@@ -4869,3 +4869,49 @@ body.landing-static .business-landing .auth-actions,
 .business-landing .auth-actions {
   grid-template-columns: 0.74fr 1.26fr;
 }
+
+/* ============================================================
+   Landing overflow behaviour + large-viewport composition
+   ============================================================ */
+
+/* Never clip. The landing still fills exactly one viewport when the content
+   fits (so no artificial scrolling is introduced), but when the content
+   genuinely exceeds the viewport it grows and scrolls naturally instead of
+   hiding the QR card and footer behind overflow:hidden. */
+body.landing-static {
+  height: auto;
+  min-height: 100svh;
+  overflow-y: auto;
+}
+
+body.landing-static .app-shell {
+  height: auto;
+  min-height: 100svh;
+  overflow: visible;
+}
+
+body.landing-static .landing-flow.auth-screen,
+body.landing-static .business-landing.auth-screen {
+  height: auto;
+  min-height: 100svh;
+  overflow: visible;
+}
+
+/* From tablet up there is far more height than the composition needs.
+   Hold it together as one centred block with whitespace around it rather
+   than stretching the sections apart into voids. */
+@media (min-width: 768px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    align-content: center;
+    gap: clamp(14px, 1.6vh, 22px);
+    padding-top: calc(max(20px, var(--safe-top)) + 4px);
+    padding-bottom: calc(24px + var(--safe-bottom));
+  }
+
+  /* The promo pill sits at the right edge, clear of the centred column, so it
+     needs only its own height reserved -- not a mobile-sized band. */
+  body:has(.install-float-wrap.public-install) .auth-screen {
+    padding-bottom: calc(64px + var(--safe-bottom));
+  }
+}
