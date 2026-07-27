@@ -4471,3 +4471,92 @@ li {
   color: var(--danger);
   background: rgba(217, 66, 66, 0.1);
 }
+
+/* Currency affix: Rand prefix on monetary inputs */
+.currency-affix::before {
+  min-width: 44px;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.field .input-affix input[inputmode="decimal"] {
+  padding-left: 2px;
+}
+
+.input-affix:focus-within {
+  border-color: var(--blue);
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(10, 77, 255, 0.12);
+}
+
+.input-affix input:focus-visible {
+  outline: none;
+}
+
+/* Skeleton loading states */
+.skeleton {
+  display: block;
+  background: linear-gradient(90deg, #e9eef7 25%, #f4f7fc 50%, #e9eef7 75%);
+  background-size: 200% 100%;
+  border-radius: 8px;
+  animation: skeletonShimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes skeletonShimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+.wallet-card .skeleton {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.18) 25%, rgba(255, 255, 255, 0.32) 50%, rgba(255, 255, 255, 0.18) 75%);
+  background-size: 200% 100%;
+}
+
+.skeleton-balance {
+  width: min(200px, 52vw);
+  height: 0.85em;
+  border-radius: 12px;
+  margin: 0.08em 0;
+}
+
+.skeleton-stat {
+  width: 56px;
+  height: 1.05em;
+  margin-inline: auto;
+}
+
+.skeleton-item {
+  pointer-events: none;
+}
+
+.skeleton-item > div {
+  display: grid;
+  gap: 8px;
+}
+
+.skeleton-circle {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+}
+
+.skeleton-line {
+  width: 70%;
+  height: 0.85rem;
+}
+
+.skeleton-line.short {
+  width: 45%;
+}
+
+.skeleton-amount {
+  width: 64px;
+  height: 1rem;
+  justify-self: end;
+}
