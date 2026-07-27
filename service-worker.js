@@ -1,8 +1,8 @@
-const CACHE_NAME = "titopay-pwa-v166-ui-refinement";
+const CACHE_NAME = "titopay-pwa-v167-landing-viewport-fix";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=166",
+  "./styles.css?v=167",
   "./assets/jsQR.min.js?v=137",
   "./app.js?v=166",
   "./services-default.json?v=154",

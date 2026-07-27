@@ -4586,14 +4586,10 @@ body:has(.install-float-wrap.with-nav) .screen {
   padding-bottom: calc(var(--nav-space) + 60px);
 }
 
+/* Reserve only the band the fixed install pill occupies (22px offset + 52px
+   pill + 10px gap), inside the existing single-viewport landing layout.
+   The :has() selector drops the reservation the moment the pill is
+   dismissed or unavailable. */
 body:has(.install-float-wrap.public-install) .auth-screen {
-  padding-bottom: calc(92px + var(--safe-bottom));
-}
-
-body.landing-static:has(.install-float-wrap.public-install),
-body.landing-static:has(.install-float-wrap.public-install) .app-shell,
-body.landing-static:has(.install-float-wrap.public-install) .landing-flow.auth-screen {
-  height: auto;
-  min-height: 100svh;
-  overflow-y: auto;
+  padding-bottom: calc(84px + var(--safe-bottom));
 }
