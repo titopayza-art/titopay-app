@@ -4560,3 +4560,24 @@ li {
   height: 1rem;
   justify-self: end;
 }
+
+/* Submission feedback: spinner on submit buttons while the form is busy */
+form[data-form].is-submitting button[type="submit"] {
+  opacity: 0.85;
+  cursor: progress;
+}
+
+form[data-form].is-submitting button[type="submit"]::after {
+  content: "";
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+form[data-form].is-submitting .chat-send-btn::after {
+  content: none;
+}

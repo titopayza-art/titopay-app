@@ -3486,7 +3486,7 @@ function openTransactionModal(service) {
     <form class="form-grid" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <div class="field"><label>Recipient, account or reference</label><input name="recipient" required></div>
-      <div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Note</label><textarea name="note"></textarea></div>
       <button class="btn primary" type="submit">${icon(service.icon)} Preview and process</button>
     </form>
@@ -3503,7 +3503,7 @@ function openTopUpModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="recipient" value="TitoPay Wallet">
       <input type="hidden" name="integrationFlow" value="wallet_top_up">
-      <div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field">
         <label>Funding method</label>
         <select name="fundingMethod">
@@ -3531,7 +3531,7 @@ function openWithdrawModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="integrationFlow" value="wallet_withdrawal">
       <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank account or account reference" required></div>
-      <div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field">
         <label>Withdrawal speed</label>
         <select name="withdrawalSpeed">
@@ -3569,7 +3569,7 @@ function openPurchaseModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <div class="field"><label>${esc(recipientLabel)}</label><input name="recipient" placeholder="${esc(recipientPlaceholder)}" required></div>
       <div class="field"><label>${esc(isVoucher ? "Category" : isElectricity ? "Product" : "Network")}</label><select name="provider">${options.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
-      <div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reference</label><input name="reference" placeholder="${esc(service.label)} purchase"></div>
       <button class="btn primary" type="submit">${icon(service.icon)} Preview purchase</button>
     </form>
@@ -3589,7 +3589,7 @@ function openPayBillsModal(service) {
       <input type="hidden" name="vasProviderReady" value="ott_or_vas_provider">
       <div class="field"><label>Biller</label><select name="provider">${billers.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
       <div class="field"><label>Account or customer number</label><input name="recipient" placeholder="DStv smartcard, municipal account or bill reference" required></div>
-      <div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reference</label><input name="reference" placeholder="Bill payment reference"></div>
       <button class="btn primary" type="submit">${icon("list")} Preview bill payment</button>
     </form>
@@ -3619,7 +3619,7 @@ function openSendMoneyModal(service = coreWalletAction("send")) {
       ${recipientMethodField("auto")}
       <div class="field"><label>Recipient</label><input name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" required></div>
       ${contactSuggestions()}
-      <div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reference</label><input name="reference" placeholder="What is this payment for?"></div>
       <div class="field"><label>Note</label><textarea name="note" placeholder="Optional message"></textarea></div>
       <button class="btn primary" type="submit">${icon("send")} Preview send money</button>
@@ -3638,7 +3638,7 @@ function openPaymentRequestModal(service) {
       ${recipientMethodField("auto")}
       <div class="field"><label>Recipient</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
       ${contactSuggestions()}
-      <div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Description</label><textarea name="description" placeholder="What is the request for?"></textarea></div>
       <div class="field"><label>Due date</label><input name="dueDate" type="date"></div>
       <div class="field"><label>Request type</label><select name="requestType"><option>One-time request</option><option>Recurring request</option></select></div>
@@ -3659,7 +3659,7 @@ function openBillSplitModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="recipient" value="Bill Split Participants">
       <div class="field"><label>Bill description</label><input name="reference" placeholder="Dinner, trip, household" required></div>
-      <div class="field"><label>Total bill amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Total bill amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Split method</label><select name="splitMethod"><option>Equal split</option><option>Percentage split</option><option>Per-item split</option></select></div>
       ${recipientAutoMethodField("participantMethod", "Participant lookup method")}
       <div class="field"><label>Participants</label><textarea name="participants" placeholder="@username, cellphone or email per line" required></textarea></div>
@@ -3683,7 +3683,7 @@ function openSendGiftModal(service) {
       ${contactSuggestions()}
       <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan recipient QR</button>
       <div id="qr-scanner-output" class="empty-state hidden"></div>
-      <div class="field"><label>Gift amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Gift amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Occasion</label><select name="occasion">${occasions.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
       <div class="field hidden" data-custom-occasion><label>Custom occasion</label><input name="customOccasion" maxlength="48" placeholder="e.g. Matric celebration, new home, team thank-you"></div>
       <div class="field"><label>Scheduled delivery</label><input name="scheduledDelivery" type="datetime-local"></div>
@@ -3703,7 +3703,7 @@ function openPayoutModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode || "merchant_payout")}">
       <input type="hidden" name="integrationFlow" value="merchant_payout">
       <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank beneficiary or account reference" required></div>
-      <div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field">
         <label>Payout speed</label>
         <select name="payoutSpeed">
@@ -3745,7 +3745,7 @@ function openRefundModal(service) {
           <option value="partial_refund">Partial refund</option>
         </select>
       </div>
-      <div class="field"><label>Refund amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Refund amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reason</label><select name="reason"><option>Customer return</option><option>Duplicate payment</option><option>Incorrect amount</option><option>Service not fulfilled</option><option>Other</option></select></div>
       <div class="field"><label>Refund message</label><textarea name="message" placeholder="Optional message for the customer"></textarea></div>
       <section class="integration-note" aria-label="Refund processing">
@@ -3785,7 +3785,7 @@ function openInvoiceDocumentModal(service) {
       <div class="field"><label>Customer email</label><input name="customerEmail" type="email"></div>
       <div class="field"><label>Customer address</label><textarea name="customerAddress" placeholder="Customer billing address"></textarea></div>
       <div class="field"><label>Itemized lines</label><textarea name="lineItems" placeholder="Design work | 1 | 850&#10;Delivery | 1 | 120" required></textarea><small class="field-hint">Use one line per item: description | quantity | unit price.</small></div>
-      <div class="field"><label>Subtotal (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Subtotal</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>VAT support</label><select name="vat"><option>Include VAT 15%</option><option>No VAT</option></select></div>
       <div class="field"><label>Notes</label><textarea name="note" placeholder="Payment terms, banking details or thank-you message"></textarea></div>
       <button class="btn primary" type="submit">${icon("list")} Save ${esc(kind)}</button>
@@ -4116,7 +4116,7 @@ function openStockvelModal() {
       <div class="field"><label>Stokvel name</label><input name="recipient" placeholder="e.g. Family Rotation, Business Round, School Fees Group" required></div>
       <div class="field"><label>Group purpose</label><textarea name="description" placeholder="Describe the rotating contribution purpose and member rules"></textarea></div>
       <div class="field"><label>Contribution cadence</label><select name="cadence"><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select></div>
-      <div class="field"><label>Contribution amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      <div class="field"><label>Contribution amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Start date</label><input name="startDate" type="date"></div>
       <div class="field"><label>Next contribution date</label><input name="nextContributionDate" type="date"></div>
       <div class="field"><label>Round length</label><select name="roundLength"><option>One payout per contribution cycle</option><option>Two payouts per month</option><option>Custom rotation agreed by group organisers</option></select></div>
@@ -4170,7 +4170,7 @@ function openQrPayModal(existing = {}) {
     </div>
     <form class="form-grid" data-form="qr-pay">
       <div class="field"><label>QR ID</label><input name="qrId" value="${esc(existing.qrId || "")}" required></div>
-      <div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" value="${esc(existing.amount || "")}"></div></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" value="${esc(existing.amount || "")}"></div></div>
       <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan QR with camera</button>
       <div id="qr-scanner-output" class="empty-state hidden"></div>
       <button class="btn primary" type="submit">${icon("scan")} Review QR Payment</button>
@@ -5016,7 +5016,7 @@ function renderTransactionEditFields(context) {
   const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "documentAction"];
   const labels = {
     recipient: "Recipient, account or reference",
-    amount: "Amount (ZAR)",
+    amount: "Amount",
     reference: "Reference",
     note: "Note",
     description: "Description",
@@ -5046,10 +5046,11 @@ function renderTransactionEditFields(context) {
       }
       const type = /date/i.test(key) ? "date" : "text";
       const inputmode = key === "amount" ? " inputmode=\"decimal\"" : "";
-      return `<div class="field"><label>${esc(label)}</label><input name="${esc(key)}" type="${type}"${inputmode} value="${esc(value)}" ${key === "recipient" || key === "amount" ? "required" : ""}></div>`;
+      const control = `<input name="${esc(key)}" type="${type}"${inputmode} value="${esc(value)}" ${key === "recipient" || key === "amount" ? "required" : ""}>`;
+      return `<div class="field"><label>${esc(label)}</label>${key === "amount" ? `<div class="input-affix currency-affix" data-prefix="R">${control}</div>` : control}</div>`;
     })
     .join("");
-  return `${hiddenFields}${visibleFields || `<input type="hidden" name="serviceCode" value="${esc(data.serviceCode)}"><div class="field"><label>Amount (ZAR)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" value="${esc(context.amount)}" required></div></div>`}`;
+  return `${hiddenFields}${visibleFields || `<input type="hidden" name="serviceCode" value="${esc(data.serviceCode)}"><div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" value="${esc(context.amount)}" required></div></div>`}`;
 }
 
 function openTransactionEditModal(context) {
@@ -7731,7 +7732,7 @@ function openTitoPayCallHistory() {
     </div>
     ${items.length ? `
       <section class="settings-list">
-        ${items.map((item) => settingsRow(item.title || "TitoPay user", `${item.direction || "call"} · ${new Date(item.startedAt).toLocaleString()} · ${item.status || "recorded"}`, "phone")).join("")}
+        ${items.map((item) => settingsRow(item.title || "TitoPay user", `${item.direction || "call"} · ${new Date(item.startedAt).toLocaleString("en-ZA")} · ${item.status || "recorded"}`, "phone")).join("")}
       </section>
     ` : `<section class="empty-state compact-state">${icon("phone")}<strong>No calls yet</strong><p>Call history will appear here after verified TitoPay user calls.</p></section>`}
     <button class="btn ghost" type="button" data-action="chat-back">${icon("arrow-left")} Back to chats</button>
@@ -8688,6 +8689,7 @@ function unlockPageScroll() {
 }
 
 function setBusy(form, busy) {
+  form.classList.toggle("is-submitting", busy);
   form.querySelectorAll("button, input, textarea, select").forEach((element) => {
     element.disabled = busy;
   });
