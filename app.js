@@ -1313,7 +1313,7 @@ function activityView() {
         <h2>Saved payment receipts</h2>
         <p class="muted">${receipts.length ? `${receipts.length} secure receipt${receipts.length === 1 ? "" : "s"} saved in TitoPay.` : "Receipts from QR payments and merchant sales will appear here."}</p>
       </div>
-      <button class="btn primary" type="button" data-action="wallet-receipts">${icon("ticket")} Open Receipts</button>
+      <button class="btn secondary" type="button" data-action="wallet-receipts">${icon("ticket")} Open Receipts</button>
     </section>
     <section class="panel report-filters">
       <div class="field"><label>Search</label><input data-filter="search" value="${esc(state.transactionFilters.search)}" placeholder="Reference, service, recipient"></div>
@@ -1370,7 +1370,7 @@ function profileView() {
     </section>
     <section class="profile-actions panel">
       <button class="btn secondary" data-action="refresh">${icon("refresh")} Refresh profile</button>
-      <button class="btn primary" data-action="logout">${icon("lock")} Sign out</button>
+      <button class="btn secondary" data-action="logout">${icon("lock")} Sign out</button>
     </section>
   `;
 }
@@ -1449,11 +1449,15 @@ function activityList(items) {
   }
   return `<section class="activity-list">${items.map((item) => {
     const direction = item.direction || "debit";
+    const statusValue = String(item.status || "").toLowerCase();
+    const statusBadge = ["pending", "processing", "failed", "declined", "reversed"].includes(statusValue)
+      ? ` <em class="tx-status ${statusValue === "pending" || statusValue === "processing" ? "" : "failed"}">${esc(statusValue)}</em>`
+      : "";
     return `<article class="activity-item">
-      <span class="icon-bubble">${icon(direction === "credit" ? "download" : "send")}</span>
+      <span class="icon-bubble">${icon(direction === "credit" ? "download" : "upload")}</span>
       <div>
         <p><strong>${esc(item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction")}</strong></p>
-        <small>${esc(item.reference || item.status || "Processed")} · ${formatDate(item.created_at || item.createdAt)}</small>
+        <small>${esc(item.reference || item.status || "Processed")} · ${formatDate(item.created_at || item.createdAt)}${statusBadge}</small>
       </div>
       <strong class="amount ${direction === "credit" ? "credit" : ""}">${direction === "credit" ? "+" : "-"}${money(item.total || item.amount)}</strong>
     </article>`;
