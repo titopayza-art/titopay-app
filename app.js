@@ -81,6 +81,7 @@ const state = {
   sessionWarningTimer: null,
   sessionWarningShown: false,
   modalScrollY: 0,
+  modalOpener: null,
   profilePhotoCrop: null,
   notifications: [],
   merchantSale: null,
@@ -144,7 +145,31 @@ window.addEventListener("error", (event) => {
     showToast("Unable to complete the request. Please try again.", "error");
   }
 });
+function renderConnectivityBanner() {
+  const existing = document.querySelector(".connectivity-banner");
+  if (navigator.onLine) {
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    return;
+  }
+  if (existing) return;
+  const banner = document.createElement("div");
+  banner.className = "connectivity-banner";
+  banner.setAttribute("role", "status");
+  banner.setAttribute("aria-live", "polite");
+  banner.innerHTML = `${icon("refresh")}<span>You are offline. TitoPay will reconnect automatically. Anything you have not submitted has not been sent.</span>`;
+  document.body.appendChild(banner);
+}
+
+function announceConnectivityRestored() {
+  const banner = document.querySelector(".connectivity-banner");
+  if (banner && banner.parentNode) banner.parentNode.removeChild(banner);
+  showToast("Connection restored.");
+}
+
+window.addEventListener("offline", renderConnectivityBanner);
+
 window.addEventListener("online", () => {
+  announceConnectivityRestored();
   if (!state.auth || !state.auth.accessToken) return;
   syncTitoPayAccountStatus({ silent: true }).catch(() => null);
   connectTitoPayChatSocket({ force: true });
@@ -176,6 +201,7 @@ boot();
 
 async function boot() {
   registerServiceWorker();
+  renderConnectivityBanner();
   await Promise.all([checkApiHealth(), loadServices(), loadMaintenanceMode(), loadPublicEventFromPath()]);
   if (state.auth && state.auth.accessToken) {
     await loadAccount();
@@ -1457,19 +1483,128 @@ function activityList(items) {
     const statusBadge = ["pending", "processing", "failed", "declined", "reversed"].includes(statusValue)
       ? ` <em class="tx-status ${statusValue === "pending" || statusValue === "processing" ? "" : "failed"}">${esc(statusValue)}</em>`
       : "";
-    return `<article class="activity-item">
+    const label = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
+    const amountText = `${direction === "credit" ? "+" : "-"}${money(item.total || item.amount)}`;
+    return `<button class="activity-item" type="button" data-transaction-open="${esc(transactionKey(item))}" aria-label="${esc(`${label}, ${direction === "credit" ? "money in" : "money out"} ${amountText}. View transaction details.`)}">
       <span class="icon-bubble">${icon(direction === "credit" ? "download" : "upload")}</span>
       <div>
-        <p><strong>${esc(item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction")}</strong></p>
+        <p><strong>${esc(label)}</strong></p>
         <small>${esc(item.reference || item.status || "Processed")} · ${formatDate(item.created_at || item.createdAt)}${statusBadge}</small>
       </div>
-      <strong class="amount ${direction === "credit" ? "credit" : ""}">${direction === "credit" ? "+" : "-"}${money(item.total || item.amount)}</strong>
-    </article>`;
+      <strong class="amount ${direction === "credit" ? "credit" : ""}">${amountText}</strong>
+    </button>`;
   }).join("")}</section>`;
 }
 
-function settingsRow(label, value, iconName) {
-  return `<article class="activity-item">
+// Identify a transaction across the filtered/sliced arrays the lists render
+// from, using only fields the payload already provides.
+function transactionKey(item = {}) {
+  return String(
+    item.id || item.transaction_id || item.transactionId || item.reference ||
+    item.created_at || item.createdAt || ""
+  );
+}
+
+function findTransactionByKey(key) {
+  if (!key) return null;
+  return (state.transactions || []).find((item) => transactionKey(item) === key) || null;
+}
+
+function transactionStatusMeaning(status) {
+  const map = {
+    completed: "This transaction has been processed.",
+    success: "This transaction has been processed.",
+    successful: "This transaction has been processed.",
+    paid: "This transaction has been processed.",
+    pending: "TitoPay is waiting for confirmation. This transaction is not final yet.",
+    processing: "This transaction is being processed.",
+    failed: "This transaction did not go through.",
+    declined: "This transaction was declined.",
+    reversed: "This transaction was reversed."
+  };
+  return map[String(status || "").toLowerCase()] || "";
+}
+
+function transactionNeedsSupport(status) {
+  return ["failed", "declined", "reversed"].includes(String(status || "").toLowerCase());
+}
+
+// A receipt is only linked when one already exists locally for this transaction.
+function receiptForTransaction(item = {}) {
+  const keys = [item.id, item.transaction_id, item.transactionId, item.reference]
+    .filter(Boolean).map(String);
+  if (!keys.length) return null;
+  return titoPayReceipts().find((receipt) =>
+    keys.includes(String(receipt.transactionId || "")) ||
+    keys.includes(String(receipt.id || "")) ||
+    keys.includes(String(receipt.reference || ""))
+  ) || null;
+}
+
+function openTransactionDetailModal(key) {
+  const item = findTransactionByKey(key);
+  if (!item) {
+    showToast("This transaction is no longer available. Pull to refresh Activity.", "error");
+    return;
+  }
+  const direction = item.direction === "credit" ? "credit" : "debit";
+  const statusRaw = String(item.status || "").toLowerCase();
+  const meaning = transactionStatusMeaning(statusRaw);
+  const amountValue = item.total ?? item.amount;
+  const created = item.created_at || item.createdAt;
+  const dateObj = created ? new Date(created) : null;
+  const service = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
+  const reference = item.reference || "";
+  const txId = item.transaction_id || item.transactionId || item.id || "";
+  // Counterparty and fee are shown ONLY when the payload actually carries them.
+  const counterparty = item.recipient || item.recipient_name || item.recipientName ||
+    item.sender || item.sender_name || item.senderName ||
+    item.merchant || item.merchant_name || item.merchantName || "";
+  const feeRaw = item.fee ?? item.fee_amount ?? item.feeAmount;
+  const hasFee = feeRaw !== undefined && feeRaw !== null && feeRaw !== "" && Number.isFinite(Number(feeRaw));
+  const receipt = receiptForTransaction(item);
+
+  const rows = [
+    ["Type", service, "grid"],
+    ["Direction", direction === "credit" ? "Money in" : "Money out", direction === "credit" ? "download" : "upload"]
+  ];
+  if (hasFee) rows.push(["Fee", money(Number(feeRaw)), "shield"]);
+  if (dateObj && !Number.isNaN(dateObj.getTime())) {
+    rows.push(["Date", dateObj.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }), "list"]);
+    rows.push(["Time", dateObj.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }), "refresh"]);
+  }
+  if (counterparty) rows.push([direction === "credit" ? "From" : "To", counterparty, "user"]);
+  if (reference) rows.push(["Reference", reference, "tag"]);
+  if (txId && String(txId) !== String(reference)) rows.push(["Transaction ID", txId, "copy"]);
+
+  const statusLabel = statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : "Recorded";
+  const statusClass = ["failed", "declined", "reversed"].includes(statusRaw)
+    ? "failed"
+    : ["pending", "processing"].includes(statusRaw) ? "" : "settled";
+
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Transaction</p><h2>${esc(service)}</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="tx-detail-summary" aria-label="Transaction amount and status">
+      <p class="tx-detail-amount ${direction === "credit" ? "credit" : ""}">${direction === "credit" ? "+" : "-"}${esc(money(amountValue))}</p>
+      <p class="tx-detail-status"><span class="tx-status ${statusClass}">${esc(statusLabel)}</span></p>
+      ${meaning ? `<p class="tx-detail-meaning">${esc(meaning)}</p>` : ""}
+    </section>
+    <section class="panel tx-detail-rows">
+      ${rows.map(([label, value, iconName]) => settingsRow(label, value, iconName)).join("")}
+    </section>
+    <div class="tx-detail-actions">
+      ${receipt ? `<button class="btn secondary" type="button" data-receipt-open="${esc(receipt.id)}">${icon("receipt-list")} View receipt</button>` : ""}
+      ${transactionNeedsSupport(statusRaw) ? `<button class="btn secondary" type="button" data-action="support">${icon("send")} Contact support</button>` : ""}
+      <button class="btn secondary" type="button" data-close>${icon("check-circle")} Done</button>
+    </div>
+  `);
+}
+
+function settingsRow(label, value, iconName, emphasis = "") {
+  return `<article class="activity-item${emphasis ? ` row-emphasis row-emphasis-${emphasis}` : ""}">
     <span class="icon-bubble">${icon(iconName)}</span>
     <div><p><strong>${esc(label)}</strong></p><small>${esc(value)}</small></div>
   </article>`;
@@ -1800,6 +1935,11 @@ async function onClick(event) {
   const posKey = event.target.closest("[data-pos-key]");
   if (posKey) {
     updateMerchantSaleAmount(posKey.dataset.posKey);
+    return;
+  }
+  const transactionOpen = event.target.closest("[data-transaction-open]");
+  if (transactionOpen) {
+    openTransactionDetailModal(transactionOpen.dataset.transactionOpen);
     return;
   }
   const receiptOpen = event.target.closest("[data-receipt-open]");
@@ -2638,6 +2778,11 @@ async function handleAction(action) {
   }
   if (action === "landing-menu") {
     openLandingMenu();
+  }
+  if (action === "failure-view-activity") {
+    closeModal();
+    location.hash = "activity";
+    return;
   }
   if (action === "confirm-transaction-review") {
     await confirmReviewedTransaction();
@@ -4974,10 +5119,10 @@ function transactionReviewRows(context) {
   const recipientAmount = Number(preview.recipientAmount ?? preview.netAmount ?? amount);
   const rows = [
     ["Service", serviceLabelForCode(data.serviceCode), "grid"],
-    ["Amount", money(amount), "wallet"],
+    ["Amount", money(amount), "wallet", "strong"],
     ["TitoPay fee", money(fee), "shield"],
     ["Third-party fee", money(Number(preview.thirdPartyFee || data.thirdPartyFee || 0)), "bank"],
-    ["Total debit", money(total), "withdraw"],
+    ["Total debit", money(total), "withdraw", "total"],
     ["Recipient amount", money(recipientAmount), "send"],
     ["Source wallet", displayWalletId(wallet) !== "Generating" ? `Wallet ${displayWalletId(wallet)}` : `${state.accountType === "business" ? "Business" : "Personal"} wallet`, "wallet"],
     ["Date and time", formatDate(context.createdAt), "list"],
@@ -4985,7 +5130,7 @@ function transactionReviewRows(context) {
     ["Expected processing", data.integrationFlow ? "Provider processing may be pending until confirmed." : "Usually instant after confirmation.", "refresh"],
     ["Refundability", data.serviceCode === "qr_payment" || data.serviceCode === "wallet_transfer" ? "Subject to TitoPay support review." : "Depends on provider response and service rules.", "list"]
   ];
-  return rows.map(([label, value, iconName]) => settingsRow(label, value, iconName)).join("");
+  return rows.map(([label, value, iconName, emphasis]) => settingsRow(label, value, iconName, emphasis)).join("");
 }
 
 function openTransactionReviewModal(context) {
@@ -5007,7 +5152,7 @@ function openTransactionReviewModal(context) {
     <div class="auth-actions transaction-review-actions">
       <button class="btn primary" type="button" data-action="confirm-transaction-review">${icon("check-circle")} Confirm</button>
       <button class="btn secondary" type="button" data-action="edit-transaction-review">${icon("list")} Edit</button>
-      <button class="btn secondary" type="button" data-action="cancel-transaction-review">${icon("x")} Cancel</button>
+      <button class="btn ghost" type="button" data-action="cancel-transaction-review">Cancel</button>
     </div>
   `);
 }
@@ -5063,8 +5208,30 @@ function openTransactionEditModal(context) {
     <form class="form-grid stable-service-form" data-form="transaction">
       ${renderTransactionEditFields(context)}
       <button class="btn primary" type="submit">${icon("refresh")} Preview again</button>
-      <button class="btn secondary" type="button" data-action="cancel-transaction-review">${icon("x")} Cancel</button>
+      <button class="btn ghost" type="button" data-action="cancel-transaction-review">Cancel</button>
     </form>
+  `);
+}
+
+// A failure after the transaction has been submitted has an ambiguous outcome:
+// funds may or may not have moved. We therefore never offer Retry here -- the
+// user is routed to Activity and Support instead, preserving the existing
+// error mapping as the headline message.
+function openTransactionFailureModal(message) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Not confirmed</p><h2>Transaction not confirmed</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="failure-panel" aria-label="Transaction failure details">
+      <p class="failure-message">${esc(message)}</p>
+      <p class="failure-guidance">Check Activity before trying again. If the transaction appears there, it was received by TitoPay and you should not submit it a second time.</p>
+    </section>
+    <div class="tx-detail-actions">
+      <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} Check Activity</button>
+      <button class="btn secondary" type="button" data-action="support">${icon("send")} Contact support</button>
+      <button class="btn ghost" type="button" data-close>Close</button>
+    </div>
   `);
 }
 
@@ -5111,7 +5278,9 @@ async function confirmReviewedTransaction() {
     }
     openSuccessModal(result.transaction || result, context.preview, data.serviceCode, context.recipient);
   } catch (error) {
-    showToast(`${friendlyFormError(error, "transaction")} No funds were deducted unless TitoPay shows this transaction in Activity.`, "error");
+    const message = friendlyFormError(error, "transaction");
+    showToast(message, "error");
+    openTransactionFailureModal(message);
   } finally {
     setButtonBusy(button, false);
   }
@@ -8620,12 +8789,27 @@ async function shareQrCode(button) {
   await copyTextValue(shareValue, button.closest("[data-qr-card]"));
 }
 
+const MODAL_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function modalFocusable(card) {
+  return Array.from(card.querySelectorAll(MODAL_FOCUSABLE)).filter((el) => el.offsetParent !== null || el === document.activeElement);
+}
+
+// Escape only dismisses a modal that already offers a close affordance, so
+// flows that intentionally withhold one stay non-dismissible.
+function modalIsDismissible(card) {
+  const closer = card.querySelector("[data-close]");
+  return Boolean(closer && !closer.disabled);
+}
+
 function openModal(html) {
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   closeModal();
+  state.modalOpener = opener;
   lockPageScroll();
   const wrapper = document.createElement("div");
   wrapper.className = "modal-backdrop";
-  wrapper.innerHTML = `<section class="modal-card">${html}</section>`;
+  wrapper.innerHTML = `<section class="modal-card" role="dialog" aria-modal="true" tabindex="-1">${html}</section>`;
   wrapper.addEventListener("click", async (event) => {
     if (event.target === wrapper || event.target.closest("[data-close]")) {
       closeModal();
@@ -8656,6 +8840,46 @@ function openModal(html) {
   document.body.appendChild(wrapper);
   document.body.classList.add("modal-open");
   enhanceContactPickerControls(wrapper);
+
+  const card = wrapper.querySelector(".modal-card");
+  // Associate the dialog with its own heading for screen readers.
+  const heading = card.querySelector("h2, h3");
+  if (heading) {
+    if (!heading.id) heading.id = `titopay-modal-title-${Date.now().toString(36)}`;
+    card.setAttribute("aria-labelledby", heading.id);
+  } else {
+    card.setAttribute("aria-label", "TitoPay dialog");
+  }
+
+  // Move focus into the dialog without stealing it from an autofocused field.
+  const firstField = card.querySelector("input:not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled])");
+  (firstField || card).focus({ preventScroll: true });
+
+  wrapper.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      if (!modalIsDismissible(card)) return;
+      event.preventDefault();
+      closeModal();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = modalFocusable(card);
+    if (!focusable.length) {
+      event.preventDefault();
+      card.focus({ preventScroll: true });
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === card || !card.contains(active))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
 }
 
 function closeModal() {
@@ -8666,6 +8890,9 @@ function closeModal() {
   resetProfilePhotoCrop();
   document.body.classList.remove("modal-open");
   unlockPageScroll();
+  const opener = state.modalOpener;
+  state.modalOpener = null;
+  if (backdrop && opener && document.contains(opener)) opener.focus({ preventScroll: true });
 }
 
 function lockPageScroll() {
@@ -8712,6 +8939,12 @@ function showToast(message, type = "") {
   if (currentToast && currentToast.parentNode) currentToast.parentNode.removeChild(currentToast);
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
+  // Financial outcomes must reach assistive technology. Errors interrupt
+  // (alert/assertive); everything else is announced politely. One live element
+  // at a time, so no duplicate announcements.
+  toast.setAttribute("role", type === "error" ? "alert" : "status");
+  toast.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
+  toast.setAttribute("aria-atomic", "true");
   toast.textContent = message;
   document.body.appendChild(toast);
   setTimeout(() => {

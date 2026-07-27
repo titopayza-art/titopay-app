@@ -4915,3 +4915,160 @@ body.landing-static .business-landing.auth-screen {
     padding-bottom: calc(64px + var(--safe-bottom));
   }
 }
+
+/* ============================================================
+   Fintech remediation pass: interactive transaction rows,
+   transaction detail, review hierarchy, failure state, offline.
+   ============================================================ */
+
+/* Transaction rows are now buttons; keep the established row appearance. */
+button.activity-item {
+  width: 100%;
+  font: inherit;
+  color: var(--navy);
+  text-align: left;
+  cursor: pointer;
+}
+
+button.activity-item:focus-visible {
+  outline: 3px solid rgba(10, 77, 255, 0.28);
+  outline-offset: 3px;
+}
+
+/* Review disclosure: amount and total debit lead, without shouting. */
+.row-emphasis small {
+  font-size: 1.02rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--navy);
+}
+
+.row-emphasis-total {
+  border-color: rgba(10, 77, 255, 0.28);
+  background: #f4f8ff;
+}
+
+.row-emphasis-total small {
+  font-size: 1.18rem;
+  font-weight: 800;
+  color: var(--blue);
+}
+
+.row-emphasis-total p strong {
+  color: var(--navy);
+}
+
+.transaction-review-actions {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+/* Transaction detail sheet */
+.tx-detail-summary {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  padding: 4px 0 16px;
+  text-align: center;
+}
+
+.tx-detail-amount {
+  margin: 0;
+  font-size: clamp(1.9rem, 7vw, 2.4rem);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--navy);
+}
+
+.tx-detail-amount.credit {
+  color: var(--success);
+}
+
+.tx-detail-status {
+  margin: 0;
+}
+
+.tx-status.settled {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.12);
+}
+
+.tx-detail-meaning {
+  margin: 0;
+  max-width: 32rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.tx-detail-rows {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.tx-detail-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Persistent failure treatment */
+.failure-panel {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(217, 66, 66, 0.24);
+  border-radius: var(--radius-control);
+  background: #fff5f5;
+}
+
+.failure-message {
+  margin: 0;
+  color: #7a1e1e;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.failure-guidance {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* Offline banner: restrained, above content, respects safe areas */
+.connectivity-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: calc(10px + var(--safe-top)) max(14px, var(--safe-right)) 10px max(14px, var(--safe-left));
+  color: #fff;
+  background: var(--navy);
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: left;
+  box-shadow: 0 4px 14px rgba(6, 26, 61, 0.18);
+}
+
+.connectivity-banner svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+/* The dialog container receives programmatic focus so screen readers announce
+   it; that is not keyboard navigation, so it must not paint a focus ring.
+   Interactive controls inside keep their own visible focus styles. */
+.modal-card[tabindex="-1"]:focus {
+  outline: none;
+}
