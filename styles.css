@@ -158,9 +158,8 @@ a:focus-visible {
   width: min(220px, 58vw);
   height: auto;
   display: block;
-  border: 1px solid rgba(223, 231, 245, 0.82);
+  border: 0;
   border-radius: clamp(18px, 4vw, 24px);
-  box-shadow: 0 6px 18px rgba(6, 26, 61, 0.07);
   mix-blend-mode: multiply;
 }
 
@@ -321,7 +320,7 @@ a:focus-visible {
 .notification-avatar svg {
   width: 23px;
   height: 23px;
-  stroke-width: 2.35;
+  stroke-width: 2.25;
 }
 
 .notification-count {
@@ -4114,7 +4113,7 @@ li {
 .service-tile .icon-bubble svg {
   width: clamp(28px, 7.8vw, 34px);
   height: clamp(28px, 7.8vw, 34px);
-  stroke-width: 2.45;
+  stroke-width: 2.05;
 }
 
 .bottom-nav svg {
@@ -4395,13 +4394,13 @@ li {
 .bottom-nav svg {
   width: 28px;
   height: 28px;
-  stroke-width: 2.55;
+  stroke-width: 2.3;
 }
 
 .bottom-nav button:nth-child(3) svg {
   width: 34px;
   height: 34px;
-  stroke-width: 2.55;
+  stroke-width: 2.3;
 }
 
 /* Screen-by-screen refinement: financial clarity and header consistency */
