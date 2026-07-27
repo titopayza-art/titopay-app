@@ -4403,3 +4403,71 @@ li {
   height: 34px;
   stroke-width: 2.55;
 }
+
+/* Screen-by-screen refinement: financial clarity and header consistency */
+.field input[inputmode="decimal"] {
+  font-size: 1.3rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.field input[name="otp"] {
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+
+.field select {
+  padding-right: 42px;
+  text-overflow: ellipsis;
+}
+
+.notification-avatar {
+  color: var(--navy);
+  background: var(--card);
+  border: 1px solid rgba(223, 231, 245, 0.86);
+  border-radius: 16px;
+  box-shadow: var(--shadow-soft);
+}
+
+.notification-count {
+  background: var(--blue);
+  box-shadow: 0 2px 8px rgba(10, 77, 255, 0.28);
+}
+
+.section-head h2,
+.panel .eyebrow + h2 {
+  font-size: 1.12rem;
+  line-height: 1.25;
+}
+
+.section-head p {
+  font-size: 0.85rem;
+}
+
+.wallet-card .muted {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.tx-status {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  padding: 2px 8px;
+  color: var(--warning);
+  background: rgba(183, 121, 31, 0.1);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-style: normal;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.tx-status.failed {
+  color: var(--danger);
+  background: rgba(217, 66, 66, 0.1);
+}
