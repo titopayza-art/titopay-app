@@ -519,32 +519,32 @@ function commercialServiceIcon(item = {}) {
     "send-money": "send",
     "receive-money": "download",
     "qr-pay": "qr",
-    "payment-request": "download",
+    "payment-request": "payment-request",
     "bill-split": "scissors",
     "send-gift": "gift",
-    "airtime-data": "phone",
-    "airtime-and-data": "phone",
-    airtime: "phone",
-    data: "phone",
+    "airtime-data": "sim-card",
+    "airtime-and-data": "sim-card",
+    airtime: "sim-card",
+    data: "signal",
     electricity: "zap",
-    voucher: "tag",
-    "pay-bills": "bill",
+    voucher: "voucher",
+    "pay-bills": "bill-pay",
     stockvel: "stockvel",
     tip: "tip",
     learn: "learn",
     transactions: "list",
     "profile-security": "shield",
-    statements: "bill",
-    payouts: "withdraw",
-    refund: "refresh",
-    "business-profile": "user",
-    invoice: "bill",
-    quote: "bill",
-    "proforma-invoice": "bill",
+    statements: "statement",
+    payouts: "bank-payout",
+    refund: "refund-card",
+    "business-profile": "merchant-profile",
+    invoice: "invoice",
+    quote: "quote",
+    "proforma-invoice": "document-invoice",
     tickets: "ticket",
-    ticketing: "ticket",
-    "business-ticketing-staff": "contacts",
-    "enterprise-distribution": "grid"
+    ticketing: "ticketing",
+    "business-ticketing-staff": "staff-badge",
+    "enterprise-distribution": "bulk-distribution"
   };
   return byAction[key] || normalizeIconName(item.service_icon || item.serviceIcon || key);
 }
@@ -1163,7 +1163,7 @@ function dashboardView() {
         <section class="wallet-card">
           <p class="eyebrow muted">${state.accountType === "business" ? "Business Wallet" : "Personal Wallet"}</p>
           <div class="wallet-balance-line">
-            <div class="wallet-balance">${displayMoney(wallet ? wallet.available_balance : undefined)}</div>
+            <div class="wallet-balance">${state.loading && !state.wallets.length ? '<span class="skeleton skeleton-balance" aria-hidden="true"></span>' : displayMoney(wallet ? wallet.available_balance : undefined)}</div>
             <button class="balance-toggle" type="button" data-action="toggle-balance" aria-label="${state.balanceHidden ? "Show wallet balance" : "Hide wallet balance"}">${icon(state.balanceHidden ? "eye" : "eye-off")}</button>
           </div>
           <div class="wallet-meta-line">
@@ -1191,15 +1191,14 @@ function dashboardView() {
           <p class="eyebrow">Today</p>
           <h2>Transaction summary</h2>
           <div class="stats-grid">
-            <div class="stat"><strong>${state.transactions.length}</strong><span>Records</span></div>
-            <div class="stat"><strong>${money(totalByDirection("credit"))}</strong><span>In</span></div>
-            <div class="stat"><strong>${money(totalByDirection("debit"))}</strong><span>Out</span></div>
+            <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : state.transactions.length}</strong><span>Records</span></div>
+            <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(totalByDirection("credit"))}</strong><span>In</span></div>
+            <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(totalByDirection("debit"))}</strong><span>Out</span></div>
           </div>
         </section>
         <section class="section-head">
           <div>
             <h2>Recent activity</h2>
-            <p>Your latest wallet activity.</p>
           </div>
         </section>
         ${activityList(state.transactions.slice(0, 5))}
@@ -1243,7 +1242,7 @@ function qrView() {
     <section class="hero">
       <p class="eyebrow">${business ? "Merchant POS" : "QR Payments"}</p>
       <h1>${business ? "Make sales with TitoPay QR." : "Make a payment."}</h1>
-      <p class="lead">${business ? "Start a sale, generate a dynamic payment QR and receive confirmation without changing the payment engine." : "Scan a TitoPay QR code with your camera and pay from your personal wallet."}</p>
+      <p class="lead">${business ? "Start a sale and generate a dynamic payment QR for your customer." : "Scan a TitoPay QR code with your camera and pay from your personal wallet."}</p>
     </section>
     ${business ? merchantPosHome(receipts) : personalQrPaymentHome(receipts)}
   `;
@@ -1259,12 +1258,12 @@ function merchantPosHome(receipts = []) {
       </button>
       <div class="merchant-pos-secondary-grid">
         <button class="panel merchant-pos-mini" type="button" data-action="merchant-sales-history">
-          ${icon("list")}
+          ${icon("receipt-list")}
           <strong>Sales History</strong>
           <small>${receipts.filter((item) => item.accountType === "business").length} saved sales</small>
         </button>
         <button class="panel merchant-pos-mini" type="button" data-route="activity">
-          ${icon("ticket")}
+          ${icon("receipt-list")}
           <strong>Activity Receipts</strong>
           <small>Open receipts from Activity.</small>
         </button>
@@ -1305,15 +1304,7 @@ function activityView() {
     <section class="hero">
       <p class="eyebrow">Transactions</p>
       <h1>Wallet activity.</h1>
-      <p class="lead">View transactions, export reports and open saved receipts from one clean place.</p>
-    </section>
-    <section class="panel activity-receipts-panel">
-      <div>
-        <p class="eyebrow">Receipts</p>
-        <h2>Saved payment receipts</h2>
-        <p class="muted">${receipts.length ? `${receipts.length} secure receipt${receipts.length === 1 ? "" : "s"} saved in TitoPay.` : "Receipts from QR payments and merchant sales will appear here."}</p>
-      </div>
-      <button class="btn primary" type="button" data-action="wallet-receipts">${icon("ticket")} Open Receipts</button>
+      <p class="lead">View, filter and export your wallet transactions.</p>
     </section>
     <section class="panel report-filters">
       <div class="field"><label>Search</label><input data-filter="search" value="${esc(state.transactionFilters.search)}" placeholder="Reference, service, recipient"></div>
@@ -1323,11 +1314,19 @@ function activityView() {
         ${["all", "credit", "debit"].map((item) => `<option value="${item}" ${state.transactionFilters.direction === item ? "selected" : ""}>${esc(item[0].toUpperCase() + item.slice(1))}</option>`).join("")}
       </select></div>
     </section>
+    ${activityList(items)}
     <section class="auth-actions">
       <button class="btn secondary" data-action="export-csv">${icon("download")} Export CSV</button>
-      <button class="btn primary" data-action="export-pdf">${icon("download")} Export PDF</button>
+      <button class="btn secondary" data-action="export-pdf">${icon("download")} Export PDF</button>
     </section>
-    ${activityList(items)}
+    <section class="panel activity-receipts-panel">
+      <div>
+        <p class="eyebrow">Receipts</p>
+        <h2>Saved payment receipts</h2>
+        <p class="muted">${receipts.length ? `${receipts.length} secure receipt${receipts.length === 1 ? "" : "s"} saved in TitoPay.` : "Receipts from QR payments and merchant sales will appear here."}</p>
+      </div>
+      <button class="btn secondary" type="button" data-action="wallet-receipts">${icon("receipt-list")} Open Receipts</button>
+    </section>
   `;
 }
 
@@ -1370,7 +1369,7 @@ function profileView() {
     </section>
     <section class="profile-actions panel">
       <button class="btn secondary" data-action="refresh">${icon("refresh")} Refresh profile</button>
-      <button class="btn primary" data-action="logout">${icon("lock")} Sign out</button>
+      <button class="btn secondary" data-action="logout">${icon("lock")} Sign out</button>
     </section>
   `;
 }
@@ -1445,15 +1444,23 @@ function walletAction(label, iconName, serviceId) {
 
 function activityList(items) {
   if (!items.length) {
+    if (state.loading) {
+      const skeletonRow = `<article class="activity-item skeleton-item" aria-hidden="true"><span class="skeleton skeleton-circle"></span><div><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span></div><span class="skeleton skeleton-amount"></span></article>`;
+      return `<section class="activity-list" aria-busy="true">${skeletonRow.repeat(4)}</section>`;
+    }
     return `<section class="empty-state">${icon("list")}<strong>No transactions yet</strong><p>Transactions will appear here after wallet activity is recorded.</p></section>`;
   }
   return `<section class="activity-list">${items.map((item) => {
     const direction = item.direction || "debit";
+    const statusValue = String(item.status || "").toLowerCase();
+    const statusBadge = ["pending", "processing", "failed", "declined", "reversed"].includes(statusValue)
+      ? ` <em class="tx-status ${statusValue === "pending" || statusValue === "processing" ? "" : "failed"}">${esc(statusValue)}</em>`
+      : "";
     return `<article class="activity-item">
-      <span class="icon-bubble">${icon(direction === "credit" ? "download" : "send")}</span>
+      <span class="icon-bubble">${icon(direction === "credit" ? "download" : "upload")}</span>
       <div>
         <p><strong>${esc(item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction")}</strong></p>
-        <small>${esc(item.reference || item.status || "Processed")} · ${formatDate(item.created_at || item.createdAt)}</small>
+        <small>${esc(item.reference || item.status || "Processed")} · ${formatDate(item.created_at || item.createdAt)}${statusBadge}</small>
       </div>
       <strong class="amount ${direction === "credit" ? "credit" : ""}">${direction === "credit" ? "+" : "-"}${money(item.total || item.amount)}</strong>
     </article>`;
@@ -1500,7 +1507,7 @@ function openNotificationsModal() {
   const unread = unreadNotificationCount();
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Unread Messages</p><h2>Notifications</h2><p class="lead">Support updates, chat alerts and important TitoPay messages in one inbox.</p></div>
+      <div><p class="eyebrow">Unread Messages</p><h2>Notifications</h2><p class="lead">Support updates, chat alerts and important TitoPay messages.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="notification-inbox-summary">
@@ -3479,7 +3486,7 @@ function openTransactionModal(service) {
     <form class="form-grid" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <div class="field"><label>Recipient, account or reference</label><input name="recipient" required></div>
-      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Note</label><textarea name="note"></textarea></div>
       <button class="btn primary" type="submit">${icon(service.icon)} Preview and process</button>
     </form>
@@ -3496,7 +3503,7 @@ function openTopUpModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="recipient" value="TitoPay Wallet">
       <input type="hidden" name="integrationFlow" value="wallet_top_up">
-      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field">
         <label>Funding method</label>
         <select name="fundingMethod">
@@ -3524,7 +3531,7 @@ function openWithdrawModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="integrationFlow" value="wallet_withdrawal">
       <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank account or account reference" required></div>
-      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field">
         <label>Withdrawal speed</label>
         <select name="withdrawalSpeed">
@@ -3562,7 +3569,7 @@ function openPurchaseModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <div class="field"><label>${esc(recipientLabel)}</label><input name="recipient" placeholder="${esc(recipientPlaceholder)}" required></div>
       <div class="field"><label>${esc(isVoucher ? "Category" : isElectricity ? "Product" : "Network")}</label><select name="provider">${options.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
-      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reference</label><input name="reference" placeholder="${esc(service.label)} purchase"></div>
       <button class="btn primary" type="submit">${icon(service.icon)} Preview purchase</button>
     </form>
@@ -3582,7 +3589,7 @@ function openPayBillsModal(service) {
       <input type="hidden" name="vasProviderReady" value="ott_or_vas_provider">
       <div class="field"><label>Biller</label><select name="provider">${billers.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
       <div class="field"><label>Account or customer number</label><input name="recipient" placeholder="DStv smartcard, municipal account or bill reference" required></div>
-      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reference</label><input name="reference" placeholder="Bill payment reference"></div>
       <button class="btn primary" type="submit">${icon("list")} Preview bill payment</button>
     </form>
@@ -3612,7 +3619,7 @@ function openSendMoneyModal(service = coreWalletAction("send")) {
       ${recipientMethodField("auto")}
       <div class="field"><label>Recipient</label><input name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" required></div>
       ${contactSuggestions()}
-      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reference</label><input name="reference" placeholder="What is this payment for?"></div>
       <div class="field"><label>Note</label><textarea name="note" placeholder="Optional message"></textarea></div>
       <button class="btn primary" type="submit">${icon("send")} Preview send money</button>
@@ -3631,7 +3638,7 @@ function openPaymentRequestModal(service) {
       ${recipientMethodField("auto")}
       <div class="field"><label>Recipient</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
       ${contactSuggestions()}
-      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Description</label><textarea name="description" placeholder="What is the request for?"></textarea></div>
       <div class="field"><label>Due date</label><input name="dueDate" type="date"></div>
       <div class="field"><label>Request type</label><select name="requestType"><option>One-time request</option><option>Recurring request</option></select></div>
@@ -3652,7 +3659,7 @@ function openBillSplitModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="recipient" value="Bill Split Participants">
       <div class="field"><label>Bill description</label><input name="reference" placeholder="Dinner, trip, household" required></div>
-      <div class="field"><label>Total bill amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Total bill amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Split method</label><select name="splitMethod"><option>Equal split</option><option>Percentage split</option><option>Per-item split</option></select></div>
       ${recipientAutoMethodField("participantMethod", "Participant lookup method")}
       <div class="field"><label>Participants</label><textarea name="participants" placeholder="@username, cellphone or email per line" required></textarea></div>
@@ -3676,7 +3683,7 @@ function openSendGiftModal(service) {
       ${contactSuggestions()}
       <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan recipient QR</button>
       <div id="qr-scanner-output" class="empty-state hidden"></div>
-      <div class="field"><label>Gift amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Gift amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Occasion</label><select name="occasion">${occasions.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
       <div class="field hidden" data-custom-occasion><label>Custom occasion</label><input name="customOccasion" maxlength="48" placeholder="e.g. Matric celebration, new home, team thank-you"></div>
       <div class="field"><label>Scheduled delivery</label><input name="scheduledDelivery" type="datetime-local"></div>
@@ -3696,7 +3703,7 @@ function openPayoutModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode || "merchant_payout")}">
       <input type="hidden" name="integrationFlow" value="merchant_payout">
       <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank beneficiary or account reference" required></div>
-      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field">
         <label>Payout speed</label>
         <select name="payoutSpeed">
@@ -3738,7 +3745,7 @@ function openRefundModal(service) {
           <option value="partial_refund">Partial refund</option>
         </select>
       </div>
-      <div class="field"><label>Refund amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Refund amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reason</label><select name="reason"><option>Customer return</option><option>Duplicate payment</option><option>Incorrect amount</option><option>Service not fulfilled</option><option>Other</option></select></div>
       <div class="field"><label>Refund message</label><textarea name="message" placeholder="Optional message for the customer"></textarea></div>
       <section class="integration-note" aria-label="Refund processing">
@@ -3778,7 +3785,7 @@ function openInvoiceDocumentModal(service) {
       <div class="field"><label>Customer email</label><input name="customerEmail" type="email"></div>
       <div class="field"><label>Customer address</label><textarea name="customerAddress" placeholder="Customer billing address"></textarea></div>
       <div class="field"><label>Itemized lines</label><textarea name="lineItems" placeholder="Design work | 1 | 850&#10;Delivery | 1 | 120" required></textarea><small class="field-hint">Use one line per item: description | quantity | unit price.</small></div>
-      <div class="field"><label>Subtotal (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Subtotal</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>VAT support</label><select name="vat"><option>Include VAT 15%</option><option>No VAT</option></select></div>
       <div class="field"><label>Notes</label><textarea name="note" placeholder="Payment terms, banking details or thank-you message"></textarea></div>
       <button class="btn primary" type="submit">${icon("list")} Save ${esc(kind)}</button>
@@ -3984,7 +3991,7 @@ function openReceiveModal() {
     </div>
     <form class="form-grid" data-form="receive">
       <div class="field"><label>QR label</label><input name="label" value="TitoPay payment"></div>
-      <div class="field"><label>Fixed amount (optional)</label><input name="amount" inputmode="decimal"></div>
+      <div class="field"><label>Fixed amount (optional)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal"></div></div>
       <button class="btn primary" type="submit">${icon("qr")} Generate receive QR</button>
     </form>
   `);
@@ -3998,7 +4005,7 @@ function openTipModal() {
     </div>
     <form class="form-grid" data-form="receive">
       <div class="field"><label>QR label</label><input name="label" value="TitoPay tip"></div>
-      <div class="field"><label>Suggested amount (optional)</label><input name="amount" inputmode="decimal"></div>
+      <div class="field"><label>Suggested amount (optional)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal"></div></div>
       <button class="btn primary" type="submit">${icon("tip")} Generate Tip QR</button>
     </form>
     <div class="auth-actions">
@@ -4109,7 +4116,7 @@ function openStockvelModal() {
       <div class="field"><label>Stokvel name</label><input name="recipient" placeholder="e.g. Family Rotation, Business Round, School Fees Group" required></div>
       <div class="field"><label>Group purpose</label><textarea name="description" placeholder="Describe the rotating contribution purpose and member rules"></textarea></div>
       <div class="field"><label>Contribution cadence</label><select name="cadence"><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select></div>
-      <div class="field"><label>Contribution amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Contribution amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Start date</label><input name="startDate" type="date"></div>
       <div class="field"><label>Next contribution date</label><input name="nextContributionDate" type="date"></div>
       <div class="field"><label>Round length</label><select name="roundLength"><option>One payout per contribution cycle</option><option>Two payouts per month</option><option>Custom rotation agreed by group organisers</option></select></div>
@@ -4163,7 +4170,7 @@ function openQrPayModal(existing = {}) {
     </div>
     <form class="form-grid" data-form="qr-pay">
       <div class="field"><label>QR ID</label><input name="qrId" value="${esc(existing.qrId || "")}" required></div>
-      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" value="${esc(existing.amount || "")}"></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" value="${esc(existing.amount || "")}"></div></div>
       <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan QR with camera</button>
       <div id="qr-scanner-output" class="empty-state hidden"></div>
       <button class="btn primary" type="submit">${icon("scan")} Review QR Payment</button>
@@ -5009,7 +5016,7 @@ function renderTransactionEditFields(context) {
   const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "documentAction"];
   const labels = {
     recipient: "Recipient, account or reference",
-    amount: "Amount (ZAR)",
+    amount: "Amount",
     reference: "Reference",
     note: "Note",
     description: "Description",
@@ -5039,10 +5046,11 @@ function renderTransactionEditFields(context) {
       }
       const type = /date/i.test(key) ? "date" : "text";
       const inputmode = key === "amount" ? " inputmode=\"decimal\"" : "";
-      return `<div class="field"><label>${esc(label)}</label><input name="${esc(key)}" type="${type}"${inputmode} value="${esc(value)}" ${key === "recipient" || key === "amount" ? "required" : ""}></div>`;
+      const control = `<input name="${esc(key)}" type="${type}"${inputmode} value="${esc(value)}" ${key === "recipient" || key === "amount" ? "required" : ""}>`;
+      return `<div class="field"><label>${esc(label)}</label>${key === "amount" ? `<div class="input-affix currency-affix" data-prefix="R">${control}</div>` : control}</div>`;
     })
     .join("");
-  return `${hiddenFields}${visibleFields || `<input type="hidden" name="serviceCode" value="${esc(data.serviceCode)}"><div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" value="${esc(context.amount)}" required></div>`}`;
+  return `${hiddenFields}${visibleFields || `<input type="hidden" name="serviceCode" value="${esc(data.serviceCode)}"><div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" value="${esc(context.amount)}" required></div></div>`}`;
 }
 
 function openTransactionEditModal(context) {
@@ -7724,7 +7732,7 @@ function openTitoPayCallHistory() {
     </div>
     ${items.length ? `
       <section class="settings-list">
-        ${items.map((item) => settingsRow(item.title || "TitoPay user", `${item.direction || "call"} · ${new Date(item.startedAt).toLocaleString()} · ${item.status || "recorded"}`, "phone")).join("")}
+        ${items.map((item) => settingsRow(item.title || "TitoPay user", `${item.direction || "call"} · ${new Date(item.startedAt).toLocaleString("en-ZA")} · ${item.status || "recorded"}`, "phone")).join("")}
       </section>
     ` : `<section class="empty-state compact-state">${icon("phone")}<strong>No calls yet</strong><p>Call history will appear here after verified TitoPay user calls.</p></section>`}
     <button class="btn ghost" type="button" data-action="chat-back">${icon("arrow-left")} Back to chats</button>
@@ -8681,6 +8689,7 @@ function unlockPageScroll() {
 }
 
 function setBusy(form, busy) {
+  form.classList.toggle("is-submitting", busy);
   form.querySelectorAll("button, input, textarea, select").forEach((element) => {
     element.disabled = busy;
   });
@@ -8735,30 +8744,8 @@ async function registerServiceWorker() {
 function icon(name) {
   const common = `width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"`;
   const aliases = {
-    "card-add": "upload",
-    "bank-transfer": "withdraw",
-    "qr-receive": "download",
-    "sim-card": "phone",
-    "data-bundle": "signal",
-    electricity: "zap",
-    voucher: "tag",
-    "bill-pay": "bill",
-    stockvel: "stockvel",
     "community-wallet": "stockvel",
-    "tip-card": "tip",
-    "split-bill": "scissors",
-    "merchant-profile": "user",
-    "staff-badge": "contacts",
-    "receipt-list": "list",
-    statement: "bill",
-    invoice: "bill",
-    quote: "bill",
-    "document-invoice": "bill",
-    "payment-request": "download",
-    ticketing: "ticket",
-    "bank-payout": "withdraw",
-    "refund-card": "refresh",
-    "bulk-distribution": "grid"
+    "piggy-bank": "stockvel"
   };
   const resolvedName = aliases[name] || name;
   const paths = {
@@ -8785,22 +8772,22 @@ function icon(name) {
     gift: `<path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7Z"/><path d="M12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7Z"/>`,
     bank: `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M6 10v8"/><path d="M10 10v8"/><path d="M14 10v8"/><path d="M18 10v8"/><path d="M4 18h16"/><path d="M3 22h18"/>`,
     bill: `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/>`,
-    "bill-pay": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h4"/><path d="m13 17 2 2 4-5"/>`,
+    "bill-pay": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="m9.3 13.7 1.9 1.9 3.5-3.9"/>`,
     ticket: `<path d="M2 9a3 3 0 0 0 0 6v3a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3a3 3 0 0 0 0-6V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M13 5v14"/>`,
     ticketing: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M9 9h6"/><path d="M9 13h4"/><path d="M17 8v8"/>`,
-    health: `<path d="M8 3v4a4 4 0 0 0 8 0V3"/><path d="M6 3h4"/><path d="M14 3h4"/><path d="M16 7v5a4 4 0 0 1-8 0"/><circle cx="18" cy="16" r="3"/><path d="M18 14.8v2.4"/><path d="M16.8 16h2.4"/>`,
-    sparkles: `<path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4a3 3 0 0 0 3 3"/><path d="M17 6h3a3 3 0 0 1-3 3"/><path d="m10 10 1.4 1.4L15 8"/>`,
+    health: `<rect x="4" y="4" width="16" height="16" rx="4.5"/><path d="M12 8.8v6.4"/><path d="M8.8 12h6.4"/>`,
+    sparkles: `<path d="m12 3.5 1.8 4.7 4.7 1.8-4.7 1.8-1.8 4.7-1.8-4.7L5.5 10l4.7-1.8z"/><path d="m18.3 15.7.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>`,
     "check-circle": `<circle cx="12" cy="12" r="9"/><path d="m8.5 12.4 2.3 2.3 4.9-5.2"/>`,
-    stockvel: `<circle cx="12" cy="7" r="3"/><path d="M7 21a5 5 0 0 1 10 0"/><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M2.5 18a3.5 3.5 0 0 1 5 0"/><path d="M16.5 18a3.5 3.5 0 0 1 5 0"/><path d="M7.5 5.5a8 8 0 0 1 9 0"/><path d="M18.5 10.5a8 8 0 0 1-1.4 6"/><path d="M5.5 10.5a8 8 0 0 0 1.4 6"/>`,
+    stockvel: `<circle cx="8.5" cy="6.8" r="2.6"/><circle cx="15.5" cy="6.8" r="2.6"/><path d="M4.5 20.5v-.5a5 5 0 0 1 5-5h5a5 5 0 0 1 5 5v.5"/><circle cx="12" cy="17.6" r="1.7"/>`,
     "piggy-bank": `<path d="M5 12a6 6 0 0 1 6-6h4a5 5 0 0 1 5 5v4a4 4 0 0 1-4 4H8a5 5 0 0 1-5-5v-1a3 3 0 0 1 2-2.8Z"/><path d="M16 6V4a2 2 0 0 0-2 2"/><path d="M7 19v2"/><path d="M17 19v2"/><path d="M19 11h2"/><path d="M9 10h.01"/>`,
     "community-wallet": `<path d="M4 17a4 4 0 0 1 8 0"/><path d="M12 17a4 4 0 0 1 8 0"/><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M6 21h12a2 2 0 0 0 2-2v-1H4v1a2 2 0 0 0 2 2Z"/><path d="M12 11v5"/>`,
     learn: `<path d="m22 10-10-5-10 5 10 5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/><path d="M22 10v6"/>`,
-    tip: `<path d="M3 13h4.5a3 3 0 0 1 2.1.9l1.3 1.3"/><path d="M4 17h5.5l2.3 2a3.5 3.5 0 0 0 4.4-.1L21 14"/><path d="M8 15h4a2 2 0 0 0 0-4H9"/><circle cx="16" cy="6" r="3"/><path d="M16 4.7v2.6"/><path d="M14.7 6h2.6"/>`,
+    tip: `<path d="M6.5 9.5h11V18a3 3 0 0 1-3 3h-5a3 3 0 0 1-3-3z"/><circle cx="12" cy="4.2" r="2.2"/><path d="M12 13.5v3"/>`,
     "tip-card": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h6"/><path d="M7 14h4"/><circle cx="17" cy="12" r="2.5"/><path d="M17 10.7v2.6"/><path d="M15.7 12h2.6"/>`,
     heart: `<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>`,
     scissors: `<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9"/><path d="M8.1 8.1 20 20"/>`,
     "split-bill": `<path d="M4 5h16v14H4z"/><path d="M8 9h8"/><path d="M8 13h4"/><path d="M12 5v14"/><path d="m7 17 2-2 2 2"/><path d="m13 17 2-2 2 2"/>`,
-    plane: `<path d="M9 21h6a2 2 0 0 0 2-2v-8H7v8a2 2 0 0 0 2 2Z"/><path d="M9 11V7a3 3 0 0 1 6 0v4"/><path d="m4 5 5 3"/><path d="m20 5-5 3"/><path d="M12 11v10"/>`,
+    plane: `<rect x="4.5" y="7.5" width="15" height="13" rx="3"/><path d="M9 7.5V6a3 3 0 0 1 6 0v1.5"/><path d="M9 7.5v13"/><path d="M15 7.5v13"/>`,
     globe: `<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>`,
     lock: `<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>`,
     user: `<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/>`,
@@ -8814,12 +8801,12 @@ function icon(name) {
     "receipt-list": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h3"/>`,
     statement: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7"/><path d="M9 16h7"/><path d="M9 20h4"/>`,
     invoice: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h6"/><path d="M9 16h4"/><path d="M16 18h2"/><path d="M16 21h2"/>`,
-    quote: `<path d="M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="m8 18 2-2 2 2"/><path d="m13 18 2-2 2 2"/>`,
+    quote: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9.5 11v2.6"/><path d="M12.5 11v2.6"/><path d="M9.5 17h5"/>`,
     "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 11h7"/><path d="M9 15h7"/><path d="M9 19h5"/>`,
     "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M8 12h8"/><path d="m13 9 3 3-3 3"/><path d="M7 16h4"/>`,
     "message-check": `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="m9 12 2 2 4-5"/>`,
     chat: `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="M8.5 11.8h.01"/><path d="M12 11.8h.01"/><path d="M15.5 11.8h.01"/>`,
-    chatbot: `<path d="M5 12a7 7 0 0 1 14 0"/><path d="M5 12v3a2 2 0 0 0 2 2h1v-7H7a2 2 0 0 0-2 2Z"/><path d="M19 12v3a2 2 0 0 1-2 2h-1v-7h1a2 2 0 0 1 2 2Z"/><path d="M9 17v1a3 3 0 0 0 3 3h2"/><path d="M10 7h.01"/><path d="M14 7h.01"/><path d="M10 11h4"/>`,
+    chatbot: `<path d="M7.3 18.6 4 20l1.15-3.3A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.7-1.4Z"/><path d="m12 8.4 1 2.3 2.3 1-2.3 1-1 2.3-1-2.3-2.3-1 2.3-1z"/>`,
     feedback: `<path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6A3.5 3.5 0 0 1 16.5 16H11l-5 4v-4.4A3.5 3.5 0 0 1 4 12.5z"/><path d="m9 9 2 2 4-4"/><path d="M9 13h6"/>`,
     bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>`,
     search: `<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>`,
@@ -8835,10 +8822,10 @@ function icon(name) {
     "refund-card": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M9 16a4 4 0 1 0 0-8"/><path d="M9 8H6v3"/>`,
     "bulk-distribution": `<path d="M4 6h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M14 14h6v6h-6z"/><path d="M10 9h4"/><path d="M10 11l4 6"/><path d="M14 7l-4 2"/>`,
     store: `<path d="M4 10h16l-1-6H5z"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/>`,
-    maintenance: `<path d="M14.5 6.5 17 4l3 3-2.5 2.5"/><path d="m4 20 7.5-7.5"/><path d="M8 20H4v-4l6-6"/><circle cx="16" cy="16" r="3"/><path d="M16 11v2"/><path d="M16 19v2"/><path d="M11 16h2"/><path d="M19 16h2"/>`,
+    maintenance: `<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>`,
     menu: `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
     "more-horizontal": `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>`,
     x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`
   };
-  return `<svg ${common}>${paths[resolvedName] || paths.sparkles}</svg>`;
+  return `<svg ${common}>${paths[resolvedName] || paths.grid}</svg>`;
 }
