@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0057FF">
+    <meta name="description" content="Mobile preview for the TitoPay Progressive Web App.">
+    <meta property="og:title" content="TitoPay App">
+    <meta property="og:description" content="Smart Payments. Simplified. Open the TitoPay mobile-first wallet and services PWA.">
+    <meta property="og:image" content="./assets/icon-512.png?v=38">
+    <meta property="og:url" content="https://app.titopay.co.za/mobile-preview.html">
+    <meta name="twitter:card" content="summary_large_image">
+    <title>TitoPay Mobile Preview</title>
+    <link rel="icon" type="image/png" sizes="128x128" href="./assets/favicon.png?v=165">
+    <style>
+      :root {
+        color-scheme: light;
+        --blue: #0057ff;
+        --navy: #061a3d;
+        --line: #d8e1ef;
+        --ink: #111827;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        background: #f8faff;
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        display: grid;
+        min-height: 100vh;
+        grid-template-columns: minmax(280px, 420px) minmax(320px, 430px);
+        gap: 42px;
+        align-items: center;
+        justify-content: center;
+        padding: 30px;
+      }
+
+      .copy { display: grid; gap: 18px; }
+      .copy img, .phone-top img { height: auto; mix-blend-mode: multiply; }
+      .copy img { width: 190px; }
+
+      h1 {
+        max-width: 440px;
+        margin: 0;
+        color: var(--navy);
+        font-size: clamp(34px, 6vw, 58px);
+        line-height: 0.98;
+      }
+
+      p {
+        max-width: 420px;
+        margin: 0;
+        color: #526173;
+        font-size: 17px;
+        line-height: 1.5;
+      }
+
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+      a, button {
+        display: inline-flex;
+        min-height: 46px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        padding: 0 18px;
+        font: inherit;
+        font-weight: 900;
+        text-decoration: none;
+      }
+
+      a { background: var(--blue); color: #fff; }
+      button { border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
+
+      .phone {
+        overflow: hidden;
+        width: min(100%, 390px);
+        height: min(844px, calc(100vh - 40px));
+        border: 12px solid #fff;
+        border-radius: 44px;
+        background: #fff;
+        box-shadow: 0 30px 80px rgba(6, 26, 61, 0.18);
+      }
+
+      .phone-screen {
+        display: grid;
+        height: 100%;
+        align-content: start;
+        gap: 18px;
+        padding: 34px 22px;
+        background: #f3f6fb;
+      }
+
+      .phone-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .phone-top img { width: 150px; }
+
+      .phone-dot {
+        display: grid;
+        width: 46px;
+        height: 46px;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--blue);
+        color: #fff;
+        font-weight: 900;
+      }
+
+      .wallet-preview {
+        display: grid;
+        gap: 18px;
+        border-radius: 28px;
+        padding: 24px 20px;
+        background: linear-gradient(145deg, #0057ff, #0347d8);
+        color: #fff;
+      }
+
+      .wallet-preview small {
+        color: rgba(255, 255, 255, 0.72);
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .wallet-preview strong { font-size: 38px; line-height: 1; }
+
+      .preview-actions {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+
+      .preview-actions span,
+      .service-preview span {
+        min-height: 72px;
+        border-radius: 18px;
+        display: grid;
+        place-items: center;
+        font-weight: 900;
+      }
+
+      .preview-actions span { background: rgba(255, 255, 255, 0.16); }
+
+      .service-preview {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
+
+      .service-preview span {
+        background: #fff;
+        color: var(--navy);
+        box-shadow: 0 12px 26px rgba(6, 26, 61, 0.08);
+      }
+
+      @media (max-width: 820px) {
+        main { grid-template-columns: 1fr; gap: 22px; padding: 18px; }
+        .copy { justify-items: center; text-align: center; }
+        .phone { height: min(760px, 78vh); }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="copy">
+        <img src="./assets/titopay-logo.jpg?v=38" alt="TitoPay">
+        <h1>Smart Payments. Simplified.</h1>
+        <p>Open the TitoPay mobile-first PWA with personal wallet, business tools, services, marketplace, stokvels and finance learning.</p>
+        <div class="actions">
+          <a href="./index.html">Open App</a>
+          <button type="button" id="share-preview">Share Preview</button>
+        </div>
+      </section>
+      <section class="phone" aria-label="TitoPay app mobile preview">
+        <div class="phone-screen">
+          <div class="phone-top">
+            <img src="./assets/titopay-logo.jpg?v=38" alt="TitoPay">
+            <span class="phone-dot">TP</span>
+          </div>
+          <section class="wallet-preview" aria-label="Wallet preview">
+            <small>Balance</small>
+            <strong>R 0,00</strong>
+            <div class="preview-actions">
+              <span>Send</span>
+              <span>Pay</span>
+              <span>Top Up</span>
+              <span>Withdraw</span>
+            </div>
+          </section>
+          <div class="service-preview" aria-label="Service preview">
+            <span>Shop</span>
+            <span>Learn</span>
+            <span>Stokvel</span>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script>
+      document.querySelector("#share-preview").addEventListener("click", async () => {
+        const url = new URL("./mobile-preview.html", location.href).href;
+        const payload = { title: "TitoPay App", text: "Open TitoPay: Smart Payments. Simplified.", url };
+        if (navigator.share) {
+          await navigator.share(payload).catch(() => null);
+          return;
+        }
+        await navigator.clipboard?.writeText(url).catch(() => null);
+      });
+    </script>
+  </body>
+</html>

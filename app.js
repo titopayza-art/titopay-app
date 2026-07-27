@@ -1,0 +1,8844 @@
+"use strict";
+
+const API_BASE = "https://api.titopay.co.za";
+const AUTH_KEY = "titopay_candidate_auth_v1";
+const SESSION_KEY = "titopay_candidate_session_v1";
+const PROFILE_PHOTO_PREFIX = "titopay_profile_photo_v1";
+const BUSINESS_LOGO_PREFIX = "titopay_business_logo_v1";
+const USERNAME_REGISTRY_KEY = "titopay_username_registry_v1";
+const KNOWN_TITOPAY_USERS_KEY = "titopay_known_users_v1";
+const TITOPAY_CHAT_THREADS_KEY = "titopay_chat_threads_v1";
+const TITOPAY_CHAT_INVITES_KEY = "titopay_chat_invites_v1";
+const TITOPAY_CHAT_BLOCKS_KEY = "titopay_chat_blocks_v1";
+const TITOPAY_CALL_HISTORY_KEY = "titopay_call_history_v1";
+const IN_APP_NOTIFICATIONS_KEY = "titopay_in_app_notifications_v1";
+const PWA_REVIEW_QUEUE_KEY = "titopay_pending_pwa_reviews_v1";
+const TITOPAY_RECEIPTS_KEY = "titopay_receipts_v1";
+const INSTALL_DISMISSED_KEY = "titopay_install_dismissed_v1";
+const SESSION_TIMEOUT_MS = 15 * 60 * 1000;
+const SESSION_WARNING_MS = 60 * 1000;
+const SECURITY_TIP_TEXT = "Never share your PIN, password or verification codes. TitoPay will never ask for those by phone, email, WhatsApp, SMS or social media.";
+const BALANCE_HIDDEN_KEY = "titopay_balance_hidden_v1";
+const OFFICIAL_APP_WARNING = "Use TitoPay only at https://app.titopay.co.za. Never enter your TitoPay details on any other website or link.";
+const BUSINESS_DOCUMENTS_KEY = "titopay_business_documents_v1";
+const DOCUMENT_PDF_FEE = 2.5;
+const REGISTERED_RECIPIENT_SERVICES = new Set([
+  "wallet_transfer",
+  "send_money",
+  "send_gift",
+  "tip",
+  "payment_request",
+  "business_payment_request",
+  "bill_split",
+  "stockvel"
+]);
+const app = document.querySelector("#app");
+
+function lockHorizontalScroll() {
+  const y = window.scrollY || document.documentElement.scrollTop || 0;
+  if (window.scrollX) window.scrollTo(0, y);
+}
+
+window.addEventListener("scroll", lockHorizontalScroll, { passive: true });
+window.addEventListener("resize", lockHorizontalScroll, { passive: true });
+
+if (typeof Element !== "undefined" && !Element.prototype.matches) {
+  Element.prototype.matches = Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
+}
+
+if (typeof Element !== "undefined" && !Element.prototype.closest) {
+  Element.prototype.closest = function closest(selector) {
+    let element = this;
+    while (element && element.nodeType === 1) {
+      if (element.matches && element.matches(selector)) return element;
+      element = element.parentElement || element.parentNode;
+    }
+    return null;
+  };
+}
+
+const state = {
+  auth: readJson(AUTH_KEY),
+  user: null,
+  wallets: [],
+  transactions: [],
+  businessDocuments: readJson(BUSINESS_DOCUMENTS_KEY) || [],
+  activeBusinessDocumentId: "",
+  services: [],
+  servicesLoaded: false,
+  serviceError: "",
+  maintenance: { pwa: { enabled: false, note: "", expectedBackAt: "" } },
+  profileQr: null,
+  securityCentre: null,
+  apiOnline: false,
+  accountType: "personal",
+  authMode: "landing",
+  route: location.hash.replace("#", "") || "dashboard",
+  loading: false,
+  balanceHidden: sessionStorage.getItem(BALANCE_HIDDEN_KEY) === "true",
+  transactionFilters: { search: "", from: "", to: "", direction: "all" },
+  sessionTimer: null,
+  sessionWarningTimer: null,
+  sessionWarningShown: false,
+  modalScrollY: 0,
+  profilePhotoCrop: null,
+  notifications: [],
+  merchantSale: null,
+  receiptFilters: { search: "", range: "all", merchant: "" },
+  pendingTransactionReview: null,
+  pendingQrPaymentReview: null,
+  ticketing: { eligibility: null, events: [], loading: false },
+  enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
+  publicEvent: null,
+  installPrompt: null,
+  installAvailable: false,
+  installed: isPwaInstalled()
+};
+
+let titoPayChatSocket = null;
+let titoPayChatReconnectTimer = null;
+let titoPayChatReconnectAttempts = 0;
+let titoPayPeerConnection = null;
+let titoPayPendingCallOffer = null;
+const titoPayChatPendingAcks = new Map();
+let titoPayChatTypingTimer = null;
+let titoPayIceServers = [{ urls: ["stun:stun.l.google.com:19302"] }];
+let titoPayPendingIceCandidates = [];
+let titoPayAccountSyncTimer = null;
+let authRefreshPromise = null;
+
+const navItems = [
+  ["dashboard", "Home", "home"],
+  ["services", "Services", "grid"],
+  ["qr", "QR", "qr"],
+  ["activity", "Activity", "list"],
+  ["profile", "Profile", "user"]
+];
+
+window.addEventListener("hashchange", () => {
+  state.route = location.hash.replace("#", "") || "dashboard";
+  render();
+});
+
+document.addEventListener("submit", onSubmit);
+document.addEventListener("click", onClick);
+document.addEventListener("input", onInput);
+document.addEventListener("change", onChange);
+["pointerdown", "keydown", "scroll", "touchstart"].forEach((eventName) => {
+  window.addEventListener(eventName, resetSessionTimers, { passive: true });
+});
+window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+window.addEventListener("appinstalled", onAppInstalled);
+window.addEventListener("unhandledrejection", (event) => {
+  const message = event.reason && (event.reason.message || event.reason.error || String(event.reason));
+  if (/something went wrong|internal server error|stack trace|jwt expired|token expired/i.test(String(message || ""))) {
+    event.preventDefault();
+    if (isQuietPublicLandingError()) return;
+    showToast("Unable to complete the request. Please try again.", "error");
+  }
+});
+window.addEventListener("error", (event) => {
+  if (/something went wrong|internal server error|stack trace|jwt expired|token expired/i.test(String(event.message || ""))) {
+    event.preventDefault();
+    if (isQuietPublicLandingError()) return;
+    showToast("Unable to complete the request. Please try again.", "error");
+  }
+});
+window.addEventListener("online", () => {
+  if (!state.auth || !state.auth.accessToken) return;
+  syncTitoPayAccountStatus({ silent: true }).catch(() => null);
+  connectTitoPayChatSocket({ force: true });
+  startTitoPayChatPolling();
+  syncTitoPayChatThreads().catch(() => null);
+  syncTitoPayChatNotifications().catch(() => null);
+  syncPendingPwaReviews().catch(() => null);
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !state.auth || !state.auth.accessToken) return;
+  syncTitoPayAccountStatus({ silent: true }).catch(() => null);
+  connectTitoPayChatSocket();
+  startTitoPayChatPolling();
+  syncTitoPayChatThreads().catch(() => null);
+  syncTitoPayChatNotifications().catch(() => null);
+  syncPendingPwaReviews().catch(() => null);
+});
+const standaloneQuery = typeof window.matchMedia === "function" ? window.matchMedia("(display-mode: standalone)") : null;
+if (standaloneQuery) {
+  const onStandaloneChange = () => {
+    state.installed = isPwaInstalled();
+    renderInstallButton();
+  };
+  if (typeof standaloneQuery.addEventListener === "function") standaloneQuery.addEventListener("change", onStandaloneChange);
+  else if (typeof standaloneQuery.addListener === "function") standaloneQuery.addListener(onStandaloneChange);
+}
+
+boot();
+
+async function boot() {
+  registerServiceWorker();
+  await Promise.all([checkApiHealth(), loadServices(), loadMaintenanceMode(), loadPublicEventFromPath()]);
+  if (state.auth && state.auth.accessToken) {
+    await loadAccount();
+    resetSessionTimers();
+    startTitoPayAccountSync();
+    connectTitoPayChatSocket();
+    startTitoPayChatPolling();
+  }
+  render();
+}
+
+function readJson(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null");
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeJson(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function saveAuth(auth) {
+  state.auth = auth;
+  localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+  resetSessionTimers();
+  startTitoPayAccountSync();
+  connectTitoPayChatSocket({ force: true });
+  startTitoPayChatPolling();
+  syncPendingPwaReviews().catch(() => null);
+}
+
+function clearAuth() {
+  stopTitoPayAccountSync();
+  stopTitoPayChatPolling();
+  disconnectTitoPayChatSocket();
+  endTitoPayPeerConnection({ notify: false });
+  state.auth = null;
+  state.user = null;
+  state.wallets = [];
+  state.transactions = [];
+  state.notifications = [];
+  state.transactionFilters = { search: "", from: "", to: "", direction: "all" };
+  localStorage.removeItem(AUTH_KEY);
+  sessionStorage.removeItem(SESSION_KEY);
+  clearTimeout(state.sessionTimer);
+  clearTimeout(state.sessionWarningTimer);
+  state.sessionWarningShown = false;
+}
+
+function money(value) {
+  return new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR" }).format(Number(value || 0));
+}
+
+function displayMoney(value) {
+  return state.balanceHidden ? "R••••••" : money(value);
+}
+
+function displayWalletId(wallet = {}) {
+  const raw = wallet.wallet_id || wallet.wallet_number || wallet.walletId || wallet.walletNumber || "";
+  const value = String(raw || "").trim();
+  const digits = value.replace(/\D/g, "");
+  if (digits && digits.length <= 10) return digits;
+  if (digits && digits.length > 10) return "Generating";
+  return value && !value.includes("-") && value.length <= 10 ? value : "Generating";
+}
+
+function localSupportTicketRef(prefix = "TC") {
+  const cleanPrefix = String(prefix || "TC").replace(/[^A-Z]/gi, "").toUpperCase().slice(0, 2) || "TC";
+  const tickets = readJson("titopay_support_requests") || [];
+  const ratings = readJson("titopay_support_ratings") || [];
+  const existing = new Set([...tickets, ...ratings].flatMap((item) => [item.ticketRef, item.ticket_ref, item.id].filter(Boolean).map(String)));
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const bytes = new Uint32Array(1);
+    if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes);
+    const seed = bytes[0] || Math.floor(Math.random() * 1000000);
+    const ref = `${cleanPrefix}${String(seed % 1000000).padStart(6, "0")}`;
+    if (!existing.has(ref)) return ref;
+  }
+  return `${cleanPrefix}${String(Date.now()).slice(-6)}`;
+}
+
+function esc(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function refreshCustomerSession() {
+  if (authRefreshPromise) return authRefreshPromise;
+  const refreshToken = state.auth && state.auth.refreshToken;
+  if (!refreshToken) {
+    const error = new Error("Your TitoPay session has expired. Please sign in again.");
+    error.status = 401;
+    throw error;
+  }
+  authRefreshPromise = (async () => {
+    let response;
+    try {
+      response = await fetch(`${API_BASE}/v1/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken, scope: "customer" })
+      });
+    } catch (cause) {
+      const error = new Error("TitoPay services are not reachable. Please check your connection and try again.");
+      error.status = 0;
+      error.cause = cause;
+      throw error;
+    }
+    const text = await response.text();
+    let payload = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch (error) {
+      payload = { error: text || "Unexpected API response" };
+    }
+    if (!response.ok || payload.ok === false) {
+      const error = new Error(payload.error || "Your TitoPay session has expired. Please sign in again.");
+      error.status = response.status;
+      error.details = payload;
+      error.requestId = payload.requestId || null;
+      if (response.status === 401 || response.status === 403) clearAuth();
+      throw error;
+    }
+    const nextAuth = {
+      ...(state.auth || {}),
+      ...payload,
+      accessToken: payload.accessToken || payload.access_token || payload.token,
+      refreshToken: payload.refreshToken || payload.refresh_token || refreshToken
+    };
+    if (!nextAuth.accessToken) {
+      const error = new Error("Your TitoPay session has expired. Please sign in again.");
+      error.status = 401;
+      clearAuth();
+      throw error;
+    }
+    saveAuth(nextAuth);
+    return nextAuth;
+  })();
+  try {
+    return await authRefreshPromise;
+  } finally {
+    authRefreshPromise = null;
+  }
+}
+
+async function api(path, options = {}) {
+  const canAbort = typeof AbortController !== "undefined";
+  const controller = canAbort ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 15000) : null;
+  const headers = Object.assign({ "Content-Type": "application/json" }, options.headers || {});
+  if (options.auth !== false && state.auth && state.auth.accessToken) {
+    headers.Authorization = `Bearer ${state.auth.accessToken}`;
+  }
+  const fetchOptions = {
+    method: options.method || "GET",
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined
+  };
+  if (controller) fetchOptions.signal = controller.signal;
+  try {
+    const response = await fetch(`${API_BASE}${path}`, fetchOptions);
+    const text = await response.text();
+    let payload = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch (error) {
+      payload = { error: text || "Unexpected API response" };
+    }
+    if (
+      response.status === 401 &&
+      options.auth !== false &&
+      options.authRetried !== true &&
+      path !== "/v1/auth/refresh" &&
+      state.auth &&
+      state.auth.refreshToken
+    ) {
+      await refreshCustomerSession();
+      return api(path, { ...options, authRetried: true });
+    }
+    if (!response.ok || payload.ok === false) {
+      const error = new Error(payload.error || `Request failed (${response.status})`);
+      error.status = response.status;
+      error.details = payload.details || payload;
+      error.requestId = payload.requestId || null;
+      error.path = path;
+      throw error;
+    }
+    return payload;
+  } catch (error) {
+    if (error.name === "AbortError") {
+      const timeoutError = new Error("TitoPay services are taking too long to respond. Please try again.");
+      timeoutError.status = 0;
+      timeoutError.path = path;
+      throw timeoutError;
+    }
+    if (!error.status) {
+      const networkError = new Error("TitoPay services are not reachable. Please check your connection and try again.");
+      networkError.status = 0;
+      networkError.path = path;
+      networkError.cause = error;
+      throw networkError;
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function friendlyFormError(error, formName = "") {
+  const status = Number(error?.status || 0);
+  const rawMessage = String(error?.message || "").trim();
+  const requestId = error?.requestId || error?.details?.requestId;
+  const suffix = requestId ? ` Ref: ${requestId}` : "";
+  if (formName === "login") {
+    if (status === 0) return rawMessage || "TitoPay services are not reachable. Please try again.";
+    if (status === 400) return "Enter your TitoPay cellphone, username or email and PIN.";
+    if (status === 401) return "Incorrect login details. Please check your PIN and try again.";
+    if (status === 403) return "This TitoPay account is not active. Please contact support.";
+    if (status === 423) return rawMessage || "This account is temporarily locked. Please try again later.";
+    if (status === 429) return "Too many login attempts. Please wait a few minutes and try again.";
+    return `Unable to sign in right now. Please try again shortly.${suffix}`;
+  }
+  if (/something went wrong|internal server error/i.test(rawMessage)) {
+    return `Unable to complete the request. Please try again.${suffix}`;
+  }
+  return rawMessage || `Unable to complete the request. Please try again.${suffix}`;
+}
+
+async function checkApiHealth() {
+  try {
+    const result = await api("/health", { auth: false });
+    state.apiOnline = result.status === "ok";
+  } catch (error) {
+    state.apiOnline = false;
+  }
+}
+
+async function loadMaintenanceMode() {
+  try {
+    const result = await api("/v1/maintenance/public", { auth: false });
+    state.maintenance = result.maintenance || state.maintenance;
+  } catch (error) {
+    state.maintenance = { pwa: { enabled: false, note: "", expectedBackAt: "" } };
+  }
+}
+
+async function loadServices() {
+  try {
+    const [defaults, result] = await Promise.all([
+      loadDefaultServices(),
+      api("/v1/services?audience=all", { auth: false })
+    ]);
+    const merged = mergeServiceCatalogue(defaults, result.items || []);
+    if (!merged.length) throw new Error("No TitoPay services returned");
+    state.services = sortServices(merged.map(normalizeService));
+    state.servicesLoaded = true;
+    state.serviceError = "";
+  } catch (error) {
+    const fallback = await loadDefaultServices();
+    state.services = sortServices(fallback.map(normalizeService));
+    state.servicesLoaded = true;
+    state.serviceError = fallback.length ? "campaign-placement-ready" : "service-catalogue-unavailable";
+  }
+}
+
+function serviceIdentity(item = {}) {
+  return String(item.service_code || item.serviceCode || item.action || item.id || item.service_name || item.serviceName || "")
+    .trim()
+    .toLowerCase();
+}
+
+function mergeServiceCatalogue(defaults = [], remote = []) {
+  const merged = new Map();
+  defaults.forEach((item) => {
+    const key = serviceIdentity(item);
+    if (key) merged.set(key, Object.assign({}, item));
+  });
+  remote.forEach((item) => {
+    const key = serviceIdentity(item);
+    if (!key) return;
+    const base = merged.get(key) || {};
+    merged.set(key, Object.assign({}, base, item));
+  });
+  return Array.from(merged.values());
+}
+
+async function loadDefaultServices() {
+  try {
+    const response = await fetch("./services-default.json?v=152", { cache: "no-store" });
+    if (!response.ok) throw new Error("Default service catalogue unavailable");
+    const payload = await response.json();
+    return payload.items || [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function sortServices(services) {
+  return services.sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
+}
+
+function normalizeService(item) {
+  const status = String(item.status || "active");
+  const action = String(item.action || item.service_code || item.serviceCode || "");
+  const serviceCode = String(item.service_code || item.serviceCode || action);
+  const serviceLabel = serviceCode === "stockvel" || action === "stockvel"
+    ? "Stokvel"
+    : (item.service_name || item.serviceName || serviceCode);
+  const badge = String(item.feature_badge || item.featureBadge || "none");
+  const isProfileSecurity = action === "profile-security" || serviceCode === "profile-security";
+  return {
+    id: serviceCode,
+    label: serviceLabel,
+    icon: commercialServiceIcon({ ...item, action, serviceCode }),
+    serviceCode,
+    action,
+    description: item.description || "",
+    fee: item.fee,
+    commission: item.commission,
+    status,
+    badge: badge === "none" ? "" : badge.replace("_", " "),
+    personalVisible: isProfileSecurity ? true : Boolean(item.personal_visible != null ? item.personal_visible : item.personalVisible),
+    businessVisible: isProfileSecurity ? true : Boolean(item.business_visible != null ? item.business_visible : item.businessVisible),
+    sortOrder: Number(item.sort_order != null ? item.sort_order : (item.sortOrder != null ? item.sortOrder : 999)),
+    type: serviceTypeFromAction(action, status),
+    disabled: status !== "active"
+  };
+}
+
+function commercialServiceIcon(item = {}) {
+  const key = String(item.action || item.serviceCode || item.service_code || item.service_name || item.serviceName || "").trim().toLowerCase();
+  const byAction = {
+    "top-up": "upload",
+    withdraw: "withdraw",
+    "send-money": "send",
+    "receive-money": "download",
+    "qr-pay": "qr",
+    "payment-request": "download",
+    "bill-split": "scissors",
+    "send-gift": "gift",
+    "airtime-data": "phone",
+    "airtime-and-data": "phone",
+    airtime: "phone",
+    data: "phone",
+    electricity: "zap",
+    voucher: "tag",
+    "pay-bills": "bill",
+    stockvel: "stockvel",
+    tip: "tip",
+    learn: "learn",
+    transactions: "list",
+    "profile-security": "shield",
+    statements: "bill",
+    payouts: "withdraw",
+    refund: "refresh",
+    "business-profile": "user",
+    invoice: "bill",
+    quote: "bill",
+    "proforma-invoice": "bill",
+    tickets: "ticket",
+    ticketing: "ticket",
+    "business-ticketing-staff": "contacts",
+    "enterprise-distribution": "grid"
+  };
+  return byAction[key] || normalizeIconName(item.service_icon || item.serviceIcon || key);
+}
+
+function normalizeIconName(name = "") {
+  const map = {
+    "corner-down-left": "download",
+    "graduation-cap": "learn",
+    "hand-coins": "tip",
+    "heart-handshake": "heart",
+    "landmark": "bank",
+    "piggy-bank": "stockvel",
+    "shopping-bag": "store",
+    "smartphone": "phone",
+    "stethoscope": "health",
+    bill: "bill",
+    stockvel: "stockvel",
+    tip: "tip"
+  };
+  return map[name] || name || "sparkles";
+}
+
+function serviceTypeFromAction(action, status) {
+  if (status !== "active") return "comingSoon";
+  if (action === "receive-money" || action === "receive") return "receive";
+  if (action === "qr-pay" || action === "qr-payments") return "qrPay";
+  if (action === "tickets") return "tickets";
+  if (action === "ticketing" || action === "business-ticketing-staff") return "ticketing";
+  if (action === "enterprise-distribution") return "enterpriseDistribution";
+  if (action === "learn") return "learn";
+  if (action === "stockvel") return "stockvel";
+  if (action === "tip") return "tip";
+  return "transaction";
+}
+
+function visibleServices() {
+  const audienceKey = state.accountType === "business" ? "businessVisible" : "personalVisible";
+  return state.services.filter((service) => {
+    const serviceName = String(service.serviceName || service.name || "").toLowerCase();
+    const action = String(service.action || "").toLowerCase();
+    const id = String(service.id || service.serviceCode || service.service_code || "").toLowerCase();
+    if (action === "titopay-chat" || id === "titopay-chat" || serviceName === "titopay chat") return false;
+    if (["fica"].includes(action) || ["fica"].includes(id)) return false;
+    if (action === "enterprise-distribution" || id === "enterprise-distribution") {
+      return state.accountType === "business" && Boolean(state.enterpriseDistribution?.eligibility?.eligible);
+    }
+    return service[audienceKey];
+  });
+}
+
+function serviceSearchTokens(service = {}) {
+  return [
+    service.id,
+    service.action,
+    service.type,
+    service.serviceCode,
+    service.service_code,
+    service.label,
+    service.serviceName,
+    service.service_name
+  ].map((value) => String(value || "").trim().toLowerCase().replace(/&/g, "and").replace(/\s+/g, "-"));
+}
+
+function hideDuplicateAirtimeDataTiles(services = []) {
+  let combinedAirtimeDataSeen = false;
+  const hasCombinedAirtimeData = services.some((service) => {
+    const tokens = serviceSearchTokens(service);
+    return tokens.some((token) => token === "airtime-and-data" || token === "airtime-data" || token === "airtime-data-bundles");
+  });
+  if (!hasCombinedAirtimeData) return services;
+  return services.filter((service) => {
+    const tokens = serviceSearchTokens(service);
+    if (tokens.some((token) => token === "airtime-and-data" || token === "airtime-data" || token === "airtime-data-bundles")) {
+      if (combinedAirtimeDataSeen) return false;
+      combinedAirtimeDataSeen = true;
+      return true;
+    }
+    return !tokens.some((token) => token === "airtime" || token === "data" || token === "mobile-data");
+  });
+}
+
+function notificationStorageKey() {
+  const user = state.user || {};
+  const identity = user.id || user.email || user.username || "guest";
+  return `${IN_APP_NOTIFICATIONS_KEY}:${state.accountType}:${identity}`;
+}
+
+function defaultInAppNotifications() {
+  return [
+    {
+      id: "welcome-in-app-notifications",
+      type: "info",
+      title: "In-app notifications enabled",
+      body: "In-app notifications are free. Optional SMS notifications cost R0.30 per SMS when enabled. PIN, password and OTP reset SMS messages are free because they are critical.",
+      critical: false,
+      unread: true,
+      createdAt: new Date().toISOString()
+    }
+  ];
+}
+
+function loadInAppNotifications() {
+  if (!state.user) {
+    state.notifications = [];
+    return;
+  }
+  const stored = readJson(notificationStorageKey());
+  state.notifications = Array.isArray(stored) && stored.length ? stored : defaultInAppNotifications();
+  persistInAppNotifications();
+}
+
+function persistInAppNotifications() {
+  if (!state.user) return;
+  writeJson(notificationStorageKey(), (state.notifications || []).slice(0, 80));
+}
+
+function unreadNotificationCount() {
+  return (state.notifications || []).filter((item) => item.unread).length;
+}
+
+function addInAppNotification(data = {}) {
+  if (!state.user) return false;
+  if (!Array.isArray(state.notifications) || !state.notifications.length) loadInAppNotifications();
+  if (data.id && state.notifications.some((item) => item.id === data.id)) return false;
+  const item = {
+    id: data.id || `notice-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    type: data.type || "info",
+    title: data.title || "TitoPay update",
+    body: data.body || "",
+    critical: Boolean(data.critical),
+    unread: data.unread !== false,
+    createdAt: data.createdAt || new Date().toISOString(),
+    metadata: data.metadata || {}
+  };
+  state.notifications.unshift(item);
+  persistInAppNotifications();
+  return true;
+}
+
+async function syncTitoPayChatNotifications() {
+  if (!state.auth || !state.auth.accessToken || !state.user) return false;
+  const result = await api("/v1/chat/notifications");
+  let changed = false;
+  (result.notifications || []).forEach((item) => addInAppNotification({
+    id: item.metadata?.clientNotificationId || item.id,
+    title: item.title,
+    body: item.body,
+    category: item.notification_type || "chat",
+    unread: item.status !== "read",
+    createdAt: item.created_at || item.createdAt,
+    metadata: { ...(item.metadata || {}), serverNotificationId: item.id, notificationType: item.notification_type || "chat" }
+  }) && (changed = true));
+  return changed;
+}
+
+function activeServices() {
+  return visibleServices().filter((service) => service.status === "active");
+}
+
+function homeQuickServices() {
+  const repeatedActions = new Set([
+    "top-up",
+    "topup",
+    "wallet-top-up",
+    "wallet_top_up",
+    "withdraw",
+    "withdrawal",
+    "receive",
+    "receive-money",
+    "qr",
+    "qr-pay",
+    "qr-payments",
+    "qr_pay",
+    "qr_payments"
+  ]);
+  const dataActions = new Set([
+    "data",
+    "airtime-data",
+    "airtime-&-data",
+    "airtime-and-data",
+    "mobile-data"
+  ]);
+  const valuesFor = (service) => [
+    service.id,
+    service.action,
+    service.type,
+    service.serviceCode,
+    service.label
+  ].map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "-"));
+  const sendMoney = activeServices().find((service) => valuesFor(service).some((value) => value === "send" || value === "send-money"));
+  const services = activeServices().filter((service) => {
+    const values = valuesFor(service);
+    return !values.some((value) => repeatedActions.has(value) || dataActions.has(value));
+  });
+  return [
+    ...(sendMoney ? [sendMoney] : []),
+    ...services.filter((service) => !sendMoney || service.id !== sendMoney.id)
+  ].slice(0, 6);
+}
+
+function comingSoonServices() {
+  return visibleServices().filter((service) => service.status === "coming_soon");
+}
+
+function landingPreviewServices() {
+  const preferred = state.accountType === "business"
+    ? ["top-up", "receive-money", "payouts", "ticketing", "invoice", "transactions"]
+    : ["top-up", "withdraw", "send-money", "airtime", "pay-bills", "tickets"];
+  const valuesFor = (service) => [
+    service.id,
+    service.action,
+    service.type,
+    service.serviceCode,
+    service.label
+  ].map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "-"));
+  const services = activeServices();
+  const selected = [];
+  preferred.forEach((key) => {
+    const match = services.find((service) => valuesFor(service).includes(key));
+    if (match && !selected.some((service) => service.id === match.id || service.serviceCode === match.serviceCode || service.action === match.action)) {
+      selected.push(match);
+    }
+  });
+  return selected.slice(0, 6);
+}
+
+function serviceById(id) {
+  return state.services.find((service) => service.id === id || service.action === id);
+}
+
+async function loadAccount() {
+  try {
+    const [profile, wallets, transactions, profileQr, securityCentre, enterpriseDistribution] = await Promise.all([
+      api("/v1/auth/me"),
+      api("/v1/wallets"),
+      api("/v1/transactions"),
+      api("/v1/qr/profile").catch(() => ({ qr: null })),
+      api("/v1/security/centre").catch(() => ({ centre: null })),
+      api("/v1/enterprise-distribution/eligibility").catch(() => ({ eligibility: null }))
+    ]);
+    state.user = hydrateAccountMedia(profile.user || {});
+    rememberLocalTitoPayUser(state.user);
+    state.wallets = wallets.items || [];
+    state.transactions = transactions.items || [];
+    state.profileQr = profileQr.qr || null;
+    state.securityCentre = securityCentre.centre || null;
+    state.enterpriseDistribution.eligibility = enterpriseDistribution.eligibility || null;
+    state.accountType = profile.user && (profile.user.accountType || profile.user.account_type) || state.accountType;
+    loadInAppNotifications();
+  } catch (error) {
+    showToast(error.message || "Session expired", "error");
+    clearAuth();
+  }
+}
+
+async function refreshData() {
+  if (!state.auth || !state.auth.accessToken) return;
+  state.loading = true;
+  render();
+  await loadAccount();
+  state.loading = false;
+  render();
+}
+
+function stopTitoPayAccountSync() {
+  if (titoPayAccountSyncTimer) {
+    clearInterval(titoPayAccountSyncTimer);
+    titoPayAccountSyncTimer = null;
+  }
+}
+
+function startTitoPayAccountSync() {
+  stopTitoPayAccountSync();
+  if (!state.auth || !state.auth.accessToken) return;
+  titoPayAccountSyncTimer = setInterval(() => {
+    if (document.hidden || !state.auth || !state.auth.accessToken) return;
+    syncTitoPayAccountStatus({ silent: true }).catch(() => null);
+  }, 15000);
+}
+
+async function syncTitoPayAccountStatus(options = {}) {
+  if (!state.auth || !state.auth.accessToken) return false;
+  const wasLocked = isWalletLocked();
+  const previousStatus = String(state.user?.status || state.user?.accountStatus || "").toLowerCase();
+  try {
+    const profile = await api("/v1/auth/me");
+    const nextUser = hydrateAccountMedia(Object.assign({}, state.user || {}, profile.user || {}));
+    state.user = nextUser;
+    state.accountType = nextUser.accountType || nextUser.account_type || state.accountType;
+    rememberLocalTitoPayUser(state.user);
+    const isLocked = isWalletLocked();
+    const nextStatus = String(nextUser.status || nextUser.accountStatus || "").toLowerCase();
+    const changed = wasLocked !== isLocked || previousStatus !== nextStatus;
+    if (changed) {
+      render();
+      if (!options.silent) {
+        showToast(isLocked ? "Profile locked. Outgoing services are disabled." : "Profile unlocked.");
+      } else if (isLocked && !wasLocked) {
+        showToast("Profile locked. Outgoing services are disabled.", "error");
+      } else if (!isLocked && wasLocked) {
+        showToast("Profile unlocked.");
+      }
+    }
+    return changed;
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) {
+      clearAuth();
+      render();
+      if (!options.silent) showToast("Your TitoPay session has expired. Please sign in again.", "error");
+    }
+    return false;
+  }
+}
+
+function resetSessionTimers() {
+  if (!state.auth || !state.auth.accessToken) return;
+  clearTimeout(state.sessionTimer);
+  clearTimeout(state.sessionWarningTimer);
+  state.sessionWarningShown = false;
+  state.sessionWarningTimer = setTimeout(showSessionWarning, SESSION_TIMEOUT_MS - SESSION_WARNING_MS);
+  state.sessionTimer = setTimeout(expireSession, SESSION_TIMEOUT_MS);
+}
+
+function showSessionWarning() {
+  if (!state.auth || !state.auth.accessToken || state.sessionWarningShown) return;
+  state.sessionWarningShown = true;
+  showToast("Your TitoPay session will expire soon due to inactivity.");
+}
+
+async function expireSession() {
+  if (!state.auth || !state.auth.accessToken) return;
+  try {
+    await api("/v1/auth/logout", { method: "POST", body: { refreshToken: state.auth ? state.auth.refreshToken : undefined } });
+  } catch (error) {}
+  clearAuth();
+  sessionStorage.removeItem("titopay_support_conversation_id");
+  sessionStorage.removeItem("titopay_support_conversation_status");
+  location.hash = "";
+  render();
+  showToast("Session timed out. Please sign in again.", "error");
+}
+
+function render() {
+  if (state.publicEvent) {
+    document.body.classList.remove("landing-static");
+    app.innerHTML = publicTicketingEventView(state.publicEvent);
+    renderInstallButton();
+    return;
+  }
+  if (state.maintenance?.pwa?.enabled) {
+    document.body.classList.add("landing-static");
+    app.innerHTML = maintenanceView(state.maintenance.pwa);
+    renderInstallButton();
+    return;
+  }
+  if (!state.auth || !state.auth.accessToken || !state.user) {
+    document.body.classList.add("landing-static");
+    app.innerHTML = authView();
+    renderInstallButton();
+    return;
+  }
+  document.body.classList.remove("landing-static");
+  app.innerHTML = appView();
+  renderInstallButton();
+}
+
+function maintenanceView(maintenance = {}) {
+  return `
+    <main class="screen auth-screen landing-flow">
+      <header class="topbar">
+        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+        <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
+      </header>
+      <section class="panel empty-state maintenance-state">
+        <span class="icon-bubble">${icon("maintenance")}</span>
+        <h1>TitoPay is under maintenance</h1>
+        <p>${esc(maintenance.note || "We are improving TitoPay services. Please try again shortly.")}</p>
+        ${maintenance.expectedBackAt ? `<p class="muted">Expected back: ${esc(maintenance.expectedBackAt)}</p>` : ""}
+        <button class="btn primary" type="button" data-action="refresh">${icon("refresh")} Check again</button>
+      </section>
+    </main>
+  `;
+}
+
+function authView() {
+  const isBusiness = state.accountType === "business";
+  const previewServices = landingPreviewServices();
+  return `
+    <main class="screen auth-screen landing-flow ${isBusiness ? "business-landing" : ""}">
+      <header class="topbar">
+        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+        <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
+      </header>
+
+      <section class="hero landing-hero">
+        <div class="segment" role="tablist" aria-label="Account type">
+          <button type="button" class="${!isBusiness ? "active" : ""}" data-account="personal">Personal</button>
+          <button type="button" class="${isBusiness ? "active" : ""}" data-account="business">Business</button>
+        </div>
+        <h1>${isBusiness ? "Accept payments. Grow your business." : "Smart Payments. Simplified."}</h1>
+      </section>
+
+      <section class="trust-strip" aria-label="TitoPay trust features">
+        ${trustItem("wallet", isBusiness ? "Business Wallet" : "One Wallet")}
+        ${trustItem(isBusiness ? "chart" : "check-circle", isBusiness ? "Business Growth" : "No Monthly Fees")}
+        ${trustItem("shield", isBusiness ? "Secure Transactions" : "Secure Wallet")}
+      </section>
+
+      <section class="service-grid preview-grid">
+        ${previewServices.length ? previewServices.map((service) => serviceTile(service)).join("") : serviceEmptyState()}
+      </section>
+
+      <section class="auth-actions">
+        <button class="btn primary" data-auth-tab="login">${icon("lock")} Sign In</button>
+        <button class="btn secondary" data-auth-tab="register">${icon("lock")} ${isBusiness ? "Create Business Account" : "Create Account"}</button>
+      </section>
+
+      <section class="scan-card">
+        <span class="icon-bubble">${icon(isBusiness ? "qr" : "scan")}</span>
+        <div>
+          <h3>${isBusiness ? "Accept Payment" : "Scan To Pay"}</h3>
+          <p>${isBusiness ? "Show your TitoPay QR and accept customer payments instantly." : "Scan a TitoPay QR code and pay instantly."}</p>
+          <button class="btn secondary" data-auth-tab="login">${isBusiness ? "Sign in to show QR" : "Sign in to scan QR"}</button>
+        </div>
+      </section>
+
+      <footer class="landing-site-footer" aria-label="TitoPay website">
+        <a href="https://www.titopay.co.za" target="_blank" rel="noopener">www.titopay.co.za</a>
+      </footer>
+
+    </main>
+  `;
+}
+
+function loginForm() {
+  return `
+    <form class="form-grid" data-form="login">
+      <div class="field">
+        <label>Email, username or cellphone</label>
+        <input name="identifier" aria-label="Email, username or cellphone" autocomplete="username" placeholder="@username, +27 71 234 5678 or name@email.co.za" required>
+        <small class="field-hint">Use your TitoPay @username, South African +27 cellphone number, or email address.</small>
+      </div>
+      <div class="field">
+        <label>Password or PIN</label>
+        <input name="password" aria-label="Password or PIN" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn primary" type="submit">${icon("lock")} Sign in securely</button>
+    </form>
+  `;
+}
+
+function authModalHtml(mode = "login") {
+  const isBusiness = state.accountType === "business";
+  const title =
+    mode === "register"
+      ? isBusiness
+        ? "Create Business Account"
+        : "Create Account"
+      : mode === "reset"
+        ? "Forgot PIN or Password"
+        : "Sign In";
+  const copy =
+    mode === "register"
+      ? "Set up your TitoPay profile and wallet access."
+      : mode === "reset"
+        ? "Recover access using your TitoPay email, username or cellphone."
+        : "Access your TitoPay wallet securely.";
+  const form = mode === "register" ? registerForm() : mode === "reset" ? resetForm() : loginForm();
+  const secondary =
+    mode === "login"
+      ? `
+        <div class="auth-modal-links">
+          <button class="btn ghost" data-auth-tab="reset" type="button">Forgot PIN or password?</button>
+          <button class="btn ghost" data-auth-tab="register" type="button">${isBusiness ? "Create Business Account" : "Create Account"}</button>
+        </div>`
+      : `
+        <div class="auth-modal-links">
+          <button class="btn ghost" data-auth-tab="login" type="button">Back to Sign In</button>
+        </div>`;
+  return `
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">TitoPay Access</p>
+        <h2>${title}</h2>
+        <p>${copy}</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section id="auth-panel" class="auth-modal-panel">
+      ${form}
+      ${secondary}
+    </section>
+  `;
+}
+
+function openAuthModal(mode = "login") {
+  state.authMode = mode;
+  openModal(authModalHtml(mode));
+}
+
+function replaceAuthPanel(html) {
+  const panel = document.querySelector("#auth-panel");
+  if (panel) {
+    panel.innerHTML = html;
+    return true;
+  }
+  return false;
+}
+
+function registerForm() {
+  const isBusiness = state.accountType === "business";
+  const usernameLabel = isBusiness ? "Business username" : "Username";
+  const usernamePlaceholder = isBusiness ? "businessname" : "yourname";
+  return `
+    <form class="form-grid" data-form="register">
+      <div class="field">
+        <label>${isBusiness ? "Business name" : "Name and surname"}</label>
+        <input name="fullName" aria-label="${isBusiness ? "Business name" : "Name and surname"}" autocomplete="${isBusiness ? "organization" : "name"}" required>
+      </div>
+      <div class="field">
+        <label>${usernameLabel}</label>
+        <div class="input-affix" data-prefix="@">
+          <input name="username" aria-label="${usernameLabel}" autocomplete="username" placeholder="${usernamePlaceholder}" required>
+        </div>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input name="email" aria-label="Email" type="email" autocomplete="email">
+      </div>
+      <div class="field">
+        <label>Cellphone</label>
+        <div class="input-affix phone-affix" data-prefix="+27">
+          <input name="phone" aria-label="South African cellphone number" inputmode="tel" autocomplete="tel" placeholder="71 234 5678" pattern="^(\\+27|0)?[6-8][0-9\\s-]{8,12}$" required>
+        </div>
+      </div>
+      <div class="field">
+        <label>${isBusiness ? "Password" : "PIN or password"}</label>
+        <input name="password" aria-label="${isBusiness ? "Password" : "PIN or password"}" type="password" autocomplete="new-password" minlength="4" required>
+      </div>
+      <div class="field">
+        <label>Confirm ${isBusiness ? "password" : "PIN or password"}</label>
+        <input name="confirmPassword" aria-label="Confirm ${isBusiness ? "password" : "PIN or password"}" type="password" autocomplete="new-password" minlength="4" required>
+      </div>
+      <label class="terms-agreement">
+        <input name="termsAccepted" type="checkbox" value="yes" required aria-label="Agree to TitoPay Terms and Conditions">
+        <span>By registering an account I agree to TitoPay's <a href="https://www.titopay.co.za/legal#legal-terms" target="_blank" rel="noopener noreferrer">Terms and Conditions</a>.</span>
+      </label>
+      <button class="btn primary" type="submit">${icon("lock")} Create TitoPay wallet</button>
+    </form>
+  `;
+}
+
+function resetForm() {
+  return `
+    <form class="form-grid" data-form="reset">
+      <div class="field">
+        <label>Email, username or cellphone</label>
+        <input name="identifier" aria-label="Email, username or cellphone" autocomplete="username" required>
+      </div>
+      <button class="btn primary" type="submit">${icon("send")} Send reset OTP</button>
+    </form>
+  `;
+}
+
+function otpForm(challenge) {
+  return `
+    <form class="form-grid" data-form="otp">
+      <input type="hidden" name="challengeId" value="${esc(challenge.challengeId)}">
+      <input type="hidden" name="accountId" value="${esc(challenge.accountId || challenge.userId || "")}">
+      <div class="field">
+        <label>OTP code</label>
+        <input name="otp" aria-label="OTP code" inputmode="numeric" maxlength="6" required>
+      </div>
+      <button class="btn primary" type="submit">${icon("shield")} Verify OTP</button>
+    </form>
+  `;
+}
+
+function appView() {
+  const route = state.route;
+  return `
+    <main class="screen">
+      ${topbar()}
+      ${route === "services" ? servicesView() : ""}
+      ${route === "qr" ? qrView() : ""}
+      ${route === "activity" ? activityView() : ""}
+      ${route === "profile" ? profileView() : ""}
+      ${route === "dashboard" ? dashboardView() : ""}
+    </main>
+    ${bottomNav()}
+  `;
+}
+
+function topbar() {
+  const unread = unreadNotificationCount();
+  return `
+    <header class="topbar">
+      <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+      <div>
+        <button class="icon-btn" type="button" data-action="chatbot" aria-label="Open TitoPay chatbot">${icon("chatbot")}</button>
+        <button class="avatar notification-avatar" type="button" data-action="notifications" aria-label="Open notifications">
+          ${icon("bell")}
+          ${unread ? `<span class="notification-count" aria-label="${unread} unread notifications">${unread > 9 ? "9+" : unread}</span>` : ""}
+        </button>
+      </div>
+    </header>
+  `;
+}
+
+function dashboardView() {
+  const wallet = primaryWallet();
+  const quickServices = homeQuickServices();
+  return `
+    <section class="dashboard-grid">
+      <div>
+        <section class="wallet-card">
+          <p class="eyebrow muted">${state.accountType === "business" ? "Business Wallet" : "Personal Wallet"}</p>
+          <div class="wallet-balance-line">
+            <div class="wallet-balance">${displayMoney(wallet ? wallet.available_balance : undefined)}</div>
+            <button class="balance-toggle" type="button" data-action="toggle-balance" aria-label="${state.balanceHidden ? "Show wallet balance" : "Hide wallet balance"}">${icon(state.balanceHidden ? "eye" : "eye-off")}</button>
+          </div>
+          <div class="wallet-meta-line">
+            <span>Wallet ID</span>
+            <strong>${esc(displayWalletId(wallet || {}))}</strong>
+          </div>
+          <p class="muted">Available balance in South African Rand.</p>
+          <div class="wallet-actions wallet-actions-compact">
+            ${walletAction("Top Up", "upload", "top-up")}
+            ${state.accountType === "business" ? walletAction("Payout", "withdraw", "payouts") : walletAction("Withdraw", "withdraw", "withdraw")}
+          </div>
+        </section>
+
+        <section class="section-head quick-services-head">
+          <div>
+            <h2>Quick services</h2>
+          </div>
+        </section>
+        <section class="service-grid quick-service-grid">
+          ${quickServices.length ? quickServices.map((service) => serviceTile(service, true)).join("") : serviceEmptyState()}
+        </section>
+      </div>
+      <aside>
+        <section class="panel">
+          <p class="eyebrow">Today</p>
+          <h2>Transaction summary</h2>
+          <div class="stats-grid">
+            <div class="stat"><strong>${state.transactions.length}</strong><span>Records</span></div>
+            <div class="stat"><strong>${money(totalByDirection("credit"))}</strong><span>In</span></div>
+            <div class="stat"><strong>${money(totalByDirection("debit"))}</strong><span>Out</span></div>
+          </div>
+        </section>
+        <section class="section-head">
+          <div>
+            <h2>Recent activity</h2>
+            <p>Your latest wallet activity.</p>
+          </div>
+        </section>
+        ${activityList(state.transactions.slice(0, 5))}
+      </aside>
+    </section>
+  `;
+}
+
+function servicesView() {
+  const hiddenServiceTiles = new Set(["transactions", "profile-security"]);
+  const shouldShowServiceTile = (service) => {
+    const action = String(service.action || "").toLowerCase();
+    const id = String(service.id || service.serviceCode || service.service_code || "").toLowerCase();
+    return !hiddenServiceTiles.has(action) && !hiddenServiceTiles.has(id);
+  };
+  const active = hideDuplicateAirtimeDataTiles(activeServices().filter(shouldShowServiceTile));
+  const soon = hideDuplicateAirtimeDataTiles(comingSoonServices().filter(shouldShowServiceTile));
+  return `
+    ${state.serviceError ? promoCarousel() : ""}
+    <section class="service-grid">
+      ${active.length ? active.map((service) => serviceTile(service, true)).join("") : serviceEmptyState()}
+    </section>
+    ${soon.length ? `
+      <section class="section-head">
+        <div>
+          <h2>Planned services</h2>
+          <p>Services approved for future activation by TitoPay.</p>
+        </div>
+      </section>
+      <section class="service-grid">
+        ${soon.map((service) => serviceTile(service, true)).join("")}
+      </section>
+    ` : ""}
+  `;
+}
+
+function qrView() {
+  const business = state.accountType === "business";
+  const receipts = titoPayReceipts();
+  return `
+    <section class="hero">
+      <p class="eyebrow">${business ? "Merchant POS" : "QR Payments"}</p>
+      <h1>${business ? "Make sales with TitoPay QR." : "Make a payment."}</h1>
+      <p class="lead">${business ? "Start a sale, generate a dynamic payment QR and receive confirmation without changing the payment engine." : "Scan a TitoPay QR code with your camera and pay from your personal wallet."}</p>
+    </section>
+    ${business ? merchantPosHome(receipts) : personalQrPaymentHome(receipts)}
+  `;
+}
+
+function merchantPosHome(receipts = []) {
+  return `
+    <section class="merchant-pos-home">
+      <button class="merchant-sale-primary" type="button" data-action="merchant-make-sale">
+        <span>${icon("store")}</span>
+        <strong>Make a Sale</strong>
+        <small>Generate a dynamic TitoPay QR for this customer.</small>
+      </button>
+      <div class="merchant-pos-secondary-grid">
+        <button class="panel merchant-pos-mini" type="button" data-action="merchant-sales-history">
+          ${icon("list")}
+          <strong>Sales History</strong>
+          <small>${receipts.filter((item) => item.accountType === "business").length} saved sales</small>
+        </button>
+        <button class="panel merchant-pos-mini" type="button" data-route="activity">
+          ${icon("ticket")}
+          <strong>Activity Receipts</strong>
+          <small>Open receipts from Activity.</small>
+        </button>
+      </div>
+    </section>
+    ${merchantSalesHistoryPreview(receipts)}
+  `;
+}
+
+function personalQrPaymentHome() {
+  return `
+    <section class="merchant-pos-home">
+      <button class="merchant-sale-primary personal-payment-primary" type="button" data-service="qr-pay">
+        <span>${icon("scan")}</span>
+        <strong>Make a Payment</strong>
+        <small>Use your camera to scan a TitoPay QR code.</small>
+      </button>
+      <div class="merchant-pos-secondary-grid">
+        <button class="panel merchant-pos-mini" type="button" data-service="receive">
+          ${icon("qr")}
+          <strong>Generate QR</strong>
+          <small>Create a TitoPay QR to receive money.</small>
+        </button>
+        <button class="panel merchant-pos-mini" type="button" data-route="activity">
+          ${icon("list")}
+          <strong>Transaction History</strong>
+          <small>View payments and receipts in Activity.</small>
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function activityView() {
+  const items = filteredTransactions();
+  const receipts = titoPayReceipts();
+  return `
+    <section class="hero">
+      <p class="eyebrow">Transactions</p>
+      <h1>Wallet activity.</h1>
+      <p class="lead">View transactions, export reports and open saved receipts from one clean place.</p>
+    </section>
+    <section class="panel activity-receipts-panel">
+      <div>
+        <p class="eyebrow">Receipts</p>
+        <h2>Saved payment receipts</h2>
+        <p class="muted">${receipts.length ? `${receipts.length} secure receipt${receipts.length === 1 ? "" : "s"} saved in TitoPay.` : "Receipts from QR payments and merchant sales will appear here."}</p>
+      </div>
+      <button class="btn primary" type="button" data-action="wallet-receipts">${icon("ticket")} Open Receipts</button>
+    </section>
+    <section class="panel report-filters">
+      <div class="field"><label>Search</label><input data-filter="search" value="${esc(state.transactionFilters.search)}" placeholder="Reference, service, recipient"></div>
+      <div class="field"><label>From</label><input data-filter="from" type="date" value="${esc(state.transactionFilters.from)}"></div>
+      <div class="field"><label>To</label><input data-filter="to" type="date" value="${esc(state.transactionFilters.to)}"></div>
+      <div class="field"><label>Direction</label><select data-filter="direction">
+        ${["all", "credit", "debit"].map((item) => `<option value="${item}" ${state.transactionFilters.direction === item ? "selected" : ""}>${esc(item[0].toUpperCase() + item.slice(1))}</option>`).join("")}
+      </select></div>
+    </section>
+    <section class="auth-actions">
+      <button class="btn secondary" data-action="export-csv">${icon("download")} Export CSV</button>
+      <button class="btn primary" data-action="export-pdf">${icon("download")} Export PDF</button>
+    </section>
+    ${activityList(items)}
+  `;
+}
+
+function profileView() {
+  const user = state.user || {};
+  const wallet = primaryWallet();
+  const locked = isWalletLocked();
+  const ficaStatus = ficaDisplayStatus(user.ficaStatus || user.fica_status);
+  const isBusiness = state.accountType === "business";
+  const mediaType = isBusiness ? "businessLogo" : "profilePhoto";
+  const mediaLabel = isBusiness ? "Business Logo" : "Profile Photo";
+  const displayName = isBusiness ? businessProfileName() : user.fullName || user.full_name || "TitoPay User";
+  return `
+    <section class="profile-card panel">
+      <button class="profile-avatar profile-avatar-btn" type="button" data-action="profile-photo" aria-label="Update ${esc(mediaLabel.toLowerCase())}">${avatarContent(user, mediaType)}</button>
+      <div>
+        <h2>${esc(displayName)}</h2>
+        <p class="lead">${esc(displayUsername(user.username))} ${user.email ? "· " + esc(user.email) : ""}</p>
+        <span class="badge">${icon("shield")} FICA ${esc(ficaStatus)}</span>
+      </div>
+    </section>
+    <section class="profile-summary-card panel" aria-label="Profile summary">
+      ${profileSummaryRow("Wallet", displayMoney(wallet ? wallet.available_balance : undefined), "wallet")}
+      ${profileSummaryRow("Username", displayUsername(user.username), "user")}
+      ${profileSummaryRow("Type", state.accountType, "shield")}
+    </section>
+    <section class="section-head compact"><h2>Account</h2></section>
+    <section class="profile-feature-grid">
+      ${profileFeature("TitoPay Chat", isBusiness ? "Chat with customers before payments." : "Chat with TitoPay users before payments.", "chat", "titopay-chat", true)}
+      ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
+      ${profileFeature("Unread Messages", `${unreadNotificationCount()} unread notification${unreadNotificationCount() === 1 ? "" : "s"} · chat, support and account alerts.`, "message-check", "account-activity")}
+      ${profileFeature("Help us improve", "Rate your TitoPay experience and send product feedback.", "feedback", "pwa-review")}
+      ${isBusiness ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bank", "enterprise-distribution") : ""}
+      ${profileFeature("Support", "Get help from TitoPay Customer Care.", "send", "support")}
+    </section>
+    <section class="section-head compact"><h2>Security & Verification</h2></section>
+    <section class="profile-feature-grid">
+      ${profileFeature(locked ? "Unlock Wallet" : "Lock Wallet", locked ? "Verify OTP to unlock outgoing payments." : "Block outgoing payments instantly.", locked ? "shield" : "lock", locked ? "unlock-wallet" : "lock-wallet", locked)}
+      ${profileFeature("Change PIN / Password", "Reset your secure TitoPay access using SMS OTP.", "lock", "change-password")}
+    </section>
+    <section class="profile-actions panel">
+      <button class="btn secondary" data-action="refresh">${icon("refresh")} Refresh profile</button>
+      <button class="btn primary" data-action="logout">${icon("lock")} Sign out</button>
+    </section>
+  `;
+}
+
+function profileStat(label, value, iconName) {
+  return `<article class="profile-stat panel">
+    <span class="icon-bubble">${icon(iconName)}</span>
+    <div><small>${esc(label)}</small><strong>${esc(value)}</strong></div>
+  </article>`;
+}
+
+function profileSummaryRow(label, value, iconName) {
+  return `<article class="profile-summary-row">
+    <span class="icon-bubble">${icon(iconName)}</span>
+    <div><small>${esc(label)}</small><strong>${esc(value)}</strong></div>
+  </article>`;
+}
+
+function profileFeature(title, subtitle, iconName, action, primary = false) {
+  return `<button class="profile-feature ${primary ? "primary" : ""}" type="button" data-action="${esc(action)}">
+    <span class="icon-bubble">${icon(iconName)}</span>
+    <span><strong>${esc(title)}</strong><small>${esc(subtitle)}</small></span>
+  </button>`;
+}
+
+function bottomNav() {
+  return `<nav class="bottom-nav" aria-label="Primary">${navItems.map(([id, label, name]) => `
+    <button class="${state.route === id ? "active" : ""}" data-route="${id}" aria-label="${esc(label)}">
+      ${icon(name)}<span>${esc(label)}</span>
+    </button>
+  `).join("")}</nav>`;
+}
+
+function serviceTile(service, clickable = false) {
+  if (!service) return "";
+  const attrs = clickable ? `data-service="${esc(service.id)}"` : `data-auth-tab="login" aria-label="Sign in to use ${esc(service.label)}"`;
+  const badge = service.status === "coming_soon" ? "soon" : "";
+  const label = state.accountType === "business" && service.type === "receive"
+    ? "Make a Sale"
+    : state.accountType !== "business" && service.type === "qrPay"
+      ? "Make a Payment"
+      : service.label;
+  const iconName = state.accountType === "business" && service.type === "receive" ? "sale" : service.icon;
+  return `<button class="service-tile" type="button" data-service-code="${esc(service.serviceCode || service.id || "")}" data-service-type="${esc(service.type || service.action || "")}" ${attrs}>
+    <span class="icon-bubble">${icon(iconName)}</span>
+    <span>${esc(label)}</span>
+    ${badge ? `<small class="service-badge">${esc(badge)}</small>` : ""}
+  </button>`;
+}
+
+function serviceEmptyState() {
+  return promoCarousel();
+}
+
+function promoCarousel() {
+  const promos = [
+    ["TitoPay Updates", "Stay informed with the latest TitoPay updates, verified merchant offers, service announcements and important public notices."]
+  ];
+  return `<section class="promo-carousel" aria-label="TitoPay campaign placements" data-ad-zone="services-home">
+    <article class="empty-state campaign-slot launch-announcement" data-campaign-slot="launch-announcement">${icon("globe")}<strong>Launching Soon — Nationwide</strong><p>Smart Payments, Simplified.</p></article>
+    ${promos.map(([title, body], index) => `<article class="empty-state campaign-slot" data-campaign-slot="services-${index + 1}">${icon(index === 0 ? "shield" : "sparkles")}<strong>${esc(title)}</strong><p>${esc(body)}</p></article>`).join("")}
+  </section>`;
+}
+
+function trustItem(iconName, label) {
+  return `<div class="trust-item">${icon(iconName)}<span>${esc(label)}</span></div>`;
+}
+
+function walletAction(label, iconName, serviceId) {
+  return `<button type="button" data-service="${esc(serviceId)}">${icon(iconName)}<span>${esc(label)}</span></button>`;
+}
+
+function activityList(items) {
+  if (!items.length) {
+    return `<section class="empty-state">${icon("list")}<strong>No transactions yet</strong><p>Transactions will appear here after wallet activity is recorded.</p></section>`;
+  }
+  return `<section class="activity-list">${items.map((item) => {
+    const direction = item.direction || "debit";
+    return `<article class="activity-item">
+      <span class="icon-bubble">${icon(direction === "credit" ? "download" : "send")}</span>
+      <div>
+        <p><strong>${esc(item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction")}</strong></p>
+        <small>${esc(item.reference || item.status || "Processed")} · ${formatDate(item.created_at || item.createdAt)}</small>
+      </div>
+      <strong class="amount ${direction === "credit" ? "credit" : ""}">${direction === "credit" ? "+" : "-"}${money(item.total || item.amount)}</strong>
+    </article>`;
+  }).join("")}</section>`;
+}
+
+function settingsRow(label, value, iconName) {
+  return `<article class="activity-item">
+    <span class="icon-bubble">${icon(iconName)}</span>
+    <div><p><strong>${esc(label)}</strong></p><small>${esc(value)}</small></div>
+  </article>`;
+}
+
+function notificationActionAttributes(item = {}) {
+  const metadata = item.metadata || {};
+  if (metadata.receiptId) return `data-notification-receipt="${esc(metadata.receiptId)}" role="button" tabindex="0"`;
+  const ticketRef = metadata.ticketRef || metadata.ticketId;
+  if (ticketRef) return `data-notification-support="${esc(ticketRef)}" role="button" tabindex="0"`;
+  return "";
+}
+
+function notificationListHtml() {
+  const items = state.notifications || [];
+  if (!items.length) {
+    return `<section class="empty-state">${icon("bell")}<strong>No unread messages</strong><p>Notifications, support updates and chat alerts will appear here.</p></section>`;
+  }
+  return `<section class="notification-list">${items.map((item) => `
+    <article class="notification-item ${item.unread ? "unread" : ""}" ${notificationActionAttributes(item)}>
+      <span class="icon-bubble">${icon(item.critical ? "shield" : "bell")}</span>
+      <div>
+        <div class="notification-meta">
+          <strong>${esc(item.title)}</strong>
+          ${item.unread ? `<span class="notification-dot" aria-label="Unread"></span>` : ""}
+        </div>
+        <p>${esc(item.body)}</p>
+        <small>${esc(formatDate(item.createdAt))}</small>
+      </div>
+    </article>`).join("")}</section>`;
+}
+
+function openNotificationsModal() {
+  loadInAppNotifications();
+  const smsEnabled = localStorage.getItem("titopay_sms_notifications_enabled") === "true";
+  const unread = unreadNotificationCount();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Unread Messages</p><h2>Notifications</h2><p class="lead">Support updates, chat alerts and important TitoPay messages in one inbox.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="notification-inbox-summary">
+      <article>
+        <span class="icon-bubble">${icon("message-check")}</span>
+        <div><strong>${unread} unread</strong><small>In-app notifications are free and always available.</small></div>
+      </article>
+      <article>
+        <span class="icon-bubble">${icon("phone")}</span>
+        <div><strong>SMS alerts ${smsEnabled ? "enabled" : "off"}</strong><small>Optional SMS alerts cost R0.30. Critical OTP and reset SMS remain free.</small></div>
+      </article>
+    </section>
+    ${notificationListHtml()}
+    <div class="auth-actions">
+      <button class="btn secondary" data-action="mark-notifications-read">${icon("check-circle")} Mark all read</button>
+      <button class="btn secondary" data-action="enable-browser-notifications">${icon("bell")} Enable device alerts</button>
+      <button class="btn secondary" data-action="preview-sms-notifications">${icon("phone")} ${smsEnabled ? "SMS enabled" : "Enable SMS alerts"}</button>
+      <button class="btn secondary" data-action="clear-notifications">${icon("x")} Clear inbox</button>
+    </div>
+  `);
+}
+
+function openSmsNotificationPreview() {
+  const enabled = localStorage.getItem("titopay_sms_notifications_enabled") === "true";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">SMS Alerts</p><h2>Preview SMS fees</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="notification-preferences">
+      ${settingsRow("In-app notifications", "Free and always available inside TitoPay.", "bell")}
+      ${settingsRow("SMS notifications", "R0.30 per SMS for optional non-critical SMS alerts that you choose to enable.", "phone")}
+      ${settingsRow("Free critical SMS", "PIN reset, password reset, OTP reset and important security notifications are free.", "shield")}
+      ${settingsRow("Current SMS status", enabled ? "Enabled" : "Not enabled", enabled ? "shield" : "phone")}
+    </section>
+    <p class="field-hint">You will see applicable SMS fees before enabling paid SMS alerts. SMS is optional; in-app notifications remain free.</p>
+    <div class="auth-actions">
+      <button class="btn secondary" data-action="notifications">${icon("bell")} Back</button>
+      <button class="btn primary" data-action="${enabled ? "disable-sms-notifications" : "enable-sms-notifications"}">${icon("phone")} ${enabled ? "Turn off SMS alerts" : "Enable SMS alerts"}</button>
+    </div>
+  `);
+}
+
+function setSmsNotifications(enabled) {
+  localStorage.setItem("titopay_sms_notifications_enabled", enabled ? "true" : "false");
+  addInAppNotification({
+    title: enabled ? "SMS alerts enabled" : "SMS alerts disabled",
+    body: enabled
+      ? "Optional SMS notifications are enabled. Non-critical SMS alerts cost R0.30 per SMS. Critical OTP, PIN and password reset SMS messages remain free."
+      : "Optional SMS notifications are off. In-app notifications remain free and active.",
+    critical: false
+  });
+  closeModal();
+  openNotificationsModal();
+  showToast(enabled ? "SMS alerts enabled." : "SMS alerts disabled.");
+}
+
+function markNotificationsRead() {
+  state.notifications = (state.notifications || []).map((item) => ({ ...item, unread: false }));
+  persistInAppNotifications();
+  api("/v1/chat/notifications/read", { method: "POST", body: { ids: [] } }).catch(() => null);
+  closeModal();
+  openNotificationsModal();
+  render();
+}
+
+function clearNotifications() {
+  state.notifications = [];
+  persistInAppNotifications();
+  closeModal();
+  openNotificationsModal();
+  render();
+  showToast("Notification inbox cleared.");
+}
+
+async function enableBrowserNotifications() {
+  if (!("Notification" in window)) {
+    showToast("Device notifications are not supported in this browser. In-app notifications will still appear in TitoPay.", "error");
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    showToast("Device alerts were not enabled. In-app notifications are still available.", "error");
+    return;
+  }
+  addInAppNotification({
+    title: "Device alerts enabled",
+    body: "TitoPay can now show device alerts while in-app notifications remain your main inbox."
+  });
+  try {
+    new Notification("TitoPay notifications enabled", {
+      body: "In-app notifications remain active. SMS stays reserved for critical alerts."
+    });
+  } catch (error) {}
+  showToast("Device alerts enabled.");
+  render();
+}
+
+function primaryWallet() {
+  return state.wallets[0] || null;
+}
+
+function totalByDirection(direction) {
+  return state.transactions
+    .filter((item) => (item.direction || "debit") === direction)
+    .reduce((sum, item) => sum + Number(item.total || item.amount || 0), 0);
+}
+
+function initials(name) {
+  return String(name).trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "TP";
+}
+
+function activeMediaType() {
+  return state.accountType === "business" ? "businessLogo" : "profilePhoto";
+}
+
+function mediaStoragePrefix(mediaType = activeMediaType()) {
+  return mediaType === "businessLogo" ? BUSINESS_LOGO_PREFIX : PROFILE_PHOTO_PREFIX;
+}
+
+function accountMediaName(user = state.user, mediaType = activeMediaType()) {
+  if (mediaType === "businessLogo") {
+    return user && (user.businessName || user.business_name || user.companyName || user.company_name || user.tradingName || user.trading_name || user.fullName || user.full_name || user.username) || "TitoPay Business";
+  }
+  return user && (user.fullName || user.full_name || user.username) || "TitoPay User";
+}
+
+function profilePhotoKey(user = state.user, mediaType = activeMediaType()) {
+  const identity = user && (user.id || user.email || user.username || user.phone) || state.accountType || "guest";
+  return `${mediaStoragePrefix(mediaType)}:${identity}`;
+}
+
+function profilePhotoUrl(user = state.user, mediaType = activeMediaType()) {
+  if (mediaType === "businessLogo") {
+    return user && (user.businessLogoUrl || user.business_logo_url || user.companyLogoUrl || user.company_logo_url || user.logoUrl || user.logo_url) || localStorage.getItem(profilePhotoKey(user, "businessLogo")) || "";
+  }
+  return user && (user.profilePhotoUrl || user.profile_photo_url || user.avatarUrl || user.avatar_url) || localStorage.getItem(profilePhotoKey(user, "profilePhoto")) || "";
+}
+
+function avatarContent(user = state.user, mediaType = activeMediaType()) {
+  const photo = profilePhotoUrl(user, mediaType);
+  const name = accountMediaName(user, mediaType);
+  if (photo) return `<img src="${esc(photo)}" alt="" loading="lazy">`;
+  return esc(initials(name));
+}
+
+function hydrateAccountMedia(user = {}) {
+  const next = Object.assign({}, user);
+  const personalPhoto = profilePhotoUrl(next, "profilePhoto");
+  const businessLogo = profilePhotoUrl(next, "businessLogo");
+  if (personalPhoto) Object.assign(next, { profilePhotoUrl: personalPhoto, profile_photo_url: personalPhoto });
+  if (businessLogo) Object.assign(next, { businessLogoUrl: businessLogo, business_logo_url: businessLogo, companyLogoUrl: businessLogo, company_logo_url: businessLogo });
+  return next;
+}
+
+function persistAccountMediaSession() {
+  state.user = hydrateAccountMedia(state.user || {});
+  try {
+    const session = readJsonFromSession(SESSION_KEY);
+    if (!session || typeof session !== "object") return;
+    const nextSession = Object.assign({}, session, {
+      user: Object.assign({}, session.user || {}, state.user),
+      accountType: state.accountType
+    });
+    if (session.profile && typeof session.profile === "object") {
+      nextSession.profile = Object.assign({}, session.profile, {
+        user: Object.assign({}, session.profile.user || {}, state.user)
+      });
+    }
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
+  } catch (error) {
+    // Session persistence is best-effort; local storage remains the source for uploaded media.
+  }
+}
+
+function formatDate(value) {
+  if (!value) return "Now";
+  return new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function ficaDisplayStatus(value) {
+  const normalized = String(value || "not_started").toLowerCase().replace(/ /g, "_");
+  const map = {
+    not_started: "Not Started",
+    pending: "Pending Review",
+    pending_review: "Pending Review",
+    submitted: "Pending Review",
+    approved: "Approved",
+    rejected: "Rejected"
+  };
+  return map[normalized] || "Not Started";
+}
+
+async function onSubmit(event) {
+  const form = event.target.closest("form[data-form]");
+  if (!form) return;
+  event.preventDefault();
+  const formData = new FormData(form);
+  const data = formDataToObject(formData);
+  try {
+    setBusy(form, true);
+    if (form.dataset.form === "login") await login(data);
+    if (form.dataset.form === "register") await register(data);
+    if (form.dataset.form === "reset") await requestReset(data);
+    if (form.dataset.form === "reset-confirm") await confirmReset(data);
+    if (form.dataset.form === "otp") await verifyOtp(data);
+    if (form.dataset.form === "transaction") await processTransaction(data);
+    if (form.dataset.form === "qr-pay") await processQrPayment(data);
+    if (form.dataset.form === "receive") await generateQr(data);
+    if (form.dataset.form === "merchant-sale-note") saveMerchantSaleNote(data);
+    if (form.dataset.form === "wallet-unlock") await verifyWalletUnlock(data);
+    if (form.dataset.form === "fica-upload") await submitFica(form);
+    if (form.dataset.form === "profile-photo") await submitProfilePhoto(form);
+    if (form.dataset.form === "profile-details") await submitProfileDetails(data);
+    if (form.dataset.form === "pwa-review") await submitPwaReview(data);
+    if (form.dataset.form === "ticketing-event") await submitTicketingEventForm(data);
+    if (form.dataset.form === "ticketing-purchase") await submitTicketingPurchase(data);
+    if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data);
+    if (form.dataset.form === "ticketing-scan") await submitTicketingScan(data);
+    if (form.dataset.form === "enterprise-distribution-application") await submitEnterpriseDistributionApplication(data);
+    if (form.dataset.form === "enterprise-beneficiary") await submitEnterpriseBeneficiary(data);
+    if (form.dataset.form === "enterprise-batch") await submitEnterpriseBatch(data);
+    if (form.dataset.form === "support") await submitSupportRequest(data);
+    if (form.dataset.form === "chatbot") await submitChatbotMessage(data);
+    if (form.dataset.form === "titopay-chat-lookup") await submitTitoPayChatLookup(data);
+    if (form.dataset.form === "titopay-chat-message") await submitTitoPayChatMessage(form, formData);
+  } catch (error) {
+    showToast(friendlyFormError(error, form.dataset.form), "error");
+  } finally {
+    setBusy(form, false);
+  }
+}
+
+function formDataToObject(formData) {
+  const output = {};
+  formData.forEach((value, key) => {
+    output[key] = value;
+  });
+  return output;
+}
+
+async function onClick(event) {
+  const dismissInstall = event.target.closest("[data-dismiss-install]");
+  if (dismissInstall) {
+    sessionStorage.setItem(INSTALL_DISMISSED_KEY, "true");
+    renderInstallButton();
+    return;
+  }
+  const install = event.target.closest("[data-install-app]");
+  if (install) {
+    await installApp();
+    return;
+  }
+  const account = event.target.closest("[data-account]");
+  if (account) {
+    state.accountType = account.dataset.account;
+    state.authMode = "landing";
+    render();
+    return;
+  }
+  const authTab = event.target.closest("[data-auth-tab]");
+  if (authTab) {
+    const tab = authTab.dataset.authTab;
+    openAuthModal(tab);
+    return;
+  }
+  const route = event.target.closest("[data-route]");
+  if (route) {
+    location.hash = route.dataset.route;
+    return;
+  }
+  const action = event.target.closest("[data-action]");
+  if (action && action.dataset.action === "pick-contact") {
+    await pickPhoneContact(action);
+    return;
+  }
+  if (action && action.dataset.action === "verify-recipient-field") {
+    await verifyRecipientField(action);
+    return;
+  }
+  if (action) {
+    try {
+      await handleAction(action.dataset.action);
+    } catch (error) {
+      showToast(error.message || "Action could not be completed.", "error");
+    }
+    return;
+  }
+  const posKey = event.target.closest("[data-pos-key]");
+  if (posKey) {
+    updateMerchantSaleAmount(posKey.dataset.posKey);
+    return;
+  }
+  const receiptOpen = event.target.closest("[data-receipt-open]");
+  if (receiptOpen) {
+    openReceiptModal(receiptOpen.dataset.receiptOpen);
+    return;
+  }
+  const receiptShare = event.target.closest("[data-receipt-share]");
+  if (receiptShare) {
+    await shareReceipt(receiptShare.dataset.receiptShare).catch((error) => showToast(error.message || "Receipt sharing failed.", "error"));
+    return;
+  }
+  const notificationReceipt = event.target.closest("[data-notification-receipt]");
+  if (notificationReceipt) {
+    openReceiptModal(notificationReceipt.dataset.notificationReceipt);
+    return;
+  }
+  const notificationSupport = event.target.closest("[data-notification-support]");
+  if (notificationSupport) {
+    openChatbotModal();
+    setTimeout(() => renderSupportRating(notificationSupport.dataset.notificationSupport), 0);
+    return;
+  }
+  const fillRecipient = event.target.closest("[data-fill-recipient]");
+  if (fillRecipient) {
+    const input = document.querySelector(".modal-card input[name='recipient']");
+    const method = document.querySelector(".modal-card select[name='recipientMethod']");
+    if (input) input.value = fillRecipient.dataset.fillRecipient;
+    if (method && fillRecipient.dataset.fillRecipientMethod) method.value = fillRecipient.dataset.fillRecipientMethod;
+    if (input) input.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
+  const chatSuggestion = event.target.closest("[data-chat-suggestion]");
+  if (chatSuggestion) {
+    const input = document.querySelector(".modal-card input[name='message']");
+    if (input) {
+      input.value = chatSuggestion.dataset.chatSuggestion;
+      input.focus();
+    }
+    return;
+  }
+  const supportEscalation = event.target.closest("[data-support-escalation]");
+  if (supportEscalation) {
+    await requestSupportEscalation(supportEscalation.dataset.supportEscalation);
+    return;
+  }
+  const supportRating = event.target.closest("[data-support-rating]");
+  if (supportRating) {
+    await submitSupportRating(supportRating.dataset.supportRating);
+    return;
+  }
+  const service = event.target.closest("[data-service]");
+  if (service) {
+    try {
+      await handleService(service.dataset.service);
+    } catch (error) {
+      showToast(friendlyFormError(error, "service"), "error");
+    }
+  }
+}
+
+function onInput(event) {
+  const recipientField = event.target.closest("input[name='recipient'], textarea[name='participants'], textarea[name='members']");
+  if (recipientField) updateRecipientAutoDetect(recipientField);
+  const chatLookupField = event.target.closest('form[data-form="titopay-chat-lookup"] input[name="identifier"]');
+  if (chatLookupField) updateRecipientAutoDetect(chatLookupField);
+  const chatMessage = event.target.closest('form[data-form="titopay-chat-message"] textarea[name="message"]');
+  if (chatMessage) {
+    const thread = activeTitoPayChatThread();
+    if (thread) {
+      sendTitoPaySocketEvent("chat:typing", {
+        payload: titoPayChatSignalPayload(thread, { active: Boolean(chatMessage.value.trim()) })
+      });
+      if (titoPayChatTypingTimer) clearTimeout(titoPayChatTypingTimer);
+      titoPayChatTypingTimer = setTimeout(() => {
+        sendTitoPaySocketEvent("chat:typing", {
+          payload: titoPayChatSignalPayload(thread, { active: false })
+        });
+      }, 1500);
+    }
+  }
+  const cropZoom = event.target.closest("[data-profile-photo-zoom]");
+  if (cropZoom) {
+    updateProfilePhotoCropZoom(Number(cropZoom.value || 1));
+    return;
+  }
+  const filter = event.target.closest("[data-filter]");
+  if (filter) {
+    state.transactionFilters[filter.dataset.filter] = filter.value;
+    if (state.route === "activity") render();
+    return;
+  }
+  const receiptFilter = event.target.closest("[data-receipt-filter]");
+  if (receiptFilter) {
+    state.receiptFilters[receiptFilter.dataset.receiptFilter] = receiptFilter.value;
+    const host = document.querySelector("[data-receipts-host]");
+    if (host) host.innerHTML = walletReceiptsList();
+  }
+}
+
+function onChange(event) {
+  const recipientMethod = event.target.closest("select[name='recipientMethod'], select[name='participantMethod'], select[name='memberMethod']");
+  if (recipientMethod) {
+    const form = recipientMethod.closest("form");
+    const fieldName = recipientMethod.name === "participantMethod" ? "participants" : recipientMethod.name === "memberMethod" ? "members" : "recipient";
+    const field = form ? form.querySelector(`[name="${fieldName}"]`) : null;
+    if (field) updateRecipientAutoDetect(field);
+  }
+  const chatLookupMethod = event.target.closest('form[data-form="titopay-chat-lookup"] select[name="lookupMethod"]');
+  if (chatLookupMethod) {
+    const field = chatLookupMethod.closest("form")?.querySelector('input[name="identifier"]');
+    if (field) updateRecipientAutoDetect(field);
+  }
+  const occasion = event.target.closest("select[name='occasion']");
+  if (occasion) toggleCustomOccasion(occasion);
+  const profilePhotoInput = event.target.closest("input[data-profile-photo-input]");
+  if (profilePhotoInput) prepareProfilePhotoCrop(profilePhotoInput);
+  const receiptFilter = event.target.closest("[data-receipt-filter]");
+  if (receiptFilter) {
+    state.receiptFilters[receiptFilter.dataset.receiptFilter] = receiptFilter.value;
+    const host = document.querySelector("[data-receipts-host]");
+    if (host) host.innerHTML = walletReceiptsList();
+  }
+}
+
+function toggleCustomOccasion(select) {
+  const form = select.closest("form");
+  const custom = form && form.querySelector("[data-custom-occasion]");
+  if (!custom) return;
+  const active = select.value === "Custom";
+  custom.classList.toggle("hidden", !active);
+  const input = custom.querySelector("input");
+  if (input) {
+    input.required = active;
+    if (!active) input.value = "";
+  }
+}
+
+async function login(data) {
+  const result = await api("/v1/auth/login", {
+    method: "POST",
+    auth: false,
+    body: Object.assign({}, data, { deviceName: navigator.userAgent.slice(0, 80), platform: "web" })
+  });
+  if (result.otpRequired) {
+    if (!replaceAuthPanel(otpForm(result))) openAuthModal("login");
+    showToast("OTP verification required");
+    return;
+  }
+  saveAuth(result);
+  await loadAccount();
+  location.hash = "dashboard";
+  closeModal();
+  render();
+  showSecurityTipModal();
+}
+
+function normalizeSouthAfricanPhone(value) {
+  const raw = String(value || "").trim();
+  const digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("27") && digits.length === 11) return `+${digits}`;
+  if (digits.startsWith("0") && digits.length === 10) return `+27${digits.slice(1)}`;
+  if (/^[6-8][0-9]{8}$/.test(digits)) return `+27${digits}`;
+  return raw.replace(/\s+/g, "");
+}
+
+function isSouthAfricanPhone(value) {
+  return /^\+27[6-8][0-9]{8}$/.test(String(value || "").trim());
+}
+
+function isEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
+function normalizeUsername(value) {
+  return String(value || "").trim().replace(/^@+/, "").toLowerCase();
+}
+
+function isValidUsername(value) {
+  return /^[a-z0-9][a-z0-9._]{2,28}[a-z0-9]$/.test(normalizeUsername(value));
+}
+
+function displayUsername(value) {
+  const username = normalizeUsername(value);
+  return username ? `@${username}` : "Not set";
+}
+
+function recipientMethodField(defaultMethod = "auto", name = "recipientMethod", label = "Send using") {
+  return `
+    <div class="field">
+      <label>${esc(label)}</label>
+      <select name="${esc(name)}">
+        <option value="auto"${defaultMethod === "auto" ? " selected" : ""}>Auto-detect</option>
+        <option value="username"${defaultMethod === "username" ? " selected" : ""}>Username</option>
+        <option value="cellphone"${defaultMethod === "cellphone" ? " selected" : ""}>Cellphone number</option>
+        <option value="email"${defaultMethod === "email" ? " selected" : ""}>Email address</option>
+      </select>
+    </div>`;
+}
+
+function recipientAutoMethodField(name = "recipientMethod", label = "Detect recipients by") {
+  return `
+    <div class="field">
+      <label>${esc(label)}</label>
+      <select name="${esc(name)}">
+        <option value="auto">Auto-detect each line</option>
+        <option value="username">Username</option>
+        <option value="cellphone">Cellphone number</option>
+        <option value="email">Email address</option>
+      </select>
+    </div>`;
+}
+
+function normalizeRecipientInput(value, method = "auto") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (method === "auto") {
+    if (isEmail(raw)) return raw.toLowerCase();
+    const phone = normalizeSouthAfricanPhone(raw);
+    if (isSouthAfricanPhone(phone)) return phone;
+    const username = normalizeUsername(raw);
+    if (isValidUsername(username)) return `@${username}`;
+    throw new Error(`Enter a valid TitoPay username, South African cellphone number or email address: ${raw}`);
+  }
+  if (method === "cellphone" || method === "phone") {
+    const phone = normalizeSouthAfricanPhone(raw);
+    if (!isSouthAfricanPhone(phone)) throw new Error("Enter a valid South African cellphone number such as +27 71 000 0000.");
+    return phone;
+  }
+  if (method === "email") {
+    const email = raw.toLowerCase();
+    if (!isEmail(email)) throw new Error("Enter a valid email address.");
+    return email;
+  }
+  if (method !== "username") throw new Error("Choose a valid recipient detection method.");
+  const username = normalizeUsername(raw);
+  if (!isValidUsername(username)) throw new Error("Enter a valid TitoPay username.");
+  return `@${username}`;
+}
+
+function normalizeRecipientList(value, method = "auto") {
+  const rawItems = String(value || "")
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const seen = {};
+  const normalized = [];
+  rawItems.forEach((item) => {
+    const recipient = normalizeRecipientInput(item, method);
+    if (!seen[recipient]) {
+      seen[recipient] = true;
+      normalized.push(recipient);
+    }
+  });
+  return normalized;
+}
+
+function contactPickerSupported() {
+  return Boolean(window.isSecureContext && navigator.contacts && typeof navigator.contacts.select === "function");
+}
+
+function inferContactMethod(value) {
+  const raw = String(value || "").trim();
+  if (isEmail(raw)) return "email";
+  if (isSouthAfricanPhone(normalizeSouthAfricanPhone(raw))) return "cellphone";
+  return "auto";
+}
+
+function selectedContactValue(contact) {
+  const phone = contact && Array.isArray(contact.tel) ? contact.tel.find(Boolean) : "";
+  if (phone) return normalizeSouthAfricanPhone(phone);
+  const email = contact && Array.isArray(contact.email) ? contact.email.find(Boolean) : "";
+  return email ? String(email).trim().toLowerCase() : "";
+}
+
+function contactPickerEligible(field) {
+  if (!field || field.type === "hidden") return false;
+  if (field.name === "participants" || field.name === "members") return true;
+  const container = field.closest(".field");
+  const label = container && container.querySelector("label") ? container.querySelector("label").textContent : "";
+  const placeholder = field.getAttribute("placeholder") || "";
+  const text = `${field.name} ${label} ${placeholder}`.toLowerCase();
+  const contactText = /(username|cellphone|phone|email|\+27|voucher recipient|customer)/.test(text);
+  const nonContactText = /(meter|bank account|account number|reference|beneficiary name|customer name|smartcard|municipal)/.test(text);
+  return contactText && !nonContactText;
+}
+
+async function pickPhoneContact(button) {
+  const targetId = button.dataset.targetId;
+  const field = targetId ? document.getElementById(targetId) : null;
+  if (!field) {
+    showToast("Contact field not found. Please enter the recipient manually.", "error");
+    return;
+  }
+  if (!contactPickerSupported()) {
+    showToast("Phone contacts are available on supported HTTPS mobile browsers. You can still enter a cellphone, username or email.", "error");
+    field.focus();
+    return;
+  }
+  try {
+    const contacts = await navigator.contacts.select(["name", "tel", "email"], { multiple: false });
+    const value = selectedContactValue((contacts || [])[0]);
+    if (!value) {
+      showToast("Selected contact has no cellphone number or email address.", "error");
+      return;
+    }
+    if (field.tagName === "TEXTAREA") {
+      const current = field.value.trim();
+      field.value = current ? `${current}\n${value}` : value;
+    } else {
+      field.value = value;
+    }
+    const form = field.closest("form");
+    const methodName = field.name === "participants" ? "participantMethod" : field.name === "members" ? "memberMethod" : "recipientMethod";
+    const method = form ? form.querySelector(`[name="${methodName}"]`) : null;
+    if (method) method.value = field.tagName === "TEXTAREA" ? "auto" : inferContactMethod(value);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.focus();
+    showToast("Contact added.");
+  } catch (error) {
+    if (error && (error.name === "AbortError" || error.name === "NotAllowedError")) return;
+    showToast("Contact picker could not open. Please enter the recipient manually.", "error");
+  }
+}
+
+function enhanceContactPickerControls(root = document) {
+  const fields = root.querySelectorAll("input[name='recipient'], textarea[name='participants'], textarea[name='members']");
+  fields.forEach((field, index) => {
+    if (!contactPickerEligible(field) || field.dataset.contactPickerEnhanced === "true") return;
+    field.dataset.contactPickerEnhanced = "true";
+    if (!field.id) field.id = `contact-recipient-${Date.now()}-${index}`;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "contact-picker-btn";
+    button.dataset.action = "pick-contact";
+    button.dataset.targetId = field.id;
+    button.setAttribute("aria-label", "Choose from phone contacts");
+    button.innerHTML = `${icon("contacts")} <span>Phone contacts</span>`;
+    const tools = document.createElement("div");
+    tools.className = "recipient-tools";
+    tools.appendChild(button);
+    const verifyButton = document.createElement("button");
+    verifyButton.type = "button";
+    verifyButton.className = "recipient-verify-btn";
+    verifyButton.dataset.action = "verify-recipient-field";
+    verifyButton.dataset.targetId = field.id;
+    verifyButton.setAttribute("aria-label", "Verify TitoPay user");
+    verifyButton.innerHTML = `${icon("shield")} <span>Verify TitoPay user</span>`;
+    tools.appendChild(verifyButton);
+    field.insertAdjacentElement("afterend", tools);
+    const hint = document.createElement("div");
+    hint.className = "recipient-detect-hint";
+    hint.dataset.recipientDetectFor = field.id;
+    hint.setAttribute("aria-live", "polite");
+    tools.insertAdjacentElement("afterend", hint);
+    updateRecipientAutoDetect(field);
+  });
+}
+
+function recipientMethodForField(field) {
+  const form = field.closest("form");
+  if (field.name === "identifier" && form?.dataset.form === "titopay-chat-lookup") {
+    return form.querySelector('[name="lookupMethod"]')?.value || "auto";
+  }
+  const methodName = field.name === "participants" ? "participantMethod" : field.name === "members" ? "memberMethod" : "recipientMethod";
+  return form?.querySelector(`[name="${methodName}"]`)?.value || "auto";
+}
+
+function recipientTypeLabel(value) {
+  if (isEmail(value)) return "email address";
+  if (isSouthAfricanPhone(normalizeSouthAfricanPhone(value))) return "cellphone number";
+  if (isValidUsername(normalizeUsername(value))) return "TitoPay username";
+  return "recipient";
+}
+
+function safeCssIdentifier(value) {
+  if (window.CSS && typeof window.CSS.escape === "function") return CSS.escape(value);
+  return String(value || "").replace(/["\\]/g, "\\$&");
+}
+
+function updateRecipientAutoDetect(field) {
+  if (!field || !field.id) return;
+  const form = field.closest("form");
+  const hint = form?.querySelector(`[data-recipient-detect-for="${safeCssIdentifier(field.id)}"]`);
+  if (!hint) return;
+  const raw = String(field.value || "").trim();
+  hint.classList.remove("is-valid", "is-error");
+  if (!raw) {
+    hint.textContent = "Auto-detect accepts a TitoPay username, South African +27 cellphone number or email address.";
+    return;
+  }
+  try {
+    const method = recipientMethodForField(field);
+    if (field.tagName === "TEXTAREA") {
+      const values = normalizeRecipientList(raw, method);
+      hint.textContent = `${values.length} recipient${values.length === 1 ? "" : "s"} detected.`;
+    } else {
+      const value = normalizeRecipientInput(raw, method);
+      hint.textContent = `Detected ${recipientTypeLabel(value)}: ${value}`;
+    }
+    hint.classList.add("is-valid");
+  } catch (error) {
+    hint.textContent = error.message || "Enter a valid TitoPay username, +27 cellphone number or email address.";
+    hint.classList.add("is-error");
+  }
+}
+
+async function verifyRecipientField(button) {
+  const targetId = button.dataset.targetId;
+  const field = targetId ? document.getElementById(targetId) : null;
+  if (!field) {
+    showToast("Recipient field not found.", "error");
+    return;
+  }
+  const form = field.closest("form");
+  const methodName = field.name === "participants" ? "participantMethod" : field.name === "members" ? "memberMethod" : "recipientMethod";
+  const method = form?.querySelector(`[name="${methodName}"]`)?.value || "auto";
+  const values = field.tagName === "TEXTAREA" ? normalizeRecipientList(field.value, method) : [normalizeRecipientInput(field.value, method)];
+  if (!values.length) {
+    showToast("Enter a username, +27 cellphone or email first.", "error");
+    return;
+  }
+  setButtonBusy(button, true);
+  try {
+    const results = [];
+    for (const value of values) {
+      const result = await lookupRegisteredRecipient(value, "manual_verification");
+      results.push({ value, result });
+    }
+    openRecipientVerificationResults(results);
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+function setButtonBusy(button, busy) {
+  if (!button) return;
+  button.disabled = busy;
+  button.classList.toggle("is-busy", busy);
+}
+
+function openRecipientVerificationResults(results) {
+  const verified = results.filter((item) => item.result && item.result.registered);
+  const missing = results.filter((item) => !item.result || !item.result.registered);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Recipient check</p><h2>TitoPay user verification</h2><p class="lead">Confirm the user before sending money, requesting payment or starting a chat.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${verified.length ? `
+      <section class="settings-list">
+        ${verified.map(({ value, result }) => {
+          const user = result.user || {};
+          const name = user.displayName || user.display_name || user.fullName || user.full_name || user.name || user.businessName || user.business_name || "TitoPay user";
+          const username = user.username || user.userName || user.user_name ? displayUsername(user.username || user.userName || user.user_name) : "";
+          const contact = user.phone || user.mobile || user.msisdn || user.email || value;
+          return settingsRow(name, `${username ? `${username} · ` : ""}${contact} · Verified`, "shield");
+        }).join("")}
+      </section>
+      <p class="muted centre-text">Only continue if these details match the person or business you intend to pay.</p>
+    ` : ""}
+    ${missing.length ? `
+      <section class="empty-state compact-state">
+        ${icon("user")}
+        <strong>${missing.length === 1 ? "User not found" : "Some users were not found"}</strong>
+        <p>${missing.map((item) => esc(item.value)).join(", ")} ${missing.length === 1 ? "is" : "are"} not currently detected as registered TitoPay users. Send an invitation before payment or chat.</p>
+      </section>
+    ` : ""}
+  `);
+}
+
+function registeredUsernames() {
+  return readJson(USERNAME_REGISTRY_KEY) || [];
+}
+
+function isUsernameReserved(username) {
+  return registeredUsernames().includes(normalizeUsername(username));
+}
+
+function reserveUsername(username) {
+  const normalized = normalizeUsername(username);
+  if (!normalized) return;
+  const usernames = new Set(registeredUsernames());
+  usernames.add(normalized);
+  localStorage.setItem(USERNAME_REGISTRY_KEY, JSON.stringify(Array.from(usernames)));
+}
+
+function knownTitoPayUsers() {
+  const users = readJson(KNOWN_TITOPAY_USERS_KEY);
+  return Array.isArray(users) ? users : [];
+}
+
+function userLookupTokens(user = {}) {
+  const tokens = [];
+  const username = normalizeUsername(user.username || user.userName || user.user_name || user.handle || user.titoPayId || user.titopayId || "");
+  const email = String(user.email || user.emailAddress || user.email_address || "").trim().toLowerCase();
+  const phone = normalizeSouthAfricanPhone(
+    user.phone || user.mobile || user.cellphone || user.contact || user.msisdn ||
+    user.phoneNumber || user.phone_number || user.mobileNumber || user.mobile_number ||
+    user.contactNumber || user.contact_number || ""
+  );
+  if (username) tokens.push(username, `@${username}`);
+  if (email && isEmail(email)) tokens.push(email);
+  if (phone && isSouthAfricanPhone(phone)) {
+    const digits = phone.replace(/\D/g, "");
+    tokens.push(phone, digits, `0${digits.slice(2)}`, digits.slice(2));
+  }
+  return Array.from(new Set(tokens));
+}
+
+function rememberLocalTitoPayUser(user = {}) {
+  const tokens = userLookupTokens(user);
+  if (!tokens.length) return;
+  const existing = knownTitoPayUsers().filter((item) => {
+    const itemTokens = userLookupTokens(item);
+    return !itemTokens.some((token) => tokens.includes(token));
+  });
+  existing.unshift({
+    id: user.id || user.userId || user.user_id || tokens[0],
+    username: normalizeUsername(user.username || user.userName || user.user_name || user.handle || user.titoPayId || user.titopayId || ""),
+    email: String(user.email || user.emailAddress || user.email_address || "").trim().toLowerCase(),
+    phone: normalizeSouthAfricanPhone(
+      user.phone || user.mobile || user.cellphone || user.contact || user.msisdn ||
+      user.phoneNumber || user.phone_number || user.mobileNumber || user.mobile_number ||
+      user.contactNumber || user.contact_number || ""
+    ),
+    displayName: user.fullName || user.full_name || user.name || user.businessName || user.business_name || user.displayName || user.display_name || "TitoPay user",
+    accountType: user.accountType || user.account_type || state.accountType,
+    walletId: user.walletId || user.wallet_id || user.walletNumber || user.wallet_number || "",
+    walletNumber: user.walletNumber || user.wallet_number || user.walletId || user.wallet_id || "",
+    profilePhotoUrl: user.profilePhotoUrl || user.profile_photo_url || user.businessLogoUrl || user.business_logo_url || "",
+    verificationStatus: user.verificationStatus || user.verification_status || user.ficaStatus || user.fica_status || user.kycStatus || user.kyc_status || "",
+    status: user.status || user.accountStatus || user.account_status || "",
+    verified: isVerifiedChatUserPayload(user),
+    updatedAt: new Date().toISOString()
+  });
+  writeJson(KNOWN_TITOPAY_USERS_KEY, existing.slice(0, 80));
+}
+
+function recipientLookupVariants(identifier) {
+  const values = new Set();
+  const raw = String(identifier || "").trim();
+  if (raw) {
+    values.add(raw);
+    values.add(raw.toLowerCase());
+    const username = normalizeUsername(raw);
+    if (username) {
+      values.add(username);
+      values.add(`@${username}`);
+    }
+    const digits = raw.replace(/\D/g, "");
+    if (digits) {
+      values.add(digits);
+      if (digits.startsWith("27") && digits.length === 11) values.add(`+${digits}`);
+      if (digits.startsWith("0") && digits.length === 10) values.add(`+27${digits.slice(1)}`);
+      if (/^[6-8][0-9]{8}$/.test(digits)) values.add(`+27${digits}`);
+      if (digits.startsWith("27") && digits.length === 11) values.add(`0${digits.slice(2)}`);
+      if (digits.startsWith("27") && digits.length === 11) values.add(digits.slice(2));
+    }
+  }
+  try {
+    const normalized = normalizeRecipientInput(identifier, "auto");
+    values.add(normalized);
+    values.add(normalized.replace(/^@/, ""));
+    const phone = normalizeSouthAfricanPhone(normalized);
+    if (isSouthAfricanPhone(phone)) {
+      const digits = phone.replace(/\D/g, "");
+      values.add(phone);
+      values.add(digits);
+      values.add(`0${digits.slice(2)}`);
+      values.add(digits.slice(2));
+    }
+  } catch (error) {
+    const raw = String(identifier || "").trim();
+    if (raw) {
+      values.add(raw);
+      values.add(raw.toLowerCase());
+      values.add(normalizeUsername(raw));
+    }
+  }
+  return Array.from(values).filter(Boolean);
+}
+
+function findLocalTitoPayUser(identifier) {
+  const lookupTokens = recipientLookupVariants(identifier);
+  return knownTitoPayUsers().find((user) => {
+    const tokens = userLookupTokens(user);
+    return lookupTokens.some((token) => tokens.includes(token));
+  }) || null;
+}
+
+function resolvedTitoPayUserFromResult(result = {}) {
+  const data = result.data || result.payload || result.result || {};
+  const list = result.items || result.users || result.results || data.items || data.users || data.results || [];
+  const user =
+    result.user ||
+    result.account ||
+    result.recipient ||
+    result.profile ||
+    result.item ||
+    data.user ||
+    data.account ||
+    data.recipient ||
+    data.profile ||
+    data.item ||
+    (Array.isArray(list) ? list.find(hasTitoPayUserIdentity) : null) ||
+    null;
+  if (user) return user;
+  if (result.registered || result.exists || result.found) return result;
+  return null;
+}
+
+function hasTitoPayUserIdentity(user = {}) {
+  return Boolean(
+    user &&
+    (
+      user.id ||
+      user.userId ||
+      user.user_id ||
+      user.username ||
+      user.userName ||
+      user.user_name ||
+      user.email ||
+      user.phone ||
+      user.mobile ||
+      user.msisdn
+    )
+  );
+}
+
+function defaultRecipientInvite(identifier) {
+  const url = "https://app.titopay.co.za";
+  return {
+    url,
+    message: `Join TitoPay to receive this payment. Register at ${url}.`
+  };
+}
+
+async function lookupRegisteredRecipient(recipient, serviceCode) {
+  const localUser = findLocalTitoPayUser(recipient);
+  const variants = recipientLookupVariants(recipient);
+  const payload = {
+    identifier: recipient,
+    query: recipient,
+    value: recipient,
+    lookupValues: variants,
+    purpose: "recipient_verification",
+    serviceCode
+  };
+  const lookupRequests = [
+    () => api("/v1/recipients/resolve", { method: "POST", body: payload }),
+    () => api("/v1/wallets/recipient/verify", { method: "POST", body: Object.assign({ recipient }, payload) }),
+    () => api("/v1/chat/users/lookup", { method: "POST", body: Object.assign({ lookupMethod: "auto" }, payload) }),
+    () => api(`/v1/recipients/resolve?identifier=${encodeURIComponent(recipient)}`),
+    () => api(`/v1/chat/users/lookup?identifier=${encodeURIComponent(recipient)}`)
+  ];
+  let invite = null;
+  for (let index = 0; index < lookupRequests.length; index += 1) {
+    try {
+      const result = await lookupRequests[index]();
+      const user = resolvedTitoPayUserFromResult(result);
+      const registered = Boolean(result.registered || result.exists || result.found || hasTitoPayUserIdentity(user));
+      if (registered) {
+        rememberLocalTitoPayUser(user);
+        return { registered: true, user, source: "user_lookup" };
+      }
+      if (result.invite) invite = result.invite;
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) throw error;
+    }
+  }
+  if (localUser) return { registered: true, user: localUser, source: "local_lookup" };
+  return { registered: false, invite: invite || defaultRecipientInvite(recipient) };
+}
+
+async function register(data) {
+  if (data.termsAccepted !== "yes") throw new Error("Please accept TitoPay's Terms and Conditions before creating your wallet.");
+  delete data.termsAccepted;
+  if ((data.password || "") !== (data.confirmPassword || "")) throw new Error(`${state.accountType === "business" ? "Passwords" : "PINs or passwords"} must match before creating your TitoPay wallet.`);
+  delete data.confirmPassword;
+  data.phone = normalizeSouthAfricanPhone(data.phone);
+  if (!isSouthAfricanPhone(data.phone)) throw new Error("Enter a valid South African cellphone number starting with +27.");
+  data.username = normalizeUsername(data.username);
+  if (!isValidUsername(data.username)) throw new Error("Choose a unique username using 4-30 letters, numbers, dots or underscores.");
+  if (isUsernameReserved(data.username)) throw new Error("That username is already reserved on this device. Choose another username.");
+  await api("/v1/auth/register", {
+    method: "POST",
+    auth: false,
+    body: Object.assign({}, data, { accountType: state.accountType })
+  });
+  reserveUsername(data.username);
+  rememberLocalTitoPayUser({
+    username: data.username,
+    email: data.email,
+    phone: data.phone,
+    fullName: data.fullName || data.name,
+    accountType: state.accountType
+  });
+  replaceAuthPanel(`
+    ${loginForm()}
+    <div class="auth-modal-links">
+      <button class="btn ghost" data-auth-tab="reset" type="button">Forgot PIN or password?</button>
+      <button class="btn ghost" data-auth-tab="register" type="button">${state.accountType === "business" ? "Create Business Account" : "Create Account"}</button>
+    </div>
+  `) || openAuthModal("login");
+  showToast("Wallet created. Sign in to continue.");
+  showSecurityTipModal();
+}
+
+async function requestReset(data) {
+  const result = await api("/v1/auth/password-reset/request", {
+    method: "POST",
+    auth: false,
+    body: { identifier: data.identifier, userType: "customer" }
+  });
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(result));
+  const html = `
+    <form class="form-grid" data-form="reset-confirm">
+      <div class="field"><label>OTP code</label><input name="otp" aria-label="OTP code" inputmode="numeric" maxlength="6" required></div>
+      <div class="field"><label>New PIN or password</label><input name="newPassword" aria-label="New PIN or password" type="password" minlength="4" required></div>
+      <div class="field"><label>Confirm PIN or password</label><input name="confirmNewPassword" aria-label="Confirm PIN or password" type="password" minlength="4" required></div>
+      <button class="btn primary" type="submit">${icon("shield")} Reset PIN / Password</button>
+    </form>`;
+  const authPanel = document.querySelector("#auth-panel");
+  if (authPanel) authPanel.innerHTML = `${html}<div class="auth-modal-links"><button class="btn ghost" data-auth-tab="login" type="button">Back to Sign In</button></div>`;
+  else openModal(`<div class="modal-head"><div><p class="eyebrow">Security</p><h2>Confirm OTP</h2></div><button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>${html}`);
+  showToast("Reset OTP sent.");
+}
+
+async function confirmReset(data) {
+  const saved = readJsonFromSession(SESSION_KEY);
+  if (!saved || (!saved.accountId && !saved.userId)) throw new Error("Reset challenge not found. Request a new OTP.");
+  if ((data.newPassword || "") !== (data.confirmNewPassword || "")) throw new Error("PINs or passwords must match before resetting your TitoPay access.");
+  await api("/v1/auth/password-reset/confirm", {
+    method: "POST",
+    auth: false,
+    body: {
+      accountId: saved.accountId || saved.userId,
+      challengeId: saved.challengeId,
+      otp: data.otp,
+      newPassword: data.newPassword,
+      userType: "customer"
+    }
+  });
+  sessionStorage.removeItem(SESSION_KEY);
+  replaceAuthPanel(`
+    ${loginForm()}
+    <div class="auth-modal-links">
+      <button class="btn ghost" data-auth-tab="reset" type="button">Forgot PIN or password?</button>
+      <button class="btn ghost" data-auth-tab="register" type="button">${state.accountType === "business" ? "Create Business Account" : "Create Account"}</button>
+    </div>
+  `) || openAuthModal("login");
+  showToast("Password reset complete. Sign in to continue.");
+}
+
+function readJsonFromSession(key) {
+  try {
+    return JSON.parse(sessionStorage.getItem(key) || "null");
+  } catch (error) {
+    return null;
+  }
+}
+
+async function verifyOtp(data) {
+  const result = await api("/v1/auth/verify-otp", {
+    method: "POST",
+    auth: false,
+    body: Object.assign({}, data, { scope: "customer", deviceName: navigator.userAgent.slice(0, 80), platform: "web" })
+  });
+  saveAuth(result);
+  await loadAccount();
+  location.hash = "dashboard";
+  closeModal();
+  render();
+  showSecurityTipModal();
+}
+
+async function handleAction(action) {
+  if (String(action || "").startsWith("ticketing-open-event:")) {
+    await openPublicTicketingEvent(action.split(":").slice(1).join(":"));
+    return;
+  }
+  if (String(action || "").startsWith("ticketing-submit:")) {
+    await submitTicketingEvent(action.split(":")[1]);
+    return;
+  }
+  if (action === "ticketing-create-event") {
+    openTicketingEventForm();
+    return;
+  }
+  if (action === "ticketing-refresh") {
+    await openBusinessTicketingDashboard({ refresh: true });
+    return;
+  }
+  if (action === "enterprise-distribution") {
+    await openEnterpriseDistributionDashboard();
+    return;
+  }
+  if (String(action || "").startsWith("enterprise-fund:")) {
+    await lockEnterpriseDistributionFunding(action.split(":")[1]);
+    return;
+  }
+  if (String(action || "").startsWith("open-chat-thread:")) {
+    openTitoPayChatThread(action.split(":").slice(1).join(":"));
+    return;
+  }
+  if (String(action || "").startsWith("chat-invite:")) {
+    await sendTitoPayChatInvite(action.split(":")[1]);
+    return;
+  }
+  if (action === "chat-confirm-user") {
+    confirmTitoPayChatUser();
+    return;
+  }
+  if (action === "refresh" || action === "health") {
+    await checkApiHealth();
+    await loadMaintenanceMode();
+    if (!state.maintenance?.pwa?.enabled && state.auth?.accessToken) await refreshData();
+    render();
+    showToast(state.apiOnline ? "TitoPay services online" : "TitoPay services are not reachable", state.apiOnline ? "" : "error");
+  }
+  if (action === "toggle-balance") {
+    state.balanceHidden = !state.balanceHidden;
+    sessionStorage.setItem(BALANCE_HIDDEN_KEY, String(state.balanceHidden));
+    render();
+  }
+  if (action === "logout") {
+    try {
+      await api("/v1/auth/logout", { method: "POST", body: { refreshToken: state.auth ? state.auth.refreshToken : undefined } });
+    } catch (error) {}
+    clearAuth();
+    sessionStorage.removeItem("titopay_support_conversation_id");
+    sessionStorage.removeItem("titopay_support_conversation_status");
+    location.hash = "";
+    render();
+  }
+  if (action === "landing-menu") {
+    openLandingMenu();
+  }
+  if (action === "confirm-transaction-review") {
+    await confirmReviewedTransaction();
+  }
+  if (action === "edit-transaction-review") {
+    if (state.pendingTransactionReview) openTransactionEditModal(state.pendingTransactionReview);
+  }
+  if (action === "cancel-transaction-review") {
+    state.pendingTransactionReview = null;
+    closeModal();
+    showToast("Transaction cancelled. No funds were deducted.");
+  }
+  if (action === "confirm-qr-payment-review") {
+    await confirmReviewedQrPayment();
+  }
+  if (action === "edit-qr-payment-review") {
+    const context = state.pendingQrPaymentReview;
+    openQrPayModal(context ? context.data : {});
+  }
+  if (action === "cancel-qr-payment-review") {
+    state.pendingQrPaymentReview = null;
+    closeModal();
+    showToast("QR payment cancelled. No funds were deducted.");
+  }
+  if (action === "export-csv") {
+    downloadTransactionsCsv();
+  }
+  if (action === "export-pdf") {
+    downloadTransactionsPdf();
+  }
+  if (action === "document-pdf") {
+    await requestBusinessDocumentPdf();
+  }
+  if (action === "confirm-document-pdf") {
+    await confirmBusinessDocumentPdfDownload();
+  }
+  if (action === "payout-pdf") {
+    downloadPayoutReportPdf();
+  }
+  if (action === "lock-wallet") {
+    await lockWallet();
+  }
+  if (action === "unlock-wallet") {
+    await requestWalletUnlock();
+  }
+  if (action === "view-lock-history") {
+    await showWalletLockHistory();
+  }
+  if (action === "profile-photo") {
+    openProfilePhotoModal();
+  }
+  if (action === "profile-details") {
+    await openProfileDetailsModal();
+  }
+  if (action === "profile-verification") {
+    openProfileVerificationModal();
+  }
+  if (action === "account-activity") {
+    openAccountActivityModal();
+  }
+  if (action === "pwa-review") {
+    openPwaReviewModal();
+  }
+  if (action === "fica-verification") {
+    openFicaVerificationModal();
+  }
+  if (action === "change-password") {
+    openPasswordResetFromProfile();
+  }
+  if (action === "change-pin") {
+    openPasswordResetFromProfile();
+  }
+  if (action === "device-management") {
+    openDeviceManagementModal();
+  }
+  if (action === "login-history") {
+    await showLoginHistory();
+  }
+  if (action === "support") {
+    openSupportModal();
+  }
+  if (action === "notifications") {
+    openNotificationsModal();
+  }
+  if (action === "mark-notifications-read") {
+    markNotificationsRead();
+  }
+  if (action === "clear-notifications") {
+    clearNotifications();
+  }
+  if (action === "enable-browser-notifications") {
+    await enableBrowserNotifications();
+  }
+  if (action === "preview-sms-notifications") {
+    openSmsNotificationPreview();
+  }
+  if (action === "enable-sms-notifications") {
+    setSmsNotifications(true);
+  }
+  if (action === "disable-sms-notifications") {
+    setSmsNotifications(false);
+  }
+  if (action === "chatbot") {
+    openChatbotModal();
+  }
+  if (action === "titopay-chat") {
+    openTitoPayChatModal();
+  }
+  if (action === "open-stockvel-chat") {
+    openStockvelChatModal();
+  }
+  if (action === "chat-back") {
+    openTitoPayChatModal();
+  }
+  if (action === "chat-call-start") {
+    openCustomerCareCallOnlyModal();
+  }
+  if (action === "chat-call-accept") {
+    openCustomerCareCallOnlyModal();
+  }
+  if (action === "chat-call-decline") {
+    openCustomerCareCallOnlyModal();
+  }
+  if (action === "chat-call-history") {
+    openCustomerCareCallOnlyModal();
+  }
+  if (action === "chat-call-mute") {
+    openCustomerCareCallOnlyModal();
+  }
+  if (action === "chat-call-speaker") {
+    openCustomerCareCallOnlyModal();
+  }
+  if (action === "chat-call-end") {
+    openCustomerCareCallOnlyModal();
+  }
+  if (action === "chat-report") {
+    reportActiveChatThread();
+  }
+  if (action === "chat-mute") {
+    await toggleActiveChatMute();
+  }
+  if (action === "chat-block") {
+    blockActiveChatThread();
+  }
+  if (action === "invoice-link") {
+    showToast("Shareable document link prepared. Email sharing will use the customer email when provided.");
+  }
+  if (action === "start-qr-scan") {
+    await startQrScanner();
+  }
+  if (action === "merchant-make-sale") {
+    openMerchantSaleModal();
+  }
+  if (action === "merchant-add-sale-note") {
+    openMerchantSaleNoteModal();
+  }
+  if (action === "merchant-generate-qr") {
+    await generateMerchantSaleQr();
+  }
+  if (action === "merchant-cancel-sale") {
+    cancelMerchantSale();
+  }
+  if (action === "merchant-sale-done") {
+    closeModal();
+    refreshData().catch(() => null);
+  }
+  if (action === "merchant-sales-history") {
+    openSalesHistoryModal();
+  }
+  if (action === "wallet-receipts") {
+    openWalletReceiptsModal();
+  }
+}
+
+function onBeforeInstallPrompt(event) {
+  event.preventDefault();
+  state.installPrompt = event;
+  state.installAvailable = true;
+  state.installed = false;
+  renderInstallButton();
+}
+
+function onAppInstalled() {
+  state.installPrompt = null;
+  state.installAvailable = false;
+  state.installed = true;
+  renderInstallButton();
+  showToast("TitoPay installed for quick access.");
+}
+
+function isPwaInstalled() {
+  const standalone = typeof window.matchMedia === "function" ? window.matchMedia("(display-mode: standalone)") : null;
+  return Boolean(standalone && standalone.matches) || (typeof navigator !== "undefined" && navigator.standalone === true);
+}
+
+function shouldShowInstallButton() {
+  if (state.installed || isPwaInstalled()) return false;
+  if (sessionStorage.getItem(INSTALL_DISMISSED_KEY) === "true") return false;
+  if (state.auth && state.auth.accessToken && state.user && state.route !== "dashboard") return false;
+  return true;
+}
+
+function renderInstallButton() {
+  const currentInstallPrompt = document.querySelector(".install-float-wrap");
+  if (currentInstallPrompt && currentInstallPrompt.parentNode) currentInstallPrompt.parentNode.removeChild(currentInstallPrompt);
+  if (!shouldShowInstallButton()) return;
+  const wrapper = document.createElement("div");
+  wrapper.className = `install-float-wrap ${state.auth && state.auth.accessToken && state.user ? "with-nav" : "public-install"}`;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "install-float";
+  button.dataset.installApp = "true";
+  button.setAttribute("aria-label", "Install TitoPay app");
+  button.innerHTML = `<span>${icon("download")}</span><strong>Download TitoPay</strong>`;
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "install-float-dismiss";
+  dismiss.dataset.dismissInstall = "true";
+  dismiss.setAttribute("aria-label", "Hide app download button");
+  dismiss.setAttribute("title", "Hide");
+  dismiss.innerHTML = icon("x");
+  wrapper.append(button, dismiss);
+  document.body.appendChild(wrapper);
+}
+
+async function installApp() {
+  if (state.installPrompt) {
+    const promptEvent = state.installPrompt;
+    state.installPrompt = null;
+    promptEvent.prompt();
+    const choice = await promptEvent.userChoice;
+    if (choice.outcome === "accepted") {
+      state.installed = true;
+      showToast("TitoPay is being installed.");
+    } else {
+      showToast("Install cancelled. You can download TitoPay anytime from this button.");
+    }
+    renderInstallButton();
+    return;
+  }
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">iPhone &amp; iPad</p><h2>Download TitoPay</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="install-instructions" aria-label="How to add TitoPay to an iPhone home screen">
+      <div class="install-stage">
+        <strong>Stage 1 — if opened inside another app</strong>
+        <ol>
+          <li>Tap <b>•••</b></li>
+          <li>Tap <b>Open in External Browser</b> or <b>Open in Safari</b></li>
+        </ol>
+      </div>
+      <div class="install-stage">
+        <strong>Stage 2 — once in Safari</strong>
+        <ol start="3">
+          <li>Tap the <b>Share</b> icon ${icon("share")}</li>
+          <li>Tap <b>Add to Home Screen</b></li>
+          <li>Tap <b>Add</b></li>
+        </ol>
+      </div>
+      <p class="install-hint">TitoPay will then appear on your Home Screen and open like an app.</p>
+    </section>
+  `);
+}
+
+function handleService(id) {
+  if (id === "activity") {
+    location.hash = "activity";
+    return;
+  }
+  if (id === "transactions" || id === "statements") {
+    location.hash = "activity";
+    return;
+  }
+  if (id === "profile-security" || id === "fica" || id === "business-profile") {
+    location.hash = "profile";
+    return;
+  }
+  if (id === "receive") return state.accountType === "business" ? openMerchantSaleModal() : openReceiveModal();
+  if (id === "qr-pay") {
+    if (!canUseFinancialService({ status: "active", label: "QR Pay", serviceCode: "qr-pay" })) return;
+    return openQrPayModal();
+  }
+  const service = serviceById(id) || coreWalletAction(id);
+  if (!canUseFinancialService(service)) return;
+  if (service.status === "coming_soon") {
+    return openInfoModal(service.label, "This service is not active yet. TitoPay will activate it once operational approval is complete.");
+  }
+  if (service.type === "receive") return state.accountType === "business" ? openMerchantSaleModal() : openReceiveModal();
+  if (service.type === "qrPay") return openQrPayModal();
+  if (service.type === "tickets" || service.action === "tickets") return openPersonalTicketsDashboard();
+  if (service.type === "ticketing" || service.action === "ticketing" || service.action === "business-ticketing-staff") {
+    return openBusinessTicketingDashboard({ staffFocus: service.action === "business-ticketing-staff" });
+  }
+  if (service.type === "enterpriseDistribution" || service.action === "enterprise-distribution") return openEnterpriseDistributionDashboard();
+  if (service.action === "top-up") return openTopUpModal(service);
+  if (service.action === "withdraw") return openWithdrawModal(service);
+  if (["airtime", "airtime-data", "airtime-and-data", "data", "electricity", "voucher"].includes(service.action)) {
+    const purchaseService = ["airtime-data", "airtime-and-data"].includes(service.action)
+      ? Object.assign({}, service, { action: "airtime", label: "Airtime & Data" })
+      : service;
+    return openPurchaseModal(purchaseService);
+  }
+  if (service.action === "pay-bills") return openPayBillsModal(service);
+  if (service.action === "send-money" || service.serviceCode === "wallet_transfer" || service.id === "send") return openSendMoneyModal(service);
+  if (service.action === "payment-request") return openPaymentRequestModal(service);
+  if (service.action === "titopay-chat") return openTitoPayChatModal();
+  if (service.action === "bill-split") return openBillSplitModal(service);
+  if (service.action === "send-gift") return openSendGiftModal(service);
+  if (service.action === "payouts") return openPayoutModal(service);
+  if (service.action === "refund") return openRefundModal(service);
+  if (["invoice", "quote", "proforma-invoice"].includes(service.action)) return openInvoiceDocumentModal(service);
+  if (service.type === "learn") return openLearnModal();
+  if (service.type === "stockvel") return openStockvelModal();
+  if (service.type === "tip") return openTipModal();
+  if (service.type === "rewards") return openInfoModal(service.label, service.description || "TitoPay rewards are earned from qualifying app spending and referrals.");
+  openTransactionModal(service);
+}
+
+async function openPersonalTicketsDashboard() {
+  try {
+    const result = await api("/v1/ticketing/public/events", { auth: false });
+    const events = Array.isArray(result.items) ? result.items : [];
+    openModal(`
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">TitoPay Tickets</p>
+          <h2>Approved events</h2>
+          <p class="lead">Browse verified TitoPay events and buy secure digital tickets.</p>
+        </div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <section class="settings-list">
+        ${events.length ? events.map(ticketingPublicEventRow).join("") : `
+          <article class="empty-state compact-state">
+            ${icon("ticket")}
+            <strong>No public events yet</strong>
+            <p>Approved TitoPay events will appear here when ticket sales open.</p>
+          </article>
+        `}
+      </section>
+    `);
+  } catch (error) {
+    openModal(`
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">TitoPay Tickets</p>
+          <h2>Events opening soon</h2>
+          <p class="lead">Approved TitoPay events will appear here as soon as ticket sales open.</p>
+        </div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <section class="empty-state compact-state">
+        ${icon("ticket")}
+        <strong>No public events are available right now</strong>
+        <p>Please check again later. If you expected an event to be live, contact TitoPay Customer Care.</p>
+        <button class="btn secondary" type="button" data-action="refresh">${icon("refresh")} Refresh</button>
+      </section>
+    `);
+  }
+}
+
+function ticketingPublicEventRow(event = {}) {
+  const tickets = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
+  const prices = tickets.map((ticket) => Number(ticket.price || 0)).filter((price) => Number.isFinite(price));
+  const lowestPrice = prices.length ? Math.min(...prices) : 0;
+  const available = tickets.reduce((total, ticket) => total + Math.max(0, Number(ticket.quantityAvailable || 0) - Number(ticket.quantitySold || 0)), 0);
+  return `
+    <article class="settings-row">
+      <span class="icon-bubble">${icon("ticket")}</span>
+      <div>
+        <strong>${esc(event.eventName || "TitoPay Event")}</strong>
+        <small>${event.eventDate ? formatDate(event.eventDate).split(",")[0] : "Date to be confirmed"} · ${esc([event.venueName, event.city].filter(Boolean).join(", ") || "Venue to be confirmed")}</small>
+        <small>${prices.length ? `From ${money(lowestPrice)}` : "Ticket price to be confirmed"} · ${available} available</small>
+      </div>
+      <button class="btn secondary mini" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}">View</button>
+    </article>
+  `;
+}
+
+async function openPublicTicketingEvent(slug) {
+  if (!slug) return openPersonalTicketsDashboard();
+  try {
+    const result = await api(`/v1/ticketing/public/events/${encodeURIComponent(slug)}`, { auth: false });
+    openModal(publicTicketingEventModal(result.event || {}));
+  } catch (error) {
+    openInfoModal("Event unavailable", error.friendlyMessage || "This event is not available right now. Please try again.");
+  }
+}
+
+function publicTicketingEventModal(event = {}) {
+  const tickets = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
+  const firstTicket = tickets[0] || {};
+  return `
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Approved TitoPay Event</p>
+        <h2>${esc(event.eventName || "Event")}</h2>
+        <p class="lead">${esc(event.description || "Secure TitoPay event ticketing.")}</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="settings-list">
+      ${settingsRow("Date", event.eventDate ? formatDate(event.eventDate).split(",")[0] : "To be confirmed", "calendar")}
+      ${settingsRow("Venue", [event.venueName, event.city, event.province].filter(Boolean).join(", ") || "Online / to be confirmed", "store")}
+      ${settingsRow("Organiser", event.businessDetails?.businessName || event.businessName || "Verified TitoPay Business", "shield")}
+    </div>
+    <section class="panel inner-panel">
+      <h3>Tickets</h3>
+      <div class="settings-list">
+        ${tickets.length ? tickets.map((ticket) => `
+          <article class="settings-row">
+            <span class="icon-bubble">${icon("ticket")}</span>
+            <div>
+              <strong>${esc(ticket.ticketName)}</strong>
+              <small>${money(ticket.price)} · ${Math.max(0, Number(ticket.quantityAvailable || 0) - Number(ticket.quantitySold || 0))} available</small>
+            </div>
+          </article>
+        `).join("") : `<p class="muted">Tickets are not available right now.</p>`}
+      </div>
+      ${state.auth?.accessToken && firstTicket.id ? `
+        <form class="form-grid" data-form="ticketing-purchase">
+          <input type="hidden" name="eventSlug" value="${esc(event.slug)}">
+          <label>Ticket type
+            <select name="ticketTypeId">
+              ${tickets.map((ticket) => `<option value="${esc(ticket.id)}">${esc(ticket.ticketName)} · ${money(ticket.price)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Quantity
+            <input name="quantity" type="number" min="1" max="${esc(firstTicket.maxPurchaseQuantity || 10)}" value="1" required>
+          </label>
+          <button class="btn primary" type="submit">${icon("ticket")} Buy ticket</button>
+        </form>
+      ` : `
+        <div class="auth-actions">
+          <button class="btn primary" type="button" data-auth-tab="login">${icon("lock")} Sign in to buy</button>
+          <button class="btn secondary" type="button" data-auth-tab="register">${icon("lock")} Create account</button>
+        </div>
+      `}
+    </section>
+  `;
+}
+
+async function loadPublicEventFromPath() {
+  const match = location.pathname.match(/\/events\/([^/?#]+)/);
+  if (!match) return;
+  try {
+    const result = await api(`/v1/ticketing/public/events/${encodeURIComponent(match[1])}`, { auth: false });
+    state.publicEvent = result.event || null;
+  } catch (error) {
+    state.publicEvent = null;
+  }
+}
+
+function publicTicketingEventView(event = {}) {
+  const tickets = event.ticketTypes || [];
+  const firstTicket = tickets[0] || {};
+  return `
+    <main class="screen auth-screen">
+      <header class="topbar">
+        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+        <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
+      </header>
+      <section class="panel">
+        <p class="eyebrow">Approved TitoPay Event</p>
+        <h1>${esc(event.eventName || "Event")}</h1>
+        <p class="lead">${esc(event.description || "Secure TitoPay event ticketing.")}</p>
+        <div class="settings-list">
+          ${settingsRow("Date", event.eventDate ? formatDate(event.eventDate).split(",")[0] : "To be confirmed", "calendar")}
+          ${settingsRow("Venue", [event.venueName, event.city, event.province].filter(Boolean).join(", ") || "Online / to be confirmed", "store")}
+          ${settingsRow("Organiser", event.businessDetails?.businessName || event.businessName || "Verified TitoPay Business", "shield")}
+        </div>
+      </section>
+      <section class="panel">
+        <h2>Tickets</h2>
+        ${tickets.length ? tickets.map((ticket) => `
+          <article class="settings-row">
+            <span class="icon-bubble">${icon("ticket")}</span>
+            <div>
+              <strong>${esc(ticket.ticketName)}</strong>
+              <small>${money(ticket.price)} · ${Math.max(0, Number(ticket.quantityAvailable || 0) - Number(ticket.quantitySold || 0))} available</small>
+            </div>
+          </article>
+        `).join("") : `<p class="muted">Tickets are not available right now.</p>`}
+        ${state.auth?.accessToken && firstTicket.id ? `
+          <form class="form-grid" data-form="ticketing-purchase">
+            <input type="hidden" name="eventSlug" value="${esc(event.slug)}">
+            <label>Ticket type
+              <select name="ticketTypeId">
+                ${tickets.map((ticket) => `<option value="${esc(ticket.id)}">${esc(ticket.ticketName)} · ${money(ticket.price)}</option>`).join("")}
+              </select>
+            </label>
+            <label>Quantity
+              <input name="quantity" type="number" min="1" max="${esc(firstTicket.maxPurchaseQuantity || 10)}" value="1" required>
+            </label>
+            <button class="btn primary" type="submit">${icon("ticket")} Buy ticket</button>
+          </form>
+        ` : `
+          <div class="auth-actions">
+            <button class="btn primary" type="button" data-auth-tab="login">${icon("lock")} Sign in to buy</button>
+            <button class="btn secondary" type="button" data-auth-tab="register">${icon("user")} Create account</button>
+          </div>
+        `}
+      </section>
+    </main>
+  `;
+}
+
+async function submitTicketingPurchase(data) {
+  const result = await api(`/v1/ticketing/public/events/${encodeURIComponent(data.eventSlug)}/purchase`, {
+    method: "POST",
+    body: {
+      ticketTypeId: data.ticketTypeId,
+      quantity: Number(data.quantity || 1),
+      buyerDetails: {
+        name: state.user?.fullName || state.user?.full_name || "",
+        phone: state.user?.phone || "",
+        email: state.user?.email || ""
+      }
+    }
+  });
+  showToast(`Ticket confirmed. Ref: ${result.order.orderReference}`);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Ticket Confirmed</p><h2>Payment successful</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="settings-list">
+      ${settingsRow("Order Reference", result.order.orderReference, "ticket")}
+      ${settingsRow("Total Paid", money(result.order.total), "wallet")}
+      ${settingsRow("Delivery", result.order.deliveryStatus || "queued", "send")}
+    </div>
+  `);
+}
+
+function ticketingStatusLabel(status = "") {
+  return String(status || "draft").replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+async function openBusinessTicketingDashboard(options = {}) {
+  if (state.accountType !== "business") {
+    openInfoModal("Business ticketing", "Switch to Business to create and manage TitoPay events.");
+    return;
+  }
+  const [eligibilityResult, eventsResult] = await Promise.all([
+    api("/v1/ticketing/eligibility"),
+    api("/v1/ticketing/business/events")
+  ]);
+  state.ticketing.eligibility = eligibilityResult.eligibility;
+  state.ticketing.events = eventsResult.items || [];
+  const eligibility = state.ticketing.eligibility;
+  const events = state.ticketing.events;
+  const counts = events.reduce((acc, event) => {
+    acc[event.status] = (acc[event.status] || 0) + 1;
+    return acc;
+  }, {});
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Create events, submit for approval, sell tickets and scan entry from TitoPay.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${eligibility.eligible ? `
+      <div class="dashboard-grid compact">
+        ${metricCard("Draft", counts.draft || 0)}
+        ${metricCard("Pending", (counts.submitted || 0) + (counts.under_review || 0))}
+        ${metricCard("Approved", counts.approved || 0)}
+      </div>
+      <div class="auth-actions">
+        <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create Event</button>
+        <button class="btn secondary" type="button" data-action="ticketing-refresh">${icon("refresh")} Refresh</button>
+      </div>
+      ${options.staffFocus ? ticketingStaffForm(events) : ""}
+      ${ticketingScannerForm(events)}
+      <section class="settings-list">
+        ${events.length ? events.map((event) => ticketingEventRow(event)).join("") : `<p class="muted">No ticketing events yet. Create your first draft when your event details are ready.</p>`}
+      </section>
+    ` : `
+      <section class="empty-state compact-state">
+        ${icon("shield")}
+        <strong>Business verification required</strong>
+        <p>${eligibility.blockers.map(esc).join(" ")}</p>
+        <button class="btn primary" type="button" data-route="profile">${icon("shield")} Open Profile</button>
+      </section>
+    `}
+  `);
+}
+
+function metricCard(label, value) {
+  return `<article class="metric-card"><strong>${esc(value)}</strong><span>${esc(label)}</span></article>`;
+}
+
+function ticketingEventRow(event) {
+  const canSubmit = ["draft", "additional_information_required", "rejected"].includes(event.status);
+  return `
+    <article class="settings-row">
+      <span class="icon-bubble">${icon("ticket")}</span>
+      <div>
+        <strong>${esc(event.eventName)}</strong>
+        <small>${ticketingStatusLabel(event.status)} · ${event.eventDate ? formatDate(event.eventDate).split(",")[0] : "Date not set"}</small>
+        ${event.marketingLink ? `<small><a href="${esc(event.marketingLink)}" target="_blank" rel="noopener">Public event page</a></small>` : ""}
+      </div>
+      ${canSubmit ? `<button class="btn secondary mini" type="button" data-action="ticketing-submit:${esc(event.id)}">Submit</button>` : ""}
+    </article>
+  `;
+}
+
+function ticketingStaffForm(events = []) {
+  const approved = events.filter((event) => event.status === "approved");
+  if (!approved.length) return "";
+  return `
+    <section class="panel inner-panel">
+      <h3>Staff permissions</h3>
+      <form class="form-grid" data-form="ticketing-staff">
+        <label>Approved event
+          <select name="eventId">${approved.map((event) => `<option value="${esc(event.id)}">${esc(event.eventName)}</option>`).join("")}</select>
+        </label>
+        <label>Verified TitoPay user
+          <input name="identifier" placeholder="@username, phone or email" required>
+        </label>
+        <button class="btn secondary" type="submit">${icon("contacts")} Add scanner</button>
+      </form>
+    </section>
+  `;
+}
+
+function ticketingScannerForm(events = []) {
+  const approved = events.filter((event) => event.status === "approved");
+  if (!approved.length) return "";
+  return `
+    <section class="panel inner-panel">
+      <h3>Entry scanner</h3>
+      <form class="form-grid" data-form="ticketing-scan">
+        <label>Ticket code
+          <input name="ticketCode" inputmode="numeric" maxlength="10" placeholder="10 digit ticket code" required>
+        </label>
+        <button class="btn primary" type="submit">${icon("scan")} Validate ticket</button>
+      </form>
+    </section>
+  `;
+}
+
+function openTicketingEventForm() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Ticketing</p><h2>Create event draft</h2><p class="lead">Save the draft first, then submit it for TitoPay approval.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="ticketing-event">
+      <label>Event name<input name="eventName" required></label>
+      <label>Category<input name="category" placeholder="Conference, concert, workshop" required></label>
+      <label>Description<textarea name="description" rows="3" required></textarea></label>
+      <label>Event date<input name="eventDate" type="date" required></label>
+      <label>Start time<input name="startTime" type="time" required></label>
+      <label>End time<input name="endTime" type="time" required></label>
+      <label>Venue name<input name="venueName" required></label>
+      <label>Full venue address<textarea name="fullVenueAddress" rows="2" required></textarea></label>
+      <label>City<input name="city" required></label>
+      <label>Province<input name="province" required></label>
+      <label>Contact email<input name="contactEmail" type="email"></label>
+      <label>Contact number<input name="contactNumber" inputmode="tel"></label>
+      <label>Ticket name<input name="ticketName" value="General Admission" required></label>
+      <label>Ticket price<input name="ticketPrice" type="number" min="0" step="0.01" required></label>
+      <label>Ticket quantity<input name="ticketQuantity" type="number" min="1" required></label>
+      <label>Terms and conditions<textarea name="termsConditions" rows="3" required></textarea></label>
+      <label>Refund policy<textarea name="refundPolicySummary" rows="3" required></textarea></label>
+      <button class="btn primary" type="submit">${icon("ticket")} Save draft</button>
+    </form>
+  `);
+}
+
+async function submitTicketingEventForm(data) {
+  const payload = {
+    eventName: data.eventName,
+    category: data.category,
+    description: data.description,
+    eventDate: data.eventDate,
+    startTime: data.startTime,
+    endTime: data.endTime,
+    venueName: data.venueName,
+    fullVenueAddress: data.fullVenueAddress,
+    city: data.city,
+    province: data.province,
+    contactEmail: data.contactEmail,
+    contactNumber: data.contactNumber,
+    termsConditions: data.termsConditions,
+    refundPolicy: { summary: data.refundPolicySummary },
+    ticketTypes: [{
+      ticketName: data.ticketName,
+      price: Number(data.ticketPrice || 0),
+      quantityAvailable: Number(data.ticketQuantity || 0),
+      minPurchaseQuantity: 1,
+      maxPurchaseQuantity: 10,
+      refundsAllowed: true
+    }]
+  };
+  const result = await api("/v1/ticketing/business/events", { method: "POST", body: payload });
+  showToast("Event draft saved. Submit it when ready.");
+  await openBusinessTicketingDashboard({ refresh: true });
+  return result;
+}
+
+async function submitTicketingEvent(eventId) {
+  await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/submit`, { method: "POST", body: {} });
+  showToast("Event submitted for approval.");
+  await openBusinessTicketingDashboard({ refresh: true });
+}
+
+async function submitTicketingStaff(data) {
+  await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/staff`, {
+    method: "POST",
+    body: { identifier: data.identifier, role: "scanner", permissions: ["scan"] }
+  });
+  showToast("Event scanner added.");
+  await openBusinessTicketingDashboard({ staffFocus: true, refresh: true });
+}
+
+async function submitTicketingScan(data) {
+  const result = await api("/v1/ticketing/scanner/validate", { method: "POST", body: { ticketCode: data.ticketCode } });
+  showToast(result.result.message, result.result.valid ? "" : "error");
+}
+
+function enterpriseDistributionStatusCopy(eligibility = {}) {
+  if (eligibility?.eligible) return "Approved organisation. Phase 1 tools are active.";
+  if (state.accountType !== "business") return "Enterprise Bulk Distribution is available to approved TitoPay Business accounts only.";
+  return "Submit an organisation application. TitoPay must approve your licence before bulk distribution tools are enabled.";
+}
+
+async function openEnterpriseDistributionDashboard() {
+  const eligibilityResult = await api("/v1/enterprise-distribution/eligibility");
+  state.enterpriseDistribution.eligibility = eligibilityResult.eligibility;
+  const eligibility = state.enterpriseDistribution.eligibility || {};
+  if (!eligibility.eligible) {
+    return openModal(`
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Enterprise Bulk Distribution</p>
+          <h2>Organisation approval required</h2>
+          <p class="lead">${esc(enterpriseDistributionStatusCopy(eligibility))}</p>
+        </div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      ${eligibility.blockers?.length ? `<section class="empty-state">${icon("shield")}<strong>Readiness checks</strong><p>${eligibility.blockers.map(esc).join("<br>")}</p></section>` : ""}
+      <form class="form-grid" data-form="enterprise-distribution-application">
+        <div class="field"><label>Organisation name</label><input name="organisationName" value="${esc(eligibility.business?.business_name || eligibility.business?.full_name || "")}" required></div>
+        <div class="field"><label>Registration number</label><input name="registrationNumber" required></div>
+        <div class="field"><label>Institution type</label><select name="institutionType" required><option value="">Select type</option><option>University</option><option>Corporate</option><option>NGO</option><option>Municipality</option><option>Landlord</option><option>Payroll Provider</option><option>Other</option></select></div>
+        <div class="field"><label>Funding purpose</label><textarea name="fundingPurpose" maxlength="500" required placeholder="Example: student allowances, payroll, grants, rentals or refunds"></textarea></div>
+        <div class="field"><label>Expected monthly volume</label><input name="expectedMonthlyVolume" type="number" min="0" step="0.01" required></div>
+        <div class="field"><label>Expected beneficiaries</label><input name="expectedBeneficiaries" type="number" min="1" step="1" required></div>
+        <div class="field"><label>Funding source</label><input name="fundingSource" required></div>
+        <button class="btn primary" type="submit">${icon("shield")} Submit application</button>
+      </form>
+    `);
+  }
+  const [beneficiaryResult, batchResult] = await Promise.all([
+    api("/v1/enterprise-distribution/beneficiaries").catch(() => ({ items: [] })),
+    api("/v1/enterprise-distribution/batches").catch(() => ({ items: [] }))
+  ]);
+  state.enterpriseDistribution.beneficiaries = beneficiaryResult.items || [];
+  state.enterpriseDistribution.batches = batchResult.items || [];
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Enterprise Bulk Distribution</p>
+        <h2>${esc(eligibility.organisation?.organisation_name || "Approved Organisation")}</h2>
+        <p class="lead">Enterprise Distribution is active for TitoPay wallet recipients. Bank withdrawals and external payouts must use TitoPay’s existing Payouts service.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="stats-grid">
+      <div class="stat"><strong>${state.enterpriseDistribution.beneficiaries.length}</strong><span>Beneficiaries</span></div>
+      <div class="stat"><strong>${state.enterpriseDistribution.batches.length}</strong><span>Batches</span></div>
+      <div class="stat"><strong>Live</strong><span>Wallet payout control</span></div>
+    </section>
+    <section class="panel">
+      <h3>Add beneficiary</h3>
+      <form class="form-grid" data-form="enterprise-beneficiary">
+        <div class="field"><label>Unique Beneficiary ID</label><input name="uniqueBeneficiaryId" required></div>
+        <div class="field"><label>First name</label><input name="firstName" required></div>
+        <div class="field"><label>Surname</label><input name="surname" required></div>
+        <div class="field"><label>Phone</label><input name="phone" inputmode="tel"></div>
+        <div class="field"><label>TitoPay wallet number</label><input name="walletNumber" inputmode="numeric"></div>
+        <button class="btn secondary" type="submit">${icon("user")} Save beneficiary</button>
+      </form>
+    </section>
+    <section class="panel">
+      <h3>Validate draft batch</h3>
+      <p class="muted">Paste CSV rows with headers such as uniqueBeneficiaryId, firstName, surname, walletNumber, amount, reference. First validate, then lock funding. Admin must release the batch before TitoPay wallet payouts are processed. Use Payouts for bank beneficiaries.</p>
+      <form class="form-grid" data-form="enterprise-batch">
+        <div class="field"><label>Batch name</label><input name="batchName" required></div>
+        <div class="field"><label>Distribution type</label><select name="distributionType"><option value="student_allowance">Student Allowance</option><option value="payroll">Payroll</option><option value="vendor_payment">Vendor Payment</option><option value="grant">Grant</option><option value="rental">Rental</option><option value="refund">Refund</option><option value="custom">Custom</option></select></div>
+        <div class="field"><label>CSV rows</label><textarea name="csvText" rows="7" required placeholder="uniqueBeneficiaryId,firstName,surname,walletNumber,amount,reference"></textarea></div>
+        <button class="btn primary" type="submit">${icon("list")} Validate batch</button>
+      </form>
+    </section>
+    <section class="panel">
+      <h3>Recent draft batches</h3>
+      ${state.enterpriseDistribution.batches.length ? state.enterpriseDistribution.batches.slice(0, 5).map((batch) => `<article class="list-row"><strong>${esc(batch.batch_name)}</strong><small>${esc(String(batch.status || "").replaceAll("_", " "))} · ${esc(batch.batch_reference)} · ${money(batch.valid_total || 0)}${Number(batch.locked_total || 0) > 0 ? ` · locked ${money(batch.locked_total)}` : ""}</small>${batch.status === "draft_validated" ? `<button class="btn secondary mini" type="button" data-action="enterprise-fund:${esc(batch.id)}">${icon("lock")} Lock Funding</button>` : ""}</article>`).join("") : `<p class="muted">No validation batches yet.</p>`}
+    </section>
+  `);
+}
+
+async function submitEnterpriseDistributionApplication(data) {
+  await api("/v1/enterprise-distribution/applications", { method: "POST", body: data });
+  showToast("Application submitted for TitoPay approval.");
+  await loadAccount();
+  closeModal();
+}
+
+async function submitEnterpriseBeneficiary(data) {
+  await api("/v1/enterprise-distribution/beneficiaries", { method: "POST", body: data });
+  showToast("Beneficiary saved.");
+  await openEnterpriseDistributionDashboard();
+}
+
+async function submitEnterpriseBatch(data) {
+  const result = await api("/v1/enterprise-distribution/batches", { method: "POST", body: data });
+  const invalidRows = result.batch?.invalid_rows || 0;
+  showToast(invalidRows ? `Batch validated with ${invalidRows} invalid row(s).` : "Batch validated successfully.");
+  await openEnterpriseDistributionDashboard();
+}
+
+async function lockEnterpriseDistributionFunding(batchId) {
+  if (!window.confirm("Lock funding for this validated batch? Funds will be reserved from the business wallet until Admin releases or resolves the batch.")) return;
+  await api(`/v1/enterprise-distribution/batches/${batchId}/fund`, { method: "POST" });
+  showToast("Funding locked. Admin can now review and release the batch.");
+  await openEnterpriseDistributionDashboard();
+}
+
+function coreWalletAction(id) {
+  const actions = {
+    "top-up": { id: "top-up", label: "Top Up", icon: "upload", type: "transaction", action: "top-up", serviceCode: "wallet_top_up" },
+    send: { id: "send", label: "Send Money", icon: "send", type: "transaction", action: "send-money", serviceCode: "wallet_transfer" },
+    withdraw: { id: "withdraw", label: "Withdraw", icon: "withdraw", type: "transaction", action: "withdraw", serviceCode: "withdraw" },
+    payouts: { id: "payouts", label: "Payout", icon: "withdraw", type: "transaction", action: "payouts", serviceCode: "merchant_payout" }
+  };
+  return actions[id] || { id, label: "TitoPay Service", icon: "sparkles", type: "transaction", serviceCode: id };
+}
+
+function openTransactionModal(service) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(service.label)}</p><h2>Confirm details</h2><p class="lead">A fee preview will be shown before TitoPay processes this transaction.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      <div class="field"><label>Recipient, account or reference</label><input name="recipient" required></div>
+      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Note</label><textarea name="note"></textarea></div>
+      <button class="btn primary" type="submit">${icon(service.icon)} Preview and process</button>
+    </form>
+  `);
+}
+
+function openTopUpModal(service) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Top Up</p><h2>Add money to your wallet</h2><p class="lead">Card top ups are processed securely by Peach Payments. TitoPay will show the fee preview first.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      <input type="hidden" name="recipient" value="TitoPay Wallet">
+      <input type="hidden" name="integrationFlow" value="wallet_top_up">
+      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field">
+        <label>Funding method</label>
+        <select name="fundingMethod">
+          <option value="peach_card">Card funding via Peach Payments</option>
+          <option value="eft_bank_transfer">EFT / bank transfer funding</option>
+        </select>
+      </div>
+      <section class="integration-note" aria-label="Top up funding options">
+        <p>${icon("wallet")} <span><strong>Peach Payments:</strong> card funding uses Peach checkout, card verification and payment-status callbacks.</span></p>
+        <p>${icon("bank")} <span><strong>EFT funding:</strong> use your TitoPay reference so the top up can be matched securely.</span></p>
+      </section>
+      <div class="field"><label>Reference</label><input name="reference" placeholder="Top up reference"></div>
+      <button class="btn primary" type="submit">${icon("upload")} Preview top up</button>
+    </form>
+  `);
+}
+
+function openWithdrawModal(service) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Withdraw</p><h2>Withdraw funds</h2><p class="lead">Withdrawals are handled through Peach Payments-supported payout processing after wallet checks and confirmation.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      <input type="hidden" name="integrationFlow" value="wallet_withdrawal">
+      <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank account or account reference" required></div>
+      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field">
+        <label>Withdrawal speed</label>
+        <select name="withdrawalSpeed">
+          <option value="standard_peach_withdrawal">Standard Peach Payments withdrawal</option>
+          <option value="instant_peach_withdrawal">Instant Peach Payments withdrawal</option>
+        </select>
+      </div>
+      <section class="integration-note" aria-label="Withdrawal processing options">
+        <p>${icon("bank")} <span><strong>Peach Payments payout:</strong> confirm the beneficiary and review the fee before submitting.</span></p>
+        <p>${icon("shield")} <span><strong>Security:</strong> withdrawals are checked against wallet lock, fee preview and confirmation before processing.</span></p>
+      </section>
+      <div class="field"><label>Reference</label><input name="reference" placeholder="Withdrawal reference"></div>
+      <button class="btn primary" type="submit">${icon("withdraw")} Preview withdrawal</button>
+    </form>
+  `);
+}
+
+function openPurchaseModal(service) {
+  const isElectricity = service.action === "electricity";
+  const isVoucher = service.action === "voucher";
+  const isData = service.action === "data";
+  const recipientLabel = isElectricity ? "Meter number" : isVoucher ? "Voucher recipient" : "Cellphone number";
+  const recipientPlaceholder = isElectricity ? "Enter prepaid meter number" : isVoucher ? "Email, phone or self" : "+27";
+  const options = isElectricity
+    ? ["Prepaid electricity"]
+    : isVoucher
+      ? ["Shopping", "Gaming", "Entertainment", "Food"]
+      : ["MTN", "Vodacom", "Telkom", "Cell C"];
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(service.label)}</p><h2>${esc(isData ? "Buy data" : isVoucher ? "Buy voucher" : isElectricity ? "Buy electricity" : "Buy airtime")}</h2><p class="lead">Enter the details and confirm the fee preview before purchase.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      <div class="field"><label>${esc(recipientLabel)}</label><input name="recipient" placeholder="${esc(recipientPlaceholder)}" required></div>
+      <div class="field"><label>${esc(isVoucher ? "Category" : isElectricity ? "Product" : "Network")}</label><select name="provider">${options.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
+      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Reference</label><input name="reference" placeholder="${esc(service.label)} purchase"></div>
+      <button class="btn primary" type="submit">${icon(service.icon)} Preview purchase</button>
+    </form>
+  `);
+}
+
+function openPayBillsModal(service) {
+  const billers = ["DStv", "Municipal bill", "Water", "Rates", "Utilities", "School fees", "Insurance", "Other biller"];
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Pay Bills</p><h2>Pay account bills</h2><p class="lead">Pay DStv, municipal, water, rates and supported utility bills. TitoPay will show the fee preview before processing.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      <input type="hidden" name="integrationFlow" value="vas_bill_payment">
+      <input type="hidden" name="vasProviderReady" value="ott_or_vas_provider">
+      <div class="field"><label>Biller</label><select name="provider">${billers.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
+      <div class="field"><label>Account or customer number</label><input name="recipient" placeholder="DStv smartcard, municipal account or bill reference" required></div>
+      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Reference</label><input name="reference" placeholder="Bill payment reference"></div>
+      <button class="btn primary" type="submit">${icon("list")} Preview bill payment</button>
+    </form>
+  `);
+}
+
+function contactSuggestions() {
+  const contacts = [
+    { value: "@example_user", method: "username" },
+    { value: "+27 71 234 5678", method: "cellphone" },
+    { value: "customer@example.com", method: "email" }
+  ];
+  return `
+    <div class="suggestion-row" aria-label="Suggested contacts">
+      ${contacts.map((item) => `<button type="button" class="chip" data-fill-recipient="${esc(item.value)}" data-fill-recipient-method="${esc(item.method)}">${esc(item.value)}</button>`).join("")}
+    </div>`;
+}
+
+function openSendMoneyModal(service = coreWalletAction("send")) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Send Money</p><h2>Send from your wallet</h2><p class="lead">Use a username, cellphone number or email address. TitoPay will show the fee preview before processing.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid stable-service-form" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode || "wallet_transfer")}">
+      ${recipientMethodField("auto")}
+      <div class="field"><label>Recipient</label><input name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" required></div>
+      ${contactSuggestions()}
+      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Reference</label><input name="reference" placeholder="What is this payment for?"></div>
+      <div class="field"><label>Note</label><textarea name="note" placeholder="Optional message"></textarea></div>
+      <button class="btn primary" type="submit">${icon("send")} Preview send money</button>
+    </form>
+  `);
+}
+
+function openPaymentRequestModal(service) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Payment Request</p><h2>Request funds</h2><p class="lead">Create a one-time or recurring request by username, phone number or email.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid stable-service-form" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      ${recipientMethodField("auto")}
+      <div class="field"><label>Recipient</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
+      ${contactSuggestions()}
+      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Description</label><textarea name="description" placeholder="What is the request for?"></textarea></div>
+      <div class="field"><label>Due date</label><input name="dueDate" type="date"></div>
+      <div class="field"><label>Request type</label><select name="requestType"><option>One-time request</option><option>Recurring request</option></select></div>
+      <div class="field"><label>Recurring frequency</label><select name="recurringFrequency"><option>Not recurring</option><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select></div>
+      <div class="field"><label>Recurring end date</label><input name="recurringEndDate" type="date"></div>
+      <button class="btn primary" type="submit">${icon("download")} Send request</button>
+    </form>
+  `);
+}
+
+function openBillSplitModal(service) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Bill Split</p><h2>Split a bill</h2><p class="lead">Create equal, percentage or per-item payment requests for every participant.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid stable-service-form" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      <input type="hidden" name="recipient" value="Bill Split Participants">
+      <div class="field"><label>Bill description</label><input name="reference" placeholder="Dinner, trip, household" required></div>
+      <div class="field"><label>Total bill amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Split method</label><select name="splitMethod"><option>Equal split</option><option>Percentage split</option><option>Per-item split</option></select></div>
+      ${recipientAutoMethodField("participantMethod", "Participant lookup method")}
+      <div class="field"><label>Participants</label><textarea name="participants" placeholder="@username, cellphone or email per line" required></textarea></div>
+      <button class="btn primary" type="submit">${icon("scissors")} Generate split requests</button>
+    </form>
+  `);
+}
+
+function openSendGiftModal(service) {
+  const occasions = ["Birthday", "Wedding", "Graduation", "Thank You", "Anniversary", "Christmas", "Eid", "Mother's Day", "Father's Day", "Valentine's Day", "Congratulations", "Custom"];
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Send Gift</p><h2>Send a digital gift</h2><p class="lead">Choose an occasion, recipient, message and optional scheduled delivery date.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid stable-service-form" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      <input type="hidden" name="transactionType" value="send_gift">
+      ${recipientMethodField("auto")}
+      <div class="field"><label>Recipient</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
+      ${contactSuggestions()}
+      <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan recipient QR</button>
+      <div id="qr-scanner-output" class="empty-state hidden"></div>
+      <div class="field"><label>Gift amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Occasion</label><select name="occasion">${occasions.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
+      <div class="field hidden" data-custom-occasion><label>Custom occasion</label><input name="customOccasion" maxlength="48" placeholder="e.g. Matric celebration, new home, team thank-you"></div>
+      <div class="field"><label>Scheduled delivery</label><input name="scheduledDelivery" type="datetime-local"></div>
+      <div class="field"><label>Gift message</label><textarea name="message" maxlength="240" placeholder="Write the message the recipient will see"></textarea></div>
+      <button class="btn primary" type="submit">${icon("gift")} Preview gift</button>
+    </form>
+  `);
+}
+
+function openPayoutModal(service) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Payouts</p><h2>Request business payout</h2><p class="lead">Business payouts are handled through Peach Payments-supported payout processing after fee preview and confirmation.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid stable-service-form" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode || "merchant_payout")}">
+      <input type="hidden" name="integrationFlow" value="merchant_payout">
+      <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank beneficiary or account reference" required></div>
+      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field">
+        <label>Payout speed</label>
+        <select name="payoutSpeed">
+          <option value="standard_peach_business_payout">Standard Peach Payments payout</option>
+          <option value="instant_peach_business_payout">Instant Peach Payments payout</option>
+        </select>
+      </div>
+      <section class="integration-note" aria-label="Business payout processing options">
+        <p>${icon("bank")} <span><strong>Peach Payments payout:</strong> confirm the beneficiary and review the fee before submitting.</span></p>
+        <p>${icon("shield")} <span><strong>Security:</strong> payouts are checked against wallet lock, fee preview and confirmation before processing.</span></p>
+      </section>
+      <div class="field"><label>Reference</label><input name="reference" placeholder="Settlement, supplier, payroll"></div>
+      <button class="btn primary" type="submit">${icon("withdraw")} Preview payout</button>
+    </form>
+    <div class="auth-actions">
+      <button class="btn secondary" data-action="export-csv">${icon("download")} Payout CSV</button>
+      <button class="btn secondary" data-action="payout-pdf">${icon("download")} Payout report</button>
+    </div>
+  `);
+}
+
+function openRefundModal(service) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Business Tool</p><h2>Refund customer</h2><p class="lead">Refund a customer from the business wallet using a full or partial refund option.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      <input type="hidden" name="integrationFlow" value="merchant_refund">
+      ${recipientMethodField("auto")}
+      <div class="field"><label>Customer</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
+      ${contactSuggestions()}
+      <div class="field"><label>Original transaction reference</label><input name="originalReference" placeholder="TP-REF or receipt number" required></div>
+      <div class="field">
+        <label>Refund type</label>
+        <select name="refundType">
+          <option value="full_refund">Full refund</option>
+          <option value="partial_refund">Partial refund</option>
+        </select>
+      </div>
+      <div class="field"><label>Refund amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Reason</label><select name="reason"><option>Customer return</option><option>Duplicate payment</option><option>Incorrect amount</option><option>Service not fulfilled</option><option>Other</option></select></div>
+      <div class="field"><label>Refund message</label><textarea name="message" placeholder="Optional message for the customer"></textarea></div>
+      <section class="integration-note" aria-label="Refund processing">
+        <p>${icon("refresh")} <span><strong>Refund options:</strong> choose full or partial refund before the fee preview and confirmation.</span></p>
+        <p>${icon("shield")} <span><strong>Audit ready:</strong> original reference, customer, reason and refund type are sent as transaction metadata.</span></p>
+      </section>
+      <button class="btn primary" type="submit">${icon("refresh")} Preview refund</button>
+    </form>
+  `);
+}
+
+function openInvoiceDocumentModal(service) {
+  const kind = service.action === "quote" ? "Quote" : service.action === "proforma-invoice" ? "Proforma Invoice" : "Invoice";
+  const businessName = businessProfileName();
+  const businessContact = businessProfileContact();
+  const businessAddress = businessProfileAddress();
+  const logoText = businessLogoText();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(kind)}</p><h2>Create ${esc(kind)}</h2><p class="lead">Creation is free. PDF extraction or download is R2.50.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="document-brand-card" aria-label="Business document brand">
+      <div class="document-logo-mark">${esc(logoText)}</div>
+      <div>
+        <strong>${esc(businessName)}</strong>
+        <span>${esc(businessContact)}</span>
+        <small>Logo mark is detected from your business profile. Update your profile photo or business name to change it.</small>
+      </div>
+    </section>
+    <form class="form-grid" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
+      <input type="hidden" name="documentAction" value="${esc(service.action || "invoice")}">
+      <input type="hidden" name="documentKind" value="${esc(kind)}">
+      <div class="field"><label>Business address</label><textarea name="businessAddress" placeholder="Business address">${esc(businessAddress)}</textarea></div>
+      <div class="field"><label>Customer name</label><input name="recipient" required></div>
+      <div class="field"><label>Customer email</label><input name="customerEmail" type="email"></div>
+      <div class="field"><label>Customer address</label><textarea name="customerAddress" placeholder="Customer billing address"></textarea></div>
+      <div class="field"><label>Itemized lines</label><textarea name="lineItems" placeholder="Design work | 1 | 850&#10;Delivery | 1 | 120" required></textarea><small class="field-hint">Use one line per item: description | quantity | unit price.</small></div>
+      <div class="field"><label>Subtotal (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>VAT support</label><select name="vat"><option>Include VAT 15%</option><option>No VAT</option></select></div>
+      <div class="field"><label>Notes</label><textarea name="note" placeholder="Payment terms, banking details or thank-you message"></textarea></div>
+      <button class="btn primary" type="submit">${icon("list")} Save ${esc(kind)}</button>
+    </form>
+    <div class="auth-actions">
+      <button class="btn secondary" data-action="invoice-link">${icon("send")} Email link free</button>
+      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay R2.50 + Download PDF</button>
+    </div>
+  `);
+}
+
+function businessProfileName() {
+  const user = state.user || {};
+  return user.businessName || user.business_name || user.companyName || user.company_name || user.tradingName || user.trading_name || user.fullName || user.full_name || user.username || "TitoPay Business";
+}
+
+function businessProfileContact() {
+  const user = state.user || {};
+  return user.businessEmail || user.business_email || user.email || user.phone || user.mobile || "@titopay";
+}
+
+function businessProfileAddress() {
+  const user = state.user || {};
+  return user.businessAddress || user.business_address || user.companyAddress || user.company_address || user.address || user.physicalAddress || user.physical_address || "Address not supplied";
+}
+
+function documentTimestamp(date = new Date()) {
+  const day = date.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }).replace(/,/g, "");
+  const time = date.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${day} ${time}`;
+}
+
+function businessLogoText() {
+  const name = businessProfileName().trim();
+  const words = name.split(/\s+/).filter(Boolean);
+  const initials = words.length > 1 ? `${words[0][0]}${words[1][0]}` : name.slice(0, 2);
+  return (initials || "TP").toUpperCase();
+}
+
+function documentKindLabel(action) {
+  if (action === "quote") return "Quote";
+  if (action === "proforma-invoice") return "Proforma Invoice";
+  return "Invoice";
+}
+
+function documentPrefix(action) {
+  if (action === "quote") return "QUO";
+  if (action === "proforma-invoice") return "PRO";
+  return "INV";
+}
+
+function nextBusinessDocumentNumber(action) {
+  const prefix = documentPrefix(action);
+  const count = state.businessDocuments.filter((item) => item.prefix === prefix).length + 1;
+  return `${prefix}-${new Date().getFullYear()}-${leftPad(String(count), 4, "0")}`;
+}
+
+function parseDocumentLineItems(lineItems, fallbackAmount) {
+  const rows = String(lineItems || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split("|").map((part) => part.trim());
+      const description = parts[0] || "Business service";
+      const quantity = Math.max(Number(parts[1] || 1) || 1, 1);
+      const unit = Math.max(Number(String(parts[2] || fallbackAmount || 0).replace(/[^\d.-]/g, "")) || 0, 0);
+      return { description, quantity, unit, total: quantity * unit };
+    });
+  if (rows.length) return rows;
+  const amount = Math.max(Number(fallbackAmount || 0) || 0, 0);
+  return [{ description: "Business service", quantity: 1, unit: amount, total: amount }];
+}
+
+function documentTotals(items, vatMode, fallbackAmount) {
+  const itemSubtotal = items.reduce((sum, item) => sum + item.total, 0);
+  const subtotal = itemSubtotal || Math.max(Number(fallbackAmount || 0) || 0, 0);
+  const vatIncluded = String(vatMode || "").toLowerCase().includes("include");
+  const vat = vatIncluded ? subtotal * 0.15 : 0;
+  return { subtotal, vat, total: subtotal + vat, vatIncluded };
+}
+
+function buildBusinessDocumentDraft(data, transaction, preview) {
+  const action = data.documentAction || "invoice";
+  const items = parseDocumentLineItems(data.lineItems, data.amount);
+  const totals = documentTotals(items, data.vat, data.amount);
+  return {
+    id: transaction && (transaction.id || transaction.transactionId) || `doc-${Date.now()}`,
+    number: nextBusinessDocumentNumber(action),
+    prefix: documentPrefix(action),
+    kind: data.documentKind || documentKindLabel(action),
+    action,
+    serviceCode: data.serviceCode,
+    businessName: businessProfileName(),
+    businessContact: businessProfileContact(),
+    businessAddress: data.businessAddress || businessProfileAddress(),
+    businessLogo: businessLogoText(),
+    customerName: data.recipient || "Customer",
+    customerEmail: data.customerEmail || "",
+    customerAddress: data.customerAddress || "Address not supplied",
+    items,
+    totals,
+    notes: data.note || "",
+    createdAt: new Date().toISOString(),
+    reference: transaction && (transaction.reference || transaction.id) || preview && preview.reference || "",
+    pdfFeePaid: false,
+    pdfFeeReference: ""
+  };
+}
+
+function saveBusinessDocumentDraft(document) {
+  const existing = state.businessDocuments.filter((item) => item.id !== document.id);
+  state.businessDocuments = [document].concat(existing).slice(0, 40);
+  state.activeBusinessDocumentId = document.id;
+  localStorage.setItem(BUSINESS_DOCUMENTS_KEY, JSON.stringify(state.businessDocuments));
+}
+
+function currentBusinessDocument() {
+  return state.businessDocuments.find((item) => item.id === state.activeBusinessDocumentId) || state.businessDocuments[0] || null;
+}
+
+function openBusinessDocumentSavedModal(document, preview) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(document.kind)}</p><h2>${esc(document.number)} saved</h2><p class="lead">The shareable link is free. PDF download is released after the R2.50 extraction fee is paid.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="document-fee-card">
+      <div><span>Document total</span><strong>${money(document.totals.total)}</strong></div>
+      <div><span>PDF extraction fee</span><strong>${money(DOCUMENT_PDF_FEE)}</strong></div>
+      <div><span>Status</span><strong>${document.pdfFeePaid ? "PDF paid" : "PDF payment required"}</strong></div>
+    </section>
+    <p class="field-hint">Transaction preview total: ${money(preview.total || preview.amount || document.totals.total)}. Customer payment links remain free to send.</p>
+    <div class="auth-actions">
+      <button class="btn secondary" data-action="invoice-link">${icon("send")} Email link free</button>
+      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay R2.50 + Download PDF</button>
+    </div>
+  `);
+}
+
+async function requestBusinessDocumentPdf() {
+  const document = currentBusinessDocument();
+  if (!document) {
+    showToast("Save the invoice, quote or proforma before downloading a PDF.", "error");
+    return;
+  }
+  if (document.pdfFeePaid) {
+    downloadBusinessDocumentPdf(document);
+    return;
+  }
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">PDF Extraction</p><h2>Pay R2.50 to download</h2><p class="lead">${esc(document.kind)} ${esc(document.number)} will be downloaded after the fee is processed.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="document-fee-card">
+      <div><span>Document</span><strong>${esc(document.number)}</strong></div>
+      <div><span>PDF fee</span><strong>${money(DOCUMENT_PDF_FEE)}</strong></div>
+      <div><span>Revenue account</span><strong>TitoPay</strong></div>
+    </section>
+    <div class="auth-actions">
+      <button class="btn secondary" data-close>Cancel</button>
+      <button class="btn primary" data-action="confirm-document-pdf">${icon("download")} Pay + Download</button>
+    </div>
+  `);
+}
+
+async function confirmBusinessDocumentPdfDownload() {
+  const document = currentBusinessDocument();
+  if (!document) {
+    showToast("No saved business document found.", "error");
+    return;
+  }
+  const result = await api("/v1/transactions", {
+    method: "POST",
+    body: {
+      serviceCode: "business_document_pdf",
+      amount: DOCUMENT_PDF_FEE,
+      recipient: "TitoPay Revenue Wallet",
+      metadata: {
+        documentId: document.id,
+        documentNumber: document.number,
+        documentKind: document.kind,
+        pdfFee: DOCUMENT_PDF_FEE
+      }
+    }
+  });
+  document.pdfFeePaid = true;
+  document.pdfFeeReference = result.transaction && (result.transaction.reference || result.transaction.id) || result.reference || `PDF-${Date.now()}`;
+  document.pdfPaidAt = new Date().toISOString();
+  saveBusinessDocumentDraft(document);
+  closeModal();
+  downloadBusinessDocumentPdf(document);
+  showToast("PDF fee processed. Document downloaded.");
+  await refreshData();
+}
+
+function openReceiveModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Receive Money</p><h2>Generate TitoPay QR</h2><p class="lead">Create a secure QR code for receiving payments.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="receive">
+      <div class="field"><label>QR label</label><input name="label" value="TitoPay payment"></div>
+      <div class="field"><label>Fixed amount (optional)</label><input name="amount" inputmode="decimal"></div>
+      <button class="btn primary" type="submit">${icon("qr")} Generate receive QR</button>
+    </form>
+  `);
+}
+
+function openTipModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Tip</p><h2>Generate Tip QR</h2><p class="lead">Create a TitoPay Tip QR, share it, and track tips in transaction history.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="receive">
+      <div class="field"><label>QR label</label><input name="label" value="TitoPay tip"></div>
+      <div class="field"><label>Suggested amount (optional)</label><input name="amount" inputmode="decimal"></div>
+      <button class="btn primary" type="submit">${icon("tip")} Generate Tip QR</button>
+    </form>
+    <div class="auth-actions">
+      <button class="btn secondary" data-action="export-csv">${icon("download")} Tip CSV</button>
+      <button class="btn secondary" data-action="export-pdf">${icon("download")} Tip statement</button>
+    </div>
+  `);
+}
+
+function openLearnModal() {
+  const personal = ["Budgeting", "Saving", "Emergency Funds", "Debt Management", "Credit Scores", "Fraud Prevention", "Digital Wallet Safety", "Airtime & Data Planning", "Electricity Tokens", "Payment Requests", "Bill Split Etiquette", "Stokvel Basics", "Investing Basics", "Insurance Basics", "Financial Planning"];
+  const business = ["Cash Flow Management", "Pricing Strategies", "Invoicing", "Quotes & Proforma", "VAT Basics", "Tax Basics", "Business Banking", "Inventory Management", "Customer Retention", "Merchant QR Payments", "Payout Planning", "Record Keeping", "Fraud Prevention for Business", "Business Funding", "Growth Strategies", "Compliance"];
+  const lessons = state.accountType === "business" ? business : personal;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Learn</p><h2>${state.accountType === "business" ? "Business Education" : "Personal Money Education"}</h2><p class="lead">Practical TitoPay learning for safer, smarter money decisions.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${lessons.map((lesson) => `<article class="activity-item"><span class="icon-bubble">${icon("learn")}</span><div><p><strong>${esc(lesson)}</strong></p><small>${esc(lessonSummary(lesson))}</small><small class="guide-list">${esc(lessonGuide(lesson))}</small></div></article>`).join("")}
+    </section>
+  `);
+}
+
+function lessonSummary(lesson) {
+  const summaries = {
+    Budgeting: "Plan monthly income, essentials, savings and discretionary spending.",
+    Saving: "Build consistent savings habits from small, repeatable actions.",
+    "Emergency Funds": "Prepare for unexpected expenses without disrupting your wallet.",
+    "Debt Management": "Understand repayments, fees and safer borrowing decisions.",
+    "Credit Scores": "Learn what lenders review and how payment behaviour matters.",
+    "Fraud Prevention": "Spot scams, protect OTPs and report suspicious activity quickly.",
+    "Digital Wallet Safety": "Use PINs, device security and wallet lock controls wisely.",
+    "Airtime & Data Planning": "Buy bundles with a plan and avoid overspending on emergency top-ups.",
+    "Electricity Tokens": "Understand prepaid purchases, token storage and meter reference checks.",
+    "Payment Requests": "Request money clearly with dates, references and status tracking.",
+    "Bill Split Etiquette": "Split shared costs fairly and make every participant's share clear.",
+    "Stokvel Basics": "Learn contribution cycles, member trust and transparent group records.",
+    "Investing Basics": "Understand risk, time horizon and why quick-return promises are dangerous.",
+    "Insurance Basics": "Know what cover, premiums, excess and exclusions mean before committing.",
+    "Financial Planning": "Set goals, review progress and keep money decisions intentional.",
+    "Cash Flow Management": "Track money in and out so your business can operate smoothly.",
+    "Pricing Strategies": "Price products with costs, margins and customer value in mind.",
+    Invoicing: "Create clear customer documents with payment terms and traceable references.",
+    "Quotes & Proforma": "Use quotes and proforma invoices to confirm pricing before delivery.",
+    "VAT Basics": "Understand VAT awareness, customer invoices and record preparation.",
+    "Tax Basics": "Keep useful records so filing and professional advice become easier.",
+    "Business Banking": "Separate business funds, settlements and payout records.",
+    "Inventory Management": "Keep stock levels healthy and avoid tying up too much cash.",
+    "Customer Retention": "Improve repeat purchases with service, trust and clear follow-up.",
+    "Merchant QR Payments": "Accept payments faster with clear references and receipt discipline.",
+    "Payout Planning": "Plan settlement timing, supplier payments and cash reserves.",
+    "Record Keeping": "Keep invoices, receipts and exports organized for decisions and compliance.",
+    "Fraud Prevention for Business": "Protect staff access, payment links and customer data.",
+    "Business Funding": "Prepare cash-flow records before applying for working capital.",
+    "Growth Strategies": "Use payment and customer data to understand demand and scale carefully.",
+    Compliance: "Understand FICA, data care and responsible financial operations."
+  };
+  return summaries[lesson] || "A practical TitoPay guide for everyday financial confidence.";
+}
+
+function lessonGuide(lesson) {
+  const guides = {
+    Budgeting: "Guides: needs vs wants, 50/30/20 planning, weekly wallet review.",
+    Saving: "Guides: savings goals, debit-order discipline, avoiding impulse spending.",
+    "Emergency Funds": "Guides: starter fund, three-month target, safe access rules.",
+    "Debt Management": "Guides: repayment priority, fee awareness, avoiding debt traps.",
+    "Credit Scores": "Guides: payment history, credit usage, application readiness.",
+    "Fraud Prevention": "Guides: OTP safety, phishing signs, reporting suspicious activity.",
+    "Digital Wallet Safety": "Guides: wallet lock, strong PINs, device sessions and support escalation.",
+    "Airtime & Data Planning": "Guides: network choice, bundle expiry, monthly usage and family top-ups.",
+    "Electricity Tokens": "Guides: meter checks, token storage, purchase references and support evidence.",
+    "Payment Requests": "Guides: recipient details, due dates, QR requests and payment tracking.",
+    "Bill Split Etiquette": "Guides: equal splits, custom shares, reminders and proof of payment.",
+    "Stokvel Basics": "Guides: member roles, contribution order, payout cycles and records.",
+    "Investing Basics": "Guides: risk, time horizon, diversification and realistic returns.",
+    "Insurance Basics": "Guides: cover types, premiums, excess and claim readiness.",
+    "Financial Planning": "Guides: short-term goals, annual reviews, debt plans and savings milestones.",
+    "Cash Flow Management": "Guides: daily takings, supplier timing, payout planning.",
+    "Pricing Strategies": "Guides: cost price, markup, profit margin, discounts and break-even thinking.",
+    Invoicing: "Guides: line items, VAT, payment terms and professional follow-up.",
+    "Quotes & Proforma": "Guides: quote validity, deposits, customer approval and delivery notes.",
+    "VAT Basics": "Guides: VAT registration awareness, records and customer invoices.",
+    "Tax Basics": "Guides: expense records, filing preparation and SARS discipline.",
+    "Business Banking": "Guides: separating funds, settlements and audit trails.",
+    "Inventory Management": "Guides: reorder levels, shrinkage, slow movers and margins.",
+    "Customer Retention": "Guides: service recovery, loyalty, follow-up and repeat purchase patterns.",
+    "Merchant QR Payments": "Guides: static QR, dynamic QR, references, refunds and receipts.",
+    "Payout Planning": "Guides: settlement timing, beneficiary checks and cash reserve rules.",
+    "Record Keeping": "Guides: PDF receipts, CSV exports, invoice folders and audit trails.",
+    "Fraud Prevention for Business": "Guides: staff roles, suspicious payments, device access and reporting.",
+    "Business Funding": "Guides: working capital, repayment planning and readiness.",
+    "Growth Strategies": "Guides: top products, repeat customers, campaign tracking and expansion timing.",
+    Compliance: "Guides: FICA, record keeping, receipts and customer data care."
+  };
+  return guides[lesson] || "Guides: practical steps, common mistakes and TitoPay workflow tips.";
+}
+
+function openStockvelModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Stokvel</p><h2>Rotating contribution group</h2><p class="lead">Create and manage a revolving stokvel where members contribute on schedule and receive payouts by round.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid stable-service-form stockvel-flow" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="stockvel">
+      <input type="hidden" name="stockvelType" value="Rotating contribution group">
+      <div class="field"><label>Stokvel name</label><input name="recipient" placeholder="e.g. Family Rotation, Business Round, School Fees Group" required></div>
+      <div class="field"><label>Group purpose</label><textarea name="description" placeholder="Describe the rotating contribution purpose and member rules"></textarea></div>
+      <div class="field"><label>Contribution cadence</label><select name="cadence"><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select></div>
+      <div class="field"><label>Contribution amount (ZAR)</label><input name="amount" inputmode="decimal" required></div>
+      <div class="field"><label>Start date</label><input name="startDate" type="date"></div>
+      <div class="field"><label>Next contribution date</label><input name="nextContributionDate" type="date"></div>
+      <div class="field"><label>Round length</label><select name="roundLength"><option>One payout per contribution cycle</option><option>Two payouts per month</option><option>Custom rotation agreed by group organisers</option></select></div>
+      <div class="field"><label>Maximum members</label><input name="memberLimit" inputmode="numeric" placeholder="e.g. 12"></div>
+      ${recipientAutoMethodField("memberMethod", "Member lookup method")}
+      <div class="field"><label>Members to invite</label><textarea name="members" placeholder="@username, cellphone or email per line" required></textarea></div>
+      <div class="field">
+        <label>Rotating payout order</label>
+        <textarea name="payoutOrder" placeholder="1. You&#10;2. @membername&#10;3. +27 cellphone or email"></textarea>
+        <small class="field-hint">The order determines who receives each round. Leave blank to use the member invite order.</small>
+      </div>
+      <section class="payout-order-card stockvel-rotation-card" aria-label="Rotating stockvel controls">
+        <div><strong>1</strong><span>Members contribute the same amount for each cycle.</span></div>
+        <div><strong>2</strong><span>The scheduled member receives the round payout.</span></div>
+        <div><strong>3</strong><span>The payout order rotates until every member has received.</span></div>
+      </section>
+      <div class="field"><label>Contribution tracking</label><select name="tracking"><option>Track paid, pending and missed contributions</option><option>Track paid contributions only</option><option>Manual organiser confirmation</option></select></div>
+      <div class="field"><label>Reminder schedule</label><select name="reminders"><option>3 days before and on due date</option><option>1 day before and on due date</option><option>On due date only</option><option>Manual reminders only</option></select></div>
+      <div class="field"><label>Group controls</label><select name="groupControls"><option>Organiser approval required for member changes</option><option>All members can invite</option><option>Creator controls payout order</option></select></div>
+      <button class="btn primary" type="submit">${icon("stockvel")} Create stokvel</button>
+    </form>
+    <section class="panel compact-panel">
+      <p class="eyebrow">Round dashboard</p>
+      <div class="stats-grid">
+        <div class="stat"><strong>0</strong><span>Contributions paid</span></div>
+        <div class="stat"><strong>0</strong><span>Pending this round</span></div>
+        <div class="stat"><strong>Ready</strong><span>Payout schedule</span></div>
+      </div>
+    </section>
+    <section class="panel compact-panel">
+      <p class="eyebrow">Group management</p>
+      <div class="payout-order-card">
+        <div><strong>${icon("contacts")}</strong><span>Add, remove and verify members before the first round starts.</span></div>
+        <div><strong>${icon("list")}</strong><span>Review contribution dates, payout recipient and round status.</span></div>
+        <div><strong>${icon("send")}</strong><span>Send reminders for upcoming and missed contributions.</span></div>
+      </div>
+    </section>
+    <div class="auth-actions">
+      <button class="btn secondary" data-action="export-csv">${icon("download")} Contribution CSV</button>
+      <button class="btn secondary" data-action="export-pdf">${icon("download")} Stokvel statement</button>
+    </div>
+    <section class="empty-state compact-state">${icon("chat")}<strong>Stokvel group chat</strong><p>Message members about contributions, payout order and reminders.</p><button class="btn secondary" type="button" data-action="open-stockvel-chat">${icon("chat")} Open group chat</button></section>
+  `);
+}
+
+function openQrPayModal(existing = {}) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">QR Pay</p><h2>Pay a TitoPay QR</h2><p class="lead">Scan a TitoPay QR code or enter the QR ID manually.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="qr-pay">
+      <div class="field"><label>QR ID</label><input name="qrId" value="${esc(existing.qrId || "")}" required></div>
+      <div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" value="${esc(existing.amount || "")}"></div>
+      <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan QR with camera</button>
+      <div id="qr-scanner-output" class="empty-state hidden"></div>
+      <button class="btn primary" type="submit">${icon("scan")} Review QR Payment</button>
+    </form>
+  `);
+}
+
+async function startQrScanner() {
+  const output = document.querySelector("#qr-scanner-output");
+  const input = document.querySelector('form[data-form="qr-pay"] input[name="qrId"]') || document.querySelector(".modal-card input[name='recipient']");
+  if (!output || !input) return;
+  output.classList.remove("hidden");
+  output.innerHTML = `${icon("scan")}<strong>Starting camera</strong><p>Allow camera access to scan a TitoPay QR code.</p>`;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    output.innerHTML = `${icon("shield")}<strong>Camera unavailable</strong><p>This browser does not expose camera scanning. Enter the QR ID manually.</p>`;
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    const video = document.createElement("video");
+    video.playsInline = true;
+    video.muted = true;
+    video.srcObject = stream;
+    output.innerHTML = "";
+    output.appendChild(video);
+    await video.play();
+
+    const deadline = Date.now() + 20000;
+    let detector = null;
+    let canvas = null;
+    let context = null;
+    if ("BarcodeDetector" in window) {
+      detector = new BarcodeDetector({ formats: ["qr_code"] });
+    } else if (typeof window.jsQR === "function") {
+      canvas = document.createElement("canvas");
+      context = canvas.getContext("2d", { willReadFrequently: true });
+    } else {
+      output.innerHTML = `${icon("shield")}<strong>Scanner unavailable</strong><p>QR scanning support is not available. Enter the QR ID manually.</p>`;
+      return;
+    }
+    while (Date.now() < deadline && document.body.contains(video)) {
+      const value = detector ? await detectQrWithBarcodeDetector(detector, video) : detectQrWithJsQr(video, canvas, context);
+      if (value) {
+        input.value = extractQrId(value);
+        output.innerHTML = `${icon("shield")}<strong>QR captured</strong><p>Review the QR ID and amount, then pay.</p>`;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, detector ? 350 : 160));
+    }
+    if (!input.value) {
+      output.innerHTML = `${icon("scan")}<strong>No QR detected</strong><p>Try again or enter the QR ID manually.</p>`;
+    }
+  } catch (error) {
+    output.innerHTML = `${icon("shield")}<strong>Camera permission needed</strong><p>${esc(error.message || "Allow camera access or enter the QR ID manually.")}</p>`;
+  } finally {
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+  }
+}
+
+async function detectQrWithBarcodeDetector(detector, video) {
+  const codes = await detector.detect(video);
+  return codes[0] ? codes[0].rawValue || "" : "";
+}
+
+function detectQrWithJsQr(video, canvas, context) {
+  if (!canvas || !context || !video.videoWidth || !video.videoHeight || typeof window.jsQR !== "function") return "";
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+  return code ? code.data || "" : "";
+}
+
+function extractQrId(value) {
+  try {
+    const url = new URL(value);
+    return url.searchParams.get("qrId") || url.searchParams.get("qr") || value;
+  } catch (error) {
+    return value;
+  }
+}
+
+function receiptStorageKey() {
+  const user = state.user || {};
+  const identity = user.id || user.email || user.username || "guest";
+  return `${TITOPAY_RECEIPTS_KEY}:${state.accountType}:${identity}`;
+}
+
+function titoPayReceipts() {
+  return readJson(receiptStorageKey()) || [];
+}
+
+function saveTitoPayReceipts(receipts) {
+  writeJson(receiptStorageKey(), receipts.slice(0, 250));
+}
+
+function saveTitoPayReceipt(receipt) {
+  const receipts = titoPayReceipts();
+  const id = receipt.id || `receipt-${Date.now()}`;
+  const normalized = Object.assign({ id, createdAt: new Date().toISOString(), status: "PAID" }, receipt, { id });
+  const existingIndex = receipts.findIndex((item) => item.id === id || item.transactionId === normalized.transactionId);
+  if (existingIndex >= 0) receipts[existingIndex] = Object.assign({}, receipts[existingIndex], normalized);
+  else receipts.unshift(normalized);
+  saveTitoPayReceipts(receipts);
+  return normalized;
+}
+
+function currentMerchantId() {
+  const user = state.user || {};
+  return user.businessId || user.business_id || user.merchantId || user.merchant_id || user.walletId || user.wallet_id || user.id || "TitoPay Merchant";
+}
+
+function currentCustomerName() {
+  const user = state.user || {};
+  return user.fullName || user.full_name || user.name || user.username || "TitoPay Customer";
+}
+
+function defaultMerchantSaleState() {
+  return {
+    amountDigits: "",
+    note: {
+      customerName: "",
+      description: "",
+      reference: ""
+    },
+    qr: null,
+    receipt: null,
+    status: "entry",
+    generated: false,
+    generating: false,
+    expiresAt: null,
+    countdownTimer: null,
+    pollTimer: null
+  };
+}
+
+function merchantSaleAmount() {
+  const digits = state.merchantSale && state.merchantSale.amountDigits || "";
+  return Number(digits || 0);
+}
+
+function merchantSaleAmountText() {
+  return money(merchantSaleAmount());
+}
+
+function openMerchantSaleModal(existing = null) {
+  state.merchantSale = existing || defaultMerchantSaleState();
+  renderMerchantSaleModal();
+}
+
+function setMerchantPosModalClass() {
+  const card = document.querySelector(".modal-card");
+  if (card) card.classList.add("merchant-pos-card");
+}
+
+function renderMerchantSaleModal() {
+  const sale = state.merchantSale || defaultMerchantSaleState();
+  const amount = merchantSaleAmount();
+  const hasNote = Boolean(sale.note.customerName || sale.note.description || sale.note.reference);
+  openModal(`
+    <section class="merchant-sale-screen" aria-label="Make a Sale">
+      <header class="merchant-sale-header">
+        <button class="icon-btn" type="button" data-close aria-label="Close">${icon("x")}</button>
+        <div>
+          <p class="eyebrow">Merchant POS</p>
+          <h2>Make a Sale</h2>
+        </div>
+        <span class="merchant-sale-lock">${icon("shield")}</span>
+      </header>
+      <section class="merchant-sale-amount" aria-live="polite">
+        <span>Amount</span>
+        <strong>${merchantSaleAmountText()}</strong>
+      </section>
+      <section class="merchant-sale-note-card ${hasNote ? "has-note" : ""}">
+        <button class="btn secondary" type="button" data-action="merchant-add-sale-note">${icon("list")} ${hasNote ? "Edit Note" : "Add Note"}</button>
+        ${hasNote ? `<p>${esc([sale.note.customerName, sale.note.description, sale.note.reference].filter(Boolean).join(" · "))}</p>` : `<p>Customer name, description and reference are optional.</p>`}
+      </section>
+      <section class="merchant-keypad" aria-label="Sale amount keypad">
+        ${["1", "2", "3", "4", "5", "6", "7", "8", "9", "backspace", "0"].map((key) => `
+          <button type="button" data-pos-key="${key}" aria-label="${key === "backspace" ? "Delete digit" : `Enter ${key}`}">${key === "backspace" ? icon("arrow-left") : key}</button>
+        `).join("")}
+      </section>
+      <button class="btn primary merchant-generate-btn" type="button" data-action="merchant-generate-qr" ${amount > 0 && !sale.generating ? "" : "disabled"}>
+        ${sale.generating ? `${icon("refresh")} Generating...` : `${icon("qr")} Generate QR`}
+      </button>
+    </section>
+  `);
+  setMerchantPosModalClass();
+}
+
+function updateMerchantSaleAmount(key) {
+  const sale = state.merchantSale || defaultMerchantSaleState();
+  if (sale.generated || sale.generating) return;
+  if (key === "backspace") sale.amountDigits = String(sale.amountDigits || "").slice(0, -1);
+  else if (/^\d$/.test(key)) {
+    const next = String(sale.amountDigits || "").replace(/^0+/, "") + key;
+    sale.amountDigits = next.slice(0, 7);
+  }
+  state.merchantSale = sale;
+  renderMerchantSaleModal();
+}
+
+function openMerchantSaleNoteModal() {
+  const sale = state.merchantSale || defaultMerchantSaleState();
+  const note = sale.note || {};
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Sale Note</p><h2>Add sale details</h2><p class="lead">Optional details appear on the merchant receipt.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="merchant-sale-note">
+      <div class="field"><label>Customer name</label><input name="customerName" value="${esc(note.customerName || "")}" autocomplete="name"></div>
+      <div class="field"><label>Description</label><textarea name="description" placeholder="What is this sale for?">${esc(note.description || "")}</textarea></div>
+      <div class="field"><label>Invoice/reference number</label><input name="reference" value="${esc(note.reference || "")}" placeholder="Optional"></div>
+      <button class="btn primary" type="submit">${icon("shield")} Save Note</button>
+    </form>
+  `);
+}
+
+function saveMerchantSaleNote(data) {
+  const sale = state.merchantSale || defaultMerchantSaleState();
+  sale.note = {
+    customerName: String(data.customerName || "").trim(),
+    description: String(data.description || "").trim(),
+    reference: String(data.reference || "").trim()
+  };
+  state.merchantSale = sale;
+  renderMerchantSaleModal();
+}
+
+async function generateMerchantSaleQr() {
+  const sale = state.merchantSale || defaultMerchantSaleState();
+  if (sale.generated || sale.generating) return;
+  const amount = merchantSaleAmount();
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a sale amount greater than R0.00.");
+  sale.generating = true;
+  state.merchantSale = sale;
+  renderMerchantSaleModal();
+  try {
+    const result = await api("/v1/qr/generate-dynamic", {
+      method: "POST",
+      body: {
+        label: sale.note.description || `TitoPay sale at ${businessProfileName()}`,
+        codeType: "dynamic",
+        amount
+      }
+    });
+    const qr = result.qr || {};
+    sale.qr = qr;
+    sale.generated = true;
+    sale.generating = false;
+    sale.status = "waiting";
+    sale.expiresAt = Date.now() + 5 * 60 * 1000;
+    state.merchantSale = sale;
+    renderMerchantQrWaitingScreen();
+    startMerchantSaleCountdown();
+    startMerchantSalePaymentPolling();
+  } catch (error) {
+    sale.generating = false;
+    state.merchantSale = sale;
+    renderMerchantSaleModal();
+    throw new Error("Unable to generate QR. Please try again.");
+  }
+}
+
+function merchantSaleReference() {
+  const sale = state.merchantSale || {};
+  const qr = sale.qr || {};
+  return sale.note?.reference || qr.reference || qr.id || `SALE-${Date.now()}`;
+}
+
+function renderMerchantQrWaitingScreen() {
+  const sale = state.merchantSale || defaultMerchantSaleState();
+  const qr = sale.qr || {};
+  const qrImage = qr.imageDataUrl || qr.image_url || "";
+  const reference = merchantSaleReference();
+  openModal(`
+    <section class="merchant-sale-screen merchant-qr-screen" aria-label="QR payment waiting">
+      <header class="merchant-sale-header">
+        <button class="icon-btn" type="button" data-action="merchant-cancel-sale" aria-label="Cancel sale">${icon("x")}</button>
+        <div><p class="eyebrow">Dynamic QR</p><h2>Make a Sale</h2></div>
+        <span class="merchant-sale-lock">${icon("shield")}</span>
+      </header>
+      <section class="merchant-qr-summary">
+        <strong>${esc(businessProfileName())}</strong>
+        <span>${merchantSaleAmountText()}</span>
+        <small>Reference ${esc(reference)}</small>
+      </section>
+      <div class="qr-frame merchant-dynamic-qr" data-qr-card>
+        ${qrImage ? `<img src="${esc(qrImage)}" alt="Dynamic TitoPay payment QR code">` : `<div class="empty-state compact-state">${icon("qr")}<strong>QR generated</strong><p>Use the reference below if the image is unavailable.</p></div>`}
+        <input class="qr-copy-value" value="${esc(qr.deepLink || qr.url || qr.paymentUrl || qr.id || reference)}" readonly aria-label="TitoPay dynamic QR link or reference">
+      </div>
+      <section class="merchant-waiting-panel">
+        <span class="payment-pulse" aria-hidden="true"></span>
+        <strong>Waiting for payment...</strong>
+        <small data-sale-countdown>05:00</small>
+      </section>
+      <button class="btn secondary" type="button" data-action="merchant-cancel-sale">${icon("x")} Cancel Sale</button>
+    </section>
+  `);
+  setMerchantPosModalClass();
+}
+
+function startMerchantSaleCountdown() {
+  stopMerchantSaleTimers({ keepStatus: true });
+  const tick = () => {
+    const sale = state.merchantSale;
+    if (!sale || sale.status !== "waiting") return;
+    const remaining = Math.max(0, sale.expiresAt - Date.now());
+    const seconds = Math.ceil(remaining / 1000);
+    const target = document.querySelector("[data-sale-countdown]");
+    if (target) target.textContent = `${leftPad(String(Math.floor(seconds / 60)), 2, "0")}:${leftPad(String(seconds % 60), 2, "0")}`;
+    if (remaining <= 0) expireMerchantSale();
+  };
+  tick();
+  state.merchantSale.countdownTimer = setInterval(tick, 1000);
+}
+
+function stopMerchantSaleTimers(options = {}) {
+  const sale = state.merchantSale;
+  if (!sale) return;
+  if (sale.countdownTimer) clearInterval(sale.countdownTimer);
+  if (sale.pollTimer) clearInterval(sale.pollTimer);
+  sale.countdownTimer = null;
+  sale.pollTimer = null;
+  if (!options.keepStatus && sale.status === "waiting") sale.status = "cancelled";
+}
+
+function cancelMerchantSale() {
+  stopMerchantSaleTimers();
+  showToast("Sale cancelled.");
+  closeModal();
+}
+
+function expireMerchantSale() {
+  stopMerchantSaleTimers({ keepStatus: true });
+  if (state.merchantSale) state.merchantSale.status = "expired";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Sale expired</p><h2>QR code expired</h2><p class="lead">This payment QR has expired. Start a new sale to generate a fresh QR.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="empty-state compact-state">${icon("qr")}<strong>Unable to complete sale</strong><p>No payment was received before the 5-minute timer ended.</p></section>
+    <button class="btn primary" type="button" data-action="merchant-make-sale">${icon("store")} New Sale</button>
+  `);
+}
+
+function startMerchantSalePaymentPolling() {
+  const sale = state.merchantSale;
+  if (!sale) return;
+  const poll = async () => {
+    if (!state.merchantSale || state.merchantSale.status !== "waiting") return;
+    try {
+      await refreshData();
+      const transaction = findMerchantSaleTransaction(state.merchantSale);
+      if (transaction) completeMerchantSale(transaction);
+    } catch (error) {
+      // Polling must never interrupt the QR screen; user sees expiry/cancel states.
+    }
+  };
+  poll();
+  sale.pollTimer = setInterval(poll, 2500);
+}
+
+function findMerchantSaleTransaction(sale) {
+  const qr = sale.qr || {};
+  const referenceTokens = [sale.note?.reference, qr.reference, qr.id, qr.qrId, qr.paymentReference]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+  const amount = merchantSaleAmount();
+  return (state.transactions || []).find((item) => {
+    const text = [item.reference, item.id, item.qrId, item.qr_id, item.description, item.service_name, item.serviceCode, item.service_code]
+      .filter(Boolean)
+      .map((value) => String(value).toLowerCase());
+    const amountMatches = Math.abs(Number(item.amount || item.total || 0) - amount) < 0.01;
+    const status = String(item.status || "").toLowerCase();
+    const direction = String(item.direction || "credit").toLowerCase();
+    const tokenMatches = referenceTokens.length && referenceTokens.some((token) => text.some((value) => value.includes(token)));
+    return amountMatches && direction !== "debit" && !["failed", "cancelled", "expired", "reversed"].includes(status) && (tokenMatches || status === "paid" || status === "completed" || status === "processed");
+  });
+}
+
+function completeMerchantSale(transaction) {
+  const sale = state.merchantSale || defaultMerchantSaleState();
+  stopMerchantSaleTimers({ keepStatus: true });
+  sale.status = "paid";
+  const receipt = buildMerchantReceipt(sale, transaction);
+  sale.receipt = saveTitoPayReceipt(receipt);
+  state.merchantSale = sale;
+  addInAppNotification({
+    id: `merchant-sale-${sale.receipt.id}`,
+    title: "Payment received",
+    body: `${merchantSaleAmountText()} paid by QR. Receipt ${sale.receipt.reference}.`,
+    category: "receipt",
+    metadata: { receiptId: sale.receipt.id }
+  });
+  renderMerchantSaleSuccess(sale.receipt);
+}
+
+function buildMerchantReceipt(sale, transaction = {}) {
+  const amount = merchantSaleAmount();
+  const fee = Number(transaction.fee || transaction.fees || 0);
+  const paidAt = transaction.created_at || transaction.createdAt || transaction.paidAt || new Date().toISOString();
+  return {
+    id: `receipt-${transaction.id || sale.qr?.id || Date.now()}`,
+    accountType: state.accountType,
+    merchantName: businessProfileName(),
+    merchantId: currentMerchantId(),
+    customerName: sale.note?.customerName || transaction.customerName || transaction.customer_name || "",
+    description: sale.note?.description || "",
+    reference: merchantSaleReference(),
+    transactionId: transaction.id || transaction.transactionId || transaction.transaction_id || sale.qr?.id || "",
+    date: new Date(paidAt).toISOString(),
+    paymentMethod: "QR Payment",
+    amount,
+    fees: fee,
+    netAmount: Math.max(0, amount - fee),
+    status: "PAID",
+    receiptUrl: `https://app.titopay.co.za/#receipt-${encodeURIComponent(transaction.id || sale.qr?.id || Date.now())}`
+  };
+}
+
+function renderMerchantSaleSuccess(receipt) {
+  openModal(`
+    <section class="merchant-sale-screen merchant-success-screen" aria-label="Payment successful">
+      <div class="success-animation" aria-hidden="true">${icon("check-circle")}</div>
+      <p class="eyebrow">Payment received</p>
+      <h2>Payment Successful</h2>
+      <section class="activity-list">
+        ${settingsRow("Amount", money(receipt.amount), "wallet")}
+        ${settingsRow("Merchant", receipt.merchantName, "store")}
+        ${settingsRow("Reference", receipt.reference, "list")}
+        ${settingsRow("Transaction ID", receipt.transactionId || "Recorded", "shield")}
+        ${settingsRow("Payment Time", new Date(receipt.date).toLocaleString("en-ZA"), "clock")}
+      </section>
+      <div class="merchant-success-actions">
+        <button class="btn secondary" type="button" data-action="merchant-sale-done">${icon("check-circle")} Done</button>
+        <button class="btn primary" type="button" data-receipt-open="${esc(receipt.id)}">${icon("ticket")} View Receipt</button>
+      </div>
+    </section>
+  `);
+  setMerchantPosModalClass();
+}
+
+function receiptRows(receipt) {
+  const paidAt = new Date(receipt.date || receipt.createdAt || Date.now());
+  return [
+    ["Merchant Name", receipt.merchantName],
+    ["Merchant ID", receipt.merchantId],
+    ...(receipt.customerName ? [["Customer Name", receipt.customerName]] : []),
+    ["Reference", receipt.reference],
+    ["Transaction ID", receipt.transactionId || "Recorded"],
+    ["Date", paidAt.toLocaleDateString("en-ZA")],
+    ["Time", paidAt.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })],
+    ["Payment Method", receipt.paymentMethod || "QR Payment"],
+    ["Amount", money(receipt.amount)],
+    ["Fees", money(receipt.fees || 0)],
+    ["Net Amount", money(receipt.netAmount ?? (Number(receipt.amount || 0) - Number(receipt.fees || 0)))],
+    ["Payment Status", receipt.status || "PAID"]
+  ];
+}
+
+function receiptHtml(receipt) {
+  return `
+    <section class="receipt-card">
+      <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="receipt-logo">
+      <h2>Payment Receipt</h2>
+      <dl>
+        ${receiptRows(receipt).map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value || "-")}</dd></div>`).join("")}
+      </dl>
+    </section>
+  `;
+}
+
+function openReceiptModal(receiptId) {
+  const receipt = titoPayReceipts().find((item) => item.id === receiptId || item.transactionId === receiptId);
+  if (!receipt) {
+    showToast("Receipt not found.", "error");
+    return;
+  }
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Wallet Receipt</p><h2>Receipt</h2><p class="lead">Secure TitoPay payment record.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${receiptHtml(receipt)}
+    <div class="receipt-actions">
+      <button class="btn secondary" type="button" data-close>${icon("check-circle")} Done</button>
+      <button class="btn primary" type="button" data-receipt-share="${esc(receipt.id)}">${icon("share")} Share Receipt</button>
+    </div>
+  `);
+}
+
+function receiptShareText(receipt) {
+  return [
+    "TitoPay Payment Receipt",
+    `Merchant: ${receipt.merchantName}`,
+    receipt.customerName ? `Customer: ${receipt.customerName}` : "",
+    `Reference: ${receipt.reference}`,
+    `Transaction ID: ${receipt.transactionId || "Recorded"}`,
+    `Amount: ${money(receipt.amount)}`,
+    `Status: ${receipt.status || "PAID"}`
+  ].filter(Boolean).join("\n");
+}
+
+async function shareReceipt(receiptId) {
+  const receipt = titoPayReceipts().find((item) => item.id === receiptId);
+  if (!receipt) throw new Error("Receipt not found.");
+  const text = receiptShareText(receipt);
+  const url = receipt.receiptUrl || "https://app.titopay.co.za";
+  if (navigator.share) {
+    await navigator.share({ title: "TitoPay Receipt", text, url });
+    showToast("Receipt shared.");
+    return;
+  }
+  await copyTextValue(`${text}\n${url}`);
+  showToast("Receipt copied.");
+}
+
+function filteredReceipts() {
+  const filters = state.receiptFilters || {};
+  const query = String(filters.search || "").toLowerCase();
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfWeek = new Date(startOfDay);
+  startOfWeek.setDate(startOfWeek.getDate() - ((startOfWeek.getDay() + 6) % 7));
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const minDate = filters.range === "today" ? startOfDay : filters.range === "week" ? startOfWeek : filters.range === "month" ? startOfMonth : null;
+  return titoPayReceipts().filter((receipt) => {
+    const haystack = [receipt.merchantName, receipt.customerName, receipt.reference, receipt.transactionId, receipt.status].join(" ").toLowerCase();
+    const date = new Date(receipt.date || receipt.createdAt || Date.now());
+    const merchantMatches = !filters.merchant || receipt.merchantName === filters.merchant;
+    return (!query || haystack.includes(query)) && (!minDate || date >= minDate) && merchantMatches;
+  });
+}
+
+function receiptListItems(receipts) {
+  if (!receipts.length) return `<section class="empty-state compact-state">${icon("ticket")}<strong>No receipts yet</strong><p>Receipts will appear after QR payments are completed.</p></section>`;
+  return `<section class="receipt-list">${receipts.map((receipt) => `
+    <button class="receipt-list-item" type="button" data-receipt-open="${esc(receipt.id)}">
+      <span>${icon("ticket")}</span>
+      <strong>${esc(receipt.merchantName || "TitoPay Merchant")}</strong>
+      <small>${esc(receipt.customerName || receipt.reference || "QR Payment")} · ${esc(new Date(receipt.date || receipt.createdAt).toLocaleString("en-ZA"))}</small>
+      <b>${money(receipt.amount)}</b>
+      <em>${esc(receipt.status || "PAID")}</em>
+    </button>
+  `).join("")}</section>`;
+}
+
+function walletReceiptsList() {
+  return receiptListItems(filteredReceipts());
+}
+
+function walletReceiptsPreview(receipts) {
+  return `
+    <section class="panel receipts-preview">
+      <div class="section-head compact-head"><div><h2>Receipts</h2><p>Recent QR payment receipts saved in TitoPay.</p></div></div>
+      ${receiptListItems(receipts.slice(0, 3))}
+    </section>
+  `;
+}
+
+function merchantSalesHistoryPreview(receipts) {
+  const sales = receipts.filter((item) => item.accountType === "business").slice(0, 4);
+  return `
+    <section class="panel receipts-preview">
+      <div class="section-head compact-head"><div><h2>Sales History</h2><p>Recent merchant QR sales.</p></div></div>
+      ${receiptListItems(sales)}
+    </section>
+  `;
+}
+
+function openWalletReceiptsModal() {
+  const merchants = Array.from(new Set(titoPayReceipts().map((item) => item.merchantName).filter(Boolean)));
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Wallet</p><h2>Receipts</h2><p class="lead">Search, filter, open and share TitoPay receipts.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="receipt-filters">
+      <div class="field"><label>Search receipts</label><input data-receipt-filter="search" value="${esc(state.receiptFilters.search || "")}" placeholder="Merchant, customer, reference"></div>
+      <div class="field"><label>Filter</label><select data-receipt-filter="range">
+        ${[["all", "All"], ["today", "Today"], ["week", "This Week"], ["month", "This Month"]].map(([value, label]) => `<option value="${value}" ${state.receiptFilters.range === value ? "selected" : ""}>${label}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>Merchant</label><select data-receipt-filter="merchant">
+        <option value="">All merchants</option>
+        ${merchants.map((merchant) => `<option value="${esc(merchant)}" ${state.receiptFilters.merchant === merchant ? "selected" : ""}>${esc(merchant)}</option>`).join("")}
+      </select></div>
+    </section>
+    <div data-receipts-host>${walletReceiptsList()}</div>
+  `);
+}
+
+function openSalesHistoryModal() {
+  const previousRange = state.receiptFilters.range;
+  state.receiptFilters.range = previousRange || "all";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Merchant</p><h2>Sales History</h2><p class="lead">Tap a sale to open its receipt.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${receiptListItems(titoPayReceipts().filter((item) => item.accountType === "business"))}
+  `);
+}
+
+function openInfoModal(title, message) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay</p><h2>${esc(title)}</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <p class="lead">${esc(message)}</p>
+  `);
+}
+
+function securityTipCard() {
+  return `
+    <article class="security-tip-card">
+      <h3>Stay safe</h3>
+      <p>${esc(SECURITY_TIP_TEXT)}</p>
+    </article>
+  `;
+}
+
+function showSecurityTipModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security Tip</p><h2>Stay safe with TitoPay</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${securityTipCard()}
+    <button class="btn primary" type="button" data-close>I understand</button>
+  `);
+}
+
+async function processTransaction(data) {
+  if (isWalletLocked()) throw new Error("Wallet locked. Unlock your wallet before making outgoing transactions.");
+  const amount = Number(data.amount);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount.");
+  const serviceCode = String(data.serviceCode || "");
+  const groupRecipientService = serviceCode === "bill_split" || serviceCode === "stockvel";
+  const normalizedParticipants = data.participants ? normalizeRecipientList(data.participants, data.participantMethod || "auto") : [];
+  const normalizedMembers = data.members ? normalizeRecipientList(data.members, data.memberMethod || "auto") : [];
+  let recipient = data.recipient || data.reference || data.serviceCode;
+  if (data.recipient && !groupRecipientService && (REGISTERED_RECIPIENT_SERVICES.has(serviceCode) || data.recipientMethod)) {
+    recipient = normalizeRecipientInput(data.recipient, data.recipientMethod || "auto");
+    data.recipient = recipient;
+  }
+  if (normalizedParticipants.length) data.participants = normalizedParticipants.join("\n");
+  if (normalizedMembers.length) data.members = normalizedMembers.join("\n");
+  data.normalizedParticipants = normalizedParticipants;
+  data.normalizedMembers = normalizedMembers;
+  const verifiedRecipients = await verifyRegisteredRecipientBeforeTransaction(Object.assign({}, data, { recipient }));
+  if (!verifiedRecipients) return;
+  const preview = await api("/v1/transactions/fee-preview", {
+    method: "POST",
+    body: { service: data.serviceCode, amount, recipient, participants: normalizedParticipants, members: normalizedMembers }
+  });
+  state.pendingTransactionReview = {
+    idempotencyKey: createClientTransactionKey(data.serviceCode),
+    data: Object.assign({}, data),
+    amount,
+    recipient,
+    normalizedParticipants,
+    normalizedMembers,
+    preview: preview.preview || preview,
+    verifiedRecipients,
+    createdAt: new Date().toISOString()
+  };
+  openTransactionReviewModal(state.pendingTransactionReview);
+}
+
+async function verifyRegisteredRecipientBeforeTransaction(data) {
+  const serviceCode = String(data.serviceCode || "");
+  const recipients = [];
+  const verified = [];
+  const groupRecipientService = serviceCode === "bill_split" || serviceCode === "stockvel";
+  if (data.recipient && !groupRecipientService && (REGISTERED_RECIPIENT_SERVICES.has(serviceCode) || data.recipientMethod)) recipients.push(data.recipient);
+  (data.normalizedParticipants || []).forEach((recipient) => recipients.push(recipient));
+  (data.normalizedMembers || []).forEach((recipient) => recipients.push(recipient));
+  if (!recipients.length) return verified;
+  const seen = {};
+  for (let index = 0; index < recipients.length; index += 1) {
+    const recipient = recipients[index];
+    if (seen[recipient]) continue;
+    seen[recipient] = true;
+    const result = await lookupRegisteredRecipient(recipient, serviceCode);
+    if (result.registered) {
+      verified.push({ identifier: recipient, user: result.user || {}, source: result.source || "lookup" });
+      continue;
+    }
+    openInviteRecipientModal(recipient, result.invite || {});
+    return false;
+  }
+  return verified;
+}
+
+function transactionConfirmationText(preview, verifiedRecipients, data, recipient) {
+  const lines = [
+    `Amount: ${money(preview.amount)}`,
+    `TitoPay fee: ${money(preview.fee)}`,
+    `Total: ${money(preview.total)}`
+  ];
+  if (verifiedRecipients && verifiedRecipients.length) {
+    lines.push("", "Verified TitoPay recipient:");
+    verifiedRecipients.slice(0, 4).forEach((item, index) => {
+      const user = item.user || {};
+      const name = user.displayName || user.display_name || user.fullName || user.full_name || user.name || user.businessName || user.business_name || "TitoPay user";
+      const username = user.username || user.userName || user.user_name || "";
+      const contact = user.email || user.phone || user.mobile || user.msisdn || item.identifier || "";
+      lines.push(`${index + 1}. ${name}${username ? ` (${displayUsername(username)})` : ""}${contact ? ` - ${contact}` : ""}`);
+    });
+    if (verifiedRecipients.length > 4) lines.push(`+ ${verifiedRecipients.length - 4} more verified recipients`);
+    lines.push("", "Confirm this is the correct TitoPay user before paying.");
+  } else if (recipient) {
+    lines.push("", `Recipient / reference: ${recipient}`);
+    if (data.integrationFlow && String(data.integrationFlow).includes("payout")) lines.push("Confirm this beneficiary before processing the payout.");
+  }
+  lines.push("", "Process this transaction?");
+  return lines.join("\n");
+}
+
+function createClientTransactionKey(serviceCode = "transaction") {
+  const prefix = String(serviceCode || "transaction").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 32) || "transaction";
+  const random = new Uint32Array(2);
+  if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(random);
+  const entropy = random[0] ? `${random[0].toString(36)}${random[1].toString(36)}` : Math.random().toString(36).slice(2);
+  return `${prefix}-${Date.now().toString(36)}-${entropy}`;
+}
+
+function primaryWallet() {
+  return (state.wallets || []).find((wallet) => String(wallet.kind || wallet.wallet_type || "").toLowerCase() === state.accountType)
+    || (state.wallets || [])[0]
+    || {};
+}
+
+function serviceLabelForCode(serviceCode) {
+  const service = state.services.find((item) => item.serviceCode === serviceCode || item.id === serviceCode || item.action === serviceCode);
+  return service?.label || String(serviceCode || "TitoPay transaction").replace(/[_-]+/g, " ");
+}
+
+function reviewRecipientName(item) {
+  const user = item?.user || {};
+  return user.displayName || user.display_name || user.fullName || user.full_name || user.name || user.businessName || user.business_name || "Verified TitoPay user";
+}
+
+function reviewRecipientUsername(item) {
+  const user = item?.user || {};
+  return user.username || user.userName || user.user_name ? displayUsername(user.username || user.userName || user.user_name) : "";
+}
+
+function maskContact(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.includes("@")) {
+    const [name, domain] = raw.split("@");
+    return `${name.slice(0, 2)}•••@${domain || ""}`;
+  }
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length >= 8) return `${raw.startsWith("+") ? "+" : ""}${digits.slice(0, 4)}••••${digits.slice(-2)}`;
+  return raw.length > 4 ? `${raw.slice(0, 2)}•••${raw.slice(-2)}` : raw;
+}
+
+function recipientVerificationCards(verifiedRecipients = [], fallbackRecipient = "") {
+  if (!verifiedRecipients.length) {
+    return `<section class="panel soft-panel">
+      ${settingsRow("Destination", fallbackRecipient || "TitoPay", "user")}
+      ${settingsRow("Verification", fallbackRecipient ? "Review this destination carefully before confirming." : "No external recipient required.", "shield")}
+    </section>`;
+  }
+  return `<section class="recipient-review-list">
+    ${verifiedRecipients.map((item) => {
+      const user = item.user || {};
+      const username = reviewRecipientUsername(item);
+      const contact = maskContact(user.phone || user.mobile || user.msisdn || user.email || item.identifier || "");
+      const accountType = user.accountType || user.account_type || user.walletType || user.wallet_type || "TitoPay account";
+      return `<article class="recipient-review-card">
+        <span class="chat-contact-avatar">${esc(reviewRecipientName(item).slice(0, 1).toUpperCase())}</span>
+        <div>
+          <strong>${esc(reviewRecipientName(item))}</strong>
+          <small>${esc([username, contact].filter(Boolean).join(" · "))}</small>
+          <small>${esc(accountType)} · Verified TitoPay user</small>
+        </div>
+        <span class="verified-pill">${icon("shield")} Verified</span>
+      </article>`;
+    }).join("")}
+  </section>`;
+}
+
+function transactionReviewRows(context) {
+  const preview = context.preview || {};
+  const data = context.data || {};
+  const wallet = primaryWallet();
+  const amount = Number(preview.amount ?? context.amount ?? 0);
+  const fee = Number(preview.fee ?? 0);
+  const total = Number(preview.total ?? amount + fee);
+  const recipientAmount = Number(preview.recipientAmount ?? preview.netAmount ?? amount);
+  const rows = [
+    ["Service", serviceLabelForCode(data.serviceCode), "grid"],
+    ["Amount", money(amount), "wallet"],
+    ["TitoPay fee", money(fee), "shield"],
+    ["Third-party fee", money(Number(preview.thirdPartyFee || data.thirdPartyFee || 0)), "bank"],
+    ["Total debit", money(total), "withdraw"],
+    ["Recipient amount", money(recipientAmount), "send"],
+    ["Source wallet", displayWalletId(wallet) !== "Generating" ? `Wallet ${displayWalletId(wallet)}` : `${state.accountType === "business" ? "Business" : "Personal"} wallet`, "wallet"],
+    ["Date and time", formatDate(context.createdAt), "list"],
+    ["Reference / note", data.reference || data.note || data.description || "Not supplied", "tag"],
+    ["Expected processing", data.integrationFlow ? "Provider processing may be pending until confirmed." : "Usually instant after confirmation.", "refresh"],
+    ["Refundability", data.serviceCode === "qr_payment" || data.serviceCode === "wallet_transfer" ? "Subject to TitoPay support review." : "Depends on provider response and service rules.", "list"]
+  ];
+  return rows.map(([label, value, iconName]) => settingsRow(label, value, iconName)).join("");
+}
+
+function openTransactionReviewModal(context) {
+  const preview = context.preview || {};
+  const total = Number(preview.total ?? context.amount ?? 0);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Transaction Review</p><h2>Review before confirming</h2><p class="lead">No funds leave your wallet until you press Confirm.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${recipientVerificationCards(context.verifiedRecipients || [], context.recipient)}
+    <section class="activity-list review-transaction-list">
+      ${transactionReviewRows(context)}
+    </section>
+    <section class="integration-note" aria-label="Transaction safety">
+      <p>${icon("shield")} <span><strong>Safety:</strong> Confirm is protected against multiple taps. If this fails, TitoPay will state whether any funds were deducted.</span></p>
+      <p>${icon("wallet")} <span><strong>Total debit:</strong> ${esc(money(total))}</span></p>
+    </section>
+    <div class="auth-actions transaction-review-actions">
+      <button class="btn primary" type="button" data-action="confirm-transaction-review">${icon("check-circle")} Confirm</button>
+      <button class="btn secondary" type="button" data-action="edit-transaction-review">${icon("list")} Edit</button>
+      <button class="btn secondary" type="button" data-action="cancel-transaction-review">${icon("x")} Cancel</button>
+    </div>
+  `);
+}
+
+function renderTransactionEditFields(context) {
+  const data = context.data || {};
+  const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "documentAction"];
+  const labels = {
+    recipient: "Recipient, account or reference",
+    amount: "Amount (ZAR)",
+    reference: "Reference",
+    note: "Note",
+    description: "Description",
+    participants: "Participants",
+    members: "Members",
+    provider: "Provider",
+    fundingMethod: "Funding method",
+    withdrawalSpeed: "Withdrawal speed",
+    payoutSpeed: "Payout speed",
+    dueDate: "Due date",
+    requestType: "Request type",
+    recurringFrequency: "Recurring frequency",
+    recurringEndDate: "Recurring end date"
+  };
+  const keys = Object.keys(data).filter((key) => !key.startsWith("normalized"));
+  const hiddenFields = hidden
+    .filter((key) => data[key] != null && data[key] !== "")
+    .map((key) => `<input type="hidden" name="${esc(key)}" value="${esc(data[key])}">`)
+    .join("");
+  const visibleFields = keys
+    .filter((key) => !hidden.includes(key))
+    .map((key) => {
+      const label = labels[key] || key.replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase());
+      const value = data[key] ?? "";
+      if (/note|description|participants|members|message/i.test(key)) {
+        return `<div class="field"><label>${esc(label)}</label><textarea name="${esc(key)}">${esc(value)}</textarea></div>`;
+      }
+      const type = /date/i.test(key) ? "date" : "text";
+      const inputmode = key === "amount" ? " inputmode=\"decimal\"" : "";
+      return `<div class="field"><label>${esc(label)}</label><input name="${esc(key)}" type="${type}"${inputmode} value="${esc(value)}" ${key === "recipient" || key === "amount" ? "required" : ""}></div>`;
+    })
+    .join("");
+  return `${hiddenFields}${visibleFields || `<input type="hidden" name="serviceCode" value="${esc(data.serviceCode)}"><div class="field"><label>Amount (ZAR)</label><input name="amount" inputmode="decimal" value="${esc(context.amount)}" required></div>`}`;
+}
+
+function openTransactionEditModal(context) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Edit Transaction</p><h2>${esc(serviceLabelForCode(context.data?.serviceCode))}</h2><p class="lead">Update details, then preview fees again before confirming.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid stable-service-form" data-form="transaction">
+      ${renderTransactionEditFields(context)}
+      <button class="btn primary" type="submit">${icon("refresh")} Preview again</button>
+      <button class="btn secondary" type="button" data-action="cancel-transaction-review">${icon("x")} Cancel</button>
+    </form>
+  `);
+}
+
+async function confirmReviewedTransaction() {
+  const context = state.pendingTransactionReview;
+  if (!context) {
+    showToast("Transaction review expired. Please start again.", "error");
+    closeModal();
+    return;
+  }
+  const button = document.querySelector('[data-action="confirm-transaction-review"]');
+  setButtonBusy(button, true);
+  try {
+    const data = context.data || {};
+    const metadata = Object.assign({}, data);
+    delete metadata.serviceCode;
+    delete metadata.amount;
+    delete metadata.recipient;
+    delete metadata.normalizedParticipants;
+    delete metadata.normalizedMembers;
+    if (context.normalizedParticipants?.length) metadata.participants = context.normalizedParticipants;
+    if (context.normalizedMembers?.length) metadata.members = context.normalizedMembers;
+    metadata.clientIdempotencyKey = context.idempotencyKey;
+    const result = await api("/v1/transactions", {
+      method: "POST",
+      headers: { "Idempotency-Key": context.idempotencyKey },
+      body: {
+        serviceCode: data.serviceCode,
+        amount: context.amount,
+        recipient: context.recipient,
+        participants: context.normalizedParticipants,
+        members: context.normalizedMembers,
+        idempotencyKey: context.idempotencyKey,
+        metadata
+      }
+    });
+    await refreshData();
+    state.pendingTransactionReview = null;
+    if (data.documentAction) {
+      const document = buildBusinessDocumentDraft(data, result.transaction || result, context.preview);
+      saveBusinessDocumentDraft(document);
+      openBusinessDocumentSavedModal(document, context.preview);
+      return;
+    }
+    openSuccessModal(result.transaction || result, context.preview, data.serviceCode, context.recipient);
+  } catch (error) {
+    showToast(`${friendlyFormError(error, "transaction")} No funds were deducted unless TitoPay shows this transaction in Activity.`, "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+function openInviteRecipientModal(identifier, invite = {}) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Recipient not registered</p><h2>Invite to TitoPay</h2><p class="lead">This recipient is not yet registered on TitoPay.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="panel soft-panel">
+      ${settingsRow("Recipient", identifier, "user")}
+      ${settingsRow("Invite link", invite.url || "https://app.titopay.co.za", "send")}
+      <p class="muted">Share the TitoPay invite link by SMS, email or WhatsApp. Payments can be completed once the recipient has registered.</p>
+    </section>
+    <div class="auth-actions">
+      <button class="btn primary" data-invite-share="${esc(identifier)}" data-invite-message="${esc(invite.message || "")}" data-invite-url="${esc(invite.url || "https://app.titopay.co.za")}">${icon("send")} Share Invite</button>
+      <button class="btn secondary" data-close>Close</button>
+    </div>
+  `);
+}
+
+async function shareInvite(identifier, message, url) {
+  let inviteId = "";
+  try {
+    const result = await api("/v1/wallets/invites", {
+      method: "POST",
+      body: { identifier, message, channels: ["sms", "email", "whatsapp"] }
+    });
+    inviteId = result.invite && result.invite.id || result.id || "";
+    message = result.invite && result.invite.message || result.message || message;
+    url = result.invite && result.invite.url || result.url || url;
+  } catch (error) {
+    // Sharing the public invite URL is still useful when the API is temporarily unreachable.
+  }
+  const text = message || `Join TitoPay to receive this payment. Register at ${url}.`;
+  if (navigator.share) {
+    await navigator.share({ title: "Join TitoPay", text, url });
+  } else {
+    await navigator.clipboard.writeText(`${text} ${url}`);
+    showToast("Invite copied.");
+  }
+  if (inviteId) {
+    await api(`/v1/wallets/invites/${inviteId}/events`, {
+      method: "POST",
+      body: { eventType: "sent", metadata: { channel: navigator.share ? "native_share" : "clipboard" } }
+    }).catch(() => {});
+  }
+}
+
+function openSuccessModal(transaction, preview, serviceCode, recipient) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Success</p><h2>Transaction recorded</h2><p class="lead">TitoPay has recorded this ${esc(serviceCode)} transaction.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${settingsRow("Reference", transaction && (transaction.reference || transaction.id) || `TP-${Date.now()}`, "list")}
+      ${settingsRow("Recipient", recipient || "TitoPay", "user")}
+      ${settingsRow("Amount", money(preview && preview.amount || transaction && transaction.amount), "wallet")}
+      ${settingsRow("Total debited", money(preview && preview.total || transaction && transaction.total), "shield")}
+      ${settingsRow("Status", transaction && transaction.status || "processed", "sparkles")}
+    </section>
+  `);
+}
+
+async function generateQr(data) {
+  const body = {
+    label: data.label || "TitoPay payment",
+    codeType: data.amount ? "dynamic" : "static",
+    amount: data.amount ? Number(data.amount) : null
+  };
+  const result = await api(data.amount ? "/v1/qr/generate-dynamic" : "/v1/qr/generate-static", {
+    method: "POST",
+    body
+  });
+  const qr = result.qr || {};
+  const qrImage = qr.imageDataUrl || qr.image_url || "";
+  const qrReference = qr.reference || qr.id || "TitoPay QR";
+  const qrCopyValue = qr.deepLink || qr.url || qr.paymentUrl || qrImage || `TitoPay QR reference: ${qrReference}`;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Receive Money</p><h2>Your TitoPay QR</h2><p class="lead">Reference ${esc(qrReference)}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="qr-frame" data-qr-card>
+      <img src="${esc(qrImage)}" alt="TitoPay QR code">
+      <input class="qr-copy-value" value="${esc(qrCopyValue)}" readonly aria-label="TitoPay QR link or reference">
+      <div class="qr-actions">
+        <button class="btn secondary" type="button" data-download-qr="${esc(qrImage)}" data-qr-filename="${esc(qrReference)}">${icon("download")} Download</button>
+        <button class="btn secondary" type="button" data-copy-qr="${esc(qrCopyValue)}">${icon("copy")} Copy</button>
+        <button class="btn primary" type="button" data-share-qr="${esc(qrImage)}" data-share-value="${esc(qrCopyValue)}" data-qr-id="${esc(qr.id || "")}" data-qr-reference="${esc(qrReference)}">${icon("send")} Share</button>
+      </div>
+    </div>
+  `);
+}
+
+async function processQrPayment(data) {
+  if (isWalletLocked()) throw new Error("Wallet locked. Unlock your wallet before making QR payments.");
+  if (!data.qrId) throw new Error("Enter or scan a valid TitoPay QR code.");
+  const amount = Number(data.amount || 0);
+  if (data.amount && (!Number.isFinite(amount) || amount <= 0)) throw new Error("Enter a valid QR payment amount.");
+  const preview = data.amount
+    ? await api("/v1/transactions/fee-preview", {
+      method: "POST",
+      body: { service: "qr_payment", amount }
+    })
+    : { preview: { amount: 0, fee: 0.50, total: 0.50, serviceCode: "qr_payment", serviceName: "QR Payment" } };
+  state.pendingQrPaymentReview = {
+    idempotencyKey: createClientTransactionKey("qr-payment"),
+    data: Object.assign({}, data),
+    preview: preview.preview || preview,
+    createdAt: new Date().toISOString()
+  };
+  openQrPaymentReviewModal(state.pendingQrPaymentReview);
+}
+
+function openQrPaymentReviewModal(context) {
+  const preview = context.preview || {};
+  const amountText = Number(preview.amount || 0) > 0 ? money(preview.amount) : "Amount from QR";
+  const totalText = Number(preview.total || 0) > 0 ? money(preview.total) : "Confirmed by QR";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">QR Payment Review</p><h2>Confirm QR payment</h2><p class="lead">No funds leave your wallet until you press Confirm.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list review-transaction-list">
+      ${settingsRow("Service", "QR Payment", "qr")}
+      ${settingsRow("QR ID", context.data.qrId, "scan")}
+      ${settingsRow("Amount", amountText, "wallet")}
+      ${settingsRow("TitoPay QR fee", money(Number(preview.fee || 0.50)), "shield")}
+      ${settingsRow("Total debit", totalText, "withdraw")}
+      ${settingsRow("Source wallet", displayWalletId(primaryWallet()) !== "Generating" ? `Wallet ${displayWalletId(primaryWallet())}` : `${state.accountType === "business" ? "Business" : "Personal"} wallet`, "wallet")}
+      ${settingsRow("Date and time", formatDate(context.createdAt), "list")}
+    </section>
+    <section class="integration-note" aria-label="QR payment safety">
+      <p>${icon("shield")} <span><strong>Safety:</strong> TitoPay will reject invalid, expired or already-paid QR codes. If payment fails, check Activity before trying again.</span></p>
+      <p>${icon("qr")} <span><strong>Review:</strong> Confirm only if the QR code belongs to the merchant or user you intend to pay.</span></p>
+    </section>
+    <div class="auth-actions transaction-review-actions">
+      <button class="btn primary" type="button" data-action="confirm-qr-payment-review">${icon("check-circle")} Confirm</button>
+      <button class="btn secondary" type="button" data-action="edit-qr-payment-review">${icon("list")} Edit</button>
+      <button class="btn secondary" type="button" data-action="cancel-qr-payment-review">${icon("x")} Cancel</button>
+    </div>
+  `);
+}
+
+async function confirmReviewedQrPayment() {
+  const context = state.pendingQrPaymentReview;
+  if (!context) {
+    showToast("QR payment review expired. Please scan again.", "error");
+    closeModal();
+    return;
+  }
+  const button = document.querySelector('[data-action="confirm-qr-payment-review"]');
+  setButtonBusy(button, true);
+  let result;
+  try {
+    result = await api("/v1/qr/pay", {
+      method: "POST",
+      headers: { "Idempotency-Key": context.idempotencyKey },
+      body: {
+        qrId: context.data.qrId,
+        amount: context.data.amount ? Number(context.data.amount) : undefined,
+        idempotencyKey: context.idempotencyKey
+      }
+    });
+  } catch (error) {
+    showToast(`${friendlyFormError(error, "qr-pay")} No funds were deducted unless TitoPay shows this payment in Activity.`, "error");
+    setButtonBusy(button, false);
+    return;
+  }
+  closeModal();
+  await refreshData();
+  const transaction = result.transaction || result.payment || result;
+  const receipt = saveTitoPayReceipt({
+    id: `receipt-${transaction.id || transaction.transactionId || result.reference || data.qrId || Date.now()}`,
+    accountType: state.accountType,
+    merchantName: transaction.merchantName || transaction.merchant_name || transaction.merchant || "TitoPay Merchant",
+    merchantId: transaction.merchantId || transaction.merchant_id || data.qrId || "",
+    customerName: currentCustomerName(),
+    reference: result.reference || transaction.reference || data.qrId,
+    transactionId: transaction.id || transaction.transactionId || transaction.transaction_id || result.reference || "",
+    date: transaction.createdAt || transaction.created_at || transaction.paidAt || new Date().toISOString(),
+    paymentMethod: "QR Payment",
+    amount: Number(data.amount || transaction.amount || 0),
+    fees: Number(transaction.fee || transaction.fees || 0),
+    netAmount: Number(transaction.netAmount || transaction.net_amount || transaction.amount || data.amount || 0),
+    status: "PAID",
+    receiptUrl: `https://app.titopay.co.za/#receipt-${encodeURIComponent(transaction.id || result.reference || data.qrId || Date.now())}`
+  });
+  addInAppNotification({
+    id: `customer-qr-${receipt.id}`,
+    title: "QR payment successful",
+    body: `${money(receipt.amount)} paid by QR. Receipt ${receipt.reference}.`,
+    category: "receipt",
+    metadata: { receiptId: receipt.id }
+  });
+  showToast(`QR paid. Ref ${result.reference}`);
+  state.pendingQrPaymentReview = null;
+}
+
+function isWalletLocked() {
+  return Boolean(state.user && (state.user.profileLocked || state.user.profile_locked));
+}
+
+function canUseFinancialService(service = {}) {
+  if (service.status === "coming_soon") return true;
+  if (!isWalletLocked()) return true;
+  const allowed = new Set(["learn", "activity", "receive"]);
+  if (allowed.has(service.type) || allowed.has(service.action) || allowed.has(service.id)) return true;
+  showToast("Wallet locked. Unlock your wallet before making payments, transfers or purchases.", "error");
+  location.hash = "profile";
+  return false;
+}
+
+function openLandingMenu() {
+  const items = [
+    {
+      title: "About TitoPay",
+      icon: "home",
+      body: "TitoPay is a South African digital wallet for people and businesses. It helps you send and receive money, accept QR payments, buy everyday services, manage wallet activity and keep transactions in one secure app.",
+      href: "https://titopay.co.za/about"
+    },
+    {
+      title: "Why TitoPay?",
+      icon: "check-circle",
+      body: `Registration is Free
+Join TitoPay without paying a registration fee.
+
+Zero Monthly Wallet Fees
+Keep your wallet active without monthly maintenance fees.
+
+Free Wallet Transfers
+Send money between TitoPay wallets at no cost.`
+    },
+    {
+      title: "What You Can Do",
+      icon: "grid",
+      body: "Use TitoPay for wallet top ups, withdrawals, QR payments, payment requests, airtime, data, electricity, vouchers, bill payments, bill split, send gift, tip QR, stokvels, transaction history and statements."
+    },
+    {
+      title: "For Businesses",
+      icon: "store",
+      body: "Businesses can accept customer payments, generate QR codes, track transactions, request payouts, create invoices, quotes and proforma invoices, and access business learning tools."
+    },
+    {
+      title: "Fees & Transparency",
+      icon: "wallet",
+      body: "TitoPay shows applicable fees before a transaction is confirmed, so users can review the cost clearly before they act."
+    },
+    {
+      title: "Safety & Verification",
+      icon: "shield",
+      body: "TitoPay supports secure login, OTP verification, wallet lock, device and session controls, FICA document submission and transaction records. Never share your PIN, password or OTP.\n\nFor more: www.titopay.co.za.",
+      href: "https://www.titopay.co.za"
+    },
+    {
+      title: "Privacy Policy",
+      icon: "lock",
+      body: "TitoPay uses personal information to provide wallet, verification, security, transaction and support services. Your information should only be used for legitimate TitoPay account activity.",
+      href: "https://titopay.co.za/legal#legal-privacy"
+    },
+    {
+      title: "Terms & Conditions",
+      icon: "list",
+      body: "TitoPay users should understand wallet limits, service availability, transaction confirmations, fees, account security responsibilities and acceptable platform use.",
+      href: "https://titopay.co.za/legal#legal-terms"
+    },
+    {
+      title: "Contact Us",
+      icon: "chat",
+      body: "For fast help, sign in and use the free TitoPay Customer Care chatbot. If you cannot log in, WhatsApp us on 0726671183 or email support@titopay.co.za.",
+      href: "mailto:support@titopay.co.za",
+      cta: "Email support"
+    }
+  ];
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Menu</p><h2>TitoPay</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${securityTipCard()}
+    <section class="activity-list">
+      ${items.map((item) => `<article class="activity-item"><span class="icon-bubble">${icon(item.icon)}</span><div><p><strong>${esc(item.title)}</strong></p><small>${esc(item.body).replace(/\n/g, "<br>")}</small>${item.href ? `<a class="text-link" href="${esc(item.href)}" target="_blank" rel="noopener">${esc(item.cta || "Read more")}</a>` : ""}</div></article>`).join("")}
+    </section>
+    <footer class="landing-menu-footer" aria-label="TitoPay company information">
+      <p><strong>TitoPay (Pty) Ltd.</strong></p>
+      <p>Reg No: 2026/399418/07</p>
+      <p>Version 1.0.0</p>
+      <p>© 2026 TitoPay (Pty) Ltd.<br>All Rights Reserved.</p>
+    </footer>
+  `);
+}
+
+function openProfilePhotoModal() {
+  const isBusiness = state.accountType === "business";
+  const mediaType = isBusiness ? "businessLogo" : "profilePhoto";
+  const title = isBusiness ? "Business logo" : "Profile photo";
+  const lead = isBusiness ? "Upload a clear square business logo. TitoPay will centre-crop and resize it for your business profile." : "Choose a clear face photo. TitoPay will centre-crop and resize it into a secure profile avatar.";
+  const note = isBusiness ? "For best results, use a square logo with enough padding around the mark or business name." : "For best results, use a square or portrait image. Keep your face centred inside the frame.";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Profile</p><h2>${esc(title)}</h2><p class="lead">${esc(lead)}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="profile-photo">
+      <div class="profile-photo-crop-layout ${isBusiness ? "is-business-logo" : "is-personal-photo"}">
+        <div class="profile-photo-cropper" data-profile-photo-cropper aria-label="${esc(title)} crop frame">
+          <div class="profile-photo-crop-placeholder" data-profile-photo-placeholder>
+            <span class="icon-bubble">${icon("upload")}</span>
+            <small>Select an image, then drag and zoom to frame it.</small>
+          </div>
+          <img data-profile-photo-crop-image alt="${esc(title)} crop source">
+          <span class="profile-photo-crop-grid" aria-hidden="true"></span>
+        </div>
+        <div class="profile-photo-final" aria-live="polite">
+          <small>Final preview</small>
+          <div class="profile-photo-preview" data-profile-photo-preview>
+            ${avatarContent(state.user, mediaType)}
+          </div>
+          <small>${isBusiness ? "Saved as a business logo" : "Saved as your profile photo"}</small>
+        </div>
+      </div>
+      <p class="form-note">${esc(note)}</p>
+      <div class="field"><label>${esc(title)}</label><input name="profilePhoto" type="file" accept="image/*" data-profile-photo-input required></div>
+      <div class="field"><label>Zoom</label><input name="zoom" type="range" min="1" max="4" step="0.01" value="1" data-profile-photo-zoom disabled></div>
+      <button class="btn primary" type="submit">${icon("upload")} Save ${isBusiness ? "logo" : "photo"}</button>
+    </form>
+  `);
+}
+
+async function openProfileDetailsModal() {
+  const user = state.user || {};
+  const isBusiness = state.accountType === "business";
+  let requests = [];
+  try {
+    const result = await api("/v1/auth/me/profile-change-requests");
+    requests = result.items || [];
+  } catch (error) {
+    requests = [];
+  }
+  const pending = requests.find((item) => ["pending", "in_review"].includes(item.status));
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Profile Details</p>
+        <h2>Request profile update</h2>
+        <p class="lead">Support reviews personal and business detail changes within 72 hours. Your current details stay active until approved.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${pending ? `<section class="panel"><h3>Approval pending</h3><p>Your profile update is already waiting for Support approval.</p><small>Due by ${esc(formatDate(pending.dueAt))}</small></section>` : `
+      <form class="form-grid" data-form="profile-details">
+        <div class="field"><label>Full name</label><input name="fullName" value="${esc(user.fullName || user.full_name || "")}" required></div>
+        <div class="field"><label>Username</label><input name="username" value="${esc(user.username || "")}" minlength="3" maxlength="32" required></div>
+        <div class="field"><label>Email</label><input name="email" type="email" value="${esc(user.email || "")}"></div>
+        <div class="field"><label>Cellphone</label><input name="phone" value="${esc(user.phone || "")}" placeholder="+27..." required></div>
+        ${isBusiness ? `<div class="field"><label>Business name</label><input name="businessName" value="${esc(businessProfileName())}" required></div>` : ""}
+        <button class="btn primary" type="submit">${icon("send")} Submit for approval</button>
+      </form>
+    `}
+    <section class="activity-list compact-list">
+      ${requests.length ? requests.slice(0, 5).map((item) => `
+        <article class="activity-item">
+          <span class="icon-bubble">${icon("user")}</span>
+          <div>
+            <p><strong>${esc(String(item.status || "pending").replace(/_/g, " "))}</strong></p>
+            <small>${esc(Object.keys(item.requestedChanges || {}).join(", ") || "Profile details")} · ${formatDate(item.createdAt)}</small>
+          </div>
+        </article>
+      `).join("") : `<article class="activity-item"><span class="icon-bubble">${icon("shield")}</span><div><p><strong>No profile update requests yet</strong></p><small>Submitted requests will appear here.</small></div></article>`}
+    </section>
+  `);
+}
+
+async function submitProfileDetails(data) {
+  const result = await api("/v1/auth/me/profile-change-requests", {
+    method: "POST",
+    body: {
+      fullName: data.fullName,
+      username: data.username,
+      email: data.email,
+      phone: data.phone,
+      businessName: data.businessName
+    }
+  });
+  closeModal();
+  showToast(result.message || "Profile update submitted for Support approval.");
+}
+
+function openProfileVerificationModal() {
+  const user = state.user || {};
+  const ficaStatus = ficaDisplayStatus(user.ficaStatus || user.fica_status);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Profile</p><h2>Profile & Verification</h2><p class="lead">Manage your TitoPay profile details and verification status.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="settings-list">
+      ${settingsRow("Profile updates", "Submit personal or business details for Support approval within 72 hours.", "user")}
+      ${settingsRow("FICA status", ficaStatus, "shield")}
+    </section>
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-action="profile-details">${icon("user")} Update details</button>
+      <button class="btn primary" type="button" data-action="fica-verification">${icon("shield")} FICA verification</button>
+    </section>
+  `);
+}
+
+function openAccountActivityModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Account</p><h2>Unread Messages</h2><p class="lead">Notifications live here together with support updates, chat alerts, devices and login history.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="settings-list">
+      ${settingsRow("Notifications", `${unreadNotificationCount()} unread in-app notification${unreadNotificationCount() === 1 ? "" : "s"}.`, "message-check")}
+      ${settingsRow("Device sessions", "View trusted or recently active devices.", "phone")}
+      ${settingsRow("Login history", "Review recent sign-ins and security events.", "list")}
+    </section>
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-action="notifications">${icon("bell")} Notifications</button>
+      <button class="btn secondary" type="button" data-action="device-management">${icon("phone")} Devices</button>
+      <button class="btn secondary" type="button" data-action="login-history">${icon("list")} Login history</button>
+      <button class="btn secondary" type="button" data-action="view-lock-history">${icon("lock")} Lock history</button>
+      <button class="btn primary" type="button" data-action="enable-browser-notifications">${icon("bell")} Enable alerts</button>
+    </section>
+  `);
+}
+
+function openPasswordResetFromProfile() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security</p><h2>Change PIN / Password</h2><p class="lead">For safety, TitoPay changes your PIN or password through SMS OTP verification.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="reset">
+      <div class="field"><label>Email, username or cellphone</label><input name="identifier" value="${esc(state.user && (state.user.email || state.user.username || state.user.phone) || "")}" required></div>
+      <button class="btn primary" type="submit">${icon("send")} Send OTP</button>
+    </form>
+  `);
+}
+
+async function openDeviceManagementModal() {
+  let items = [];
+  try {
+    const result = await api("/v1/security/devices");
+    items = result.items || [];
+  } catch (error) {
+    items = [{ deviceName: navigator.userAgent.slice(0, 72), status: "Current browser session", createdAt: new Date().toISOString() }];
+  }
+  openModal(`
+      <div class="modal-head">
+      <div><p class="eyebrow">Security</p><h2>Device sessions</h2><p class="lead">These are active or recently trusted devices linked to this TitoPay profile.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${items.length ? items.map((item) => `<article class="activity-item"><span class="icon-bubble">${icon("phone")}</span><div><p><strong>${esc(item.deviceName || item.device_name || "Web device")}</strong></p><small>${esc(item.status || "Active")} · ${formatDate(item.created_at || item.createdAt)}</small></div></article>`).join("") : `<article class="activity-item"><span class="icon-bubble">${icon("phone")}</span><div><p><strong>Current device</strong></p><small>This browser session is active now.</small></div></article>`}
+    </section>
+  `);
+}
+
+async function showLoginHistory() {
+  let items = [];
+  try {
+    const result = await api("/v1/security/logins");
+    items = result.items || [];
+  } catch (error) {
+    items = [{ action: "Current session", createdAt: new Date().toISOString(), status: "Active" }];
+  }
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security</p><h2>Login history</h2><p class="lead">This is the audit trail of past sign-ins and security activity.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${items.length ? items.map((item) => `<article class="activity-item"><span class="icon-bubble">${icon("shield")}</span><div><p><strong>${esc(item.action || item.event_type || "Login event")}</strong></p><small>${esc(item.status || (item.success === false ? "Failed" : "Successful"))} · ${formatDate(item.created_at || item.createdAt)}</small></div></article>`).join("") : `<article class="activity-item"><span class="icon-bubble">${icon("shield")}</span><div><p><strong>Current sign-in</strong></p><small>Login activity will appear here after the API records security events.</small></div></article>`}
+    </section>
+  `);
+}
+
+function openSupportModal() {
+  const categories = ["Account Access", "Payments", "Withdrawals", "Airtime & Data", "QR Payments", "FICA", "Business", "Technical Support", "General Enquiries"];
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Support</p><h2>Contact TitoPay</h2><p class="lead">support@titopay.co.za</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="support">
+      <div class="field"><label>Category</label><select name="category">${categories.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
+      <div class="field"><label>Message</label><textarea name="message" minlength="10" required placeholder="Describe the issue"></textarea></div>
+      <button class="btn primary" type="submit">${icon("send")} Submit support request</button>
+    </form>
+  `);
+}
+
+function openPwaReviewModal() {
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Help us improve</p>
+        <h2>We'd love your feedback</h2>
+        <p class="lead">Tell us what feels great, what feels confusing, or what you'd like to see improved as we prepare for our nationwide public launch.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="pwa-review">
+          <input type="hidden" name="appVersion" value="pwa-v134">
+      <div class="field">
+        <label>Rating</label>
+        <select name="rating" required>
+          <option value="">Select rating</option>
+          <option value="5">5 - Excellent</option>
+          <option value="4">4 - Good</option>
+          <option value="3">3 - Needs improvement</option>
+          <option value="2">2 - Difficult to use</option>
+          <option value="1">1 - Serious issue</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Area</label>
+        <select name="category" required>
+          <option value="general">General experience</option>
+          <option value="payments">Payments</option>
+          <option value="chat">TitoPay Chat</option>
+          <option value="support">Support</option>
+          <option value="performance">Speed and performance</option>
+          <option value="design">Design and usability</option>
+          <option value="security">Security and trust</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Your feedback</label>
+        <textarea name="message" minlength="8" maxlength="1200" required placeholder="Write your feedback here"></textarea>
+      </div>
+      <label class="switch-row">
+        <span><strong>Allow TitoPay to contact me about this feedback</strong><small>Your contact details are only shown to authorised Admin and Marketing users if enabled.</small></span>
+        <input type="checkbox" name="contactPermission" value="true">
+      </label>
+      <button class="btn primary" type="submit">${icon("sparkles")} Send feedback</button>
+    </form>
+  `);
+}
+
+function openFicaVerificationModal() {
+  const user = state.user || {};
+  const ficaStatus = ficaDisplayStatus(user.ficaStatus || user.fica_status);
+  const isBusiness = state.accountType === "business";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">FICA Verification</p><h2>Verify your TitoPay profile</h2><p class="lead">Submit your identity and address documents once. TitoPay will track the review as Not Started, Pending Review, Approved or Rejected.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list compact-list">
+      ${settingsRow("Current status", ficaStatus, "shield")}
+      ${settingsRow("Review process", "Most reviews are completed once documents are checked.", "list")}
+    </section>
+    <form class="form-grid" data-form="fica-upload">
+      <div class="field"><label>Document type</label><select name="documentType" required>
+        ${["South African ID", "Passport", "Permanent Resident Permit", "Refugee Documentation", "Asylum Documentation"].map((item) => `<option>${esc(item)}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>${isBusiness ? "Responsible person photo" : "Profile photo"}</label><input name="profilePhoto" type="file" accept="image/*"></div>
+      <div class="field"><label>ID or passport upload</label><input name="document" type="file" accept=".pdf,image/*" required></div>
+      <div class="field"><label>Proof of address</label><input name="proofOfAddress" type="file" accept=".pdf,image/*"></div>
+      <button class="btn primary" type="submit">${icon("upload")} Submit verification</button>
+    </form>
+  `);
+}
+
+async function lockWallet() {
+  const confirmed = confirm("Lock your TitoPay wallet now? Outgoing transactions, withdrawals, transfers and QR payments will be disabled.");
+  if (!confirmed) return;
+  const result = await api("/v1/security/wallet-lock", { method: "POST", body: {} });
+  state.user = Object.assign({}, state.user, result.user || {}, { profileLocked: true, profile_locked: true });
+  render();
+  showToast("Wallet locked.");
+}
+
+async function requestWalletUnlock() {
+  const result = await api("/v1/security/wallet-lock/unlock/request", { method: "POST", body: {} });
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Unlock Wallet</p><h2>OTP verification</h2><p class="lead">Enter the SMS OTP sent to your registered cellphone.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="wallet-unlock">
+      <input type="hidden" name="challengeId" value="${esc(result.challengeId)}">
+      <div class="field"><label>OTP code</label><input name="otp" aria-label="OTP code" inputmode="numeric" maxlength="6" required></div>
+      <button class="btn primary" type="submit">${icon("shield")} Unlock wallet</button>
+    </form>
+  `);
+}
+
+async function verifyWalletUnlock(data) {
+  const result = await api("/v1/security/wallet-lock/unlock/verify", {
+    method: "POST",
+    body: { challengeId: data.challengeId, otp: data.otp }
+  });
+  state.user = Object.assign({}, state.user, result.user || {}, { profileLocked: false, profile_locked: false });
+  closeModal();
+  render();
+  showToast("Wallet unlocked.");
+}
+
+async function showWalletLockHistory() {
+  const result = await api("/v1/security/wallet-lock/history");
+  const items = result.items || [];
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security</p><h2>Wallet lock history</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${items.length ? `<section class="activity-list">${items.map((item) => `<article class="activity-item"><span class="icon-bubble">${icon("lock")}</span><div><p><strong>${esc(item.action || item.event_type || "Wallet security event")}</strong></p><small>${formatDate(item.created_at || item.createdAt)}</small></div></article>`).join("")}</section>` : `<section class="empty-state">${icon("lock")}<strong>No lock events yet</strong><p>Wallet lock and unlock events will appear here.</p></section>`}
+  `);
+}
+
+async function submitFica(form) {
+  const data = new FormData(form);
+  const file = data.get("document");
+  if (!file || !file.name) throw new Error("Choose a document to upload.");
+  const profilePhoto = data.get("profilePhoto");
+  const proofOfAddress = data.get("proofOfAddress");
+  const result = await api("/v1/kyc/fica", {
+    method: "POST",
+    body: {
+      documentType: data.get("documentType"),
+      documentReference: file.name,
+      metadata: {
+        identityDocument: { name: file.name, size: file.size, type: file.type },
+        profilePhoto: profilePhoto && profilePhoto.name ? { name: profilePhoto.name, size: profilePhoto.size, type: profilePhoto.type } : null,
+        proofOfAddress: proofOfAddress && proofOfAddress.name ? { name: proofOfAddress.name, size: proofOfAddress.size, type: proofOfAddress.type } : null
+      }
+    }
+  });
+  state.user = Object.assign({}, state.user, { ficaStatus: result.ficaStatus || "pending_review", fica_status: result.ficaStatus || "pending_review" });
+  if (profilePhoto && profilePhoto.name && state.accountType !== "business") await saveProfilePhoto(profilePhoto, { renderAfter: false, notify: false, mediaType: "profilePhoto" });
+  await loadAccount();
+  render();
+  showToast("FICA document submitted.");
+}
+
+async function submitProfilePhoto(form) {
+  const data = new FormData(form);
+  const file = data.get("profilePhoto");
+  const croppedDataUrl = getCroppedProfilePhotoDataUrl();
+  if (croppedDataUrl) {
+    await saveProfilePhotoDataUrl(croppedDataUrl, { mediaType: activeMediaType() });
+    return;
+  }
+  await saveProfilePhoto(file);
+}
+
+async function saveProfilePhoto(file, options = {}) {
+  const { renderAfter = true, notify = true, mediaType = activeMediaType() } = options;
+  const isBusinessLogo = mediaType === "businessLogo";
+  if (!file || !file.name) throw new Error(`Choose a ${isBusinessLogo ? "business logo" : "profile photo"}.`);
+  if (!String(file.type || "").startsWith("image/")) throw new Error("Choose an image file.");
+  if (file.size > 12 * 1024 * 1024) throw new Error("Choose an image under 12MB.");
+  const dataUrl = await resizeProfilePhoto(file, { mediaType });
+  await saveProfilePhotoDataUrl(dataUrl, { renderAfter, notify, mediaType });
+}
+
+async function saveProfilePhotoDataUrl(dataUrl, options = {}) {
+  const { renderAfter = true, notify = true, mediaType = activeMediaType() } = options;
+  const isBusinessLogo = mediaType === "businessLogo";
+  if (!dataUrl || !String(dataUrl).startsWith("data:image/")) throw new Error("Crop the image before saving.");
+  await api("/v1/auth/me/photo", {
+    method: "PUT",
+    body: { mediaType, dataUrl }
+  });
+  try {
+    profilePhotoKeys(state.user, mediaType).forEach((key) => localStorage.setItem(key, dataUrl));
+  } catch (error) {
+    throw new Error("This image is too large to save on this device. Crop tighter or choose a smaller image.");
+  }
+  state.user = isBusinessLogo
+    ? Object.assign({}, state.user, { businessLogoUrl: dataUrl, business_logo_url: dataUrl, companyLogoUrl: dataUrl, company_logo_url: dataUrl })
+    : Object.assign({}, state.user, { profilePhotoUrl: dataUrl, profile_photo_url: dataUrl });
+  persistAccountMediaSession();
+  if (renderAfter) {
+    closeModal();
+    render();
+  }
+  if (notify) showToast(`${isBusinessLogo ? "Business logo" : "Profile photo"} updated.`);
+}
+
+async function prepareProfilePhotoCrop(input) {
+  const file = input.files && input.files[0];
+  if (!file || !String(file.type || "").startsWith("image/")) return;
+  if (file.size > 12 * 1024 * 1024) {
+    showToast("Choose an image under 12MB.", "error");
+    input.value = "";
+    return;
+  }
+  try {
+    const source = await readFileAsDataUrl(file);
+    const image = new Image();
+    image.onload = () => {
+      const cropper = document.querySelector("[data-profile-photo-cropper]");
+      if (!cropper) return;
+      const imageEl = cropper.querySelector("[data-profile-photo-crop-image]");
+      const zoom = document.querySelector("[data-profile-photo-zoom]");
+      const frameSize = cropper.clientWidth || 240;
+      const naturalWidth = image.naturalWidth || image.width || frameSize;
+      const naturalHeight = image.naturalHeight || image.height || frameSize;
+      const minScale = Math.max(frameSize / naturalWidth, frameSize / naturalHeight);
+      const defaultZoom = state.accountType === "business" ? 1 : 1.28;
+      state.profilePhotoCrop = {
+        source,
+        image,
+        naturalWidth,
+        naturalHeight,
+        frameSize,
+        minScale,
+        zoom: defaultZoom,
+        offsetX: 0,
+        offsetY: 0,
+        pointers: new Map(),
+        outputDataUrl: ""
+      };
+      if (imageEl) imageEl.src = source;
+      if (zoom) {
+        zoom.disabled = false;
+        zoom.value = String(defaultZoom);
+      }
+      attachProfilePhotoCropEvents(cropper);
+      renderProfilePhotoCrop();
+    };
+    image.onerror = () => showToast("Could not load the selected image.", "error");
+    image.src = source;
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+function attachProfilePhotoCropEvents(cropper) {
+  if (!cropper || cropper.dataset.cropEventsReady === "true") return;
+  cropper.dataset.cropEventsReady = "true";
+  cropper.addEventListener("pointerdown", (event) => {
+    if (!state.profilePhotoCrop) return;
+    event.preventDefault();
+    cropper.setPointerCapture && cropper.setPointerCapture(event.pointerId);
+    const crop = state.profilePhotoCrop;
+    crop.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (crop.pointers.size === 1) {
+      crop.dragStart = { x: event.clientX, y: event.clientY, offsetX: crop.offsetX, offsetY: crop.offsetY };
+    }
+    if (crop.pointers.size === 2) {
+      const points = Array.from(crop.pointers.values());
+      crop.pinchStartDistance = distanceBetweenPoints(points[0], points[1]);
+      crop.pinchStartZoom = crop.zoom;
+    }
+  });
+  cropper.addEventListener("pointermove", (event) => {
+    const crop = state.profilePhotoCrop;
+    if (!crop || !crop.pointers.has(event.pointerId)) return;
+    event.preventDefault();
+    crop.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (crop.pointers.size >= 2) {
+      const points = Array.from(crop.pointers.values()).slice(0, 2);
+      const startDistance = crop.pinchStartDistance || distanceBetweenPoints(points[0], points[1]);
+      const nextZoom = clamp((crop.pinchStartZoom || crop.zoom) * (distanceBetweenPoints(points[0], points[1]) / Math.max(1, startDistance)), 1, 4);
+      updateProfilePhotoCropZoom(nextZoom);
+      const zoomInput = document.querySelector("[data-profile-photo-zoom]");
+      if (zoomInput) zoomInput.value = String(nextZoom);
+      return;
+    }
+    if (crop.dragStart) {
+      crop.offsetX = crop.dragStart.offsetX + (event.clientX - crop.dragStart.x);
+      crop.offsetY = crop.dragStart.offsetY + (event.clientY - crop.dragStart.y);
+      renderProfilePhotoCrop();
+    }
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((eventName) => {
+    cropper.addEventListener(eventName, (event) => {
+      const crop = state.profilePhotoCrop;
+      if (!crop) return;
+      crop.pointers.delete(event.pointerId);
+      crop.dragStart = null;
+      if (crop.pointers.size < 2) {
+        crop.pinchStartDistance = 0;
+        crop.pinchStartZoom = crop.zoom;
+      }
+    });
+  });
+}
+
+function updateProfilePhotoCropZoom(zoom) {
+  if (!state.profilePhotoCrop) return;
+  state.profilePhotoCrop.zoom = clamp(Number(zoom) || 1, 1, 4);
+  renderProfilePhotoCrop();
+}
+
+function renderProfilePhotoCrop() {
+  const crop = state.profilePhotoCrop;
+  const cropper = document.querySelector("[data-profile-photo-cropper]");
+  if (!crop || !cropper) return;
+  crop.frameSize = cropper.clientWidth || crop.frameSize || 240;
+  crop.minScale = Math.max(crop.frameSize / crop.naturalWidth, crop.frameSize / crop.naturalHeight);
+  const scale = crop.minScale * crop.zoom;
+  const drawWidth = crop.naturalWidth * scale;
+  const drawHeight = crop.naturalHeight * scale;
+  const maxX = Math.max(0, (drawWidth - crop.frameSize) / 2);
+  const maxY = Math.max(0, (drawHeight - crop.frameSize) / 2);
+  crop.offsetX = clamp(crop.offsetX, -maxX, maxX);
+  crop.offsetY = clamp(crop.offsetY, -maxY, maxY);
+
+  const imageEl = cropper.querySelector("[data-profile-photo-crop-image]");
+  const placeholder = cropper.querySelector("[data-profile-photo-placeholder]");
+  if (placeholder) placeholder.classList.add("hidden");
+  if (imageEl) {
+    imageEl.style.width = `${drawWidth}px`;
+    imageEl.style.height = `${drawHeight}px`;
+    imageEl.style.transform = `translate(calc(-50% + ${crop.offsetX}px), calc(-50% + ${crop.offsetY}px))`;
+  }
+
+  const cropped = renderProfilePhotoCropDataUrl();
+  const preview = document.querySelector("[data-profile-photo-preview]");
+  crop.outputDataUrl = cropped;
+  if (preview && cropped) preview.innerHTML = `<img src="${esc(cropped)}" alt="Cropped ${state.accountType === "business" ? "business logo" : "profile photo"} preview">`;
+}
+
+function renderProfilePhotoCropDataUrl() {
+  const crop = state.profilePhotoCrop;
+  if (!crop || typeof document === "undefined") return "";
+  const canvas = document.createElement("canvas");
+  const size = 512;
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (!context) return "";
+  context.fillStyle = "#f8faff";
+  context.fillRect(0, 0, size, size);
+  const scale = crop.minScale * crop.zoom;
+  const frameToCanvas = size / Math.max(1, crop.frameSize);
+  const drawWidth = crop.naturalWidth * scale * frameToCanvas;
+  const drawHeight = crop.naturalHeight * scale * frameToCanvas;
+  const dx = (size - drawWidth) / 2 + crop.offsetX * frameToCanvas;
+  const dy = (size - drawHeight) / 2 + crop.offsetY * frameToCanvas;
+  context.drawImage(crop.image, dx, dy, drawWidth, drawHeight);
+  return canvas.toDataURL("image/jpeg", 0.9);
+}
+
+function getCroppedProfilePhotoDataUrl() {
+  if (!state.profilePhotoCrop) return "";
+  return state.profilePhotoCrop.outputDataUrl || renderProfilePhotoCropDataUrl();
+}
+
+function resetProfilePhotoCrop() {
+  state.profilePhotoCrop = null;
+}
+
+function distanceBetweenPoints(a, b) {
+  return Math.hypot((a.x || 0) - (b.x || 0), (a.y || 0) - (b.y || 0));
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+async function resizeProfilePhoto(file, options = {}) {
+  if (typeof document === "undefined") return readFileAsDataUrl(file);
+  const source = await readFileAsDataUrl(file);
+  const mediaType = options.mediaType || activeMediaType();
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      const size = 512;
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        resolve(source);
+        return;
+      }
+      const naturalWidth = image.naturalWidth || image.width;
+      const naturalHeight = image.naturalHeight || image.height;
+      const minSide = Math.min(naturalWidth, naturalHeight);
+      const cropSide = mediaType === "businessLogo" ? minSide : minSide * 0.78;
+      const sx = (naturalWidth - cropSide) / 2;
+      const sy = (naturalHeight - cropSide) / 2;
+      context.fillStyle = "#f8faff";
+      context.fillRect(0, 0, size, size);
+      context.drawImage(image, sx, sy, cropSide, cropSide, 0, 0, size, size);
+      resolve(canvas.toDataURL("image/jpeg", 0.88));
+    };
+    image.onerror = () => resolve(source);
+    image.src = source;
+  });
+}
+
+function profilePhotoKeys(user = state.user, mediaType = activeMediaType()) {
+  const prefix = mediaStoragePrefix(mediaType);
+  const keys = {};
+  [
+    profilePhotoKey(user, mediaType),
+    profilePhotoKey(Object.assign({}, user, { id: null }), mediaType),
+    profilePhotoKey(Object.assign({}, user, { id: null, email: null }), mediaType),
+    `${prefix}:${state.accountType || "guest"}`
+  ].forEach((key) => {
+    if (key) keys[key] = true;
+  });
+  return Object.keys(keys);
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Could not read the selected image."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function submitSupportRequest(data) {
+  if (!data.message || data.message.length < 10) throw new Error("Enter at least 10 characters for support.");
+  try {
+    await api("/v1/support/tickets", {
+      method: "POST",
+      body: { category: data.category, message: data.message }
+    });
+  } catch (error) {
+    // Support API may be deployed after the customer PWA; keep the user-facing request captured locally.
+    const tickets = readJson("titopay_support_requests") || [];
+    tickets.push({ category: data.category, message: data.message, createdAt: new Date().toISOString() });
+    localStorage.setItem("titopay_support_requests", JSON.stringify(tickets));
+  }
+  closeModal();
+  showToast("Support request submitted.");
+}
+
+async function submitPwaReview(data) {
+  const rating = Number(data.rating || 0);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new Error("Select a rating from 1 to 5.");
+  if (!data.message || String(data.message).trim().length < 8) throw new Error("Enter at least 8 characters of feedback.");
+  const review = {
+    id: `pwa-review-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    rating,
+    category: data.category || "general",
+    message: String(data.message || "").trim(),
+    contactPermission: Boolean(data.contactPermission),
+      appVersion: data.appVersion || "pwa-v134",
+    createdAt: new Date().toISOString()
+  };
+  let result = null;
+  try {
+    result = await sendPwaReview(review);
+  } catch (error) {
+    queuePwaReview(review);
+  }
+  closeModal();
+  showToast(result?.message || "Thank you. Your feedback was saved and will sync automatically.");
+}
+
+async function sendPwaReview(review) {
+  return api("/v1/support/reviews", {
+    method: "POST",
+    body: {
+      rating: review.rating,
+      category: review.category || "general",
+      message: String(review.message || "").trim(),
+      contactPermission: Boolean(review.contactPermission),
+      appVersion: review.appVersion || "pwa-v134"
+    }
+  });
+}
+
+function queuePwaReview(review) {
+  const queue = readJson(PWA_REVIEW_QUEUE_KEY) || [];
+  if (!queue.some((item) => item.id === review.id)) queue.unshift(review);
+  writeJson(PWA_REVIEW_QUEUE_KEY, queue.slice(0, 20));
+}
+
+async function syncPendingPwaReviews() {
+  if (!state.auth?.accessToken) return false;
+  const queue = readJson(PWA_REVIEW_QUEUE_KEY) || [];
+  if (!queue.length) return false;
+  const remaining = [];
+  let synced = 0;
+  for (const review of queue) {
+    try {
+      await sendPwaReview(review);
+      synced += 1;
+    } catch (error) {
+      remaining.push(review);
+    }
+  }
+  writeJson(PWA_REVIEW_QUEUE_KEY, remaining);
+  if (synced) showToast(`${synced} saved feedback ${synced === 1 ? "item was" : "items were"} synced.`);
+  return synced > 0;
+}
+
+function titoPayChatThreads() {
+  return readJson(TITOPAY_CHAT_THREADS_KEY) || [];
+}
+
+function saveTitoPayChatThreads(threads) {
+  writeJson(TITOPAY_CHAT_THREADS_KEY, threads);
+}
+
+function titoPayChatInvites() {
+  return readJson(TITOPAY_CHAT_INVITES_KEY) || [];
+}
+
+function saveTitoPayChatInvites(invites) {
+  writeJson(TITOPAY_CHAT_INVITES_KEY, invites);
+}
+
+function titoPayChatBlocks() {
+  return readJson(TITOPAY_CHAT_BLOCKS_KEY) || [];
+}
+
+function saveTitoPayChatBlocks(blocks) {
+  writeJson(TITOPAY_CHAT_BLOCKS_KEY, blocks);
+}
+
+function titoPayCallHistory() {
+  return readJson(TITOPAY_CALL_HISTORY_KEY) || [];
+}
+
+function saveTitoPayCallHistory(items) {
+  writeJson(TITOPAY_CALL_HISTORY_KEY, items.slice(0, 60));
+}
+
+function titoPayChatSocketUrl() {
+  if (!state.auth || !state.auth.accessToken) return "";
+  try {
+    const url = new URL(API_BASE);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = "/v1/chat/socket";
+    url.search = "";
+    return url.toString();
+  } catch (error) {
+    return "";
+  }
+}
+
+function connectTitoPayChatSocket(options = {}) {
+  if (!state.auth || !state.auth.accessToken || typeof WebSocket === "undefined") return;
+  const url = titoPayChatSocketUrl();
+  if (!url) return;
+  if (titoPayChatSocket && !options.force && [0, 1].includes(titoPayChatSocket.readyState)) return;
+  if (titoPayChatReconnectTimer) {
+    clearTimeout(titoPayChatReconnectTimer);
+    titoPayChatReconnectTimer = null;
+  }
+  if (titoPayChatSocket && options.force) {
+    try { titoPayChatSocket.close(); } catch (error) {}
+  }
+  try {
+    titoPayChatSocket = new WebSocket(url, ["titopay-chat", `bearer.${state.auth.accessToken}`]);
+    titoPayChatSocket.addEventListener("open", () => {
+      titoPayChatReconnectAttempts = 0;
+      syncTitoPayChatThreads().catch(() => null);
+      syncTitoPayChatNotifications().catch(() => null);
+    });
+    titoPayChatSocket.addEventListener("message", (event) => {
+      try {
+        handleTitoPayChatSocketEvent(JSON.parse(event.data || "{}"));
+      } catch (error) {}
+    });
+    titoPayChatSocket.addEventListener("close", () => {
+      titoPayChatPendingAcks.forEach(({ reject }) => reject(new Error("Chat connection closed")));
+      titoPayChatPendingAcks.clear();
+      if (!state.auth || !state.auth.accessToken) return;
+      const delay = Math.min(10000, 1000 * Math.max(1, ++titoPayChatReconnectAttempts));
+      titoPayChatReconnectTimer = setTimeout(() => connectTitoPayChatSocket(), delay);
+    });
+    titoPayChatSocket.addEventListener("error", () => {
+      try { titoPayChatSocket.close(); } catch (error) {}
+    });
+  } catch (error) {
+    // REST polling remains available when a browser blocks WebSockets.
+  }
+}
+
+function disconnectTitoPayChatSocket() {
+  if (titoPayChatReconnectTimer) clearTimeout(titoPayChatReconnectTimer);
+  titoPayChatReconnectTimer = null;
+  titoPayChatReconnectAttempts = 0;
+  if (titoPayChatSocket) {
+    try { titoPayChatSocket.close(); } catch (error) {}
+  }
+  titoPayChatSocket = null;
+  titoPayChatPendingAcks.forEach(({ reject }) => reject(new Error("Chat connection closed")));
+  titoPayChatPendingAcks.clear();
+}
+
+function sendTitoPaySocketEvent(type, payload = {}) {
+  if (!titoPayChatSocket || titoPayChatSocket.readyState !== 1) return false;
+  titoPayChatSocket.send(JSON.stringify(Object.assign({ type }, payload)));
+  return true;
+}
+
+function waitForTitoPayChatSocket(timeout = 3500) {
+  if (!state.auth || !state.auth.accessToken || typeof WebSocket === "undefined") {
+    return Promise.reject(new Error("TitoPay Chat is unavailable in this browser."));
+  }
+  connectTitoPayChatSocket();
+  if (titoPayChatSocket && titoPayChatSocket.readyState === 1) return Promise.resolve(true);
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const check = () => {
+      if (titoPayChatSocket && titoPayChatSocket.readyState === 1) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - startedAt >= timeout) {
+        reject(new Error("TitoPay Chat must be online before starting a call."));
+        return;
+      }
+      setTimeout(check, 120);
+    };
+    check();
+  });
+}
+
+function chatCurrentProfile() {
+  const user = state.user || {};
+  const name = state.accountType === "business"
+    ? (user.businessName || user.name || "TitoPay Business")
+    : (user.name || "TitoPay User");
+  return {
+    id: user.id || state.accountType,
+    name,
+    username: normalizeUsername(user.username || user.businessUsername || name),
+    phone: user.phone || user.mobile || "",
+    email: user.email || "",
+    accountType: state.accountType
+  };
+}
+
+function chatParticipantInitials(name) {
+  return String(name || "TP")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "TP";
+}
+
+function chatParticipantAvatar(user = {}, name = "") {
+  const photo = String(user.profilePhotoUrl || user.profile_photo_url || "").trim();
+  if (/^https:\/\//i.test(photo) || /^data:image\/(?:png|jpe?g|webp);base64,/i.test(photo)) {
+    return `<span class="chat-contact-avatar"><img src="${esc(photo)}" alt="" loading="lazy"></span>`;
+  }
+  return `<span class="chat-contact-avatar">${esc(chatParticipantInitials(name || user.name || user.fullName))}</span>`;
+}
+
+function chatThreadKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || `thread-${Date.now()}`;
+}
+
+function normalizeChatLookupIdentifier(raw, method = "auto") {
+  const value = String(raw || "").trim();
+  if (!value) throw new Error("Enter a TitoPay username, cellphone number or email address.");
+  if (method === "phone" || (method === "auto" && /^[+\d\s()-]+$/.test(value))) {
+    const phone = normalizeSouthAfricanPhone(value);
+    if (!isSouthAfricanPhone(phone)) throw new Error("Enter a valid South African cellphone number such as +27 71 000 0000.");
+    return { method: "phone", value: phone, display: phone };
+  }
+  if (method === "email" || (method === "auto" && isEmail(value))) {
+    const email = value.toLowerCase();
+    if (!isEmail(email)) throw new Error("Enter a valid email address.");
+    return { method: "email", value: email, display: email };
+  }
+  const username = normalizeUsername(value);
+  if (!isValidUsername(username)) throw new Error("Enter a valid TitoPay username, cellphone number or email address.");
+  return { method: "username", value: username, display: displayUsername(value) };
+}
+
+function formatChatTime(value) {
+  return new Intl.DateTimeFormat("en-ZA", { hour: "2-digit", minute: "2-digit" }).format(new Date(value || Date.now()));
+}
+
+function isVerifiedChatUserPayload(user = {}) {
+  const accountStatus = String(user.status || user.accountStatus || user.account_status || "").toLowerCase();
+  const verificationStatus = String(
+    user.verificationStatus ||
+    user.verification_status ||
+    user.ficaStatus ||
+    user.fica_status ||
+    user.kycStatus ||
+    user.kyc_status ||
+    ""
+  ).toLowerCase();
+  const blocked = ["blocked", "closed", "deleted", "inactive", "suspended"].includes(accountStatus);
+  const active = !accountStatus || ["active", "verified", "approved"].includes(accountStatus);
+  return Boolean(
+    !blocked &&
+    active &&
+    (
+      user.verified === true ||
+      user.isVerified === true ||
+      user.is_verified === true ||
+      Boolean(user.walletId || user.wallet_id || user.walletNumber || user.wallet_number) ||
+      Boolean(user.verifiedAt || user.verified_at) ||
+      ["approved", "verified", "complete", "completed"].includes(verificationStatus) ||
+      ["verified", "approved"].includes(accountStatus)
+    )
+  );
+}
+
+function normalizeResolvedChatUser(user, lookup) {
+  const name = user.name || user.fullName || user.full_name || user.businessName || user.business_name || user.displayName || user.display_name || lookup.display;
+  const verificationStatus = String(user.verificationStatus || user.verification_status || user.ficaStatus || user.fica_status || user.kycStatus || user.kyc_status || "").toLowerCase();
+  const explicitUsername = user.username || user.handle || user.userName || user.user_name || "";
+  return {
+    id: user.id || user.userId || user.user_id || chatThreadKey(lookup.value),
+    name,
+    username: normalizeUsername(explicitUsername || (lookup.method === "username" ? lookup.value : "")),
+    hasExplicitUsername: Boolean(explicitUsername || lookup.method === "username"),
+    phone: user.phone || user.mobile || user.msisdn || (lookup.method === "phone" ? lookup.value : ""),
+    email: user.email || (lookup.method === "email" ? lookup.value : ""),
+    accountType: user.accountType || user.account_type || user.type || "personal",
+    walletId: user.walletId || user.wallet_id || user.walletNumber || user.wallet_number || "",
+    walletNumber: user.walletNumber || user.wallet_number || user.walletId || user.wallet_id || "",
+    profilePhotoUrl: user.profilePhotoUrl || user.profile_photo_url || user.businessLogoUrl || user.business_logo_url || "",
+    verificationStatus,
+    status: user.status || user.accountStatus || user.account_status || "",
+    verified: isVerifiedChatUserPayload(user)
+  };
+}
+
+function currentChatIdentityTokens() {
+  const user = state.user || {};
+  const auth = state.auth || {};
+  const current = chatCurrentProfile();
+  const values = [
+    current.id,
+    current.username,
+    current.email,
+    current.phone,
+    user.id,
+    user.userId,
+    user.user_id,
+    user.customerId,
+    user.customer_id,
+    user.username,
+    user.businessUsername,
+    user.email,
+    user.phone,
+    user.mobile,
+    auth.userId,
+    auth.user_id,
+    auth.customerId,
+    auth.user && auth.user.id,
+    auth.user && auth.user.username,
+    auth.user && auth.user.email,
+    auth.profile && auth.profile.id,
+    auth.profile && auth.profile.username,
+    auth.profile && auth.profile.email
+  ];
+  const tokens = new Set();
+  values.forEach((value) => {
+    if (!value) return;
+    const raw = String(value).trim();
+    if (!raw) return;
+    tokens.add(raw);
+    tokens.add(raw.toLowerCase());
+    const username = normalizeUsername(raw);
+    if (username) {
+      tokens.add(username);
+      tokens.add(`@${username}`);
+    }
+    try {
+      const phone = normalizeSouthAfricanPhone(raw);
+      if (phone && phone !== "+27") {
+        tokens.add(phone);
+        tokens.add(phone.replace(/\D/g, ""));
+      }
+    } catch (error) {
+      // Not every identity token is a phone number.
+    }
+  });
+  return tokens;
+}
+
+function normalizeChatIdentityPhone(value) {
+  try {
+    const phone = normalizeSouthAfricanPhone(value);
+    if (!isSouthAfricanPhone(phone)) return [];
+    const digits = phone.replace(/\D/g, "");
+    return [phone, digits, `0${digits.slice(2)}`, digits.slice(2)].filter(Boolean);
+  } catch (error) {
+    return [];
+  }
+}
+
+function addIdentityValues(set, values, transform = (value) => String(value || "").trim()) {
+  values.forEach((value) => {
+    const transformed = transform(value);
+    if (!transformed) return;
+    set.add(transformed);
+    set.add(String(transformed).toLowerCase());
+  });
+}
+
+function currentStrongChatIdentity() {
+  const user = state.user || {};
+  const auth = state.auth || {};
+  const ids = new Set();
+  const usernames = new Set();
+  const emails = new Set();
+  const phones = new Set();
+  const wallets = new Set();
+  addIdentityValues(ids, [
+    user.id,
+    user.userId,
+    user.user_id,
+    user.customerId,
+    user.customer_id,
+    auth.userId,
+    auth.user_id,
+    auth.customerId,
+    auth.user && auth.user.id,
+    auth.profile && auth.profile.id
+  ]);
+  addIdentityValues(usernames, [
+    user.username,
+    user.businessUsername,
+    user.userName,
+    user.user_name,
+    auth.user && auth.user.username,
+    auth.profile && auth.profile.username
+  ], normalizeUsername);
+  addIdentityValues(emails, [
+    user.email,
+    user.emailAddress,
+    user.email_address,
+    auth.user && auth.user.email,
+    auth.profile && auth.profile.email
+  ], (value) => {
+    const email = String(value || "").trim().toLowerCase();
+    return isEmail(email) ? email : "";
+  });
+  [
+    user.phone,
+    user.mobile,
+    user.cellphone,
+    user.msisdn,
+    user.phoneNumber,
+    user.phone_number,
+    user.mobileNumber,
+    user.mobile_number,
+    auth.user && (auth.user.phone || auth.user.mobile),
+    auth.profile && (auth.profile.phone || auth.profile.mobile)
+  ].forEach((value) => normalizeChatIdentityPhone(value).forEach((item) => phones.add(item)));
+  addIdentityValues(wallets, [
+    user.walletId,
+    user.wallet_id,
+    user.walletNumber,
+    user.wallet_number,
+    auth.user && (auth.user.walletId || auth.user.wallet_id || auth.user.walletNumber || auth.user.wallet_number),
+    auth.profile && (auth.profile.walletId || auth.profile.wallet_id || auth.profile.walletNumber || auth.profile.wallet_number)
+  ]);
+  return { ids, usernames, emails, phones, wallets };
+}
+
+function identityHas(set, value, transform = (item) => String(item || "").trim()) {
+  const transformed = transform(value);
+  return Boolean(transformed && (set.has(transformed) || set.has(String(transformed).toLowerCase())));
+}
+
+function isSameTitoPayChatUser(user = {}) {
+  const identity = currentStrongChatIdentity();
+  if (identityHas(identity.ids, user.id || user.userId || user.user_id)) return true;
+  const username = user.username || user.userName || user.user_name || user.handle || "";
+  if ((user.hasExplicitUsername || username) && identityHas(identity.usernames, username, normalizeUsername)) return true;
+  if (identityHas(identity.emails, user.email || user.emailAddress || user.email_address, (value) => {
+    const email = String(value || "").trim().toLowerCase();
+    return isEmail(email) ? email : "";
+  })) return true;
+  const userPhones = normalizeChatIdentityPhone(user.phone || user.mobile || user.cellphone || user.msisdn || user.phoneNumber || user.phone_number || user.mobileNumber || user.mobile_number);
+  if (userPhones.some((value) => identity.phones.has(value))) return true;
+  if (identityHas(identity.wallets, user.walletId || user.wallet_id || user.walletNumber || user.wallet_number)) return true;
+  return false;
+}
+
+function isCurrentChatSender(item = {}) {
+  const identity = currentChatIdentityTokens();
+  const senderValues = [
+    item.senderId,
+    item.sender_id,
+    item.fromUserId,
+    item.from_user_id,
+    item.from,
+    item.userId,
+    item.user_id,
+    item.senderUsername,
+    item.sender_username,
+    item.fromUsername,
+    item.from_username,
+    item.senderEmail,
+    item.sender_email,
+    item.fromEmail,
+    item.from_email,
+    item.senderPhone,
+    item.sender_phone,
+    item.fromPhone,
+    item.from_phone
+  ];
+  if (item.sender === "me" || item.direction === "outgoing" || item.mine === true || item.isMine === true) return true;
+  return senderValues.some((value) => {
+    if (!value) return false;
+    const raw = String(value).trim();
+    if (identity.has(raw) || identity.has(raw.toLowerCase())) return true;
+    const username = normalizeUsername(raw);
+    if (username && (identity.has(username) || identity.has(`@${username}`))) return true;
+    try {
+      const phone = normalizeSouthAfricanPhone(raw);
+      return identity.has(phone) || identity.has(phone.replace(/\D/g, ""));
+    } catch (error) {
+      return false;
+    }
+  });
+}
+
+function findTitoPayThreadForApiMessage(message = {}) {
+  const threads = titoPayChatThreads();
+  const ids = [
+    message.threadId,
+    message.thread_id,
+    message.clientThreadId,
+    message.client_thread_id,
+    message.thread && message.thread.id
+  ].filter(Boolean).map(String);
+  let thread = threads.find((item) => [item.id, item.apiThreadId, item.clientThreadId].filter(Boolean).map(String).some((id) => ids.includes(id)));
+  if (thread) return thread;
+  const sender = message.senderId || message.sender_id || message.fromUserId || message.from_user_id;
+  const recipient = message.recipientId || message.recipient_id || message.toUserId || message.to_user_id;
+  const otherUserId = isCurrentChatSender(message) ? recipient : sender;
+  if (otherUserId) {
+    thread = threads.find((item) => {
+      const participant = item.participant || {};
+      return [participant.id, participant.userId, participant.user_id].filter(Boolean).map(String).includes(String(otherUserId));
+    });
+  }
+  return thread || null;
+}
+
+function mergeTitoPaySocketMessage(message = {}) {
+  let thread = findTitoPayThreadForApiMessage(message);
+  if (!thread) {
+    syncTitoPayChatThreads().then((changed) => {
+      thread = findTitoPayThreadForApiMessage(message);
+      if (thread) {
+        mergeTitoPayChatMessages(thread, [message]);
+        if (!isCurrentChatSender(message)) {
+          addInAppNotification({
+            title: "New TitoPay Chat message",
+            body: String(message.text || message.message || message.body || "New message").slice(0, 120),
+            category: "chat",
+            metadata: { threadId: thread.id }
+          });
+        }
+        if (sessionStorage.getItem("titopay_active_chat_thread") === thread.id) {
+          openTitoPayChatThread(thread.id);
+        } else if (document.querySelector(".titopay-chat-shell")) {
+          openTitoPayChatModal();
+        } else {
+          render();
+        }
+        return;
+      }
+      if (changed && document.querySelector(".titopay-chat-shell")) openTitoPayChatModal();
+    }).catch(() => null);
+    return false;
+  }
+  thread.apiThreadId = message.threadId || message.thread_id || thread.apiThreadId;
+  const changed = mergeTitoPayChatMessages(thread, [message]);
+  if (changed && !isCurrentChatSender(message)) {
+    addInAppNotification({
+      title: "New TitoPay Chat message",
+      body: String(message.text || message.message || message.body || "New message").slice(0, 120),
+      category: "chat",
+      metadata: { threadId: thread.id }
+    });
+  }
+  if (changed && sessionStorage.getItem("titopay_active_chat_thread") === thread.id) openTitoPayChatThread(thread.id);
+  return changed;
+}
+
+function handleTitoPayChatSocketEvent(event = {}) {
+  if (String(event.type || "").startsWith("support:")) {
+    const activeConversationId = sessionStorage.getItem("titopay_support_conversation_id");
+    const eventConversationId = event.conversationId || event.conversation?.id || event.message?.conversationId;
+    if (eventConversationId) sessionStorage.setItem("titopay_support_conversation_id", eventConversationId);
+    if (event.conversation?.status) sessionStorage.setItem("titopay_support_conversation_status", event.conversation.status);
+    if (
+      event.message &&
+      event.message.senderType !== "CUSTOMER" &&
+      (!activeConversationId || activeConversationId === eventConversationId)
+    ) {
+      appendChatMessage(
+        event.message.senderType === "CUSTOMER" ? "user" : "assistant",
+        event.message.body || event.message.message || "Support conversation updated."
+      );
+    }
+    if (document.querySelector(".chatbot-panel") && eventConversationId) hydrateSupportConversation(eventConversationId).catch(() => null);
+    return;
+  }
+  if (event.type === "chat:message" && event.message) {
+    mergeTitoPaySocketMessage(event.message);
+    return;
+  }
+  if (event.type === "chat:ack" && event.message) {
+    mergeTitoPaySocketMessage(event.message);
+    const pending = titoPayChatPendingAcks.get(event.clientMessageId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      titoPayChatPendingAcks.delete(event.clientMessageId);
+      pending.resolve({ ok: true, message: event.message, delivered: event.message.status !== "sent" });
+    }
+    return;
+  }
+  if (event.type === "chat:status" && event.message) {
+    mergeTitoPaySocketMessage(event.message);
+    return;
+  }
+  if (event.type === "chat:signal" && event.signal) {
+    handleTitoPayChatSignal(event.signal);
+    return;
+  }
+  if (event.type === "chat:error") {
+    showToast("TitoPay Chat is temporarily unavailable. Please try again.", "error");
+  }
+}
+
+async function resolveTitoPayChatUser(rawIdentifier, method = "auto") {
+  const lookup = normalizeChatLookupIdentifier(rawIdentifier, method);
+  const lookupValues = recipientLookupVariants(lookup.value);
+  const payload = {
+    identifier: lookup.value,
+    query: lookup.value,
+    value: lookup.value,
+    lookupValues,
+    lookupMethod: lookup.method,
+    purpose: "titopay_chat"
+  };
+  const requests = [
+    () => api("/v1/chat/users/lookup", { method: "POST", body: payload }),
+    () => api(`/v1/chat/users/lookup?identifier=${encodeURIComponent(lookup.value)}`)
+  ];
+  try {
+    for (const request of requests) {
+      try {
+        const result = await request();
+        const found = resolvedTitoPayUserFromResult(result);
+        if (found) {
+          const user = normalizeResolvedChatUser(found, lookup);
+          if (user.verified) return user;
+        }
+      } catch (error) {
+        if (error.status === 401 || error.status === 403) throw error;
+      }
+    }
+  } catch (error) {
+    throw error;
+  }
+  try {
+    const verified = await lookupRegisteredRecipient(lookup.value, "titopay_chat");
+    if (verified && verified.registered) {
+      const user = normalizeResolvedChatUser(verified.user || verified.account || verified.recipient || verified.profile || {}, lookup);
+      if (user.verified) return user;
+    }
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) throw error;
+  }
+  return null;
+}
+
+function getOrCreateTitoPayChatThread(participant, options = {}) {
+  const current = chatCurrentProfile();
+  const mode = options.mode || (state.accountType === "business" ? "business_to_customer" : "user_to_user");
+  const threadId = options.id || `chat-${chatThreadKey(`${current.id}-${participant.id || participant.username || participant.phone || participant.email}`)}`;
+  const threads = titoPayChatThreads();
+  let thread = threads.find((item) => item.id === threadId);
+  if (!thread) {
+    thread = {
+      id: threadId,
+      mode,
+      accountType: state.accountType,
+      participant,
+      title: options.title || participant.name || displayUsername(participant.username),
+      subtitle: options.subtitle || (participant.username ? displayUsername(participant.username) : participant.email || participant.phone || "TitoPay user"),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [
+        {
+          id: `msg-${Date.now()}`,
+          sender: "system",
+          text: options.welcome || "Secure TitoPay Chat is ready. You can message before sending money, requesting payment or completing a transaction.",
+          createdAt: new Date().toISOString(),
+          status: "delivered"
+        }
+      ]
+    };
+    threads.unshift(thread);
+    saveTitoPayChatThreads(threads);
+  }
+  return thread;
+}
+
+function updateTitoPayChatThread(thread) {
+  const threads = titoPayChatThreads();
+  const index = threads.findIndex((item) => item.id === thread.id);
+  thread.updatedAt = new Date().toISOString();
+  if (index >= 0) threads.splice(index, 1);
+  threads.unshift(thread);
+  saveTitoPayChatThreads(threads);
+}
+
+function renderTitoPayChatThreadList() {
+  const threads = titoPayChatThreads().filter((thread) => thread.accountType === state.accountType || thread.mode === "stockvel_group");
+  if (!threads.length) {
+    return `<section class="empty-state compact-state">${icon("chat")}<strong>No chats yet</strong><p>Search for a TitoPay user to start a secure conversation.</p></section>`;
+  }
+  return `
+    <div class="titopay-chat-list">
+      ${threads.map((thread) => `
+        <button class="titopay-chat-thread-card" type="button" data-action="open-chat-thread:${esc(thread.id)}">
+          ${chatParticipantAvatar(thread.participant, thread.title)}
+          <span><strong>${esc(thread.title)}</strong><small>${esc(thread.subtitle || "TitoPay Chat")}</small></span>
+          <em>${esc(formatChatTime(thread.updatedAt))}</em>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function openTitoPayChatModal() {
+  connectTitoPayChatSocket();
+  loadTitoPayCallConfig().catch(() => null);
+  syncTitoPayChatNotifications().catch(() => null);
+  const business = state.accountType === "business";
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">TitoPay Chat</p>
+        <h2>${business ? "Business to customer chat" : "User to user chat"}</h2>
+        <p class="lead">${business ? "Chat securely with customers before payment requests, refunds and business transactions." : "Chat securely with TitoPay users before sending money, splitting bills or making requests."}</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="titopay-chat-shell">
+      <form class="form-grid titopay-chat-lookup" data-form="titopay-chat-lookup">
+        <div class="field"><label>Find TitoPay user</label><input id="titopay-chat-lookup-identifier" name="identifier" placeholder="@username, +27 cellphone or email" autocomplete="off" required><div class="recipient-detect-hint" data-recipient-detect-for="titopay-chat-lookup-identifier" aria-live="polite">Auto-detect accepts a TitoPay username, South African +27 cellphone number or email address.</div></div>
+        <div class="field"><label>Method</label><select name="lookupMethod"><option value="auto">Auto-detect</option><option value="username">Username</option><option value="phone">Cellphone</option><option value="email">Email</option></select></div>
+        <button class="btn primary" type="submit">${icon("search")} Start chat</button>
+      </form>
+      <section class="panel compact-panel chat-privacy-card">
+        <strong>${icon("shield")} Secure chat</strong>
+        <p>Only verified TitoPay users can chat. If the person is not registered, you can send an invitation link first.</p>
+      </section>
+      <h3 class="section-title small-title">Recent chats</h3>
+      ${renderTitoPayChatThreadList()}
+    </section>
+  `);
+  syncTitoPayChatThreads().then((changed) => {
+    if (changed && !sessionStorage.getItem("titopay_active_chat_thread")) openTitoPayChatModal();
+  }).catch(() => null);
+  startTitoPayChatPolling();
+}
+
+async function submitTitoPayChatLookup(data) {
+  const identifier = data.identifier;
+  const lookupMethod = data.lookupMethod || "auto";
+  const lookup = normalizeChatLookupIdentifier(identifier, lookupMethod);
+  const submitButton = document.querySelector('form[data-form="titopay-chat-lookup"] button[type="submit"]');
+  const originalButtonHtml = submitButton ? submitButton.innerHTML : "";
+  if (submitButton) submitButton.innerHTML = `${icon("refresh")} Checking`;
+  try {
+    let user = null;
+    try {
+      user = await resolveTitoPayChatUser(identifier, lookupMethod);
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) throw error;
+      user = null;
+    }
+    if (!user) {
+      openTitoPayChatInviteScreen(lookup);
+      return;
+    }
+    sessionStorage.setItem("titopay_pending_chat_user", JSON.stringify(user));
+    openTitoPayChatUserPreview(user);
+  } finally {
+    if (submitButton && document.body.contains(submitButton)) submitButton.innerHTML = originalButtonHtml;
+  }
+}
+
+function openTitoPayChatUserPreview(user) {
+  const accountType = user.accountType === "business" ? "Business" : "Personal";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Verified TitoPay user</p><h2>Confirm who you are messaging</h2><p class="lead">Check these details before starting the conversation.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="panel compact-panel chat-user-preview">
+      ${chatParticipantAvatar(user, user.name)}
+      <div>
+        <h3>${esc(user.name)}</h3>
+        <p>${esc(user.username ? displayUsername(user.username) : user.phone || user.email || "")}</p>
+        <p><strong>${esc(accountType)} account</strong> · Verified</p>
+      </div>
+    </section>
+    <button class="btn primary" type="button" data-action="chat-confirm-user">${icon("chat")} Start chat</button>
+    <button class="btn ghost" type="button" data-action="chat-back">${icon("arrow-left")} Back</button>
+  `);
+}
+
+function confirmTitoPayChatUser() {
+  const user = readJsonFromSession("titopay_pending_chat_user");
+  if (!user || user.verified !== true) throw new Error("Verified TitoPay user not found.");
+  if (isSameTitoPayChatUser(user)) throw new Error("You cannot start a chat with your own TitoPay profile.");
+  sessionStorage.removeItem("titopay_pending_chat_user");
+  rememberLocalTitoPayUser(user);
+  const thread = getOrCreateTitoPayChatThread(user);
+  openTitoPayChatThread(thread.id);
+  openTitoPayChatThreadOnServer(thread).catch((error) => {
+    if (error?.status === 401 || error?.status === 403) {
+      showToast("Please sign in again to start TitoPay Chat.", "error");
+    }
+  });
+}
+
+function isTitoPayCustomerCareThread(thread = {}) {
+  const participant = thread.participant || {};
+  const haystack = [
+    thread.title,
+    thread.subtitle,
+    thread.mode,
+    participant.name,
+    participant.fullName,
+    participant.username,
+    participant.email,
+    participant.role,
+    participant.accountType,
+    participant.account_type
+  ].filter(Boolean).join(" ").toLowerCase();
+  return /(customer care|support|titopay care|help desk|agent)/.test(haystack);
+}
+
+function openTitoPayChatInviteScreen(lookup) {
+  const invite = Object.assign(defaultRecipientInvite(lookup.value), {
+    identifier: lookup.value,
+    display: lookup.display,
+    lookupMethod: lookup.method,
+    createdAt: new Date().toISOString()
+  });
+  sessionStorage.setItem("titopay_pending_chat_invite", JSON.stringify(invite));
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Invite to TitoPay</p><h2>Invite this person</h2><p class="lead">${esc(lookup.display)} is not detected as a verified TitoPay user yet. Send an invite so they can join TitoPay and chat securely.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="panel compact-panel">
+      <strong>${icon("user")} ${esc(lookup.display)}</strong>
+      <p>Chat becomes available once the recipient joins TitoPay.</p>
+    </section>
+    <div class="grid two">
+      <button class="btn secondary" type="button" data-action="chat-invite:sms">${icon("phone")} SMS</button>
+      <button class="btn secondary" type="button" data-action="chat-invite:email">${icon("mail")} Email</button>
+      <button class="btn secondary" type="button" data-action="chat-invite:whatsapp">${icon("send")} WhatsApp</button>
+      <button class="btn primary" type="button" data-action="chat-invite:share">${icon("share")} Share link</button>
+    </div>
+    <button class="btn ghost" type="button" data-action="chat-back">${icon("arrow-left")} Back to chat</button>
+  `);
+}
+
+async function sendTitoPayChatInvite(channel) {
+  const invite = JSON.parse(sessionStorage.getItem("titopay_pending_chat_invite") || "{}");
+  if (!invite.identifier) throw new Error("No pending invitation found.");
+  const message = invite.message || `Join TitoPay so we can chat and transact securely: ${invite.url}`;
+  const invites = titoPayChatInvites();
+  invites.unshift(Object.assign({}, invite, { channel, sentAt: new Date().toISOString() }));
+  saveTitoPayChatInvites(invites);
+  if (channel === "share" && navigator.share) {
+    await navigator.share({ title: "Join TitoPay", text: message, url: invite.url });
+  } else if (channel === "email" && isEmail(invite.identifier)) {
+    location.href = `mailto:${encodeURIComponent(invite.identifier)}?subject=${encodeURIComponent("Join TitoPay")}&body=${encodeURIComponent(message)}`;
+  } else if (channel === "sms" && /^\+27/.test(invite.identifier)) {
+    location.href = `sms:${encodeURIComponent(invite.identifier)}?&body=${encodeURIComponent(message)}`;
+  } else if (channel === "whatsapp" && /^\+27/.test(invite.identifier)) {
+    window.open(`https://wa.me/${invite.identifier.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`, "_blank", "noopener");
+  } else {
+    await copyTextValue(message);
+  }
+  showToast("TitoPay invitation ready.");
+}
+
+function openTitoPayChatThread(threadId) {
+  const thread = titoPayChatThreads().find((item) => item.id === threadId);
+  if (!thread) {
+    openTitoPayChatModal();
+    return;
+  }
+  sessionStorage.setItem("titopay_active_chat_thread", threadId);
+  const blocked = titoPayChatBlocks().includes(threadId);
+  const customerCareThread = isTitoPayCustomerCareThread(thread);
+  openModal(`
+    <div class="modal-head titopay-chat-head">
+      <div class="chat-thread-title">
+        ${chatParticipantAvatar(thread.participant, thread.title)}
+        <div><p class="eyebrow">${customerCareThread ? "Customer Care" : thread.mode === "business_to_customer" ? "Business chat" : thread.mode === "stockvel_group" ? "Stokvel chat" : "TitoPay Chat"}</p><h2>${esc(thread.title)}</h2><p class="lead">${esc(customerCareThread ? "Online support" : thread.subtitle || "Secure TitoPay user")}</p></div>
+      </div>
+      <div class="chat-header-actions">
+        ${customerCareThread ? `<button class="chat-action-btn primary" type="button" data-action="chatbot" aria-label="Contact Customer Care">${icon("phone")}<span>Call</span></button>` : ""}
+        <button class="chat-action-btn" type="button" data-action="chat-mute" aria-label="${thread.muted ? "Unmute conversation" : "Mute conversation"}">${icon("bell")}<span>${thread.muted ? "Unmute" : "Mute"}</span></button>
+        <button class="chat-action-btn" type="button" data-action="chat-report" aria-label="Report conversation">${icon("shield")}<span>Report</span></button>
+        <button class="chat-action-btn" type="button" data-action="chat-block" aria-label="${blocked ? "Conversation blocked" : "Block conversation"}">${icon("x")}<span>${blocked ? "Blocked" : "Block"}</span></button>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+    </div>
+    <section class="titopay-chat-window" aria-live="polite">
+      ${thread.messages.map(renderTitoPayChatMessage).join("")}
+    </section>
+    <p class="chat-typing-status" data-chat-typing aria-live="polite"></p>
+    <form class="titopay-chat-compose" data-form="titopay-chat-message" data-thread-id="${esc(thread.id)}">
+      <label class="sr-only" for="titopay-chat-message-input">Message</label>
+      <textarea id="titopay-chat-message-input" name="message" rows="1" placeholder="${blocked ? "This chat is blocked" : "Message"}" ${blocked ? "disabled" : ""}></textarea>
+      <button class="chat-send-btn" type="submit" ${blocked ? "disabled" : ""} aria-label="Send message">${icon("send")}</button>
+    </form>
+    <button class="btn ghost" type="button" data-action="chat-back">${icon("arrow-left")} Back to chats</button>
+  `);
+  const windowEl = document.querySelector(".titopay-chat-window");
+  if (windowEl) windowEl.scrollTop = windowEl.scrollHeight;
+  sendTitoPaySocketEvent("chat:read", { payload: titoPayChatSignalPayload(thread) });
+  syncTitoPayChatThread(threadId).then((changed) => {
+    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) openTitoPayChatThread(threadId);
+  }).catch(() => null);
+  startTitoPayChatPolling(threadId);
+}
+
+async function toggleActiveChatMute() {
+  const threadId = sessionStorage.getItem("titopay_active_chat_thread");
+  const threads = titoPayChatThreads();
+  const thread = threads.find((item) => item.id === threadId);
+  if (!thread) return;
+  const apiThreadId = thread.apiThreadId || thread.threadId || thread.id;
+  const muted = !thread.muted;
+  await api(`/v1/chat/threads/${encodeURIComponent(apiThreadId)}/${muted ? "mute" : "unmute"}`, {
+    method: "POST",
+    body: {}
+  });
+  thread.muted = muted;
+  saveTitoPayChatThreads(threads);
+  openTitoPayChatThread(thread.id);
+  showToast(muted ? "Conversation muted" : "Conversation unmuted");
+}
+
+function stopTitoPayChatPolling() {
+  if (window.titoPayChatPollTimer) {
+    clearInterval(window.titoPayChatPollTimer);
+    window.titoPayChatPollTimer = null;
+  }
+}
+
+function startTitoPayChatPolling(threadId = "") {
+  stopTitoPayChatPolling();
+  if (!state.auth || !state.auth.accessToken) return;
+  const poll = async () => {
+    const activeThreadId = sessionStorage.getItem("titopay_active_chat_thread") || threadId;
+    try {
+      const notificationChanged = await syncTitoPayChatNotifications().catch(() => false);
+      const threadsChanged = await syncTitoPayChatThreads().catch(() => false);
+      if (activeThreadId) {
+        const changed = await syncTitoPayChatThread(activeThreadId);
+        if (changed && sessionStorage.getItem("titopay_active_chat_thread") === activeThreadId) {
+          openTitoPayChatThread(activeThreadId);
+        } else if ((threadsChanged || notificationChanged) && document.querySelector(".titopay-chat-shell")) {
+          openTitoPayChatModal();
+        } else if ((threadsChanged || notificationChanged) && !document.querySelector(".modal-backdrop")) {
+          render();
+        }
+        return;
+      }
+      if (threadsChanged && document.querySelector(".titopay-chat-shell")) openTitoPayChatModal();
+      else if ((threadsChanged || notificationChanged) && !document.querySelector(".modal-backdrop")) render();
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) stopTitoPayChatPolling();
+    }
+  };
+  poll().catch(() => null);
+  window.titoPayChatPollTimer = setInterval(poll, 5000);
+}
+
+function renderTitoPayChatMessage(message) {
+  const role = message.sender === "me" ? "me" : message.sender === "system" ? "system" : "them";
+  const text = String(message.text || message.message || message.body || message.content || "").trim() || "Message delivered";
+  const stateClass = ["queued", "failed"].includes(String(message.status || "").toLowerCase()) ? String(message.status).toLowerCase() : "";
+  return `
+    <article class="titopay-user-message ${role} ${stateClass}">
+      <p>${esc(text)}</p>
+      <span>${esc(formatChatTime(message.createdAt))} · ${esc(message.status || "sent")}</span>
+    </article>
+  `;
+}
+
+function normalizeTitoPayChatApiMessage(item, thread) {
+  if (!item) return null;
+  const body = item.text || item.message || item.body || item.content || "";
+  if (!String(body).trim()) return null;
+  const mine = isCurrentChatSender(item);
+  return {
+    id: item.id || item.messageId || item.message_id || `api-${chatThreadKey(`${thread.id}-${body}-${item.createdAt || item.created_at || Date.now()}`)}`,
+    clientMessageId: item.clientMessageId || item.client_message_id || item.localMessageId || item.local_message_id || null,
+    sender: mine ? "me" : "them",
+    text: String(body).trim(),
+    createdAt: item.createdAt || item.created_at || item.sentAt || item.sent_at || new Date().toISOString(),
+    status: item.status || (item.readAt || item.read_at || item.read ? "read" : item.deliveredAt || item.delivered_at || item.delivered ? "delivered" : "sent")
+  };
+}
+
+function mergeTitoPayChatMessages(thread, messages) {
+  let changed = false;
+  const incoming = messages.map((item) => normalizeTitoPayChatApiMessage(item, thread)).filter(Boolean);
+  if (!Array.isArray(thread.messages)) thread.messages = [];
+  incoming.forEach((item) => {
+    const index = thread.messages.findIndex((existing) => {
+      if (item.clientMessageId && existing.clientMessageId && item.clientMessageId === existing.clientMessageId) return true;
+      if (item.id && existing.id && item.id === existing.id) return true;
+      return false;
+    });
+    if (index >= 0) {
+      thread.messages[index] = Object.assign({}, thread.messages[index], item, {
+        text: item.text || thread.messages[index].text,
+        status: item.status || thread.messages[index].status
+      });
+      changed = true;
+    } else {
+      thread.messages.push(item);
+      changed = true;
+    }
+  });
+  if (!changed) return false;
+  thread.messages = thread.messages.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  updateTitoPayChatThread(thread);
+  return true;
+}
+
+function extractTitoPayChatMessages(result) {
+  if (!result) return [];
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result.messages)) return result.messages;
+  if (Array.isArray(result.data)) return result.data;
+  if (result.data && Array.isArray(result.data.messages)) return result.data.messages;
+  if (result.data && result.data.message) return [result.data.message];
+  if (result.thread && Array.isArray(result.thread.messages)) return result.thread.messages;
+  if (result.data && result.data.thread && Array.isArray(result.data.thread.messages)) return result.data.thread.messages;
+  if (result.result) return extractTitoPayChatMessages(result.result);
+  if (result.message) return [result.message];
+  return [];
+}
+
+function extractTitoPayChatThreads(result) {
+  if (!result) return [];
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result.threads)) return result.threads;
+  if (Array.isArray(result.items)) return result.items;
+  if (Array.isArray(result.data)) return result.data;
+  if (result.data && Array.isArray(result.data.threads)) return result.data.threads;
+  if (result.result) return extractTitoPayChatThreads(result.result);
+  return [];
+}
+
+function normalizeTitoPayRemoteThread(remote = {}) {
+  const participant = remote.participant || remote.user || remote.recipient || {};
+  const participantName = participant.fullName || participant.full_name || participant.name || participant.displayName || participant.display_name || participant.username || remote.title || "TitoPay user";
+  const username = normalizeUsername(participant.username || participant.userName || participant.user_name || participant.handle || "");
+  const normalizedParticipant = {
+    id: participant.id || participant.userId || participant.user_id || remote.participantId || remote.participant_id,
+    userId: participant.id || participant.userId || participant.user_id || remote.participantId || remote.participant_id,
+    username,
+    phone: normalizeSouthAfricanPhone(participant.phone || participant.mobile || participant.msisdn || ""),
+    email: String(participant.email || "").trim().toLowerCase(),
+    accountType: participant.accountType || participant.account_type || "personal",
+    name: participantName,
+    fullName: participantName,
+    profilePhotoUrl: participant.profilePhotoUrl || participant.profile_photo_url || "",
+    verificationStatus: participant.verificationStatus || participant.verification_status || participant.ficaStatus || participant.fica_status || participant.kycStatus || participant.kyc_status || "",
+    status: participant.status || participant.accountStatus || participant.account_status || "",
+    verified: isVerifiedChatUserPayload(participant)
+  };
+  const mode = remote.mode || remote.threadType || remote.thread_type || "direct";
+  const thread = {
+    id: remote.id || remote.threadId || remote.thread_id || remote.clientThreadId || remote.client_thread_id,
+    apiThreadId: remote.threadId || remote.thread_id || remote.id || "",
+    clientThreadId: remote.clientThreadId || remote.client_thread_id || "",
+    mode: String(mode).includes("business") ? "business_to_customer" : "user_to_user",
+    accountType: state.accountType,
+    participant: normalizedParticipant,
+    title: remote.title || participantName,
+    subtitle: remote.subtitle || (username ? displayUsername(username) : normalizedParticipant.phone || normalizedParticipant.email || "TitoPay user"),
+    createdAt: remote.createdAt || remote.created_at || new Date().toISOString(),
+    updatedAt: remote.updatedAt || remote.updated_at || new Date().toISOString(),
+    unreadCount: Number(remote.unreadCount ?? remote.unread_count ?? 0),
+    muted: Boolean(remote.muted),
+    messages: []
+  };
+  if (!thread.id) thread.id = `chat-${chatThreadKey(`${thread.apiThreadId}-${thread.title}`)}`;
+  const lastMessage = remote.lastMessage || remote.last_message;
+  if (lastMessage && (lastMessage.text || lastMessage.message || lastMessage.body)) {
+    const normalizedMessage = normalizeTitoPayChatApiMessage(lastMessage, thread);
+    if (normalizedMessage) thread.messages.push(normalizedMessage);
+  }
+  return thread;
+}
+
+function sameTitoPayChatThread(local, remote) {
+  if (!local || !remote) return false;
+  if (local.id && remote.id && local.id === remote.id) return true;
+  if (local.apiThreadId && remote.apiThreadId && local.apiThreadId === remote.apiThreadId) return true;
+  if (local.clientThreadId && remote.clientThreadId && local.clientThreadId === remote.clientThreadId) return true;
+  if (local.id && remote.clientThreadId && local.id === remote.clientThreadId) return true;
+  const localTokens = userLookupTokens(local.participant || {});
+  const remoteTokens = userLookupTokens(remote.participant || {});
+  return localTokens.length > 0 && localTokens.some((token) => remoteTokens.includes(token)) && local.mode === remote.mode;
+}
+
+function mergeTitoPayChatThreadsFromApi(remoteThreads = []) {
+  if (!remoteThreads.length) return false;
+  const existing = titoPayChatThreads();
+  let changed = false;
+  remoteThreads.map(normalizeTitoPayRemoteThread).forEach((remote) => {
+    rememberLocalTitoPayUser(remote.participant);
+    const index = existing.findIndex((thread) => sameTitoPayChatThread(thread, remote));
+    if (index >= 0) {
+      const current = existing[index];
+      current.apiThreadId = remote.apiThreadId || current.apiThreadId;
+      current.clientThreadId = remote.clientThreadId || current.clientThreadId;
+      current.participant = Object.assign({}, current.participant || {}, remote.participant || {});
+      current.title = remote.title || current.title;
+      current.subtitle = remote.subtitle || current.subtitle;
+      current.updatedAt = remote.updatedAt || current.updatedAt;
+      if (remote.messages.length) mergeTitoPayChatMessages(current, remote.messages);
+      changed = true;
+    } else {
+      remote.messages = remote.messages.length ? remote.messages : [{
+        id: `msg-${Date.now()}-${chatThreadKey(remote.id)}`,
+        sender: "system",
+        text: "Secure TitoPay Chat is ready. You can message before sending money, requesting payment or completing a transaction.",
+        createdAt: remote.createdAt,
+        status: "delivered"
+      }];
+      existing.unshift(remote);
+      changed = true;
+    }
+  });
+  if (changed) saveTitoPayChatThreads(existing);
+  return changed;
+}
+
+async function openTitoPayChatThreadOnServer(thread) {
+  if (!state.auth || !state.auth.accessToken || !thread) return false;
+  const participant = thread.participant || {};
+  const payload = {
+    threadId: thread.clientThreadId || thread.id,
+    clientThreadId: thread.clientThreadId || thread.id,
+    recipient: participant,
+    participantId: participant.id || participant.userId || participant.user_id,
+    identifier: participant.username || participant.phone || participant.email || thread.subtitle || thread.title,
+    mode: thread.mode || "direct"
+  };
+  const result = await api("/v1/chat/threads", { method: "POST", body: payload });
+  const remoteThread = result.thread || result.data?.thread || result;
+  if (remoteThread) {
+    mergeTitoPayChatThreadsFromApi([remoteThread]);
+    return true;
+  }
+  return false;
+}
+
+async function syncTitoPayChatThreads() {
+  if (!state.auth || !state.auth.accessToken || window.titoPayChatThreadSyncing) return false;
+  window.titoPayChatThreadSyncing = true;
+  try {
+    const result = await api("/v1/chat/threads");
+    return mergeTitoPayChatThreadsFromApi(extractTitoPayChatThreads(result));
+  } finally {
+    window.titoPayChatThreadSyncing = false;
+  }
+}
+
+async function syncTitoPayChatThread(threadId) {
+  const thread = titoPayChatThreads().find((item) => item.id === threadId);
+  if (!thread) return false;
+  const participant = thread.participant || {};
+  const participantId = participant.id || participant.userId || participant.user_id || "";
+  const identifier = participant.username || participant.phone || participant.email || thread.subtitle || thread.title || "";
+  const query = new URLSearchParams({
+    threadId,
+    clientThreadId: thread.clientThreadId || thread.id,
+    mode: thread.mode || "direct"
+  });
+  if (participantId) query.set("participantId", participantId);
+  if (identifier) query.set("identifier", identifier);
+  const primaryThreadId = thread.apiThreadId || thread.id;
+  const endpoints = [
+    `/v1/chat/threads/${encodeURIComponent(primaryThreadId)}/messages?${query.toString()}`,
+    `/v1/chat/messages?${query.toString()}`,
+    `/v1/messages?${query.toString()}`
+  ];
+  for (const endpoint of endpoints) {
+    try {
+      const result = await api(endpoint);
+      const messages = extractTitoPayChatMessages(result);
+      if (mergeTitoPayChatMessages(thread, messages)) return true;
+      if (messages.length) return false;
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) throw error;
+    }
+  }
+  return false;
+}
+
+async function sendTitoPayChatMessageToApi(thread, text, localMessageId) {
+  if (isSameTitoPayChatUser(thread.participant || {})) {
+    throw new Error("You cannot send a TitoPay Chat message to your own profile.");
+  }
+  const apiThreadId = thread.apiThreadId || (/^[0-9a-f-]{36}$/i.test(String(thread.id || "")) ? thread.id : "");
+  const clientThreadId = thread.clientThreadId || (!apiThreadId ? thread.id : "");
+  const payload = {
+    threadId: apiThreadId || thread.id,
+    clientThreadId: clientThreadId || thread.id,
+    recipient: thread.participant,
+    participantId: thread.participant && (thread.participant.id || thread.participant.userId || thread.participant.user_id),
+    identifier: thread.participant && (thread.participant.username || thread.participant.phone || thread.participant.email),
+    message: text,
+    clientMessageId: localMessageId,
+    localMessageId,
+    text,
+    body: text,
+    type: "text",
+    mode: thread.mode
+  };
+  if (sendTitoPaySocketEvent("chat:send", { clientMessageId: localMessageId, payload })) {
+    try {
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          titoPayChatPendingAcks.delete(localMessageId);
+          reject(new Error("Chat acknowledgement timed out"));
+        }, 7000);
+        titoPayChatPendingAcks.set(localMessageId, { resolve, reject, timer });
+      });
+    } catch (error) {
+      // The idempotent REST fallback safely retries the same client message ID.
+    }
+  }
+  const requests = [
+    () => api("/v1/chat/messages", { method: "POST", body: payload }),
+    () => api(`/v1/chat/threads/${encodeURIComponent(apiThreadId || thread.id)}/messages`, { method: "POST", body: payload })
+  ];
+  let lastError = null;
+  for (const request of requests) {
+    try {
+      const result = await request();
+      const liveThread = titoPayChatThreads().find((item) => item.id === thread.id);
+      const liveMessage = liveThread && liveThread.messages.find((item) => item.id === localMessageId || item.clientMessageId === localMessageId);
+      const apiMessage = result.message || result.data?.message;
+      if (liveMessage) {
+        if (apiMessage && apiMessage.id) liveMessage.id = apiMessage.id;
+        if (apiMessage && (apiMessage.clientMessageId || apiMessage.client_message_id)) {
+          liveMessage.clientMessageId = apiMessage.clientMessageId || apiMessage.client_message_id;
+        } else {
+          liveMessage.clientMessageId = localMessageId;
+        }
+        liveMessage.status = result.read ? "read" : result.delivered === false ? "sent" : "delivered";
+        liveMessage.createdAt = apiMessage?.createdAt || apiMessage?.created_at || liveMessage.createdAt;
+        updateTitoPayChatThread(liveThread);
+      }
+      if (apiMessage && liveThread && apiMessage.threadId) {
+        liveThread.apiThreadId = apiMessage.threadId;
+        liveThread.clientThreadId = liveThread.clientThreadId || thread.id;
+        updateTitoPayChatThread(liveThread);
+      }
+      const messages = extractTitoPayChatMessages(result);
+      if (messages.length && liveThread) mergeTitoPayChatMessages(liveThread, messages);
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.warn("TitoPay Chat send failed", {
+        status: error.status || 0,
+        path: error.path || "",
+        requestId: error.requestId || "",
+        message: error.message || "Chat send failed"
+      });
+      if (error.status === 401 || error.status === 403) throw error;
+      if (error.status === 400 || error.status === 404) break;
+    }
+  }
+  throw lastError || new Error("TitoPay Chat API is unavailable.");
+}
+
+async function submitTitoPayChatMessage(form, snapshotFormData) {
+  const threadId = form.dataset.threadId;
+  if (titoPayChatBlocks().includes(threadId)) throw new Error("This chat is blocked.");
+  const threads = titoPayChatThreads();
+  const thread = threads.find((item) => item.id === threadId);
+  if (!thread) throw new Error("Chat thread not found.");
+  const formData = snapshotFormData || new FormData(form);
+  const text = String(formData.get("message") || "").trim();
+  if (!text) throw new Error("Type a message.");
+  const message = {
+    id: `msg-${Date.now()}`,
+    clientMessageId: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    sender: "me",
+    text,
+    createdAt: new Date().toISOString(),
+    status: "sent"
+  };
+  thread.messages.push(message);
+  updateTitoPayChatThread(thread);
+  form.reset();
+  openTitoPayChatThread(threadId);
+  try {
+    const result = await sendTitoPayChatMessageToApi(thread, text, message.clientMessageId || message.id);
+    const liveThread = titoPayChatThreads().find((item) => item.id === threadId);
+    const liveMessage = liveThread && liveThread.messages.find((item) => item.id === message.id || item.clientMessageId === message.clientMessageId);
+    if (liveMessage) {
+      const apiMessage = result.message || result.data?.message;
+      if (apiMessage && apiMessage.id) liveMessage.id = apiMessage.id;
+      liveMessage.status = result.read ? "read" : result.delivered === false ? "sent" : "delivered";
+      updateTitoPayChatThread(liveThread);
+    }
+  } catch (error) {
+    const liveThread = titoPayChatThreads().find((item) => item.id === threadId);
+    const liveMessage = liveThread && liveThread.messages.find((item) => item.id === message.id);
+    if (liveMessage) {
+      liveMessage.status = "failed";
+      updateTitoPayChatThread(liveThread);
+    }
+    showToast(error.message && !/request failed|not reachable|timed out/i.test(error.message) ? error.message : "Unable to send message. Please try again.", "error");
+  }
+  openTitoPayChatThread(threadId);
+  syncTitoPayChatThread(threadId).then((changed) => {
+    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) openTitoPayChatThread(threadId);
+  }).catch(() => null);
+}
+
+function activeTitoPayChatThread() {
+  const threadId = sessionStorage.getItem("titopay_active_chat_thread");
+  return titoPayChatThreads().find((item) => item.id === threadId) || null;
+}
+
+function titoPayChatSignalPayload(thread, data = {}) {
+  return Object.assign({
+    threadId: thread.apiThreadId || thread.id,
+    clientThreadId: thread.clientThreadId || thread.id,
+    participant: thread.participant,
+    participantId: thread.participant && (thread.participant.id || thread.participant.userId || thread.participant.user_id),
+    identifier: thread.participant && (thread.participant.username || thread.participant.phone || thread.participant.email),
+    mode: thread.mode
+  }, data);
+}
+
+function titoPayCallMediaSupported() {
+  return Boolean(window.RTCPeerConnection && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+
+function ensureTitoPayRemoteAudio() {
+  let audio = document.querySelector("#titopay-remote-audio");
+  if (!audio) {
+    audio = document.createElement("audio");
+    audio.id = "titopay-remote-audio";
+    audio.autoplay = true;
+    audio.playsInline = true;
+    audio.hidden = true;
+    document.body.appendChild(audio);
+  }
+  return audio;
+}
+
+function endTitoPayPeerConnection(options = {}) {
+  if (options.notify !== false) {
+    const thread = activeTitoPayChatThread();
+    if (thread) sendTitoPaySocketEvent("call:end", { payload: titoPayChatSignalPayload(thread) });
+  }
+  if (titoPayPeerConnection) {
+    try { titoPayPeerConnection.close(); } catch (error) {}
+  }
+  titoPayPeerConnection = null;
+  titoPayPendingCallOffer = null;
+  const stream = window.titoPayActiveCallStream;
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+  window.titoPayActiveCallStream = null;
+  const audio = document.querySelector("#titopay-remote-audio");
+  if (audio) audio.srcObject = null;
+}
+
+function createTitoPayPeerConnection(thread, options = {}) {
+  endTitoPayPeerConnection({ notify: false });
+  if (!options.preserveIceCandidates) titoPayPendingIceCandidates = [];
+  titoPayPeerConnection = new RTCPeerConnection({ iceServers: titoPayIceServers });
+  titoPayPeerConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+      sendTitoPaySocketEvent("call:ice", { payload: titoPayChatSignalPayload(thread, { data: event.candidate }) });
+    }
+  };
+  titoPayPeerConnection.ontrack = (event) => {
+    ensureTitoPayRemoteAudio().srcObject = event.streams[0];
+  };
+  return titoPayPeerConnection;
+}
+
+async function loadTitoPayCallConfig() {
+  const result = await api("/v1/chat/config");
+  if (Array.isArray(result.iceServers) && result.iceServers.length) {
+    titoPayIceServers = result.iceServers;
+  }
+}
+
+async function addPendingTitoPayIceCandidates() {
+  if (!titoPayPeerConnection || !titoPayPeerConnection.remoteDescription) return;
+  const candidates = titoPayPendingIceCandidates.splice(0);
+  for (const candidate of candidates) {
+    try {
+      await titoPayPeerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (error) {}
+  }
+}
+
+async function getTitoPayCallStream() {
+  if (!titoPayCallMediaSupported()) throw new Error("Voice calling is not supported by this browser.");
+  window.titoPayActiveCallStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  return window.titoPayActiveCallStream;
+}
+
+function openCustomerCareCallOnlyModal() {
+  titoPayPendingCallOffer = null;
+  endTitoPayPeerConnection({ notify: false });
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Customer Care only</p><h2>Request a secure callback</h2><p class="lead">TitoPay voice calls are handled by verified Customer Care agents, not direct user-to-user calling.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="call-panel customer-care-call-panel">
+      <span class="call-avatar">${icon("chat")}</span>
+      <strong>Need to speak to TitoPay?</strong>
+      <p>Open the assistant and choose “Request a Callback”. Your chat history stays available, and Customer Care will handle the voice call securely.</p>
+    </section>
+    <div class="call-controls support-call-controls">
+      <button class="btn primary" type="button" data-action="chatbot">${icon("phone")} Open Customer Care</button>
+      <button class="btn secondary" type="button" data-action="chat-back">${icon("chat")} Back to chat</button>
+    </div>
+  `);
+}
+
+function handleTitoPayChatSignal(signal = {}) {
+  const thread = findTitoPayThreadForApiMessage({ threadId: signal.threadId, senderId: signal.senderId });
+  if (signal.kind === "typing") {
+    if (!thread || sessionStorage.getItem("titopay_active_chat_thread") !== thread.id) return;
+    const status = document.querySelector("[data-chat-typing]");
+    if (status) status.textContent = signal.active ? `${thread.title || "TitoPay user"} is typing…` : "";
+    return;
+  }
+  if (String(signal.kind || "").startsWith("call:")) {
+    titoPayPendingCallOffer = null;
+    endTitoPayPeerConnection({ notify: false });
+    showToast("Voice calls are available only through TitoPay Customer Care.", "info");
+    return;
+  }
+  if (signal.kind === "call:offer") {
+    if (!thread) {
+      if (signal.lookupRetried) return;
+      signal.lookupRetried = true;
+      syncTitoPayChatThreads().then(() => handleTitoPayChatSignal(signal)).catch(() => null);
+      return;
+    }
+    titoPayPendingCallOffer = { signal, threadId: thread.id };
+    addInAppNotification({
+      title: "Incoming TitoPay voice call",
+      body: `${thread.title || "A TitoPay user"} is calling you.`,
+      category: "chat",
+      metadata: { threadId: thread.id }
+    });
+    openIncomingTitoPayCallModal(thread, signal);
+    return;
+  }
+  if (signal.kind === "call:answer" && titoPayPeerConnection && signal.data) {
+    titoPayPeerConnection.setRemoteDescription(new RTCSessionDescription(signal.data))
+      .then(addPendingTitoPayIceCandidates)
+      .catch(() => null);
+    const status = document.querySelector("[data-call-status]");
+    if (status) status.textContent = "Voice call connected.";
+    return;
+  }
+  if (signal.kind === "call:ice" && signal.data) {
+    if (!titoPayPeerConnection || !titoPayPeerConnection.remoteDescription) {
+      titoPayPendingIceCandidates.push(signal.data);
+    } else {
+      titoPayPeerConnection.addIceCandidate(new RTCIceCandidate(signal.data)).catch(() => null);
+    }
+    return;
+  }
+  if (signal.kind === "call:end") {
+    endTitoPayPeerConnection({ notify: false });
+    showToast("TitoPay call ended.");
+    return;
+  }
+  if (signal.kind === "call:mute") {
+    showToast(signal.muted ? "The other user muted their microphone." : "The other user unmuted their microphone.");
+  }
+}
+
+function openIncomingTitoPayCallModal(thread, signal) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Incoming TitoPay Call</p><h2>${esc(thread.title)}</h2><p class="lead">Verified TitoPay voice call.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="call-panel">
+      <span class="call-avatar">${esc(chatParticipantInitials(thread.title))}</span>
+      <strong>Incoming voice call</strong>
+      <p>${esc(thread.title)} wants to speak before completing a transaction.</p>
+    </section>
+    <div class="call-controls">
+      <button class="btn primary" type="button" data-action="chat-call-accept">${icon("phone")} Accept</button>
+      <button class="btn secondary" type="button" data-action="chat-call-decline">${icon("x")} Decline</button>
+    </div>
+  `);
+}
+
+function isVerifiedChatParticipant(thread) {
+  const participant = thread && thread.participant || {};
+  return participant.verified === true &&
+    Boolean(participant.id || participant.userId || participant.user_id);
+}
+
+async function startTitoPayCall() {
+  const thread = activeTitoPayChatThread();
+  if (!thread) throw new Error("Open a TitoPay Chat first.");
+  if (!isVerifiedChatParticipant(thread)) {
+    throw new Error("Calls are only available for verified TitoPay users.");
+  }
+  if (!titoPayCallMediaSupported()) throw new Error("Voice calling is not supported by this browser.");
+  await waitForTitoPayChatSocket();
+  await loadTitoPayCallConfig();
+  const history = titoPayCallHistory();
+  const call = {
+    id: `call-${Date.now()}`,
+    threadId: thread.id,
+    title: thread.title,
+    mode: thread.mode,
+    callType: "voice",
+    direction: "outgoing",
+    status: "connecting",
+    startedAt: new Date().toISOString()
+  };
+  history.unshift(call);
+  saveTitoPayCallHistory(history);
+  const stream = await getTitoPayCallStream();
+  const peer = createTitoPayPeerConnection(thread);
+  stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+  sendTitoPaySocketEvent("call:offer", {
+    payload: titoPayChatSignalPayload(thread, {
+      callId: call.id,
+      data: offer,
+      type: "voice",
+      media: "audio_only",
+      encryption: "webrtc_dtls_srtp"
+    })
+  });
+  const updatedHistory = titoPayCallHistory();
+  const savedCall = updatedHistory.find((item) => item.id === call.id);
+  if (savedCall) {
+    savedCall.status = "calling";
+    savedCall.micReady = true;
+    saveTitoPayCallHistory(updatedHistory);
+  }
+  openTitoPayCallModal(thread, call.id, true, "");
+}
+
+async function acceptTitoPayIncomingCall() {
+  if (!titoPayPendingCallOffer) throw new Error("Incoming call is no longer available.");
+  const pendingCall = titoPayPendingCallOffer;
+  const thread = titoPayChatThreads().find((item) => item.id === pendingCall.threadId);
+  if (!thread) throw new Error("Chat thread not found.");
+  await loadTitoPayCallConfig();
+  const stream = await getTitoPayCallStream();
+  const peer = createTitoPayPeerConnection(thread, { preserveIceCandidates: true });
+  stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+  await peer.setRemoteDescription(new RTCSessionDescription(pendingCall.signal.data));
+  await addPendingTitoPayIceCandidates();
+  const answer = await peer.createAnswer();
+  await peer.setLocalDescription(answer);
+  sendTitoPaySocketEvent("call:answer", {
+    payload: titoPayChatSignalPayload(thread, {
+      callId: pendingCall.signal.callId,
+      data: answer
+    })
+  });
+  const history = titoPayCallHistory();
+  history.unshift({
+    id: pendingCall.signal.callId || `call-${Date.now()}`,
+    threadId: thread.id,
+    title: thread.title,
+    mode: thread.mode,
+    callType: "voice",
+    direction: "incoming",
+    status: "active",
+    startedAt: new Date().toISOString(),
+    micReady: true
+  });
+  saveTitoPayCallHistory(history);
+  titoPayPendingCallOffer = null;
+  openTitoPayCallModal(thread, history[0].id, true, "");
+}
+
+function declineTitoPayIncomingCall() {
+  if (titoPayPendingCallOffer) {
+    const thread = titoPayChatThreads().find((item) => item.id === titoPayPendingCallOffer.threadId);
+    if (thread) sendTitoPaySocketEvent("call:end", { payload: titoPayChatSignalPayload(thread, { callId: titoPayPendingCallOffer.signal.callId }) });
+  }
+  titoPayPendingCallOffer = null;
+  closeModal();
+  showToast("Call declined.");
+}
+
+function openTitoPayCallModal(thread, callId, micReady, micError = "") {
+  window.titoPayActiveCallState = {
+    id: callId,
+    muted: false,
+    speaker: false,
+    micReady: Boolean(micReady)
+  };
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay Call</p><h2>${esc(thread.title)}</h2><p class="lead">Calls are available only for verified TitoPay users.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="call-panel" data-call-id="${esc(callId)}">
+      <span class="call-avatar">${esc(chatParticipantInitials(thread.title))}</span>
+      <strong>${micReady ? "Secure call active" : "Call controls ready"}</strong>
+      <p>${micReady ? "Microphone is active. TitoPay voice calling is ready for this verified user." : (micError || "Voice calling needs microphone access. You can still use the call controls while permission is requested again.")}</p>
+      <p class="call-status" data-call-status>${micReady ? "Microphone unmuted." : "Microphone not connected yet."}</p>
+      <small>Voice calls are protected and available only for approved TitoPay support conversations.</small>
+    </section>
+    <div class="call-controls">
+      <button class="btn secondary" type="button" data-action="chat-call-mute" aria-pressed="false">${icon("phone")} Mute</button>
+      <button class="btn secondary" type="button" data-action="chat-call-speaker" aria-pressed="false">${icon("signal")} Speaker</button>
+      <button class="btn secondary" type="button" data-action="chat-call-end">${icon("x")} End call</button>
+    </div>
+  `);
+}
+
+function toggleTitoPayCallMute() {
+  const stream = window.titoPayActiveCallStream;
+  const callState = window.titoPayActiveCallState || { muted: false };
+  const track = stream && stream.getAudioTracks ? stream.getAudioTracks()[0] : null;
+  if (track) {
+    track.enabled = !track.enabled;
+    callState.muted = !track.enabled;
+  } else {
+    callState.muted = !callState.muted;
+  }
+  window.titoPayActiveCallState = callState;
+  const button = document.querySelector('[data-action="chat-call-mute"]');
+  if (button) {
+    button.classList.toggle("is-active", callState.muted);
+    button.setAttribute("aria-pressed", String(callState.muted));
+    button.innerHTML = `${icon("phone")} ${callState.muted ? "Unmute" : "Mute"}`;
+  }
+  const status = document.querySelector("[data-call-status]");
+  if (status) status.textContent = callState.muted ? "Microphone muted." : "Microphone unmuted.";
+  const thread = activeTitoPayChatThread();
+  if (thread) sendTitoPaySocketEvent("call:mute", { payload: titoPayChatSignalPayload(thread, { muted: callState.muted }) });
+  showToast(callState.muted ? "Microphone muted." : "Microphone unmuted.");
+}
+
+function toggleTitoPayCallSpeaker() {
+  const callState = window.titoPayActiveCallState || { speaker: false };
+  callState.speaker = !callState.speaker;
+  window.titoPayActiveCallState = callState;
+  const button = document.querySelector('[data-action="chat-call-speaker"]');
+  if (button) {
+    button.classList.toggle("is-active", callState.speaker);
+    button.setAttribute("aria-pressed", String(callState.speaker));
+    button.innerHTML = `${icon("signal")} ${callState.speaker ? "Speaker On" : "Speaker"}`;
+  }
+  showToast(callState.speaker ? "Speaker mode selected. Device audio controls may still apply." : "Speaker mode off.");
+}
+
+function endTitoPayCall() {
+  const callState = window.titoPayActiveCallState || {};
+  endTitoPayPeerConnection({ notify: true });
+  window.titoPayActiveCallState = null;
+  const history = titoPayCallHistory();
+  const activeCall = history.find((item) => item.id === callState.id) || history.find((item) => !item.endedAt);
+  if (activeCall) {
+    activeCall.status = "ended";
+    activeCall.endedAt = new Date().toISOString();
+    saveTitoPayCallHistory(history);
+    if (activeCall.apiCallId) {
+      api(`/v1/chat/calls/${encodeURIComponent(activeCall.apiCallId)}/end`, { method: "POST", body: {} }).catch(() => null);
+    }
+  }
+  closeModal();
+  showToast("TitoPay call ended.");
+}
+
+function openTitoPayCallHistory() {
+  const thread = activeTitoPayChatThread();
+  const items = titoPayCallHistory().filter((item) => !thread || item.threadId === thread.id).slice(0, 12);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay Call</p><h2>Call history</h2><p class="lead">Recent verified-user call activity.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${items.length ? `
+      <section class="settings-list">
+        ${items.map((item) => settingsRow(item.title || "TitoPay user", `${item.direction || "call"} · ${new Date(item.startedAt).toLocaleString()} · ${item.status || "recorded"}`, "phone")).join("")}
+      </section>
+    ` : `<section class="empty-state compact-state">${icon("phone")}<strong>No calls yet</strong><p>Call history will appear here after verified TitoPay user calls.</p></section>`}
+    <button class="btn ghost" type="button" data-action="chat-back">${icon("arrow-left")} Back to chats</button>
+  `);
+}
+
+function reportActiveChatThread() {
+  const threadId = sessionStorage.getItem("titopay_active_chat_thread");
+  if (!threadId) return;
+  const reports = readJson("titopay_chat_reports_v1") || [];
+  reports.unshift({ threadId, reportedAt: new Date().toISOString(), accountType: state.accountType });
+  writeJson("titopay_chat_reports_v1", reports);
+  showToast("Chat reported for review.");
+}
+
+function blockActiveChatThread() {
+  const threadId = sessionStorage.getItem("titopay_active_chat_thread");
+  if (!threadId) return;
+  const blocks = titoPayChatBlocks();
+  if (!blocks.includes(threadId)) blocks.push(threadId);
+  saveTitoPayChatBlocks(blocks);
+  showToast("Chat blocked.");
+  openTitoPayChatThread(threadId);
+}
+
+function openStockvelChatModal() {
+  const thread = getOrCreateTitoPayChatThread(
+    { id: "stockvel-group", name: "Stokvel Group", username: "stockvel-group", accountType: "group" },
+    {
+      id: "stockvel-group-chat",
+      mode: "stockvel_group",
+      title: "Stokvel group chat",
+      subtitle: "Contribution reminders, payout order and member updates",
+      welcome: "Stokvel group chat is ready. Use this space for contribution reminders, payout order updates and member coordination."
+    }
+  );
+  openTitoPayChatThread(thread.id);
+}
+
+function openChatbotModal() {
+  const business = state.accountType === "business";
+  const suggestions = [
+    "How do I send money?",
+    "How do I receive money?",
+    "How do QR payments work?",
+    "How do I withdraw funds?",
+    "How do I top up my wallet?",
+    "How do I verify my account?",
+    business ? "How do I create a business profile?" : "How do I create a payment request?",
+    business ? "How do payouts work?" : "How do TitoPay users get detected?",
+    "Transaction issues",
+    "Failed payments",
+    "Refund requests",
+    "Security and fraud support",
+    "Account access issues",
+    "Fee information",
+    "Speak to Customer Care",
+    "Request a callback",
+    "General FAQs"
+  ];
+  openModal(`
+    <div class="modal-head chatbot-head">
+      <div><p class="eyebrow">TitoPay Assistant</p><h2>${business ? "Business support" : "Personal support"}</h2><p class="lead">Ask a question, choose a quick topic, or request Customer Care.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="chat-panel chatbot-panel" data-clickatell-ready="true" aria-label="TitoPay chatbot conversation">
+      <div class="chat-thread" aria-live="polite">
+        <article class="chat-message assistant">
+          <span class="icon-bubble">${icon("chatbot")}</span>
+          <p>Hi, I can help with ${business ? "payments, payouts, invoices, reports and account security." : "top ups, transfers, QR Pay, purchases, FICA and wallet security."}</p>
+        </article>
+      </div>
+      <div class="chatbot-quick-title">Quick help</div>
+      <div class="suggestion-row chatbot-suggestions" aria-label="Suggested chatbot questions">
+        ${suggestions.map((item) => `<button type="button" class="chip" data-chat-suggestion="${esc(item)}">${esc(item)}</button>`).join("")}
+      </div>
+    </section>
+    <form class="chatbot-compose" data-form="chatbot">
+      <input type="hidden" name="provider" value="clickatell">
+      <label class="sr-only" for="chatbot-message-input">Message</label>
+      <input id="chatbot-message-input" name="message" placeholder="Type your question..." autocomplete="off" required>
+      <button class="btn primary" type="submit" aria-label="Send message">${icon("send")}</button>
+    </form>
+  `);
+  const existingConversationId = sessionStorage.getItem("titopay_support_conversation_id");
+  if (existingConversationId) hydrateSupportConversation(existingConversationId).catch(() => null);
+}
+
+async function hydrateSupportConversation(conversationId) {
+  const result = await api(`/v1/support/conversations/${encodeURIComponent(conversationId)}/messages`);
+  const messages = result.messages || result.items || [];
+  const thread = document.querySelector(".chat-thread");
+  if (!thread) return;
+  thread.innerHTML = "";
+  messages.forEach((item) => appendChatMessage(
+    item.senderType === "CUSTOMER" ? "user" : "assistant",
+    item.body || item.message || ""
+  ));
+  await api(`/v1/support/conversations/${encodeURIComponent(conversationId)}/read`, {
+    method: "POST",
+    body: {}
+  }).catch(() => null);
+  const conversationResult = await api(`/v1/support/conversations/${encodeURIComponent(conversationId)}`);
+  const status = conversationResult.conversation?.status;
+  if (status) sessionStorage.setItem("titopay_support_conversation_status", status);
+}
+
+async function submitChatbotMessage(data) {
+  const message = String(data.message || "").trim();
+  if (!message) throw new Error("Enter a message for TitoPay Chatbot.");
+  const formInput = document.querySelector('form[data-form="chatbot"] input[name="message"]');
+  if (formInput) formInput.value = "";
+  appendChatMessage("user", message);
+  const supportConversationId = sessionStorage.getItem("titopay_support_conversation_id");
+  const supportStatus = sessionStorage.getItem("titopay_support_conversation_status");
+  if (supportConversationId && ["ESCALATED", "WAITING_FOR_AGENT", "AGENT_ACTIVE", "REOPENED"].includes(supportStatus)) {
+    await api(`/v1/support/conversations/${encodeURIComponent(supportConversationId)}/messages`, {
+      method: "POST",
+      body: { message, clientMessageId: `support-${Date.now()}-${Math.random().toString(36).slice(2)}` }
+    });
+    return;
+  }
+  const loadingId = `chat-loading-${Date.now()}`;
+  appendChatMessage("assistant", "Checking TitoPay support knowledge...", loadingId);
+  let answer = "";
+  let needsEscalation = false;
+  try {
+    const result = await api("/v1/chatbot/messages", {
+      method: "POST",
+      body: {
+        message,
+        conversationId: supportConversationId || undefined,
+        clientMessageId: `bot-customer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        botMessageId: `bot-reply-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        accountType: state.accountType,
+        channelProvider: "clickatell"
+      }
+    });
+    answer = result.answer || result.message || "TitoPay Chatbot received your message.";
+    needsEscalation = Boolean(result.needsEscalation || result.escalate);
+    if (result.conversationId) {
+      sessionStorage.setItem("titopay_support_conversation_id", result.conversationId);
+      sessionStorage.setItem("titopay_support_conversation_status", result.status || "BOT_ACTIVE");
+    }
+  } catch (error) {
+    answer = "TitoPay Assistant could not connect. Your message was not marked as resolved; please retry when the connection is restored.";
+    needsEscalation = false;
+  }
+  const loading = document.getElementById(loadingId);
+  if (loading) loading.remove();
+  appendChatMessage("assistant", answer);
+  if (needsEscalation) renderSupportEscalation(message);
+}
+
+function appendChatMessage(role, message, id = "") {
+  const thread = document.querySelector(".chat-thread");
+  if (!thread) return;
+  const article = document.createElement("article");
+  article.className = `chat-message ${role}`;
+  if (id) article.id = id;
+  article.innerHTML = role === "assistant"
+    ? `<span class="icon-bubble">${icon("chatbot")}</span><p>${esc(message)}</p>`
+    : `<p>${esc(message)}</p>`;
+  thread.appendChild(article);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function renderSupportEscalation(message) {
+  const thread = document.querySelector(".chat-thread");
+  if (!thread) return;
+  thread.querySelectorAll(".support-escalation").forEach((item) => item.remove());
+  sessionStorage.setItem("titopay_pending_support_message", message);
+  thread.insertAdjacentHTML("beforeend", `
+    <section class="support-escalation" aria-label="Customer care escalation">
+      <strong>Please wait while we connect you to one of our Customer Care Specialists.</strong>
+      <p>Estimated wait: 2-5 minutes. You can keep using TitoPay while the request is in the support queue.</p>
+      <div class="support-actions">
+        <button type="button" class="btn primary" data-support-escalation="live_chat">${icon("chat")} Start Live Chat</button>
+        <button type="button" class="btn secondary" data-support-escalation="callback">${icon("phone")} Request a Callback</button>
+        <button type="button" class="btn secondary" data-support-escalation="wait">${icon("refresh")} Continue Waiting</button>
+      </div>
+    </section>
+  `);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function requestSupportEscalation(mode) {
+  const message = sessionStorage.getItem("titopay_pending_support_message") || "Customer requested support from TitoPay Chatbot.";
+  const modeLabels = {
+    live_chat: "Live chat",
+    callback: "Callback request",
+    wait: "Continue waiting"
+  };
+  let ticketRef = "";
+  let ticketId = "";
+  try {
+    const result = await api("/v1/chatbot/escalations", {
+      method: "POST",
+      body: {
+        mode,
+        message,
+        conversationId: sessionStorage.getItem("titopay_support_conversation_id") || undefined,
+        clientMessageId: `escalation-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        accountType: state.accountType,
+        channelProvider: "clickatell"
+      }
+    });
+    ticketRef = result.ticket?.ticketRef || result.ticket?.ticket_ref || result.ticketRef || result.ticket_ref || ticketRef;
+    ticketId = result.ticket?.id || result.id || ticketRef;
+    if (result.conversation?.id) {
+      sessionStorage.setItem("titopay_support_conversation_id", result.conversation.id);
+      sessionStorage.setItem("titopay_support_conversation_status", result.conversation.status || "WAITING_FOR_AGENT");
+    }
+  } catch (error) {
+    appendChatMessage("assistant", "The support request could not be created. Please check your connection and try again.");
+    showToast(error.message || "Unable to create support request", "error");
+    return;
+  }
+  appendChatMessage("assistant", `${modeLabels[mode] || "Support request"} created. Reference ${ticketRef}. TitoPay Customer Care will assist you from here.`);
+  addInAppNotification({
+    id: `support-${ticketRef}`,
+    title: "Customer Care reference created",
+    body: `${modeLabels[mode] || "Support request"} created. Reference ${ticketRef}.`,
+    category: "support_reference",
+    metadata: {
+      ticketId,
+      ticketRef,
+      mode,
+      supportStatus: "created",
+      notificationType: "support_reference"
+    }
+  });
+  renderSupportRating(ticketRef);
+}
+
+function renderSupportRating(ticketId) {
+  const thread = document.querySelector(".chat-thread");
+  if (!thread) return;
+  thread.querySelectorAll(".support-rating").forEach((item) => item.remove());
+  thread.insertAdjacentHTML("beforeend", `
+    <section class="support-rating" aria-label="Support rating">
+      <strong>Rate this support experience after it is resolved.</strong>
+      <div class="support-rating-actions">
+        ${[5, 4, 3, 2, 1].map((rating) => `<button type="button" class="chip" data-support-ticket="${esc(ticketId)}" data-support-rating="${rating}">${rating} star${rating === 1 ? "" : "s"}</button>`).join("")}
+      </div>
+    </section>
+  `);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function submitSupportRating(rating) {
+  const button = document.querySelector(`[data-support-rating="${String(rating)}"]`);
+  const ticketId = button?.dataset.supportTicket || "";
+  const feedback = window.prompt("Optional feedback for TitoPay Customer Care") || "";
+  try {
+    await api("/v1/chatbot/ratings", {
+      method: "POST",
+      body: {
+        ticketId,
+        rating: Number(rating),
+        feedback,
+        accountType: state.accountType
+      }
+    });
+  } catch (error) {
+    const ratings = readJson("titopay_support_ratings") || [];
+    ratings.push({ ticketId, rating: Number(rating), feedback, createdAt: new Date().toISOString() });
+    localStorage.setItem("titopay_support_ratings", JSON.stringify(ratings));
+  }
+  addInAppNotification({
+    id: `support-rating-${ticketId}-${rating}`,
+    title: "Service rating sent",
+    body: "Thank you. Your service rating has been sent to TitoPay Customer Care.",
+    category: "support_rating",
+    metadata: {
+      ticketId,
+      rating: Number(rating),
+      notificationType: "support_rating"
+    }
+  });
+  appendChatMessage("assistant", "Thank you. Your rating has been sent to TitoPay Customer Care.");
+}
+
+function chatbotFallbackAnswer(message) {
+  const text = message.toLowerCase();
+  if (text.includes("top")) return { needsEscalation: false, answer: "Choose Top Up, enter the amount, select card or EFT, then confirm the fee preview." };
+  if (text.includes("withdraw") || text.includes("payout")) return { needsEscalation: false, answer: "Add a beneficiary, enter the amount, review the fee preview, then confirm. Wallet Lock blocks payouts until unlocked." };
+  if (text.includes("qr")) return { needsEscalation: false, answer: "Use QR to generate a receive code or scan a TitoPay merchant/customer QR before confirming payment." };
+  if (text.includes("lock") || text.includes("security") || text.includes("fraud")) return { needsEscalation: false, answer: "Wallet Lock sits in Profile and Security. Never share your PIN, password or verification code." };
+  if (text.includes("invoice") || text.includes("quote") || text.includes("proforma")) return { needsEscalation: false, answer: "Business documents support customer details, item lines, VAT, notes and paid PDF download." };
+  if (text.includes("fee")) return { needsEscalation: false, answer: "TitoPay shows fees before paid actions. SMS alerts are optional at R0.30 per SMS; in-app notifications are free." };
+  if (text.includes("customer care") || text.includes("callback") || text.includes("agent") || text.includes("live chat")) return { needsEscalation: true, answer: "I can connect you to Customer Care. Choose live chat, request a callback, or continue waiting in the support queue." };
+  return { needsEscalation: true, answer: "I can escalate this to Customer Care for a live chat or callback request." };
+}
+
+function filteredTransactions() {
+  const { search, from, to, direction } = state.transactionFilters;
+  const query = search.trim().toLowerCase();
+  const fromTime = from ? new Date(`${from}T00:00:00`).getTime() : null;
+  const toTime = to ? new Date(`${to}T23:59:59`).getTime() : null;
+  return state.transactions.filter((item) => {
+    const created = new Date(item.created_at || item.createdAt || Date.now()).getTime();
+    const text = [
+      item.id,
+      item.reference,
+      item.service_name,
+      item.serviceName,
+      item.service_code,
+      item.serviceCode,
+      item.recipient_reference,
+      item.recipientReference,
+      item.status
+    ].filter(Boolean).join(" ").toLowerCase();
+    if (query && !text.includes(query)) return false;
+    if (direction !== "all" && (item.direction || "debit") !== direction) return false;
+    if (fromTime && created < fromTime) return false;
+    if (toTime && created > toTime) return false;
+    return true;
+  });
+}
+
+function downloadTransactionsCsv() {
+  const items = filteredTransactions();
+  const rows = [
+    ["Transaction ID", "Reference", "Date", "Time", "Service", "Direction", "Sender", "Recipient", "Amount", "Total", "Status"]
+  ];
+  items.forEach((item) => {
+    rows.push([
+      item.id || "",
+      item.reference || "",
+      new Date(item.created_at || item.createdAt || Date.now()).toLocaleDateString("en-ZA"),
+      new Date(item.created_at || item.createdAt || Date.now()).toLocaleTimeString("en-ZA"),
+      item.service_name || item.serviceName || item.service_code || item.serviceCode || "",
+      item.direction || "",
+      item.sender_reference || item.senderReference || state.user && state.user.username || "",
+      item.recipient_reference || item.recipientReference || "",
+      item.amount || "",
+      item.total || "",
+      item.status || ""
+    ]);
+  });
+  const csv = "\uFEFF" + rows.map((row) => row.map(csvCell).join(",")).join("\n");
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `titopay-transactions-${Date.now()}.csv`);
+}
+
+function csvCell(value) {
+  const text = String(value != null ? value : "");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadTransactionsPdf() {
+  const items = filteredTransactions();
+  const now = new Date();
+  const statementNo = `TPS-${dateStamp(now)}-${leftPad(String(Math.floor(Math.random() * 999999)), 6, "0")}`;
+  const referenceNo = `TP-${dateStamp(now)}-${leftPad(String(state.transactions.length + 1), 6, "0")}`;
+  const pdf = statementPdf({ items, now, statementNo, referenceNo });
+  downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${statementNo}.pdf`);
+}
+
+function dateStamp(date) {
+  return date.toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+function statementAccountName(user = state.user || {}) {
+  if (state.accountType === "business") {
+    return user.businessName || user.business_name || user.companyName || user.company_name || user.tradingName || user.trading_name || user.fullName || user.full_name || user.username || "TitoPay Business";
+  }
+  return user.fullName || user.full_name || user.name || user.username || "TitoPay User";
+}
+
+function statementContactLine(user = state.user || {}) {
+  const contactParts = [
+    user.phone || user.mobile || user.contactNumber || user.contact_number,
+    user.email || user.businessEmail || user.business_email
+  ].filter(Boolean);
+  return contactParts.length ? contactParts.join(" | ") : "Not supplied";
+}
+
+function statementAddressLine(user = state.user || {}) {
+  return user.address || user.physicalAddress || user.physical_address || user.businessAddress || user.business_address || user.streetAddress || user.street_address || "Not supplied";
+}
+
+function splitStatementText(value, maxChars = 54, maxLines = 2) {
+  const words = String(value || "").replace(/\s+/g, " ").trim().split(" ");
+  const lines = [];
+  let line = "";
+  words.forEach((word) => {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > maxChars && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  });
+  if (line) lines.push(line);
+  const output = lines.slice(0, maxLines);
+  if (lines.length > maxLines && output.length) output[output.length - 1] = `${output[output.length - 1].replace(/\s+$/, "")}...`;
+  return output.length ? output : ["Not supplied"];
+}
+
+function compactStatementReference(reference, maxChars = 24) {
+  const value = String(reference || "TP-STATEMENT");
+  return value.length > maxChars ? `${value.slice(0, maxChars - 3)}...` : value;
+}
+
+function statementPdf({ items, now, statementNo, referenceNo }) {
+  const user = state.user || {};
+  const wallet = primaryWallet() || {};
+  const profileType = state.accountType === "business" ? "Business profile" : "Personal profile";
+  const accountName = statementAccountName(user);
+  const contact = statementContactLine(user);
+  const address = statementAddressLine(user);
+  const accountNameLines = splitStatementText(accountName, 34, 2);
+  const contactLines = splitStatementText(contact, 42, 1);
+  const addressLines = splitStatementText(address, 42, 1);
+  const ficaStatus = ficaDisplayStatus(user.ficaStatus || user.fica_status);
+  const totalIn = items.filter(transactionIsCredit).reduce((sum, item) => sum + statementAmountNumber(item), 0);
+  const totalOut = items.filter((item) => !transactionIsCredit(item)).reduce((sum, item) => sum + statementAmountNumber(item), 0);
+  const net = totalIn - totalOut;
+  const issuedDate = now.toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+  const issuedTime = now.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const generatedAt = now.toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" });
+  const commands = [];
+  const fill = (x, y, w, h, color) => commands.push(`q ${color} rg ${x} ${y} ${w} ${h} re f Q`);
+  const stroke = (x, y, w, h, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x} ${y} ${w} ${h} re S Q`);
+  const line = (x1, y1, x2, y2, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`);
+  const text = (x, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => commands.push(`BT /${font} ${size} Tf ${color} rg ${x} ${y} Td (${pdfEscape(value)}) Tj ET`);
+  const rightText = (rightX, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => {
+    const width = String(value || "").length * size * 0.5;
+    text(rightX - width, y, value, size, font, color);
+  };
+  const centerText = (centerX, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => {
+    const width = String(value || "").length * size * 0.48;
+    text(centerX - width / 2, y, value, size, font, color);
+  };
+  const circle = (cx, cy, r, color = "0.60 0.10 0.14", width = 1.2) => {
+    const k = 0.5522847498 * r;
+    commands.push(`q ${color} RG ${width} w ${cx + r} ${cy} m ${cx + r} ${cy + k} ${cx + k} ${cy + r} ${cx} ${cy + r} c ${cx - k} ${cy + r} ${cx - r} ${cy + k} ${cx - r} ${cy} c ${cx - r} ${cy - k} ${cx - k} ${cy - r} ${cx} ${cy - r} c ${cx + k} ${cy - r} ${cx + r} ${cy - k} ${cx + r} ${cy} c S Q`);
+  };
+
+  fill(0, 720, 595, 92, "0.03 0.08 0.22");
+  fill(0, 716, 595, 4, "0.00 0.34 1.00");
+  text(52, 770, "TitoPay", 24, "F2", "1 1 1");
+  text(52, 752, "Smart Payments. Simplified.", 8.6, "F1", "0.84 0.89 0.98");
+  rightText(545, 775, "ACCOUNT STATEMENT", 13, "F2", "1 1 1");
+  rightText(545, 758, profileType, 9, "F1", "0.90 0.94 1.00");
+  rightText(545, 744, `Issued ${issuedDate} at ${issuedTime}`, 8.5, "F1", "0.90 0.94 1.00");
+  rightText(545, 731, `Reference ${referenceNo}`, 8.5, "F1", "0.90 0.94 1.00");
+
+  fill(52, 538, 491, 138, "0.99 0.99 1.00");
+  stroke(52, 538, 491, 138);
+  text(66, 652, "ACCOUNT DETAILS", 10, "F2", "0.12 0.32 0.62");
+  text(66, 633, "ACCOUNT NAME", 7.5, "F1", "0.38 0.43 0.52");
+  accountNameLines.forEach((lineValue, index) => text(66, 620 - index * 10, lineValue, index ? 8.4 : 9.2, index ? "F1" : "F2"));
+  text(66, 594, "CONTACT", 7.5, "F1", "0.38 0.43 0.52");
+  contactLines.forEach((lineValue, index) => text(66, 581 - index * 10, lineValue, 8.2, "F1", "0.06 0.10 0.20"));
+  text(66, 566, "ADDRESS", 7.5, "F1", "0.38 0.43 0.52");
+  addressLines.forEach((lineValue, index) => text(66, 554 - index * 10, lineValue, 7.6, "F1", "0.06 0.10 0.20"));
+  text(322, 633, "FICA STATUS", 7.5, "F1", "0.38 0.43 0.52");
+  text(322, 620, ficaStatus, 9.2, "F2");
+  text(322, 594, "WALLET ID", 7.5, "F1", "0.38 0.43 0.52");
+  text(322, 581, compactStatementReference(displayWalletId(wallet), 24), 8.4, "F2");
+  text(322, 560, "STATEMENT NO", 7.5, "F1", "0.38 0.43 0.52");
+  text(322, 547, compactStatementReference(statementNo, 24), 8.1, "F2");
+
+  text(52, 518, "PERIOD SUMMARY", 10, "F2", "0.12 0.32 0.62");
+  fill(52, 463, 150, 44, "0.92 0.99 0.96");
+  stroke(52, 463, 150, 44, "0.78 0.92 0.86");
+  text(64, 489, "TOTAL IN", 8.5, "F1", "0.38 0.43 0.52");
+  text(64, 471, statementMoney(totalIn, "+"), 13, "F2", "0.03 0.50 0.38");
+  fill(222, 463, 150, 44, "1.00 0.95 0.95");
+  stroke(222, 463, 150, 44, "0.94 0.82 0.82");
+  text(234, 489, "TOTAL OUT", 8.5, "F1", "0.38 0.43 0.52");
+  text(234, 471, statementMoney(totalOut, "-"), 13, "F2", "0.62 0.10 0.13");
+  fill(392, 463, 151, 44, "0.94 0.97 1.00");
+  stroke(392, 463, 151, 44, "0.82 0.88 0.98");
+  text(404, 489, "NET MOVEMENT", 8.5, "F1", "0.38 0.43 0.52");
+  text(404, 471, statementMoney(Math.abs(net), net >= 0 ? "+" : "-"), 13, "F2", "0.04 0.11 0.27");
+
+  text(52, 430, `${state.accountType === "business" ? "BUSINESS" : "PERSONAL"} ACTIVITY (${items.length})`, 10, "F2", "0.12 0.32 0.62");
+  fill(52, 399, 491, 24, "0.03 0.08 0.22");
+  text(64, 408, "DATE", 9, "F2", "1 1 1");
+  text(155, 408, "DESCRIPTION", 9, "F2", "1 1 1");
+  rightText(532, 408, "AMOUNT", 9, "F2", "1 1 1");
+
+  let y = 375;
+  items.slice(0, 8).forEach((item, index) => {
+    if (index % 2 === 0) fill(52, y - 3, 491, 23, "0.98 0.985 0.995");
+    const credit = transactionIsCredit(item);
+    const title = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
+    const detail = item.reference || item.recipient_reference || item.recipientReference || item.status || "Processed";
+    text(64, y + 6, statementDateLabel(item.created_at || item.createdAt), 8.5, "F1", "0.42 0.46 0.55");
+    text(155, y + 8, title, 9, "F2");
+    text(155, y - 3, detail, 7.5, "F1", "0.42 0.46 0.55");
+    rightText(532, y + 4, statementMoney(statementAmountNumber(item), credit ? "+" : "-"), 9, "F2", credit ? "0.03 0.50 0.38" : "0.62 0.10 0.13");
+    y -= 25;
+  });
+  line(52, y + 13, 543, y + 13);
+  text(52, y - 8, "Closing net for period", 10, "F2");
+  rightText(532, y - 8, statementMoney(Math.abs(net), net >= 0 ? "+" : "-"), 10, "F2", "0.04 0.11 0.27");
+
+  fill(392, 108, 151, 58, "0.95 0.97 1.00");
+  stroke(392, 108, 151, 58, "0.82 0.88 0.98");
+  centerText(467, 146, "OFFICIAL TITOPAY STATEMENT", 7.5, "F2", "0.12 0.32 0.62");
+  centerText(467, 133, compactStatementReference(referenceNo, 22), 6.4, "F1", "0.06 0.10 0.20");
+  centerText(467, 121, issuedDate, 6.2, "F1", "0.42 0.46 0.55");
+
+  line(52, 86, 543, 86);
+  text(52, 56, "Smart Payments. Simplified.", 7, "F1", "0.42 0.46 0.55");
+  text(52, 27, `Generated ${generatedAt}. This statement is generated electronically and is valid without signature.`, 6.2, "F1", "0.42 0.46 0.55");
+  rightText(543, 34, "Page 1 of 1", 7, "F1", "0.42 0.46 0.55");
+
+  const content = commands.join("\n");
+  const objects = [
+    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+    "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
+    "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >> endobj",
+    "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
+    "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj",
+    `6 0 obj << /Length ${content.length} >> stream\n${content}\nendstream endobj`
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(pdf.length);
+    pdf += object + "\n";
+  }
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.slice(1).forEach((offset) => {
+    pdf += leftPad(String(offset), 10, "0") + " 00000 n \n";
+  });
+  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return pdf;
+}
+
+function makePdf(commands) {
+  const content = commands.join("\n");
+  const objects = [
+    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+    "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
+    "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >> endobj",
+    "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
+    "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj",
+    `6 0 obj << /Length ${content.length} >> stream\n${content}\nendstream endobj`
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(pdf.length);
+    pdf += object + "\n";
+  }
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  offsets.slice(1).forEach((offset) => {
+    pdf += leftPad(String(offset), 10, "0") + " 00000 n \n";
+  });
+  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return pdf;
+}
+
+function businessDocumentPdf(document) {
+  const issued = new Date(document.createdAt || Date.now());
+  const paidAt = document.pdfPaidAt ? new Date(document.pdfPaidAt) : null;
+  const businessAddress = document.businessAddress || businessProfileAddress();
+  const customerAddress = document.customerAddress || "Address not supplied";
+  const businessAddressLines = splitStatementText(businessAddress, 42, 2);
+  const customerAddressLines = splitStatementText(customerAddress, 42, 2);
+  const businessContactLine = compactStatementReference(document.businessContact || "TitoPay merchant", 42);
+  const customerEmailLine = compactStatementReference(document.customerEmail || "No email supplied", 42);
+  const documentNoLine = compactStatementReference(document.number || "Document", 26);
+  const documentRefLine = compactStatementReference(document.reference || document.number || "Pending", 28);
+  const items = Array.isArray(document.items) && document.items.length
+    ? document.items
+    : [{ description: "Business service", quantity: 1, unit: document.totals?.total || 0, total: document.totals?.total || 0 }];
+  const totals = document.totals || documentTotals(items, "No VAT", 0);
+  const commands = [];
+  const fill = (x, y, w, h, color) => commands.push(`q ${color} rg ${x} ${y} ${w} ${h} re f Q`);
+  const stroke = (x, y, w, h, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x} ${y} ${w} ${h} re S Q`);
+  const line = (x1, y1, x2, y2, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`);
+  const text = (x, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => commands.push(`BT /${font} ${size} Tf ${color} rg ${x} ${y} Td (${pdfEscape(value)}) Tj ET`);
+  const rightText = (rightX, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => {
+    const width = String(value || "").length * size * 0.5;
+    text(rightX - width, y, value, size, font, color);
+  };
+  fill(0, 720, 595, 92, "0.03 0.08 0.22");
+  fill(0, 716, 595, 4, "0.00 0.34 1.00");
+  text(52, 774, document.businessName || "TitoPay Business", 19, "F2", "1 1 1");
+  text(52, 756, businessContactLine, 8.8, "F1", "0.84 0.89 0.98");
+  businessAddressLines.slice(0, 1).forEach((lineValue) => text(52, 742, lineValue, 8, "F1", "0.84 0.89 0.98"));
+  text(52, 728, "Powered by TitoPay. Smart Payments. Simplified.", 7.4, "F1", "0.84 0.89 0.98");
+  rightText(545, 775, String(document.kind || "Invoice").toUpperCase(), 14, "F2", "1 1 1");
+  rightText(545, 758, documentNoLine, 10, "F2", "0.90 0.94 1.00");
+  rightText(545, 744, `Issued ${documentTimestamp(issued)}`, 8.5, "F1", "0.90 0.94 1.00");
+  if (paidAt) rightText(545, 731, `PDF paid ${paidAt.toLocaleDateString("en-ZA")}`, 8, "F1", "0.90 0.94 1.00");
+
+  text(52, 670, "FROM", 10, "F2", "0.12 0.32 0.62");
+  text(308, 670, "BILL TO", 10, "F2", "0.12 0.32 0.62");
+  fill(52, 595, 235, 62, "0.99 0.99 1.00");
+  stroke(52, 595, 235, 62);
+  fill(308, 595, 235, 62, "0.99 0.99 1.00");
+  stroke(308, 595, 235, 62);
+  text(66, 632, document.businessName || "TitoPay Business", 11, "F2");
+  text(66, 616, businessContactLine, 8.5, "F1", "0.42 0.46 0.55");
+  businessAddressLines.forEach((lineValue, index) => text(66, 602 - index * 10, lineValue, 7.6, "F1", "0.42 0.46 0.55"));
+  text(322, 632, document.customerName || "Customer", 11, "F2");
+  text(322, 616, customerEmailLine, 8.5, "F1", "0.42 0.46 0.55");
+  customerAddressLines.forEach((lineValue, index) => text(322, 602 - index * 10, lineValue, 7.6, "F1", "0.42 0.46 0.55"));
+
+  fill(52, 560, 491, 22, "0.94 0.97 1.00");
+  stroke(52, 560, 491, 22, "0.82 0.88 0.98");
+  text(64, 568, `Document no: ${documentNoLine}`, 8.5, "F2", "0.04 0.11 0.27");
+  text(250, 568, `Reference: ${documentRefLine}`, 8.2, "F1", "0.42 0.46 0.55");
+  rightText(532, 568, `Issued ${documentTimestamp(issued)}`, 8.2, "F1", "0.42 0.46 0.55");
+
+  text(52, 528, "ITEMS", 10, "F2", "0.12 0.32 0.62");
+  fill(52, 498, 491, 22, "0.03 0.08 0.22");
+  text(64, 506, "DESCRIPTION", 9, "F2", "1 1 1");
+  rightText(368, 506, "QTY", 9, "F2", "1 1 1");
+  rightText(448, 506, "UNIT", 9, "F2", "1 1 1");
+  rightText(532, 506, "AMOUNT", 9, "F2", "1 1 1");
+  let y = 474;
+  items.slice(0, 10).forEach((item, index) => {
+    if (index % 2 === 0) fill(52, y - 4, 491, 24, "0.98 0.985 0.995");
+    text(64, y + 5, compactStatementReference(item.description, 44), 9, "F2");
+    rightText(368, y + 5, String(item.quantity), 8.5, "F1");
+    rightText(448, y + 5, statementMoney(item.unit), 8.5, "F1");
+    rightText(532, y + 5, statementMoney(item.total), 9, "F2");
+    y -= 26;
+  });
+
+  const totalsTop = Math.max(y - 8, 230);
+  line(360, totalsTop + 52, 543, totalsTop + 52);
+  text(372, totalsTop + 34, "Subtotal", 9, "F1", "0.42 0.46 0.55");
+  rightText(532, totalsTop + 34, statementMoney(totals.subtotal), 9, "F2");
+  text(372, totalsTop + 16, totals.vatIncluded ? "VAT 15%" : "VAT", 9, "F1", "0.42 0.46 0.55");
+  rightText(532, totalsTop + 16, statementMoney(totals.vat), 9, "F2");
+  line(360, totalsTop + 4, 543, totalsTop + 4);
+  text(372, totalsTop - 16, "Total", 12, "F2", "0.00 0.34 1.00");
+  rightText(532, totalsTop - 16, statementMoney(totals.total), 12, "F2", "0.00 0.34 1.00");
+
+  text(52, 190, "NOTES", 10, "F2", "0.12 0.32 0.62");
+  splitStatementText(document.notes || "Thank you for your business.", 72, 2).forEach((lineValue, index) => text(52, 174 - index * 11, lineValue, 8.5, "F1", "0.42 0.46 0.55"));
+  text(52, 126, "PDF EXTRACTION", 10, "F2", "0.12 0.32 0.62");
+  text(52, 110, `Fee paid: ${document.pdfFeePaid ? "Yes" : "No"} | Fee: ${statementMoney(DOCUMENT_PDF_FEE)} | Ref: ${compactStatementReference(document.pdfFeeReference || "Pending", 30)}`, 8, "F1", "0.42 0.46 0.55");
+
+  line(52, 78, 543, 78);
+  text(52, 48, "Smart Payments. Simplified.", 7, "F1", "0.42 0.46 0.55");
+  rightText(543, 34, "Page 1 of 1", 7, "F1", "0.42 0.46 0.55");
+
+  return makePdf(commands);
+}
+
+function downloadBusinessDocumentPdf(document) {
+  const pdf = businessDocumentPdf(document);
+  downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${document.number || "titopay-document"}.pdf`);
+}
+
+function payoutReportPdf() {
+  const now = new Date();
+  const businessName = businessProfileName();
+  const businessContact = businessProfileContact();
+  const businessAddress = businessProfileAddress();
+  const reportReference = `PAY-${dateStamp(now)}-${leftPad(String(state.transactions.length + 1), 5, "0")}`;
+  const items = state.transactions.filter((item) => {
+    const key = `${item.service_code || item.serviceCode || ""} ${item.service_name || item.serviceName || ""}`.toLowerCase();
+    return key.includes("payout") || key.includes("settlement");
+  });
+  const total = items.reduce((sum, item) => sum + statementAmountNumber(item), 0);
+  const commands = [];
+  const fill = (x, y, w, h, color) => commands.push(`q ${color} rg ${x} ${y} ${w} ${h} re f Q`);
+  const stroke = (x, y, w, h, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x} ${y} ${w} ${h} re S Q`);
+  const line = (x1, y1, x2, y2, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`);
+  const text = (x, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => commands.push(`BT /${font} ${size} Tf ${color} rg ${x} ${y} Td (${pdfEscape(value)}) Tj ET`);
+  const rightText = (rightX, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => {
+    const width = String(value || "").length * size * 0.5;
+    text(rightX - width, y, value, size, font, color);
+  };
+  const centerText = (cx, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => {
+    const width = String(value || "").length * size * 0.5;
+    text(cx - width / 2, y, value, size, font, color);
+  };
+  const circle = (cx, cy, r, color = "0.60 0.10 0.14", width = 1.1) => {
+    const c = r * 0.5522847498;
+    commands.push(`q ${color} RG ${width} w ${cx + r} ${cy} m ${cx + r} ${cy + c} ${cx + c} ${cy + r} ${cx} ${cy + r} c ${cx - c} ${cy + r} ${cx - r} ${cy + c} ${cx - r} ${cy} c ${cx - r} ${cy - c} ${cx - c} ${cy - r} ${cx} ${cy - r} c ${cx + c} ${cy - r} ${cx + r} ${cy - c} ${cx + r} ${cy} c S Q`);
+  };
+
+  fill(0, 720, 595, 92, "0.03 0.08 0.22");
+  fill(0, 716, 595, 4, "0.00 0.34 1.00");
+  text(52, 774, "Tito", 22, "F2", "1 1 1");
+  text(92, 774, "Pay", 22, "F2", "0.25 0.67 1.00");
+  text(52, 756, "Smart Payments. Simplified.", 8.2, "F1", "0.84 0.89 0.98");
+  text(52, 742, businessName, 8.8, "F1", "0.84 0.89 0.98");
+  rightText(545, 775, "PAYOUT REPORT", 13, "F2", "1 1 1");
+  rightText(545, 758, `Generated ${documentTimestamp(now)}`, 8.5, "F1", "0.90 0.94 1.00");
+  rightText(545, 744, `Reference ${reportReference}`, 8.5, "F1", "0.90 0.94 1.00");
+
+  text(52, 670, "BUSINESS PROFILE", 10, "F2", "0.12 0.32 0.62");
+  fill(52, 596, 491, 60, "0.99 0.99 1.00");
+  stroke(52, 596, 491, 60);
+  text(66, 635, businessName, 12, "F2");
+  text(66, 619, businessContact, 8.8, "F1", "0.42 0.46 0.55");
+  text(66, 604, businessAddress, 8.2, "F1", "0.42 0.46 0.55");
+  rightText(532, 626, `Total payouts ${statementMoney(total)}`, 10, "F2", "0.00 0.34 1.00");
+  rightText(532, 609, `Records ${items.length}`, 8.5, "F1", "0.42 0.46 0.55");
+
+  text(52, 575, `PAYOUT ACTIVITY (${items.length})`, 10, "F2", "0.12 0.32 0.62");
+  fill(52, 545, 491, 22, "0.03 0.08 0.22");
+  text(64, 553, "DATE", 9, "F2", "1 1 1");
+  text(155, 553, "REFERENCE", 9, "F2", "1 1 1");
+  rightText(532, 553, "AMOUNT", 9, "F2", "1 1 1");
+  let y = 521;
+  (items.length ? items : [{ created_at: now.toISOString(), reference: "No payout records for this period", amount: 0 }]).slice(0, 12).forEach((item, index) => {
+    if (index % 2 === 0) fill(52, y - 4, 491, 24, "0.98 0.985 0.995");
+    text(64, y + 5, statementDateLabel(item.created_at || item.createdAt), 8.5, "F1", "0.42 0.46 0.55");
+    text(155, y + 5, item.reference || item.recipient_reference || item.recipientReference || "Payout", 9, "F2");
+    rightText(532, y + 5, statementMoney(statementAmountNumber(item), items.length ? "-" : ""), 9, "F2", items.length ? "0.62 0.10 0.13" : "0.42 0.46 0.55");
+    y -= 26;
+  });
+  const issuedDate = now.toLocaleDateString("en-ZA", { year: "numeric", month: "short", day: "2-digit" });
+  const issuedTime = now.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
+  circle(466, 136, 37);
+  circle(466, 136, 29, "0.60 0.10 0.14", 0.8);
+  centerText(466, 151, "VERIFIED", 7.8, "F2", "0.60 0.10 0.14");
+  centerText(466, 141, "PAYOUT", 5, "F2", "0.60 0.10 0.14");
+  centerText(466, 132, "REPORT", 5, "F2", "0.60 0.10 0.14");
+  centerText(466, 123, compactStatementReference(reportReference, 16), 4.5, "F1", "0.60 0.10 0.14");
+  centerText(466, 115, issuedDate, 4.1, "F1", "0.60 0.10 0.14");
+  centerText(466, 107, `Generated ${issuedTime}`, 3.9, "F1", "0.60 0.10 0.14");
+  line(52, 78, 543, 78);
+  text(52, 48, "Smart Payments. Simplified.", 7, "F1", "0.42 0.46 0.55");
+  rightText(543, 34, "Page 1 of 1", 7, "F1", "0.42 0.46 0.55");
+  return makePdf(commands);
+}
+
+function downloadPayoutReportPdf() {
+  const pdf = payoutReportPdf();
+  downloadBlob(new Blob([pdf], { type: "application/pdf" }), `titopay-payout-report-${dateStamp(new Date())}.pdf`);
+}
+
+function pdfEscape(value) {
+  return String(value == null ? "" : value)
+    .replace(/[^\x20-\x7E]/g, " ")
+    .replace(/[()\\]/g, "\\$&");
+}
+
+function transactionIsCredit(item) {
+  return (item.direction || "debit") === "credit";
+}
+
+function statementAmountNumber(item) {
+  return Math.abs(Number(item.total || item.amount || 0) || 0);
+}
+
+function statementMoney(value, prefix = "") {
+  const amount = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Math.abs(Number(value || 0))).replace(/\s/g, " ");
+  return `${prefix}R ${amount}`;
+}
+
+function statementDateLabel(value) {
+  if (!value) return "Today";
+  const date = new Date(value);
+  return date.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }).replace(/,/g, "");
+}
+
+function leftPad(value, length, fill) {
+  let output = String(value);
+  while (output.length < length) output = fill + output;
+  return output;
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  if (link.parentNode) link.parentNode.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function dataUrlToBlob(dataUrl) {
+  if (!dataUrl || !dataUrl.startsWith("data:")) return null;
+  const parts = dataUrl.split(",");
+  const meta = parts[0] || "";
+  const base64 = parts[1] || "";
+  const mimeMatch = meta.match(/data:([^;]+)/);
+  const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: mimeType });
+}
+
+function safeQrFilename(value) {
+  const name = String(value || "titopay-qr").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `${name || "titopay-qr"}.png`;
+}
+
+async function downloadQrImage(imageDataUrl, reference) {
+  if (!imageDataUrl) throw new Error("QR image is not available yet.");
+  const blob = dataUrlToBlob(imageDataUrl);
+  if (blob) {
+    downloadBlob(blob, safeQrFilename(reference));
+    showToast("QR downloaded.");
+    return;
+  }
+  try {
+    const response = await fetch(imageDataUrl);
+    if (!response.ok) throw new Error("QR image download failed.");
+    downloadBlob(await response.blob(), safeQrFilename(reference));
+    showToast("QR downloaded.");
+  } catch (error) {
+    window.open(imageDataUrl, "_blank", "noopener");
+    showToast("QR opened. Save the image from your browser.");
+  }
+}
+
+async function copyTextValue(value, container) {
+  if (!value) throw new Error("There is no QR link or reference to copy.");
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      showToast("QR copied.");
+      return true;
+    }
+  } catch (error) {
+    // Fall through to manual selection for browsers that block clipboard access.
+  }
+  const input = container && container.querySelector(".qr-copy-value");
+  if (input) {
+    input.classList.remove("visually-hidden");
+    input.focus();
+    input.select();
+    try {
+      if (document.execCommand && document.execCommand("copy")) {
+        showToast("QR copied.");
+        return true;
+      }
+    } catch (error) {
+      // Manual selection below.
+    }
+  }
+  showToast("Select and copy the QR reference shown on screen.", "error");
+  return false;
+}
+
+async function shareQrCode(button) {
+  const imageDataUrl = button.dataset.shareQr || "";
+  const shareValue = button.dataset.shareValue || imageDataUrl;
+  const reference = button.dataset.qrReference || "TitoPay QR";
+  const text = `Scan this TitoPay QR code. Reference: ${reference}`;
+  if (button.dataset.qrId) {
+    await api("/v1/qr/share", {
+      method: "POST",
+      body: { qrId: button.dataset.qrId, channel: navigator.share ? "native_share" : "clipboard" }
+    }).catch(() => {});
+  }
+
+  try {
+    const blob = dataUrlToBlob(imageDataUrl);
+    if (blob && navigator.share && window.File) {
+      const file = new File([blob], safeQrFilename(reference), { type: blob.type || "image/png" });
+      if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+        await navigator.share({ title: "TitoPay QR", text, files: [file] });
+        showToast("QR shared.");
+        return;
+      }
+    }
+    if (navigator.share) {
+      await navigator.share({ title: "TitoPay QR", text, url: shareValue });
+      showToast("QR shared.");
+      return;
+    }
+  } catch (error) {
+    if (error && error.name === "AbortError") return;
+  }
+
+  await copyTextValue(shareValue, button.closest("[data-qr-card]"));
+}
+
+function openModal(html) {
+  closeModal();
+  lockPageScroll();
+  const wrapper = document.createElement("div");
+  wrapper.className = "modal-backdrop";
+  wrapper.innerHTML = `<section class="modal-card">${html}</section>`;
+  wrapper.addEventListener("click", async (event) => {
+    if (event.target === wrapper || event.target.closest("[data-close]")) {
+      closeModal();
+      return;
+    }
+    const inviteShare = event.target.closest("[data-invite-share]");
+    if (inviteShare) {
+      await shareInvite(inviteShare.dataset.inviteShare, inviteShare.dataset.inviteMessage, inviteShare.dataset.inviteUrl);
+      return;
+    }
+    const share = event.target.closest("[data-share-qr]");
+    if (share) {
+      await shareQrCode(share).catch((error) => showToast(error.message || "QR sharing failed.", "error"));
+      return;
+    }
+    const copyQr = event.target.closest("[data-copy-qr]");
+    if (copyQr) {
+      await copyTextValue(copyQr.dataset.copyQr, copyQr.closest("[data-qr-card]"));
+      return;
+    }
+    const downloadQr = event.target.closest("[data-download-qr]");
+    if (downloadQr) {
+      await downloadQrImage(downloadQr.dataset.downloadQr, downloadQr.dataset.qrFilename).catch((error) =>
+        showToast(error.message || "QR download failed.", "error")
+      );
+    }
+  });
+  document.body.appendChild(wrapper);
+  document.body.classList.add("modal-open");
+  enhanceContactPickerControls(wrapper);
+}
+
+function closeModal() {
+  if (state.merchantSale && state.merchantSale.status === "waiting") stopMerchantSaleTimers();
+  const backdrop = document.querySelector(".modal-backdrop");
+  if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+  stopTitoPayChatPolling();
+  resetProfilePhotoCrop();
+  document.body.classList.remove("modal-open");
+  unlockPageScroll();
+}
+
+function lockPageScroll() {
+  if (document.body.classList.contains("modal-open")) return;
+  state.modalScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+  document.body.style.position = "fixed";
+  document.body.style.top = `-${state.modalScrollY}px`;
+  document.body.style.left = "0";
+  document.body.style.right = "0";
+  document.body.style.width = "100%";
+}
+
+function unlockPageScroll() {
+  const scrollY = state.modalScrollY || 0;
+  document.body.style.position = "";
+  document.body.style.top = "";
+  document.body.style.left = "";
+  document.body.style.right = "";
+  document.body.style.width = "";
+  if (scrollY) window.scrollTo(0, scrollY);
+  state.modalScrollY = 0;
+}
+
+function setBusy(form, busy) {
+  form.querySelectorAll("button, input, textarea, select").forEach((element) => {
+    element.disabled = busy;
+  });
+}
+
+function showToast(message, type = "") {
+  const rawMessage = String(message || "").trim();
+  const isGenericError = /something went wrong|internal server error|stack trace|jwt expired|token expired|unexpected api response|unable to complete the request/i.test(rawMessage);
+  const isPublicLanding = isPublicLandingScreen();
+  if (type === "error" && isPublicLanding && !document.querySelector(".modal-card")) {
+    return;
+  }
+  if (isGenericError) {
+    message = isPublicLanding
+      ? "Unable to complete this step. Please try again shortly."
+      : "Unable to complete the request. Please try again.";
+  }
+  const currentToast = document.querySelector(".toast");
+  if (currentToast && currentToast.parentNode) currentToast.parentNode.removeChild(currentToast);
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    if (toast.parentNode) toast.parentNode.removeChild(toast);
+  }, 4200);
+}
+
+function isPublicLandingScreen() {
+  return (!state.auth || !state.auth.accessToken || !state.user) && !document.querySelector(".modal-card");
+}
+
+function isQuietPublicLandingError() {
+  return isPublicLandingScreen();
+}
+
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  const canRegister =
+    location.protocol === "https:" ||
+    location.hostname === "localhost" ||
+    location.hostname === "127.0.0.1";
+  if (!canRegister) return;
+  try {
+    const registration = await navigator.serviceWorker.register("./service-worker.js");
+    registration.update();
+  } catch (error) {
+    // PWA registration is non-blocking.
+  }
+}
+
+function icon(name) {
+  const common = `width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"`;
+  const aliases = {
+    "card-add": "upload",
+    "bank-transfer": "withdraw",
+    "qr-receive": "download",
+    "sim-card": "phone",
+    "data-bundle": "signal",
+    electricity: "zap",
+    voucher: "tag",
+    "bill-pay": "bill",
+    stockvel: "stockvel",
+    "community-wallet": "stockvel",
+    "tip-card": "tip",
+    "split-bill": "scissors",
+    "merchant-profile": "user",
+    "staff-badge": "contacts",
+    "receipt-list": "list",
+    statement: "bill",
+    invoice: "bill",
+    quote: "bill",
+    "document-invoice": "bill",
+    "payment-request": "download",
+    ticketing: "ticket",
+    "bank-payout": "withdraw",
+    "refund-card": "refresh",
+    "bulk-distribution": "grid"
+  };
+  const resolvedName = aliases[name] || name;
+  const paths = {
+    wallet: `<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a2 2 0 0 1 2 2v10.5a2.5 2.5 0 0 1-2.5 2.5h-12A2.5 2.5 0 0 1 3 17.5z"/><path d="M17 12h4v4h-4a2 2 0 0 1 0-4Z"/><path d="M6 5l9-2v2"/>`,
+    "card-add": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M8 15h5"/><path d="M16 14v4"/><path d="M14 16h4"/>`,
+    upload: `<path d="M12 19V5"/><path d="m6 11 6-6 6 6"/><path d="M5 21h14"/>`,
+    withdraw: `<path d="M12 5v14"/><path d="m18 13-6 6-6-6"/><path d="M5 3h14"/>`,
+    "bank-transfer": `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M7 10v7"/><path d="M12 10v7"/><path d="M17 10v7"/><path d="M4 17h16"/><path d="m8 21 8-8"/><path d="M16 17v-4h-4"/>`,
+    send: `<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>`,
+    download: `<path d="m12 5 0 14"/><path d="m18 13-6 6-6-6"/><path d="M5 21h14"/>`,
+    copy: `<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`,
+    qr: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h2"/><path d="M20 14v2"/><path d="M16 18h4"/><path d="M14 20h2"/>`,
+    "qr-receive": `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M15 16h5"/><path d="m17 14-2 2 2 2"/><path d="M20 20h-6"/>`,
+    scan: `<path d="M4 7V5a1 1 0 0 1 1-1h2"/><path d="M17 4h2a1 1 0 0 1 1 1v2"/><path d="M20 17v2a1 1 0 0 1-1 1h-2"/><path d="M7 20H5a1 1 0 0 1-1-1v-2"/><path d="M7 12h10"/>`,
+    sale: `<rect x="6" y="3" width="12" height="18" rx="3"/><path d="M9 7h6"/><path d="M9 11h6"/><path d="M9 15h2"/><path d="m12 17 2 2 4-5"/>`,
+    phone: `<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>`,
+    "sim-card": `<path d="M8 2h6l4 4v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v5h4"/><path d="M9 14h6"/><path d="M9 18h3"/><path d="M10 10h.01"/><path d="M14 10h.01"/>`,
+    signal: `<path d="M4 18h2"/><path d="M9 18v-4"/><path d="M14 18v-8"/><path d="M19 18V6"/>`,
+    "data-bundle": `<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 17h8"/><path d="M8 7h.01"/><path d="M12 7h.01"/><path d="M16 7h.01"/><path d="M8 11h8"/><path d="M8 14h8"/>`,
+    zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
+    electricity: `<path d="m13 2-9 13h7l-1 7 10-14h-7z"/><path d="M5 21h14"/>`,
+    tag: `<path d="M20 13 11 22l-9-9V4h9z"/><path d="M7 7h.01"/>`,
+    voucher: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4z"/><path d="M9 9h.01"/><path d="M9 15h.01"/><path d="M13 9h4"/><path d="M13 15h4"/>`,
+    gift: `<path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7Z"/><path d="M12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7Z"/>`,
+    bank: `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M6 10v8"/><path d="M10 10v8"/><path d="M14 10v8"/><path d="M18 10v8"/><path d="M4 18h16"/><path d="M3 22h18"/>`,
+    bill: `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/>`,
+    "bill-pay": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h4"/><path d="m13 17 2 2 4-5"/>`,
+    ticket: `<path d="M2 9a3 3 0 0 0 0 6v3a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3a3 3 0 0 0 0-6V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M13 5v14"/>`,
+    ticketing: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M9 9h6"/><path d="M9 13h4"/><path d="M17 8v8"/>`,
+    health: `<path d="M8 3v4a4 4 0 0 0 8 0V3"/><path d="M6 3h4"/><path d="M14 3h4"/><path d="M16 7v5a4 4 0 0 1-8 0"/><circle cx="18" cy="16" r="3"/><path d="M18 14.8v2.4"/><path d="M16.8 16h2.4"/>`,
+    sparkles: `<path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4a3 3 0 0 0 3 3"/><path d="M17 6h3a3 3 0 0 1-3 3"/><path d="m10 10 1.4 1.4L15 8"/>`,
+    "check-circle": `<circle cx="12" cy="12" r="9"/><path d="m8.5 12.4 2.3 2.3 4.9-5.2"/>`,
+    stockvel: `<circle cx="12" cy="7" r="3"/><path d="M7 21a5 5 0 0 1 10 0"/><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M2.5 18a3.5 3.5 0 0 1 5 0"/><path d="M16.5 18a3.5 3.5 0 0 1 5 0"/><path d="M7.5 5.5a8 8 0 0 1 9 0"/><path d="M18.5 10.5a8 8 0 0 1-1.4 6"/><path d="M5.5 10.5a8 8 0 0 0 1.4 6"/>`,
+    "piggy-bank": `<path d="M5 12a6 6 0 0 1 6-6h4a5 5 0 0 1 5 5v4a4 4 0 0 1-4 4H8a5 5 0 0 1-5-5v-1a3 3 0 0 1 2-2.8Z"/><path d="M16 6V4a2 2 0 0 0-2 2"/><path d="M7 19v2"/><path d="M17 19v2"/><path d="M19 11h2"/><path d="M9 10h.01"/>`,
+    "community-wallet": `<path d="M4 17a4 4 0 0 1 8 0"/><path d="M12 17a4 4 0 0 1 8 0"/><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M6 21h12a2 2 0 0 0 2-2v-1H4v1a2 2 0 0 0 2 2Z"/><path d="M12 11v5"/>`,
+    learn: `<path d="m22 10-10-5-10 5 10 5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/><path d="M22 10v6"/>`,
+    tip: `<path d="M3 13h4.5a3 3 0 0 1 2.1.9l1.3 1.3"/><path d="M4 17h5.5l2.3 2a3.5 3.5 0 0 0 4.4-.1L21 14"/><path d="M8 15h4a2 2 0 0 0 0-4H9"/><circle cx="16" cy="6" r="3"/><path d="M16 4.7v2.6"/><path d="M14.7 6h2.6"/>`,
+    "tip-card": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h6"/><path d="M7 14h4"/><circle cx="17" cy="12" r="2.5"/><path d="M17 10.7v2.6"/><path d="M15.7 12h2.6"/>`,
+    heart: `<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>`,
+    scissors: `<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9"/><path d="M8.1 8.1 20 20"/>`,
+    "split-bill": `<path d="M4 5h16v14H4z"/><path d="M8 9h8"/><path d="M8 13h4"/><path d="M12 5v14"/><path d="m7 17 2-2 2 2"/><path d="m13 17 2-2 2 2"/>`,
+    plane: `<path d="M9 21h6a2 2 0 0 0 2-2v-8H7v8a2 2 0 0 0 2 2Z"/><path d="M9 11V7a3 3 0 0 1 6 0v4"/><path d="m4 5 5 3"/><path d="m20 5-5 3"/><path d="M12 11v10"/>`,
+    globe: `<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>`,
+    lock: `<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>`,
+    user: `<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/>`,
+    "merchant-profile": `<path d="M4 10h16l-1-5H5z"/><path d="M6 10v10h12V10"/><path d="M9 20v-5h6v5"/><path d="M8 14h.01"/><path d="M16 14h.01"/>`,
+    contacts: `<path d="M16 18a4 4 0 0 0-8 0"/><circle cx="12" cy="10" r="3"/><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M7 7h.01"/><path d="M17 7h.01"/>`,
+    "staff-badge": `<rect x="4" y="3" width="16" height="18" rx="3"/><circle cx="12" cy="9" r="3"/><path d="M8 17a4 4 0 0 1 8 0"/><path d="M8 21v-2"/><path d="M16 21v-2"/>`,
+    shield: `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/>`,
+    home: `<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>`,
+    grid: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h6v6h-6z"/>`,
+    list: `<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>`,
+    "receipt-list": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h3"/>`,
+    statement: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7"/><path d="M9 16h7"/><path d="M9 20h4"/>`,
+    invoice: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h6"/><path d="M9 16h4"/><path d="M16 18h2"/><path d="M16 21h2"/>`,
+    quote: `<path d="M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3z"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="m8 18 2-2 2 2"/><path d="m13 18 2-2 2 2"/>`,
+    "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 11h7"/><path d="M9 15h7"/><path d="M9 19h5"/>`,
+    "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M8 12h8"/><path d="m13 9 3 3-3 3"/><path d="M7 16h4"/>`,
+    "message-check": `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="m9 12 2 2 4-5"/>`,
+    chat: `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="M8.5 11.8h.01"/><path d="M12 11.8h.01"/><path d="M15.5 11.8h.01"/>`,
+    chatbot: `<path d="M5 12a7 7 0 0 1 14 0"/><path d="M5 12v3a2 2 0 0 0 2 2h1v-7H7a2 2 0 0 0-2 2Z"/><path d="M19 12v3a2 2 0 0 1-2 2h-1v-7h1a2 2 0 0 1 2 2Z"/><path d="M9 17v1a3 3 0 0 0 3 3h2"/><path d="M10 7h.01"/><path d="M14 7h.01"/><path d="M10 11h4"/>`,
+    feedback: `<path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6A3.5 3.5 0 0 1 16.5 16H11l-5 4v-4.4A3.5 3.5 0 0 1 4 12.5z"/><path d="m9 9 2 2 4-4"/><path d="M9 13h6"/>`,
+    bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>`,
+    search: `<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>`,
+    mail: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>`,
+    paperclip: `<path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 1 1 5.7 5.7l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.5-8.5"/>`,
+    share: `<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/>`,
+    "arrow-left": `<path d="m15 18-6-6 6-6"/><path d="M21 12H9"/>`,
+    eye: `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="3"/>`,
+    "eye-off": `<path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.3A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17.5 17.5 0 0 1-3.1 4.1"/><path d="M6.1 6.1A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4.2-.8"/>`,
+    refresh: `<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>`,
+    chart: `<path d="M3 3v18h18"/><path d="M7 16v-5"/><path d="M12 16V8"/><path d="M17 16v-9"/>`,
+    "bank-payout": `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M6 10v8"/><path d="M10 10v8"/><path d="M14 10v8"/><path d="M18 10v8"/><path d="M4 18h16"/><path d="m13 21 4-4 4 4"/>`,
+    "refund-card": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M9 16a4 4 0 1 0 0-8"/><path d="M9 8H6v3"/>`,
+    "bulk-distribution": `<path d="M4 6h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M14 14h6v6h-6z"/><path d="M10 9h4"/><path d="M10 11l4 6"/><path d="M14 7l-4 2"/>`,
+    store: `<path d="M4 10h16l-1-6H5z"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/>`,
+    maintenance: `<path d="M14.5 6.5 17 4l3 3-2.5 2.5"/><path d="m4 20 7.5-7.5"/><path d="M8 20H4v-4l6-6"/><circle cx="16" cy="16" r="3"/><path d="M16 11v2"/><path d="M16 19v2"/><path d="M11 16h2"/><path d="M19 16h2"/>`,
+    menu: `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
+    "more-horizontal": `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>`,
+    x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`
+  };
+  return `<svg ${common}>${paths[resolvedName] || paths.sparkles}</svg>`;
+}

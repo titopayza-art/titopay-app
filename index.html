@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en-ZA">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+    <meta name="theme-color" content="#0057ff">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.titopay.co.za wss://api.titopay.co.za; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self'">
+    <meta name="description" content="TitoPay. Smart Payments. Simplified.">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="TitoPay">
+    <title>TitoPay App</title>
+    <link rel="manifest" href="./manifest.webmanifest?v=165">
+    <link rel="icon" type="image/png" href="./assets/favicon.png?v=165">
+    <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=165">
+    <link rel="stylesheet" href="./styles.css?v=155">
+    <script src="./assets/jsQR.min.js?v=137" defer></script>
+    <script src="./app.js?v=155" defer></script>
+  </head>
+  <body>
+    <div id="app" class="app-shell" aria-live="polite">
+      <main class="launch-screen">
+        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="launch-logo">
+        <div class="loader" aria-label="Loading"></div>
+        <p>Smart Payments. Simplified.</p>
+        <footer class="launch-legal" aria-label="TitoPay legal and payment partner">
+          <span>TitoPay (Pty) Ltd | Reg No: 2026/399418/07</span>
+          <span>Powered by Peach Payments (PCI DSS Level 1 Certified)</span>
+        </footer>
+      </main>
+    </div>
+    <noscript>
+      <main class="noscript">
+        <h1>TitoPay needs JavaScript</h1>
+        <p>Please enable JavaScript to use the TitoPay app.</p>
+      </main>
+    </noscript>
+  </body>
+</html>

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TitoPay Splash Render</title>
+    <style>
+      :root {
+        --navy: #041653;
+        --blue: #2f93ee;
+        --deep-blue: #0b5ff0;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #ffffff;
+      }
+
+      body {
+        display: grid;
+        place-items: stretch;
+        color: var(--navy);
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      }
+
+      .splash {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 50% 38%, rgba(72, 149, 239, 0.08), transparent 34%),
+          linear-gradient(180deg, #ffffff 0%, #fafdff 54%, #eaf3ff 100%);
+      }
+
+      .brand {
+        position: absolute;
+        top: 36.5%;
+        left: 50%;
+        width: min(78vw, 910px);
+        transform: translate(-50%, -50%);
+        text-align: center;
+      }
+
+      .welcome {
+        margin: 0 0 28px;
+        color: var(--navy);
+        font-size: clamp(52px, 6.2vw, 72px);
+        font-weight: 500;
+        letter-spacing: 0;
+      }
+
+      .wordmark {
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+        margin: 0;
+        font-size: clamp(132px, 15.6vw, 184px);
+        font-weight: 800;
+        letter-spacing: 0;
+        line-height: 0.84;
+      }
+
+      .wordmark .tito {
+        position: relative;
+        color: var(--navy);
+      }
+
+      .wordmark .tito::after {
+        content: "";
+        position: absolute;
+        top: 0.06em;
+        left: 0.52em;
+        width: 0.18em;
+        height: 0.25em;
+        background: var(--blue);
+        clip-path: polygon(0 0, 100% 0, 0 100%);
+      }
+
+      .wordmark .pay {
+        color: var(--blue);
+      }
+
+      .tagline {
+        margin: 66px 0 0;
+        color: var(--navy);
+        font-size: clamp(38px, 4.3vw, 50px);
+        font-weight: 800;
+        letter-spacing: 0;
+        line-height: 1.1;
+      }
+
+      .tagline span {
+        color: var(--blue);
+      }
+
+      .waves {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: 44%;
+      }
+
+      .footer {
+        position: absolute;
+        right: 48px;
+        bottom: 132px;
+        left: 48px;
+        color: rgba(255, 255, 255, 0.94);
+        text-align: center;
+        text-shadow: 0 2px 8px rgba(10, 65, 170, 0.2);
+      }
+
+      .footer p {
+        margin: 0;
+        font-size: clamp(28px, 3.1vw, 36px);
+        font-weight: 500;
+        line-height: 1.5;
+        letter-spacing: 0;
+      }
+
+      .footer em {
+        display: block;
+        margin-top: 8px;
+        font-style: italic;
+      }
+
+      #png-canvas {
+        position: fixed;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="splash" aria-label="TitoPay splash screen">
+      <section class="brand">
+        <p class="welcome">Welcome to</p>
+        <h1 class="wordmark"><span class="tito">Tito</span><span class="pay">Pay</span></h1>
+        <p class="tagline">Smart Payments. <span>Simplified.</span></p>
+      </section>
+
+      <svg class="waves" viewBox="0 0 1170 1110" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 190 C250 365 430 410 680 348 C910 290 1010 195 1170 112 L1170 1110 L0 1110 Z" fill="#dceaff"/>
+        <path d="M0 342 C250 520 456 570 707 510 C902 463 1024 366 1170 290 L1170 1110 L0 1110 Z" fill="#cfe2ff"/>
+        <path d="M0 500 C255 660 462 720 724 660 C914 616 1035 510 1170 440 L1170 1110 L0 1110 Z" fill="#9dc7ff"/>
+        <path d="M0 660 C265 810 475 862 730 805 C930 760 1038 668 1170 596 L1170 1110 L0 1110 Z" fill="#67a5ff"/>
+        <path d="M0 814 C260 950 493 1004 742 948 C943 903 1047 819 1170 746 L1170 1110 L0 1110 Z" fill="#2f7df4"/>
+        <path d="M0 948 C240 1042 452 1095 730 1052 C925 1022 1034 954 1170 874 L1170 1110 L0 1110 Z" fill="#1769ed"/>
+      </svg>
+
+      <footer class="footer">
+        <p>TitoPay (Pty) Ltd | Reg No: 2026/399418/07</p>
+        <p><em>Powered by Peach Payments (PCI DSS Level 1 Certified)</em></p>
+      </footer>
+    </main>
+    <canvas id="png-canvas" width="1170" height="2532" aria-hidden="true"></canvas>
+    <script>
+      (() => {
+        const canvas = document.getElementById("png-canvas");
+        const ctx = canvas.getContext("2d");
+        const width = canvas.width;
+        const height = canvas.height;
+        const navy = "#041653";
+        const blue = "#2f93ee";
+
+        const bg = ctx.createLinearGradient(0, 0, 0, height);
+        bg.addColorStop(0, "#ffffff");
+        bg.addColorStop(0.54, "#fbfdff");
+        bg.addColorStop(1, "#eaf3ff");
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, width, height);
+
+        const glow = ctx.createRadialGradient(width / 2, height * 0.38, 10, width / 2, height * 0.38, 520);
+        glow.addColorStop(0, "rgba(72,149,239,0.12)");
+        glow.addColorStop(1, "rgba(72,149,239,0)");
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, width, height);
+
+        function wave(fill, points) {
+          ctx.beginPath();
+          ctx.moveTo(points[0][0], points[0][1]);
+          for (let i = 1; i < points.length; i += 3) {
+            ctx.bezierCurveTo(points[i][0], points[i][1], points[i + 1][0], points[i + 1][1], points[i + 2][0], points[i + 2][1]);
+          }
+          ctx.lineTo(width, height);
+          ctx.lineTo(0, height);
+          ctx.closePath();
+          ctx.fillStyle = fill;
+          ctx.fill();
+        }
+
+        const y0 = height - 1110;
+        wave("#dceaff", [[0, y0 + 190], [250, y0 + 365], [430, y0 + 410], [680, y0 + 348], [910, y0 + 290], [1010, y0 + 195], [1170, y0 + 112]]);
+        wave("#cfe2ff", [[0, y0 + 342], [250, y0 + 520], [456, y0 + 570], [707, y0 + 510], [902, y0 + 463], [1024, y0 + 366], [1170, y0 + 290]]);
+        wave("#9dc7ff", [[0, y0 + 500], [255, y0 + 660], [462, y0 + 720], [724, y0 + 660], [914, y0 + 616], [1035, y0 + 510], [1170, y0 + 440]]);
+        wave("#67a5ff", [[0, y0 + 660], [265, y0 + 810], [475, y0 + 862], [730, y0 + 805], [930, y0 + 760], [1038, y0 + 668], [1170, y0 + 596]]);
+        wave("#2f7df4", [[0, y0 + 814], [260, y0 + 950], [493, y0 + 1004], [742, y0 + 948], [943, y0 + 903], [1047, y0 + 819], [1170, y0 + 746]]);
+        wave("#1769ed", [[0, y0 + 948], [240, y0 + 1042], [452, y0 + 1095], [730, y0 + 1052], [925, y0 + 1022], [1034, y0 + 954], [1170, y0 + 874]]);
+
+        ctx.textAlign = "center";
+        ctx.fillStyle = navy;
+        ctx.font = '500 66px "Helvetica Neue", Helvetica, Arial, sans-serif';
+        ctx.fillText("Welcome to", width / 2, 870);
+
+        ctx.font = '800 174px "Helvetica Neue", Helvetica, Arial, sans-serif';
+        const tito = "Tito";
+        const pay = "Pay";
+        const titoWidth = ctx.measureText(tito).width;
+        const payWidth = ctx.measureText(pay).width;
+        const startX = (width - titoWidth - payWidth) / 2;
+        ctx.textAlign = "left";
+        ctx.fillStyle = navy;
+        ctx.fillText(tito, startX, 1058);
+        ctx.fillStyle = blue;
+        ctx.fillText(pay, startX + titoWidth, 1058);
+        ctx.beginPath();
+        ctx.moveTo(startX + 126, 888);
+        ctx.lineTo(startX + 170, 888);
+        ctx.lineTo(startX + 126, 948);
+        ctx.closePath();
+        ctx.fillStyle = blue;
+        ctx.fill();
+
+        ctx.font = '800 48px "Helvetica Neue", Helvetica, Arial, sans-serif';
+        const smart = "Smart Payments. ";
+        const simple = "Simplified.";
+        const smartWidth = ctx.measureText(smart).width;
+        const simpleWidth = ctx.measureText(simple).width;
+        const tagStart = (width - smartWidth - simpleWidth) / 2;
+        ctx.fillStyle = navy;
+        ctx.fillText(smart, tagStart, 1210);
+        ctx.fillStyle = blue;
+        ctx.fillText(simple, tagStart + smartWidth, 1210);
+
+        ctx.textAlign = "center";
+        ctx.shadowColor = "rgba(10,65,170,0.22)";
+        ctx.shadowBlur = 8;
+        ctx.shadowOffsetY = 2;
+        ctx.fillStyle = "rgba(255,255,255,0.96)";
+        ctx.font = '500 34px "Helvetica Neue", Helvetica, Arial, sans-serif';
+        ctx.fillText("TitoPay (Pty) Ltd | Reg No: 2026/399418/07", width / 2, height - 220);
+        ctx.font = 'italic 500 34px "Helvetica Neue", Helvetica, Arial, sans-serif';
+        ctx.fillText("Powered by Peach Payments (PCI DSS Level 1 Certified)", width / 2, height - 170);
+        canvas.setAttribute("data-ready", "true");
+        canvas.setAttribute("data-png", canvas.toDataURL("image/png"));
+      })();
+    </script>
+  </body>
+</html>
