@@ -944,13 +944,14 @@ function authView() {
           <button type="button" class="${!isBusiness ? "active" : ""}" data-account="personal">Personal</button>
           <button type="button" class="${isBusiness ? "active" : ""}" data-account="business">Business</button>
         </div>
-        <h1>${isBusiness ? "Accept payments. Grow your business." : "Smart Payments. Simplified."}</h1>
+        <h1>${isBusiness ? "Accept payments. Grow your business." : "Send, pay and get paid."}</h1>
+        <p class="landing-tagline">Smart Payments. Simplified.</p>
       </section>
 
       <section class="trust-strip" aria-label="TitoPay trust features">
         ${trustItem("wallet", isBusiness ? "Business Wallet" : "One Wallet")}
-        ${trustItem(isBusiness ? "chart" : "check-circle", isBusiness ? "Business Growth" : "No Monthly Fees")}
-        ${trustItem("shield", isBusiness ? "Secure Transactions" : "Secure Wallet")}
+        ${trustItem(isBusiness ? "sale" : "check-circle", isBusiness ? "Sales & Payouts" : "No Monthly Fees")}
+        ${trustItem("shield", "Secure Payments")}
       </section>
 
       <section class="service-grid preview-grid">
@@ -959,16 +960,16 @@ function authView() {
 
       <section class="auth-actions">
         <button class="btn primary" data-auth-tab="login">${icon("lock")} Sign In</button>
-        <button class="btn secondary" data-auth-tab="register">${icon("lock")} ${isBusiness ? "Create Business Account" : "Create Account"}</button>
+        <button class="btn secondary" data-auth-tab="register">${isBusiness ? "Create Business Account" : "Create Account"}</button>
       </section>
 
       <section class="scan-card">
         <span class="icon-bubble">${icon(isBusiness ? "qr" : "scan")}</span>
         <div>
           <h3>${isBusiness ? "Accept Payment" : "Scan To Pay"}</h3>
-          <p>${isBusiness ? "Show your TitoPay QR and accept customer payments instantly." : "Scan a TitoPay QR code and pay instantly."}</p>
-          <button class="btn secondary" data-auth-tab="login">${isBusiness ? "Sign in to show QR" : "Sign in to scan QR"}</button>
+          <p>${isBusiness ? "Show your QR to accept payments." : "Scan any TitoPay QR to pay."}</p>
         </div>
+        <button class="btn secondary" data-auth-tab="login" aria-label="${isBusiness ? "Sign in to show your payment QR" : "Sign in to scan a TitoPay QR"}">Sign in</button>
       </section>
 
       <footer class="landing-site-footer" aria-label="TitoPay website">
