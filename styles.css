@@ -306,7 +306,7 @@ a:focus-visible {
   place-items: center;
   border-radius: 50%;
   color: #fff;
-  background: linear-gradient(135deg, var(--blue), var(--deep-blue));
+  background: var(--blue);
   font-weight: 600;
   box-shadow: var(--shadow-blue);
   overflow: hidden;
@@ -439,7 +439,7 @@ h3 {
 
 .segment button.active {
   color: #fff;
-  background: linear-gradient(135deg, var(--blue), var(--blue));
+  background: var(--blue);
   box-shadow: 0 4px 12px rgba(10, 77, 255, 0.22);
 }
 
@@ -640,7 +640,7 @@ h3 {
 }
 
 .btn {
-  min-height: 58px;
+  min-height: 54px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -660,9 +660,17 @@ h3 {
 
 .btn.primary {
   color: #fff;
-  background: linear-gradient(135deg, var(--blue), var(--deep-blue) 64%, var(--deep-blue));
-  border-color: rgba(10, 77, 255, 0.45);
-  box-shadow: 0 6px 18px rgba(10, 77, 255, 0.2);
+  background: var(--blue);
+  border-color: transparent;
+  box-shadow: 0 4px 14px rgba(10, 77, 255, 0.24);
+}
+
+.btn.primary:not(:disabled):active {
+  background: var(--deep-blue);
+}
+
+.btn.secondary:not(:disabled):active {
+  background: #f2f6fe;
 }
 
 .btn.secondary {
@@ -1196,7 +1204,6 @@ body.landing-static .landing-flow.auth-screen {
   background: #fbfdff;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 8px 18px rgba(6, 26, 61, 0.04);
   transition:
     border-color 160ms var(--ease-premium),
     box-shadow 160ms var(--ease-premium),
@@ -1206,11 +1213,9 @@ body.landing-static .landing-flow.auth-screen {
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
-  border-color: rgba(10, 77, 255, 0.45);
+  border-color: var(--blue);
   background: #ffffff;
-  box-shadow:
-    0 0 0 4px rgba(10, 77, 255, 0.09),
-    var(--shadow-card);
+  box-shadow: 0 0 0 4px rgba(10, 77, 255, 0.12);
 }
 
 .input-affix {
@@ -1223,7 +1228,6 @@ body.landing-static .landing-flow.auth-screen {
   background: #fbfdff;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 8px 18px rgba(6, 26, 61, 0.04);
   overflow: hidden;
 }
 
@@ -1338,7 +1342,7 @@ body.landing-static .landing-flow.auth-screen {
   height: 54px;
   place-items: center;
   color: #ffffff;
-  background: linear-gradient(135deg, var(--blue), #061a3d);
+  background: var(--blue);
   border-radius: 16px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -1664,7 +1668,6 @@ body.landing-static .landing-flow.auth-screen {
   background: var(--soft-blue);
   border: 1px solid rgba(10, 77, 255, 0.16);
   border-radius: 999px;
-  box-shadow: var(--shadow-soft);
   font-size: 0.82rem;
   font-weight: 700;
   cursor: pointer;
@@ -1705,7 +1708,6 @@ body.landing-static .landing-flow.auth-screen {
   background: var(--soft-blue);
   border: 1px solid rgba(10, 77, 255, 0.16);
   border-radius: 999px;
-  box-shadow: var(--shadow-soft);
   font-size: 0.82rem;
   font-weight: 700;
   cursor: pointer;
@@ -1899,7 +1901,7 @@ body.landing-static .landing-flow.auth-screen {
   margin-left: auto;
   max-width: 86%;
   color: #fff;
-  background: linear-gradient(135deg, var(--blue), var(--deep-blue));
+  background: var(--blue);
   border-color: rgba(10, 77, 255, 0.18);
 }
 
@@ -2061,7 +2063,7 @@ body.landing-static .landing-flow.auth-screen {
   color: #fff;
   font-weight: 700;
   letter-spacing: 0.02em;
-  background: linear-gradient(135deg, var(--blue), var(--deep-blue));
+  background: var(--blue);
   border: 2px solid rgba(255, 255, 255, 0.76);
   border-radius: 16px;
   box-shadow: 0 5px 14px rgba(10, 77, 255, 0.2);
@@ -2157,7 +2159,7 @@ body.landing-static .landing-flow.auth-screen {
 
 .chat-action-btn.primary {
   color: #fff;
-  background: linear-gradient(135deg, var(--blue), var(--deep-blue));
+  background: var(--blue);
   border-color: rgba(10, 77, 255, 0.32);
 }
 
@@ -2198,7 +2200,7 @@ body.landing-static .landing-flow.auth-screen {
 .titopay-user-message.me {
   justify-self: end;
   color: #fff !important;
-  background: linear-gradient(135deg, var(--blue), var(--deep-blue)) !important;
+  background: var(--blue) !important;
   border-color: rgba(10, 77, 255, 0.38) !important;
   border-radius: 18px 18px 6px 18px;
   box-shadow: 0 4px 12px rgba(10, 77, 255, 0.16);
@@ -2319,7 +2321,7 @@ body.landing-static .landing-flow.auth-screen {
   display: inline-grid;
   place-items: center;
   color: #fff;
-  background: linear-gradient(135deg, var(--blue), var(--deep-blue));
+  background: var(--blue);
   border: 0;
   border-radius: 50%;
   box-shadow: 0 4px 12px rgba(10, 77, 255, 0.2);
@@ -2355,7 +2357,7 @@ body.landing-static .landing-flow.auth-screen {
   color: #fff;
   font-size: 1.45rem;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--blue), var(--deep-blue));
+  background: var(--blue);
   border-radius: 24px;
   box-shadow: 0 6px 16px rgba(10, 77, 255, 0.2);
 }
@@ -2389,7 +2391,7 @@ body.landing-static .landing-flow.auth-screen {
 
 .call-controls .btn.is-active {
   color: #fff;
-  background: linear-gradient(135deg, var(--blue), var(--deep-blue));
+  background: var(--blue);
   border-color: transparent;
 }
 
@@ -3058,7 +3060,7 @@ body.landing-static .landing-flow.auth-screen {
   display: inline-grid;
   place-items: center;
   color: #fff;
-  background: linear-gradient(135deg, #16a36f, #08774f);
+  background: var(--success);
   border-radius: 999px;
   box-shadow: 0 10px 24px rgba(11, 159, 106, 0.24);
   animation: successPop 520ms ease both;
@@ -3221,7 +3223,7 @@ body.landing-static .landing-flow.auth-screen {
   display: grid;
   place-items: center;
   color: #fff;
-  background: linear-gradient(135deg, var(--blue), #061a3d);
+  background: var(--blue);
   font-size: 1.45rem;
   font-weight: 700;
 }
@@ -3373,7 +3375,7 @@ body.landing-static .landing-flow.auth-screen {
   border-radius: 24px;
   overflow: hidden;
   color: #fff;
-  background: linear-gradient(135deg, var(--blue), #061a3d);
+  background: var(--blue);
   border: 5px solid #fff;
   box-shadow: 0 8px 20px rgba(10, 77, 255, 0.16), 0 0 0 1px rgba(10, 77, 255, 0.1);
   font-weight: 700;
@@ -3960,12 +3962,11 @@ li {
 }
 
 .btn.primary {
-  background: linear-gradient(135deg, var(--blue) 0%, var(--blue) 44%, var(--deep-blue) 100%);
+  background: var(--blue);
 }
 
 .btn.secondary {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 255, 0.92));
+  background: var(--card);
 }
 
 .btn.ghost {
@@ -4165,7 +4166,7 @@ li {
 
 @media (max-width: 420px) {
   .btn {
-    min-height: 54px;
+    min-height: 52px;
     padding-inline: 14px;
   }
 
