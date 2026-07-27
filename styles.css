@@ -4580,3 +4580,20 @@ form[data-form].is-submitting button[type="submit"]::after {
 form[data-form].is-submitting .chat-send-btn::after {
   content: none;
 }
+
+/* Install float: reserve layout space so it never covers interactive content */
+body:has(.install-float-wrap.with-nav) .screen {
+  padding-bottom: calc(var(--nav-space) + 60px);
+}
+
+body:has(.install-float-wrap.public-install) .auth-screen {
+  padding-bottom: calc(92px + var(--safe-bottom));
+}
+
+body.landing-static:has(.install-float-wrap.public-install),
+body.landing-static:has(.install-float-wrap.public-install) .app-shell,
+body.landing-static:has(.install-float-wrap.public-install) .landing-flow.auth-screen {
+  height: auto;
+  min-height: 100svh;
+  overflow-y: auto;
+}

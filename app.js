@@ -8782,7 +8782,7 @@ function icon(name) {
     "piggy-bank": `<path d="M5 12a6 6 0 0 1 6-6h4a5 5 0 0 1 5 5v4a4 4 0 0 1-4 4H8a5 5 0 0 1-5-5v-1a3 3 0 0 1 2-2.8Z"/><path d="M16 6V4a2 2 0 0 0-2 2"/><path d="M7 19v2"/><path d="M17 19v2"/><path d="M19 11h2"/><path d="M9 10h.01"/>`,
     "community-wallet": `<path d="M4 17a4 4 0 0 1 8 0"/><path d="M12 17a4 4 0 0 1 8 0"/><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M6 21h12a2 2 0 0 0 2-2v-1H4v1a2 2 0 0 0 2 2Z"/><path d="M12 11v5"/>`,
     learn: `<path d="m22 10-10-5-10 5 10 5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/><path d="M22 10v6"/>`,
-    tip: `<path d="M3 13h4.5a3 3 0 0 1 2.1.9l1.3 1.3"/><path d="M4 17h5.5l2.3 2a3.5 3.5 0 0 0 4.4-.1L21 14"/><path d="M8 15h4a2 2 0 0 0 0-4H9"/><circle cx="16" cy="6" r="3"/><path d="M16 4.7v2.6"/><path d="M14.7 6h2.6"/>`,
+    tip: `<path d="M6.5 9.5h11V18a3 3 0 0 1-3 3h-5a3 3 0 0 1-3-3z"/><circle cx="12" cy="4.2" r="2.2"/><path d="M12 13.5v3"/>`,
     "tip-card": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h6"/><path d="M7 14h4"/><circle cx="17" cy="12" r="2.5"/><path d="M17 10.7v2.6"/><path d="M15.7 12h2.6"/>`,
     heart: `<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>`,
     scissors: `<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9"/><path d="M8.1 8.1 20 20"/>`,
