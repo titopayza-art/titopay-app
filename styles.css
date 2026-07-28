@@ -1658,7 +1658,7 @@ body.landing-static .landing-flow.auth-screen {
 .contact-picker-btn {
   display: inline-flex;
   width: fit-content;
-  min-height: 40px;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -1698,7 +1698,7 @@ body.landing-static .landing-flow.auth-screen {
 .recipient-verify-btn {
   display: inline-flex;
   width: fit-content;
-  min-height: 40px;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -5606,4 +5606,214 @@ button.activity-item:focus-visible {
 .vas-form.vas-unavailable .vas-catalogue,
 .vas-form.vas-unavailable .vas-switch {
   opacity: 1;
+}
+
+/* Screen-reader-only text (used by VAS search labels and the QR copy field). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Provider-defined account fields */
+
+.vas-account {
+  display: grid;
+  gap: 14px;
+}
+
+.vas-account:empty {
+  display: none;
+}
+
+.vas-field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Journey actions match the contact-picker chips they sit beside. */
+.vas-field-actions .btn,
+.recipient-tools .vas-self,
+.recipient-tools .vas-validate,
+.vas-self,
+.vas-validate {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 0;
+  padding: 0 14px;
+  color: var(--blue);
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: 1px solid rgba(10, 77, 255, 0.16);
+  border-radius: 999px;
+  background: var(--soft-blue);
+}
+
+.vas-self svg,
+.vas-validate svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+/* Searchable provider picker */
+
+.vas-provider-field {
+  position: relative;
+}
+
+select.is-picker-source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vas-picker {
+  position: relative;
+}
+
+.vas-picker:empty {
+  display: none;
+}
+
+.vas-picker-input {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 52px 0 16px;
+  color: var(--navy);
+  font-family: inherit;
+  font-size: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.vas-picker-input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.vas-picker-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.vas-picker-clear svg {
+  width: 16px;
+  height: 16px;
+}
+
+.vas-picker-clear:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.vas-picker-list {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  max-height: 240px;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  box-shadow: var(--shadow-lift);
+}
+
+.vas-picker-option {
+  min-height: 44px;
+  padding: 11px 12px;
+  color: var(--text);
+  font-size: 0.95rem;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.vas-picker-option.is-active,
+.vas-picker-option:hover {
+  background: var(--soft-blue);
+}
+
+.vas-picker-option.is-selected {
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.vas-picker-empty {
+  padding: 11px 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Product search */
+
+.vas-product-search {
+  display: grid;
+  gap: 4px;
+}
+
+.vas-search-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 16px;
+  color: var(--navy);
+  font-family: inherit;
+  font-size: 0.98rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.vas-search-input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+/* Sensitive credentials */
+
+.vas-credential-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.vas-credential.is-sensitive .vas-credential-value {
+  letter-spacing: 0.06em;
+}
+
+.vas-credential.is-sensitive .vas-credential-value:not([data-revealed]) {
+  color: var(--muted);
 }

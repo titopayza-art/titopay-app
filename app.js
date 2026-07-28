@@ -124,6 +124,7 @@ window.addEventListener("hashchange", () => {
 document.addEventListener("submit", onSubmit);
 document.addEventListener("click", onClick);
 document.addEventListener("input", onInput);
+document.addEventListener("keydown", handleVasPickerKeydown, true);
 document.addEventListener("change", onChange);
 ["pointerdown", "keydown", "scroll", "touchstart"].forEach((eventName) => {
   window.addEventListener(eventName, resetSessionTimers, { passive: true });
@@ -1969,6 +1970,34 @@ async function onClick(event) {
     await validateVasIdentifier(vasValidate);
     return;
   }
+  const vasPickerOption = event.target.closest("[data-vas-picker-value]");
+  if (vasPickerOption) {
+    const form = vasPickerOption.closest("form");
+    if (form) chooseVasPickerOption(form, vasPickerOption.dataset.vasPickerValue);
+    return;
+  }
+  const vasPickerClear = event.target.closest("[data-vas-picker-clear]");
+  if (vasPickerClear) {
+    const form = vasPickerClear.closest("form");
+    const input = form && form.querySelector(".vas-picker-input");
+    if (form && input) {
+      input.value = "";
+      renderVasPickerList(form, "");
+      openVasPickerList(form, true);
+      input.focus();
+    }
+    return;
+  }
+  const vasSelf = event.target.closest("[data-vas-self]");
+  if (vasSelf) {
+    applyVasSelfNumber(vasSelf);
+    return;
+  }
+  const vasReveal = event.target.closest("[data-vas-reveal]");
+  if (vasReveal) {
+    revealVasSecret(vasReveal);
+    return;
+  }
   const vasCopy = event.target.closest("[data-vas-copy]");
   if (vasCopy) {
     await copyVasCredential(vasCopy);
@@ -2052,8 +2081,29 @@ async function onClick(event) {
 }
 
 function onInput(event) {
+  const pickerInput = event.target.closest(".vas-picker-input");
+  if (pickerInput) {
+    const form = pickerInput.closest("form");
+    if (form) {
+      renderVasPickerList(form, pickerInput.value);
+      openVasPickerList(form, true);
+    }
+    return;
+  }
+  const productSearch = event.target.closest("[data-vas-product-search]");
+  if (productSearch) {
+    filterVasProducts(productSearch);
+    return;
+  }
+  const accountField = event.target.closest("[data-vas-account] [name]");
+  if (accountField) captureVasAccountValues(accountField.closest("form"));
   const recipientField = event.target.closest("input[name='recipient'], textarea[name='participants'], textarea[name='members']");
-  if (recipientField) updateRecipientAutoDetect(recipientField);
+  if (recipientField) {
+    updateRecipientAutoDetect(recipientField);
+    // Typing again withdraws a pending "replace what I typed" confirmation.
+    const selfButton = recipientField.closest("form")?.querySelector("[data-vas-self]");
+    if (selfButton) delete selfButton.dataset.confirmReplace;
+  }
   const chatLookupField = event.target.closest('form[data-form="titopay-chat-lookup"] input[name="identifier"]');
   if (chatLookupField) updateRecipientAutoDetect(chatLookupField);
   const chatMessage = event.target.closest('form[data-form="titopay-chat-message"] textarea[name="message"]');
@@ -2103,6 +2153,8 @@ function onChange(event) {
     const field = chatLookupMethod.closest("form")?.querySelector('input[name="identifier"]');
     if (field) updateRecipientAutoDetect(field);
   }
+  const accountSelect = event.target.closest("[data-vas-account] select");
+  if (accountSelect) captureVasAccountValues(accountSelect.closest("form"));
   const vasProvider = event.target.closest("[data-vas-provider]");
   if (vasProvider) handleVasProviderChange(vasProvider);
   const occasion = event.target.closest("select[name='occasion']");
@@ -3856,6 +3908,11 @@ function openWithdrawModal(service) {
 // today stops working.
 // ---------------------------------------------------------------------------
 
+// Above these sizes a plain dropdown or an unfiltered grid stops being usable,
+// so the journey switches to a searchable picker. Below them the native select
+// is the better control on every platform.
+const VAS_PROVIDER_SEARCH_THRESHOLD = 8;
+const VAS_PRODUCT_SEARCH_THRESHOLD = 10;
 const VAS_CATALOGUE_PATH = "/v1/vas/catalogue";
 const VAS_VALIDATE_PATH = "/v1/vas/validate";
 const vasCatalogueCache = new Map();
@@ -3865,6 +3922,7 @@ const vasCatalogueCache = new Map();
 const VAS_JOURNEYS = {
   airtime: {
     vasKey: "airtime",
+    selfPurchase: true,
     productLed: true,
     eyebrow: "Airtime & Data",
     title: "Buy airtime",
@@ -3885,6 +3943,7 @@ const VAS_JOURNEYS = {
   },
   data: {
     vasKey: "data",
+    selfPurchase: true,
     productLed: true,
     eyebrow: "Airtime & Data",
     title: "Buy data",
@@ -3947,6 +4006,7 @@ const VAS_JOURNEYS = {
   },
   sms: {
     vasKey: "sms",
+    selfPurchase: true,
     productLed: true,
     eyebrow: "SMS Bundles",
     title: "Buy an SMS bundle",
@@ -3954,6 +4014,27 @@ const VAS_JOURNEYS = {
     icon: "sms-bundle",
     providerLabel: "Network",
     productLabel: "SMS bundle",
+    recipientLabel: "Cellphone number",
+    recipientPlaceholder: "+27",
+    recipientInputMode: "tel",
+    fallbackProviders: [],
+    openValue: false,
+    amountLabel: "Amount",
+    openValueLabel: "Other amount",
+    openValueNote: "",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  voice: {
+    vasKey: "voice",
+    selfPurchase: true,
+    productLed: true,
+    eyebrow: "Voice Bundles",
+    title: "Buy a voice bundle",
+    lead: "Choose the network and bundle, then confirm the fee preview before purchase.",
+    icon: "voice-bundle",
+    providerLabel: "Network",
+    productLabel: "Voice bundle",
     recipientLabel: "Cellphone number",
     recipientPlaceholder: "+27",
     recipientInputMode: "tel",
@@ -3995,6 +4076,16 @@ const VAS_JOURNEYS = {
 // keeps the selected provider/product out of the DOM round-trip.
 let activeVasJourney = null;
 
+// The signed-in customer's own cellphone number, when the profile carries one.
+// Nothing is guessed: an absent number simply means no self-purchase shortcut.
+function vasSelfNumber() {
+  const user = state.user || {};
+  const raw = vasText(user, ["phone", "mobile", "msisdn", "cellphone", "cell_number", "cellNumber", "phoneNumber", "phone_number"]);
+  if (!raw) return "";
+  const normalized = normalizeSouthAfricanPhone(raw);
+  return isSouthAfricanPhone(normalized) ? normalized : "";
+}
+
 function vasJourneyKind(service) {
   const action = String(service.action || "").toLowerCase();
   if (action === "pay-bills") return "bill";
@@ -4002,6 +4093,7 @@ function vasJourneyKind(service) {
   if (action === "voucher") return "voucher";
   if (action === "data") return "data";
   if (action === "sms" || action === "sms-bundle" || action === "sms-bundles") return "sms";
+  if (action === "voice" || action === "voice-bundle" || action === "voice-bundles") return "voice";
   return "airtime";
 }
 
@@ -4040,6 +4132,57 @@ function normalizeVasProduct(raw) {
   };
 }
 
+// A provider may publish the fields it needs (a DStv smartcard, a municipal
+// account plus a sub-account, and so on). TitoPay renders exactly those fields.
+// Nothing is assumed about which fields any provider requires.
+const VAS_FIELD_TYPES = { text: "text", string: "text", number: "number", numeric: "number", tel: "tel", phone: "tel", msisdn: "tel", email: "email", select: "select", enum: "select", list: "select", date: "date" };
+
+function normalizeVasFieldOption(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== "object") return { value: String(raw), label: String(raw) };
+  const value = vasText(raw, ["value", "code", "id"]);
+  const label = vasText(raw, ["label", "name", "title", "description"]) || value;
+  if (!value && !label) return null;
+  return { value: value || label, label: label || value };
+}
+
+function normalizeVasField(raw, index) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : { name: raw };
+  const key = vasText(source, ["name", "key", "field", "fieldName", "field_name", "id", "code"]);
+  const label = vasText(source, ["label", "title", "displayName", "display_name", "prompt", "caption"]) || key;
+  if (!key && !label) return null;
+  const optionSource = source.options || source.values || source.choices || source.allowedValues || source.allowed_values || [];
+  const options = (Array.isArray(optionSource) ? optionSource : []).map(normalizeVasFieldOption).filter(Boolean);
+  const declaredType = String(vasText(source, ["type", "inputType", "input_type", "dataType", "data_type", "format"]) || "").toLowerCase();
+  return {
+    key: key || `field${index + 1}`,
+    label: label || key,
+    type: options.length ? "select" : (VAS_FIELD_TYPES[declaredType] || "text"),
+    options,
+    placeholder: vasText(source, ["placeholder", "example", "sample", "hint"]),
+    help: vasText(source, ["help", "helpText", "help_text", "description", "note", "guidance"]),
+    required: source.required === true || source.mandatory === true || source.isRequired === true || source.is_required === true,
+    primary: source.primary === true || source.isAccountIdentifier === true || source.is_account_identifier === true || source.identifier === true || source.isPrimary === true,
+    pattern: vasText(source, ["pattern", "regex", "validationPattern", "validation_pattern"]),
+    maxLength: vasNumber(source, ["maxLength", "max_length", "length"]),
+    inputMode: vasText(source, ["inputMode", "input_mode", "keyboard"])
+  };
+}
+
+// Exactly one field carries the account identifier, because that value is what
+// the existing transaction contract sends as `recipient`.
+function normalizeVasFields(raw) {
+  const list = (Array.isArray(raw) ? raw : []).map(normalizeVasField).filter(Boolean);
+  if (!list.length) return [];
+  const primaryIndex = list.findIndex((field) => field.primary);
+  list.forEach((field, index) => {
+    field.primary = index === (primaryIndex >= 0 ? primaryIndex : 0);
+    if (field.primary) field.required = true;
+  });
+  return list;
+}
+
 function normalizeVasProvider(raw) {
   if (raw == null) return null;
   const source = typeof raw === "object" ? raw : { name: raw };
@@ -4056,6 +4199,7 @@ function normalizeVasProvider(raw) {
     allowsOpenValue: source.allowsOpenValue !== false && source.allows_open_value !== false,
     minAmount: vasNumber(source, ["minAmount", "min_amount", "minimum"]),
     maxAmount: vasNumber(source, ["maxAmount", "max_amount", "maximum"]),
+    fields: normalizeVasFields(source.fields || source.requiredFields || source.required_fields || source.accountFields || source.account_fields || source.inputs),
     products
   };
 }
@@ -4142,8 +4286,17 @@ function vasProductGrid(config, provider) {
         <span class="vas-product-price">Enter amount</span>
       </button>`
     : "";
+  const search = provider.products.length > VAS_PRODUCT_SEARCH_THRESHOLD
+    ? `<div class="vas-product-search">
+        <label class="visually-hidden" for="vas-product-search">Search ${esc(config.productLabel.toLowerCase())}s</label>
+        <input id="vas-product-search" class="vas-search-input" type="search" autocomplete="off" data-vas-product-search
+          placeholder="Search ${esc(config.productLabel.toLowerCase())}s">
+        <p class="field-hint" data-vas-product-status role="status" aria-live="polite"></p>
+      </div>`
+    : "";
   return `
     <p class="vas-section-label" id="vas-product-label">${esc(config.productLabel)}</p>
+    ${search}
     <div class="vas-product-grid" role="group" aria-labelledby="vas-product-label">${cards}${openValue}</div>`;
 }
 
@@ -4176,6 +4329,7 @@ function renderVasProviderOptions(form) {
   if (previous && names.some(([value]) => value === previous)) select.value = previous;
   activeVasJourney.providerCode = select.value;
   syncVasProviderName(form);
+  applyVasProviderPicker(form);
 }
 
 // The submitted `provider` value stays exactly what the catalogue supplied (a
@@ -4207,10 +4361,252 @@ function applyVasAvailability(form) {
   const available = vasCanTransact();
   const submit = form.querySelector('button[type="submit"]');
   if (submit) submit.disabled = !available;
-  form.querySelectorAll('[name="recipient"], [name="amount"], [name="reference"], [data-vas-validate]').forEach((field) => {
+  form.querySelectorAll('[data-vas-account] [name], [name="amount"], [name="reference"], [data-vas-validate], [data-vas-self]').forEach((field) => {
     field.disabled = !available;
   });
   form.classList.toggle("vas-unavailable", !available);
+}
+
+// The account section is either the journey's own single field, or the exact
+// fields the selected provider published. The primary field always submits as
+// `recipient`, so the transaction contract is unchanged; any additional
+// provider fields travel as clearly namespaced vasField_ metadata.
+function vasAccountFieldName(field) {
+  return field.primary ? "recipient" : `vasField_${field.key}`;
+}
+
+function vasFieldControl(field, index) {
+  const id = `vas-field-${index}`;
+  const name = vasAccountFieldName(field);
+  const required = field.required ? " required" : "";
+  const maxLength = field.maxLength ? ` maxlength="${field.maxLength}"` : "";
+  const pattern = field.pattern ? ` pattern="${esc(field.pattern)}"` : "";
+  const inputMode = field.inputMode || (field.type === "number" ? "numeric" : field.type === "tel" ? "tel" : "text");
+  const describedBy = field.help ? ` aria-describedby="${id}-help"` : "";
+  const control = field.type === "select"
+    ? `<select id="${id}" name="${esc(name)}"${required}${describedBy}>
+        <option value="">Select ${esc(field.label.toLowerCase())}</option>
+        ${field.options.map((option) => `<option value="${esc(option.value)}">${esc(option.label)}</option>`).join("")}
+      </select>`
+    : `<input id="${id}" name="${esc(name)}" type="${field.type === "number" ? "text" : esc(field.type)}" inputmode="${esc(inputMode)}" autocomplete="off" placeholder="${esc(field.placeholder)}"${maxLength}${pattern}${required}${describedBy} data-no-user-verify="true">`;
+  return `<div class="field"${field.primary ? " data-vas-validate-anchor" : ""}>
+    <label for="${id}">${esc(field.label)}</label>
+    ${control}
+    ${field.help ? `<p class="field-hint" id="${id}-help">${esc(field.help)}</p>` : ""}
+    ${field.primary ? vasPrimaryFieldTools() : ""}
+  </div>`;
+}
+
+function renderVasAccountFields(form) {
+  const host = form.querySelector("[data-vas-account]");
+  if (!host || !activeVasJourney) return;
+  const { config } = activeVasJourney;
+  const provider = vasSelectedProvider();
+  const fields = (provider && provider.fields) || [];
+  // Values already typed survive a provider change, a re-render, or a return
+  // from Review -- including fields that belong to a biller not shown right now.
+  captureVasAccountValues(form);
+  const stored = activeVasJourney.accountValues || {};
+
+  host.innerHTML = fields.length
+    ? fields.map((field, index) => vasFieldControl(field, index)).join("")
+    : `<div class="field" data-vas-validate-anchor>
+        <label for="vas-recipient">${esc(config.recipientLabel)}</label>
+        <input id="vas-recipient" name="recipient" inputmode="${esc(config.recipientInputMode)}" autocomplete="off" placeholder="${esc(config.recipientPlaceholder)}" data-no-user-verify="true" required>
+        ${vasPrimaryFieldTools()}
+      </div>`;
+
+  host.querySelectorAll("[name]").forEach((el) => {
+    const value = stored[el.name];
+    if (value === undefined) return;
+    if (el.tagName === "SELECT" && !Array.from(el.options).some((option) => option.value === value)) return;
+    el.value = value;
+  });
+  enhanceContactPickerControls(host);
+  mergeVasFieldActions(host);
+}
+
+function mergeVasFieldActions(host) {
+  host.querySelectorAll(".field").forEach((field) => {
+    const tools = field.querySelector(".recipient-tools");
+    const actions = field.querySelector(".vas-field-actions");
+    if (!tools || !actions) return;
+    Array.from(actions.children).forEach((child) => tools.appendChild(child));
+    actions.remove();
+  });
+}
+
+function captureVasAccountValues(form) {
+  if (!activeVasJourney) return;
+  if (!activeVasJourney.accountValues) activeVasJourney.accountValues = {};
+  const host = form.querySelector("[data-vas-account]");
+  if (!host) return;
+  host.querySelectorAll("[name]").forEach((el) => {
+    activeVasJourney.accountValues[el.name] = el.value;
+  });
+}
+
+// Fills the customer's own number. An existing entry is never silently
+// replaced: the first press asks, the second press confirms.
+function applyVasSelfNumber(button) {
+  const form = button.closest("form");
+  const field = form && form.querySelector('[name="recipient"]');
+  if (!field) return;
+  const own = button.dataset.vasSelf || "";
+  if (!own) return;
+  const current = String(field.value || "").trim();
+  if (current === own) {
+    showToast("This is already your own number.");
+    return;
+  }
+  if (current && button.dataset.confirmReplace !== "true") {
+    button.dataset.confirmReplace = "true";
+    showToast("Press again to replace the number you entered with your own.");
+    return;
+  }
+  delete button.dataset.confirmReplace;
+  field.value = own;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.focus();
+  showToast("Your own number is in place.");
+}
+
+function vasPrimaryFieldTools() {
+  const config = activeVasJourney ? activeVasJourney.config : null;
+  if (!config) return "";
+  const self = config.selfPurchase ? vasSelfNumber() : "";
+  const buttons = [
+    self ? `<button class="btn ghost vas-self" type="button" data-vas-self="${esc(self)}">${icon("user")} Buy for myself</button>` : "",
+    config.validate ? `<button class="btn ghost vas-validate" type="button" data-vas-validate="1">${icon("shield")} ${esc(config.validateLabel)}</button>` : ""
+  ].filter(Boolean);
+  return buttons.length ? `<div class="vas-field-actions">${buttons.join("")}</div>` : "";
+}
+
+function vasProviderPickerHost(form) {
+  return form.querySelector("[data-vas-provider-picker]");
+}
+
+function applyVasProviderPicker(form) {
+  const select = form.querySelector('[name="provider"]');
+  const host = vasProviderPickerHost(form);
+  if (!select || !host) return;
+  const options = Array.from(select.options).filter((option) => option.value);
+  if (options.length <= VAS_PROVIDER_SEARCH_THRESHOLD) {
+    host.innerHTML = "";
+    select.classList.remove("is-picker-source");
+    select.removeAttribute("aria-hidden");
+    select.removeAttribute("tabindex");
+    return;
+  }
+  select.classList.add("is-picker-source");
+  select.setAttribute("aria-hidden", "true");
+  select.setAttribute("tabindex", "-1");
+  const selected = options.find((option) => option.value === select.value) || options[0];
+  host.innerHTML = `
+    <input class="vas-picker-input" type="text" role="combobox" aria-expanded="false"
+      aria-controls="vas-picker-list" aria-autocomplete="list" autocomplete="off"
+      aria-label="Search ${esc(activeVasJourney.config.providerLabel.toLowerCase())}"
+      placeholder="Search ${esc(activeVasJourney.config.providerLabel.toLowerCase())}" value="${esc(selected ? selected.textContent.trim() : "")}">
+    <button class="vas-picker-clear" type="button" data-vas-picker-clear aria-label="Clear selection">${icon("x")}</button>
+    <ul class="vas-picker-list" id="vas-picker-list" role="listbox" hidden></ul>`;
+  renderVasPickerList(form, "");
+}
+
+function renderVasPickerList(form, query) {
+  const select = form.querySelector('[name="provider"]');
+  const list = form.querySelector(".vas-picker-list");
+  if (!select || !list) return;
+  const needle = String(query || "").trim().toLowerCase();
+  const options = Array.from(select.options)
+    .filter((option) => option.value)
+    .filter((option) => !needle || option.textContent.toLowerCase().includes(needle));
+  list.innerHTML = options.length
+    ? options.map((option, index) => `<li class="vas-picker-option${option.value === select.value ? " is-selected" : ""}" id="vas-picker-option-${index}" role="option" aria-selected="${option.value === select.value ? "true" : "false"}" data-vas-picker-value="${esc(option.value)}" tabindex="-1">${esc(option.textContent.trim())}</li>`).join("")
+    : `<li class="vas-picker-empty" role="option" aria-selected="false" aria-disabled="true">No match for "${esc(query)}"</li>`;
+}
+
+function openVasPickerList(form, open) {
+  const list = form.querySelector(".vas-picker-list");
+  const input = form.querySelector(".vas-picker-input");
+  if (!list || !input) return;
+  list.hidden = !open;
+  input.setAttribute("aria-expanded", open ? "true" : "false");
+  if (!open) input.removeAttribute("aria-activedescendant");
+}
+
+function chooseVasPickerOption(form, value) {
+  const select = form.querySelector('[name="provider"]');
+  const input = form.querySelector(".vas-picker-input");
+  if (!select) return;
+  const option = Array.from(select.options).find((item) => item.value === value);
+  if (!option) return;
+  select.value = value;
+  if (input) input.value = option.textContent.trim();
+  openVasPickerList(form, false);
+  renderVasPickerList(form, "");
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  if (input) input.focus();
+}
+
+function activeVasPickerOption(form) {
+  return form.querySelector(".vas-picker-option.is-active") || form.querySelector(".vas-picker-option.is-selected");
+}
+
+function moveVasPickerActive(form, direction) {
+  const options = Array.from(form.querySelectorAll(".vas-picker-option"));
+  if (!options.length) return;
+  const current = activeVasPickerOption(form);
+  const index = current ? options.indexOf(current) : -1;
+  const next = options[Math.max(0, Math.min(options.length - 1, index + direction))] || options[0];
+  options.forEach((option) => option.classList.remove("is-active"));
+  next.classList.add("is-active");
+  next.scrollIntoView({ block: "nearest" });
+  const input = form.querySelector(".vas-picker-input");
+  if (input) input.setAttribute("aria-activedescendant", next.id);
+}
+
+function handleVasPickerKeydown(event) {
+  const input = event.target.closest(".vas-picker-input");
+  if (!input) return;
+  const form = input.closest("form");
+  if (!form) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    openVasPickerList(form, true);
+    moveVasPickerActive(form, event.key === "ArrowDown" ? 1 : -1);
+    return;
+  }
+  if (event.key === "Enter") {
+    const active = activeVasPickerOption(form);
+    if (active && active.dataset.vasPickerValue) {
+      event.preventDefault();
+      chooseVasPickerOption(form, active.dataset.vasPickerValue);
+    }
+    return;
+  }
+  if (event.key === "Escape") {
+    const list = form.querySelector(".vas-picker-list");
+    if (list && !list.hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      openVasPickerList(form, false);
+    }
+  }
+}
+
+function filterVasProducts(input) {
+  const form = input.closest("form");
+  if (!form) return;
+  const needle = input.value.trim().toLowerCase();
+  const cards = Array.from(form.querySelectorAll(".vas-product"));
+  let shown = 0;
+  cards.forEach((card) => {
+    const match = !needle || card.textContent.toLowerCase().includes(needle);
+    card.hidden = !match;
+    if (match) shown += 1;
+  });
+  const status = form.querySelector("[data-vas-product-status]");
+  if (status) status.textContent = needle ? `${shown} of ${cards.length} shown` : "";
 }
 
 function renderVasCatalogueSection(form) {
@@ -4325,6 +4721,7 @@ function handleVasProviderChange(select) {
   activeVasJourney.productIndex = null;
   syncVasProviderName(form);
   clearVasValidationPanel(form);
+  renderVasAccountFields(form);
   renderVasCatalogueSection(form);
   syncVasProductFields(form);
 }
@@ -4353,6 +4750,8 @@ async function refreshVasCatalogue(form, { force = false } = {}) {
       syncVasProviderName(form);
     }
   }
+  renderVasAccountFields(form);
+  restoreVasCarry(form, activeVasJourney.carry);
   renderVasCatalogueSection(form);
   if (restore && restore.productCode) {
     const provider = vasSelectedProvider();
@@ -4388,6 +4787,9 @@ function reopenVasJourneyFromContext(context) {
     amount,
     reference: data.reference || ""
   };
+  Object.keys(data).forEach((key) => {
+    if (key.startsWith("vasField_") && data[key]) carry[key] = data[key];
+  });
   openVasJourneyModal(service, kind, carry, {
     provider: data.provider || "",
     productCode: data.vasProductCode || "",
@@ -4494,7 +4896,12 @@ async function copyVasCredential(button) {
   } catch (error) {
     // Selecting the value lets the customer copy it manually when the browser
     // blocks clipboard access. A token must never be silently unavailable.
-    const target = button.closest(".vas-credential")?.querySelector(".vas-credential-value");
+    const row = button.closest(".vas-credential");
+    const target = row?.querySelector(".vas-credential-value");
+    const revealButton = row?.querySelector("[data-vas-reveal]");
+    if (target && target.dataset.vasSecret && revealButton && revealButton.getAttribute("aria-pressed") !== "true") {
+      revealVasSecret(revealButton);
+    }
     if (target && window.getSelection && document.createRange) {
       const range = document.createRange();
       range.selectNodeContents(target);
@@ -4516,12 +4923,13 @@ async function copyVasCredential(button) {
 const VAS_MOBILE_VARIANTS = [
   { kind: "airtime", label: "Airtime", ids: ["airtime"] },
   { kind: "data", label: "Data", ids: ["data", "mobile-data"] },
-  { kind: "sms", label: "SMS", ids: ["sms", "sms-bundle", "sms-bundles"] }
+  { kind: "sms", label: "SMS", ids: ["sms", "sms-bundle", "sms-bundles"] },
+  { kind: "voice", label: "Voice", ids: ["voice", "voice-bundle", "voice-bundles"] }
 ];
 
 function vasProductTypeVariants(service) {
   const action = String(service.action || "").toLowerCase();
-  const mobile = ["airtime", "airtime-data", "airtime-and-data", "data", "mobile-data", "sms", "sms-bundle", "sms-bundles"];
+  const mobile = ["airtime", "airtime-data", "airtime-and-data", "data", "mobile-data", "sms", "sms-bundle", "sms-bundles", "voice", "voice-bundle", "voice-bundles"];
   if (!mobile.includes(action)) return [];
   const variants = [];
   VAS_MOBILE_VARIANTS.forEach((variant) => {
@@ -4588,18 +4996,15 @@ function openVasJourneyModal(service, kind, carry = null, restore = null) {
       <input type="hidden" name="vasJourney" value="${esc(kind)}">
       <p class="vas-progress">Step 1 of 3 &middot; Purchase details</p>
       ${vasProductTypeSwitch(variants, kind)}
-      <div class="field">
+      <div class="field vas-provider-field">
         <label for="vas-provider">${esc(config.providerLabel)}</label>
         <select id="vas-provider" name="provider" data-vas-provider disabled>
           <option>Loading...</option>
         </select>
+        <div class="vas-picker" data-vas-provider-picker></div>
       </div>
       <section class="vas-catalogue" data-vas-catalogue aria-live="polite"></section>
-      <div class="field" data-vas-validate-anchor>
-        <label for="vas-recipient">${esc(config.recipientLabel)}</label>
-        <input id="vas-recipient" name="recipient" inputmode="${esc(config.recipientInputMode)}" autocomplete="off" placeholder="${esc(config.recipientPlaceholder)}" data-no-user-verify="true" required>
-        ${config.validate ? `<button class="btn ghost vas-validate" type="button" data-vas-validate="1">${icon("shield")} ${esc(config.validateLabel)}</button>` : ""}
-      </div>
+      <section class="vas-account" data-vas-account></section>
       <div class="field">
         <label for="vas-amount">${esc(config.amountLabel)}</label>
         <div class="input-affix currency-affix" data-prefix="R"><input id="vas-amount" name="amount" inputmode="decimal" required></div>
@@ -4624,10 +5029,12 @@ function openVasJourneyModal(service, kind, carry = null, restore = null) {
     product: null,
     productIndex: null,
     carry: carry || null,
-    restore: restore || null
+    restore: restore || null,
+    accountValues: Object.assign({}, carry || {})
   };
   const form = document.querySelector('.modal-card form[data-vas-journey]');
   if (!form) return;
+  renderVasAccountFields(form);
   // Anything the customer already typed survives a product-type switch or a
   // return from another screen.
   restoreVasCarry(form, carry);
@@ -6031,6 +6438,19 @@ function recipientVerificationCards(verifiedRecipients = [], fallbackRecipient =
   </section>`;
 }
 
+// Extra fields a biller asked for are shown back to the customer before they
+// commit. The label is derived from the provider's own field name.
+function vasProviderFieldLabel(key) {
+  const raw = String(key || "").replace(/^vasField_/, "").replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim();
+  return raw ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase() : "Detail";
+}
+
+function vasProviderFieldRows(data = {}) {
+  return Object.keys(data)
+    .filter((key) => key.startsWith("vasField_") && String(data[key] || "").trim() !== "")
+    .map((key) => [vasProviderFieldLabel(key), String(data[key]), "list"]);
+}
+
 function transactionReviewRows(context) {
   const preview = context.preview || {};
   const data = context.data || {};
@@ -6044,6 +6464,7 @@ function transactionReviewRows(context) {
     // Provider selection and product only appear when the journey captured them.
     ...(data.vasProviderName || data.provider ? [["Provider", data.vasProviderName || data.provider, "bank"]] : []),
     ...(data.vasProductName ? [["Product", data.vasProductName, "tag"]] : []),
+    ...vasProviderFieldRows(data),
     ["Amount", money(amount), "wallet", "strong"],
     ["TitoPay fee", money(fee), "shield"],
     ["Third-party fee", money(Number(preview.thirdPartyFee || data.thirdPartyFee || 0)), "bank"],
@@ -6270,8 +6691,8 @@ async function shareInvite(identifier, message, url) {
 // value is genuinely in the response.
 const VAS_CREDENTIAL_FIELDS = [
   { label: "Electricity token", keys: ["token", "electricityToken", "electricity_token", "stsToken", "sts_token", "meterToken", "meter_token"], copy: true, mono: true, keep: true },
-  { label: "Voucher PIN", keys: ["pin", "voucherPin", "voucher_pin", "voucherCode", "voucher_code"], copy: true, mono: true, keep: true },
-  { label: "Voucher serial", keys: ["serial", "serialNumber", "serial_number", "voucherSerial", "voucher_serial"], copy: true, mono: true, keep: true },
+  { label: "Voucher PIN", keys: ["pin", "voucherPin", "voucher_pin", "voucherCode", "voucher_code"], copy: true, mono: true, keep: true, sensitive: true },
+  { label: "Voucher serial", keys: ["serial", "serialNumber", "serial_number", "voucherSerial", "voucher_serial"], copy: true, mono: true, keep: true, sensitive: true },
   { label: "Units", keys: ["units", "kwh", "unitsPurchased", "units_purchased"], keep: true },
   { label: "Product", keys: ["productName", "product_name", "bundleName", "bundle_name"] },
   { label: "Provider", keys: ["providerName", "provider_name", "networkName", "network_name", "billerName", "biller_name"] },
@@ -6320,6 +6741,29 @@ function vasInfoCredentials(credentials) {
   return credentials.filter((item) => !item.keep);
 }
 
+function vasCredentialSlug(label) {
+  return String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "detail";
+}
+
+// Keeps the shape of the value visible (grouping and length) without disclosing
+// any digit, so the customer can still tell which credential they are looking at.
+function vasMaskedValue(value) {
+  return String(value || "").replace(/[^\s-]/g, "\u2022");
+}
+
+function revealVasSecret(button) {
+  const row = button.closest(".vas-credential");
+  const target = row && row.querySelector(".vas-credential-value");
+  if (!target) return;
+  const secret = target.dataset.vasSecret || "";
+  const label = row.querySelector(".vas-credential-label")?.textContent.trim() || "Details";
+  const revealed = button.getAttribute("aria-pressed") === "true";
+  target.textContent = revealed ? vasMaskedValue(secret) : secret;
+  button.setAttribute("aria-pressed", revealed ? "false" : "true");
+  button.setAttribute("aria-label", `${revealed ? "Reveal" : "Hide"} ${label}`);
+  button.innerHTML = icon(revealed ? "eye" : "eye-off");
+}
+
 function vasCredentialPanel(allCredentials) {
   const credentials = vasKeepCredentials(allCredentials || []);
   if (!credentials.length) return "";
@@ -6327,10 +6771,13 @@ function vasCredentialPanel(allCredentials) {
     <section class="vas-credentials" aria-label="Provider details">
       <p class="vas-credentials-head">${icon("shield")} Keep these details</p>
       ${credentials.map((item) => `
-        <div class="vas-credential${item.mono ? " is-mono" : ""}">
-          <span class="vas-credential-label">${esc(item.label)}</span>
-          <span class="vas-credential-value">${esc(item.value)}</span>
-          ${item.copy ? `<button class="icon-btn" type="button" data-vas-copy="${esc(item.value)}" data-vas-copy-label="${esc(item.label)}" aria-label="Copy ${esc(item.label)}">${icon("copy")}</button>` : ""}
+        <div class="vas-credential${item.mono ? " is-mono" : ""}${item.sensitive ? " is-sensitive" : ""}">
+          <span class="vas-credential-label" id="vas-cred-${esc(vasCredentialSlug(item.label))}">${esc(item.label)}</span>
+          <span class="vas-credential-value"${item.sensitive ? ` data-vas-secret="${esc(item.value)}" aria-labelledby="vas-cred-${esc(vasCredentialSlug(item.label))}"` : ""}>${esc(item.sensitive ? vasMaskedValue(item.value) : item.value)}</span>
+          <span class="vas-credential-actions">
+            ${item.sensitive ? `<button class="icon-btn" type="button" data-vas-reveal="${esc(vasCredentialSlug(item.label))}" aria-pressed="false" aria-label="Reveal ${esc(item.label)}">${icon("eye")}</button>` : ""}
+            ${item.copy ? `<button class="icon-btn" type="button" data-vas-copy="${esc(item.value)}" data-vas-copy-label="${esc(item.label)}" aria-label="Copy ${esc(item.label)}">${icon("copy")}</button>` : ""}
+          </span>
         </div>`).join("")}
     </section>`;
 }
@@ -9836,7 +10283,8 @@ function modalIsDismissible(card) {
 }
 
 function openModal(html) {
-  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const opener = active && active.closest(".modal-backdrop") ? state.modalOpener : active;
   closeModal();
   state.modalOpener = opener;
   lockPageScroll();
@@ -10032,6 +10480,7 @@ function icon(name) {
     phone: `<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>`,
     "sim-card": `<path d="M8 2h6l4 4v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v5h4"/><path d="M9 14h6"/><path d="M9 18h3"/><path d="M10 10h.01"/><path d="M14 10h.01"/>`,
     signal: `<path d="M4 18h2"/><path d="M9 18v-4"/><path d="M14 18v-8"/><path d="M19 18V6"/>`,
+    "voice-bundle": `<path d="M7.5 3.5 10 8 8 9.5a10 10 0 0 0 6.5 6.5L16 14l4.5 2.5-1 3a2 2 0 0 1-2.1 1.4C10.6 20 4 13.4 3.1 6.6A2 2 0 0 1 4.5 4.5Z"/><path d="M15.5 4.2a5.5 5.5 0 0 1 4.3 4.3"/>`,
     "sms-bundle": `<path d="M4 4h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16h-8.5L7 20v-4H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 4Z"/><path d="M7 8.5h10"/><path d="M7 12h6"/>`,
     "data-bundle": `<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 17h8"/><path d="M8 7h.01"/><path d="M12 7h.01"/><path d="M16 7h.01"/><path d="M8 11h8"/><path d="M8 14h8"/>`,
     zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
