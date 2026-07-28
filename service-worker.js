@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v171-money-forms-tickets";
+const CACHE_NAME = "titopay-pwa-v172-learn-documents-statements";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=171",
+  "./styles.css?v=172",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=171",
-  "./services-default.json?v=171",
-  "./manifest.webmanifest?v=171",
+  "./app.js?v=172",
+  "./services-default.json?v=172",
+  "./manifest.webmanifest?v=172",
   "./offline.html",
   "./assets/titopay-logo.jpg",
   "./assets/icon-192.png?v=165",

@@ -91,6 +91,7 @@ const state = {
   pendingQrPaymentReview: null,
   stockvel: { status: "idle", groups: [], invitations: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
   ticketing: { eligibility: null, events: [], loading: false, search: "" },
+  learn: { search: "", category: "all", open: "" },
   enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
   publicEvent: null,
   installPrompt: null,
@@ -510,7 +511,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=171", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=172", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -1994,6 +1995,36 @@ async function onClick(event) {
     applyQuickAmount(quickAmount);
     return;
   }
+  const splitRemove = event.target.closest("[data-split-remove]");
+  if (splitRemove) {
+    removeBillSplitParticipant(splitRemove);
+    return;
+  }
+  const statementPeriod = event.target.closest("[data-statement-period]");
+  if (statementPeriod) {
+    applyStatementPeriod(statementPeriod.dataset.statementPeriod);
+    return;
+  }
+  const docRemoveItem = event.target.closest("[data-doc-remove-item]");
+  if (docRemoveItem) {
+    removeDocumentItemRow(docRemoveItem);
+    return;
+  }
+  const docTerm = event.target.closest("[data-doc-term]");
+  if (docTerm) {
+    applyDocumentTerm(docTerm);
+    return;
+  }
+  const learnToggle = event.target.closest("[data-learn-toggle]");
+  if (learnToggle) {
+    toggleLearnLesson(learnToggle.dataset.learnToggle);
+    return;
+  }
+  const learnCategory = event.target.closest("[data-learn-category]");
+  if (learnCategory) {
+    selectLearnCategory(learnCategory.dataset.learnCategory);
+    return;
+  }
   const giftOccasion = event.target.closest("[data-gift-occasion]");
   if (giftOccasion) {
     selectGiftOccasion(giftOccasion);
@@ -2241,6 +2272,29 @@ function onInput(event) {
     }
     return;
   }
+  const documentField = event.target.closest("[data-doc-desc], [data-doc-qty], [data-doc-unit], [data-doc-issue], [data-doc-due]");
+  if (documentField) {
+    syncDocumentTotals();
+    return;
+  }
+  if (event.target.closest("[data-split-form]")) syncBillSplit();
+  const statementRange = event.target.closest("[data-statement-from], [data-statement-to]");
+  if (statementRange) {
+    applyStatementCustomRange();
+    return;
+  }
+  const learnSearch = event.target.closest("[data-learn-search]");
+  if (learnSearch) {
+    state.learn.search = learnSearch.value;
+    state.learn.open = "";
+    renderLearnLessons();
+    const refocus = document.querySelector("[data-learn-search]");
+    if (refocus) {
+      refocus.focus();
+      refocus.setSelectionRange(refocus.value.length, refocus.value.length);
+    }
+    return;
+  }
   const amountField = event.target.closest('.money-form [name="amount"], .gift-form [name="amount"]');
   if (amountField) {
     // A typed amount is no longer one of the presets.
@@ -2310,6 +2364,8 @@ function onInput(event) {
 }
 
 function onChange(event) {
+  if (event.target.closest("[data-document-form]")) syncDocumentTotals();
+  if (event.target.closest("[data-split-form]")) syncBillSplit();
   const recipientMethod = event.target.closest("select[name='recipientMethod'], select[name='participantMethod'], select[name='memberMethod']");
   if (recipientMethod) {
     const form = recipientMethod.closest("form");
@@ -3321,8 +3377,14 @@ async function handleAction(action) {
   if (action === "chat-block") {
     blockActiveChatThread();
   }
+  if (action === "doc-add-item") {
+    addDocumentItemRow();
+  }
+  if (action === "split-add-participant") {
+    addBillSplitParticipant();
+  }
   if (action === "invoice-link") {
-    showToast("Shareable document link prepared. Email sharing will use the customer email when provided.");
+    await shareBusinessDocument();
   }
   if (action === "start-qr-scan") {
     await startQrScanner();
@@ -3448,7 +3510,8 @@ function handleService(id) {
     location.hash = "activity";
     return;
   }
-  if (id === "transactions" || id === "statements") {
+  if (id === "statements") return openStatementsModal();
+  if (id === "transactions") {
     location.hash = "activity";
     return;
   }
@@ -3489,6 +3552,7 @@ function handleService(id) {
   if (service.action === "send-gift") return openSendGiftModal(service);
   if (service.action === "payouts") return openPayoutModal(service);
   if (service.action === "refund") return openRefundModal(service);
+  if (service.action === "statements") return openStatementsModal();
   if (["invoice", "quote", "proforma-invoice"].includes(service.action)) return openInvoiceDocumentModal(service);
   if (service.type === "learn") return openLearnModal();
   if (service.type === "stockvel") return openStockvelModal();
@@ -5416,23 +5480,181 @@ function openPaymentRequestModal(service) {
   `);
 }
 
+// ---------------------------------------------------------------------------
+// Bill Split
+//
+// The old form asked for a total and a block of participant text and sent it.
+// Nobody ever saw what each person would be asked for until the requests had
+// already gone out.
+//
+// Participants are now rows, and the per-person share is calculated and shown
+// before anything is sent. The cent that does not divide evenly is assigned
+// explicitly rather than being left to rounding.
+//
+// The payload is unchanged: the rows serialise into the same participants
+// field, one entry per line, and splitMethod keeps its original values.
+// ---------------------------------------------------------------------------
+
+const BILL_SPLIT_EQUAL = "Equal split";
+
+let splitRowSequence = 0;
+
+function billSplitParticipantRow(index = 0) {
+  splitRowSequence += 1;
+  const id = `split-person-${splitRowSequence}`;
+  return `
+    <div class="split-participant" data-split-participant>
+      <div class="field">
+        <label class="visually-hidden" for="${id}">Participant ${index + 1}</label>
+        <input id="${id}" data-split-person type="text" autocomplete="off" placeholder="@username, +27 cellphone or email">
+      </div>
+      <p class="split-share" data-split-share aria-live="off">${esc(money(0))}</p>
+      <button class="icon-btn split-remove" type="button" data-split-remove aria-label="Remove participant ${index + 1}">${icon("x")}</button>
+    </div>`;
+}
+
+// Splits an amount across n people in whole cents. The remainder cents go to
+// the earliest participants rather than disappearing into rounding, so the
+// shares always add back up to the bill.
+function splitEvenly(total, people) {
+  const cents = Math.round((Number(total) || 0) * 100);
+  if (!people || cents <= 0) return new Array(Math.max(people, 0)).fill(0);
+  const base = Math.floor(cents / people);
+  const remainder = cents - base * people;
+  return new Array(people).fill(0).map((_, index) => (base + (index < remainder ? 1 : 0)) / 100);
+}
+
+function syncBillSplit() {
+  const form = document.querySelector("[data-split-form]");
+  if (!form) return;
+  const rows = [...form.querySelectorAll("[data-split-participant]")];
+  const people = rows.map((row) => ({ row, value: String(row.querySelector("[data-split-person]")?.value || "").trim() }));
+  const named = people.filter((person) => person.value);
+  const total = Math.max(Number(String(form.querySelector('[name="amount"]')?.value || "").replace(/[^\d.]/g, "")) || 0, 0);
+  const method = form.querySelector('[name="splitMethod"]')?.value || BILL_SPLIT_EQUAL;
+  const equal = method === BILL_SPLIT_EQUAL;
+
+  // You are part of the bill you are splitting, so the share is over
+  // participants plus yourself.
+  const shares = equal ? splitEvenly(total, named.length + 1) : [];
+  let cursor = 1;
+  people.forEach((person) => {
+    const cell = person.row.querySelector("[data-split-share]");
+    if (!cell) return;
+    if (!person.value) cell.textContent = "";
+    else if (!equal || !total) cell.textContent = "";
+    else {
+      cell.textContent = money(shares[cursor] || 0);
+      cursor += 1;
+    }
+  });
+
+  const hidden = form.querySelector('[name="participants"]');
+  if (hidden) hidden.value = named.map((person) => person.value).join("\n");
+
+  const removeButtons = form.querySelectorAll("[data-split-remove]");
+  removeButtons.forEach((button) => { button.disabled = removeButtons.length < 2; });
+
+  const summary = document.querySelector("[data-split-summary]");
+  if (summary) {
+    if (!named.length) {
+      summary.innerHTML = `<p class="field-hint">Add at least one participant to see the split.</p>`;
+    } else if (!total) {
+      summary.innerHTML = `<p class="field-hint">Enter the total bill to see what each person pays.</p>`;
+    } else if (equal) {
+      const yours = shares[0] || 0;
+      const uneven = shares.some((value) => value !== shares[0]);
+      summary.innerHTML = `
+        <div class="split-figures">
+          <div><span>Split between</span><strong>${named.length + 1} people</strong></div>
+          <div><span>Your share</span><strong>${esc(money(yours))}</strong></div>
+          <div><span>You are requesting</span><strong>${esc(money(total - yours))}</strong></div>
+        </div>
+        <p class="field-hint">${uneven
+          ? "The bill does not divide evenly. Your share carries the extra cent so every share still adds up to the full bill."
+          : "Each participant is sent a request for their share. They approve it themselves."}</p>`;
+    } else {
+      summary.innerHTML = `
+        <div class="split-figures">
+          <div><span>Split between</span><strong>${named.length + 1} people</strong></div>
+          <div><span>Total bill</span><strong>${esc(money(total))}</strong></div>
+        </div>
+        <p class="field-hint">TitoPay cannot calculate ${esc(method.toLowerCase())} shares in the app yet. Each participant is sent a request carrying the bill description, and the amounts are agreed between you.</p>`;
+    }
+  }
+
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = !named.length || !total;
+}
+
+function addBillSplitParticipant() {
+  const host = document.querySelector("[data-split-participants]");
+  if (!host) return;
+  host.insertAdjacentHTML("beforeend", billSplitParticipantRow(host.children.length));
+  syncBillSplit();
+  const added = host.querySelector("[data-split-participant]:last-child [data-split-person]");
+  if (added) added.focus();
+}
+
+function removeBillSplitParticipant(button) {
+  const row = button.closest("[data-split-participant]");
+  if (!row) return;
+  if (document.querySelectorAll("[data-split-participant]").length < 2) return;
+  row.remove();
+  syncBillSplit();
+}
+
 function openBillSplitModal(service) {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Bill Split</p><h2>Split a bill</h2><p class="lead">Create equal, percentage or per-item payment requests for every participant.</p></div>
+      <div>
+        <p class="eyebrow">Bill Split</p>
+        <h2>Split a bill</h2>
+        <p class="lead">Enter the total, add the people, and see what each person is asked for before anything is sent.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form" data-form="transaction">
+    <form class="form-grid stable-service-form split-form" data-form="transaction" data-split-form>
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="recipient" value="Bill Split Participants">
-      <div class="field"><label>Bill description</label><input name="reference" placeholder="Dinner, trip, household" required></div>
-      <div class="field"><label>Total bill amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Split method</label><select name="splitMethod"><option>Equal split</option><option>Percentage split</option><option>Per-item split</option></select></div>
-      ${recipientAutoMethodField("participantMethod", "Participant lookup method")}
-      <div class="field"><label>Participants</label><textarea name="participants" placeholder="@username, cellphone or email per line" required></textarea></div>
-      <button class="btn primary" type="submit">${icon("scissors")} Generate split requests</button>
+      <input type="hidden" name="participants" value="">
+
+      <div class="field">
+        <label for="split-reference">What is the bill for?</label>
+        <input id="split-reference" name="reference" autocomplete="off" placeholder="Dinner, trip, household" required>
+        <small class="field-hint">Every participant sees this, so make it recognisable.</small>
+      </div>
+
+      <div class="field">
+        <label for="split-amount">Total bill</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="split-amount" name="amount" inputmode="decimal" required></div>
+      </div>
+
+      <div class="field">
+        <label for="split-method">How is it split?</label>
+        <select id="split-method" name="splitMethod">
+          <option>Equal split</option>
+          <option>Percentage split</option>
+          <option>Per-item split</option>
+        </select>
+      </div>
+
+      ${recipientAutoMethodField("participantMethod", "Find participants by")}
+
+      <div class="field">
+        <p class="field-label" id="split-people-label">Participants</p>
+        <div class="split-participants" data-split-participants aria-labelledby="split-people-label">
+          ${billSplitParticipantRow(0)}
+        </div>
+        <button class="btn ghost split-add" type="button" data-action="split-add-participant">${icon("plus")} Add a person</button>
+      </div>
+
+      <section class="split-summary" data-split-summary aria-live="polite"></section>
+
+      <button class="btn primary" type="submit" disabled>${icon("scissors")} Preview split requests</button>
     </form>
   `);
+  syncBillSplit();
 }
 
 function openSendGiftModal(service) {
@@ -5627,44 +5849,328 @@ function openRefundModal(service) {
   `);
 }
 
+// ---------------------------------------------------------------------------
+// Business documents: Invoice, Quote, Proforma Invoice
+//
+// These three used to share one form that treated them as the same thing:
+// line items were typed as pipe-delimited text, the subtotal was typed by hand
+// separately from the lines it was meant to total, and VAT was chosen from a
+// dropdown whose result was never shown. A document could be saved with a
+// subtotal that disagreed with its own items.
+//
+// Now the lines are rows, the subtotal is derived from them, and the totals are
+// on screen before anything is saved. The three kinds carry the terminology and
+// the date that each actually needs: an invoice is due, a quote is valid until,
+// a proforma is payable by and is not a tax invoice.
+//
+// The submitted payload is unchanged. The rows serialise back into the same
+// "description | qty | unit" lineItems string, the derived subtotal is written
+// into the same amount field, and the VAT select keeps its original values.
+// Dates and terms are carried on unnamed inputs, which FormData does not
+// collect, so they reach the locally-built document without entering the
+// request body.
+// ---------------------------------------------------------------------------
+
+const DOCUMENT_KINDS = {
+  invoice: {
+    kind: "Invoice",
+    title: "Create an invoice",
+    lead: "A numbered request for payment for work already delivered.",
+    customerLabel: "Bill to",
+    dateLabel: "Due date",
+    dateHint: "State when payment is expected. An invoice without a due date invites a late one.",
+    defaultDays: 30,
+    termChips: [0, 7, 14, 30],
+    disclaimer: ""
+  },
+  quote: {
+    kind: "Quote",
+    title: "Create a quote",
+    lead: "A priced offer, sent before the work starts.",
+    customerLabel: "Quote for",
+    dateLabel: "Valid until",
+    dateHint: "A validity date stops old pricing binding you later.",
+    defaultDays: 14,
+    termChips: [7, 14, 30, 60],
+    disclaimer: "This quote is an offer and is not a request for payment. It becomes binding only once accepted in writing."
+  },
+  "proforma-invoice": {
+    kind: "Proforma Invoice",
+    title: "Create a proforma invoice",
+    lead: "A request for payment before supply.",
+    customerLabel: "Issued to",
+    dateLabel: "Payable by",
+    dateHint: "State the date payment is expected before the goods or services are supplied.",
+    defaultDays: 7,
+    termChips: [0, 7, 14, 30],
+    disclaimer: "This is a proforma invoice and not a tax invoice. A tax invoice will follow once payment is received."
+  }
+};
+
+// Document detail that belongs on the document but not in the request body.
+let activeDocumentMeta = null;
+
+function documentKindConfig(action) {
+  return DOCUMENT_KINDS[action] || DOCUMENT_KINDS.invoice;
+}
+
+function isoDate(date) {
+  const value = date instanceof Date ? date : new Date(date);
+  return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const value = new Date(date);
+  value.setDate(value.getDate() + Number(days || 0));
+  return value;
+}
+
+function friendlyDate(value) {
+  if (!value) return "Not set";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "Not set";
+  return date.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }).replace(/,/g, "");
+}
+
+function termChipLabel(days) {
+  if (!days) return "On receipt";
+  return `${days} days`;
+}
+
+let documentRowSequence = 0;
+
+function documentItemRow() {
+  documentRowSequence += 1;
+  const id = `doc-line-${documentRowSequence}`;
+  return `
+    <div class="doc-item" data-doc-item>
+      <div class="field doc-item-field doc-item-desc">
+        <label class="visually-hidden" for="${id}-desc">Item description</label>
+        <input id="${id}-desc" data-doc-desc type="text" autocomplete="off" placeholder="What are you charging for?">
+      </div>
+      <div class="field doc-item-field doc-item-qty">
+        <label class="visually-hidden" for="${id}-qty">Quantity</label>
+        <input id="${id}-qty" data-doc-qty type="text" inputmode="decimal" value="1">
+      </div>
+      <div class="field doc-item-field doc-item-unit">
+        <label class="visually-hidden" for="${id}-unit">Unit price</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="${id}-unit" data-doc-unit type="text" inputmode="decimal" placeholder="0.00"></div>
+      </div>
+      <p class="doc-item-total" data-doc-line-total>${esc(money(0))}</p>
+      <button class="icon-btn doc-item-remove" type="button" data-doc-remove-item aria-label="Remove this line">${icon("x")}</button>
+    </div>`;
+}
+
+function readDocumentItems() {
+  const rows = [...document.querySelectorAll("[data-doc-item]")];
+  return rows.map((row) => {
+    const description = String(row.querySelector("[data-doc-desc]")?.value || "").trim();
+    const quantity = Math.max(Number(String(row.querySelector("[data-doc-qty]")?.value || "").replace(/[^\d.]/g, "")) || 0, 0);
+    const unit = Math.max(Number(String(row.querySelector("[data-doc-unit]")?.value || "").replace(/[^\d.]/g, "")) || 0, 0);
+    return { row, description, quantity, unit, total: quantity * unit };
+  });
+}
+
+// Rebuilds the derived fields from the rows on every edit. The hidden lineItems
+// and amount fields are the only things the request ever sees, so they are the
+// single place the rows are converted back into the original format.
+function syncDocumentTotals() {
+  const form = document.querySelector("[data-document-form]");
+  if (!form) return;
+  const rows = readDocumentItems();
+  rows.forEach((item) => {
+    const cell = item.row.querySelector("[data-doc-line-total]");
+    if (cell) cell.textContent = money(item.total);
+  });
+  const usable = rows.filter((item) => item.description && item.total > 0);
+  const serialised = usable.map((item) => `${item.description.replace(/\|/g, "/")} | ${item.quantity} | ${item.unit}`).join("\n");
+  const subtotal = usable.reduce((sum, item) => sum + item.total, 0);
+  const lineField = form.querySelector('[name="lineItems"]');
+  const amountField = form.querySelector('[name="amount"]');
+  if (lineField) lineField.value = serialised;
+  if (amountField) amountField.value = subtotal ? String(Number(subtotal.toFixed(2))) : "";
+
+  const vatMode = form.querySelector('[name="vat"]')?.value || "No VAT";
+  const totals = documentTotals(usable.map((item) => ({ total: item.total })), vatMode, subtotal);
+  const totalsHost = document.querySelector("[data-doc-totals]");
+  if (totalsHost) {
+    totalsHost.innerHTML = `
+      <div><span>Subtotal</span><strong>${esc(money(totals.subtotal))}</strong></div>
+      <div><span>${totals.vatIncluded ? "VAT 15%" : "VAT"}</span><strong>${esc(money(totals.vat))}</strong></div>
+      <div class="doc-total-row"><span>Total</span><strong>${esc(money(totals.total))}</strong></div>`;
+  }
+
+  const removeButtons = form.querySelectorAll("[data-doc-remove-item]");
+  removeButtons.forEach((button) => { button.disabled = removeButtons.length < 2; });
+
+  const submit = form.querySelector('button[type="submit"]');
+  const warning = document.querySelector("[data-doc-warning]");
+  const valid = usable.length > 0;
+  if (submit) submit.disabled = !valid;
+  if (warning) warning.hidden = valid;
+
+  const issue = form.querySelector("[data-doc-issue]")?.value || "";
+  const due = form.querySelector("[data-doc-due]")?.value || "";
+  const action = form.querySelector('[name="documentAction"]')?.value || "invoice";
+  const config = documentKindConfig(action);
+  activeDocumentMeta = { issueDate: issue, dueDate: due, dateLabel: config.dateLabel, disclaimer: config.disclaimer };
+  const dueSummary = document.querySelector("[data-doc-due-summary]");
+  if (dueSummary) dueSummary.textContent = `${config.dateLabel}: ${friendlyDate(due)}`;
+}
+
+function addDocumentItemRow() {
+  const host = document.querySelector("[data-doc-items]");
+  if (!host) return;
+  host.insertAdjacentHTML("beforeend", documentItemRow());
+  syncDocumentTotals();
+  const added = host.querySelector("[data-doc-item]:last-child [data-doc-desc]");
+  if (added) added.focus();
+}
+
+function removeDocumentItemRow(button) {
+  const row = button.closest("[data-doc-item]");
+  if (!row) return;
+  if (document.querySelectorAll("[data-doc-item]").length < 2) return;
+  row.remove();
+  syncDocumentTotals();
+}
+
+function applyDocumentTerm(button) {
+  const form = document.querySelector("[data-document-form]");
+  if (!form) return;
+  const issueField = form.querySelector("[data-doc-issue]");
+  const dueField = form.querySelector("[data-doc-due]");
+  const base = issueField && issueField.value ? new Date(`${issueField.value}T00:00:00`) : new Date();
+  if (dueField) dueField.value = isoDate(addDays(base, Number(button.dataset.docTerm) || 0));
+  form.querySelectorAll("[data-doc-term]").forEach((chip) => {
+    const active = chip === button;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  syncDocumentTotals();
+}
+
 function openInvoiceDocumentModal(service) {
-  const kind = service.action === "quote" ? "Quote" : service.action === "proforma-invoice" ? "Proforma Invoice" : "Invoice";
+  const action = service.action || "invoice";
+  const config = documentKindConfig(action);
+  const kind = config.kind;
   const businessName = businessProfileName();
   const businessContact = businessProfileContact();
-  const businessAddress = businessProfileAddress();
+  // businessProfileAddress() falls back to a placeholder string. Prefilling it
+  // as a value would print "Address not supplied" on the finished document.
+  const profileAddress = businessProfileAddress();
+  const businessAddress = profileAddress === "Address not supplied" ? "" : profileAddress;
   const logoText = businessLogoText();
+  const today = new Date();
+  const number = nextBusinessDocumentNumber(action);
+  activeDocumentMeta = null;
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">${esc(kind)}</p><h2>Create ${esc(kind)}</h2><p class="lead">Creation is free. PDF extraction or download is R2.50.</p></div>
+      <div>
+        <p class="eyebrow">${esc(kind)}</p>
+        <h2>${esc(config.title)}</h2>
+        <p class="lead">${esc(config.lead)} Creating and saving it is free. The PDF download carries a ${esc(money(DOCUMENT_PDF_FEE))} extraction fee.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+
     <section class="document-brand-card" aria-label="Business document brand">
       <div class="document-logo-mark">${esc(logoText)}</div>
       <div>
         <strong>${esc(businessName)}</strong>
         <span>${esc(businessContact)}</span>
-        <small>Logo mark is detected from your business profile. Update your profile photo or business name to change it.</small>
+        <small>${esc(kind)} ${esc(number)}. The logo mark comes from your business profile.</small>
       </div>
     </section>
-    <form class="form-grid" data-form="transaction">
+
+    <form class="form-grid document-form" data-form="transaction" data-document-form>
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
-      <input type="hidden" name="documentAction" value="${esc(service.action || "invoice")}">
+      <input type="hidden" name="documentAction" value="${esc(action)}">
       <input type="hidden" name="documentKind" value="${esc(kind)}">
-      <div class="field"><label>Business address</label><textarea name="businessAddress" placeholder="Business address">${esc(businessAddress)}</textarea></div>
-      <div class="field"><label>Customer name</label><input name="recipient" required></div>
-      <div class="field"><label>Customer email</label><input name="customerEmail" type="email"></div>
-      <div class="field"><label>Customer address</label><textarea name="customerAddress" placeholder="Customer billing address"></textarea></div>
-      <div class="field"><label>Itemized lines</label><textarea name="lineItems" placeholder="Design work | 1 | 850&#10;Delivery | 1 | 120" required></textarea><small class="field-hint">Use one line per item: description | quantity | unit price.</small></div>
-      <div class="field"><label>Subtotal</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>VAT support</label><select name="vat"><option>Include VAT 15%</option><option>No VAT</option></select></div>
-      <div class="field"><label>Notes</label><textarea name="note" placeholder="Payment terms, banking details or thank-you message"></textarea></div>
-      <button class="btn primary" type="submit">${icon("list")} Save ${esc(kind)}</button>
+      <input type="hidden" name="lineItems" value="">
+      <input type="hidden" name="amount" value="">
+
+      <fieldset class="doc-section">
+        <legend>${esc(config.customerLabel)}</legend>
+        <div class="field">
+          <label for="doc-customer">Customer name</label>
+          <input id="doc-customer" name="recipient" autocomplete="off" required>
+        </div>
+        <div class="field">
+          <label for="doc-customer-email">Customer email <span class="field-optional">optional</span></label>
+          <input id="doc-customer-email" name="customerEmail" type="email" autocomplete="off" inputmode="email">
+          <small class="field-hint">Used when you share the document from the saved screen.</small>
+        </div>
+        <div class="field">
+          <label for="doc-customer-address">Customer address <span class="field-optional">optional</span></label>
+          <textarea id="doc-customer-address" name="customerAddress" rows="2" placeholder="Street, suburb, city, postal code"></textarea>
+        </div>
+      </fieldset>
+
+      <fieldset class="doc-section">
+        <legend>Items</legend>
+        <div class="doc-item-head" aria-hidden="true">
+          <span>Description</span>
+          <span>Qty</span>
+          <span>Unit price</span>
+          <span>Amount</span>
+          <span></span>
+        </div>
+        <div class="doc-items" data-doc-items>
+          ${documentItemRow()}
+        </div>
+        <button class="btn ghost doc-add-item" type="button" data-action="doc-add-item">${icon("plus")} Add a line</button>
+        <p class="field-hint" data-doc-warning>Add at least one line with a description and a price before saving.</p>
+
+        <div class="field">
+          <label for="doc-vat">VAT</label>
+          <select id="doc-vat" name="vat">
+            <option>No VAT</option>
+            <option>Include VAT 15%</option>
+          </select>
+          <small class="field-hint">Only a registered VAT vendor may charge VAT. Confirm your position with SARS or your accountant.</small>
+        </div>
+
+        <section class="doc-totals" data-doc-totals aria-live="polite"></section>
+      </fieldset>
+
+      <fieldset class="doc-section">
+        <legend>Dates</legend>
+        <div class="doc-dates">
+          <div class="field">
+            <label for="doc-issue">Issue date</label>
+            <input id="doc-issue" type="date" data-doc-issue value="${esc(isoDate(today))}">
+          </div>
+          <div class="field">
+            <label for="doc-due">${esc(config.dateLabel)}</label>
+            <input id="doc-due" type="date" data-doc-due value="${esc(isoDate(addDays(today, config.defaultDays)))}">
+          </div>
+        </div>
+        <div class="doc-terms" role="group" aria-label="Payment terms">
+          ${config.termChips.map((days) => `<button class="chip${days === config.defaultDays ? " is-active" : ""}" type="button" data-doc-term="${days}" aria-pressed="${days === config.defaultDays ? "true" : "false"}">${esc(termChipLabel(days))}</button>`).join("")}
+        </div>
+        <small class="field-hint">${esc(config.dateHint)}</small>
+      </fieldset>
+
+      <fieldset class="doc-section">
+        <legend>Your details</legend>
+        <div class="field">
+          <label for="doc-business-address">Business address</label>
+          <textarea id="doc-business-address" name="businessAddress" rows="2" placeholder="Street, suburb, city, postal code">${esc(businessAddress)}</textarea>
+        </div>
+        <div class="field">
+          <label for="doc-note">Notes and payment terms <span class="field-optional">optional</span></label>
+          <textarea id="doc-note" name="note" rows="2" maxlength="240" placeholder="Payment terms, delivery arrangements or a thank-you message"></textarea>
+          <small class="field-hint">Do not put full banking details here. Share those through a channel you control.</small>
+        </div>
+      </fieldset>
+
+      ${config.disclaimer ? `<p class="doc-disclaimer">${esc(config.disclaimer)}</p>` : ""}
+
+      <button class="btn primary" type="submit" disabled>${icon("list")} Save ${esc(kind)}</button>
     </form>
-    <div class="auth-actions">
-      <button class="btn secondary" data-action="invoice-link">${icon("send")} Email link free</button>
-      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay R2.50 + Download PDF</button>
-    </div>
   `);
+  syncDocumentTotals();
 }
 
 function businessProfileName() {
@@ -5740,9 +6246,17 @@ function documentTotals(items, vatMode, fallbackAmount) {
 
 function buildBusinessDocumentDraft(data, transaction, preview) {
   const action = data.documentAction || "invoice";
+  const config = documentKindConfig(action);
   const items = parseDocumentLineItems(data.lineItems, data.amount);
   const totals = documentTotals(items, data.vat, data.amount);
+  // Dates and the kind disclaimer never travel in the request body. They are
+  // captured from the unnamed inputs while the form is still on screen.
+  const meta = activeDocumentMeta || {};
   return {
+    issueDate: meta.issueDate || isoDate(new Date()),
+    dueDate: meta.dueDate || "",
+    dateLabel: meta.dateLabel || config.dateLabel,
+    disclaimer: meta.disclaimer || config.disclaimer || "",
     id: transaction && (transaction.id || transaction.transactionId) || `doc-${Date.now()}`,
     number: nextBusinessDocumentNumber(action),
     prefix: documentPrefix(action),
@@ -5784,14 +6298,18 @@ function openBusinessDocumentSavedModal(document, preview) {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="document-fee-card">
+      <div><span>Customer</span><strong>${esc(document.customerName)}</strong></div>
+      <div><span>Issued</span><strong>${esc(friendlyDate(document.issueDate))}</strong></div>
+      ${document.dueDate ? `<div><span>${esc(document.dateLabel || "Due date")}</span><strong>${esc(friendlyDate(document.dueDate))}</strong></div>` : ""}
       <div><span>Document total</span><strong>${money(document.totals.total)}</strong></div>
       <div><span>PDF extraction fee</span><strong>${money(DOCUMENT_PDF_FEE)}</strong></div>
       <div><span>Status</span><strong>${document.pdfFeePaid ? "PDF paid" : "PDF payment required"}</strong></div>
     </section>
-    <p class="field-hint">Transaction preview total: ${money(preview.total || preview.amount || document.totals.total)}. Customer payment links remain free to send.</p>
+    ${document.disclaimer ? `<p class="doc-disclaimer">${esc(document.disclaimer)}</p>` : ""}
+    <p class="field-hint">Transaction preview total: ${money(preview.total || preview.amount || document.totals.total)}. Sharing the document is free; only the PDF download carries the extraction fee.</p>
     <div class="auth-actions">
-      <button class="btn secondary" data-action="invoice-link">${icon("send")} Email link free</button>
-      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay R2.50 + Download PDF</button>
+      <button class="btn secondary" data-action="invoice-link">${icon("share")} Share document</button>
+      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay ${money(DOCUMENT_PDF_FEE)} + Download PDF</button>
     </div>
   `);
 }
@@ -5885,93 +6403,566 @@ function openTipModal() {
   `);
 }
 
+// ---------------------------------------------------------------------------
+// Learn
+//
+// Learn used to be a list of topic names with a one-line summary and a "Guides:"
+// teaser naming guides that did not exist. Nothing opened. This is the library
+// itself: every topic carries the guidance it was advertising.
+//
+// Scope rules for this content:
+//   - It is general financial education, not advice. Anything that depends on a
+//     person's circumstances says so and points at the authority (SARS, FSCA,
+//     a registered adviser) rather than answering for them.
+//   - Statements about TitoPay describe what the app actually does today. No
+//     capability is claimed here that is not built.
+//   - Nothing promises a return, a rate or an outcome.
+// ---------------------------------------------------------------------------
+
+const LEARN_LIBRARY = {
+  personal: [
+    {
+      category: "Everyday money",
+      lessons: [
+        {
+          title: "Budgeting",
+          summary: "Decide where your money goes before the month decides for you.",
+          points: [
+            "List your fixed costs first: rent, transport, school fees, debit orders. What is left is what you actually have to plan with.",
+            "Give every rand a job. Money without a job is the money that disappears.",
+            "The 50/30/20 split is a starting point, not a rule: about half to needs, a third to wants, the rest to savings and debt. Adjust it to your income rather than forcing your income into it.",
+            "Budget for the irregular things too. December, school uniforms and a car licence are yearly costs, and a yearly cost divided by twelve is a monthly cost.",
+            "Review weekly, not monthly. A month is too long to notice you have overspent."
+          ],
+          titopay: "Activity lists every wallet transaction with search, date and direction filters, and exports to CSV or PDF if you want to add it up outside the app."
+        },
+        {
+          title: "Saving",
+          summary: "Save small, save often, and make it automatic before it becomes a decision.",
+          points: [
+            "Save on payday, not at month-end. What is left at month-end is usually nothing.",
+            "A small amount you never skip beats a large amount you manage twice a year.",
+            "Name your savings. \"R400 for December\" is harder to spend than \"savings\".",
+            "Keep savings apart from spending money. Money you can see is money you will use.",
+            "Increase the amount when your income increases, before your spending does."
+          ],
+          titopay: "A savings group on TitoPay is one way to save a fixed amount on a fixed date, with every contribution visible to the whole group."
+        },
+        {
+          title: "Emergency Funds",
+          summary: "Money set aside so an unexpected expense does not become debt.",
+          points: [
+            "Start with one month of essential costs, not six. A reachable target is one you reach.",
+            "Essentials means rent, food, transport and electricity, not your whole budget.",
+            "Build this before you invest. An emergency fund is what stops you selling an investment at the worst possible moment.",
+            "Keep it somewhere you can reach within a day, but not somewhere you will spend it by accident.",
+            "Replace what you use. A fund used once and never refilled is a fund you no longer have."
+          ],
+          titopay: "Prepaid essentials like electricity and airtime can be bought straight from your wallet, so a short cash gap does not have to mean going without."
+        },
+        {
+          title: "Financial Planning",
+          summary: "Goals with amounts and dates attached, reviewed often enough to matter.",
+          points: [
+            "Write the goal, the amount and the date. \"Save more\" is not a goal.",
+            "Separate short goals under a year, medium goals of one to five years, and long goals beyond that. They need different treatment.",
+            "Check progress quarterly. Adjust the plan, not the goal.",
+            "Plan for the life events you can already see coming. A known cost should never arrive as a surprise.",
+            "Write down where your financial records are and who should know, in case something happens to you."
+          ],
+          titopay: "Statements and saved receipts give you the record to review when you check progress."
+        }
+      ]
+    },
+    {
+      category: "Debt and credit",
+      lessons: [
+        {
+          title: "Debt Management",
+          summary: "Know what you owe, what it costs, and what to pay first.",
+          points: [
+            "List every debt with its balance, its instalment and its interest rate. You cannot manage what you have not written down.",
+            "Pay the minimum on everything, then put anything extra on the most expensive debt. That is the cheapest route out.",
+            "Short-term and unsecured credit usually costs the most. Compare the rate, not just the instalment.",
+            "Never borrow to pay a debt instalment. That is the point where debt starts growing on its own.",
+            "If you cannot pay, contact the credit provider before you miss. An arrangement made early is worth far more than a default.",
+            "South Africa has a formal debt counselling process under the National Credit Act. A registered debt counsellor can tell you whether it applies to you."
+          ],
+          titopay: "TitoPay does not offer credit or loans. Your wallet balance is your own money."
+        },
+        {
+          title: "Credit Scores",
+          summary: "A record of how you have handled credit, used by lenders to decide.",
+          points: [
+            "Payment history carries the most weight. Paying on time, every time, is the single biggest factor.",
+            "How much of your available credit you use matters too. Consistently maxed-out accounts read as strain.",
+            "Several credit applications in a short period can count against you.",
+            "Closing old accounts is not automatically helpful. Length of history counts.",
+            "You are entitled to a free credit report each year from the registered South African credit bureaus. Read it, and dispute anything that is wrong."
+          ],
+          titopay: "Wallet activity on TitoPay is not credit and is not reported to credit bureaus."
+        }
+      ]
+    },
+    {
+      category: "Staying safe",
+      lessons: [
+        {
+          title: "Fraud Prevention",
+          summary: "Most fraud needs your cooperation to work. Do not give it.",
+          points: [
+            "No TitoPay employee, bank employee or service provider will ever ask for your OTP or PIN. Nobody legitimate ever needs it.",
+            "Urgency is the tell. \"Act now or your account is blocked\" is pressure designed to stop you thinking.",
+            "Do not trust the number that called you. Hang up and call back on a number you found yourself.",
+            "Never approve a payment or share a code in order to \"reverse\" or \"cancel\" a transaction. That request is the fraud.",
+            "If a deal, prize or job needs a payment from you first, it is not a deal, prize or job.",
+            "Report it immediately. Speed matters much more than embarrassment."
+          ],
+          titopay: "TitoPay shows the recipient, the fee and the total before any payment is confirmed. If that screen does not match what you were told, stop there."
+        },
+        {
+          title: "Digital Wallet Safety",
+          summary: "Your phone is your wallet. Secure it like one.",
+          points: [
+            "Lock the device itself with a PIN, pattern or biometrics. Everything else depends on that.",
+            "Do not reuse your wallet PIN as your phone unlock code.",
+            "Never store a PIN in notes, photos or contacts.",
+            "Sign out on any device that is not yours, and avoid moving money on public Wi-Fi.",
+            "Check your activity regularly. Small unfamiliar amounts are often a test before a larger attempt.",
+            "If your phone is lost or stolen, lock the wallet and report it straight away."
+          ],
+          titopay: "Profile includes a wallet lock, and every transaction appears in Activity with a reference you can check."
+        }
+      ]
+    },
+    {
+      category: "Using TitoPay",
+      lessons: [
+        {
+          title: "Airtime and Data Planning",
+          summary: "Buy with a plan instead of topping up in a panic.",
+          points: [
+            "Bundles are almost always cheaper per megabyte than out-of-bundle rates. Out-of-bundle is where the money goes.",
+            "Match the bundle to how you actually use data, then check at month-end whether you were right.",
+            "One larger bundle usually costs less than five emergency top-ups.",
+            "Set your phone to warn you before data runs out, and keep background updates off mobile data.",
+            "Check the network and the number before confirming. Airtime sent to a wrong number is usually gone."
+          ],
+          titopay: "Airtime, data, SMS and voice bundles are bought from your wallet with the network and product confirmed before payment, and you can buy for your own number or for someone else."
+        },
+        {
+          title: "Electricity Tokens",
+          summary: "Prepaid electricity, bought correctly and kept safely.",
+          points: [
+            "Check the meter number every single time. A token bought against the wrong meter usually cannot be recovered.",
+            "Keep the receipt. If a token does not load, the receipt is your proof.",
+            "A token is a number, not a payment. It only takes effect once it is entered into the meter.",
+            "Buy before you run out. Buying in the dark is how mistakes happen.",
+            "Watch your usage across a few months so you know what a normal month costs you."
+          ],
+          titopay: "Electricity is bought from your wallet and the token appears on the receipt saved in the app, so you can find it again."
+        },
+        {
+          title: "Payment Requests",
+          summary: "Ask for money in a way that is easy to say yes to.",
+          points: [
+            "Say what it is for. A request with a clear reference is paid faster than a bare amount.",
+            "Send it while the reason is fresh, the same day rather than two weeks later.",
+            "One request per thing. Combining unrelated amounts invites a dispute.",
+            "A request is an ask, not a debit. The other person still has to approve it.",
+            "Follow up once, politely, then speak to them directly."
+          ],
+          titopay: "Payment requests carry a reference and a status you can track, and the recipient approves the payment themselves."
+        },
+        {
+          title: "Bill Split Etiquette",
+          summary: "Shared costs, split in a way nobody argues about.",
+          points: [
+            "Agree the split before the bill arrives, not after it does.",
+            "Equal is simplest and usually fairest for shared things. Split by item when what people used differs a lot.",
+            "Show the working. People pay faster when they can see how their share was calculated.",
+            "Round in the other person's favour. The rand you lose is cheaper than the conversation.",
+            "Somebody has to carry the full amount first. Take turns."
+          ],
+          titopay: "Bill Split shows each participant's share before you send, and creates a separate request per person carrying the same description."
+        },
+        {
+          title: "Savings Group Basics",
+          summary: "A stokvel works on written agreement and visibility, not trust alone.",
+          points: [
+            "Agree the amount, the date and the payout order in writing before the first contribution.",
+            "Write down what happens when somebody misses a contribution, before anybody misses one.",
+            "Every member should be able to see the full contribution record at any time. Secrecy is where groups fail.",
+            "Share responsibility. One person holding everything is a risk to them as much as to the group.",
+            "A savings group holds only what its members put in. Any group promising a return on top of contributions is something else, and worth being careful about."
+          ],
+          titopay: "A TitoPay savings group records contributions per member against a shared statement, so every member sees the same record. TitoPay does not add interest or a return."
+        }
+      ]
+    },
+    {
+      category: "Planning ahead",
+      lessons: [
+        {
+          title: "Investing Basics",
+          summary: "Understand the risk before you look at the return.",
+          points: [
+            "Risk and return travel together. A higher promised return always means higher risk, without exception.",
+            "Guaranteed high returns do not exist. That promise is the most reliable sign of a scam there is.",
+            "Time in the market matters more than timing it. Long horizons absorb short shocks.",
+            "Spread your money. One investment failing should not end your plan.",
+            "Understand the fees. Fees are certain in a way returns never are.",
+            "In South Africa, check that a provider is registered with the FSCA before handing over money. This is education, not advice. A registered financial adviser can advise on your own situation."
+          ],
+          titopay: "TitoPay is a payments wallet. It does not offer investments, and a wallet balance does not earn a return."
+        },
+        {
+          title: "Insurance Basics",
+          summary: "Know what is covered before you need it to be.",
+          points: [
+            "Insurance covers a loss you could not absorb yourself. It is not a savings product.",
+            "Read the exclusions first. That is where claims are lost.",
+            "The excess is what you pay on a claim. A low premium with a large excess may not be cheaper overall.",
+            "Answer the application honestly. Non-disclosure is the most common reason a claim that looked valid is rejected.",
+            "Review your cover when life changes: a move, a new vehicle, a new child."
+          ],
+          titopay: "TitoPay does not sell insurance. Premiums paid by debit order sit outside the wallet."
+        }
+      ]
+    }
+  ],
+  business: [
+    {
+      category: "Money in, money out",
+      lessons: [
+        {
+          title: "Cash Flow Management",
+          summary: "Profit is an opinion. Cash is a fact.",
+          points: [
+            "A profitable business can still fail. It fails when money goes out before it comes in.",
+            "Track expected money in and money out weekly rather than monthly.",
+            "Know your runway: how many weeks you could operate if no new income arrived.",
+            "Chase late payments early and consistently. Most late payment is habit, not inability.",
+            "Keep a buffer that is separate from operating money."
+          ],
+          titopay: "Activity filters by date and direction and exports to CSV, so you can set money in against money out for any period."
+        },
+        {
+          title: "Pricing Strategies",
+          summary: "Price from your costs and your value, never from your competitor alone.",
+          points: [
+            "Know your true cost per unit: materials, time, transport, fees and waste. Price below it and volume only makes it worse.",
+            "Add margin deliberately. Margin is what funds growth and covers slow months.",
+            "Undercutting is the easiest strategy for anyone to copy and the hardest to recover from.",
+            "Raise prices in small, explained steps rather than one large shock.",
+            "Different customers can carry different prices, based on volume, urgency or service level."
+          ],
+          titopay: "Quotes let you present a price and its breakdown before any work starts, so the pricing conversation happens first."
+        },
+        {
+          title: "Payout Planning",
+          summary: "Match when money leaves to when money arrives.",
+          points: [
+            "Know your settlement timing before you agree supplier terms.",
+            "Schedule supplier payments after expected settlements, not before them.",
+            "Keep a reserve so a delayed settlement is not a missed payment.",
+            "Reconcile payouts against sales every time. Unexplained differences do not resolve themselves."
+          ],
+          titopay: "Payouts are requested from the business wallet, and payout records export to CSV for reconciliation."
+        }
+      ]
+    },
+    {
+      category: "Getting paid",
+      lessons: [
+        {
+          title: "Invoicing",
+          summary: "A clear invoice is paid faster than a good reminder.",
+          points: [
+            "Every invoice needs a unique number, an issue date, a due date and stated payment terms.",
+            "Describe each line so the customer recognises what they bought. Vague lines create queries, and queries create delay.",
+            "Put the total, the VAT treatment and the due date where they cannot be missed.",
+            "Send it the day the work is done. Invoicing late teaches customers to pay late.",
+            "Keep every invoice. It is your record for tax, for disputes and for cash-flow planning."
+          ],
+          titopay: "Invoices are built from itemised lines with VAT and totals calculated for you, and issue and due dates on the document. Creating and sending the link is free; the PDF download carries the R2.50 extraction fee."
+        },
+        {
+          title: "Quotes and Proforma",
+          summary: "Agree the price in writing before the work starts.",
+          points: [
+            "A quote is an offer. Give it a validity period so old pricing does not bind you later.",
+            "A proforma invoice is a request for payment before supply. It is not a tax invoice and should say so on its face.",
+            "Once a quote is accepted, invoice against the same numbers. Changing them afterwards causes disputes.",
+            "Put the scope in writing. Most disputes are about what was included, not about the amount.",
+            "Quote for changes separately rather than absorbing them quietly."
+          ],
+          titopay: "Quote, Proforma Invoice and Invoice each use their own numbering series. A quote carries a valid-until date, and a proforma is marked as not a tax invoice."
+        },
+        {
+          title: "Merchant QR Payments",
+          summary: "Fast at the counter, clean in the records.",
+          points: [
+            "Confirm the amount on screen with the customer before they scan.",
+            "Use a reference that will still mean something to you at reconciliation.",
+            "Wait for the confirmation before releasing goods. A screenshot is not a confirmation.",
+            "Keep the receipt record. It settles disputes quickly."
+          ],
+          titopay: "Merchant sales generate a QR carrying the amount and reference you set, and receipts are saved in the app."
+        }
+      ]
+    },
+    {
+      category: "Tax and records",
+      lessons: [
+        {
+          title: "VAT Basics",
+          summary: "VAT is collected on behalf of SARS. It is not income.",
+          points: [
+            "VAT registration is compulsory above a turnover threshold and voluntary below it. SARS sets and updates those thresholds, so confirm the current figures with SARS or your accountant.",
+            "VAT you charge is not yours. Set it aside.",
+            "Only a registered vendor may charge VAT, and a valid tax invoice must carry the details SARS requires, including your VAT number.",
+            "Keep supplier tax invoices. Input VAT you cannot prove is input VAT you cannot claim.",
+            "Getting this wrong is expensive. This is general information, not tax advice."
+          ],
+          titopay: "Business documents can add VAT at 15% to the subtotal and show it as its own line. Whether you should be charging VAT at all is a question for SARS or your accountant."
+        },
+        {
+          title: "Tax Basics",
+          summary: "Good records make tax ordinary instead of frightening.",
+          points: [
+            "Separate business and personal money. Mixed records are the single biggest cause of tax pain.",
+            "Keep records for the period SARS requires. Confirm the current retention rule rather than assuming.",
+            "Provisional tax applies to many business owners, with payments during the year rather than one at the end.",
+            "Record expenses as they happen. Reconstructing a year in one week loses money.",
+            "Use a registered tax practitioner for anything you are unsure about."
+          ],
+          titopay: "Statements export to CSV and PDF for any date range, which is the format most accountants ask for."
+        },
+        {
+          title: "Record Keeping",
+          summary: "If it is not written down, it did not happen.",
+          points: [
+            "Keep invoices, quotes, receipts and bank records for every transaction.",
+            "File as you go, by month. Batch filing is where documents go missing.",
+            "Back up digitally. One damaged box should not end your records.",
+            "Reconcile monthly against your actual balance rather than once a year."
+          ],
+          titopay: "Receipts, saved business documents and statements are all retrievable in the app, and activity exports cover any date range."
+        },
+        {
+          title: "Compliance",
+          summary: "Meeting your obligations is cheaper than explaining why you did not.",
+          points: [
+            "Know which registrations apply to you: company, tax, VAT where relevant, and any industry licence.",
+            "Verified business details are required for financial services. Keep them current.",
+            "Protect customer information. Under POPIA, collect only what you need and keep it secure.",
+            "Keep staff access to financial tools limited, and review that list.",
+            "Rules change. Check with the relevant authority rather than assuming last year's answer still holds."
+          ],
+          titopay: "Business verification is completed in Profile, and business features that require it stay locked until it is approved."
+        }
+      ]
+    },
+    {
+      category: "Running the business",
+      lessons: [
+        {
+          title: "Inventory Management",
+          summary: "Stock is cash sitting on a shelf.",
+          points: [
+            "Count regularly. Records that do not match the shelf are not records.",
+            "Know which items sell fast and which tie up money. Slow stock is expensive stock.",
+            "Order to demand, not to a discount. A bulk deal on a slow item is a cash-flow problem.",
+            "Watch for shrinkage and check it against your sales records."
+          ],
+          titopay: "Sales history in Activity shows what actually sold and when, which is a better ordering guide than memory."
+        },
+        {
+          title: "Customer Retention",
+          summary: "Keeping a customer costs less than finding one.",
+          points: [
+            "Existing customers already trust you. That is the cheapest growth available.",
+            "Answer quickly. Response time shapes how people describe you to others.",
+            "Fix problems generously and visibly. A recovered complaint creates more loyalty than a smooth sale.",
+            "Keep a record of who buys what, and follow up in a way that is useful rather than noisy."
+          ],
+          titopay: "Transaction records show repeat customers by reference, so follow-up is based on what actually happened."
+        },
+        {
+          title: "Business Banking",
+          summary: "Keep business money separate and everything else gets easier.",
+          points: [
+            "Never run business income through a personal account. It ruins your records and complicates tax.",
+            "Reconcile settlements against sales regularly.",
+            "Give each person only the access their role requires.",
+            "Understand the fees on each payment method. They change your real margin."
+          ],
+          titopay: "The business wallet is separate from personal, and payouts and statements are recorded against the business account."
+        }
+      ]
+    },
+    {
+      category: "Growing",
+      lessons: [
+        {
+          title: "Business Funding",
+          summary: "Prepare the records first, then ask.",
+          points: [
+            "Funders look at cash flow, not ambition. Clean records are most of the application.",
+            "Know exactly what the money is for and what it will produce.",
+            "Understand the total cost of the funding, not just the instalment.",
+            "Compare the options. A funder, a supplier term, or simply waiting are all answers. Not every gap needs credit.",
+            "Be careful with anyone offering funding that requires an upfront fee from you."
+          ],
+          titopay: "Statements and document history give you a documented trading record to present. TitoPay does not provide funding or credit."
+        },
+        {
+          title: "Growth Strategies",
+          summary: "Grow on evidence, not on optimism.",
+          points: [
+            "Look at what already sells before adding something new.",
+            "Growth increases cash needs before it increases cash. Plan for that gap.",
+            "Test small. A cheap failed test is information; an expensive one is a setback.",
+            "Fix what breaks at higher volume, such as delivery, service and stock, before the volume arrives."
+          ],
+          titopay: "Filtered activity exports let you compare periods and see which services and customers are actually growing."
+        }
+      ]
+    },
+    {
+      category: "Staying safe",
+      lessons: [
+        {
+          title: "Fraud Prevention for Business",
+          summary: "Most business fraud arrives as a normal-looking instruction.",
+          points: [
+            "Verify any change of banking details by phoning a number you already had, never a number on the new instruction. This one habit stops the most common business fraud in South Africa.",
+            "Never act on an urgent payment instruction that discourages checking, even when it appears to come from an owner or a manager.",
+            "Limit who can move money, and review that list.",
+            "Confirm payment has actually arrived before releasing goods. Proof-of-payment emails and screenshots are easily faked.",
+            "Train staff on refund and overpayment scams. A refund request for an overpayment that never arrived is a classic."
+          ],
+          titopay: "Refunds run through the business wallet with a recorded reference, and TitoPay staff will never ask for an OTP or PIN."
+        }
+      ]
+    }
+  ]
+};
+
+function learnCategories() {
+  return LEARN_LIBRARY[state.accountType === "business" ? "business" : "personal"] || LEARN_LIBRARY.personal;
+}
+
+function learnLessons() {
+  return learnCategories().flatMap((group) => group.lessons.map((lesson) => Object.assign({}, lesson, { category: group.category })));
+}
+
+function learnLessonId(lesson) {
+  return String(lesson.title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function matchingLearnLessons() {
+  const query = String(state.learn.search || "").trim().toLowerCase();
+  const category = state.learn.category || "all";
+  return learnLessons().filter((lesson) => {
+    if (category !== "all" && lesson.category !== category) return false;
+    if (!query) return true;
+    const haystack = [lesson.title, lesson.summary, lesson.category, lesson.titopay].concat(lesson.points).join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function learnLessonMarkup(lesson) {
+  const id = learnLessonId(lesson);
+  const open = state.learn.open === id;
+  return `
+    <article class="learn-item${open ? " is-open" : ""}">
+      <h3>
+        <button class="learn-head" type="button" data-learn-toggle="${esc(id)}" aria-expanded="${open ? "true" : "false"}" aria-controls="learn-body-${esc(id)}">
+          <span class="learn-head-text">
+            <strong>${esc(lesson.title)}</strong>
+            <small>${esc(lesson.summary)}</small>
+          </span>
+          <span class="learn-chevron" aria-hidden="true">${icon("chevron-down")}</span>
+        </button>
+      </h3>
+      <div class="learn-body" id="learn-body-${esc(id)}"${open ? "" : " hidden"}>
+        <ul class="learn-points">
+          ${lesson.points.map((point) => `<li>${esc(point)}</li>`).join("")}
+        </ul>
+        <p class="learn-note"><strong>In TitoPay</strong> ${esc(lesson.titopay)}</p>
+      </div>
+    </article>`;
+}
+
+function renderLearnLessons() {
+  const host = document.querySelector("[data-learn-list]");
+  if (!host) return;
+  const lessons = matchingLearnLessons();
+  if (!lessons.length) {
+    host.innerHTML = `<div class="empty-state"><strong>No match</strong><p>Nothing here covers "${esc(state.learn.search)}" yet. Try a shorter word, or clear the search to browse everything.</p></div>`;
+    return;
+  }
+  const grouped = [];
+  lessons.forEach((lesson) => {
+    const last = grouped[grouped.length - 1];
+    if (last && last.category === lesson.category) last.lessons.push(lesson);
+    else grouped.push({ category: lesson.category, lessons: [lesson] });
+  });
+  host.innerHTML = grouped.map((group) => `
+    <section class="learn-group">
+      <h4 class="learn-group-title">${esc(group.category)}</h4>
+      ${group.lessons.map(learnLessonMarkup).join("")}
+    </section>`).join("");
+  const counter = document.querySelector("[data-learn-count]");
+  if (counter) counter.textContent = `${lessons.length} ${lessons.length === 1 ? "guide" : "guides"}`;
+}
+
+function toggleLearnLesson(id) {
+  state.learn.open = state.learn.open === id ? "" : id;
+  renderLearnLessons();
+  const opened = document.querySelector(`[data-learn-toggle="${CSS.escape(id)}"]`);
+  if (opened && state.learn.open === id) opened.focus();
+}
+
+function selectLearnCategory(category) {
+  state.learn.category = category;
+  state.learn.open = "";
+  document.querySelectorAll("[data-learn-category]").forEach((chip) => {
+    const active = chip.dataset.learnCategory === category;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  renderLearnLessons();
+}
+
 function openLearnModal() {
-  const personal = ["Budgeting", "Saving", "Emergency Funds", "Debt Management", "Credit Scores", "Fraud Prevention", "Digital Wallet Safety", "Airtime & Data Planning", "Electricity Tokens", "Payment Requests", "Bill Split Etiquette", "Stokvel Basics", "Investing Basics", "Insurance Basics", "Financial Planning"];
-  const business = ["Cash Flow Management", "Pricing Strategies", "Invoicing", "Quotes & Proforma", "VAT Basics", "Tax Basics", "Business Banking", "Inventory Management", "Customer Retention", "Merchant QR Payments", "Payout Planning", "Record Keeping", "Fraud Prevention for Business", "Business Funding", "Growth Strategies", "Compliance"];
-  const lessons = state.accountType === "business" ? business : personal;
+  const isBusiness = state.accountType === "business";
+  state.learn = { search: "", category: "all", open: "" };
+  const categories = learnCategories().map((group) => group.category);
+  const total = learnLessons().length;
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Learn</p><h2>${state.accountType === "business" ? "Business Education" : "Personal Money Education"}</h2><p class="lead">Practical TitoPay learning for safer, smarter money decisions.</p></div>
+      <div>
+        <p class="eyebrow">Learn</p>
+        <h2>${isBusiness ? "Business education" : "Money education"}</h2>
+        <p class="lead">${total} practical guides. Open one to read it. This is general education, not financial advice.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <section class="activity-list">
-      ${lessons.map((lesson) => `<article class="activity-item"><span class="icon-bubble">${icon("learn")}</span><div><p><strong>${esc(lesson)}</strong></p><small>${esc(lessonSummary(lesson))}</small><small class="guide-list">${esc(lessonGuide(lesson))}</small></div></article>`).join("")}
-    </section>
+    <div class="field learn-search-field">
+      <label class="visually-hidden" for="learn-search">Search guides</label>
+      <input id="learn-search" data-learn-search type="search" autocomplete="off" placeholder="Search guides">
+    </div>
+    <div class="learn-categories" role="group" aria-label="Filter by category">
+      <button class="chip is-active" type="button" data-learn-category="all" aria-pressed="true">All</button>
+      ${categories.map((category) => `<button class="chip" type="button" data-learn-category="${esc(category)}" aria-pressed="false">${esc(category)}</button>`).join("")}
+    </div>
+    <p class="learn-count muted" data-learn-count aria-live="polite">${total} guides</p>
+    <div class="learn-list" data-learn-list></div>
   `);
-}
-
-function lessonSummary(lesson) {
-  const summaries = {
-    Budgeting: "Plan monthly income, essentials, savings and discretionary spending.",
-    Saving: "Build consistent savings habits from small, repeatable actions.",
-    "Emergency Funds": "Prepare for unexpected expenses without disrupting your wallet.",
-    "Debt Management": "Understand repayments, fees and safer borrowing decisions.",
-    "Credit Scores": "Learn what lenders review and how payment behaviour matters.",
-    "Fraud Prevention": "Spot scams, protect OTPs and report suspicious activity quickly.",
-    "Digital Wallet Safety": "Use PINs, device security and wallet lock controls wisely.",
-    "Airtime & Data Planning": "Buy bundles with a plan and avoid overspending on emergency top-ups.",
-    "Electricity Tokens": "Understand prepaid purchases, token storage and meter reference checks.",
-    "Payment Requests": "Request money clearly with dates, references and status tracking.",
-    "Bill Split Etiquette": "Split shared costs fairly and make every participant's share clear.",
-    "Stokvel Basics": "Learn contribution cycles, member trust and transparent group records.",
-    "Investing Basics": "Understand risk, time horizon and why quick-return promises are dangerous.",
-    "Insurance Basics": "Know what cover, premiums, excess and exclusions mean before committing.",
-    "Financial Planning": "Set goals, review progress and keep money decisions intentional.",
-    "Cash Flow Management": "Track money in and out so your business can operate smoothly.",
-    "Pricing Strategies": "Price products with costs, margins and customer value in mind.",
-    Invoicing: "Create clear customer documents with payment terms and traceable references.",
-    "Quotes & Proforma": "Use quotes and proforma invoices to confirm pricing before delivery.",
-    "VAT Basics": "Understand VAT awareness, customer invoices and record preparation.",
-    "Tax Basics": "Keep useful records so filing and professional advice become easier.",
-    "Business Banking": "Separate business funds, settlements and payout records.",
-    "Inventory Management": "Keep stock levels healthy and avoid tying up too much cash.",
-    "Customer Retention": "Improve repeat purchases with service, trust and clear follow-up.",
-    "Merchant QR Payments": "Accept payments faster with clear references and receipt discipline.",
-    "Payout Planning": "Plan settlement timing, supplier payments and cash reserves.",
-    "Record Keeping": "Keep invoices, receipts and exports organized for decisions and compliance.",
-    "Fraud Prevention for Business": "Protect staff access, payment links and customer data.",
-    "Business Funding": "Prepare cash-flow records before applying for working capital.",
-    "Growth Strategies": "Use payment and customer data to understand demand and scale carefully.",
-    Compliance: "Understand FICA, data care and responsible financial operations."
-  };
-  return summaries[lesson] || "A practical TitoPay guide for everyday financial confidence.";
-}
-
-function lessonGuide(lesson) {
-  const guides = {
-    Budgeting: "Guides: needs vs wants, 50/30/20 planning, weekly wallet review.",
-    Saving: "Guides: savings goals, debit-order discipline, avoiding impulse spending.",
-    "Emergency Funds": "Guides: starter fund, three-month target, safe access rules.",
-    "Debt Management": "Guides: repayment priority, fee awareness, avoiding debt traps.",
-    "Credit Scores": "Guides: payment history, credit usage, application readiness.",
-    "Fraud Prevention": "Guides: OTP safety, phishing signs, reporting suspicious activity.",
-    "Digital Wallet Safety": "Guides: wallet lock, strong PINs, device sessions and support escalation.",
-    "Airtime & Data Planning": "Guides: network choice, bundle expiry, monthly usage and family top-ups.",
-    "Electricity Tokens": "Guides: meter checks, token storage, purchase references and support evidence.",
-    "Payment Requests": "Guides: recipient details, due dates, QR requests and payment tracking.",
-    "Bill Split Etiquette": "Guides: equal splits, custom shares, reminders and proof of payment.",
-    "Stokvel Basics": "Guides: member roles, contribution order, payout cycles and records.",
-    "Investing Basics": "Guides: risk, time horizon, diversification and realistic returns.",
-    "Insurance Basics": "Guides: cover types, premiums, excess and claim readiness.",
-    "Financial Planning": "Guides: short-term goals, annual reviews, debt plans and savings milestones.",
-    "Cash Flow Management": "Guides: daily takings, supplier timing, payout planning.",
-    "Pricing Strategies": "Guides: cost price, markup, profit margin, discounts and break-even thinking.",
-    Invoicing: "Guides: line items, VAT, payment terms and professional follow-up.",
-    "Quotes & Proforma": "Guides: quote validity, deposits, customer approval and delivery notes.",
-    "VAT Basics": "Guides: VAT registration awareness, records and customer invoices.",
-    "Tax Basics": "Guides: expense records, filing preparation and SARS discipline.",
-    "Business Banking": "Guides: separating funds, settlements and audit trails.",
-    "Inventory Management": "Guides: reorder levels, shrinkage, slow movers and margins.",
-    "Customer Retention": "Guides: service recovery, loyalty, follow-up and repeat purchase patterns.",
-    "Merchant QR Payments": "Guides: static QR, dynamic QR, references, refunds and receipts.",
-    "Payout Planning": "Guides: settlement timing, beneficiary checks and cash reserve rules.",
-    "Record Keeping": "Guides: PDF receipts, CSV exports, invoice folders and audit trails.",
-    "Fraud Prevention for Business": "Guides: staff roles, suspicious payments, device access and reporting.",
-    "Business Funding": "Guides: working capital, repayment planning and readiness.",
-    "Growth Strategies": "Guides: top products, repeat customers, campaign tracking and expansion timing.",
-    Compliance: "Guides: FICA, record keeping, receipts and customer data care."
-  };
-  return guides[lesson] || "Guides: practical steps, common mistakes and TitoPay workflow tips.";
+  renderLearnLessons();
 }
 
 // ---------------------------------------------------------------------------
@@ -8056,6 +9047,55 @@ function receiptShareText(receipt) {
     `Amount: ${money(receipt.amount)}`,
     `Status: ${receipt.status || "PAID"}`
   ].filter(Boolean).join("\n");
+}
+
+// Sharing a saved document. TitoPay has no document delivery service, so this
+// hands the document to something that does -- the share sheet, the mail client
+// or the clipboard -- rather than claiming a link was sent.
+function businessDocumentShareText(record) {
+  const lines = [
+    `${record.kind} ${record.number}`,
+    `From: ${record.businessName}`,
+    `To: ${record.customerName}`,
+    `Issued: ${friendlyDate(record.issueDate)}`
+  ];
+  if (record.dueDate) lines.push(`${record.dateLabel || "Due date"}: ${friendlyDate(record.dueDate)}`);
+  lines.push("");
+  (record.items || []).forEach((item) => {
+    lines.push(`${item.description} - ${item.quantity} x ${money(item.unit)} = ${money(item.total)}`);
+  });
+  lines.push("");
+  lines.push(`Subtotal: ${money(record.totals.subtotal)}`);
+  if (record.totals.vatIncluded) lines.push(`VAT 15%: ${money(record.totals.vat)}`);
+  lines.push(`Total: ${money(record.totals.total)}`);
+  if (record.notes) lines.push("", record.notes);
+  if (record.disclaimer) lines.push("", record.disclaimer);
+  return lines.join("\n");
+}
+
+async function shareBusinessDocument() {
+  const record = currentBusinessDocument();
+  if (!record) {
+    showToast("Save the document before sharing it.", "error");
+    return;
+  }
+  const text = businessDocumentShareText(record);
+  const subject = `${record.kind} ${record.number} from ${record.businessName}`;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: subject, text });
+      showToast("Document shared.");
+      return;
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+    }
+  }
+  if (record.customerEmail) {
+    window.location.href = `mailto:${encodeURIComponent(record.customerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+    return;
+  }
+  await copyTextValue(text);
+  showToast("Document copied. Paste it into an email or message.");
 }
 
 async function shareReceipt(receiptId) {
@@ -11620,6 +12660,149 @@ function filteredTransactions() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Statements
+//
+// The Statements tile used to navigate to the wallet activity list and stop
+// there. Everything a statement needs already existed -- the date filters, the
+// PDF builder and the CSV builder -- but nothing tied them together, told you
+// what period you were about to export, or summarised what was in it.
+//
+// This screen drives the same state.transactionFilters the activity list uses,
+// so the summary on screen and the exported file are always the same set of
+// transactions. No totals are calculated anywhere else.
+// ---------------------------------------------------------------------------
+
+const STATEMENT_PERIODS = [
+  { id: "this-month", label: "This month" },
+  { id: "last-month", label: "Last month" },
+  { id: "three-months", label: "Last 3 months" },
+  { id: "this-year", label: "This year" },
+  { id: "all", label: "All time" }
+];
+
+function statementPeriodRange(id, today = new Date()) {
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  if (id === "this-month") return { from: isoDate(new Date(year, month, 1)), to: isoDate(today) };
+  if (id === "last-month") return { from: isoDate(new Date(year, month - 1, 1)), to: isoDate(new Date(year, month, 0)) };
+  if (id === "three-months") return { from: isoDate(new Date(year, month - 2, 1)), to: isoDate(today) };
+  if (id === "this-year") return { from: isoDate(new Date(year, 0, 1)), to: isoDate(today) };
+  return { from: "", to: "" };
+}
+
+function statementTotals(items) {
+  return items.reduce((totals, item) => {
+    const value = Math.abs(Number(item.total ?? item.amount ?? 0) || 0);
+    if ((item.direction || "debit") === "credit") totals.in += value;
+    else totals.out += value;
+    return totals;
+  }, { in: 0, out: 0 });
+}
+
+function statementPeriodLabel() {
+  const { from, to } = state.transactionFilters;
+  if (!from && !to) return "All transactions on this account";
+  if (from && to) return `${friendlyDate(from)} to ${friendlyDate(to)}`;
+  if (from) return `From ${friendlyDate(from)}`;
+  return `Up to ${friendlyDate(to)}`;
+}
+
+function renderStatementSummary() {
+  const host = document.querySelector("[data-statement-summary]");
+  if (!host) return;
+  const items = filteredTransactions();
+  const totals = statementTotals(items);
+  const net = totals.in - totals.out;
+  host.innerHTML = `
+    <p class="statement-period">${esc(statementPeriodLabel())}</p>
+    <div class="statement-figures">
+      <div><span>Transactions</span><strong>${items.length}</strong></div>
+      <div><span>Money in</span><strong class="is-credit">${esc(money(totals.in))}</strong></div>
+      <div><span>Money out</span><strong class="is-debit">${esc(money(totals.out))}</strong></div>
+      <div class="statement-net"><span>Net movement</span><strong>${esc(`${net < 0 ? "-" : ""}${money(Math.abs(net))}`)}</strong></div>
+    </div>
+    ${items.length
+      ? `<p class="field-hint">These ${items.length} transaction${items.length === 1 ? "" : "s"} are exactly what the PDF and CSV will contain.</p>`
+      : `<p class="field-hint">No transactions fall in this period, so an export would be empty. Choose a wider period.</p>`}`;
+
+  const exports = document.querySelectorAll("[data-statement-export]");
+  exports.forEach((button) => { button.disabled = items.length === 0; });
+}
+
+function applyStatementPeriod(id) {
+  const range = statementPeriodRange(id);
+  state.transactionFilters.from = range.from;
+  state.transactionFilters.to = range.to;
+  const form = document.querySelector("[data-statement-form]");
+  if (form) {
+    const fromField = form.querySelector("[data-statement-from]");
+    const toField = form.querySelector("[data-statement-to]");
+    if (fromField) fromField.value = range.from;
+    if (toField) toField.value = range.to;
+  }
+  document.querySelectorAll("[data-statement-period]").forEach((chip) => {
+    const active = chip.dataset.statementPeriod === id;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  renderStatementSummary();
+}
+
+function applyStatementCustomRange() {
+  const from = document.querySelector("[data-statement-from]");
+  const to = document.querySelector("[data-statement-to]");
+  state.transactionFilters.from = from ? from.value : "";
+  state.transactionFilters.to = to ? to.value : "";
+  document.querySelectorAll("[data-statement-period]").forEach((chip) => {
+    chip.classList.remove("is-active");
+    chip.setAttribute("aria-pressed", "false");
+  });
+  renderStatementSummary();
+}
+
+function openStatementsModal() {
+  // A statement is a period, not a search. Clearing these means the summary on
+  // screen and the exported file can never disagree with each other.
+  state.transactionFilters.search = "";
+  state.transactionFilters.direction = "all";
+  const isBusiness = state.accountType === "business";
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Statements</p>
+        <h2>${isBusiness ? "Business statements" : "Wallet statements"}</h2>
+        <p class="lead">Choose a period, check the summary, then download it as a PDF statement or a CSV export.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    <div class="statement-periods" role="group" aria-label="Statement period">
+      ${STATEMENT_PERIODS.map((period) => `<button class="chip" type="button" data-statement-period="${esc(period.id)}" aria-pressed="false">${esc(period.label)}</button>`).join("")}
+    </div>
+
+    <div class="statement-range" data-statement-form>
+      <div class="field">
+        <label for="statement-from">From</label>
+        <input id="statement-from" type="date" data-statement-from value="${esc(state.transactionFilters.from || "")}">
+      </div>
+      <div class="field">
+        <label for="statement-to">To</label>
+        <input id="statement-to" type="date" data-statement-to value="${esc(state.transactionFilters.to || "")}">
+      </div>
+    </div>
+
+    <section class="statement-summary" data-statement-summary aria-live="polite"></section>
+
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-statement-export data-action="export-pdf">${icon("statement")} Download PDF statement</button>
+      <button class="btn secondary" type="button" data-statement-export data-action="export-csv">${icon("download")} Export CSV</button>
+    </div>
+    <p class="field-hint">The statement is built from the transactions TitoPay holds for this account. It is a record of wallet activity, not a bank statement.</p>
+  `);
+  applyStatementPeriod("this-month");
+}
+
 function downloadTransactionsCsv() {
   const items = filteredTransactions();
   const rows = [
@@ -11913,7 +13096,9 @@ function businessDocumentPdf(document) {
   stroke(52, 560, 491, 22, "0.82 0.88 0.98");
   text(64, 568, `Document no: ${documentNoLine}`, 8.5, "F2", "0.04 0.11 0.27");
   text(250, 568, `Reference: ${documentRefLine}`, 8.2, "F1", "0.42 0.46 0.55");
-  rightText(532, 568, `Issued ${documentTimestamp(issued)}`, 8.2, "F1", "0.42 0.46 0.55");
+  const issuedLabel = document.issueDate ? friendlyDate(document.issueDate) : documentTimestamp(issued);
+  const dueLabel = document.dueDate ? `${document.dateLabel || "Due"}: ${friendlyDate(document.dueDate)}` : "";
+  rightText(532, 568, dueLabel ? `Issued ${issuedLabel} | ${dueLabel}` : `Issued ${issuedLabel}`, 8.2, "F1", "0.42 0.46 0.55");
 
   text(52, 528, "ITEMS", 10, "F2", "0.12 0.32 0.62");
   fill(52, 498, 491, 22, "0.03 0.08 0.22");
@@ -11943,6 +13128,13 @@ function businessDocumentPdf(document) {
 
   text(52, 190, "NOTES", 10, "F2", "0.12 0.32 0.62");
   splitStatementText(document.notes || "Thank you for your business.", 72, 2).forEach((lineValue, index) => text(52, 174 - index * 11, lineValue, 8.5, "F1", "0.42 0.46 0.55"));
+  // A quote that does not say it is an offer, or a proforma that does not say
+  // it is not a tax invoice, is the kind of document that causes a dispute.
+  if (document.disclaimer) {
+    fill(52, 138, 491, 24, "0.96 0.97 1.00");
+    stroke(52, 138, 491, 24, "0.86 0.90 0.98");
+    splitStatementText(document.disclaimer, 92, 1).forEach((lineValue) => text(62, 146, lineValue, 7.6, "F2", "0.12 0.32 0.62"));
+  }
   text(52, 126, "PDF EXTRACTION", 10, "F2", "0.12 0.32 0.62");
   text(52, 110, `Fee paid: ${document.pdfFeePaid ? "Yes" : "No"} | Fee: ${statementMoney(DOCUMENT_PDF_FEE)} | Ref: ${compactStatementReference(document.pdfFeeReference || "Pending", 30)}`, 8, "F1", "0.42 0.46 0.55");
 
@@ -12430,6 +13622,8 @@ function icon(name) {
     "bank-transfer": `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M7 10v7"/><path d="M12 10v7"/><path d="M17 10v7"/><path d="M4 17h16"/><path d="m8 21 8-8"/><path d="M16 17v-4h-4"/>`,
     send: `<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>`,
     download: `<path d="m12 5 0 14"/><path d="m18 13-6 6-6-6"/><path d="M5 21h14"/>`,
+    "chevron-down": `<path d="m6 9 6 6 6-6"/>`,
+    plus: `<path d="M12 5v14"/><path d="M5 12h14"/>`,
     copy: `<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`,
     qr: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h2"/><path d="M20 14v2"/><path d="M16 18h4"/><path d="M14 20h2"/>`,
     "qr-receive": `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M15 16h5"/><path d="m17 14-2 2 2 2"/><path d="M20 20h-6"/>`,
