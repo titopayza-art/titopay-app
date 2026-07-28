@@ -511,7 +511,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=173", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=174", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -14064,10 +14064,10 @@ function icon(name) {
     grid: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h6v6h-6z"/>`,
     list: `<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>`,
     "receipt-list": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h3"/>`,
-    statement: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7"/><path d="M9 16h7"/><path d="M9 20h4"/>`,
+    statement: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9.5 19v-3.5"/><path d="M12 19v-6"/><path d="M14.5 19v-4.5"/>`,
     invoice: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h6"/><path d="M9 16h4"/><path d="M16 18h2"/><path d="M16 21h2"/>`,
-    quote: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9.5 11v2.6"/><path d="M12.5 11v2.6"/><path d="M9.5 17h5"/>`,
-    "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 11h7"/><path d="M9 15h7"/><path d="M9 19h5"/>`,
+    quote: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M10 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M14.5 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M9 19h7"/>`,
+    "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7"/><path d="M9 16h7"/><path d="M9 20h2"/><path d="M13 20h3"/>`,
     "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M8 12h8"/><path d="m13 9 3 3-3 3"/><path d="M7 16h4"/>`,
     "message-check": `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="m9 12 2 2 4-5"/>`,
     chat: `<path d="M16 11.5V6.5A2.5 2.5 0 0 0 13.5 4h-8A2.5 2.5 0 0 0 3 6.5v5A2.5 2.5 0 0 0 5.5 14H7v3l3.4-3"/><path d="M10.5 11h8A2.5 2.5 0 0 1 21 13.5v4a2.5 2.5 0 0 1-2.5 2.5H17v2.2L13.6 20h-3.1A2.5 2.5 0 0 1 8 17.5v-4A2.5 2.5 0 0 1 10.5 11Z"/>`,

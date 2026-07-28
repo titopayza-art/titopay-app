@@ -1094,11 +1094,16 @@ body.landing-static .landing-flow.auth-screen {
   margin-bottom: clamp(8px, 1.8vh, 12px);
 }
 
+/* nowrap forced "Accept payments. Grow your business." onto one line, which
+   ran past the hero and was clipped at every width below 430px -- 63px of it
+   was lost on a 320px screen. Balanced wrapping keeps the two sentences even
+   instead. */
 .business-landing h1 {
   margin-bottom: 5px;
   font-size: clamp(1.12rem, 3.6vw, 1.58rem);
-  line-height: 1.03;
-  white-space: nowrap;
+  line-height: 1.08;
+  text-wrap: balance;
+  overflow-wrap: break-word;
 }
 
 .business-landing .lead {
@@ -5257,7 +5262,8 @@ li {
 
   body.landing-static .business-landing h1 {
     font-size: clamp(1.06rem, 3.4vw, 1.45rem);
-    white-space: nowrap;
+    text-wrap: balance;
+    overflow-wrap: break-word;
   }
 
   body.landing-static .business-landing .trust-item {

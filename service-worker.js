@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v173-chat-ticketing-consistency";
+const CACHE_NAME = "titopay-pwa-v174-landing-headline-icons";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=173",
+  "./styles.css?v=174",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=173",
-  "./services-default.json?v=173",
-  "./manifest.webmanifest?v=173",
+  "./app.js?v=174",
+  "./services-default.json?v=174",
+  "./manifest.webmanifest?v=174",
   "./offline.html",
   "./assets/titopay-logo.jpg",
   "./assets/icon-192.png?v=165",
