@@ -1,0 +1,15 @@
+{
+  "name": "titopay-pwa",
+  "version": "0.0.0",
+  "private": true,
+  "description": "TitoPay progressive web app. No build step: the files in the repository root are the deployed artefact.",
+  "scripts": {
+    "serve": "python3 -m http.server 8899",
+    "test": "node tests/run-all.js",
+    "test:headers": "node tests/header-test.js personal && node tests/header-test.js business",
+    "test:landing": "node tests/fill.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

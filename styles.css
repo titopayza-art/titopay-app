@@ -1657,7 +1657,7 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 .doc-terms .chip {
-  min-height: 40px;
+  min-height: 44px;
   padding-inline: 14px;
   font-size: 0.84rem;
   white-space: nowrap;
@@ -1755,7 +1755,7 @@ body.landing-static .landing-flow.auth-screen {
 
 .statement-periods .chip {
   flex: 0 0 auto;
-  min-height: 42px;
+  min-height: 44px;
   padding-inline: 14px;
   font-size: 0.84rem;
   white-space: nowrap;
@@ -2498,10 +2498,13 @@ body.landing-static .landing-flow.auth-screen {
   padding-bottom: 2px;
 }
 
+/* 38px was under the 44px minimum touch target, app-wide: contact suggestions,
+   quick amounts, Learn categories, statement periods and document terms all
+   inherit from here. */
 .chip {
-  min-height: 38px;
+  min-height: 44px;
   flex: 0 0 auto;
-  padding: 0 12px;
+  padding: 0 14px;
   color: var(--blue);
   background: var(--soft-blue);
   border: 1px solid rgba(10, 77, 255, 0.16);
@@ -2631,7 +2634,7 @@ body.landing-static .landing-flow.auth-screen {
 
 .learn-categories .chip {
   flex: 0 0 auto;
-  min-height: 40px;
+  min-height: 44px;
   padding-inline: 14px;
   font-size: 0.82rem;
   white-space: nowrap;
@@ -3592,8 +3595,8 @@ body.landing-static .landing-flow.auth-screen {
 
 .install-stage {
   padding: 16px;
-  color: var(--ink);
-  background: var(--surface-soft);
+  color: var(--text);
+  background: var(--soft);
   border: 1px solid var(--line);
   border-radius: 16px;
 }
@@ -6538,6 +6541,14 @@ button.activity-item:focus-visible {
   background: #fdf8ef;
 }
 
+/* "Could not check" is a neutral, retryable state -- not a warning about the
+   recipient, who may well be a TitoPay user. It reads in brand blue rather
+   than the amber used for a genuine not-found. */
+.recipient-verify-result.is-unknown {
+  border-color: rgba(10, 77, 255, 0.26);
+  background: var(--soft-blue);
+}
+
 .rv-head {
   margin: 0;
   color: var(--success);
@@ -6549,6 +6560,10 @@ button.activity-item:focus-visible {
 
 .rv-head-missing {
   color: var(--warning);
+}
+
+.rv-head-unknown {
+  color: var(--blue);
 }
 
 .rv-row {

@@ -91,6 +91,7 @@ const state = {
   pendingQrPaymentReview: null,
   stockvel: { status: "idle", groups: [], invitations: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
   ticketing: { eligibility: null, events: [], loading: false, search: "" },
+  pendingTicketPurchase: null,
   learn: { search: "", category: "all", open: "" },
   enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
   publicEvent: null,
@@ -620,7 +621,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=178", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=179", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -2107,6 +2108,16 @@ async function onClick(event) {
     await pickPhoneContact(action);
     return;
   }
+  const verifyRetry = event.target.closest("[data-verify-recipient-retry]");
+  if (verifyRetry) {
+    // Re-run the same check the panel came from, rather than making the user
+    // find the Verify button again.
+    const form = verifyRetry.closest("form");
+    const trigger = form && form.querySelector('[data-action="verify-recipient-field"]');
+    verifyRetry.closest(".recipient-verify-result")?.remove();
+    if (trigger) await verifyRecipientField(trigger);
+    return;
+  }
   if (action && action.dataset.action === "verify-recipient-field") {
     await verifyRecipientField(action);
     return;
@@ -2158,6 +2169,11 @@ async function onClick(event) {
   const statementPeriod = event.target.closest("[data-statement-period]");
   if (statementPeriod) {
     applyStatementPeriod(statementPeriod.dataset.statementPeriod);
+    return;
+  }
+  const documentOpen = event.target.closest("[data-document-open]");
+  if (documentOpen) {
+    openSavedBusinessDocument(documentOpen.dataset.documentOpen);
     return;
   }
   const docRemoveItem = event.target.closest("[data-doc-remove-item]");
@@ -2642,10 +2658,13 @@ function displayUsername(value) {
 }
 
 function recipientMethodField(defaultMethod = "auto", name = "recipientMethod", label = "Send using") {
+  // The label had no `for` and did not wrap the select, so screen readers
+  // announced an unlabelled combo box on Send Money, Bill Split and Stockvel.
+  const id = `rmf-${String(name).replace(/[^a-zA-Z0-9]/g, "")}`;
   return `
     <div class="field">
-      <label>${esc(label)}</label>
-      <select name="${esc(name)}">
+      <label for="${id}">${esc(label)}</label>
+      <select id="${id}" name="${esc(name)}">
         <option value="auto"${defaultMethod === "auto" ? " selected" : ""}>Auto-detect</option>
         <option value="username"${defaultMethod === "username" ? " selected" : ""}>Username</option>
         <option value="cellphone"${defaultMethod === "cellphone" ? " selected" : ""}>Cellphone number</option>
@@ -2655,10 +2674,11 @@ function recipientMethodField(defaultMethod = "auto", name = "recipientMethod", 
 }
 
 function recipientAutoMethodField(name = "recipientMethod", label = "Detect recipients by") {
+  const id = `ramf-${String(name).replace(/[^a-zA-Z0-9]/g, "")}`;
   return `
     <div class="field">
-      <label>${esc(label)}</label>
-      <select name="${esc(name)}">
+      <label for="${id}">${esc(label)}</label>
+      <select id="${id}" name="${esc(name)}">
         <option value="auto">Auto-detect each line</option>
         <option value="username">Username</option>
         <option value="cellphone">Cellphone number</option>
@@ -2921,7 +2941,10 @@ function renderInlineRecipientVerification(field, results) {
   if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
 
   const verified = results.filter((item) => item.result && item.result.registered);
-  const missing = results.filter((item) => !item.result || !item.result.registered);
+  // "Not found" and "could not check" are different answers. Reporting an
+  // outage as a missing user sends people chasing someone already on TitoPay.
+  const unchecked = results.filter((item) => item.result && !item.result.registered && item.result.lookupFailed);
+  const missing = results.filter((item) => (!item.result || !item.result.registered) && !(item.result && item.result.lookupFailed));
 
   const rows = verified.map(({ value, result }) => {
     const user = result.user || {};
@@ -2933,7 +2956,7 @@ function renderInlineRecipientVerification(field, results) {
   }).join("");
 
   const panel = document.createElement("div");
-  panel.className = `recipient-verify-result${missing.length && !verified.length ? " is-missing" : ""}`;
+  panel.className = `recipient-verify-result${missing.length && !verified.length ? " is-missing" : ""}${unchecked.length && !verified.length && !missing.length ? " is-unknown" : ""}`;
   panel.dataset.recipientVerifyFor = field.id;
   panel.setAttribute("role", "status");
   panel.setAttribute("aria-live", "polite");
@@ -2946,6 +2969,11 @@ function renderInlineRecipientVerification(field, results) {
     ${missing.length ? `
       <p class="rv-head rv-head-missing">${missing.length === 1 ? "User not found" : "Some users were not found"}</p>
       <p class="rv-note">${esc(missing.map((item) => item.value).join(", "))} ${missing.length === 1 ? "is" : "are"} not currently detected as a registered TitoPay user. Your details are still here \u2014 correct the recipient or send an invitation.</p>
+    ` : ""}
+    ${unchecked.length ? `
+      <p class="rv-head rv-head-unknown">${unchecked.length === 1 ? "Could not check this recipient" : "Could not check some recipients"}</p>
+      <p class="rv-note">TitoPay could not reach the directory to confirm ${esc(unchecked.map((item) => item.value).join(", "))}. That says nothing about whether they are on TitoPay. Try again in a moment.</p>
+      <button class="btn secondary" type="button" data-verify-recipient-retry>${icon("refresh")} Try again</button>
     ` : ""}
   `;
   anchor.insertAdjacentElement("afterend", panel);
@@ -2960,7 +2988,11 @@ function setButtonBusy(button, busy) {
 
 // Submit-time "recipient not registered" outcome, rendered inside the live form
 // so the amount, reference and other entered values are preserved.
-function renderInlineRecipientNotRegistered(identifier, invite = {}) {
+// Two different outcomes used to share one message. "We asked and this person
+// does not exist" justifies an invite; "we could not ask" does not, and telling
+// someone their contact is unregistered because the directory was unreachable
+// sends them chasing a person who is already on TitoPay.
+function renderInlineRecipientNotRegistered(identifier, invite = {}, lookupFailed = false) {
   const form = document.querySelector(".modal-card form[data-form]");
   if (!form) return false;
   const field = form.querySelector('[name="recipient"], [name="participants"], [name="members"]');
@@ -2972,23 +3004,34 @@ function renderInlineRecipientNotRegistered(identifier, invite = {}) {
   if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
 
   const panel = document.createElement("div");
-  panel.className = "recipient-verify-result is-missing";
+  panel.className = `recipient-verify-result ${lookupFailed ? "is-unknown" : "is-missing"}`;
   panel.dataset.recipientNotRegistered = "true";
   panel.setAttribute("role", "status");
   panel.setAttribute("aria-live", "polite");
-  panel.innerHTML = `
-    <p class="rv-head rv-head-missing">Recipient not registered</p>
-    <p class="rv-note">${esc(identifier)} is not yet registered on TitoPay, so this payment cannot be completed. Your details are still here \u2014 correct the recipient, or invite them and try again.</p>
-    <button class="btn secondary" type="button" data-invite-share="${esc(identifier)}" data-invite-message="${esc(invite.message || "")}" data-invite-url="${esc(invite.url || "https://app.titopay.co.za")}">${icon("send")} Share invite</button>
-  `;
+  panel.innerHTML = lookupFailed
+    ? `
+      <p class="rv-head rv-head-unknown">Could not check this recipient</p>
+      <p class="rv-note">TitoPay could not reach the directory to confirm ${esc(identifier)}. This is not a result about them, and nothing has been sent. Your details are still here \u2014 try again in a moment.</p>
+      <button class="btn secondary" type="button" data-verify-recipient-retry>${icon("refresh")} Try again</button>
+    `
+    : `
+      <p class="rv-head rv-head-missing">Recipient not registered</p>
+      <p class="rv-note">${esc(identifier)} is not yet registered on TitoPay, so this payment cannot be completed. Your details are still here \u2014 correct the recipient, or invite them and try again.</p>
+      <button class="btn secondary" type="button" data-invite-share="${esc(identifier)}" data-invite-message="${esc(invite.message || "")}" data-invite-url="${esc(invite.url || "https://app.titopay.co.za")}">${icon("send")} Share invite</button>
+    `;
   anchor.insertAdjacentElement("afterend", panel);
-  showToast(`${identifier} is not a registered TitoPay user.`, "error");
+  showToast(lookupFailed
+    ? `Could not check ${identifier}. Nothing was sent.`
+    : `${identifier} is not a registered TitoPay user.`, "error");
   return true;
 }
 
 function openRecipientVerificationResults(results) {
   const verified = results.filter((item) => item.result && item.result.registered);
-  const missing = results.filter((item) => !item.result || !item.result.registered);
+  // "Not found" and "could not check" are different answers. Reporting an
+  // outage as a missing user sends people chasing someone already on TitoPay.
+  const unchecked = results.filter((item) => item.result && !item.result.registered && item.result.lookupFailed);
+  const missing = results.filter((item) => (!item.result || !item.result.registered) && !(item.result && item.result.lookupFailed));
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Recipient check</p><h2>TitoPay user verification</h2><p class="lead">Confirm the user before sending money, requesting payment or starting a chat.</p></div>
@@ -3011,6 +3054,13 @@ function openRecipientVerificationResults(results) {
         ${icon("user")}
         <strong>${missing.length === 1 ? "User not found" : "Some users were not found"}</strong>
         <p>${missing.map((item) => esc(item.value)).join(", ")} ${missing.length === 1 ? "is" : "are"} not currently detected as registered TitoPay users. Send an invitation before payment or chat.</p>
+      </section>
+    ` : ""}
+    ${unchecked.length ? `
+      <section class="empty-state compact-state">
+        ${icon("refresh")}
+        <strong>${unchecked.length === 1 ? "Could not check this recipient" : "Could not check some recipients"}</strong>
+        <p>TitoPay could not reach the directory to confirm ${unchecked.map((item) => esc(item.value)).join(", ")}. That says nothing about whether they are on TitoPay. Nothing has been sent. Try again in a moment.</p>
       </section>
     ` : ""}
   `);
@@ -3339,6 +3389,14 @@ async function handleAction(action) {
     await submitTicketingEvent(action.split(":")[1]);
     return;
   }
+  if (action === "confirm-ticket-purchase") {
+    await confirmTicketingPurchase();
+  }
+  if (action === "cancel-ticket-purchase") {
+    state.pendingTicketPurchase = null;
+    closeModal();
+    showToast("Ticket purchase cancelled. Nothing was charged.");
+  }
   if (action === "ticketing-create-event") {
     openTicketingEventForm();
     return;
@@ -3561,6 +3619,9 @@ async function handleAction(action) {
   }
   if (action === "chat-block") {
     blockActiveChatThread();
+  }
+  if (action === "business-documents") {
+    openBusinessDocumentHistory();
   }
   if (action === "doc-add-item") {
     addDocumentItemRow();
@@ -3976,22 +4037,77 @@ function publicTicketingEventView(event = {}) {
   `;
 }
 
+// Buying a ticket charged the wallet the moment the form was submitted. Every
+// other money flow in TitoPay shows what is about to happen and waits for a
+// second, deliberate confirmation. This brings ticketing into line: the request
+// itself is unchanged, it just no longer fires until the buyer has seen it.
+function openTicketingPurchaseReview(data) {
+  const event = state.publicEvent || {};
+  const tickets = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
+  const chosen = tickets.find((ticket) => String(ticket.id) === String(data.ticketTypeId)) || tickets[0] || {};
+  const quantity = Math.max(1, Number(data.quantity || 1));
+  const unit = Number(chosen.price) || 0;
+  const total = unit * quantity;
+  state.pendingTicketPurchase = { data, quantity, unit, total, ticketName: chosen.ticketName || "Ticket", eventName: event.eventName || "TitoPay event" };
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Confirm purchase</p>
+        <h2>Review your tickets</h2>
+        <p class="lead">Nothing has been charged yet. Check the details before you pay.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="review-transaction-list activity-list">
+      ${settingsRow("Event", state.pendingTicketPurchase.eventName, "ticket")}
+      ${settingsRow("Ticket", state.pendingTicketPurchase.ticketName, "ticket")}
+      ${settingsRow("Quantity", String(quantity), "list")}
+      ${settingsRow("Price each", money(unit), "wallet")}
+      ${settingsRow("Total to pay", money(total), "wallet")}
+    </section>
+    <p class="field-hint">Paid from your TitoPay wallet. Tickets are issued by the organiser once payment succeeds.</p>
+    <div class="auth-actions">
+      <button class="btn secondary" type="button" data-action="cancel-ticket-purchase">Cancel</button>
+      <button class="btn primary" type="button" data-action="confirm-ticket-purchase">${icon("ticket")} Pay ${esc(money(total))}</button>
+    </div>
+  `);
+}
+
 async function submitTicketingPurchase(data) {
-  const result = await api(`/v1/ticketing/public/events/${encodeURIComponent(data.eventSlug)}/purchase`, {
-    method: "POST",
-    body: {
-      ticketTypeId: data.ticketTypeId,
-      quantity: Number(data.quantity || 1),
-      buyerDetails: {
-        name: state.user?.fullName || state.user?.full_name || "",
-        phone: state.user?.phone || "",
-        email: state.user?.email || ""
+  openTicketingPurchaseReview(data);
+}
+
+async function confirmTicketingPurchase() {
+  const context = state.pendingTicketPurchase;
+  if (!context) {
+    showToast("Ticket selection expired. Please choose again.", "error");
+    return;
+  }
+  const button = document.querySelector('[data-action="confirm-ticket-purchase"]');
+  setButtonBusy(button, true);
+  try {
+    const data = context.data;
+    const result = await api(`/v1/ticketing/public/events/${encodeURIComponent(data.eventSlug)}/purchase`, {
+      method: "POST",
+      body: {
+        ticketTypeId: data.ticketTypeId,
+        quantity: Number(data.quantity || 1),
+        buyerDetails: {
+          name: state.user?.fullName || state.user?.full_name || "",
+          phone: state.user?.phone || "",
+          email: state.user?.email || ""
+        }
       }
-    }
-  });
-  const order = result.order || {};
-  showToast(`Ticket confirmed. Ref: ${order.orderReference}`);
-  openTicketConfirmation(result, order);
+    });
+    state.pendingTicketPurchase = null;
+    const order = result.order || {};
+    showToast(`Ticket confirmed. Ref: ${order.orderReference}`);
+    openTicketConfirmation(result, order);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing-purchase"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 
 // Renders the tickets the purchase response actually returned. Previously the
@@ -6402,6 +6518,56 @@ function applyDocumentTerm(button) {
   syncDocumentTotals();
 }
 
+// Saved documents were written to localStorage and then had no route back to
+// them: once the saved screen closed, an invoice was unreachable. This is that
+// route. It is still local-only storage -- see the API specification -- so the
+// screen says so rather than implying a server-held archive.
+function openBusinessDocumentHistory() {
+  const documents = state.businessDocuments || [];
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Documents</p>
+        <h2>Saved documents</h2>
+        <p class="lead">${documents.length ? `${documents.length} saved on this device.` : "Invoices, quotes and proformas you save appear here."}</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${documents.length ? `
+      <section class="settings-list">
+        ${documents.map((record) => `
+          <article class="settings-row">
+            <span class="icon-bubble">${icon(record.action === "quote" ? "quote" : record.action === "proforma-invoice" ? "document-invoice" : "invoice")}</span>
+            <div>
+              <strong>${esc(record.number || record.kind)}</strong>
+              <small>${esc(record.customerName || "Customer")} · ${esc(money(record.totals?.total || 0))}</small>
+              <small>${esc(record.kind)} · ${esc(friendlyDate(record.issueDate))}${record.dueDate ? ` · ${esc(record.dateLabel || "Due")} ${esc(friendlyDate(record.dueDate))}` : ""}</small>
+            </div>
+            <button class="btn secondary mini" type="button" data-document-open="${esc(record.id)}">Open</button>
+          </article>
+        `).join("")}
+      </section>
+      <p class="field-hint">These are stored on this device only. Clearing your browser data removes them, so keep the PDF of anything you need to retain.</p>
+    ` : `
+      <section class="empty-state compact-state">
+        ${icon("invoice")}
+        <strong>No saved documents yet</strong>
+        <p>Create an invoice, quote or proforma and it will be listed here.</p>
+      </section>
+    `}
+  `);
+}
+
+function openSavedBusinessDocument(id) {
+  const record = (state.businessDocuments || []).find((item) => item.id === id);
+  if (!record) {
+    showToast("That document is no longer saved on this device.", "error");
+    return;
+  }
+  state.activeBusinessDocumentId = record.id;
+  openBusinessDocumentSavedModal(record, { total: record.totals?.total || 0 });
+}
+
 function openInvoiceDocumentModal(service) {
   const action = service.action || "invoice";
   const config = documentKindConfig(action);
@@ -6521,6 +6687,9 @@ function openInvoiceDocumentModal(service) {
 
       <button class="btn primary" type="submit" disabled>${icon("list")} Save ${esc(kind)}</button>
     </form>
+    ${(state.businessDocuments || []).length ? `
+      <button class="btn ghost" type="button" data-action="business-documents">${icon("list")} Saved documents (${(state.businessDocuments || []).length})</button>
+    ` : ""}
   `);
   syncDocumentTotals();
 }
@@ -9678,8 +9847,9 @@ async function verifyRegisteredRecipientBeforeTransaction(data) {
       verified.push({ identifier: recipient, user: result.user || {}, source: result.source || "lookup" });
       continue;
     }
-    if (!renderInlineRecipientNotRegistered(recipient, result.invite || {})) {
-      openInviteRecipientModal(recipient, result.invite || {});
+    if (!renderInlineRecipientNotRegistered(recipient, result.invite || {}, Boolean(result.lookupFailed))) {
+      if (result.lookupFailed) openRecipientLookupUnavailableModal(recipient);
+      else openInviteRecipientModal(recipient, result.invite || {});
     }
     return false;
   }
@@ -9986,6 +10156,26 @@ async function confirmReviewedTransaction() {
   } finally {
     setButtonBusy(button, false);
   }
+}
+
+// Fallback for the rare case where there is no live form to render into.
+function openRecipientLookupUnavailableModal(identifier) {
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Recipient check</p>
+        <h2>Could not check this recipient</h2>
+        <p class="lead">TitoPay could not reach the directory to confirm ${esc(identifier)}. Nothing has been sent and no money has moved.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="empty-state compact-state">
+      ${icon("refresh")}
+      <strong>This is not a result about them</strong>
+      <p>They may well be a TitoPay user. Check your connection and try again in a moment.</p>
+    </section>
+    <button class="btn primary" type="button" data-close>${icon("arrow-left")} Back</button>
+  `);
 }
 
 function openInviteRecipientModal(identifier, invite = {}) {
