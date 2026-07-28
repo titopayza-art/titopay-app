@@ -511,7 +511,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=172", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=173", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -795,9 +795,13 @@ function comingSoonServices() {
 }
 
 function landingPreviewServices() {
+  // "airtime-data" first: the services grid collapses airtime, data and the
+  // combined product into one tile, and the landing page was picking the
+  // standalone "Airtime" entry. The same product was then labelled two
+  // different ways in two places.
   const preferred = state.accountType === "business"
-    ? ["top-up", "receive-money", "payouts", "ticketing", "invoice", "transactions"]
-    : ["top-up", "withdraw", "send-money", "airtime", "pay-bills", "tickets"];
+    ? ["top-up", "receive-money", "payouts", "ticketing", "invoice", "statements"]
+    : ["top-up", "withdraw", "send-money", "airtime-data", "pay-bills", "tickets"];
   const valuesFor = (service) => [
     service.id,
     service.action,
@@ -805,7 +809,7 @@ function landingPreviewServices() {
     service.serviceCode,
     service.label
   ].map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "-"));
-  const services = activeServices();
+  const services = hideDuplicateAirtimeDataTiles(activeServices());
   const selected = [];
   preferred.forEach((key) => {
     const match = services.find((service) => valuesFor(service).includes(key));
@@ -1254,7 +1258,10 @@ function dashboardView() {
 }
 
 function servicesView() {
-  const hiddenServiceTiles = new Set(["transactions", "profile-security"]);
+  // Pure navigation entries. Each of these routes to a tab that already exists
+  // in the bottom navigation, so a tile for them is a duplicate of the nav, not
+  // a service. Business Profile was the one still leaking into the grid.
+  const hiddenServiceTiles = new Set(["transactions", "profile-security", "business-profile"]);
   const shouldShowServiceTile = (service) => {
     const action = String(service.action || "").toLowerCase();
     const id = String(service.id || service.serviceCode || service.service_code || "").toLowerCase();
@@ -2331,6 +2338,9 @@ function onInput(event) {
   if (chatLookupField) updateRecipientAutoDetect(chatLookupField);
   const chatMessage = event.target.closest('form[data-form="titopay-chat-message"] textarea[name="message"]');
   if (chatMessage) {
+    // Kept so an incoming message repainting the thread cannot discard a
+    // part-typed reply.
+    rememberChatDraft(chatMessage.closest("form")?.dataset.threadId || "");
     const thread = activeTitoPayChatThread();
     if (thread) {
       sendTitoPaySocketEvent("chat:typing", {
@@ -2392,6 +2402,15 @@ function onChange(event) {
     const hint = withdrawalSpeed.closest("form")?.querySelector("[data-withdrawal-hint]");
     if (hint) {
       hint.textContent = withdrawalSpeed.value === "instant_peach_withdrawal"
+        ? "Sent for immediate payout through Peach Payments. The exact fee is shown on the review screen before you confirm."
+        : "Processed through Peach Payments. The exact fee is shown on the review screen before you confirm.";
+    }
+  }
+  const payoutSpeed = event.target.closest("[data-payout-speed]");
+  if (payoutSpeed) {
+    const hint = payoutSpeed.closest("form")?.querySelector("[data-payout-hint]");
+    if (hint) {
+      hint.textContent = payoutSpeed.value === "instant_peach_business_payout"
         ? "Sent for immediate payout through Peach Payments. The exact fee is shown on the review screen before you confirm."
         : "Processed through Peach Payments. The exact fee is shown on the review screen before you confirm.";
     }
@@ -3035,9 +3054,17 @@ async function lookupRegisteredRecipient(recipient, serviceCode) {
     () => api(`/v1/chat/users/lookup?identifier=${encodeURIComponent(recipient)}`)
   ];
   let invite = null;
+  // Every request below swallows its own error and falls through to the next.
+  // If they all error, the function still returned registered:false, which is
+  // the same answer it gives for "we asked and this person does not exist".
+  // Callers then tell the user their contact is not on TitoPay when the truth
+  // is that nothing could be checked. lookupFailed carries that distinction;
+  // registered keeps its existing meaning so current callers are unaffected.
+  let completedCleanly = false;
   for (let index = 0; index < lookupRequests.length; index += 1) {
     try {
       const result = await lookupRequests[index]();
+      completedCleanly = true;
       const user = resolvedTitoPayUserFromResult(result);
       const registered = Boolean(result.registered || result.exists || result.found || hasTitoPayUserIdentity(user));
       if (registered) {
@@ -3050,7 +3077,7 @@ async function lookupRegisteredRecipient(recipient, serviceCode) {
     }
   }
   if (localUser) return { registered: true, user: localUser, source: "local_lookup" };
-  return { registered: false, invite: invite || defaultRecipientInvite(recipient) };
+  return { registered: false, lookupFailed: !completedCleanly, invite: invite || defaultRecipientInvite(recipient) };
 }
 
 async function register(data) {
@@ -3345,7 +3372,17 @@ async function handleAction(action) {
     openStockvelJoinModal();
   }
   if (action === "chat-back") {
+    sessionStorage.removeItem("titopay_active_chat_thread");
     openTitoPayChatModal();
+  }
+  if (action === "chat-retry-lookup") {
+    const trigger = event.target.closest("[data-chat-identifier]");
+    if (trigger) {
+      await submitTitoPayChatLookup({
+        identifier: trigger.dataset.chatIdentifier,
+        lookupMethod: trigger.dataset.chatMethod || "auto"
+      });
+    }
   }
   if (action === "chat-call-start") {
     openCustomerCareCallOnlyModal();
@@ -3804,16 +3841,82 @@ async function submitTicketingPurchase(data) {
       }
     }
   });
-  showToast(`Ticket confirmed. Ref: ${result.order.orderReference}`);
+  const order = result.order || {};
+  showToast(`Ticket confirmed. Ref: ${order.orderReference}`);
+  openTicketConfirmation(result, order);
+}
+
+// Renders the tickets the purchase response actually returned. Previously the
+// confirmation showed only an order reference and a delivery status, so a buyer
+// never saw the thing they had bought. Nothing here is invented: if the response
+// carries no ticket records, the screen says the ticket is being issued instead
+// of drawing a ticket that does not exist.
+function ticketRecordsFromResult(result = {}, order = {}) {
+  const candidates = [result.tickets, order.tickets, result.data?.tickets, order.items];
+  const list = candidates.find((value) => Array.isArray(value) && value.length);
+  return Array.isArray(list) ? list : [];
+}
+
+function ticketStub(ticket = {}, order = {}, event = {}) {
+  const holder = ticket.holderName || ticket.holder_name || order.buyerName || order.buyer_name
+    || state.user?.fullName || state.user?.full_name || "";
+  const code = ticket.ticketCode || ticket.ticket_code || ticket.reference || ticket.serial || "";
+  const qrImage = ticket.qrImageDataUrl || ticket.qr_image_url || ticket.qrImage || ticket.qr_url || "";
+  const seat = ticket.seat || ticket.seatNumber || ticket.seat_number || "";
+  const typeName = ticket.ticketTypeName || ticket.ticket_type_name || ticket.typeName || ticket.name || "";
+  const eventName = ticket.eventName || event.eventName || order.eventName || "TitoPay event";
+  const eventDate = ticket.eventDate || event.eventDate || order.eventDate || "";
+  const venue = ticket.venueName || event.venueName || order.venueName || "";
+  const city = ticket.city || event.city || "";
+  return `
+    <article class="ticket-stub">
+      <header class="ticket-stub-head">
+        <p class="eyebrow">TitoPay Ticket</p>
+        <strong>${esc(eventName)}</strong>
+        <span>${esc(eventDate ? formatDate(eventDate) : "Date to be confirmed")}</span>
+        ${venue ? `<span>${esc([venue, city].filter(Boolean).join(", "))}</span>` : ""}
+      </header>
+      <div class="ticket-stub-body">
+        <div class="ticket-stub-meta">
+          ${typeName ? `<div><span>Ticket</span><strong>${esc(typeName)}</strong></div>` : ""}
+          ${holder ? `<div><span>Holder</span><strong>${esc(holder)}</strong></div>` : ""}
+          ${seat ? `<div><span>Seat</span><strong>${esc(seat)}</strong></div>` : ""}
+          ${code ? `<div><span>Ticket code</span><strong class="ticket-code">${esc(code)}</strong></div>` : ""}
+          ${order.orderReference ? `<div><span>Order</span><strong>${esc(order.orderReference)}</strong></div>` : ""}
+        </div>
+        <div class="ticket-stub-scan">
+          ${qrImage
+            ? `<img src="${esc(qrImage)}" alt="Entry QR code for ${esc(eventName)}">`
+            : `<div class="ticket-stub-nocode">${icon("qr")}<span>Entry code is issued by the organiser</span></div>`}
+        </div>
+      </div>
+      <footer class="ticket-stub-foot">Present this ticket at the entrance. Do not share the code publicly.</footer>
+    </article>`;
+}
+
+function openTicketConfirmation(result = {}, order = {}) {
+  const tickets = ticketRecordsFromResult(result, order);
+  const event = result.event || order.event || {};
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Ticket Confirmed</p><h2>Payment successful</h2></div>
+      <div>
+        <p class="eyebrow">Ticket confirmed</p>
+        <h2>${tickets.length > 1 ? `${tickets.length} tickets issued` : "Your ticket"}</h2>
+        <p class="lead">Paid from your TitoPay wallet. Keep this reference: ${esc(order.orderReference || "pending")}.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${tickets.length
+      ? `<section class="ticket-stub-list">${tickets.map((ticket) => ticketStub(ticket, order, event)).join("")}</section>`
+      : `<section class="empty-state compact-state">
+          ${icon("ticket")}
+          <strong>Ticket is being issued</strong>
+          <p>Payment succeeded. The organiser issues the entry code, and it will appear here and in your activity once it is ready.</p>
+        </section>`}
     <div class="settings-list">
-      ${settingsRow("Order Reference", result.order.orderReference, "ticket")}
-      ${settingsRow("Total Paid", money(result.order.total), "wallet")}
-      ${settingsRow("Delivery", result.order.deliveryStatus || "queued", "send")}
+      ${settingsRow("Order reference", order.orderReference || "Pending", "ticket")}
+      ${settingsRow("Total paid", money(order.total), "wallet")}
+      ${settingsRow("Delivery", ticketingStatusLabel(order.deliveryStatus || "queued"), "send")}
     </div>
   `);
 }
@@ -3827,13 +3930,48 @@ async function openBusinessTicketingDashboard(options = {}) {
     openInfoModal("Business ticketing", "Switch to Business to create and manage TitoPay events.");
     return;
   }
-  const [eligibilityResult, eventsResult] = await Promise.all([
-    api("/v1/ticketing/eligibility"),
-    api("/v1/ticketing/business/events")
-  ]);
-  state.ticketing.eligibility = eligibilityResult.eligibility;
+  // Both requests used to be awaited before anything appeared, so the tile
+  // looked dead on a slow connection, and a rejection meant no modal opened at
+  // all. Open first, then fill in.
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Loading your events.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="settings-list" aria-busy="true">
+      ${[0, 1, 2].map(() => `<article class="ticket-event is-loading"><span class="skeleton skeleton-line" aria-hidden="true"></span><span class="skeleton skeleton-line short" aria-hidden="true"></span></article>`).join("")}
+    </section>
+  `);
+  let eligibilityResult = null;
+  let eventsResult = null;
+  try {
+    [eligibilityResult, eventsResult] = await Promise.all([
+      api("/v1/ticketing/eligibility"),
+      api("/v1/ticketing/business/events")
+    ]);
+  } catch (error) {
+    openModal(`
+      <div class="modal-head">
+        <div><p class="eyebrow">Business Ticketing</p><h2>Events could not be loaded</h2><p class="lead">${esc(friendlyFormError(error, "ticketing"))}</p></div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <section class="empty-state compact-state">
+        ${icon("refresh")}
+        <strong>Nothing was changed</strong>
+        <p>Your events and ticket sales are unaffected. Check your connection and try again.</p>
+      </section>
+      <div class="auth-actions">
+        <button class="btn primary" type="button" data-action="ticketing-refresh">${icon("refresh")} Try again</button>
+      </div>
+    `);
+    return;
+  }
+  state.ticketing.eligibility = eligibilityResult.eligibility || null;
   state.ticketing.events = eventsResult.items || [];
-  const eligibility = state.ticketing.eligibility;
+  // A missing eligibility payload previously threw on eligibility.eligible and
+  // took the whole modal down with it.
+  const eligibility = state.ticketing.eligibility || { eligible: false, blockers: [] };
+  const blockers = Array.isArray(eligibility.blockers) ? eligibility.blockers : [];
   const events = state.ticketing.events;
   const counts = events.reduce((acc, event) => {
     acc[event.status] = (acc[event.status] || 0) + 1;
@@ -3867,7 +4005,7 @@ async function openBusinessTicketingDashboard(options = {}) {
       <section class="empty-state compact-state">
         ${icon("shield")}
         <strong>Business verification required</strong>
-        <p>${eligibility.blockers.map(esc).join(" ")}</p>
+        <p>${blockers.length ? blockers.map(esc).join(" ") : "Complete business verification in Profile to create and sell tickets."}</p>
         <button class="btn primary" type="button" data-route="profile">${icon("shield")} Open Profile</button>
       </section>
     `}
@@ -3878,17 +4016,56 @@ function metricCard(label, value) {
   return `<article class="metric-card"><strong>${esc(value)}</strong><span>${esc(label)}</span></article>`;
 }
 
+const TICKETING_STATUS_TONE = {
+  approved: "is-approved",
+  submitted: "is-pending",
+  under_review: "is-pending",
+  additional_information_required: "is-attention",
+  rejected: "is-rejected",
+  draft: "is-draft"
+};
+
+// Everything here is read from what the events endpoint returns. Where a count
+// is absent it is left out rather than shown as zero, because "0 sold" and "we
+// were not told" are different facts to an organiser.
 function ticketingEventRow(event) {
   const canSubmit = ["draft", "additional_information_required", "rejected"].includes(event.status);
+  const types = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
+  const sold = types.reduce((total, type) => total + (Number(type.quantitySold ?? type.quantity_sold) || 0), 0);
+  const capacity = types.reduce((total, type) => total + (Number(type.quantityAvailable ?? type.quantity_available) || 0), 0);
+  const revenue = types.reduce((total, type) => total + (Number(type.quantitySold ?? type.quantity_sold) || 0) * (Number(type.price) || 0), 0);
+  const prices = types.map((type) => Number(type.price) || 0).filter((value) => value > 0);
+  const hasCounts = types.length > 0 && capacity > 0;
+  const remaining = Math.max(capacity - sold, 0);
+  const pct = hasCounts ? Math.round((sold / capacity) * 100) : 0;
   return `
-    <article class="settings-row">
-      <span class="icon-bubble">${icon("ticket")}</span>
-      <div>
-        <strong>${esc(event.eventName)}</strong>
-        <small>${ticketingStatusLabel(event.status)} · ${event.eventDate ? formatDate(event.eventDate).split(",")[0] : "Date not set"}</small>
-        ${event.marketingLink ? `<small><a href="${esc(event.marketingLink)}" target="_blank" rel="noopener">Public event page</a></small>` : ""}
+    <article class="ticket-event">
+      <div class="ticket-event-head">
+        <div class="ticket-event-title">
+          <strong>${esc(event.eventName || "Untitled event")}</strong>
+          <small>${esc(event.eventDate ? formatDate(event.eventDate).split(",")[0] : "Date not set")}${event.venueName ? ` · ${esc(event.venueName)}` : ""}</small>
+        </div>
+        <span class="ticket-status ${TICKETING_STATUS_TONE[event.status] || "is-draft"}">${esc(ticketingStatusLabel(event.status))}</span>
       </div>
-      ${canSubmit ? `<button class="btn secondary mini" type="button" data-action="ticketing-submit:${esc(event.id)}">Submit</button>` : ""}
+      ${types.length ? `
+        <div class="ticket-event-figures">
+          <div><span>Ticket types</span><strong>${types.length}</strong></div>
+          ${prices.length ? `<div><span>From</span><strong>${esc(money(Math.min(...prices)))}</strong></div>` : ""}
+          ${hasCounts ? `<div><span>Sold</span><strong>${sold} of ${capacity}</strong></div>` : ""}
+          ${hasCounts ? `<div><span>Revenue</span><strong>${esc(money(revenue))}</strong></div>` : ""}
+        </div>
+        ${hasCounts ? `
+          <div class="ticket-progress" role="img" aria-label="${sold} of ${capacity} tickets sold">
+            <span data-ticket-progress="${pct}"></span>
+          </div>
+          <p class="ticket-event-note">${remaining ? `${remaining} still available` : "Sold out"}</p>
+        ` : ""}
+      ` : `<p class="ticket-event-note">No ticket types added yet.</p>`}
+      <div class="ticket-event-actions">
+        ${canSubmit ? `<button class="btn secondary mini" type="button" data-action="ticketing-submit:${esc(event.id)}">Submit for approval</button>` : ""}
+        ${event.slug ? `<button class="btn ghost mini" type="button" data-action="ticketing-open-event:${esc(event.slug)}">${icon("eye")} Preview ticket</button>` : ""}
+        ${event.marketingLink ? `<a class="btn ghost mini" href="${esc(event.marketingLink)}" target="_blank" rel="noopener">${icon("share")} Public page</a>` : ""}
+      </div>
     </article>
   `;
 }
@@ -5785,31 +5962,53 @@ function updateGiftCounter(field) {
   counter.classList.toggle("is-low", left <= 20);
 }
 
+// Payouts and Withdraw both move wallet money to a bank account, and the two
+// tiles gave no clue which to use. They are separate service codes on the
+// backend, so they cannot be merged here; instead each one now says what it is
+// for. Payouts also gained the balance context and amount presets Withdraw has.
 function openPayoutModal(service) {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Payouts</p><h2>Request business payout</h2><p class="lead">Business payouts are handled through Peach Payments-supported payout processing after fee preview and confirmation.</p></div>
+      <div>
+        <p class="eyebrow">Payouts</p>
+        <h2>Pay out to a bank account</h2>
+        <p class="lead">Settle business takings to a bank beneficiary. Payouts keep their own record and reference so they can be reconciled against sales.</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form" data-form="transaction">
+    <form class="form-grid money-form stable-service-form" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode || "merchant_payout")}">
       <input type="hidden" name="integrationFlow" value="merchant_payout">
-      <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank beneficiary or account reference" required></div>
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      ${balanceContextRow("Available to pay out")}
       <div class="field">
-        <label>Payout speed</label>
-        <select name="payoutSpeed">
-          <option value="standard_peach_business_payout">Standard Peach Payments payout</option>
-          <option value="instant_peach_business_payout">Instant Peach Payments payout</option>
-        </select>
+        <label for="payout-amount">Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="payout-amount" name="amount" inputmode="decimal" required></div>
+        ${quickAmountChips(QUICK_AMOUNTS, { includeAll: true })}
       </div>
-      <section class="integration-note" aria-label="Business payout processing options">
-        <p>${icon("bank")} <span><strong>Peach Payments payout:</strong> confirm the beneficiary and review the fee before submitting.</span></p>
-        <p>${icon("shield")} <span><strong>Security:</strong> payouts are checked against wallet lock, fee preview and confirmation before processing.</span></p>
-      </section>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="Settlement, supplier, payroll"></div>
-      <button class="btn primary" type="submit">${icon("withdraw")} Preview payout</button>
+      <div class="field">
+        <label for="payout-recipient">Bank account or beneficiary</label>
+        <input id="payout-recipient" name="recipient" autocomplete="off" placeholder="Saved bank beneficiary or account reference" required>
+        <p class="field-hint">Enter the beneficiary you have already given TitoPay, or its reference.</p>
+      </div>
+      <div class="field">
+        <label for="payout-speed">How soon do you need it?</label>
+        <select id="payout-speed" name="payoutSpeed" data-payout-speed>
+          <option value="standard_peach_business_payout">Standard</option>
+          <option value="instant_peach_business_payout">Instant</option>
+        </select>
+        <p class="field-hint" data-payout-hint>Processed through Peach Payments. The exact fee is shown on the preview before you confirm.</p>
+      </div>
+      <div class="field">
+        <label for="payout-reference">Reference <span class="field-optional">optional</span></label>
+        <input id="payout-reference" name="reference" autocomplete="off" placeholder="Settlement, supplier, payroll">
+        <p class="field-hint">Appears on your payout record, which helps when reconciling.</p>
+      </div>
+      <button class="btn primary" type="submit">${icon("bank-payout")} Preview payout</button>
     </form>
+    <section class="integration-note" aria-label="About payouts">
+      <p>${icon("bank")} <span><strong>Payout or withdrawal:</strong> use Payouts to settle business takings to a bank beneficiary with a reconcilable record. Withdraw moves money out of a personal wallet.</span></p>
+      <p>${icon("shield")} <span><strong>Security:</strong> payouts are checked against wallet lock, fee preview and confirmation before processing.</span></p>
+    </section>
     <div class="auth-actions">
       <button class="btn secondary" data-action="export-csv">${icon("download")} Payout CSV</button>
       <button class="btn secondary" data-action="payout-pdf">${icon("download")} Payout report</button>
@@ -6371,6 +6570,21 @@ async function confirmBusinessDocumentPdfDownload() {
   await refreshData();
 }
 
+// The label is what the payer sees when they scan. Defaulting it to "TitoPay
+// payment" told them nothing about who they were paying, so it now carries the
+// account name and stays editable.
+function qrOwnerName() {
+  const user = state.user || {};
+  if (state.accountType === "business") return businessProfileName();
+  return user.fullName || user.full_name || user.name || (user.username ? displayUsername(user.username) : "") || "TitoPay";
+}
+
+function defaultQrLabel(suffix = "") {
+  const name = String(qrOwnerName() || "").trim();
+  if (!name || name === "TitoPay") return suffix ? `TitoPay ${suffix}` : "TitoPay payment";
+  return suffix ? `${name} ${suffix}` : name;
+}
+
 function openReceiveModal() {
   openModal(`
     <div class="modal-head">
@@ -6378,8 +6592,16 @@ function openReceiveModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="receive">
-      <div class="field"><label>QR label</label><input name="label" value="TitoPay payment"></div>
-      <div class="field"><label>Fixed amount (optional)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal"></div></div>
+      <div class="field">
+        <label for="receive-qr-label">QR label</label>
+        <input id="receive-qr-label" name="label" value="${esc(defaultQrLabel())}" maxlength="48">
+        <small class="field-hint">This is what the payer sees when they scan. Your name is used unless you change it.</small>
+      </div>
+      <div class="field">
+        <label for="receive-qr-amount">Fixed amount <span class="field-optional">optional</span></label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="receive-qr-amount" name="amount" inputmode="decimal"></div>
+        <small class="field-hint">Leave empty to let the payer enter the amount.</small>
+      </div>
       <button class="btn primary" type="submit">${icon("qr")} Generate receive QR</button>
     </form>
   `);
@@ -6392,8 +6614,16 @@ function openTipModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="receive">
-      <div class="field"><label>QR label</label><input name="label" value="TitoPay tip"></div>
-      <div class="field"><label>Suggested amount (optional)</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal"></div></div>
+      <div class="field">
+        <label for="tip-qr-label">QR label</label>
+        <input id="tip-qr-label" name="label" value="${esc(defaultQrLabel("tips"))}" maxlength="48">
+        <small class="field-hint">This is what the tipper sees when they scan. Your name is used unless you change it.</small>
+      </div>
+      <div class="field">
+        <label for="tip-qr-amount">Suggested amount <span class="field-optional">optional</span></label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="tip-qr-amount" name="amount" inputmode="decimal"></div>
+        <small class="field-hint">Leave empty to let the tipper choose.</small>
+      </div>
       <button class="btn primary" type="submit">${icon("tip")} Generate Tip QR</button>
     </form>
     <div class="auth-actions">
@@ -7256,7 +7486,17 @@ function stockvelAvatar(name, size = "") {
 
 // Applies the values the markup could not carry inline. Called after every
 // Stockvel render; safe to run repeatedly.
+// The Content Security Policy is style-src 'self', so an inline style attribute
+// is refused outright. Any computed width has to be applied through the CSSOM.
+function paintProgressBars(root = document) {
+  if (!root || typeof root.querySelectorAll !== "function") return;
+  root.querySelectorAll("[data-ticket-progress]").forEach((el) => {
+    el.style.width = `${Math.max(0, Math.min(100, Number(el.dataset.ticketProgress) || 0))}%`;
+  });
+}
+
 function paintStockvel(root = document) {
+  paintProgressBars(root);
   if (!root || typeof root.querySelectorAll !== "function") return;
   root.querySelectorAll("[data-sv-hue]").forEach((el) => {
     el.style.setProperty("--sv-hue", el.dataset.svHue);
@@ -11254,7 +11494,12 @@ function handleTitoPayChatSocketEvent(event = {}) {
   }
 }
 
+// Set by resolveTitoPayChatUser when a lookup could not be completed, as
+// opposed to completing and finding nobody.
+let lastChatLookupFailed = false;
+
 async function resolveTitoPayChatUser(rawIdentifier, method = "auto") {
+  lastChatLookupFailed = false;
   const lookup = normalizeChatLookupIdentifier(rawIdentifier, method);
   const lookupValues = recipientLookupVariants(lookup.value);
   const payload = {
@@ -11269,6 +11514,12 @@ async function resolveTitoPayChatUser(rawIdentifier, method = "auto") {
     () => api("/v1/chat/users/lookup", { method: "POST", body: payload }),
     () => api(`/v1/chat/users/lookup?identifier=${encodeURIComponent(lookup.value)}`)
   ];
+  // Every attempt below swallows its error and falls through. Without tracking
+  // that, a lookup that failed for network or server reasons was indistinguishable
+  // from a lookup that succeeded and found nobody -- and the caller then told the
+  // user the person was not registered on TitoPay. The flag lets the caller tell
+  // "no such user" apart from "we could not check".
+  let attemptFailed = false;
   try {
     for (const request of requests) {
       try {
@@ -11280,6 +11531,7 @@ async function resolveTitoPayChatUser(rawIdentifier, method = "auto") {
         }
       } catch (error) {
         if (error.status === 401 || error.status === 403) throw error;
+        attemptFailed = true;
       }
     }
   } catch (error) {
@@ -11291,9 +11543,16 @@ async function resolveTitoPayChatUser(rawIdentifier, method = "auto") {
       const user = normalizeResolvedChatUser(verified.user || verified.account || verified.recipient || verified.profile || {}, lookup);
       if (user.verified) return user;
     }
+    // A clean "no such user" from the directory settles it. A result that says
+    // registered but cannot be verified settles nothing, so an earlier failure
+    // must not be cleared by it -- that path is reached from the locally cached
+    // contact list, which is not a directory answer.
+    else attemptFailed = attemptFailed || Boolean(verified && verified.lookupFailed);
   } catch (error) {
     if (error.status === 401 || error.status === 403) throw error;
+    attemptFailed = true;
   }
+  lastChatLookupFailed = attemptFailed;
   return null;
 }
 
@@ -11381,11 +11640,15 @@ function openTitoPayChatModal() {
         <p>Only verified TitoPay users can chat. If the person is not registered, you can send an invitation link first.</p>
       </section>
       <h3 class="section-title small-title">Recent chats</h3>
-      ${renderTitoPayChatThreadList()}
+      <div data-chat-thread-list>${renderTitoPayChatThreadList()}</div>
     </section>
   `);
+  // Paint new threads into the list rather than reopening this modal. The old
+  // call reopened the chat home from inside itself, which restarted this same
+  // sync and could re-enter indefinitely while the lookup field was cleared
+  // underneath the user on every pass.
   syncTitoPayChatThreads().then((changed) => {
-    if (changed && !sessionStorage.getItem("titopay_active_chat_thread")) openTitoPayChatModal();
+    if (changed && !sessionStorage.getItem("titopay_active_chat_thread")) repaintChatThreadList();
   }).catch(() => null);
   startTitoPayChatPolling();
 }
@@ -11396,24 +11659,61 @@ async function submitTitoPayChatLookup(data) {
   const lookup = normalizeChatLookupIdentifier(identifier, lookupMethod);
   const submitButton = document.querySelector('form[data-form="titopay-chat-lookup"] button[type="submit"]');
   const originalButtonHtml = submitButton ? submitButton.innerHTML : "";
-  if (submitButton) submitButton.innerHTML = `${icon("refresh")} Checking`;
+  if (submitButton) {
+    // The button previously only changed its label, so it stayed clickable and
+    // a slow lookup could be fired several times over.
+    submitButton.innerHTML = `${icon("refresh")} Checking`;
+    submitButton.disabled = true;
+  }
   try {
     let user = null;
+    let failed = false;
     try {
       user = await resolveTitoPayChatUser(identifier, lookupMethod);
+      failed = !user && lastChatLookupFailed;
     } catch (error) {
       if (error.status === 401 || error.status === 403) throw error;
       user = null;
+      failed = true;
     }
     if (!user) {
-      openTitoPayChatInviteScreen(lookup);
+      // Only offer the invite when the lookup actually completed and found
+      // nobody. Telling someone their contact is not registered because the
+      // request failed is worse than telling them nothing.
+      if (failed) openTitoPayChatLookupFailedScreen(lookup);
+      else openTitoPayChatInviteScreen(lookup);
       return;
     }
     sessionStorage.setItem("titopay_pending_chat_user", JSON.stringify(user));
     openTitoPayChatUserPreview(user);
   } finally {
-    if (submitButton && document.body.contains(submitButton)) submitButton.innerHTML = originalButtonHtml;
+    if (submitButton && document.body.contains(submitButton)) {
+      submitButton.innerHTML = originalButtonHtml;
+      submitButton.disabled = false;
+    }
   }
+}
+
+function openTitoPayChatLookupFailedScreen(lookup) {
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">TitoPay Chat</p>
+        <h2>Could not check that contact</h2>
+        <p class="lead">TitoPay could not reach the directory to confirm whether ${esc(lookup.value)} is a registered user. This is not a result about them.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="empty-state compact-state">
+      ${icon("refresh")}
+      <strong>Check your connection and try again</strong>
+      <p>If you are online and this keeps happening, the chat directory is temporarily unavailable. Your messages and existing chats are unaffected.</p>
+    </section>
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="chat-retry-lookup" data-chat-identifier="${esc(lookup.value)}" data-chat-method="${esc(lookup.method || "auto")}">${icon("refresh")} Try again</button>
+      <button class="btn secondary" type="button" data-action="chat-back">${icon("arrow-left")} Back to chats</button>
+    </div>
+  `);
 }
 
 function openTitoPayChatUserPreview(user) {
@@ -11552,11 +11852,89 @@ function openTitoPayChatThread(threadId) {
   `);
   const windowEl = document.querySelector(".titopay-chat-window");
   if (windowEl) windowEl.scrollTop = windowEl.scrollHeight;
+  restoreChatDraft(threadId);
   sendTitoPaySocketEvent("chat:read", { payload: titoPayChatSignalPayload(thread) });
+  // Refresh the messages in place. Reopening the whole modal here rebuilt the
+  // composer, which threw away whatever the user was part-way through typing.
   syncTitoPayChatThread(threadId).then((changed) => {
-    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) openTitoPayChatThread(threadId);
+    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) repaintChatThread(threadId);
   }).catch(() => null);
   startTitoPayChatPolling(threadId);
+}
+
+// ---------------------------------------------------------------------------
+// Chat re-render safety
+//
+// Both the thread view and the thread list used to answer "something changed"
+// by calling openModal() again, which destroys and rebuilds every node inside
+// it. With polling running every few seconds, an open chat rebuilt itself
+// repeatedly: the composer was recreated empty, the scroll position jumped to
+// the bottom, and focus was lost. Typing a message of any length became a race
+// against the next poll.
+//
+// Nothing about the transport changes here. The same data is fetched; it is
+// just painted into the existing nodes instead of replacing the modal.
+// ---------------------------------------------------------------------------
+
+const chatDrafts = new Map();
+
+function chatComposer() {
+  return document.querySelector('form[data-form="titopay-chat-message"] textarea[name="message"]');
+}
+
+function rememberChatDraft(threadId) {
+  const field = chatComposer();
+  if (!field) return;
+  const key = threadId || sessionStorage.getItem("titopay_active_chat_thread") || "";
+  if (!key) return;
+  if (field.value) chatDrafts.set(key, field.value);
+  else chatDrafts.delete(key);
+}
+
+function restoreChatDraft(threadId) {
+  const field = chatComposer();
+  if (!field) return;
+  const draft = chatDrafts.get(threadId);
+  if (!draft) return;
+  field.value = draft;
+  field.focus();
+  field.setSelectionRange(draft.length, draft.length);
+}
+
+function clearChatDraft(threadId) {
+  if (threadId) chatDrafts.delete(threadId);
+}
+
+// Repaints the message list only. The composer, its draft, the header and the
+// scroll position are left exactly as the user left them.
+function repaintChatThread(threadId) {
+  const windowEl = document.querySelector(".titopay-chat-window");
+  if (!windowEl) return;
+  if (sessionStorage.getItem("titopay_active_chat_thread") !== threadId) return;
+  const thread = titoPayChatThreads().find((item) => item.id === threadId);
+  if (!thread) return;
+  // Only follow the conversation down if the user was already reading the end
+  // of it. Yanking someone back from older messages is its own bug.
+  const atBottom = windowEl.scrollHeight - windowEl.scrollTop - windowEl.clientHeight < 48;
+  windowEl.innerHTML = thread.messages.map(renderTitoPayChatMessage).join("");
+  if (atBottom) windowEl.scrollTop = windowEl.scrollHeight;
+}
+
+// Repaints the recent-chats list in the chat home without rebuilding the modal,
+// so the lookup field keeps its value and its focus.
+function repaintChatThreadList() {
+  const shell = document.querySelector(".titopay-chat-shell");
+  if (!shell) return;
+  const list = shell.querySelector("[data-chat-thread-list]");
+  if (!list) return;
+  const active = document.activeElement;
+  const restoreLookup = active instanceof HTMLElement && active.closest(".titopay-chat-lookup") ? active : null;
+  const caret = restoreLookup && typeof restoreLookup.selectionStart === "number" ? restoreLookup.selectionStart : null;
+  list.innerHTML = renderTitoPayChatThreadList();
+  if (restoreLookup && document.body.contains(restoreLookup)) {
+    restoreLookup.focus();
+    if (caret != null && typeof restoreLookup.setSelectionRange === "function") restoreLookup.setSelectionRange(caret, caret);
+  }
 }
 
 async function toggleActiveChatMute() {
@@ -11591,18 +11969,22 @@ function startTitoPayChatPolling(threadId = "") {
     try {
       const notificationChanged = await syncTitoPayChatNotifications().catch(() => false);
       const threadsChanged = await syncTitoPayChatThreads().catch(() => false);
+      // Every branch below used to reopen a modal. On a chat that is open and
+      // receiving messages that meant a full rebuild on each tick, wiping the
+      // composer. Painting in place keeps the conversation live without taking
+      // the keyboard away from the person using it.
       if (activeThreadId) {
         const changed = await syncTitoPayChatThread(activeThreadId);
         if (changed && sessionStorage.getItem("titopay_active_chat_thread") === activeThreadId) {
-          openTitoPayChatThread(activeThreadId);
+          repaintChatThread(activeThreadId);
         } else if ((threadsChanged || notificationChanged) && document.querySelector(".titopay-chat-shell")) {
-          openTitoPayChatModal();
+          repaintChatThreadList();
         } else if ((threadsChanged || notificationChanged) && !document.querySelector(".modal-backdrop")) {
           render();
         }
         return;
       }
-      if (threadsChanged && document.querySelector(".titopay-chat-shell")) openTitoPayChatModal();
+      if (threadsChanged && document.querySelector(".titopay-chat-shell")) repaintChatThreadList();
       else if ((threadsChanged || notificationChanged) && !document.querySelector(".modal-backdrop")) render();
     } catch (error) {
       if (error.status === 401 || error.status === 403) stopTitoPayChatPolling();
@@ -11939,7 +12321,12 @@ async function submitTitoPayChatMessage(form, snapshotFormData) {
   thread.messages.push(message);
   updateTitoPayChatThread(thread);
   form.reset();
-  openTitoPayChatThread(threadId);
+  clearChatDraft(threadId);
+  // Paint the sent message into the open thread rather than rebuilding the
+  // modal, so the composer keeps focus and the keyboard stays up.
+  repaintChatThread(threadId);
+  const composer = chatComposer();
+  if (composer) composer.focus();
   try {
     const result = await sendTitoPayChatMessageToApi(thread, text, message.clientMessageId || message.id);
     const liveThread = titoPayChatThreads().find((item) => item.id === threadId);
@@ -11959,9 +12346,16 @@ async function submitTitoPayChatMessage(form, snapshotFormData) {
     }
     showToast(error.message && !/request failed|not reachable|timed out/i.test(error.message) ? error.message : "Unable to send message. Please try again.", "error");
   }
-  openTitoPayChatThread(threadId);
+  repaintChatThread(threadId);
+  // setBusy() disables every control while the send is in flight, and disabling
+  // the focused textarea blurs it. Re-focusing has to wait until the shared
+  // submit handler has re-enabled the form, which happens after this returns.
+  setTimeout(() => {
+    const restored = chatComposer();
+    if (restored && !restored.disabled) restored.focus();
+  }, 0);
   syncTitoPayChatThread(threadId).then((changed) => {
-    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) openTitoPayChatThread(threadId);
+    if (changed && sessionStorage.getItem("titopay_active_chat_thread") === threadId) repaintChatThread(threadId);
   }).catch(() => null);
 }
 
@@ -13465,6 +13859,7 @@ function openModal(html) {
     }
   });
   document.body.appendChild(wrapper);
+  paintProgressBars(wrapper);
   document.body.classList.add("modal-open");
   enhanceContactPickerControls(wrapper);
 

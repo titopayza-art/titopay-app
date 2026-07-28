@@ -889,15 +889,15 @@ h3 {
 }
 
 .landing-flow .preview-grid .service-tile {
-  min-height: clamp(92px, 22vw, 112px);
-  gap: 8px;
-  padding: 12px 7px;
+  min-height: clamp(86px, 21vw, 108px);
+  gap: 7px;
+  padding: 11px 6px;
   border-radius: 20px;
 }
 
 .landing-flow .preview-grid .icon-bubble {
-  width: clamp(46px, 11.5vw, 54px);
-  height: clamp(46px, 11.5vw, 54px);
+  width: clamp(43px, 11vw, 52px);
+  height: clamp(43px, 11vw, 52px);
 }
 
 .landing-flow .auth-actions {
@@ -1850,6 +1850,302 @@ body.landing-static .landing-flow.auth-screen {
 @media (min-width: 480px) {
   .statement-range {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Business ticketing ------------------------------------------------------ */
+
+.ticket-event {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.ticket-event.is-loading {
+  gap: 10px;
+}
+
+.ticket-event-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.ticket-event-title {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.ticket-event-title strong {
+  color: var(--navy);
+  font-size: 0.98rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.ticket-event-title small {
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.ticket-status {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ticket-status.is-approved {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.12);
+}
+
+.ticket-status.is-pending {
+  color: var(--warning);
+  background: rgba(183, 121, 31, 0.12);
+}
+
+.ticket-status.is-attention {
+  color: var(--warning);
+  background: rgba(183, 121, 31, 0.18);
+}
+
+.ticket-status.is-rejected {
+  color: var(--danger);
+  background: rgba(217, 66, 66, 0.12);
+}
+
+.ticket-status.is-draft {
+  color: var(--muted);
+  background: var(--soft);
+}
+
+.ticket-event-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.ticket-event-figures div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.ticket-event-figures span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.ticket-event-figures strong {
+  color: var(--navy);
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.ticket-progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--soft-blue);
+  overflow: hidden;
+}
+
+.ticket-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.ticket-event-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.ticket-event-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* .mini was already in use on ticketing buttons but had no rule, so those
+   buttons rendered at full size. */
+.btn.mini {
+  flex: 0 1 auto;
+  min-height: 42px;
+  padding-inline: 14px;
+  font-size: 0.84rem;
+}
+
+/* Issued ticket ----------------------------------------------------------- */
+
+.ticket-stub-list {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin-bottom: 16px;
+}
+
+.ticket-stub {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.ticket-stub-head {
+  display: grid;
+  gap: 4px;
+  padding: 16px 16px 14px;
+  background: var(--navy);
+  color: #fff;
+}
+
+.ticket-stub-head .eyebrow {
+  margin: 0;
+  color: var(--blue-2);
+}
+
+.ticket-stub-head strong {
+  font-size: 1.04rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.ticket-stub-head span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+/* The notch between the header and the body reads as a torn ticket without
+   needing an image. */
+.ticket-stub-body {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 20px 16px 16px;
+  border-top: 2px dashed var(--line);
+}
+
+.ticket-stub-body::before,
+.ticket-stub-body::after {
+  content: "";
+  position: absolute;
+  top: -11px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.ticket-stub-body::before {
+  left: -11px;
+}
+
+.ticket-stub-body::after {
+  right: -11px;
+}
+
+.ticket-stub-meta {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ticket-stub-meta div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.ticket-stub-meta span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.ticket-stub-meta strong {
+  color: var(--navy);
+  font-size: 0.88rem;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.ticket-code {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.ticket-stub-scan {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+
+.ticket-stub-scan img {
+  width: min(200px, 100%);
+  height: auto;
+  border-radius: var(--radius-control);
+  background: #fff;
+}
+
+.ticket-stub-nocode {
+  display: grid;
+  gap: 8px;
+  place-items: center;
+  width: 100%;
+  padding: 22px 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.ticket-stub-foot {
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+@media (min-width: 460px) {
+  .ticket-stub-body {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .ticket-stub-scan img {
+    width: 150px;
   }
 }
 
@@ -5849,22 +6145,32 @@ button.activity-item:focus-visible {
     height: 20px;
   }
 
+  /* Sized so a two-line label ("Airtime & Data") still leaves the landing
+     inside the fold on a 667px-tall screen. The label is not shortened here:
+     the same service is named the same way everywhere in the app. */
   body.landing-static .landing-flow .preview-grid .service-tile,
   body.landing-static .business-landing .preview-grid .service-tile {
-    min-height: 78px;
-    gap: 6px;
-    padding: 8px 6px;
+    min-height: 72px;
+    gap: 5px;
+    padding: 7px 5px;
   }
 
   body.landing-static .landing-flow .preview-grid .icon-bubble,
   body.landing-static .business-landing .preview-grid .icon-bubble {
-    width: 44px;
-    height: 44px;
+    width: 36px;
+    height: 36px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble svg,
+  body.landing-static .business-landing .preview-grid .icon-bubble svg {
+    width: 19px;
+    height: 19px;
   }
 
   body.landing-static .landing-flow .preview-grid .service-tile span,
   body.landing-static .business-landing .preview-grid .service-tile span {
-    font-size: clamp(0.76rem, 2.8vw, 0.82rem);
+    font-size: clamp(0.72rem, 2.7vw, 0.78rem);
+    line-height: 1.16;
   }
 
   body.landing-static .landing-flow .auth-actions .btn,
