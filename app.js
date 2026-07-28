@@ -119,9 +119,53 @@ const navItems = [
   ["profile", "Profile", "user"]
 ];
 
+// ---------------------------------------------------------------------------
+// App chrome: fixed header state and per-route scroll memory
+//
+// render() replaces the whole screen, so the browser has nothing to restore
+// and every navigation used to land at the top -- including going back to a
+// list the user had scrolled halfway down. The position is remembered per
+// route and restored after the new screen has been painted.
+// ---------------------------------------------------------------------------
+
+const routeScrollPositions = new Map();
+
+function currentScrollY() {
+  return window.scrollY || document.documentElement.scrollTop || 0;
+}
+
+function rememberRouteScroll(route) {
+  if (!route) return;
+  if (document.body.classList.contains("modal-open")) return;
+  routeScrollPositions.set(route, currentScrollY());
+}
+
+function restoreRouteScroll(route) {
+  const target = routeScrollPositions.get(route) || 0;
+  // Two frames: the first lets the new screen lay out, the second lets the
+  // browser settle its own scroll anchoring before we override it.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: target, behavior: "auto" });
+      syncTopbarScrollState();
+    });
+  });
+}
+
+function syncTopbarScrollState() {
+  const bar = document.querySelector("[data-app-topbar]");
+  if (!bar) return;
+  bar.classList.toggle("is-scrolled", currentScrollY() > 2);
+}
+
+window.addEventListener("scroll", syncTopbarScrollState, { passive: true });
+
 window.addEventListener("hashchange", () => {
+  const previousRoute = state.route;
+  rememberRouteScroll(previousRoute);
   state.route = location.hash.replace("#", "") || "dashboard";
   render();
+  restoreRouteScroll(state.route);
 });
 
 document.addEventListener("submit", onSubmit);
@@ -511,7 +555,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=176", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=177", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -765,13 +809,6 @@ function homeQuickServices() {
     "qr_pay",
     "qr_payments"
   ]);
-  const dataActions = new Set([
-    "data",
-    "airtime-data",
-    "airtime-&-data",
-    "airtime-and-data",
-    "mobile-data"
-  ]);
   const valuesFor = (service) => [
     service.id,
     service.action,
@@ -779,10 +816,15 @@ function homeQuickServices() {
     service.serviceCode,
     service.label
   ].map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "-"));
-  const sendMoney = activeServices().find((service) => valuesFor(service).some((value) => value === "send" || value === "send-money"));
-  const services = activeServices().filter((service) => {
+  // Quick services used to exclude the combined airtime-and-data product, which
+  // left the standalone "Airtime" entry to represent it here while the Services
+  // grid showed the combined "Airtime & Data" tile. One product, two names, two
+  // screens. Both lists now collapse the trio the same way.
+  const source = hideDuplicateAirtimeDataTiles(activeServices());
+  const sendMoney = source.find((service) => valuesFor(service).some((value) => value === "send" || value === "send-money"));
+  const services = source.filter((service) => {
     const values = valuesFor(service);
-    return !values.some((value) => repeatedActions.has(value) || dataActions.has(value));
+    return !values.some((value) => repeatedActions.has(value));
   });
   return [
     ...(sendMoney ? [sendMoney] : []),
@@ -996,6 +1038,7 @@ function render() {
   document.body.classList.remove("landing-static");
   app.innerHTML = appView();
   renderInstallButton();
+  syncTopbarScrollState();
 }
 
 function maintenanceView(maintenance = {}) {
@@ -1213,9 +1256,12 @@ function otpForm(challenge) {
 
 function appView() {
   const route = state.route;
+  // The top bar sits outside .screen so it is not part of the scrolling flow
+  // and does not re-run the route fade on every navigation. The screen reserves
+  // its height as padding, which is what keeps content from passing under it.
   return `
+    ${topbar()}
     <main class="screen">
-      ${topbar()}
       ${route === "services" ? servicesView() : ""}
       ${route === "qr" ? qrView() : ""}
       ${route === "activity" ? activityView() : ""}
@@ -1229,7 +1275,7 @@ function appView() {
 function topbar() {
   const unread = unreadNotificationCount();
   return `
-    <header class="topbar">
+    <header class="topbar app-topbar" data-app-topbar>
       <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
       <div>
         <button class="icon-btn" type="button" data-action="chatbot" aria-label="Open TitoPay chatbot">${icon("chatbot")}</button>
@@ -1436,7 +1482,7 @@ function profileView() {
       <div>
         <h2>${esc(displayName)}</h2>
         <p class="lead">${esc(displayUsername(user.username))} ${user.email ? "· " + esc(user.email) : ""}</p>
-        <span class="badge">${icon("shield")} FICA ${esc(ficaStatus)}</span>
+        <button class="badge badge-btn" type="button" data-action="fica-verification" aria-label="FICA status ${esc(ficaStatus)}. Open FICA verification.">${icon("shield")} FICA ${esc(ficaStatus)}</button>
       </div>
     </section>
     <section class="profile-summary-card panel" aria-label="Profile summary">
@@ -4028,7 +4074,6 @@ async function openBusinessTicketingDashboard(options = {}) {
       </div>
       <div class="auth-actions">
         <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create Event</button>
-        <button class="btn secondary" type="button" data-action="ticketing-browse-public">${icon("ticket")} Browse events</button>
         <button class="btn secondary" type="button" data-action="ticketing-refresh">${icon("refresh")} Refresh</button>
       </div>
       ${options.staffFocus ? ticketingStaffForm(events) : ""}
@@ -4037,9 +4082,6 @@ async function openBusinessTicketingDashboard(options = {}) {
         ${events.length ? events.map((event) => ticketingEventRow(event)).join("") : `<p class="muted">No ticketing events yet. Create your first draft when your event details are ready.</p>`}
       </section>
     ` : `
-      <div class="auth-actions">
-        <button class="btn secondary" type="button" data-action="ticketing-browse-public">${icon("ticket")} Browse events</button>
-      </div>
       <section class="empty-state compact-state">
         ${icon("shield")}
         <strong>Business verification required</strong>
@@ -13987,7 +14029,19 @@ function unlockPageScroll() {
   document.body.style.left = "";
   document.body.style.right = "";
   document.body.style.width = "";
-  if (scrollY) window.scrollTo(0, scrollY);
+  if (scrollY) {
+    window.scrollTo(0, scrollY);
+    // While the body was fixed the document had no scrollable height, so the
+    // synchronous call above can be clamped to 0 before layout catches up.
+    // Re-applying on the next frame is what actually returns the reader to
+    // where they were. Skipped if another modal opened in the meantime, so the
+    // deferred call cannot fight a fresh scroll lock.
+    requestAnimationFrame(() => {
+      if (document.body.classList.contains("modal-open")) return;
+      if (Math.abs(currentScrollY() - scrollY) > 2) window.scrollTo(0, scrollY);
+      syncTopbarScrollState();
+    });
+  }
   state.modalScrollY = 0;
 }
 

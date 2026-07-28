@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v176-account-terminology";
+const CACHE_NAME = "titopay-pwa-v177-fixed-app-bar";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=176",
+  "./styles.css?v=177",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=176",
-  "./services-default.json?v=176",
-  "./manifest.webmanifest?v=176",
+  "./app.js?v=177",
+  "./services-default.json?v=177",
+  "./manifest.webmanifest?v=177",
   "./offline.html",
   "./assets/titopay-logo.jpg",
   "./assets/icon-192.png?v=165",

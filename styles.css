@@ -202,6 +202,23 @@ a:focus-visible {
   overscroll-behavior: contain;
 }
 
+/* Authenticated screens sit under the fixed bar. The reserved space is the bar
+   height plus a 20px gutter, which is the first thing the hero or wallet card
+   is measured from. The safe-top inset is already inside --app-header-h, so it
+   must not be added again here. */
+body:not(.landing-static) .screen {
+  padding-top: calc(var(--app-header-h) + 20px);
+  scroll-padding-top: calc(var(--app-header-h) + 12px);
+}
+
+/* The screen's own padding sets the distance from the bar. A first child that
+   also carries a top margin -- .hero does -- made that distance 32px on some
+   routes and 20px on others, so the gap under the header depended on which
+   page you were looking at. */
+body:not(.landing-static) .screen > *:first-child {
+  margin-top: 0;
+}
+
 .screen > *,
 .landing-flow > *,
 .dashboard-grid > *,
@@ -243,6 +260,47 @@ a:focus-visible {
   justify-content: space-between;
   gap: 14px;
   margin-bottom: clamp(16px, 4vw, 24px);
+}
+
+/* Fixed top app bar -------------------------------------------------------
+   The authenticated header is chrome, not content: it leaves the scrolling
+   flow entirely and the screen reserves its height as padding. That is what
+   guarantees nothing can pass underneath it, rather than relying on stacking
+   order alone.
+
+   Height resolves to 64px where there is no inset (Android, desktop) and to
+   roughly 91px on a notched iPhone, where the 44px bar sits below a ~47px
+   inset. The status bar area is part of the bar and shares its background, so
+   there is never a strip of page colour above it. */
+:root {
+  --app-bar-row: 64px;
+  --app-header-h: max(var(--app-bar-row), calc(44px + var(--safe-top)));
+}
+
+.app-topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  box-sizing: border-box;
+  height: var(--app-header-h);
+  margin-bottom: 0;
+  padding: var(--safe-top) max(var(--screen-pad-x), var(--safe-right)) 0 max(var(--screen-pad-x), var(--safe-left));
+  background: #fff;
+  border-bottom: 1px solid transparent;
+  transition: border-color 180ms var(--ease-premium), box-shadow 180ms var(--ease-premium);
+}
+
+/* The divider and shadow only appear once there is content behind the bar, so
+   a page sitting at the top reads as one continuous surface. */
+.app-topbar.is-scrolled {
+  border-bottom-color: var(--line);
+  box-shadow: 0 1px 12px rgba(6, 26, 61, 0.06);
+}
+
+.app-topbar .brand-logo {
+  flex: 0 0 auto;
 }
 
 .topbar > div {
@@ -4476,6 +4534,25 @@ input[data-profile-photo-zoom] {
   background: var(--soft-blue);
   font-size: 0.76rem;
   font-weight: 700;
+}
+
+/* The FICA status badge is the most-looked-at thing on the profile and it did
+   nothing when tapped. As a button it needs a real target and a pressed state. */
+.badge-btn {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 160ms var(--ease-premium), border-color 160ms var(--ease-premium);
+}
+
+.badge-btn:hover,
+.badge-btn:focus-visible {
+  border-color: var(--blue);
+}
+
+.badge-btn:active {
+  background: #dfe9ff;
 }
 
 .error-box {
