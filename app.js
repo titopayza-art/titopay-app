@@ -511,7 +511,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=175", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=176", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -5642,11 +5642,20 @@ function captureVasCarry(form) {
   return carry;
 }
 
+// A business deals with customers; a personal account deals with other TitoPay
+// users. Copy that names the other party has to follow the account type, or a
+// personal user is told they are sending money to a "customer".
+function counterpartyNoun({ plural = false, capitalise = false } = {}) {
+  const base = state.accountType === "business" ? "customer" : "user";
+  const word = plural ? `${base}s` : base;
+  return capitalise ? word.charAt(0).toUpperCase() + word.slice(1) : word;
+}
+
 function contactSuggestions() {
   const contacts = [
     { value: "@example_user", method: "username" },
     { value: "+27 71 234 5678", method: "cellphone" },
-    { value: "customer@example.com", method: "email" }
+    { value: `${counterpartyNoun()}@example.com`, method: "email" }
   ];
   return `
     <div class="suggestion-row" aria-label="Suggested contacts">
@@ -8936,7 +8945,8 @@ function currentMerchantId() {
 
 function currentCustomerName() {
   const user = state.user || {};
-  return user.fullName || user.full_name || user.name || user.username || "TitoPay Customer";
+  return user.fullName || user.full_name || user.name || user.username
+    || `TitoPay ${counterpartyNoun({ capitalise: true })}`;
 }
 
 function defaultMerchantSaleState() {
@@ -9451,7 +9461,7 @@ function openWalletReceiptsModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="receipt-filters">
-      <div class="field"><label>Search receipts</label><input data-receipt-filter="search" value="${esc(state.receiptFilters.search || "")}" placeholder="Merchant, customer, reference"></div>
+      <div class="field"><label>Search receipts</label><input data-receipt-filter="search" value="${esc(state.receiptFilters.search || "")}" placeholder="Merchant, ${esc(counterpartyNoun())}, reference"></div>
       <div class="field"><label>Filter</label><select data-receipt-filter="range">
         ${[["all", "All"], ["today", "Today"], ["week", "This Week"], ["month", "This Month"]].map(([value, label]) => `<option value="${value}" ${state.receiptFilters.range === value ? "selected" : ""}>${label}</option>`).join("")}
       </select></div>
