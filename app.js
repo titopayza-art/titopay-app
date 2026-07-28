@@ -2357,7 +2357,16 @@ async function verifyRecipientField(button) {
   const form = field.closest("form");
   const methodName = field.name === "participants" ? "participantMethod" : field.name === "members" ? "memberMethod" : "recipientMethod";
   const method = form?.querySelector(`[name="${methodName}"]`)?.value || "auto";
-  const values = field.tagName === "TEXTAREA" ? normalizeRecipientList(field.value, method) : [normalizeRecipientInput(field.value, method)];
+  // Normalisation enforces the existing recipient rules and throws on invalid
+  // input. Surface that as feedback instead of an unhandled rejection, keeping
+  // the entered transaction state intact.
+  let values;
+  try {
+    values = field.tagName === "TEXTAREA" ? normalizeRecipientList(field.value, method) : [normalizeRecipientInput(field.value, method)];
+  } catch (error) {
+    showToast(error.message || "Enter a valid TitoPay username, +27 cellphone number or email address.", "error");
+    return;
+  }
   if (!values.length) {
     showToast("Enter a username, +27 cellphone or email first.", "error");
     return;
@@ -2369,16 +2378,94 @@ async function verifyRecipientField(button) {
       const result = await lookupRegisteredRecipient(value, "manual_verification");
       results.push({ value, result });
     }
-    openRecipientVerificationResults(results);
+    // Render the outcome inside the live form. Opening a modal here would
+    // call closeModal() first and destroy the in-progress transaction.
+    if (!renderInlineRecipientVerification(field, results)) {
+      openRecipientVerificationResults(results);
+    }
+  } catch (error) {
+    showToast(friendlyFormError(error, "verify-recipient"), "error");
   } finally {
     setButtonBusy(button, false);
   }
+}
+
+// Verification is a step inside the transaction, not a navigation event.
+// Returns false if there is no inline host, so callers can fall back.
+function renderInlineRecipientVerification(field, results) {
+  const form = field.closest("form");
+  if (!form) return false;
+  const anchor = form.querySelector(`[data-recipient-detect-for="${safeCssIdentifier(field.id)}"]`)
+    || field.parentElement;
+  if (!anchor) return false;
+
+  const existing = form.querySelector(`[data-recipient-verify-for="${safeCssIdentifier(field.id)}"]`);
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+  const verified = results.filter((item) => item.result && item.result.registered);
+  const missing = results.filter((item) => !item.result || !item.result.registered);
+
+  const rows = verified.map(({ value, result }) => {
+    const user = result.user || {};
+    const name = user.displayName || user.display_name || user.fullName || user.full_name || user.name || user.businessName || user.business_name || "TitoPay user";
+    const rawUsername = user.username || user.userName || user.user_name;
+    const username = rawUsername ? displayUsername(rawUsername) : "";
+    const contact = user.phone || user.mobile || user.msisdn || user.email || value;
+    return `<div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(name)}</strong><small>${esc(`${username ? `${username} · ` : ""}${contact}`)}</small></span></div>`;
+  }).join("");
+
+  const panel = document.createElement("div");
+  panel.className = `recipient-verify-result${missing.length && !verified.length ? " is-missing" : ""}`;
+  panel.dataset.recipientVerifyFor = field.id;
+  panel.setAttribute("role", "status");
+  panel.setAttribute("aria-live", "polite");
+  panel.innerHTML = `
+    ${verified.length ? `
+      <p class="rv-head">${verified.length === 1 ? "Verified TitoPay user" : "Verified TitoPay users"}</p>
+      ${rows}
+      <p class="rv-note">Only continue if these details match the person or business you intend to pay.</p>
+    ` : ""}
+    ${missing.length ? `
+      <p class="rv-head rv-head-missing">${missing.length === 1 ? "User not found" : "Some users were not found"}</p>
+      <p class="rv-note">${esc(missing.map((item) => item.value).join(", "))} ${missing.length === 1 ? "is" : "are"} not currently detected as a registered TitoPay user. Your details are still here \u2014 correct the recipient or send an invitation.</p>
+    ` : ""}
+  `;
+  anchor.insertAdjacentElement("afterend", panel);
+  return true;
 }
 
 function setButtonBusy(button, busy) {
   if (!button) return;
   button.disabled = busy;
   button.classList.toggle("is-busy", busy);
+}
+
+// Submit-time "recipient not registered" outcome, rendered inside the live form
+// so the amount, reference and other entered values are preserved.
+function renderInlineRecipientNotRegistered(identifier, invite = {}) {
+  const form = document.querySelector(".modal-card form[data-form]");
+  if (!form) return false;
+  const field = form.querySelector('[name="recipient"], [name="participants"], [name="members"]');
+  const anchor = (field && (form.querySelector(`[data-recipient-detect-for="${safeCssIdentifier(field.id)}"]`) || field.parentElement))
+    || form.firstElementChild;
+  if (!anchor) return false;
+
+  const existing = form.querySelector("[data-recipient-not-registered]");
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+  const panel = document.createElement("div");
+  panel.className = "recipient-verify-result is-missing";
+  panel.dataset.recipientNotRegistered = "true";
+  panel.setAttribute("role", "status");
+  panel.setAttribute("aria-live", "polite");
+  panel.innerHTML = `
+    <p class="rv-head rv-head-missing">Recipient not registered</p>
+    <p class="rv-note">${esc(identifier)} is not yet registered on TitoPay, so this payment cannot be completed. Your details are still here \u2014 correct the recipient, or invite them and try again.</p>
+    <button class="btn secondary" type="button" data-invite-share="${esc(identifier)}" data-invite-message="${esc(invite.message || "")}" data-invite-url="${esc(invite.url || "https://app.titopay.co.za")}">${icon("send")} Share invite</button>
+  `;
+  anchor.insertAdjacentElement("afterend", panel);
+  showToast(`${identifier} is not a registered TitoPay user.`, "error");
+  return true;
 }
 
 function openRecipientVerificationResults(results) {
@@ -5011,7 +5098,9 @@ async function verifyRegisteredRecipientBeforeTransaction(data) {
       verified.push({ identifier: recipient, user: result.user || {}, source: result.source || "lookup" });
       continue;
     }
-    openInviteRecipientModal(recipient, result.invite || {});
+    if (!renderInlineRecipientNotRegistered(recipient, result.invite || {})) {
+      openInviteRecipientModal(recipient, result.invite || {});
+    }
     return false;
   }
   return verified;

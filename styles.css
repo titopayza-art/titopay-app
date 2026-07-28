@@ -5255,3 +5255,87 @@ button.activity-item:focus-visible {
     font-size: 0.8rem;
   }
 }
+
+/* Inline recipient verification result: verification is a step inside the
+   transaction, so its outcome renders in the form rather than in a modal
+   that would replace it. */
+.recipient-verify-result {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(11, 159, 106, 0.28);
+  border-radius: var(--radius-control);
+  background: #f2fbf7;
+}
+
+.recipient-verify-result.is-missing {
+  border-color: rgba(183, 121, 31, 0.3);
+  background: #fdf8ef;
+}
+
+.rv-head {
+  margin: 0;
+  color: var(--success);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.rv-head-missing {
+  color: var(--warning);
+}
+
+.rv-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.rv-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.12);
+  border-radius: 50%;
+}
+
+.rv-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rv-row strong,
+.rv-row small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rv-row strong {
+  color: var(--navy);
+  font-size: 0.95rem;
+}
+
+.rv-row small {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.rv-note {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.recipient-verify-result .btn {
+  min-height: 44px;
+  margin-top: 2px;
+}
