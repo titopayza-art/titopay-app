@@ -1,0 +1,16 @@
+TitoPay Admin
+Build: admin-console-v30
+Date: 2026-07-28
+Purpose: Operations console front-end rebuild. Single-layer stylesheet (no stacked
+override passes), persistent console chrome with sidebar + topbar, banking-grade
+data tables with a correctly pinned Actions column, module filter, environment
+badge, SAST clock, optional dark appearance, off-canvas navigation on tablet and
+phone widths, and full keyboard/screen-reader landmarks.
+
+No API, endpoint, authentication, routing or permission behaviour was changed in
+this build. Presentation only.
+
+If admin.titopay.co.za still shows the previous layout after this file is visible,
+the browser is serving a cached page or the files were extracted into the wrong
+document root. Assets are versioned with ?v=admin-console-v30, so a hard refresh
+(Ctrl+F5 / Cmd+Shift+R) clears it.

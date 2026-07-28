@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#0B1F3F">
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="referrer" content="no-referrer">
+    <meta name="description" content="Secure operations console for TitoPay platform teams.">
+    <meta name="titopay-admin-build" content="admin-console-v30">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.titopay.co.za; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'">
+    <title>TitoPay Admin — Sign in</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=6" sizes="any">
+    <link rel="stylesheet" href="assets/admin.css?v=admin-console-v30">
+    <script src="assets/admin.js?v=admin-console-v30" defer></script>
+  </head>
+  <body data-page="login">
+    <main class="auth-shell admin-login-page" aria-label="Secure admin sign in">
+      <section class="admin-login-brand" aria-label="Secure operations overview">
+        <div class="admin-login-logo-row">
+          <img class="admin-login-logo" src="assets/titopay-logo.jpg" alt="TitoPay" width="230" height="96" decoding="async">
+          <span>Internal Operations</span>
+        </div>
+        <div class="admin-login-copy">
+          <p class="admin-login-pill">Secure Control Centre</p>
+          <h1>Command the platform with confidence.</h1>
+          <p>Monitor users, wallets, pricing, integrations, support and platform health from one protected workspace.</p>
+          <div class="admin-login-cards" aria-label="Operations highlights">
+            <article>
+              <span>01</span>
+              <strong>Access control</strong>
+              <small>Role-based permissions and secure staff sessions.</small>
+            </article>
+            <article>
+              <span>02</span>
+              <strong>Platform command</strong>
+              <small>Critical controls for teams, services and workflows.</small>
+            </article>
+            <article>
+              <span>03</span>
+              <strong>Audit-ready</strong>
+              <small>Every sensitive action is tracked for governance.</small>
+            </article>
+          </div>
+        </div>
+        <div class="admin-login-footer">
+          <strong>Operations • Security • Compliance</strong>
+          <span>Enterprise access only.</span>
+        </div>
+      </section>
+      <section class="auth-card admin-login-card">
+        <div class="auth-logo-wrap">
+          <img class="auth-logo" src="assets/titopay-logo.jpg" alt="TitoPay" width="230" height="96" decoding="async">
+        </div>
+        <p class="portal-badge">Staff Access</p>
+        <p class="eyebrow">Secure sign in</p>
+        <h1 class="auth-title">Welcome back</h1>
+        <p class="auth-copy">Use your authorised staff credentials to continue.</p>
+        <form id="admin-login-form" class="form-grid">
+          <div class="field">
+            <label for="identifier">Username or email</label>
+            <input id="identifier" name="identifier" placeholder="name@titopay.co.za" autocomplete="username" required>
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" placeholder="Enter password" autocomplete="current-password" required>
+          </div>
+          <button class="primary-btn" type="submit">Sign in securely</button>
+        </form>
+        <div class="auth-actions">
+          <button class="ghost-btn" id="show-reset" type="button">Forgot password?</button>
+        </div>
+        <section class="otp-card" id="reset-card" hidden>
+          <form id="admin-reset-request-form" class="form-grid">
+            <div class="field">
+              <label for="reset-identifier">Reset password</label>
+              <input id="reset-identifier" name="identifier" placeholder="admin email or username" autocomplete="username" required>
+            </div>
+            <button class="secondary-btn" type="submit">Send reset instructions</button>
+          </form>
+        </section>
+        <p class="status-text" id="login-status" role="status" aria-live="polite">Need access? Contact the platform owner.</p>
+      </section>
+    </main>
+  </body>
+</html>
