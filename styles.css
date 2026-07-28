@@ -5072,3 +5072,186 @@ button.activity-item:focus-visible {
 .modal-card[tabindex="-1"]:focus {
   outline: none;
 }
+
+/* ============================================================
+   Landing scale & rhythm (mobile only, max-width 767px).
+   Space is reclaimed from the stacked CTA block and tight gaps,
+   then spent on component presence. Tablet/desktop untouched.
+   ============================================================ */
+@media (max-width: 767px) {
+  /* Both CTAs sit side by side at every mobile height, which frees the
+     ~58px the stacked block consumed on full-height iPhones. */
+  body.landing-static .landing-flow .auth-actions,
+  body.landing-static .business-landing .auth-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  body.landing-static .business-landing .auth-actions {
+    grid-template-columns: 0.74fr 1.26fr;
+  }
+
+  /* Wordmark presence */
+  .landing-flow .brand-logo,
+  body.landing-static .landing-flow .brand-logo,
+  body.landing-static .business-landing .brand-logo {
+    width: min(166px, 44vw);
+  }
+
+  /* Trust strip: taller row, larger label and icon */
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: 58px;
+    gap: 5px;
+    font-size: clamp(0.7rem, 2.9vw, 0.78rem);
+  }
+
+  body.landing-static .landing-flow .trust-item svg,
+  body.landing-static .business-landing .trust-item svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* Service cards: taller tile, larger icon circle */
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: 90px;
+    gap: 8px;
+    padding: 10px 7px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble,
+  body.landing-static .business-landing .preview-grid .icon-bubble {
+    width: 50px;
+    height: 50px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile span,
+  body.landing-static .business-landing .preview-grid .service-tile span {
+    font-size: clamp(0.8rem, 2.9vw, 0.88rem);
+  }
+
+  /* CTA presence */
+  body.landing-static .landing-flow .auth-actions .btn,
+  body.landing-static .business-landing .auth-actions .btn {
+    min-height: 56px;
+    font-size: clamp(0.94rem, 3vw, 1.02rem);
+  }
+
+  /* Horizontal QR card presence (composition preserved) */
+  body.landing-static .landing-flow .scan-card,
+  body.landing-static .business-landing .scan-card {
+    padding: 14px 16px;
+    gap: 14px;
+  }
+
+  body.landing-static .landing-flow .scan-card .icon-bubble,
+  body.landing-static .business-landing .scan-card .icon-bubble {
+    width: 50px;
+    height: 50px;
+  }
+
+  body.landing-static .landing-flow .scan-card h3,
+  body.landing-static .business-landing .scan-card h3 {
+    font-size: 1.1rem;
+  }
+
+  body.landing-static .landing-flow .scan-card p,
+  body.landing-static .business-landing .scan-card p {
+    font-size: 0.9rem;
+  }
+
+  body.landing-static .landing-flow .scan-card .btn,
+  body.landing-static .business-landing .scan-card .btn {
+    min-height: 44px;
+    font-size: 0.92rem;
+  }
+
+  .landing-tagline {
+    font-size: 0.86rem;
+  }
+}
+
+/* Tall mobile viewports (iPhone 12/13/14/15 at full height and PWA): trim the
+   inter-section gap so the reclaimed space goes to components, not voids. */
+@media (max-width: 767px) and (min-height: 780px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    gap: 4px;
+  }
+}
+
+/* Shorter mobile viewports (iPhone SE/8 at full height, and Safari with
+   browser chrome): a moderate scale increase that still fits, rather than
+   forcing the full scale and scrolling. */
+@media (max-width: 767px) and (max-height: 779px) {
+  .landing-flow .brand-logo,
+  body.landing-static .landing-flow .brand-logo,
+  body.landing-static .business-landing .brand-logo {
+    width: min(150px, 40vw);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: 50px;
+    gap: 4px;
+    font-size: clamp(0.68rem, 2.8vw, 0.74rem);
+  }
+
+  body.landing-static .landing-flow .trust-item svg,
+  body.landing-static .business-landing .trust-item svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: 78px;
+    gap: 6px;
+    padding: 8px 6px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble,
+  body.landing-static .business-landing .preview-grid .icon-bubble {
+    width: 44px;
+    height: 44px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile span,
+  body.landing-static .business-landing .preview-grid .service-tile span {
+    font-size: clamp(0.76rem, 2.8vw, 0.82rem);
+  }
+
+  body.landing-static .landing-flow .auth-actions .btn,
+  body.landing-static .business-landing .auth-actions .btn {
+    min-height: 50px;
+    font-size: clamp(0.9rem, 2.9vw, 0.96rem);
+  }
+
+  body.landing-static .landing-flow .scan-card,
+  body.landing-static .business-landing .scan-card {
+    padding: 11px 13px;
+    gap: 12px;
+  }
+
+  body.landing-static .landing-flow .scan-card .icon-bubble,
+  body.landing-static .business-landing .scan-card .icon-bubble {
+    width: 44px;
+    height: 44px;
+  }
+
+  body.landing-static .landing-flow .scan-card h3,
+  body.landing-static .business-landing .scan-card h3 {
+    font-size: 1.04rem;
+  }
+
+  body.landing-static .landing-flow .scan-card .btn,
+  body.landing-static .business-landing .scan-card .btn {
+    min-height: 42px;
+    font-size: 0.88rem;
+  }
+
+  .landing-tagline {
+    font-size: 0.8rem;
+  }
+}
