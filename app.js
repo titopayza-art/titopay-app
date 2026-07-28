@@ -160,6 +160,71 @@ function syncTopbarScrollState() {
 
 window.addEventListener("scroll", syncTopbarScrollState, { passive: true });
 
+// ---------------------------------------------------------------------------
+// Landing: swipeable account segment
+//
+// The segment was two buttons that swapped colour. It now carries a thumb that
+// slides between them, and the landing accepts a horizontal swipe so the two
+// account types behave like a pager rather than a pair of toggles.
+// ---------------------------------------------------------------------------
+
+const LANDING_ACCOUNTS = ["personal", "business"];
+const SWIPE_MIN_DISTANCE = 48;
+// A gesture only counts as a swipe when it is clearly sideways, so a vertical
+// scroll or a tap never switches the account by accident.
+const SWIPE_MAX_VERTICAL_RATIO = 0.6;
+
+function switchLandingAccount(account) {
+  if (!LANDING_ACCOUNTS.includes(account) || state.accountType === account) return;
+  state.accountType = account;
+  state.authMode = "landing";
+  render();
+}
+
+function stepLandingAccount(direction) {
+  const index = LANDING_ACCOUNTS.indexOf(state.accountType === "business" ? "business" : "personal");
+  switchLandingAccount(LANDING_ACCOUNTS[Math.min(Math.max(index + direction, 0), LANDING_ACCOUNTS.length - 1)]);
+}
+
+let landingSwipe = null;
+
+function landingSwipeStart(event) {
+  if (!document.body.classList.contains("landing-static")) return;
+  if (event.pointerType === "mouse") return;
+  const surface = event.target.closest("[data-landing-swipe]");
+  if (!surface) return;
+  // Horizontal strips and form controls own their own sideways gestures.
+  if (event.target.closest("input, textarea, select, .suggestion-row, .learn-categories, .statement-periods")) return;
+  landingSwipe = { x: event.clientX, y: event.clientY, done: false };
+}
+
+function landingSwipeMove(event) {
+  if (!landingSwipe || landingSwipe.done) return;
+  const dx = event.clientX - landingSwipe.x;
+  const dy = event.clientY - landingSwipe.y;
+  if (Math.abs(dx) < SWIPE_MIN_DISTANCE) return;
+  if (Math.abs(dy) > Math.abs(dx) * SWIPE_MAX_VERTICAL_RATIO) return;
+  landingSwipe.done = true;
+  stepLandingAccount(dx < 0 ? 1 : -1);
+}
+
+function landingSwipeEnd() {
+  landingSwipe = null;
+}
+
+window.addEventListener("pointerdown", landingSwipeStart, { passive: true });
+window.addEventListener("pointermove", landingSwipeMove, { passive: true });
+window.addEventListener("pointerup", landingSwipeEnd, { passive: true });
+window.addEventListener("pointercancel", landingSwipeEnd, { passive: true });
+
+// Left/right arrows move between the two tabs, which is what a tablist should do.
+window.addEventListener("keydown", (event) => {
+  if (!document.body.classList.contains("landing-static")) return;
+  if (!event.target.closest?.("[data-account-segment]")) return;
+  if (event.key === "ArrowRight") stepLandingAccount(1);
+  else if (event.key === "ArrowLeft") stepLandingAccount(-1);
+});
+
 window.addEventListener("hashchange", () => {
   const previousRoute = state.route;
   rememberRouteScroll(previousRoute);
@@ -555,7 +620,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=177", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=178", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -1063,16 +1128,17 @@ function authView() {
   const isBusiness = state.accountType === "business";
   const previewServices = landingPreviewServices();
   return `
-    <main class="screen auth-screen landing-flow ${isBusiness ? "business-landing" : ""}">
+    <main class="screen auth-screen landing-flow ${isBusiness ? "business-landing" : ""}" data-landing-swipe>
       <header class="topbar">
         <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
         <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
       </header>
 
       <section class="hero landing-hero">
-        <div class="segment" role="tablist" aria-label="Account type">
-          <button type="button" class="${!isBusiness ? "active" : ""}" data-account="personal">Personal</button>
-          <button type="button" class="${isBusiness ? "active" : ""}" data-account="business">Business</button>
+        <div class="segment${isBusiness ? " is-business" : ""}" role="tablist" aria-label="Account type" data-account-segment>
+          <span class="segment-thumb" aria-hidden="true"></span>
+          <button type="button" role="tab" aria-selected="${!isBusiness}" class="${!isBusiness ? "active" : ""}" data-account="personal">Personal</button>
+          <button type="button" role="tab" aria-selected="${isBusiness}" class="${isBusiness ? "active" : ""}" data-account="business">Business</button>
         </div>
         <h1>${isBusiness ? "Accept payments. Grow your business." : "Send, pay and get paid."}</h1>
         <p class="landing-tagline">Smart Payments. Simplified.</p>
@@ -2022,9 +2088,7 @@ async function onClick(event) {
   }
   const account = event.target.closest("[data-account]");
   if (account) {
-    state.accountType = account.dataset.account;
-    state.authMode = "landing";
-    render();
+    switchLandingAccount(account.dataset.account);
     return;
   }
   const authTab = event.target.closest("[data-auth-tab]");
@@ -14133,7 +14197,7 @@ function icon(name) {
     "sms-bundle": `<path d="M4 4h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16h-8.5L7 20v-4H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 4Z"/><path d="M7 8.5h10"/><path d="M7 12h6"/>`,
     "data-bundle": `<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 17h8"/><path d="M8 7h.01"/><path d="M12 7h.01"/><path d="M16 7h.01"/><path d="M8 11h8"/><path d="M8 14h8"/>`,
     zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
-    electricity: `<path d="m13 2-9 13h7l-1 7 10-14h-7z"/><path d="M5 21h14"/>`,
+    electricity: `<path d="M12 2.6a6.4 6.4 0 0 0-3.7 11.6c.5.4.8 1 .8 1.6v.6h5.8v-.6c0-.6.3-1.2.8-1.6A6.4 6.4 0 0 0 12 2.6Z"/><path d="M9.4 19h5.2"/><path d="M10.2 21.6h3.6"/>`,
     tag: `<path d="M20 13 11 22l-9-9V4h9z"/><path d="M7 7h.01"/>`,
     voucher: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4z"/><path d="M9 9h.01"/><path d="M9 15h.01"/><path d="M13 9h4"/><path d="M13 15h4"/>`,
     gift: `<path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7Z"/><path d="M12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7Z"/>`,
@@ -14170,7 +14234,7 @@ function icon(name) {
     invoice: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h6"/><path d="M9 16h4"/><path d="M16 18h2"/><path d="M16 21h2"/>`,
     quote: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M10 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M14.5 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M9 19h7"/>`,
     "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7"/><path d="M9 16h7"/><path d="M9 20h2"/><path d="M13 20h3"/>`,
-    "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M8 12h8"/><path d="m13 9 3 3-3 3"/><path d="M7 16h4"/>`,
+    "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h5"/><path d="M7 14.5h3"/><path d="M19 12h-5.5"/><path d="m16 9 -2.6 3 2.6 3"/>`,
     "message-check": `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="m9 12 2 2 4-5"/>`,
     chat: `<path d="M16 11.5V6.5A2.5 2.5 0 0 0 13.5 4h-8A2.5 2.5 0 0 0 3 6.5v5A2.5 2.5 0 0 0 5.5 14H7v3l3.4-3"/><path d="M10.5 11h8A2.5 2.5 0 0 1 21 13.5v4a2.5 2.5 0 0 1-2.5 2.5H17v2.2L13.6 20h-3.1A2.5 2.5 0 0 1 8 17.5v-4A2.5 2.5 0 0 1 10.5 11Z"/>`,
     chatbot: `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="M8.5 11.8h.01"/><path d="M12 11.8h.01"/><path d="M15.5 11.8h.01"/>`,

@@ -473,31 +473,61 @@ h3 {
   margin-inline: auto;
 }
 
+/* Segmented control: a thumb that slides between the two options rather than
+   two buttons swapping colour. The track is the positioning context and the
+   thumb is a real element, so the movement is a transform rather than a repaint
+   and stays smooth on a phone. */
 .segment {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 6px;
-  padding: 6px;
+  gap: 0;
+  padding: 5px;
   margin: 0 auto clamp(16px, 4vw, 22px);
   max-width: 380px;
   background: #eef4ff;
   border: 1px solid var(--line);
   border-radius: 999px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), var(--shadow-soft);
+  touch-action: pan-y;
+}
+
+.segment-thumb {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  bottom: 5px;
+  width: calc(50% - 5px);
+  border-radius: 999px;
+  background: var(--blue);
+  box-shadow: 0 4px 12px rgba(10, 77, 255, 0.22);
+  transition: transform 320ms var(--ease-premium);
+  pointer-events: none;
+}
+
+.segment.is-business .segment-thumb {
+  transform: translateX(100%);
 }
 
 .segment button {
+  position: relative;
+  z-index: 1;
   min-height: 46px;
   border-radius: 999px;
   color: var(--muted);
   background: transparent;
   font-weight: 600;
+  transition: color 240ms var(--ease-premium);
 }
 
 .segment button.active {
   color: #fff;
-  background: var(--blue);
-  box-shadow: 0 4px 12px rgba(10, 77, 255, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment-thumb {
+    transition: none;
+  }
 }
 
 .trust-strip,
@@ -1163,7 +1193,9 @@ body.landing-static .landing-flow.auth-screen {
    instead. */
 .business-landing h1 {
   margin-bottom: 5px;
-  font-size: clamp(1.12rem, 3.6vw, 1.58rem);
+  /* Matched to .landing-flow h1 so the headline is the same size on both
+     account types. It was two-thirds the size on business. */
+  font-size: clamp(1.48rem, 4.7vw, 2.05rem);
   line-height: 1.08;
   text-wrap: balance;
   overflow-wrap: break-word;
@@ -5347,7 +5379,7 @@ li {
   }
 
   body.landing-static .business-landing h1 {
-    font-size: clamp(1.06rem, 3.4vw, 1.45rem);
+    font-size: clamp(1.32rem, 4.4vw, 1.78rem);
     text-wrap: balance;
     overflow-wrap: break-word;
   }
@@ -5929,6 +5961,193 @@ body.landing-static .business-landing.auth-screen {
   height: auto;
   min-height: 100svh;
   overflow: visible;
+}
+
+/* ------------------------------------------------------------------------
+   Landing: tablet portrait
+
+   A tall, narrow viewport keeps the single column -- splitting it in two would
+   only make the block shorter and the empty bands larger. Instead the parts
+   grow with the height that is actually there, so the composition fills the
+   screen rather than floating in the middle of it.
+   ------------------------------------------------------------------------ */
+@media (min-width: 700px) and (max-width: 899px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    max-width: 640px;
+    gap: clamp(20px, 3.4vh, 46px);
+  }
+
+  body.landing-static .landing-flow h1,
+  body.landing-static .business-landing h1 {
+    font-size: clamp(2rem, 5.2vw, 2.5rem);
+  }
+
+  body.landing-static .landing-flow .landing-tagline {
+    font-size: clamp(0.98rem, 1.9vw, 1.1rem);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(118px, 13vh, 172px);
+    gap: 12px;
+    padding: 18px 12px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble,
+  body.landing-static .business-landing .preview-grid .icon-bubble {
+    width: clamp(48px, 6vh, 60px);
+    height: clamp(48px, 6vh, 60px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile span,
+  body.landing-static .business-landing .preview-grid .service-tile span {
+    font-size: clamp(0.86rem, 1.6vw, 0.96rem);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(66px, 7.5vh, 96px);
+    font-size: 0.86rem;
+  }
+
+  body.landing-static .landing-flow .auth-actions .btn,
+  body.landing-static .business-landing .auth-actions .btn {
+    min-height: clamp(54px, 6.2vh, 68px);
+  }
+
+  body.landing-static .landing-flow .scan-card,
+  body.landing-static .business-landing .scan-card {
+    padding: clamp(18px, 2.6vh, 30px);
+  }
+
+  body.landing-static .landing-flow .segment {
+    max-width: 420px;
+  }
+
+  body.landing-static .landing-flow .segment button {
+    min-height: 52px;
+  }
+}
+
+/* ------------------------------------------------------------------------
+   Landing: two-column composition from tablet up
+
+   Below this width the landing is a single stacked column, which is right for
+   a phone. Above it, stacking one narrow column in the middle of a wide screen
+   is just the mobile design stretched: it left ~460px of content in a 1440px
+   viewport with large empty bands above and below. The same sections are
+   re-laid into two columns so the width carries the composition and the height
+   stops being padding.
+   ------------------------------------------------------------------------ */
+@media (min-width: 900px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    max-width: min(1080px, 92vw);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.06fr);
+    grid-template-areas:
+      "bar   bar"
+      "hero  grid"
+      "trust grid"
+      "cta   scan"
+      "foot  foot";
+    align-content: center;
+    justify-content: center;
+    column-gap: clamp(36px, 4.6vw, 68px);
+    row-gap: clamp(24px, 5.2vh, 60px);
+  }
+
+  body.landing-static .landing-flow .topbar { grid-area: bar; }
+  body.landing-static .landing-flow .landing-hero { grid-area: hero; }
+  body.landing-static .landing-flow .trust-strip { grid-area: trust; }
+  body.landing-static .landing-flow .preview-grid { grid-area: grid; align-self: center; }
+  body.landing-static .landing-flow .auth-actions { grid-area: cta; }
+  body.landing-static .landing-flow .scan-card { grid-area: scan; }
+  body.landing-static .landing-flow .landing-site-footer { grid-area: foot; }
+
+  /* The left column reads as a column of text, so it aligns left. */
+  body.landing-static .landing-flow .landing-hero {
+    text-align: left;
+    align-self: end;
+  }
+
+  body.landing-static .landing-flow .segment {
+    margin-inline: 0;
+    max-width: 320px;
+  }
+
+  /* A 43px headline on a 1440px screen reads as a phone layout enlarged. This
+     is the size a fintech homepage actually uses at this width. */
+  body.landing-static .landing-flow h1,
+  body.landing-static .business-landing h1 {
+    font-size: clamp(2.2rem, 3.7vw, 3.4rem);
+    line-height: 1.06;
+    text-wrap: balance;
+  }
+
+  /* The tagline is set centre on mobile. In the two-column layout it belongs to
+     the left text column and has to follow the headline. */
+  body.landing-static .landing-flow .landing-tagline {
+    font-size: clamp(0.98rem, 1.15vw, 1.12rem);
+    text-align: left;
+  }
+
+  /* Three across keeps the tiles square-ish instead of stretching into
+     letterboxes at this width. */
+  body.landing-static .landing-flow .preview-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(12px, 1.1vw, 16px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile {
+    min-height: clamp(126px, 18.5vh, 196px);
+    gap: 14px;
+    padding: 22px 12px;
+  }
+
+  body.landing-static .landing-flow .trust-item {
+    min-height: clamp(70px, 9.5vh, 104px);
+  }
+
+  body.landing-static .landing-flow .auth-actions .btn {
+    min-height: clamp(52px, 6.4vh, 66px);
+  }
+
+  body.landing-static .landing-flow .scan-card {
+    padding: clamp(16px, 2.4vh, 26px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble {
+    width: 50px;
+    height: 50px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .icon-bubble svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile span {
+    font-size: 0.88rem;
+  }
+
+  body.landing-static .landing-flow .trust-strip {
+    align-self: start;
+  }
+
+  body.landing-static .landing-flow .auth-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-self: center;
+  }
+
+  body.landing-static .landing-flow .scan-card {
+    align-self: center;
+  }
+
+  body.landing-static .landing-flow .landing-site-footer {
+    justify-self: center;
+    padding-top: 4px;
+  }
 }
 
 /* From tablet up there is far more height than the composition needs.
