@@ -886,13 +886,71 @@ function renderKeyValueList(rows = []) {
   `;
 }
 
+/* Sign-in feedback. Same wording as before; `tone` only drives the colour so a
+   failed sign-in never reads as a neutral hint. */
+function setLoginStatus(message, tone = "") {
+  const target = document.getElementById("login-status");
+  if (!target) return;
+  target.textContent = message;
+  if (tone) target.dataset.tone = tone;
+  else delete target.dataset.tone;
+}
+
+function setLoginPending(pending) {
+  const submit = document.getElementById("admin-login-submit");
+  if (!submit) return;
+  submit.disabled = pending;
+  if (pending) {
+    submit.dataset.pending = "true";
+    submit.textContent = "Signing in...";
+  } else {
+    delete submit.dataset.pending;
+    submit.textContent = "Sign in securely";
+  }
+}
+
+function bindSignInControls() {
+  const environment = document.getElementById("login-environment");
+  if (environment) {
+    const { label, nonProd } = adminEnvironment();
+    environment.textContent = label;
+    environment.classList.toggle("env-nonprod", nonProd);
+  }
+
+  const password = document.getElementById("password");
+  const toggle = document.querySelector("[data-password-toggle]");
+  toggle?.addEventListener("click", () => {
+    const reveal = password.type === "password";
+    password.type = reveal ? "text" : "password";
+    toggle.textContent = reveal ? "Hide" : "Show";
+    toggle.setAttribute("aria-pressed", reveal ? "true" : "false");
+    password.focus();
+  });
+
+  // Caps Lock silently defeats a correct password more often than anything else
+  // on a staff sign-in, so say so before the request is made.
+  const capsHint = document.getElementById("caps-hint");
+  const trackCapsLock = (event) => {
+    if (!capsHint || typeof event.getModifierState !== "function") return;
+    capsHint.hidden = !event.getModifierState("CapsLock");
+  };
+  password?.addEventListener("keydown", trackCapsLock);
+  password?.addEventListener("keyup", trackCapsLock);
+  password?.addEventListener("blur", () => {
+    if (capsHint) capsHint.hidden = true;
+  });
+
+  document.getElementById("identifier")?.focus();
+}
+
 async function bootLogin() {
   if (!validateAdminHost()) return;
   const loginForm = document.getElementById("admin-login-form");
-  const loginStatus = document.getElementById("login-status");
   const resetToggle = document.getElementById("show-reset");
   const resetCard = document.getElementById("reset-card");
   const resetRequestForm = document.getElementById("admin-reset-request-form");
+
+  bindSignInControls();
 
   const existingAuth = getAuth();
   if (existingAuth?.accessToken) {
@@ -907,14 +965,15 @@ async function bootLogin() {
 
   const storedNotice = sessionStorage.getItem("titopay_admin_notice");
   if (storedNotice) {
-    loginStatus.textContent = storedNotice;
+    setLoginStatus(storedNotice);
     sessionStorage.removeItem("titopay_admin_notice");
   }
 
   loginForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = adminLoginPayload(Object.fromEntries(new FormData(loginForm).entries()));
-    loginStatus.textContent = "Checking staff credentials...";
+    setLoginStatus("Checking staff credentials...", "pending");
+    setLoginPending(true);
     try {
       let result;
       try {
@@ -931,35 +990,45 @@ async function bootLogin() {
       }
       const session = normalizeAdminSession(result);
       if (!hasAdminSession(session)) {
-        loginStatus.textContent = "Sign in failed. Please check the staff email and password, then try again.";
+        setLoginStatus("Sign in failed. Please check the staff email and password, then try again.", "error");
+        setLoginPending(false);
         return;
       }
       setAuth(session);
       startIdleGuard();
+      setLoginStatus("Signed in. Opening the console...", "success");
       location.href = "/dashboard/";
     } catch (error) {
-      loginStatus.textContent = adminErrorMessage(error.message);
+      setLoginStatus(adminErrorMessage(error.message), "error");
+      setLoginPending(false);
+      document.getElementById("password")?.focus();
     }
   });
 
   resetToggle?.addEventListener("click", () => {
-    resetCard.hidden = !resetCard.hidden;
+    const open = resetCard.hidden;
+    resetCard.hidden = !open;
+    resetToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    resetToggle.textContent = open ? "Cancel password reset" : "Forgot password?";
+    if (open) document.getElementById("reset-identifier")?.focus();
   });
 
   resetRequestForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(resetRequestForm).entries());
-    loginStatus.textContent = "Sending password reset instructions...";
+    setLoginStatus("Sending password reset instructions...", "pending");
     try {
       await apiFetch("/auth/password-reset", {
         method: "POST",
         body: JSON.stringify({ mode: "request", userType: "admin", identifier: data.identifier }),
       });
-      loginStatus.textContent = "If the account exists, password reset instructions have been sent.";
+      setLoginStatus("If the account exists, password reset instructions have been sent.", "success");
       resetCard.hidden = true;
+      resetToggle?.setAttribute("aria-expanded", "false");
+      if (resetToggle) resetToggle.textContent = "Forgot password?";
       resetRequestForm.reset();
     } catch (error) {
-      loginStatus.textContent = adminErrorMessage(error.message);
+      setLoginStatus(adminErrorMessage(error.message), "error");
     }
   });
 }
