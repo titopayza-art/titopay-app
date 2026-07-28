@@ -964,14 +964,19 @@ body.landing-static .app-shell {
   overflow: hidden;
 }
 
+/* space-between distributed all leftover height between every section, so the
+   same rule produced five dead bands on a tall phone and 5px clustering on a
+   short one. Centring collects the leftover into one margin above and below the
+   block instead, and the gap below keeps the rhythm identical at every height. */
 body.landing-static .landing-flow.auth-screen {
   height: 100vh;
   height: 100svh;
   min-height: 100vh;
   min-height: 100svh;
   overflow: hidden;
-  align-content: space-between;
+  align-content: center;
   grid-auto-rows: max-content;
+  row-gap: clamp(10px, 1.8vh, 18px);
 }
 
 @media (max-height: 760px) {
@@ -1075,7 +1080,7 @@ body.landing-static .landing-flow.auth-screen {
 .business-landing.auth-screen {
   padding-top: calc(max(8px, var(--safe-top)) + 2px);
   padding-bottom: 12px;
-  align-content: space-between;
+  align-content: center;
 }
 
 .business-landing .topbar {
@@ -4623,8 +4628,12 @@ input[data-profile-photo-zoom] {
     gap: 9px;
   }
 
+  /* The landing preview stays three across at every width. It sits directly
+     under the three-up trust strip, so two columns broke the alignment, made
+     three rows where two do, and left a hole in the last row whenever the
+     catalogue returned five services rather than six. */
   .preview-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .service-tile {
@@ -5257,7 +5266,7 @@ li {
   body.landing-static .business-landing.auth-screen {
     gap: 8px;
     padding-bottom: 10px;
-    align-content: space-between;
+    align-content: center;
   }
 
   body.landing-static .business-landing h1 {
@@ -5744,8 +5753,9 @@ body.landing-static .business-landing .scan-card .icon-bubble {
   margin-bottom: clamp(10px, 2.6vw, 14px);
 }
 
-/* Final clearance: tighten the section rhythm a touch so the footer link sits
-   clear of the promo pill on 664px-class Safari viewports. */
+/* The rhythm scales with viewport height. A fixed 6px looked tight on a tall
+   phone and, now that the block is centred rather than justified, left all the
+   reclaimed height sitting as one void above and below it. */
 body.landing-static .landing-flow.auth-screen,
 body.landing-static .business-landing.auth-screen {
   gap: 6px;
@@ -6119,12 +6129,13 @@ button.activity-item:focus-visible {
   }
 }
 
-/* Tall mobile viewports (iPhone 12/13/14/15 at full height and PWA): trim the
-   inter-section gap so the reclaimed space goes to components, not voids. */
+/* Tall mobile viewports (iPhone 12/13/14/15 at full height and PWA) have real
+   height to spend. Spending it on the rhythm keeps the sections evenly related
+   instead of banking it all into margins at the top and bottom. */
 @media (max-width: 767px) and (min-height: 780px) {
   body.landing-static .landing-flow.auth-screen,
   body.landing-static .business-landing.auth-screen {
-    gap: 4px;
+    gap: clamp(12px, 2.1vh, 24px);
   }
 }
 

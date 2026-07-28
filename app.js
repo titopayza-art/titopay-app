@@ -511,7 +511,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=174", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=175", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -794,14 +794,35 @@ function comingSoonServices() {
   return visibleServices().filter((service) => service.status === "coming_soon");
 }
 
+const LANDING_PREVIEW_COUNT = 6;
+
+// Each entry is a list of aliases, because the live catalogue does not always
+// use the same code as the fallback. The airtime slot in particular was a
+// single "airtime" key, and a catalogue that only publishes the combined
+// "Airtime & Data" product matched none of it -- which is how the landing came
+// to render five tiles in a three-column grid, with a hole where the sixth
+// should be.
+const LANDING_PREVIEW_KEYS = {
+  personal: [
+    ["top-up"],
+    ["withdraw"],
+    ["send-money", "send"],
+    ["airtime-data", "airtime-and-data", "airtime-&-data", "airtime"],
+    ["pay-bills"],
+    ["tickets"]
+  ],
+  business: [
+    ["top-up"],
+    ["receive-money", "receive"],
+    ["payouts"],
+    ["ticketing"],
+    ["invoice"],
+    ["statements", "transactions"]
+  ]
+};
+
 function landingPreviewServices() {
-  // "airtime-data" first: the services grid collapses airtime, data and the
-  // combined product into one tile, and the landing page was picking the
-  // standalone "Airtime" entry. The same product was then labelled two
-  // different ways in two places.
-  const preferred = state.accountType === "business"
-    ? ["top-up", "receive-money", "payouts", "ticketing", "invoice", "statements"]
-    : ["top-up", "withdraw", "send-money", "airtime-data", "pay-bills", "tickets"];
+  const groups = LANDING_PREVIEW_KEYS[state.accountType === "business" ? "business" : "personal"];
   const valuesFor = (service) => [
     service.id,
     service.action,
@@ -811,13 +832,30 @@ function landingPreviewServices() {
   ].map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "-"));
   const services = hideDuplicateAirtimeDataTiles(activeServices());
   const selected = [];
-  preferred.forEach((key) => {
-    const match = services.find((service) => valuesFor(service).includes(key));
-    if (match && !selected.some((service) => service.id === match.id || service.serviceCode === match.serviceCode || service.action === match.action)) {
-      selected.push(match);
+  const taken = (candidate) => selected.some((service) =>
+    service.id === candidate.id || service.serviceCode === candidate.serviceCode || service.action === candidate.action);
+
+  groups.forEach((aliases) => {
+    for (const key of aliases) {
+      const match = services.find((service) => valuesFor(service).includes(key));
+      if (match && !taken(match)) {
+        selected.push(match);
+        return;
+      }
     }
   });
-  return selected.slice(0, 6);
+
+  // The grid is three columns wide, so a short list leaves a visible hole in
+  // the last row. Top up from whatever else the catalogue offers so the block
+  // is always complete.
+  services.forEach((service) => {
+    if (selected.length >= LANDING_PREVIEW_COUNT) return;
+    if (!taken(service)) selected.push(service);
+  });
+
+  // Never leave an orphan: show a full row rather than one stranded tile.
+  const complete = Math.floor(selected.length / 3) * 3;
+  return selected.slice(0, Math.min(selected.length >= 3 ? complete : selected.length, LANDING_PREVIEW_COUNT));
 }
 
 function serviceById(id) {
