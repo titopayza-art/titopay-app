@@ -430,6 +430,17 @@ function friendlyFormError(error, formName = "") {
     if (status === 429) return "Too many login attempts. Please wait a few minutes and try again.";
     return `Unable to sign in right now. Please try again shortly.${suffix}`;
   }
+  // api() falls back to "Request failed (NNN)" when the API sends no message of
+  // its own. That is a developer string and must never reach a customer.
+  if (/^request failed \(\d+\)$/i.test(rawMessage)) {
+    if (status === 400 || status === 422) return `Some of these details could not be accepted. Check what you entered and try again.${suffix}`;
+    if (status === 401 || status === 403) return `You are not authorised to complete this. Sign in again, or contact support if it continues.${suffix}`;
+    if (status === 404) return `TitoPay could not find what this request needs. Please try again, or contact support if it continues.${suffix}`;
+    if (status === 409) return `This request has already been received. Check Activity before trying again.${suffix}`;
+    if (status === 429) return `Too many attempts. Please wait a moment and try again.${suffix}`;
+    if (status >= 500) return `TitoPay or the provider could not complete this right now. Please try again shortly.${suffix}`;
+    return `Unable to complete the request. Please try again.${suffix}`;
+  }
   if (/something went wrong|internal server error/i.test(rawMessage)) {
     return `Unable to complete the request. Please try again.${suffix}`;
   }
@@ -551,8 +562,12 @@ function commercialServiceIcon(item = {}) {
     "airtime-data": "sim-card",
     "airtime-and-data": "sim-card",
     airtime: "sim-card",
-    data: "signal",
-    electricity: "zap",
+    data: "data-bundle",
+    "mobile-data": "data-bundle",
+    sms: "sms-bundle",
+    "sms-bundle": "sms-bundle",
+    "sms-bundles": "sms-bundle",
+    electricity: "electricity",
     voucher: "voucher",
     "pay-bills": "bill-pay",
     stockvel: "stockvel",
@@ -1525,6 +1540,11 @@ function transactionStatusMeaning(status) {
   return map[String(status || "").toLowerCase()] || "";
 }
 
+function transactionStatusLabel(status) {
+  const raw = String(status || "").toLowerCase();
+  return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "Recorded";
+}
+
 function transactionNeedsSupport(status) {
   return ["failed", "declined", "reversed"].includes(String(status || "").toLowerCase());
 }
@@ -1574,6 +1594,9 @@ function openTransactionDetailModal(key) {
     rows.push(["Time", dateObj.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }), "refresh"]);
   }
   if (counterparty) rows.push([direction === "credit" ? "From" : "To", counterparty, "user"]);
+  vasInfoCredentials(vasCredentials(item)).forEach((entry) => {
+    rows.push([entry.label, entry.value, entry.label === "Provider" ? "bank" : "tag"]);
+  });
   if (reference) rows.push(["Reference", reference, "tag"]);
   if (txId && String(txId) !== String(reference)) rows.push(["Transaction ID", txId, "copy"]);
 
@@ -1592,6 +1615,7 @@ function openTransactionDetailModal(key) {
       <p class="tx-detail-status"><span class="tx-status ${statusClass}">${esc(statusLabel)}</span></p>
       ${meaning ? `<p class="tx-detail-meaning">${esc(meaning)}</p>` : ""}
     </section>
+    ${vasCredentialPanel(vasCredentials(item))}
     <section class="panel tx-detail-rows">
       ${rows.map(([label, value, iconName]) => settingsRow(label, value, iconName)).join("")}
     </section>
@@ -1924,6 +1948,32 @@ async function onClick(event) {
     await verifyRecipientField(action);
     return;
   }
+  const vasKind = event.target.closest("[data-vas-kind]");
+  if (vasKind) {
+    switchVasProductType(vasKind);
+    return;
+  }
+  const vasProduct = event.target.closest("[data-vas-product]");
+  if (vasProduct) {
+    selectVasProduct(vasProduct);
+    return;
+  }
+  const vasRetry = event.target.closest("[data-vas-retry]");
+  if (vasRetry) {
+    const form = vasRetry.closest("form");
+    if (form) await refreshVasCatalogue(form, { force: true }).catch(() => {});
+    return;
+  }
+  const vasValidate = event.target.closest("[data-vas-validate]");
+  if (vasValidate) {
+    await validateVasIdentifier(vasValidate);
+    return;
+  }
+  const vasCopy = event.target.closest("[data-vas-copy]");
+  if (vasCopy) {
+    await copyVasCredential(vasCopy);
+    return;
+  }
   if (action) {
     try {
       await handleAction(action.dataset.action);
@@ -2053,6 +2103,8 @@ function onChange(event) {
     const field = chatLookupMethod.closest("form")?.querySelector('input[name="identifier"]');
     if (field) updateRecipientAutoDetect(field);
   }
+  const vasProvider = event.target.closest("[data-vas-provider]");
+  if (vasProvider) handleVasProviderChange(vasProvider);
   const occasion = event.target.closest("select[name='occasion']");
   if (occasion) toggleCustomOccasion(occasion);
   const profilePhotoInput = event.target.closest("input[data-profile-photo-input]");
@@ -2281,15 +2333,19 @@ function enhanceContactPickerControls(root = document) {
     const tools = document.createElement("div");
     tools.className = "recipient-tools";
     tools.appendChild(button);
-    const verifyButton = document.createElement("button");
-    verifyButton.type = "button";
-    verifyButton.className = "recipient-verify-btn";
-    verifyButton.dataset.action = "verify-recipient-field";
-    verifyButton.dataset.targetId = field.id;
-    verifyButton.setAttribute("aria-label", "Verify TitoPay user");
-    verifyButton.innerHTML = `${icon("shield")} <span>Verify TitoPay user</span>`;
-    tools.appendChild(verifyButton);
+    const userDestination = field.dataset.noUserVerify !== "true";
+    if (userDestination) {
+      const verifyButton = document.createElement("button");
+      verifyButton.type = "button";
+      verifyButton.className = "recipient-verify-btn";
+      verifyButton.dataset.action = "verify-recipient-field";
+      verifyButton.dataset.targetId = field.id;
+      verifyButton.setAttribute("aria-label", "Verify TitoPay user");
+      verifyButton.innerHTML = `${icon("shield")} <span>Verify TitoPay user</span>`;
+      tools.appendChild(verifyButton);
+    }
     field.insertAdjacentElement("afterend", tools);
+    if (!userDestination) return;
     const hint = document.createElement("div");
     hint.className = "recipient-detect-hint";
     hint.dataset.recipientDetectFor = field.id;
@@ -2875,7 +2931,10 @@ async function handleAction(action) {
     await confirmReviewedTransaction();
   }
   if (action === "edit-transaction-review") {
-    if (state.pendingTransactionReview) openTransactionEditModal(state.pendingTransactionReview);
+    const context = state.pendingTransactionReview;
+    // A VAS purchase goes back to its own journey with the provider, product
+    // and entered details intact, rather than to the generic edit form.
+    if (context && !reopenVasJourneyFromContext(context)) openTransactionEditModal(context);
   }
   if (action === "cancel-transaction-review") {
     state.pendingTransactionReview = null;
@@ -3782,51 +3841,825 @@ function openWithdrawModal(service) {
   `);
 }
 
-function openPurchaseModal(service) {
-  const isElectricity = service.action === "electricity";
-  const isVoucher = service.action === "voucher";
-  const isData = service.action === "data";
-  const recipientLabel = isElectricity ? "Meter number" : isVoucher ? "Voucher recipient" : "Cellphone number";
-  const recipientPlaceholder = isElectricity ? "Enter prepaid meter number" : isVoucher ? "Email, phone or self" : "+27";
-  const options = isElectricity
-    ? ["Prepaid electricity"]
-    : isVoucher
-      ? ["Shopping", "Gaming", "Entertainment", "Food"]
-      : ["MTN", "Vodacom", "Telkom", "Cell C"];
-  openModal(`
-    <div class="modal-head">
-      <div><p class="eyebrow">${esc(service.label)}</p><h2>${esc(isData ? "Buy data" : isVoucher ? "Buy voucher" : isElectricity ? "Buy electricity" : "Buy airtime")}</h2><p class="lead">Enter the details and confirm the fee preview before purchase.</p></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+// ---------------------------------------------------------------------------
+// VAS (value-added service) purchase journey
+//
+// Airtime, data, electricity, vouchers and bill payments are provider products,
+// not free-form amounts. The authoritative product catalogue therefore belongs
+// to the TitoPay API, which resolves it from whichever VAS provider is
+// connected. This layer asks the API for that catalogue and renders exactly
+// what comes back.
+//
+// It never invents providers, bundles, denominations, meter owners or provider
+// references. When TitoPay has no catalogue to give, the journey says so and
+// keeps the open-value form production already relies on, so nothing that works
+// today stops working.
+// ---------------------------------------------------------------------------
+
+const VAS_CATALOGUE_PATH = "/v1/vas/catalogue";
+const VAS_VALIDATE_PATH = "/v1/vas/validate";
+const vasCatalogueCache = new Map();
+
+// Network and biller names below are selection labels that already shipped in
+// production, not a product catalogue. They carry no prices, bundles or SKUs.
+const VAS_JOURNEYS = {
+  airtime: {
+    vasKey: "airtime",
+    productLed: true,
+    eyebrow: "Airtime & Data",
+    title: "Buy airtime",
+    lead: "Choose the network and product, then confirm the fee preview before purchase.",
+    icon: "sim-card",
+    providerLabel: "Network",
+    productLabel: "Airtime product",
+    recipientLabel: "Cellphone number",
+    recipientPlaceholder: "+27",
+    recipientInputMode: "tel",
+    fallbackProviders: ["MTN", "Vodacom", "Telkom", "Cell C"],
+    openValue: true,
+    amountLabel: "Amount",
+    openValueLabel: "Other amount",
+    openValueNote: "Airtime can be bought at any value.",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  data: {
+    vasKey: "data",
+    productLed: true,
+    eyebrow: "Airtime & Data",
+    title: "Buy data",
+    lead: "Choose the network and bundle, then confirm the fee preview before purchase.",
+    icon: "data-bundle",
+    providerLabel: "Network",
+    productLabel: "Data bundle",
+    recipientLabel: "Cellphone number",
+    recipientPlaceholder: "+27",
+    recipientInputMode: "tel",
+    fallbackProviders: ["MTN", "Vodacom", "Telkom", "Cell C"],
+    openValue: true,
+    amountLabel: "Amount",
+    openValueLabel: "Other amount",
+    openValueNote: "",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  electricity: {
+    vasKey: "electricity",
+    productLed: false,
+    eyebrow: "Electricity",
+    title: "Buy electricity",
+    lead: "Enter the prepaid meter number and amount, then confirm the fee preview before purchase.",
+    icon: "electricity",
+    providerLabel: "Utility",
+    productLabel: "Electricity product",
+    recipientLabel: "Meter number",
+    recipientPlaceholder: "Enter prepaid meter number",
+    recipientInputMode: "numeric",
+    fallbackProviders: ["Prepaid electricity"],
+    openValue: true,
+    amountLabel: "Purchase amount",
+    openValueLabel: "Purchase amount",
+    openValueNote: "Prepaid electricity is bought by value.",
+    validate: true,
+    validateLabel: "Verify meter",
+    validateHeading: "Meter",
+    submitLabel: "Preview purchase"
+  },
+  voucher: {
+    vasKey: "voucher",
+    productLed: true,
+    eyebrow: "Vouchers",
+    title: "Buy voucher",
+    lead: "Choose the voucher and value, then confirm the fee preview before purchase.",
+    icon: "voucher",
+    providerLabel: "Voucher category",
+    productLabel: "Voucher",
+    recipientLabel: "Voucher recipient",
+    recipientPlaceholder: "Email, phone or self",
+    recipientInputMode: "text",
+    fallbackProviders: ["Shopping", "Gaming", "Entertainment", "Food"],
+    openValue: true,
+    amountLabel: "Value",
+    openValueLabel: "Other value",
+    openValueNote: "",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  sms: {
+    vasKey: "sms",
+    productLed: true,
+    eyebrow: "SMS Bundles",
+    title: "Buy an SMS bundle",
+    lead: "Choose the network and bundle, then confirm the fee preview before purchase.",
+    icon: "sms-bundle",
+    providerLabel: "Network",
+    productLabel: "SMS bundle",
+    recipientLabel: "Cellphone number",
+    recipientPlaceholder: "+27",
+    recipientInputMode: "tel",
+    fallbackProviders: [],
+    openValue: false,
+    amountLabel: "Amount",
+    openValueLabel: "Other amount",
+    openValueNote: "",
+    validate: false,
+    submitLabel: "Preview purchase"
+  },
+  bill: {
+    vasKey: "bill_payment",
+    productLed: false,
+    eyebrow: "Pay Bills",
+    title: "Pay account bills",
+    lead: "Choose the biller, enter the account number and confirm the fee preview before payment.",
+    icon: "bill-pay",
+    providerLabel: "Biller",
+    productLabel: "Bill product",
+    recipientLabel: "Account or customer number",
+    recipientPlaceholder: "Smartcard, municipal account or bill reference",
+    recipientInputMode: "text",
+    fallbackProviders: ["DStv", "Municipal bill", "Water", "Rates", "Utilities", "School fees", "Insurance", "Other biller"],
+    openValue: true,
+    amountLabel: "Payment amount",
+    openValueLabel: "Payment amount",
+    openValueNote: "",
+    validate: true,
+    validateLabel: "Verify account",
+    validateHeading: "Account",
+    integrationFlow: "vas_bill_payment",
+    providerReady: "ott_or_vas_provider",
+    submitLabel: "Preview bill payment"
+  }
+};
+
+// The live journey. Modals are single-instance, so one record is enough and it
+// keeps the selected provider/product out of the DOM round-trip.
+let activeVasJourney = null;
+
+function vasJourneyKind(service) {
+  const action = String(service.action || "").toLowerCase();
+  if (action === "pay-bills") return "bill";
+  if (action === "electricity") return "electricity";
+  if (action === "voucher") return "voucher";
+  if (action === "data") return "data";
+  if (action === "sms" || action === "sms-bundle" || action === "sms-bundles") return "sms";
+  return "airtime";
+}
+
+function vasText(source, keys) {
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = source[keys[index]];
+    if (value != null && String(value).trim() !== "") return String(value).trim();
+  }
+  return "";
+}
+
+function vasNumber(source, keys) {
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = Number(source[keys[index]]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+}
+
+function normalizeVasProduct(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : { name: raw };
+  const name = vasText(source, ["name", "productName", "product_name", "label", "title", "description"]);
+  const code = vasText(source, ["code", "productCode", "product_code", "sku", "id", "productId", "product_id"]);
+  if (!name && !code) return null;
+  const amount = vasNumber(source, ["amount", "price", "value", "sellPrice", "sell_price", "retailPrice", "retail_price"]);
+  return {
+    code,
+    name: name || code,
+    description: vasText(source, ["description", "detail", "details", "subtitle"]),
+    validity: vasText(source, ["validity", "validityPeriod", "validity_period", "expiry", "duration"]),
+    size: vasText(source, ["size", "dataSize", "data_size", "volume", "bundleSize", "bundle_size"]),
+    amount,
+    minAmount: vasNumber(source, ["minAmount", "min_amount", "minimum", "minValue", "min_value"]),
+    maxAmount: vasNumber(source, ["maxAmount", "max_amount", "maximum", "maxValue", "max_value"])
+  };
+}
+
+function normalizeVasProvider(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : { name: raw };
+  const name = vasText(source, ["name", "providerName", "provider_name", "label", "billerName", "biller_name", "title", "network"]);
+  const code = vasText(source, ["code", "providerCode", "provider_code", "id", "providerId", "provider_id", "billerCode", "biller_code"]);
+  if (!name && !code) return null;
+  const productSource = source.products || source.items || source.bundles || source.denominations || source.tariffs || [];
+  const products = (Array.isArray(productSource) ? productSource : []).map(normalizeVasProduct).filter(Boolean);
+  return {
+    code: code || name,
+    name: name || code,
+    note: vasText(source, ["note", "description", "hint"]),
+    requiresValidation: source.requiresValidation === true || source.requires_validation === true,
+    allowsOpenValue: source.allowsOpenValue !== false && source.allows_open_value !== false,
+    minAmount: vasNumber(source, ["minAmount", "min_amount", "minimum"]),
+    maxAmount: vasNumber(source, ["maxAmount", "max_amount", "maximum"]),
+    products
+  };
+}
+
+function normalizeVasCatalogue(payload) {
+  const root = payload && (payload.catalogue || payload.data || payload) || {};
+  const providerSource = root.providers || root.billers || root.networks || root.items || [];
+  const providers = (Array.isArray(providerSource) ? providerSource : []).map(normalizeVasProvider).filter(Boolean);
+  return providers;
+}
+
+async function loadVasCatalogue(vasKey) {
+  if (vasCatalogueCache.has(vasKey)) return vasCatalogueCache.get(vasKey);
+  try {
+    const payload = await api(`${VAS_CATALOGUE_PATH}?service=${encodeURIComponent(vasKey)}`);
+    const providers = normalizeVasCatalogue(payload);
+    const result = providers.length
+      ? { status: "ready", providers }
+      : { status: "empty", providers: [] };
+    vasCatalogueCache.set(vasKey, result);
+    return result;
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    // 404/501 means TitoPay has no catalogue endpoint for this service yet.
+    // Anything else is transient, so it is not cached and can be retried.
+    const result = {
+      status: "unavailable",
+      providers: [],
+      reason: status === 404 || status === 501 ? "not-provisioned" : status === 0 ? "offline" : "error",
+      message: status === 404 || status === 501 ? "" : friendlyFormError(error, "vas-catalogue")
+    };
+    if (result.reason === "not-provisioned") vasCatalogueCache.set(vasKey, result);
+    return result;
+  }
+}
+
+function vasCatalogueNotice(config, catalogue) {
+  if (catalogue.status === "empty") {
+    return {
+      head: `No ${config.productLabel.toLowerCase()}s available`,
+      body: `TitoPay returned no ${config.productLabel.toLowerCase()}s for this service. You can still continue by entering the ${config.amountLabel.toLowerCase()}.`
+    };
+  }
+  if (catalogue.reason === "offline") {
+    return {
+      head: "Product list unavailable",
+      body: `TitoPay could not be reached to load ${config.productLabel.toLowerCase()}s. Check your connection and retry, or continue by entering the ${config.amountLabel.toLowerCase()}.`
+    };
+  }
+  if (catalogue.reason === "error") {
+    return {
+      head: "Product list unavailable",
+      body: catalogue.message || `TitoPay could not load ${config.productLabel.toLowerCase()}s right now. Retry, or continue by entering the ${config.amountLabel.toLowerCase()}.`
+    };
+  }
+  return {
+    head: "Product list not available yet",
+    body: `TitoPay does not yet publish a ${config.productLabel.toLowerCase()} list for this service. Choose the ${config.providerLabel.toLowerCase()} and enter the ${config.amountLabel.toLowerCase()} to continue.`
+  };
+}
+
+function vasProductPriceText(product) {
+  if (product.amount) return money(product.amount);
+  if (product.minAmount && product.maxAmount) return `${money(product.minAmount)} - ${money(product.maxAmount)}`;
+  if (product.minAmount) return `From ${money(product.minAmount)}`;
+  return "Enter amount";
+}
+
+function vasProductMeta(product) {
+  return [product.size, product.validity, product.description].filter(Boolean).join(" · ");
+}
+
+function vasProductGrid(config, provider) {
+  if (!provider || !provider.products.length) return "";
+  const cards = provider.products.map((product, index) => `
+    <button class="vas-product" type="button" data-vas-product="${index}" aria-pressed="false">
+      <span class="vas-product-name">${esc(product.name)}</span>
+      ${vasProductMeta(product) ? `<span class="vas-product-meta">${esc(vasProductMeta(product))}</span>` : ""}
+      <span class="vas-product-price">${esc(vasProductPriceText(product))}</span>
+    </button>`).join("");
+  const openValue = config.openValue && provider.allowsOpenValue
+    ? `<button class="vas-product vas-product-open" type="button" data-vas-product="open" aria-pressed="false">
+        <span class="vas-product-name">${esc(config.openValueLabel)}</span>
+        <span class="vas-product-price">Enter amount</span>
+      </button>`
+    : "";
+  return `
+    <p class="vas-section-label" id="vas-product-label">${esc(config.productLabel)}</p>
+    <div class="vas-product-grid" role="group" aria-labelledby="vas-product-label">${cards}${openValue}</div>`;
+}
+
+function vasCatalogueSkeleton(config) {
+  return `
+    <p class="vas-section-label">${esc(config.productLabel)}</p>
+    <div class="vas-product-grid is-loading" aria-hidden="true">
+      ${[0, 1, 2, 3].map(() => `<span class="skeleton vas-product-skeleton"></span>`).join("")}
     </div>
-    <form class="form-grid" data-form="transaction">
-      <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
-      <div class="field"><label>${esc(recipientLabel)}</label><input name="recipient" placeholder="${esc(recipientPlaceholder)}" required></div>
-      <div class="field"><label>${esc(isVoucher ? "Category" : isElectricity ? "Product" : "Network")}</label><select name="provider">${options.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="${esc(service.label)} purchase"></div>
-      <button class="btn primary" type="submit">${icon(service.icon)} Preview purchase</button>
-    </form>
-  `);
+    <p class="vas-loading-note" role="status">Loading ${esc(config.productLabel.toLowerCase())}s...</p>`;
+}
+
+function vasSelectedProvider() {
+  if (!activeVasJourney) return null;
+  const { catalogue, providerCode } = activeVasJourney;
+  if (catalogue.status !== "ready") return null;
+  return catalogue.providers.find((provider) => provider.code === providerCode) || catalogue.providers[0] || null;
+}
+
+function renderVasProviderOptions(form) {
+  const select = form.querySelector('[name="provider"]');
+  if (!select) return;
+  const { config, catalogue } = activeVasJourney;
+  const names = catalogue.status === "ready"
+    ? catalogue.providers.map((provider) => [provider.code, provider.name])
+    : config.fallbackProviders.map((name) => [name, name]);
+  const previous = select.value;
+  select.innerHTML = names.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
+  select.disabled = false;
+  if (previous && names.some(([value]) => value === previous)) select.value = previous;
+  activeVasJourney.providerCode = select.value;
+  syncVasProviderName(form);
+}
+
+// The submitted `provider` value stays exactly what the catalogue supplied (a
+// provider code once the API publishes one). The readable name is carried
+// alongside it so Review and Activity never show a raw code to the customer.
+function syncVasProviderName(form) {
+  const select = form.querySelector('[name="provider"]');
+  const nameField = form.querySelector("[data-vas-provider-name]");
+  if (!select || !nameField) return;
+  const option = select.options[select.selectedIndex];
+  nameField.value = option ? option.textContent.trim() : "";
+}
+
+// True when the customer has a legitimate way to name an amount: either the
+// catalogue supplied products, or the service is genuinely open-value.
+function vasCanTransact() {
+  if (!activeVasJourney) return false;
+  const { config, catalogue } = activeVasJourney;
+  const provider = vasSelectedProvider();
+  if (provider && provider.products.length) return true;
+  if (!config.openValue) return false;
+  if (catalogue.status === "ready") return Boolean(provider && provider.allowsOpenValue);
+  return config.fallbackProviders.length > 0;
+}
+
+// Blocks submission when nothing can legitimately be purchased, rather than
+// letting the customer fill in a form that cannot succeed.
+function applyVasAvailability(form) {
+  const available = vasCanTransact();
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = !available;
+  form.querySelectorAll('[name="recipient"], [name="amount"], [name="reference"], [data-vas-validate]').forEach((field) => {
+    field.disabled = !available;
+  });
+  form.classList.toggle("vas-unavailable", !available);
+}
+
+function renderVasCatalogueSection(form) {
+  const host = form.querySelector("[data-vas-catalogue]");
+  if (!host || !activeVasJourney) return;
+  const { config, catalogue } = activeVasJourney;
+  if (catalogue.status === "loading") {
+    host.innerHTML = vasCatalogueSkeleton(config);
+    return;
+  }
+  if (catalogue.status === "ready") {
+    const provider = vasSelectedProvider();
+    host.innerHTML = provider && provider.products.length
+      ? vasProductGrid(config, provider)
+      : vasEmptyProviderNotice(config, provider);
+    return;
+  }
+  // Electricity and bill payments are value-based: the absence of a product
+  // list is not news, and the open-value path they already use still works.
+  if (!config.productLed && config.openValue && config.fallbackProviders.length) {
+    host.innerHTML = "";
+    return;
+  }
+  const notice = vasCatalogueNotice(config, catalogue);
+  host.innerHTML = `
+    <div class="vas-notice" role="status">
+      <p class="vas-notice-head">${esc(notice.head)}</p>
+      <p class="vas-notice-body">${esc(notice.body)}</p>
+      <button class="btn ghost vas-retry" type="button" data-vas-retry="1">${icon("refresh")} Retry</button>
+    </div>`;
+}
+
+function vasEmptyProviderNotice(config, provider) {
+  const who = provider ? provider.name : config.providerLabel.toLowerCase();
+  const canOpenValue = config.openValue && (!provider || provider.allowsOpenValue);
+  // A value-based service with a working open-value path has nothing to report.
+  if (!config.productLed && canOpenValue) return "";
+  return `
+    <div class="vas-notice" role="status">
+      <p class="vas-notice-head">No ${esc(config.productLabel.toLowerCase())}s listed</p>
+      <p class="vas-notice-body">${esc(canOpenValue
+        ? `TitoPay has no ${config.productLabel.toLowerCase()} list for ${who}. Enter the ${config.amountLabel.toLowerCase()} to continue.`
+        : `TitoPay has no ${config.productLabel.toLowerCase()} available for ${who} right now, so this purchase cannot be completed. Try another ${config.providerLabel.toLowerCase()} or check back shortly.`)}</p>
+      <button class="btn ghost vas-retry" type="button" data-vas-retry="1">${icon("refresh")} Retry</button>
+    </div>`;
+}
+
+function applyVasAmountConstraints(form) {
+  const amountField = form.querySelector('[name="amount"]');
+  if (!amountField) return;
+  const hint = form.querySelector("[data-vas-amount-hint]");
+  const product = activeVasJourney && activeVasJourney.product;
+  const provider = vasSelectedProvider();
+  if (product && product.amount) {
+    amountField.value = String(product.amount);
+    amountField.readOnly = true;
+    amountField.setAttribute("aria-describedby", "vas-amount-hint");
+    if (hint) hint.textContent = `Set by ${product.name}. Choose another ${activeVasJourney.config.productLabel.toLowerCase()} to change it.`;
+    return;
+  }
+  amountField.readOnly = false;
+  const min = (product && product.minAmount) || (provider && provider.minAmount) || 0;
+  const max = (product && product.maxAmount) || (provider && provider.maxAmount) || 0;
+  if (hint) {
+    if (min && max) hint.textContent = `Between ${money(min)} and ${money(max)}.`;
+    else if (min) hint.textContent = `Minimum ${money(min)}.`;
+    else hint.textContent = activeVasJourney ? activeVasJourney.config.openValueNote : "";
+  }
+}
+
+function syncVasProductFields(form) {
+  const product = activeVasJourney && activeVasJourney.product;
+  const codeField = form.querySelector('[data-vas-product-code]');
+  const nameField = form.querySelector('[data-vas-product-name]');
+  if (codeField) codeField.value = product && product.code ? product.code : "";
+  if (nameField) nameField.value = product && product.name ? product.name : "";
+  form.querySelectorAll("[data-vas-product]").forEach((button) => {
+    const selected = product
+      ? button.dataset.vasProduct === String(activeVasJourney.productIndex)
+      : button.dataset.vasProduct === "open" && activeVasJourney && activeVasJourney.productIndex === "open";
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+    button.classList.toggle("is-selected", selected);
+  });
+  applyVasAmountConstraints(form);
+  applyVasAvailability(form);
+}
+
+function selectVasProduct(button) {
+  const form = button.closest("form");
+  if (!form || !activeVasJourney) return;
+  const key = button.dataset.vasProduct;
+  if (key === "open") {
+    activeVasJourney.product = null;
+    activeVasJourney.productIndex = "open";
+  } else {
+    const provider = vasSelectedProvider();
+    const product = provider && provider.products[Number(key)];
+    if (!product) return;
+    activeVasJourney.product = product;
+    activeVasJourney.productIndex = key;
+  }
+  syncVasProductFields(form);
+  const amountField = form.querySelector('[name="amount"]');
+  if (amountField && !amountField.readOnly) amountField.focus();
+}
+
+function handleVasProviderChange(select) {
+  const form = select.closest("form");
+  if (!form || !activeVasJourney) return;
+  activeVasJourney.providerCode = select.value;
+  activeVasJourney.product = null;
+  activeVasJourney.productIndex = null;
+  syncVasProviderName(form);
+  clearVasValidationPanel(form);
+  renderVasCatalogueSection(form);
+  syncVasProductFields(form);
+}
+
+async function refreshVasCatalogue(form, { force = false } = {}) {
+  if (!activeVasJourney) return;
+  const { config } = activeVasJourney;
+  if (force) vasCatalogueCache.delete(config.vasKey);
+  activeVasJourney.catalogue = { status: "loading", providers: [] };
+  renderVasCatalogueSection(form);
+  applyVasAvailability(form);
+  const catalogue = await loadVasCatalogue(config.vasKey);
+  // The modal may have been closed or replaced while the request was in flight.
+  if (!activeVasJourney || activeVasJourney.config !== config || !document.contains(form)) return;
+  activeVasJourney.catalogue = catalogue;
+  activeVasJourney.product = null;
+  activeVasJourney.productIndex = null;
+  const restore = activeVasJourney.restore;
+  if (restore && restore.provider) activeVasJourney.providerCode = restore.provider;
+  renderVasProviderOptions(form);
+  if (restore && restore.provider) {
+    const select = form.querySelector('[name="provider"]');
+    if (select && Array.from(select.options).some((option) => option.value === restore.provider)) {
+      select.value = restore.provider;
+      activeVasJourney.providerCode = restore.provider;
+      syncVasProviderName(form);
+    }
+  }
+  renderVasCatalogueSection(form);
+  if (restore && restore.productCode) {
+    const provider = vasSelectedProvider();
+    const index = provider ? provider.products.findIndex((product) => product.code === restore.productCode) : -1;
+    if (index >= 0) {
+      activeVasJourney.product = provider.products[index];
+      activeVasJourney.productIndex = String(index);
+    } else if (restore.openValue) {
+      activeVasJourney.productIndex = "open";
+    }
+  }
+  activeVasJourney.restore = null;
+  syncVasProductFields(form);
+  // A restored fixed-price product must not silently overwrite an amount the
+  // customer changed on the review screen.
+  if (restore && restore.amount && !activeVasJourney.product) {
+    const amountField = form.querySelector('[name="amount"]');
+    if (amountField && !amountField.readOnly) amountField.value = restore.amount;
+  }
+}
+
+// Rebuilds the VAS journey for a transaction that is already under review, so
+// going back never costs the customer their provider, product or details.
+function reopenVasJourneyFromContext(context) {
+  const data = context.data || {};
+  const kind = String(data.vasJourney || "");
+  if (!kind || !VAS_JOURNEYS[kind]) return false;
+  const service = (state.services || []).find((item) => item.serviceCode === data.serviceCode)
+    || { serviceCode: data.serviceCode, action: kind, label: VAS_JOURNEYS[kind].eyebrow };
+  const amount = data.amount != null && data.amount !== "" ? String(data.amount) : String(context.amount || "");
+  const carry = {
+    recipient: data.recipient || "",
+    amount,
+    reference: data.reference || ""
+  };
+  openVasJourneyModal(service, kind, carry, {
+    provider: data.provider || "",
+    productCode: data.vasProductCode || "",
+    openValue: !data.vasProductCode,
+    amount
+  });
+  return true;
+}
+
+function clearVasValidationPanel(form) {
+  const existing = form.querySelector("[data-vas-validation]");
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+}
+
+function vasValidationRows(data) {
+  const rows = [
+    ["Name", vasText(data, ["customerName", "customer_name", "name", "accountName", "account_name", "holder"])],
+    ["Address", vasText(data, ["address", "customerAddress", "customer_address", "premises"])],
+    ["Meter or account", vasText(data, ["meterNumber", "meter_number", "accountNumber", "account_number", "identifier"])],
+    ["Utility or biller", vasText(data, ["utility", "municipality", "providerName", "provider_name", "billerName", "biller_name"])],
+    ["Amount due", vasNumber(data, ["amountDue", "amount_due", "outstandingBalance", "outstanding_balance", "balance"]) ? money(vasNumber(data, ["amountDue", "amount_due", "outstandingBalance", "outstanding_balance", "balance"])) : ""],
+    ["Meter type", vasText(data, ["meterType", "meter_type", "tariff", "tariffName", "tariff_name"])]
+  ].filter(([, value]) => value);
+  return rows;
+}
+
+// Renders the validation outcome inside the live form so the meter number,
+// amount and reference the user already typed are preserved. Only fields the
+// provider actually returned are shown; nothing is inferred.
+function renderVasValidationPanel(form, outcome) {
+  clearVasValidationPanel(form);
+  const anchor = form.querySelector("[data-vas-validate-anchor]");
+  if (!anchor) return;
+  const config = activeVasJourney ? activeVasJourney.config : { validateHeading: "Account" };
+  const panel = document.createElement("div");
+  panel.className = `recipient-verify-result vas-validation${outcome.status === "ok" ? "" : " is-missing"}`;
+  panel.dataset.vasValidation = "true";
+  panel.setAttribute("role", "status");
+  panel.setAttribute("aria-live", "polite");
+
+  if (outcome.status === "ok") {
+    const rows = vasValidationRows(outcome.data || {});
+    panel.innerHTML = rows.length
+      ? `<p class="rv-head">${esc(config.validateHeading)} verified</p>
+         ${rows.map(([label, value]) => `<div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(value)}</strong><small>${esc(label)}</small></span></div>`).join("")}
+         <p class="rv-note">Only continue if these details match the ${esc(config.validateHeading.toLowerCase())} you intend to pay.</p>`
+      : `<p class="rv-head rv-head-missing">${esc(config.validateHeading)} details not returned</p>
+         <p class="rv-note">TitoPay confirmed the request but returned no ${esc(config.validateHeading.toLowerCase())} details to display. Check the number carefully before you continue.</p>`;
+  } else if (outcome.status === "unsupported") {
+    panel.innerHTML = `<p class="rv-head rv-head-missing">${esc(config.validateHeading)} verification unavailable</p>
+      <p class="rv-note">TitoPay cannot verify this ${esc(config.validateHeading.toLowerCase())} yet, so it has not been checked. Confirm the number is correct before you continue — your details are still here.</p>`;
+  } else {
+    panel.innerHTML = `<p class="rv-head rv-head-missing">${esc(config.validateHeading)} not verified</p>
+      <p class="rv-note">${esc(outcome.message || "TitoPay could not verify this number right now.")} Your details are still here — retry or check the number.</p>`;
+  }
+  anchor.insertAdjacentElement("afterend", panel);
+}
+
+async function validateVasIdentifier(button) {
+  const form = button.closest("form");
+  if (!form || !activeVasJourney) return;
+  const { config } = activeVasJourney;
+  const field = form.querySelector('[name="recipient"]');
+  const identifier = String(field ? field.value : "").trim();
+  if (!identifier) {
+    showToast(`Enter the ${config.recipientLabel.toLowerCase()} first.`, "error");
+    if (field) field.focus();
+    return;
+  }
+  const providerSelect = form.querySelector('[name="provider"]');
+  setButtonBusy(button, true);
+  try {
+    const payload = await api(VAS_VALIDATE_PATH, {
+      method: "POST",
+      body: {
+        service: config.vasKey,
+        provider: providerSelect ? providerSelect.value : "",
+        identifier
+      }
+    });
+    if (!document.contains(form)) return;
+    renderVasValidationPanel(form, { status: "ok", data: payload.validation || payload.data || payload });
+  } catch (error) {
+    if (!document.contains(form)) return;
+    const status = Number(error?.status || 0);
+    if (status === 404 || status === 501) renderVasValidationPanel(form, { status: "unsupported" });
+    else renderVasValidationPanel(form, { status: "failed", message: friendlyFormError(error, "vas-validate") });
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function copyVasCredential(button) {
+  const value = button.dataset.vasCopy || "";
+  const label = button.dataset.vasCopyLabel || "Details";
+  if (!value) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      showToast(`${label} copied.`);
+      return;
+    }
+    throw new Error("Clipboard unavailable");
+  } catch (error) {
+    // Selecting the value lets the customer copy it manually when the browser
+    // blocks clipboard access. A token must never be silently unavailable.
+    const target = button.closest(".vas-credential")?.querySelector(".vas-credential-value");
+    if (target && window.getSelection && document.createRange) {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      showToast(`${label} selected. Copy it from the screen.`);
+      return;
+    }
+    showToast(`${label} could not be copied. Write it down before closing.`, "error");
+  }
+}
+
+// The Services grid presents airtime and data behind one "Airtime & Data" tile,
+// which previously opened the airtime form only -- there was no route to a data
+// purchase at all. The switch below is offered only when the service catalogue
+// really does carry separate airtime and data services, so each side keeps its
+// own serviceCode instead of one being invented.
+const VAS_MOBILE_VARIANTS = [
+  { kind: "airtime", label: "Airtime", ids: ["airtime"] },
+  { kind: "data", label: "Data", ids: ["data", "mobile-data"] },
+  { kind: "sms", label: "SMS", ids: ["sms", "sms-bundle", "sms-bundles"] }
+];
+
+function vasProductTypeVariants(service) {
+  const action = String(service.action || "").toLowerCase();
+  const mobile = ["airtime", "airtime-data", "airtime-and-data", "data", "mobile-data", "sms", "sms-bundle", "sms-bundles"];
+  if (!mobile.includes(action)) return [];
+  const variants = [];
+  VAS_MOBILE_VARIANTS.forEach((variant) => {
+    for (let index = 0; index < variant.ids.length; index += 1) {
+      const match = serviceById(variant.ids[index]);
+      if (match && match.serviceCode && !isDisabledService(match)) {
+        variants.push({ kind: variant.kind, label: variant.label, serviceCode: match.serviceCode });
+        return;
+      }
+    }
+  });
+  return variants.length > 1 ? variants : [];
+}
+
+function isDisabledService(service) {
+  return String(service.status || "").toLowerCase() === "disabled";
+}
+
+function vasProductTypeSwitch(variants, kind) {
+  if (variants.length < 2) return "";
+  return `<div class="vas-switch" role="group" aria-label="Product type">
+    ${variants.map((variant) => `
+      <button class="vas-switch-btn${variant.kind === kind ? " is-active" : ""}" type="button" data-vas-kind="${esc(variant.kind)}" aria-pressed="${variant.kind === kind ? "true" : "false"}">${esc(variant.label)}</button>`).join("")}
+  </div>`;
+}
+
+function switchVasProductType(button) {
+  if (!activeVasJourney) return;
+  const kind = button.dataset.vasKind;
+  if (!kind || kind === activeVasJourney.kind) return;
+  const variant = (activeVasJourney.variants || []).find((item) => item.kind === kind);
+  if (!variant) return;
+  const carry = captureVasCarry(button.closest("form"));
+  openVasJourneyModal(Object.assign({}, activeVasJourney.service, { serviceCode: variant.serviceCode }), kind, carry);
+}
+
+function openPurchaseModal(service) {
+  openVasJourneyModal(service, vasJourneyKind(service));
 }
 
 function openPayBillsModal(service) {
-  const billers = ["DStv", "Municipal bill", "Water", "Rates", "Utilities", "School fees", "Insurance", "Other biller"];
+  openVasJourneyModal(service, "bill");
+}
+
+function openVasJourneyModal(service, kind, carry = null, restore = null) {
+  const config = VAS_JOURNEYS[kind] || VAS_JOURNEYS.airtime;
+  const variants = vasProductTypeVariants(service);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Pay Bills</p><h2>Pay account bills</h2><p class="lead">Pay DStv, municipal, water, rates and supported utility bills. TitoPay will show the fee preview before processing.</p></div>
+      <div>
+        <p class="eyebrow">${esc(service.label || config.eyebrow)}</p>
+        <h2>${esc(config.title)}</h2>
+        <p class="lead">${esc(config.lead)}</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid" data-form="transaction">
+    <form class="form-grid stable-service-form vas-form" data-form="transaction" data-vas-journey="${esc(kind)}">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
-      <input type="hidden" name="integrationFlow" value="vas_bill_payment">
-      <input type="hidden" name="vasProviderReady" value="ott_or_vas_provider">
-      <div class="field"><label>Biller</label><select name="provider">${billers.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
-      <div class="field"><label>Account or customer number</label><input name="recipient" placeholder="DStv smartcard, municipal account or bill reference" required></div>
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="Bill payment reference"></div>
-      <button class="btn primary" type="submit">${icon("list")} Preview bill payment</button>
+      ${config.integrationFlow ? `<input type="hidden" name="integrationFlow" value="${esc(config.integrationFlow)}">` : ""}
+      ${config.providerReady ? `<input type="hidden" name="vasProviderReady" value="${esc(config.providerReady)}">` : ""}
+      <input type="hidden" name="vasProductCode" value="" data-vas-product-code>
+      <input type="hidden" name="vasProductName" value="" data-vas-product-name>
+      <input type="hidden" name="vasProviderName" value="" data-vas-provider-name>
+      <input type="hidden" name="vasJourney" value="${esc(kind)}">
+      <p class="vas-progress">Step 1 of 3 &middot; Purchase details</p>
+      ${vasProductTypeSwitch(variants, kind)}
+      <div class="field">
+        <label for="vas-provider">${esc(config.providerLabel)}</label>
+        <select id="vas-provider" name="provider" data-vas-provider disabled>
+          <option>Loading...</option>
+        </select>
+      </div>
+      <section class="vas-catalogue" data-vas-catalogue aria-live="polite"></section>
+      <div class="field" data-vas-validate-anchor>
+        <label for="vas-recipient">${esc(config.recipientLabel)}</label>
+        <input id="vas-recipient" name="recipient" inputmode="${esc(config.recipientInputMode)}" autocomplete="off" placeholder="${esc(config.recipientPlaceholder)}" data-no-user-verify="true" required>
+        ${config.validate ? `<button class="btn ghost vas-validate" type="button" data-vas-validate="1">${icon("shield")} ${esc(config.validateLabel)}</button>` : ""}
+      </div>
+      <div class="field">
+        <label for="vas-amount">${esc(config.amountLabel)}</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="vas-amount" name="amount" inputmode="decimal" required></div>
+        <p class="field-hint" id="vas-amount-hint" data-vas-amount-hint>${esc(config.openValueNote)}</p>
+      </div>
+      <div class="field">
+        <label for="vas-reference">Reference</label>
+        <input id="vas-reference" name="reference" placeholder="${esc(config.title)} reference">
+      </div>
+      <button class="btn primary" type="submit">${icon(config.icon)} ${esc(config.submitLabel)}</button>
     </form>
   `);
+  // Set after openModal: openModal closes any previous modal first, which
+  // clears the journey record.
+  activeVasJourney = {
+    config,
+    kind,
+    service,
+    variants,
+    catalogue: { status: "loading", providers: [] },
+    providerCode: "",
+    product: null,
+    productIndex: null,
+    carry: carry || null,
+    restore: restore || null
+  };
+  const form = document.querySelector('.modal-card form[data-vas-journey]');
+  if (!form) return;
+  // Anything the customer already typed survives a product-type switch or a
+  // return from another screen.
+  restoreVasCarry(form, carry);
+  // Fire and forget: a catalogue problem must never surface as an unhandled
+  // rejection, and loadVasCatalogue already renders its own failure state.
+  refreshVasCatalogue(form).catch(() => {});
+}
+
+// Restores previously entered values into a freshly rendered journey form.
+// Only fields the customer actually filled are written back.
+function restoreVasCarry(form, carry) {
+  if (!carry) return;
+  Object.entries(carry).forEach(([name, value]) => {
+    if (value === "" || value == null) return;
+    const field = form.querySelector(`[name="${name}"]`);
+    if (!field || field.readOnly) return;
+    field.value = value;
+  });
+}
+
+// Snapshot of everything the customer has entered in the live journey, used
+// whenever the journey has to be re-rendered.
+function captureVasCarry(form) {
+  if (!form) return null;
+  const carry = {};
+  const productPriced = Boolean(activeVasJourney && activeVasJourney.product && activeVasJourney.product.amount);
+  form.querySelectorAll("input:not([type=hidden]), textarea, select").forEach((field) => {
+    if (!field.name || field.name === "provider") return;
+    if (field.name === "amount" && productPriced) return;
+    if (field.value) carry[field.name] = field.value;
+  });
+  return carry;
 }
 
 function contactSuggestions() {
@@ -5208,6 +6041,9 @@ function transactionReviewRows(context) {
   const recipientAmount = Number(preview.recipientAmount ?? preview.netAmount ?? amount);
   const rows = [
     ["Service", serviceLabelForCode(data.serviceCode), "grid"],
+    // Provider selection and product only appear when the journey captured them.
+    ...(data.vasProviderName || data.provider ? [["Provider", data.vasProviderName || data.provider, "bank"]] : []),
+    ...(data.vasProductName ? [["Product", data.vasProductName, "tag"]] : []),
     ["Amount", money(amount), "wallet", "strong"],
     ["TitoPay fee", money(fee), "shield"],
     ["Third-party fee", money(Number(preview.thirdPartyFee || data.thirdPartyFee || 0)), "bank"],
@@ -5248,7 +6084,7 @@ function openTransactionReviewModal(context) {
 
 function renderTransactionEditFields(context) {
   const data = context.data || {};
-  const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "documentAction"];
+  const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "vasProductCode", "vasProductName", "vasProviderName", "vasJourney", "documentAction"];
   const labels = {
     recipient: "Recipient, account or reference",
     amount: "Amount",
@@ -5294,6 +6130,12 @@ function openTransactionEditModal(context) {
       <div><p class="eyebrow">Edit Transaction</p><h2>${esc(serviceLabelForCode(context.data?.serviceCode))}</h2><p class="lead">Update details, then preview fees again before confirming.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${(context.verifiedRecipients || []).length ? `
+      <div class="recipient-verify-result" role="status">
+        <p class="rv-head">${context.verifiedRecipients.length === 1 ? "Verified TitoPay user" : "Verified TitoPay users"}</p>
+        ${context.verifiedRecipients.map((item) => `<div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(reviewRecipientName(item))}</strong><small>${esc([reviewRecipientUsername(item), maskContact((item.user || {}).phone || (item.user || {}).email || item.identifier || "")].filter(Boolean).join(" · "))}</small></span></div>`).join("")}
+        <p class="rv-note">This verification is still in place. Changing the recipient will verify it again before you confirm.</p>
+      </div>` : ""}
     <form class="form-grid stable-service-form" data-form="transaction">
       ${renderTransactionEditFields(context)}
       <button class="btn primary" type="submit">${icon("refresh")} Preview again</button>
@@ -5421,19 +6263,121 @@ async function shareInvite(identifier, message, url) {
   }
 }
 
+// Provider credentials that some VAS purchases return and that the customer
+// cannot use the purchase without: a prepaid electricity token, a voucher PIN,
+// the provider's own reference. These are read from whatever the API sends and
+// are never generated, defaulted or placeheld -- a row appears only when the
+// value is genuinely in the response.
+const VAS_CREDENTIAL_FIELDS = [
+  { label: "Electricity token", keys: ["token", "electricityToken", "electricity_token", "stsToken", "sts_token", "meterToken", "meter_token"], copy: true, mono: true, keep: true },
+  { label: "Voucher PIN", keys: ["pin", "voucherPin", "voucher_pin", "voucherCode", "voucher_code"], copy: true, mono: true, keep: true },
+  { label: "Voucher serial", keys: ["serial", "serialNumber", "serial_number", "voucherSerial", "voucher_serial"], copy: true, mono: true, keep: true },
+  { label: "Units", keys: ["units", "kwh", "unitsPurchased", "units_purchased"], keep: true },
+  { label: "Product", keys: ["productName", "product_name", "bundleName", "bundle_name"] },
+  { label: "Provider", keys: ["providerName", "provider_name", "networkName", "network_name", "billerName", "biller_name"] },
+  { label: "Provider reference", keys: ["providerReference", "provider_reference", "providerRef", "provider_ref", "vasReference", "vas_reference"], copy: true, keep: true },
+  { label: "Receipt number", keys: ["receiptNumber", "receipt_number", "providerReceipt", "provider_receipt"], copy: true, keep: true },
+  { label: "Valid until", keys: ["expiresAt", "expires_at", "tokenExpiry", "token_expiry", "validUntil", "valid_until"], keep: true }
+];
+
+const VAS_SERVICE_CODE_PATTERN = /airtime|data|electricity|voucher|bill/i;
+
+function vasCredentialSources(transaction) {
+  const root = transaction || {};
+  return [
+    root,
+    root.metadata,
+    root.vas,
+    root.provider,
+    root.providerResponse,
+    root.provider_response,
+    root.result,
+    root.credentials
+  ].filter((source) => source && typeof source === "object" && !Array.isArray(source));
+}
+
+function vasCredentials(transaction) {
+  const sources = vasCredentialSources(transaction);
+  const found = [];
+  const seen = new Set();
+  VAS_CREDENTIAL_FIELDS.forEach((field) => {
+    for (let index = 0; index < sources.length; index += 1) {
+      const value = vasText(sources[index], field.keys);
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      found.push(Object.assign({}, field, { value }));
+      return;
+    }
+  });
+  return found;
+}
+
+function vasKeepCredentials(credentials) {
+  return credentials.filter((item) => item.keep);
+}
+
+function vasInfoCredentials(credentials) {
+  return credentials.filter((item) => !item.keep);
+}
+
+function vasCredentialPanel(allCredentials) {
+  const credentials = vasKeepCredentials(allCredentials || []);
+  if (!credentials.length) return "";
+  return `
+    <section class="vas-credentials" aria-label="Provider details">
+      <p class="vas-credentials-head">${icon("shield")} Keep these details</p>
+      ${credentials.map((item) => `
+        <div class="vas-credential${item.mono ? " is-mono" : ""}">
+          <span class="vas-credential-label">${esc(item.label)}</span>
+          <span class="vas-credential-value">${esc(item.value)}</span>
+          ${item.copy ? `<button class="icon-btn" type="button" data-vas-copy="${esc(item.value)}" data-vas-copy-label="${esc(item.label)}" aria-label="Copy ${esc(item.label)}">${icon("copy")}</button>` : ""}
+        </div>`).join("")}
+    </section>`;
+}
+
+function transactionOutcomeState(transaction) {
+  const status = String(transaction && transaction.status || "").toLowerCase();
+  if (/fail|declin|reject|error/.test(status)) return { tone: "failed", eyebrow: "Not completed", heading: "Purchase not completed" };
+  if (/pending|processing|submitted|queued|awaiting/.test(status)) return { tone: "pending", eyebrow: "In progress", heading: "Purchase in progress" };
+  return { tone: "complete", eyebrow: "Success", heading: "Purchase complete" };
+}
+
 function openSuccessModal(transaction, preview, serviceCode, recipient) {
+  const record = transaction || {};
+  const credentials = vasCredentials(record);
+  const outcome = transactionOutcomeState(record);
+  const isVasService = VAS_SERVICE_CODE_PATTERN.test(String(serviceCode || ""));
+  const status = String(record.status || "").toLowerCase();
+  const awaitingCredentials = isVasService
+    && !credentials.length
+    && /pending|processing|submitted|queued|awaiting/.test(status);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Success</p><h2>Transaction recorded</h2><p class="lead">TitoPay has recorded this ${esc(serviceCode)} transaction.</p></div>
+      <div>
+        <p class="eyebrow">${esc(outcome.eyebrow)}</p>
+        <h2>${esc(isVasService ? outcome.heading : "Transaction recorded")}</h2>
+        <p class="lead">${esc(serviceLabelForCode(serviceCode))} &middot; ${esc(money(preview && preview.total || record.total))} debited</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${vasCredentialPanel(credentials)}
+    ${awaitingCredentials ? `
+      <section class="vas-notice" role="status">
+        <p class="vas-notice-head">Waiting for the provider</p>
+        <p class="vas-notice-body">TitoPay has submitted this purchase and is waiting for the provider to confirm it. Any token or PIN will appear on this transaction in Activity once the provider responds. Do not buy again.</p>
+      </section>` : ""}
     <section class="activity-list">
-      ${settingsRow("Reference", transaction && (transaction.reference || transaction.id) || `TP-${Date.now()}`, "list")}
-      ${settingsRow("Recipient", recipient || "TitoPay", "user")}
-      ${settingsRow("Amount", money(preview && preview.amount || transaction && transaction.amount), "wallet")}
-      ${settingsRow("Total debited", money(preview && preview.total || transaction && transaction.total), "shield")}
-      ${settingsRow("Status", transaction && transaction.status || "processed", "sparkles")}
+      ${settingsRow("Reference", record.reference || record.id || "Recorded", "list")}
+      ${settingsRow("Destination", recipient || "TitoPay", "user")}
+      ${vasInfoCredentials(credentials).map((item) => settingsRow(item.label, item.value, item.label === "Provider" ? "bank" : "tag")).join("")}
+      ${settingsRow("Amount", money(preview && preview.amount || record.amount), "wallet", "strong")}
+      ${settingsRow("Total debited", money(preview && preview.total || record.total), "withdraw", "total")}
+      ${settingsRow("Status", transactionStatusLabel(record.status), "sparkles")}
     </section>
+    <div class="tx-detail-actions">
+      <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} View in Activity</button>
+      <button class="btn ghost" type="button" data-close>Done</button>
+    </div>
   `);
 }
 
@@ -8977,6 +9921,7 @@ function closeModal() {
   if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
   stopTitoPayChatPolling();
   resetProfilePhotoCrop();
+  activeVasJourney = null;
   document.body.classList.remove("modal-open");
   unlockPageScroll();
   const opener = state.modalOpener;
@@ -9087,6 +10032,7 @@ function icon(name) {
     phone: `<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>`,
     "sim-card": `<path d="M8 2h6l4 4v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v5h4"/><path d="M9 14h6"/><path d="M9 18h3"/><path d="M10 10h.01"/><path d="M14 10h.01"/>`,
     signal: `<path d="M4 18h2"/><path d="M9 18v-4"/><path d="M14 18v-8"/><path d="M19 18V6"/>`,
+    "sms-bundle": `<path d="M4 4h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16h-8.5L7 20v-4H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 4Z"/><path d="M7 8.5h10"/><path d="M7 12h6"/>`,
     "data-bundle": `<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 17h8"/><path d="M8 7h.01"/><path d="M12 7h.01"/><path d="M16 7h.01"/><path d="M8 11h8"/><path d="M8 14h8"/>`,
     zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
     electricity: `<path d="m13 2-9 13h7l-1 7 10-14h-7z"/><path d="M5 21h14"/>`,
@@ -9128,7 +10074,7 @@ function icon(name) {
     "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 11h7"/><path d="M9 15h7"/><path d="M9 19h5"/>`,
     "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M8 12h8"/><path d="m13 9 3 3-3 3"/><path d="M7 16h4"/>`,
     "message-check": `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="m9 12 2 2 4-5"/>`,
-    chat: `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="M8.5 11.8h.01"/><path d="M12 11.8h.01"/><path d="M15.5 11.8h.01"/>`,
+    chat: `<path d="M16 11.5V6.5A2.5 2.5 0 0 0 13.5 4h-8A2.5 2.5 0 0 0 3 6.5v5A2.5 2.5 0 0 0 5.5 14H7v3l3.4-3"/><path d="M10.5 11h8A2.5 2.5 0 0 1 21 13.5v4a2.5 2.5 0 0 1-2.5 2.5H17v2.2L13.6 20h-3.1A2.5 2.5 0 0 1 8 17.5v-4A2.5 2.5 0 0 1 10.5 11Z"/>`,
     chatbot: `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="M8.5 11.8h.01"/><path d="M12 11.8h.01"/><path d="M15.5 11.8h.01"/>`,
     feedback: `<path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6A3.5 3.5 0 0 1 16.5 16H11l-5 4v-4.4A3.5 3.5 0 0 1 4 12.5z"/><path d="m9 9 2 2 4-4"/><path d="M9 13h6"/>`,
     bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>`,

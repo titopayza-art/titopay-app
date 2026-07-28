@@ -5339,3 +5339,271 @@ button.activity-item:focus-visible {
   min-height: 44px;
   margin-top: 2px;
 }
+
+/* ---------------------------------------------------------------------------
+   VAS purchase journey: provider, product catalogue, validation, credentials
+   --------------------------------------------------------------------------- */
+
+.vas-progress {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.vas-catalogue {
+  display: grid;
+  gap: 10px;
+}
+
+.vas-catalogue:empty {
+  display: none;
+}
+
+.vas-section-label {
+  margin: 0;
+  color: var(--navy);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.vas-product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.vas-product {
+  display: grid;
+  gap: 3px;
+  align-content: start;
+  min-height: 82px;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color 0.18s var(--ease-premium), background 0.18s var(--ease-premium);
+}
+
+.vas-product:hover {
+  border-color: var(--blue-2);
+}
+
+.vas-product:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.vas-product.is-selected {
+  border-color: var(--blue);
+  background: var(--soft-blue);
+}
+
+.vas-product-name {
+  color: var(--navy);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.vas-product-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.vas-product-price {
+  margin-top: 2px;
+  color: var(--blue);
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.vas-product-open .vas-product-price {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.vas-product-skeleton {
+  display: block;
+  height: 82px;
+  border-radius: var(--radius-control);
+}
+
+.vas-loading-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.vas-notice {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.vas-notice-head {
+  margin: 0;
+  color: var(--navy);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.vas-notice-body {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.vas-notice .vas-retry {
+  justify-self: start;
+  min-height: 40px;
+  margin-top: 2px;
+  padding-inline: 14px;
+}
+
+.vas-validate {
+  justify-self: start;
+  min-height: 44px;
+  margin-top: 8px;
+  padding-inline: 14px;
+}
+
+.vas-validation {
+  margin-top: 12px;
+}
+
+.vas-credentials {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(10, 77, 255, 0.22);
+  border-radius: var(--radius-control);
+  background: var(--soft-blue);
+}
+
+.vas-credentials-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  color: var(--deep-blue);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.vas-credentials-head svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.vas-credential {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.vas-credential-label {
+  grid-column: 1;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.vas-credential-value {
+  grid-column: 1;
+  min-width: 0;
+  color: var(--navy);
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.vas-credential.is-mono .vas-credential-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.02rem;
+  letter-spacing: 0.04em;
+}
+
+.vas-credential .icon-btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.vas-form input[readonly] {
+  color: var(--navy);
+  background: var(--soft);
+  font-weight: 700;
+}
+
+@media (max-width: 400px) {
+  .vas-product-grid {
+    grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  }
+}
+
+.vas-switch {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.vas-switch-btn {
+  min-height: 44px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.18s var(--ease-premium), color 0.18s var(--ease-premium);
+}
+
+.vas-switch-btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.vas-switch-btn.is-active {
+  color: var(--blue);
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+}
+
+.vas-form.vas-unavailable .field {
+  opacity: 0.55;
+}
+
+.vas-form.vas-unavailable .vas-catalogue,
+.vas-form.vas-unavailable .vas-switch {
+  opacity: 1;
+}
