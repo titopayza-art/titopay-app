@@ -1,1 +1,1 @@
-TitoPay PWA build: honesty-and-tests-v179-20260728
+TitoPay PWA build: catalogue-fix-v180-20260728

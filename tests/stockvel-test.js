@@ -46,6 +46,13 @@ const GROUP = {
 
 (async () => {
   const cat = JSON.parse(fs.readFileSync(CATALOGUE, "utf8"));
+  // Stockvel is hidden in the shipped catalogue until its backend exists. The
+  // feature itself is still built and still has to keep working, so this
+  // harness serves a catalogue with it switched on -- exactly what the live
+  // catalogue will look like on the day it is enabled.
+  (cat.items || []).forEach((row) => {
+    if (row.service_code === "stockvel") row.personal_visible = true;
+  });
   const browser = await chromium.launch({ ...launchOptions() });
   const ctx = await browser.newContext(devices["iPhone 13"]);
   await ctx.addInitScript(() => localStorage.setItem("titopay_candidate_auth_v1", JSON.stringify({ accessToken: "t", refreshToken: "r" })));
