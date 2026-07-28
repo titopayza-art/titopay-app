@@ -89,7 +89,7 @@ const state = {
   receiptFilters: { search: "", range: "all", merchant: "" },
   pendingTransactionReview: null,
   pendingQrPaymentReview: null,
-  stockvel: { status: "idle", groups: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
+  stockvel: { status: "idle", groups: [], invitations: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
   ticketing: { eligibility: null, events: [], loading: false },
   enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
   publicEvent: null,
@@ -1878,6 +1878,9 @@ async function onSubmit(event) {
     if (form.dataset.form === "reset-confirm") await confirmReset(data);
     if (form.dataset.form === "otp") await verifyOtp(data);
     if (form.dataset.form === "stockvel-join") await submitStockvelJoin(data);
+    else if (form.dataset.form === "stockvel-add-members") await submitStockvelAddMembers(data);
+    else if (form.dataset.form === "stockvel-withdrawal") await submitStockvelWithdrawal(data);
+    else if (form.dataset.form === "stockvel-close") await submitStockvelClose(data);
     else if (form.dataset.form === "transaction") await processTransaction(data);
     if (form.dataset.form === "qr-pay") await processQrPayment(data);
     if (form.dataset.form === "receive") await generateQr(data);
@@ -1984,6 +1987,46 @@ async function onClick(event) {
   if (stockvelRetry) {
     if (stockvelRetry.dataset.stockvelRetry === "detail") await refreshStockvelDashboard(state.stockvel.activeId);
     else await refreshStockvelHub({ force: true });
+    return;
+  }
+  const stockvelInviteAccept = event.target.closest("[data-stockvel-invite-accept]");
+  if (stockvelInviteAccept) {
+    await respondToStockvelInvitation(stockvelInviteAccept.dataset.stockvelInviteAccept, true);
+    return;
+  }
+  const stockvelInviteDecline = event.target.closest("[data-stockvel-invite-decline]");
+  if (stockvelInviteDecline) {
+    await respondToStockvelInvitation(stockvelInviteDecline.dataset.stockvelInviteDecline, false);
+    return;
+  }
+  const stockvelAddMembers = event.target.closest("[data-stockvel-add-members]");
+  if (stockvelAddMembers) {
+    openStockvelAddMembersModal(stockvelAddMembers.dataset.stockvelAddMembers);
+    return;
+  }
+  const stockvelWithdraw = event.target.closest("[data-stockvel-withdraw]");
+  if (stockvelWithdraw) {
+    openStockvelWithdrawalRequestModal(stockvelWithdraw.dataset.stockvelWithdraw);
+    return;
+  }
+  const stockvelApprove = event.target.closest("[data-stockvel-withdrawal-approve]");
+  if (stockvelApprove) {
+    await respondToStockvelWithdrawal(stockvelApprove.dataset.stockvelWithdrawalApprove, true);
+    return;
+  }
+  const stockvelDecline = event.target.closest("[data-stockvel-withdrawal-decline]");
+  if (stockvelDecline) {
+    await respondToStockvelWithdrawal(stockvelDecline.dataset.stockvelWithdrawalDecline, false);
+    return;
+  }
+  const stockvelClose = event.target.closest("[data-stockvel-close]");
+  if (stockvelClose) {
+    openStockvelCloseModal(stockvelClose.dataset.stockvelClose);
+    return;
+  }
+  const stockvelPrint = event.target.closest("[data-stockvel-statement-print]");
+  if (stockvelPrint) {
+    printStockvelStatement();
     return;
   }
   const stockvelContribute = event.target.closest("[data-stockvel-contribute]");
@@ -5796,6 +5839,7 @@ function normalizeStockvelMember(raw) {
     lastContributionAt: stockvelText(source, ["lastContributionAt", "last_contribution_at", "lastPaidAt", "last_paid_at"]),
     lastContributionAmount: stockvelNumber(source, ["lastContributionAmount", "last_contribution_amount", "lastAmount", "last_amount"]),
     lastActivityAt: stockvelText(source, ["lastActivityAt", "last_activity_at", "lastSeenAt", "last_seen_at"]),
+    outstandingAmount: stockvelNumber(source, ["outstandingAmount", "outstanding_amount", "outstandingBalance", "outstanding_balance", "amountOwed", "amount_owed", "arrears"]),
     totalContributed: stockvelNumber(source, ["totalContributed", "total_contributed", "lifetimeContribution", "lifetime_contribution"]),
     streak: stockvelNumber(source, ["streak", "contributionStreak", "contribution_streak"])
   };
@@ -5884,6 +5928,9 @@ function normalizeStockvelGroup(raw) {
     nextContributionAmount: stockvelNumber(source, ["nextContributionAmount", "next_contribution_amount", "nextAmount", "next_amount"]),
     myStatus: stockvelText(source, ["myStatus", "my_status", "yourStatus", "your_status", "contributionStatus", "contribution_status"]),
     myStreak: stockvelNumber(source, ["myStreak", "my_streak", "streak", "contributionStreak", "contribution_streak"]),
+    myOutstanding: stockvelNumber(source, ["myOutstanding", "my_outstanding", "yourOutstanding", "your_outstanding", "myOutstandingAmount", "my_outstanding_amount"]),
+    outstandingTotal: stockvelNumber(source, ["outstandingTotal", "outstanding_total", "totalOutstanding", "total_outstanding", "arrearsTotal", "arrears_total"]),
+    canManage: source.canManage === true || source.can_manage === true,
     inviteCode: stockvelText(source, ["inviteCode", "invite_code", "joinCode", "join_code"]),
     inviteUrl: stockvelText(source, ["inviteUrl", "invite_url", "joinUrl", "join_url", "shareUrl", "share_url"]),
     startedAt: stockvelText(source, ["startDate", "start_date", "startedAt", "started_at", "createdAt", "created_at"]),
@@ -6057,10 +6104,10 @@ async function refreshStockvelHub({ force = false } = {}) {
   const host = document.querySelector("[data-stockvel-hub]");
   if (!host) return;
   host.innerHTML = stockvelSkeletonCards();
-  const store = await loadStockvelGroups({ force });
+  const [store] = await Promise.all([loadStockvelGroups({ force }), loadStockvelInvitations()]);
   const current = document.querySelector("[data-stockvel-hub]");
   if (!current) return;
-  current.innerHTML = renderStockvelHub(store);
+  current.innerHTML = `${renderStockvelInvitations(store)}${renderStockvelHub(store)}`;
   paintStockvel(current);
 }
 
@@ -6493,7 +6540,9 @@ function renderStockvelOverview(group, store) {
     stockvelStat("Members", group.memberCount != null ? `${group.memberCount}${group.memberLimit ? ` / ${group.memberLimit}` : ""}` : null),
     stockvelStat("Paid this cycle", group.membersPaid != null ? String(group.membersPaid) : null),
     stockvelStat("Outstanding", group.membersOutstanding != null ? String(group.membersOutstanding) : null),
-    stockvelStat("Your streak", group.myStreak != null ? `${group.myStreak} in a row` : null)
+    stockvelStat("Your streak", group.myStreak != null ? `${group.myStreak} in a row` : null),
+    stockvelStat("Outstanding balance", group.outstandingTotal != null ? money(group.outstandingTotal) : null),
+    stockvelStat("You owe", group.myOutstanding != null && group.myOutstanding > 0 ? money(group.myOutstanding) : null)
   ].filter(Boolean).join("");
 
   const nextDue = group.nextContributionAt || group.nextContributionAmount != null ? `
@@ -6520,7 +6569,9 @@ function renderStockvelOverview(group, store) {
       </section>` : ""}
     ${!stats && !nextDue && !recent.length ? stockvelSectionUnavailable(store, "Group figures") : ""}
     <div class="tx-detail-actions">
-      ${group.inviteCode || group.inviteUrl ? `<button class="btn secondary" type="button" data-stockvel-invite="${esc(group.id)}">${icon("share")} Share invite</button>` : ""}
+      ${group.myOutstanding != null && group.myOutstanding > 0 ? `<button class="btn primary" type="button" data-stockvel-contribute="${esc(group.id)}">${icon("wallet")} Contribute ${esc(money(group.myOutstanding))}</button>` : ""}
+      <button class="btn secondary" type="button" data-stockvel-add-members="${esc(group.id)}">${icon("send")} Invite members</button>
+      <button class="btn secondary" type="button" data-stockvel-withdraw="${esc(group.id)}">${icon("withdraw")} Request withdrawal</button>
       <button class="btn secondary" type="button" data-action="open-stockvel-chat">${icon("chat")} Group chat</button>
       <button class="btn secondary" type="button" data-stockvel-statement="${esc(group.id)}">${icon("statement")} Statement</button>
     </div>`;
@@ -6592,6 +6643,7 @@ function renderStockvelMembers(group, store) {
           ${member.joinedAt ? `<small>Joined ${esc(stockvelDate(member.joinedAt))}</small>` : ""}
           ${member.lastContributionAt ? `<small>Last contribution ${esc(stockvelDate(member.lastContributionAt))}${member.lastContributionAmount != null ? ` · ${esc(money(member.lastContributionAmount))}` : ""}</small>` : ""}
           ${member.lastActivityAt ? `<small>Last active ${esc(stockvelDate(member.lastActivityAt))}</small>` : ""}
+          ${member.outstandingAmount != null && member.outstandingAmount > 0 ? `<small class="sv-owed">Outstanding ${esc(money(member.outstandingAmount))}</small>` : ""}
         </div>
         <span class="sv-member-aside">
           ${stockvelStatusChip(member.status)}
@@ -6599,13 +6651,12 @@ function renderStockvelMembers(group, store) {
         </span>
       </article>`).join("")}</div>` : `<section class="sv-empty compact"><strong>No match</strong><p>No member matches "${esc(needle)}".</p></section>`}
     <div class="tx-detail-actions">
-      <button class="btn secondary" type="button" data-stockvel-invite="${esc(group.id)}">${icon("send")} Invite members</button>
+      <button class="btn secondary" type="button" data-stockvel-add-members="${esc(group.id)}">${icon("send")} Invite members</button>
       <button class="btn ghost" type="button" data-stockvel-leave="${esc(group.id)}">Leave group</button>
     </div>`;
 }
 
 function renderStockvelContributions(group, store) {
-  if (!group.contributions.length) return stockvelSectionUnavailable(store, "Contribution history");
   const needle = store.search || "";
   const rows = group.contributions.filter((item) => stockvelMatchesSearch(needle, item.memberName, item.reference, item.cycle, item.status));
   const paid = group.contributions.filter((item) => /paid|settled|complete/i.test(item.status || "")).length;
@@ -6619,10 +6670,17 @@ function renderStockvelContributions(group, store) {
     stockvelStat("Your streak", group.myStreak != null ? `${group.myStreak} in a row` : null),
     stockvelStat("Lifetime", group.myContribution != null ? money(group.myContribution) : null)
   ].filter(Boolean).join("");
+  const owed = group.myOutstanding;
   return `
     ${stats ? `<div class="sv-stat-grid">${stats}</div>` : ""}
-    ${stockvelSearchField("Search contributions", needle)}
-    ${rows.length ? `<div class="activity-list">${rows.map((item) => `
+    ${owed != null && owed > 0 ? `
+      <section class="sv-next" aria-label="Your outstanding balance">
+        <div><p class="sv-section-label">You still owe</p><strong>${esc(money(owed))}</strong></div>
+        <em class="sv-chip warn">Outstanding</em>
+      </section>` : ""}
+    ${group.contributions.length ? stockvelSearchField("Search contributions", needle) : ""}
+    ${!group.contributions.length ? stockvelSectionUnavailable(store, "Contribution history")
+      : rows.length ? `<div class="activity-list">${rows.map((item) => `
       <article class="activity-item">
         <span class="icon-bubble">${icon("wallet")}</span>
         <div>
@@ -6653,7 +6711,10 @@ function renderStockvelActivity(group, store) {
 }
 
 function renderStockvelWithdrawals(group, store) {
-  if (!group.withdrawals.length) return stockvelSectionUnavailable(store, "Withdrawal requests");
+  const requestAction = `<div class="tx-detail-actions">
+      <button class="btn primary" type="button" data-stockvel-withdraw="${esc(group.id)}">${icon("withdraw")} Request a withdrawal</button>
+    </div>`;
+  if (!group.withdrawals.length) return `${stockvelSectionUnavailable(store, "Withdrawal requests")}${requestAction}`;
   return `
     <div class="sv-card-list">${group.withdrawals.map((item) => {
       const has = item.approvals != null && item.approvalsRequired != null && item.approvalsRequired > 0;
@@ -6672,8 +6733,14 @@ function renderStockvelWithdrawals(group, store) {
             <div class="sv-progress" role="img" aria-label="${item.approvals} of ${item.approvalsRequired} approvals received"><span data-sv-width="${percent}"></span></div>
           </div>` : ""}
         ${item.approvedBy.length ? `<small>Approved by ${esc(item.approvedBy.join(", "))}</small>` : ""}
+        ${/pending|awaiting|open|voting/i.test(item.status || "") && item.id ? `
+          <div class="sv-vote">
+            <button class="btn primary" type="button" data-stockvel-withdrawal-approve="${esc(item.id)}">${icon("check-circle")} Approve</button>
+            <button class="btn ghost" type="button" data-stockvel-withdrawal-decline="${esc(item.id)}">Decline</button>
+          </div>` : ""}
       </article>`;
-    }).join("")}</div>`;
+    }).join("")}</div>
+    ${requestAction}`;
 }
 
 function renderStockvelSettings(group, store) {
@@ -6730,6 +6797,9 @@ function renderStockvelSettings(group, store) {
       <p class="sv-section-label sv-danger-label">Danger zone</p>
       <p class="field-hint">Leaving a group does not return contributions already made. Settle anything outstanding with the organiser first.</p>
       <button class="btn ghost sv-danger-btn" type="button" data-stockvel-leave="${esc(group.id)}">Leave this group</button>
+      ${/organiser|organizer|admin|owner|creator/i.test(group.role || "") || group.canManage ? `
+        <p class="field-hint">Closing ends the group for every member. Only do this once the balance is settled.</p>
+        <button class="btn ghost sv-danger-btn" type="button" data-stockvel-close="${esc(group.id)}">Close this group</button>` : ""}
     </section>`;
 }
 
@@ -6770,7 +6840,7 @@ function openStockvelStatementModal(id) {
     </section>
     <div class="receipt-actions">
       <button class="btn secondary" type="button" data-close>${icon("check-circle")} Done</button>
-      <button class="btn primary" type="button" data-action="export-pdf">${icon("download")} Save statement</button>
+      <button class="btn primary" type="button" data-stockvel-statement-print="1">${icon("download")} Save statement</button>
     </div>
   `);
 }
@@ -6890,6 +6960,284 @@ async function confirmStockvelLeave(id) {
       "error"
     );
   }
+}
+
+
+// ---- Invitations -----------------------------------------------------------
+
+// Invitations addressed to this customer. Rendered on the hub only when the API
+// actually returns them, so nothing appears that the group has not really sent.
+function normalizeStockvelInvitation(raw) {
+  if (raw == null) return null;
+  const source = typeof raw === "object" ? raw : {};
+  const groupName = stockvelText(source, ["stockvelName", "stockvel_name", "groupName", "group_name", "name"]);
+  const id = stockvelText(source, ["id", "invitationId", "invitation_id", "inviteId", "invite_id", "code", "inviteCode", "invite_code"]);
+  if (!groupName && !id) return null;
+  return {
+    id: id || groupName,
+    groupId: stockvelText(source, ["stockvelId", "stockvel_id", "groupId", "group_id"]),
+    groupName: groupName || "Savings group",
+    invitedBy: stockvelText(source, ["invitedBy", "invited_by", "inviterName", "inviter_name", "from", "organiser"]),
+    contributionAmount: stockvelNumber(source, ["contributionAmount", "contribution_amount", "amount"]),
+    cadence: stockvelText(source, ["cadence", "frequency", "contributionFrequency", "contribution_frequency"]),
+    memberCount: stockvelNumber(source, ["memberCount", "member_count", "members"]),
+    invitedAt: stockvelText(source, ["invitedAt", "invited_at", "createdAt", "created_at"])
+  };
+}
+
+function renderStockvelInvitations(store) {
+  const invitations = store.invitations || [];
+  if (!invitations.length) return "";
+  return `
+    <section class="sv-invites" aria-label="Invitations to join a savings group">
+      <p class="sv-section-label">${invitations.length === 1 ? "You have an invitation" : `You have ${invitations.length} invitations`}</p>
+      ${invitations.map((invite) => `
+        <article class="sv-invite">
+          ${stockvelAvatar(invite.groupName)}
+          <div class="sv-invite-body">
+            <strong>${esc(invite.groupName)}</strong>
+            <small>${esc([
+              invite.invitedBy ? `Invited by ${invite.invitedBy}` : "",
+              invite.contributionAmount != null ? `${money(invite.contributionAmount)}${invite.cadence ? ` ${invite.cadence.toLowerCase()}` : ""}` : "",
+              invite.memberCount != null ? `${invite.memberCount} members` : ""
+            ].filter(Boolean).join(" · "))}</small>
+          </div>
+          <div class="sv-invite-actions">
+            <button class="btn primary" type="button" data-stockvel-invite-accept="${esc(invite.id)}">Accept</button>
+            <button class="btn ghost" type="button" data-stockvel-invite-decline="${esc(invite.id)}">Decline</button>
+          </div>
+        </article>`).join("")}
+    </section>`;
+}
+
+async function loadStockvelInvitations() {
+  const store = state.stockvel;
+  try {
+    const payload = await api(`${STOCKVEL_PATH}/invitations`);
+    store.invitations = stockvelList(payload, ["items", "invitations", "data"]).map(normalizeStockvelInvitation).filter(Boolean);
+  } catch (error) {
+    // An absent endpoint simply means there are no invitations to show.
+    store.invitations = [];
+  }
+  return store.invitations;
+}
+
+async function respondToStockvelInvitation(id, accept) {
+  try {
+    const result = await api(`${STOCKVEL_PATH}/invitations/${encodeURIComponent(id)}/${accept ? "accept" : "decline"}`, { method: "POST" });
+    const group = accept ? normalizeStockvelGroup(result.stockvel || result.group || result) : null;
+    showToast(accept ? `You have joined ${group ? group.name : "the group"}.` : "Invitation declined.");
+    state.stockvel.status = "idle";
+    if (accept && group && group.id) openStockvelDashboard(group.id);
+    else openStockvelModal();
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    showToast(
+      status === 404 || status === 501
+        ? "Responding to invitations is not available yet. Ask the organiser to add you directly."
+        : friendlyFormError(error, "stockvel-invitation"),
+      "error"
+    );
+  }
+}
+
+// Inviting people into a group that already exists. Members are normalised and
+// verified through the same recipient helper the rest of TitoPay uses.
+function openStockvelAddMembersModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  const remaining = group.memberLimit != null && group.memberCount != null ? group.memberLimit - group.memberCount : null;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">${esc(group.name)}</p>
+        <h2>Invite members</h2>
+        <p class="lead">Invite by TitoPay username, cellphone number or email address.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="stockvel-add-members">
+      <input type="hidden" name="stockvelId" value="${esc(group.id)}">
+      ${remaining != null ? `<p class="field-hint">${remaining > 0 ? `Room for ${remaining} more ${remaining === 1 ? "member" : "members"}.` : "This group is at its member limit."}</p>` : ""}
+      ${recipientAutoMethodField("memberMethod", "Member lookup method")}
+      <div class="field">
+        <label for="sv-add-members">People to invite</label>
+        <textarea id="sv-add-members" name="members" placeholder="@username, cellphone or email — one per line" required></textarea>
+      </div>
+      <button class="btn primary" type="submit"${remaining === 0 ? " disabled" : ""}>${icon("send")} Send invitations</button>
+    </form>
+    ${group.inviteCode || group.inviteUrl ? `
+      <div class="tx-detail-actions">
+        <button class="btn secondary" type="button" data-stockvel-invite="${esc(group.id)}">${icon("share")} Share invite code instead</button>
+      </div>` : ""}
+  `);
+}
+
+async function submitStockvelAddMembers(data) {
+  const groupId = String(data.stockvelId || "");
+  const members = normalizeRecipientList(data.members, data.memberMethod || "auto");
+  if (!members.length) throw new Error("Add at least one username, cellphone number or email address.");
+  try {
+    const result = await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}/invitations`, {
+      method: "POST",
+      body: { members }
+    });
+    const sent = stockvelNumber(result, ["invited", "sent", "count"]) ?? members.length;
+    showToast(`${sent} ${sent === 1 ? "invitation" : "invitations"} sent.`);
+    closeModal();
+    await refreshStockvelDashboard(groupId);
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status === 404 || status === 501) {
+      throw new Error("Inviting members into an existing group is not available yet. Share the invite code instead.");
+    }
+    throw new Error(friendlyFormError(error, "stockvel-invite"));
+  }
+}
+
+// ---- Withdrawals: request and approve --------------------------------------
+
+function openStockvelWithdrawalRequestModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">${esc(group.name)}</p>
+        <h2>Request a withdrawal</h2>
+        <p class="lead">The group approves a withdrawal before any money leaves it.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="stockvel-withdrawal">
+      <input type="hidden" name="stockvelId" value="${esc(group.id)}">
+      <div class="field">
+        <label for="sv-wd-amount">Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="sv-wd-amount" name="amount" inputmode="decimal" required></div>
+        ${group.balance != null ? `<p class="field-hint">The group holds ${esc(money(group.balance))}.</p>` : ""}
+      </div>
+      <div class="field">
+        <label for="sv-wd-reason">What is it for?</label>
+        <textarea id="sv-wd-reason" name="reason" placeholder="The group will see this reason when they vote" required></textarea>
+      </div>
+      <button class="btn primary" type="submit">${icon("withdraw")} Send request to the group</button>
+    </form>
+    <section class="integration-note" aria-label="How approval works">
+      <p>${icon("shield")} <span><strong>Nothing moves yet.</strong> This asks the group to approve; money only leaves once enough members agree.</span></p>
+    </section>
+  `);
+}
+
+async function submitStockvelWithdrawal(data) {
+  const groupId = String(data.stockvelId || "");
+  const amount = Number(data.amount);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount.");
+  const reason = String(data.reason || "").trim();
+  if (!reason) throw new Error("Tell the group what the withdrawal is for.");
+  try {
+    await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}/withdrawals`, {
+      method: "POST",
+      headers: { "Idempotency-Key": createClientTransactionKey("stockvel-withdrawal") },
+      body: { amount, reason }
+    });
+    showToast("Withdrawal request sent to the group.");
+    closeModal();
+    await refreshStockvelDashboard(groupId);
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status === 404 || status === 501) {
+      throw new Error("Withdrawal requests are not available yet. Agree the payout with your organiser directly.");
+    }
+    throw new Error(friendlyFormError(error, "stockvel-withdrawal"));
+  }
+}
+
+async function respondToStockvelWithdrawal(withdrawalId, approve) {
+  const group = activeStockvelGroup();
+  if (!group) return;
+  try {
+    await api(`${STOCKVEL_PATH}/${encodeURIComponent(group.id)}/withdrawals/${encodeURIComponent(withdrawalId)}/${approve ? "approve" : "decline"}`, { method: "POST" });
+    showToast(approve ? "Approval recorded." : "You declined this withdrawal.");
+    await refreshStockvelDashboard(group.id);
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    showToast(
+      status === 404 || status === 501
+        ? "Voting on withdrawals is not available yet. Confirm the decision with your organiser."
+        : friendlyFormError(error, "stockvel-approval"),
+      "error"
+    );
+  }
+}
+
+// ---- Closing a group -------------------------------------------------------
+
+// Closing ends the group for everyone, so it asks twice: once for intent, then
+// for the group's name typed out.
+function openStockvelCloseModal(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(group.name)}</p><h2>Close this group?</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="failure-panel" aria-label="What closing means">
+      <p class="failure-message">Closing ends the group for every member.</p>
+      <p class="failure-guidance">Settle the group balance${group.balance != null ? ` of ${esc(money(group.balance))}` : ""} before closing. Contribution records stay available in Activity.</p>
+    </section>
+    <form class="form-grid" data-form="stockvel-close">
+      <input type="hidden" name="stockvelId" value="${esc(group.id)}">
+      <input type="hidden" name="expectedName" value="${esc(group.name)}">
+      <div class="field">
+        <label for="sv-close-name">Type the group name to confirm</label>
+        <input id="sv-close-name" name="confirmName" autocomplete="off" placeholder="${esc(group.name)}" required>
+      </div>
+      <button class="btn ghost sv-danger-btn" type="submit">Close this group permanently</button>
+      <button class="btn secondary" type="button" data-close>Keep the group</button>
+    </form>
+  `);
+}
+
+async function submitStockvelClose(data) {
+  const groupId = String(data.stockvelId || "");
+  if (String(data.confirmName || "").trim().toLowerCase() !== String(data.expectedName || "").trim().toLowerCase()) {
+    throw new Error("The group name does not match. Type it exactly to confirm.");
+  }
+  try {
+    await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+    showToast("The group has been closed.");
+    state.stockvel.status = "idle";
+    state.stockvel.detail = null;
+    openStockvelModal();
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status === 404 || status === 501) {
+      throw new Error("Closing a group is not available yet. Ask TitoPay support to close it for you.");
+    }
+    throw new Error(friendlyFormError(error, "stockvel-close"));
+  }
+}
+
+// ---- Statement export ------------------------------------------------------
+
+// Prints the statement that is already on screen. The wallet's PDF builder is
+// deliberately not reused: it renders a wallet transaction statement, which is
+// not what this screen shows.
+function printStockvelStatement() {
+  const card = document.querySelector(".sv-statement");
+  if (!card) {
+    showToast("Open the statement before saving it.", "error");
+    return;
+  }
+  document.body.classList.add("sv-printing");
+  const cleanup = () => {
+    document.body.classList.remove("sv-printing");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+  setTimeout(cleanup, 1500);
 }
 
 // ---- Invite ----------------------------------------------------------------
@@ -7798,7 +8146,7 @@ function openTransactionReviewModal(context) {
 
 function renderTransactionEditFields(context) {
   const data = context.data || {};
-  const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "vasProductCode", "vasProductName", "vasProviderName", "vasJourney", "stockvelType", "documentAction"];
+  const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "vasProductCode", "vasProductName", "vasProviderName", "vasJourney", "stockvelType", "stockvelGroupId", "stockvelGroupName", "documentAction"];
   const labels = {
     recipient: "Recipient, account or reference",
     amount: "Amount",
@@ -7920,6 +8268,16 @@ async function confirmReviewedTransaction() {
       saveBusinessDocumentDraft(document);
       openBusinessDocumentSavedModal(document, context.preview);
       return;
+    }
+    // A contribution the client saw succeed is a real event, so it is recorded in
+    // the notification centre. Group events TitoPay never observed are not.
+    if (data.stockvelGroupName) {
+      addInAppNotification({
+        type: "success",
+        title: "Contribution recorded",
+        body: `Your ${money(context.amount)} contribution to ${data.stockvelGroupName} was recorded.`,
+        metadata: { stockvelGroupId: data.stockvelGroupId || "" }
+      });
     }
     openSuccessModal(result.transaction || result, context.preview, data.serviceCode, context.recipient);
   } catch (error) {

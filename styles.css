@@ -6587,3 +6587,130 @@ select.is-picker-source {
     transition: none;
   }
 }
+
+/* Invitations, voting, outstanding balances */
+
+.sv-invites {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(10, 77, 255, 0.2);
+  border-radius: var(--radius-control);
+  background: var(--soft-blue);
+}
+
+.sv-invite {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "avatar body"
+    "actions actions";
+  gap: 10px 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.sv-invite > .sv-avatar {
+  grid-area: avatar;
+}
+
+.sv-invite-body {
+  grid-area: body;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sv-invite-body strong {
+  color: var(--navy);
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+
+.sv-invite-body small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.sv-invite-actions {
+  grid-area: actions;
+  display: flex;
+  gap: 8px;
+}
+
+.sv-invite-actions .btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  min-width: 0;
+}
+
+.sv-vote {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sv-vote .btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  min-width: 0;
+}
+
+.sv-owed {
+  color: var(--warning) !important;
+  font-weight: 600;
+}
+
+@media (min-width: 560px) {
+  .sv-invite {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "avatar body actions";
+  }
+
+  .sv-invite-actions .btn {
+    flex: 0 0 auto;
+  }
+}
+
+/* Printing a group statement: only the statement card goes on the page. */
+@media print {
+  body.sv-printing > *:not(.modal-backdrop) {
+    display: none !important;
+  }
+
+  body.sv-printing .modal-backdrop {
+    position: static;
+    display: block;
+    padding: 0;
+    background: none;
+    backdrop-filter: none;
+  }
+
+  body.sv-printing .modal-card {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  body.sv-printing .modal-card > *:not(.sv-statement) {
+    display: none !important;
+  }
+
+  body.sv-printing .sv-statement {
+    border: 0;
+    box-shadow: none;
+  }
+}
