@@ -28,8 +28,16 @@ Required files (every one of these is requested by `index.html`,
     ├── jsQR.min.js
     ├── maskable-512.png
     ├── splash-1170x2532.png
-    └── titopay-logo.jpg
+    ├── titopay-logo.png
+    └── titopay-logo.jpg        <- superseded by the .png, keep until v182
 ```
+
+`titopay-logo.png` is the wordmark the app now uses: cropped to the letters and
+transparent, so it carries no white card behind it. The `.jpg` is the old asset
+and nothing in this build references it — it stays on the server only so that a
+returning visitor still holding the v180 cached `index.html` does not see a
+broken image in the seconds before the new service worker activates. It can be
+deleted once v181 has been live for a day.
 
 Do not upload this folder inside another `/app` folder unless the domain is intentionally configured to serve from `/app`.
 

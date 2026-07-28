@@ -621,7 +621,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=180", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=181", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -1111,7 +1111,7 @@ function maintenanceView(maintenance = {}) {
   return `
     <main class="screen auth-screen landing-flow">
       <header class="topbar">
-        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+        <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
         <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
       </header>
       <section class="panel empty-state maintenance-state">
@@ -1131,7 +1131,7 @@ function authView() {
   return `
     <main class="screen auth-screen landing-flow ${isBusiness ? "business-landing" : ""}" data-landing-swipe>
       <header class="topbar">
-        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+        <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
         <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
       </header>
 
@@ -1343,7 +1343,7 @@ function topbar() {
   const unread = unreadNotificationCount();
   return `
     <header class="topbar app-topbar" data-app-topbar>
-      <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+      <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
       <div>
         <button class="icon-btn" type="button" data-action="chatbot" aria-label="Open TitoPay chatbot">${icon("chatbot")}</button>
         <button class="avatar notification-avatar" type="button" data-action="notifications" aria-label="Open notifications">
@@ -3989,7 +3989,7 @@ function publicTicketingEventView(event = {}) {
   return `
     <main class="screen auth-screen">
       <header class="topbar">
-        <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="brand-logo">
+        <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
         <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
       </header>
       <section class="panel">
@@ -8648,7 +8648,7 @@ function openStockvelStatementModal(id) {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="receipt-card sv-statement">
-      <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="receipt-logo">
+      <img src="./assets/titopay-logo.png" alt="TitoPay" class="receipt-logo">
       <h2>${esc(group.name)}</h2>
       <dl>${rows.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl>
       ${group.contributions.length ? `
@@ -9572,7 +9572,7 @@ function receiptRows(receipt) {
 function receiptHtml(receipt) {
   return `
     <section class="receipt-card">
-      <img src="./assets/titopay-logo.jpg" alt="TitoPay" class="receipt-logo">
+      <img src="./assets/titopay-logo.png" alt="TitoPay" class="receipt-logo">
       <h2>Payment Receipt</h2>
       <dl>
         ${receiptRows(receipt).map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value || "-")}</dd></div>`).join("")}

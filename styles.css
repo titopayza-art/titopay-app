@@ -152,15 +152,16 @@ a:focus-visible {
   text-align: center;
 }
 
+/* The wordmark is a transparent PNG cropped to the ink, so it needs no
+   rounded card and no blend mode to hide a white canvas -- both of those
+   were what drew the frame around the logo. */
 .launch-logo,
 .offline-card img,
 .brand-logo {
-  width: min(220px, 58vw);
+  width: min(186px, 49vw);
   height: auto;
   display: block;
   border: 0;
-  border-radius: clamp(18px, 4vw, 24px);
-  mix-blend-mode: multiply;
 }
 
 .loader {
@@ -289,6 +290,9 @@ body:not(.landing-static) .screen > *:first-child {
   padding: var(--safe-top) max(var(--screen-pad-x), var(--safe-right)) 0 max(var(--screen-pad-x), var(--safe-left));
   background: #fff;
   border-bottom: 1px solid transparent;
+  /* Nothing in the bar may paint below its own edge. Without this the logo
+     overhung the divider and read as a curved notch over the wallet card. */
+  overflow: hidden;
   transition: border-color 180ms var(--ease-premium), box-shadow 180ms var(--ease-premium);
 }
 
@@ -299,8 +303,12 @@ body:not(.landing-static) .screen > *:first-child {
   box-shadow: 0 1px 12px rgba(6, 26, 61, 0.06);
 }
 
-.app-topbar .brand-logo {
+/* Sized by height, not width, so the wordmark can never be taller than the
+   bar's content row on a device with a large safe-area inset. */
+.topbar.app-topbar .brand-logo {
   flex: 0 0 auto;
+  width: auto;
+  height: clamp(26px, calc(var(--app-header-h) - var(--safe-top) - 12px), 34px);
 }
 
 .topbar > div {
@@ -931,12 +939,11 @@ h3 {
 }
 
 .landing-flow .brand-logo {
-  width: min(188px, 50vw);
+  width: min(160px, 42vw);
 }
 
 .screen:not(.auth-screen) > .topbar .brand-logo {
-  width: min(156px, 42vw);
-  border-radius: clamp(14px, 3vw, 20px);
+  width: min(132px, 36vw);
 }
 
 .landing-flow .icon-btn {
@@ -1075,7 +1082,7 @@ body.landing-static .landing-flow.auth-screen {
   }
 
   body.landing-static .landing-flow .brand-logo {
-    width: min(166px, 44vw);
+    width: min(140px, 37vw);
   }
 
   body.landing-static .landing-flow .topbar {
@@ -1176,7 +1183,7 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 .business-landing .brand-logo {
-  width: min(182px, 48vw);
+  width: min(154px, 41vw);
 }
 
 .business-landing .landing-hero {
@@ -1682,7 +1689,11 @@ body.landing-static .landing-flow.auth-screen {
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 400px) {
+/* The five-column row needs ~500px of viewport before the description column
+   is wide enough for its own heading; below that "DESCRIPTION" ran straight
+   into "QTY" and the description input collapsed to a stub. Every phone,
+   including the 440pt models, gets the stacked card instead. */
+@media (max-width: 560px) {
   .doc-item-head {
     display: none;
   }
@@ -4139,10 +4150,9 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 .receipt-logo {
-  width: 132px;
+  width: 112px;
   height: auto;
   justify-self: center;
-  border-radius: 16px;
 }
 
 .receipt-card h2 {
@@ -4733,7 +4743,7 @@ input[data-profile-photo-zoom] {
   }
 
   .brand-logo {
-    width: min(172px, 48vw);
+    width: min(146px, 41vw);
   }
 
   .service-grid {
@@ -5258,8 +5268,7 @@ li {
   }
 
   body.landing-static .landing-flow .brand-logo {
-    width: min(166px, 44vw);
-    border-radius: 16px;
+    width: min(140px, 37vw);
   }
 
   body.landing-static .landing-flow .icon-btn {
@@ -5669,12 +5678,12 @@ body:has(.install-float-wrap.public-install) .auth-screen {
    screens are unaffected.
    ============================================================ */
 
-/* Wordmark: smaller optical size trims the dead space the JPG's
-   white canvas contributes above the segmented control. */
+/* Wordmark sizing. The asset is cropped to the ink, so the box height is
+   the letter height -- no dead canvas above the segmented control. */
 .landing-flow .brand-logo,
 body.landing-static .landing-flow .brand-logo,
 body.landing-static .business-landing .brand-logo {
-  width: min(142px, 38vw);
+  width: min(126px, 34vw);
 }
 
 .landing-flow .topbar {
@@ -6351,7 +6360,7 @@ button.activity-item:focus-visible {
   .landing-flow .brand-logo,
   body.landing-static .landing-flow .brand-logo,
   body.landing-static .business-landing .brand-logo {
-    width: min(166px, 44vw);
+    width: min(140px, 37vw);
   }
 
   /* Trust strip: taller row, larger label and icon */
@@ -6438,6 +6447,28 @@ button.activity-item:focus-visible {
   }
 }
 
+/* The largest phones -- 6.7" and 6.9" -- still had ~115px of void above the
+   wordmark and below the footer once the block was centred, and cropping the
+   logo to its ink returned another 20px on top of that. Spend it on the cards
+   and the rhythm so the composition reaches the edges of the screen. The gate
+   is 880px because at 800-850 the same numbers push the block past the fold. */
+@media (max-width: 767px) and (min-height: 880px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    gap: clamp(18px, 3.1vh, 32px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(84px, 11vh, 106px);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(60px, 7.4vh, 74px);
+  }
+}
+
 /* Shorter mobile viewports (iPhone SE/8 at full height, and Safari with
    browser chrome): a moderate scale increase that still fits, rather than
    forcing the full scale and scrolling. */
@@ -6445,7 +6476,7 @@ button.activity-item:focus-visible {
   .landing-flow .brand-logo,
   body.landing-static .landing-flow .brand-logo,
   body.landing-static .business-landing .brand-logo {
-    width: min(150px, 40vw);
+    width: min(128px, 34vw);
   }
 
   body.landing-static .landing-flow .trust-item,
