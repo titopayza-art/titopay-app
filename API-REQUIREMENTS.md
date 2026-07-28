@@ -330,6 +330,55 @@ fallback chain masks failures and the polling costs battery on mobile.
 
 ---
 
+## P1-4 — Bulk Distribution: the validation report and the release state
+
+The Bulk Distribution client was rebuilt in v182 to show what the API returns
+instead of a single toast. Three gaps surfaced while doing it. None of them
+block the feature; all of them limit it.
+
+**1. Per-row rejection reasons.** `POST /v1/enterprise-distribution/batches`
+returns `invalid_rows` as a count. An organisation uploading 400 rows is told
+"7 rejected" and has no way to learn which seven or why. The client already
+renders per-row detail when it is present — it looks for an array on
+`batch.rows`, `batch.invalid_row_details` or `batch.errors`, where each entry
+carries an identifier and one of `error` / `reason` / `message`:
+
+```json
+{
+  "batch": {
+    "id": "…", "batch_name": "…", "batch_reference": "…",
+    "valid_rows": 393, "invalid_rows": 7, "valid_total": 98250.00,
+    "rows": [
+      { "line": 12, "uniqueBeneficiaryId": "STU-10022", "amount": 250.00,
+        "error": "Beneficiary has no TitoPay wallet number" }
+    ]
+  }
+}
+```
+
+Until this lands the client says plainly that TitoPay reported a count but not
+which rows — it does not guess a reason.
+
+**2. Batch status vocabulary.** The client styles `draft_validated` as the one
+state that can be funded, and prints every other status verbatim. Please
+confirm the full set of values and which of them are terminal, so a released
+or rejected batch reads correctly rather than as raw snake_case.
+
+**3. No release visibility.** Step 5 of the flow is "TitoPay Admin releases the
+batch", and the app has no way to show whether that has happened, when, or by
+whom — `GET /v1/enterprise-distribution/batches` returns no released timestamp
+or actor. An organisation that has locked R98 250 of its own money currently
+has to phone TitoPay to find out where the batch is. A `released_at`,
+`released_by` and, on failure, `failure_reason` on the batch record would close
+this.
+
+**Not requested:** any change to the funding or release control flow. The
+client deliberately keeps lock and release as two separate, human-triggered
+steps, and v182 replaced a browser `confirm()` with a review screen that
+restates the amount before the lock call is made.
+
+---
+
 ## Cross-cutting
 
 **Idempotency.** The client sends `clientIdempotencyKey` in the body and

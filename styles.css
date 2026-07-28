@@ -583,6 +583,22 @@ h3 {
   margin-bottom: -2px;
 }
 
+/* Home is meant to fit the screen. A stacked eyebrow and heading spent ~60px
+   introducing three numbers, so they share a baseline instead. */
+.home-summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.home-summary-head h2,
+.home-summary-head .eyebrow {
+  margin: 0;
+}
+
 .landing-flow .section-head {
   margin-top: 8px;
 }
@@ -3679,6 +3695,111 @@ body.landing-static .landing-flow.auth-screen {
   backdrop-filter: blur(16px);
 }
 
+/* ---------------------------------------------------------------------------
+   Landing menu
+
+   Nine identical rows of small grey text is a document, not a menu. Each topic
+   is now its own card with a heading you can scan for, and the parts that were
+   prose lists -- the benefits, the service catalogue -- are set as lists.
+   --------------------------------------------------------------------------- */
+
+.menu-sections {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.menu-section {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.menu-section-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.menu-section-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.menu-section-head .icon-bubble {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+}
+
+.menu-section-body {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.menu-benefits {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.menu-benefits div {
+  display: grid;
+  gap: 2px;
+  padding-left: 14px;
+  border-left: 2px solid var(--soft-blue);
+}
+
+.menu-benefits dt {
+  color: var(--navy);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.menu-benefits dd {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.menu-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu-tag-list li {
+  padding: 6px 10px;
+  color: var(--navy);
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.menu-section-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  align-items: center;
+}
+
+.menu-section-links .text-link {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+}
+
 .landing-menu-footer {
   margin-top: 18px;
   padding: 20px 18px calc(20px + var(--safe-bottom));
@@ -3936,7 +4057,11 @@ body.landing-static .landing-flow.auth-screen {
   max-height: calc(100dvh - 20px);
   min-height: min(760px, calc(100dvh - 20px));
   padding: 0;
-  overflow: hidden;
+  /* The card is capped at the viewport, so anything taller than that used to
+     be clipped outright -- on a laptop that hid Generate QR, the one control
+     the till needs. The keypad now compresses to fit, and this is the net
+     underneath it: content that still cannot fit scrolls instead of vanishing. */
+  overflow: auto;
   background: #fff;
 }
 
@@ -3946,6 +4071,32 @@ body.landing-static .landing-flow.auth-screen {
   align-content: start;
   gap: 18px;
   padding: max(18px, var(--safe-top)) max(18px, var(--safe-right)) max(18px, var(--safe-bottom)) max(18px, var(--safe-left));
+}
+
+/* Till layout: everything but the keypad keeps its natural height, and the
+   keypad takes what is left. On a short viewport the keys shrink rather than
+   pushing the primary action off the bottom of the card. */
+.merchant-sale-screen:not(.merchant-qr-screen) {
+  align-content: stretch;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: clamp(10px, 1.8vh, 18px);
+}
+
+.merchant-sale-screen:not(.merchant-qr-screen) .merchant-keypad {
+  grid-auto-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.merchant-sale-screen:not(.merchant-qr-screen) .merchant-keypad button {
+  min-height: clamp(44px, 8.4vh, 68px);
+}
+
+.merchant-sale-screen:not(.merchant-qr-screen) .merchant-sale-amount {
+  padding: clamp(4px, 1.4vh, 18px) 8px clamp(2px, 0.8vh, 8px);
+}
+
+.merchant-sale-screen:not(.merchant-qr-screen) .merchant-sale-amount strong {
+  font-size: clamp(2rem, 6.4vh, 3.8rem);
 }
 
 .merchant-sale-header {
@@ -8023,6 +8174,333 @@ select.is-picker-source {
     border: 0;
     box-shadow: none;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Bulk Distribution
+
+   The screen was three stacked forms and a `.list-row` class that had no
+   styles at all, so batches rendered as unstyled text. Batches and
+   beneficiaries are now real rows, and the five-step sequence is stated up
+   front because the order is the safety model, not a nicety.
+   --------------------------------------------------------------------------- */
+
+.ed-steps {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.ed-steps h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.ed-steps ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: ed-step;
+}
+
+.ed-steps li {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+  counter-increment: ed-step;
+}
+
+.ed-steps li::before {
+  content: counter(ed-step);
+  grid-row: span 2;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  background: var(--blue);
+  border-radius: 50%;
+}
+
+.ed-steps li strong {
+  color: var(--navy);
+  font-size: 0.92rem;
+}
+
+.ed-steps li span {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.ed-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ed-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.ed-row-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.ed-row-main strong {
+  color: var(--navy);
+  overflow-wrap: anywhere;
+}
+
+.ed-row-main small,
+.ed-row-meta small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.ed-row-meta {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  text-align: right;
+}
+
+.ed-row-meta strong {
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+}
+
+.ed-row .btn {
+  flex: 0 0 auto;
+}
+
+.ed-invalid {
+  color: var(--danger);
+}
+
+.ed-status {
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.ed-status-draft_validated {
+  color: var(--blue);
+  background: var(--soft-blue);
+  border-color: rgba(10, 77, 255, 0.2);
+}
+
+/* ---------------------------------------------------------------------------
+   Printable payment QR poster
+
+   On screen it is a preview scaled to the modal. On paper it is a single A4
+   portrait sheet: the aspect ratio is fixed either way so what a shop sees is
+   what comes out of the printer.
+   --------------------------------------------------------------------------- */
+
+.qr-poster {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 0;
+  /* Type scales with the sheet, not the screen, so the preview and the print
+     read identically. */
+  container-type: inline-size;
+  aspect-ratio: 210 / 297;
+  padding: 6.5% 7% 5.5%;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  text-align: center;
+  overflow: hidden;
+}
+
+.qr-poster-head {
+  display: grid;
+  justify-items: center;
+}
+
+.qr-poster-logo {
+  width: 34%;
+  min-width: 96px;
+  height: auto;
+}
+
+.qr-poster-body {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: clamp(8px, 2%, 20px);
+  min-height: 0;
+}
+
+.qr-poster-eyebrow {
+  margin: 0;
+  color: var(--blue);
+  font-size: clamp(0.82rem, 2.6cqw, 1.15rem);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.qr-poster-name {
+  margin: 0;
+  max-width: 100%;
+  color: var(--navy);
+  font-size: clamp(1.15rem, 4.4cqw, 2.1rem);
+  line-height: 1.15;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+}
+
+.qr-poster-qr {
+  display: grid;
+  place-items: center;
+  width: min(62%, 300px);
+  aspect-ratio: 1;
+  padding: 4%;
+  border: 2px solid var(--navy);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.qr-poster-qr img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.qr-poster-qr-missing {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.qr-poster-qr-missing strong {
+  color: var(--navy);
+}
+
+.qr-poster-qr-missing p {
+  margin: 0;
+}
+
+.qr-poster-steps {
+  margin: 0;
+  color: var(--navy);
+  font-size: clamp(0.72rem, 2.3cqw, 1rem);
+  font-weight: 600;
+}
+
+.qr-poster-foot {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding-top: 3%;
+  border-top: 1px solid var(--line);
+}
+
+.qr-poster-id {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0;
+  font-size: clamp(0.66rem, 2cqw, 0.9rem);
+}
+
+.qr-poster-id span {
+  color: var(--muted);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.qr-poster-id strong {
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.qr-poster-site {
+  margin: 0;
+  color: var(--blue);
+  font-size: clamp(0.66rem, 2cqw, 0.9rem);
+  font-weight: 700;
+}
+
+@media print {
+  body.qr-poster-printing > *:not(.modal-backdrop) {
+    display: none !important;
+  }
+
+  body.qr-poster-printing .modal-backdrop {
+    position: static;
+    display: block;
+    padding: 0;
+    background: none;
+    backdrop-filter: none;
+  }
+
+  body.qr-poster-printing .modal-card {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  body.qr-poster-printing .modal-card > *:not(.qr-poster) {
+    display: none !important;
+  }
+
+  body.qr-poster-printing .qr-poster {
+    width: 100%;
+    height: 100vh;
+    aspect-ratio: auto;
+    border: 0;
+    border-radius: 0;
+  }
+
+  body.qr-poster-printing .qr-poster-qr {
+    width: min(62%, 120mm);
+  }
+}
+
+@page {
+  size: A4 portrait;
+  margin: 12mm;
 }
 
 /* ---------------------------------------------------------------------------

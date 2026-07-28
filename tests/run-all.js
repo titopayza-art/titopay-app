@@ -23,7 +23,8 @@ const SUITES = [
   ["swipe-test.js", []],
   ["modal-stack.js", []],
   ["wording-sweep.js", ["personal"]],
-  ["wording-sweep.js", ["business"]]
+  ["wording-sweep.js", ["business"]],
+  ["v182-features.js", []]
 ];
 
 // Suites that intentionally drive a mocked submission all the way through.

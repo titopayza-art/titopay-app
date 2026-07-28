@@ -621,7 +621,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=181", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=182", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -1388,21 +1388,17 @@ function dashboardView() {
         </section>
       </div>
       <aside>
-        <section class="panel">
-          <p class="eyebrow">Today</p>
-          <h2>Transaction summary</h2>
+        <section class="panel home-summary-card">
+          <div class="home-summary-head">
+            <h2>Transaction summary</h2>
+            <p class="eyebrow">Today</p>
+          </div>
           <div class="stats-grid">
             <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : state.transactions.length}</strong><span>Records</span></div>
             <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(totalByDirection("credit"))}</strong><span>In</span></div>
             <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(totalByDirection("debit"))}</strong><span>Out</span></div>
           </div>
         </section>
-        <section class="section-head">
-          <div>
-            <h2>Recent activity</h2>
-          </div>
-        </section>
-        ${activityList(state.transactions.slice(0, 5))}
       </aside>
     </section>
   `;
@@ -1563,7 +1559,8 @@ function profileView() {
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
       ${profileFeature("Unread Messages", `${unreadNotificationCount()} unread notification${unreadNotificationCount() === 1 ? "" : "s"} · chat, support and account alerts.`, "message-check", "account-activity")}
       ${profileFeature("Help us improve", "Rate your TitoPay experience and send product feedback.", "feedback", "pwa-review")}
-      ${isBusiness ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bank", "enterprise-distribution") : ""}
+      ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
+      ${isBusiness ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
       ${profileFeature("Support", "Get help from TitoPay Customer Care.", "send", "support")}
     </section>
     <section class="section-head compact"><h2>Security & Verification</h2></section>
@@ -2587,6 +2584,8 @@ function onChange(event) {
   if (occasion) toggleCustomOccasion(occasion);
   const profilePhotoInput = event.target.closest("input[data-profile-photo-input]");
   if (profilePhotoInput) prepareProfilePhotoCrop(profilePhotoInput);
+  const enterpriseCsvInput = event.target.closest("input[data-enterprise-csv-input]");
+  if (enterpriseCsvInput) loadEnterpriseCsvFile(enterpriseCsvInput.files && enterpriseCsvInput.files[0]);
   const receiptFilter = event.target.closest("[data-receipt-filter]");
   if (receiptFilter) {
     state.receiptFilters[receiptFilter.dataset.receiptFilter] = receiptFilter.value;
@@ -3409,8 +3408,36 @@ async function handleAction(action) {
     await openEnterpriseDistributionDashboard();
     return;
   }
+  if (action === "qr-poster") {
+    await openBusinessQrPosterModal();
+    return;
+  }
+  if (action === "print-qr-poster") {
+    printQrPoster();
+    return;
+  }
   if (String(action || "").startsWith("enterprise-fund:")) {
+    openEnterpriseFundingReview(action.split(":")[1]);
+    return;
+  }
+  if (String(action || "").startsWith("enterprise-fund-confirm:")) {
     await lockEnterpriseDistributionFunding(action.split(":")[1]);
+    return;
+  }
+  if (action === "enterprise-add-beneficiary") {
+    openEnterpriseBeneficiaryModal();
+    return;
+  }
+  if (action === "enterprise-new-batch") {
+    openEnterpriseBatchModal();
+    return;
+  }
+  if (action === "enterprise-csv-template") {
+    downloadEnterpriseCsvTemplate();
+    return;
+  }
+  if (action === "enterprise-csv-pick") {
+    pickEnterpriseCsvFile();
     return;
   }
   if (String(action || "").startsWith("open-chat-thread:")) {
@@ -4484,44 +4511,266 @@ async function openEnterpriseDistributionDashboard() {
   ]);
   state.enterpriseDistribution.beneficiaries = beneficiaryResult.items || [];
   state.enterpriseDistribution.batches = batchResult.items || [];
+  const beneficiaries = state.enterpriseDistribution.beneficiaries;
+  const batches = state.enterpriseDistribution.batches;
+  const awaitingFunding = batches.filter((batch) => batch.status === "draft_validated");
+  const lockedTotal = batches.reduce((sum, batch) => sum + (Number(batch.locked_total) || 0), 0);
   openModal(`
     <div class="modal-head">
       <div>
-        <p class="eyebrow">Enterprise Bulk Distribution</p>
-        <h2>${esc(eligibility.organisation?.organisation_name || "Approved Organisation")}</h2>
-        <p class="lead">Enterprise Distribution is active for TitoPay wallet recipients. Bank withdrawals and external payouts must use TitoPay’s existing Payouts service.</p>
+        <p class="eyebrow">Bulk Distribution</p>
+        <h2>${esc(eligibility.organisation?.organisation_name || "Approved organisation")}</h2>
+        <p class="lead">Pay many TitoPay wallets from one batch. Bank accounts are not covered here &mdash; use Payouts for those.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+
+    ${enterpriseHowItWorks()}
+
     <section class="stats-grid">
-      <div class="stat"><strong>${state.enterpriseDistribution.beneficiaries.length}</strong><span>Beneficiaries</span></div>
-      <div class="stat"><strong>${state.enterpriseDistribution.batches.length}</strong><span>Batches</span></div>
-      <div class="stat"><strong>Live</strong><span>Wallet payout control</span></div>
+      <div class="stat"><strong>${beneficiaries.length}</strong><span>Beneficiaries</span></div>
+      <div class="stat"><strong>${batches.length}</strong><span>Batches</span></div>
+      <div class="stat"><strong>${esc(money(lockedTotal))}</strong><span>Funds locked</span></div>
     </section>
-    <section class="panel">
-      <h3>Add beneficiary</h3>
-      <form class="form-grid" data-form="enterprise-beneficiary">
-        <div class="field"><label>Unique Beneficiary ID</label><input name="uniqueBeneficiaryId" required></div>
-        <div class="field"><label>First name</label><input name="firstName" required></div>
-        <div class="field"><label>Surname</label><input name="surname" required></div>
-        <div class="field"><label>Phone</label><input name="phone" inputmode="tel"></div>
-        <div class="field"><label>TitoPay wallet number</label><input name="walletNumber" inputmode="numeric"></div>
-        <button class="btn secondary" type="submit">${icon("user")} Save beneficiary</button>
-      </form>
+
+    ${awaitingFunding.length ? `<section class="integration-note" aria-label="Batches awaiting funding">
+      <strong>${awaitingFunding.length} validated batch${awaitingFunding.length === 1 ? "" : "es"} waiting for funding</strong>
+      <p>Nothing is paid until you lock funding and TitoPay Admin releases the batch.</p>
+    </section>` : ""}
+
+    <section class="section-head compact"><h2>Batches</h2></section>
+    <section class="auth-actions">
+      <button class="btn primary" type="button" data-action="enterprise-new-batch">${icon("plus")} Build a batch</button>
     </section>
-    <section class="panel">
-      <h3>Validate draft batch</h3>
-      <p class="muted">Paste CSV rows with headers such as uniqueBeneficiaryId, firstName, surname, walletNumber, amount, reference. First validate, then lock funding. Admin must release the batch before TitoPay wallet payouts are processed. Use Payouts for bank beneficiaries.</p>
-      <form class="form-grid" data-form="enterprise-batch">
-        <div class="field"><label>Batch name</label><input name="batchName" required></div>
-        <div class="field"><label>Distribution type</label><select name="distributionType"><option value="student_allowance">Student Allowance</option><option value="payroll">Payroll</option><option value="vendor_payment">Vendor Payment</option><option value="grant">Grant</option><option value="rental">Rental</option><option value="refund">Refund</option><option value="custom">Custom</option></select></div>
-        <div class="field"><label>CSV rows</label><textarea name="csvText" rows="7" required placeholder="uniqueBeneficiaryId,firstName,surname,walletNumber,amount,reference"></textarea></div>
-        <button class="btn primary" type="submit">${icon("list")} Validate batch</button>
-      </form>
+    ${batches.length ? `<section class="ed-list">
+      ${batches.slice(0, 8).map(enterpriseBatchRow).join("")}
+    </section>` : `<section class="empty-state">${icon("bulk-distribution")}<strong>No batches yet</strong><p>Build a batch to validate rows before any money is reserved.</p></section>`}
+
+    <section class="section-head compact"><h2>Beneficiaries</h2></section>
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-action="enterprise-add-beneficiary">${icon("user")} Add beneficiary</button>
     </section>
-    <section class="panel">
-      <h3>Recent draft batches</h3>
-      ${state.enterpriseDistribution.batches.length ? state.enterpriseDistribution.batches.slice(0, 5).map((batch) => `<article class="list-row"><strong>${esc(batch.batch_name)}</strong><small>${esc(String(batch.status || "").replaceAll("_", " "))} · ${esc(batch.batch_reference)} · ${money(batch.valid_total || 0)}${Number(batch.locked_total || 0) > 0 ? ` · locked ${money(batch.locked_total)}` : ""}</small>${batch.status === "draft_validated" ? `<button class="btn secondary mini" type="button" data-action="enterprise-fund:${esc(batch.id)}">${icon("lock")} Lock Funding</button>` : ""}</article>`).join("") : `<p class="muted">No validation batches yet.</p>`}
+    ${beneficiaries.length ? `<section class="ed-list">
+      ${beneficiaries.slice(0, 12).map(enterpriseBeneficiaryRow).join("")}
+      ${beneficiaries.length > 12 ? `<p class="field-hint">Showing 12 of ${beneficiaries.length}.</p>` : ""}
+    </section>` : `<section class="empty-state">${icon("user")}<strong>No beneficiaries saved</strong><p>A beneficiary record links a person to a TitoPay wallet so batch rows can be checked against it.</p></section>`}
+  `);
+}
+
+// The sequence is the product: five states, and money only moves at the last
+// one. Numbering it is not decoration -- a batch cannot skip a step.
+function enterpriseHowItWorks() {
+  const steps = [
+    ["Add beneficiaries", "Store each recipient once, with their TitoPay wallet number."],
+    ["Build a batch", "Upload or paste the rows you want to pay, with an amount and reference each."],
+    ["Validate", "TitoPay checks every row and reports which ones it cannot match. Nothing is reserved yet."],
+    ["Lock funding", "You reserve the batch total from your business wallet. Still nothing is paid out."],
+    ["TitoPay Admin releases", "An approver at TitoPay releases the batch and the wallet payouts run."]
+  ];
+  return `
+    <section class="ed-steps" aria-label="How bulk distribution works">
+      <h3>How it works</h3>
+      <ol>
+        ${steps.map(([title, body]) => `<li><strong>${esc(title)}</strong><span>${esc(body)}</span></li>`).join("")}
+      </ol>
+    </section>
+  `;
+}
+
+function enterpriseBatchStatusLabel(status) {
+  return String(status || "draft").replaceAll("_", " ");
+}
+
+function enterpriseBatchRow(batch = {}) {
+  const status = String(batch.status || "draft");
+  const validated = status === "draft_validated";
+  const invalid = Number(batch.invalid_rows) || 0;
+  return `
+    <article class="ed-row">
+      <div class="ed-row-main">
+        <strong>${esc(batch.batch_name || "Untitled batch")}</strong>
+        <small>${esc(batch.batch_reference || "")}</small>
+      </div>
+      <div class="ed-row-meta">
+        <span class="ed-status ed-status-${esc(status)}">${esc(enterpriseBatchStatusLabel(status))}</span>
+        <strong>${esc(money(batch.valid_total || 0))}</strong>
+        ${Number(batch.locked_total || 0) > 0 ? `<small>${esc(money(batch.locked_total))} locked</small>` : ""}
+        ${invalid ? `<small class="ed-invalid">${invalid} row${invalid === 1 ? "" : "s"} rejected</small>` : ""}
+      </div>
+      ${validated ? `<button class="btn secondary" type="button" data-action="enterprise-fund:${esc(batch.id)}">${icon("lock")} Lock funding</button>` : ""}
+    </article>
+  `;
+}
+
+function enterpriseBeneficiaryRow(beneficiary = {}) {
+  const name = [beneficiary.first_name || beneficiary.firstName, beneficiary.surname].filter(Boolean).join(" ").trim();
+  const wallet = beneficiary.wallet_number || beneficiary.walletNumber || "";
+  const reference = beneficiary.unique_beneficiary_id || beneficiary.uniqueBeneficiaryId || "";
+  return `
+    <article class="ed-row">
+      <div class="ed-row-main">
+        <strong>${esc(name || reference || "Beneficiary")}</strong>
+        <small>${esc(reference)}</small>
+      </div>
+      <div class="ed-row-meta">
+        ${wallet ? `<strong>Wallet ${esc(wallet)}</strong>` : `<small class="ed-invalid">No wallet number</small>`}
+        ${beneficiary.phone ? `<small>${esc(beneficiary.phone)}</small>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+const ENTERPRISE_CSV_HEADERS = "uniqueBeneficiaryId,firstName,surname,walletNumber,amount,reference";
+
+function downloadEnterpriseCsvTemplate() {
+  const csv = `${ENTERPRISE_CSV_HEADERS}\n`;
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), "titopay-bulk-distribution-template.csv");
+}
+
+function openEnterpriseBeneficiaryModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Bulk Distribution</p><h2>Add beneficiary</h2><p class="lead">Stored once, then referenced by every batch. Adding a beneficiary moves no money.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="enterprise-beneficiary">
+      <div class="field"><label for="ed-ben-id">Unique beneficiary ID</label><input id="ed-ben-id" name="uniqueBeneficiaryId" required><small class="field-hint">Your own reference &mdash; a student, employee or tenant number.</small></div>
+      <div class="field"><label for="ed-ben-first">First name</label><input id="ed-ben-first" name="firstName" required autocomplete="given-name"></div>
+      <div class="field"><label for="ed-ben-last">Surname</label><input id="ed-ben-last" name="surname" required autocomplete="family-name"></div>
+      <div class="field"><label for="ed-ben-phone">Phone <span class="field-optional">optional</span></label><input id="ed-ben-phone" name="phone" inputmode="tel" autocomplete="tel"></div>
+      <div class="field"><label for="ed-ben-wallet">TitoPay wallet number</label><input id="ed-ben-wallet" name="walletNumber" inputmode="numeric"><small class="field-hint">Rows without a matching wallet are rejected at validation.</small></div>
+      <button class="btn primary" type="submit">${icon("user")} Save beneficiary</button>
+    </form>
+  `);
+}
+
+function openEnterpriseBatchModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Bulk Distribution</p><h2>Build a batch</h2><p class="lead">Validation only checks the rows. No funds are reserved and nothing is paid at this step.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="integration-note" aria-label="CSV columns">
+      <strong>Columns, in this order</strong>
+      <p>${esc(ENTERPRISE_CSV_HEADERS.replaceAll(",", ", "))}</p>
+    </section>
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-action="enterprise-csv-template">${icon("download")} Download template</button>
+      <button class="btn secondary" type="button" data-action="enterprise-csv-pick">${icon("upload")} Load a CSV file</button>
+    </section>
+    <input class="visually-hidden" type="file" accept=".csv,text/csv,text/plain" data-enterprise-csv-input aria-label="Choose a CSV file of batch rows">
+    <form class="form-grid" data-form="enterprise-batch">
+      <div class="field"><label for="ed-batch-name">Batch name</label><input id="ed-batch-name" name="batchName" required placeholder="March student allowances"></div>
+      <div class="field">
+        <label for="ed-batch-type">Distribution type</label>
+        <select id="ed-batch-type" name="distributionType">
+          <option value="student_allowance">Student allowance</option>
+          <option value="payroll">Payroll</option>
+          <option value="vendor_payment">Vendor payment</option>
+          <option value="grant">Grant</option>
+          <option value="rental">Rental</option>
+          <option value="refund">Refund</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="ed-batch-csv">CSV rows</label>
+        <textarea id="ed-batch-csv" name="csvText" rows="8" required placeholder="${esc(ENTERPRISE_CSV_HEADERS)}" data-enterprise-csv-text></textarea>
+        <small class="field-hint">Loading a file fills this box &mdash; you can still edit it before validating.</small>
+      </div>
+      <button class="btn primary" type="submit">${icon("list")} Validate batch</button>
+    </form>
+  `);
+}
+
+// The file never leaves the browser: it is read locally and dropped into the
+// same textarea, so the request body is byte-for-byte what a paste produces.
+function pickEnterpriseCsvFile() {
+  const input = document.querySelector("[data-enterprise-csv-input]");
+  if (input) input.click();
+}
+
+function loadEnterpriseCsvFile(file) {
+  const textarea = document.querySelector("[data-enterprise-csv-text]");
+  if (!file || !textarea) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    textarea.value = String(reader.result || "").trim();
+    const rows = textarea.value.split(/\r?\n/).filter((line) => line.trim()).length;
+    showToast(`Loaded ${rows} line${rows === 1 ? "" : "s"} from ${file.name}.`);
+  };
+  reader.onerror = () => showToast("Could not read that file.", "error");
+  reader.readAsText(file);
+}
+
+// Whatever the validator reports is what gets shown. Counts and per-row
+// reasons are rendered when the API returns them and simply omitted when it
+// does not -- this screen never invents a reason a row failed.
+function openEnterpriseBatchResult(batch = {}) {
+  const invalid = Number(batch.invalid_rows) || 0;
+  const valid = Number(batch.valid_rows ?? batch.total_rows - invalid);
+  const rows = batch.rows || batch.invalid_row_details || batch.errors || [];
+  const rowList = Array.isArray(rows) ? rows.filter((row) => row && (row.error || row.reason || row.message)) : [];
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Bulk Distribution</p>
+        <h2>${invalid ? "Validated with rejections" : "Batch validated"}</h2>
+        <p class="lead">No funds have been reserved. Lock funding when the rows are right.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list review-transaction-list">
+      ${settingsRow("Batch", batch.batch_name || "Untitled batch", "list")}
+      ${batch.batch_reference ? settingsRow("Reference", batch.batch_reference, "receipt-list") : ""}
+      ${Number.isFinite(valid) ? settingsRow("Rows accepted", String(valid), "check-circle") : ""}
+      ${invalid ? settingsRow("Rows rejected", String(invalid), "shield") : ""}
+      ${settingsRow("Batch total", money(batch.valid_total || 0), "wallet")}
+    </section>
+    ${rowList.length ? `
+      <section class="section-head compact"><h2>Rejected rows</h2></section>
+      <section class="ed-list">
+        ${rowList.slice(0, 25).map((row) => `<article class="ed-row"><div class="ed-row-main"><strong>${esc(row.uniqueBeneficiaryId || row.unique_beneficiary_id || row.reference || `Row ${row.line || row.row || ""}`)}</strong><small class="ed-invalid">${esc(row.error || row.reason || row.message)}</small></div>${row.amount != null ? `<div class="ed-row-meta"><strong>${esc(money(row.amount))}</strong></div>` : ""}</article>`).join("")}
+        ${rowList.length > 25 ? `<p class="field-hint">Showing 25 of ${rowList.length} rejected rows.</p>` : ""}
+      </section>
+    ` : invalid ? `<section class="integration-note"><strong>${invalid} row${invalid === 1 ? "" : "s"} rejected</strong><p>TitoPay reported the count but not which rows. Check the CSV against your beneficiary list, or ask TitoPay support for the validation report.</p></section>` : ""}
+    <section class="auth-actions">
+      <button class="btn primary" type="button" data-action="enterprise-distribution">${icon("bulk-distribution")} Back to batches</button>
+    </section>
+  `);
+}
+
+// Locking reserves real money, so it gets the same treatment as every other
+// debit in this app: a review that restates the amount, and an explicit
+// confirm. It replaced a browser confirm() dialog.
+function openEnterpriseFundingReview(batchId) {
+  const batch = (state.enterpriseDistribution.batches || []).find((item) => String(item.id) === String(batchId));
+  if (!batch) {
+    showToast("That batch is no longer in the list. Refresh and try again.", "error");
+    return;
+  }
+  const balance = walletAvailableBalance();
+  const total = Number(batch.valid_total) || 0;
+  const short = balance != null && balance < total;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Bulk Distribution</p>
+        <h2>Lock funding</h2>
+        <p class="lead">This reserves the batch total in your business wallet. It does not pay anyone &mdash; TitoPay Admin still has to release the batch.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list review-transaction-list">
+      ${settingsRow("Batch", batch.batch_name || "Untitled batch", "list")}
+      ${batch.batch_reference ? settingsRow("Reference", batch.batch_reference, "receipt-list") : ""}
+      ${settingsRow("Amount to reserve", money(total), "lock", "primary")}
+      ${balance != null ? settingsRow("Wallet available now", money(balance), "wallet") : ""}
+    </section>
+    ${short ? `<section class="integration-note" aria-label="Insufficient balance"><strong>Wallet is short of the batch total</strong><p>TitoPay will decline the lock. Top up the business wallet or reduce the batch first.</p></section>` : ""}
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-close>Cancel</button>
+      <button class="btn primary" type="button" data-action="enterprise-fund-confirm:${esc(batch.id)}">${icon("lock")} Lock ${esc(money(total))}</button>
     </section>
   `);
 }
@@ -4541,15 +4790,19 @@ async function submitEnterpriseBeneficiary(data) {
 
 async function submitEnterpriseBatch(data) {
   const result = await api("/v1/enterprise-distribution/batches", { method: "POST", body: data });
-  const invalidRows = result.batch?.invalid_rows || 0;
-  showToast(invalidRows ? `Batch validated with ${invalidRows} invalid row(s).` : "Batch validated successfully.");
-  await openEnterpriseDistributionDashboard();
+  const batch = result.batch || {};
+  const invalidRows = Number(batch.invalid_rows) || 0;
+  showToast(invalidRows ? `Batch validated with ${invalidRows} rejected row${invalidRows === 1 ? "" : "s"}.` : "Batch validated. No funds reserved yet.");
+  // Refresh the list behind the result so returning to the dashboard is current.
+  await api("/v1/enterprise-distribution/batches")
+    .then((res) => { state.enterpriseDistribution.batches = res.items || []; })
+    .catch(() => {});
+  openEnterpriseBatchResult(batch);
 }
 
 async function lockEnterpriseDistributionFunding(batchId) {
-  if (!window.confirm("Lock funding for this validated batch? Funds will be reserved from the business wallet until Admin releases or resolves the batch.")) return;
   await api(`/v1/enterprise-distribution/batches/${batchId}/fund`, { method: "POST" });
-  showToast("Funding locked. Admin can now review and release the batch.");
+  showToast("Funding locked. TitoPay Admin can now review and release the batch.");
   await openEnterpriseDistributionDashboard();
 }
 
@@ -6927,6 +7180,107 @@ function openReceiveModal() {
       <button class="btn primary" type="submit">${icon("qr")} Generate receive QR</button>
     </form>
   `);
+}
+
+// ---------------------------------------------------------------------------
+// Printable payment QR poster
+//
+// A shop needs one thing on the counter: a sheet a customer can scan. This
+// builds it from the QR the account already has -- /v1/qr/profile if the
+// account carries a permanent one, otherwise the same static QR the Receive
+// Money screen generates. Nothing here invents a code: if neither call returns
+// an image, the poster says so rather than printing a placeholder a customer
+// would try to scan.
+// ---------------------------------------------------------------------------
+
+function posterQrFrom(qr) {
+  if (!qr) return null;
+  const image = qr.imageDataUrl || qr.image_url || qr.imageUrl || "";
+  const id = qr.id || qr.reference || qr.qrId || "";
+  const link = qr.deepLink || qr.url || qr.paymentUrl || "";
+  if (!image && !id && !link) return null;
+  return { image, id, link };
+}
+
+async function ensurePosterQr() {
+  const existing = posterQrFrom(state.profileQr);
+  if (existing && existing.image) return existing;
+  const result = await api("/v1/qr/generate-static", {
+    method: "POST",
+    body: { label: defaultQrLabel(), codeType: "static", amount: null }
+  });
+  const generated = posterQrFrom(result.qr);
+  if (!generated) throw new Error("TitoPay could not return a payment QR for this account.");
+  state.profileQr = result.qr || state.profileQr;
+  return generated;
+}
+
+async function openBusinessQrPosterModal() {
+  let qr = null;
+  let failure = "";
+  try {
+    qr = await ensurePosterQr();
+  } catch (error) {
+    failure = error.message || "TitoPay could not return a payment QR right now.";
+  }
+  const name = state.accountType === "business" ? businessProfileName() : qrOwnerName();
+  const wallet = primaryWallet();
+  const walletId = displayWalletId(wallet || {});
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Receive Payment</p>
+        <h2>Payment QR poster</h2>
+        <p class="lead">An A4 sheet for your counter, window or table. Print it, or save it as a PDF from the print dialog.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${failure ? `<section class="empty-state">${icon("qr")}<strong>QR unavailable</strong><p>${esc(failure)} Your wallet is unaffected. Try again once you are back online.</p></section>` : `
+      <article class="qr-poster" data-qr-poster aria-label="Printable payment QR poster">
+        <header class="qr-poster-head">
+          <img src="./assets/titopay-logo.png" alt="TitoPay" class="qr-poster-logo">
+        </header>
+        <div class="qr-poster-body">
+          <p class="qr-poster-eyebrow">Pay with TitoPay</p>
+          <h3 class="qr-poster-name">${esc(name)}</h3>
+          <div class="qr-poster-qr">
+            ${qr.image
+              ? `<img src="${esc(qr.image)}" alt="Payment QR code for ${esc(name)}">`
+              : `<div class="qr-poster-qr-missing"><strong>QR image unavailable</strong><p>Use the code below.</p></div>`}
+          </div>
+          <p class="qr-poster-steps">Open TitoPay &middot; Scan this code &middot; Confirm the amount</p>
+        </div>
+        <footer class="qr-poster-foot">
+          ${qr.id ? `<p class="qr-poster-id"><span>QR ID</span><strong>${esc(qr.id)}</strong></p>` : ""}
+          ${walletId && walletId !== "Generating" ? `<p class="qr-poster-id"><span>Wallet ID</span><strong>${esc(walletId)}</strong></p>` : ""}
+          <p class="qr-poster-site">titopay.co.za</p>
+        </footer>
+      </article>
+      <section class="auth-actions">
+        <button class="btn primary" type="button" data-action="print-qr-poster">${icon("download")} Print or save as PDF</button>
+        ${qr.image ? `<button class="btn secondary" type="button" data-download-qr="${esc(qr.image)}" data-qr-filename="${esc(qr.id || "titopay-qr")}">${icon("qr")} Download QR image</button>` : ""}
+      </section>
+      <p class="field-hint">The sheet prints at A4. In the print dialog choose A4, portrait, and set margins to none for the full-bleed layout.</p>
+    `}
+  `);
+}
+
+// Mirrors the statement print path: hide the app, leave the poster, restore
+// afterwards whether the user prints or cancels.
+function printQrPoster() {
+  const poster = document.querySelector("[data-qr-poster]");
+  if (!poster) {
+    showToast("Open the poster before printing it.", "error");
+    return;
+  }
+  document.body.classList.add("qr-poster-printing");
+  const cleanup = () => {
+    document.body.classList.remove("qr-poster-printing");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+  setTimeout(cleanup, 1500);
 }
 
 function openTipModal() {
@@ -10518,81 +10872,129 @@ function canUseFinancialService(service = {}) {
   return false;
 }
 
+// The build the browser actually loaded, read off the script tag. The menu
+// used to state "Version 1.0.0", which had not been true for a long time.
+function appBuildVersion() {
+  const script = document.querySelector('script[src*="app.js"]');
+  const match = script && /[?&]v=(\d+)/.exec(script.getAttribute("src") || "");
+  return match ? `v${match[1]}` : "not available";
+}
+
+// The "What you can do" list is read off the live catalogue rather than a
+// sentence someone has to remember to edit. A service that is not published
+// is not advertised here either.
+function landingMenuServiceNames() {
+  const seen = new Set();
+  const names = [];
+  hideDuplicateAirtimeDataTiles(activeServices()).forEach((service) => {
+    const label = String(service.label || "").trim();
+    const key = label.toLowerCase();
+    if (!label || seen.has(key)) return;
+    seen.add(key);
+    names.push(label);
+  });
+  return names;
+}
+
+const LANDING_MENU_BENEFITS = [
+  ["Registration is free", "Join TitoPay without paying a registration fee."],
+  ["Zero monthly wallet fees", "Keep your wallet active without monthly maintenance fees."],
+  ["Free wallet transfers", "Send money between TitoPay wallets at no cost."]
+];
+
+function landingMenuSection(section) {
+  const links = (section.links || []).filter(Boolean);
+  return `
+    <section class="menu-section" aria-labelledby="menu-${esc(section.id)}">
+      <header class="menu-section-head">
+        <span class="icon-bubble">${icon(section.icon)}</span>
+        <h3 id="menu-${esc(section.id)}">${esc(section.title)}</h3>
+      </header>
+      ${section.body ? `<p class="menu-section-body">${esc(section.body)}</p>` : ""}
+      ${section.benefits ? `<dl class="menu-benefits">${section.benefits.map(([term, detail]) => `<div><dt>${esc(term)}</dt><dd>${esc(detail)}</dd></div>`).join("")}</dl>` : ""}
+      ${section.tags && section.tags.length ? `<ul class="menu-tag-list">${section.tags.map((tag) => `<li>${esc(tag)}</li>`).join("")}</ul>` : ""}
+      ${links.length ? `<div class="menu-section-links">${links.map((link) => `<a class="text-link" href="${esc(link.href)}"${link.href.startsWith("http") ? ' target="_blank" rel="noopener"' : ""}>${esc(link.label)}</a>`).join("")}</div>` : ""}
+    </section>
+  `;
+}
+
 function openLandingMenu() {
-  const items = [
+  const serviceNames = landingMenuServiceNames();
+  const sections = [
     {
+      id: "about",
       title: "About TitoPay",
       icon: "home",
       body: "TitoPay is a South African digital wallet for people and businesses. It helps you send and receive money, accept QR payments, buy everyday services, manage wallet activity and keep transactions in one secure app.",
-      href: "https://titopay.co.za/about"
+      links: [{ label: "About us", href: "https://titopay.co.za/about" }]
     },
     {
-      title: "Why TitoPay?",
+      id: "why",
+      title: "Why TitoPay",
       icon: "check-circle",
-      body: `Registration is Free
-Join TitoPay without paying a registration fee.
-
-Zero Monthly Wallet Fees
-Keep your wallet active without monthly maintenance fees.
-
-Free Wallet Transfers
-Send money between TitoPay wallets at no cost.`
+      benefits: LANDING_MENU_BENEFITS
     },
     {
-      title: "What You Can Do",
+      id: "services",
+      title: "What you can do",
       icon: "grid",
-      body: "Use TitoPay for wallet top ups, withdrawals, QR payments, payment requests, airtime, data, electricity, vouchers, bill payments, bill split, send gift, tip QR, stokvels, transaction history and statements."
+      body: serviceNames.length ? "" : "Wallet top ups, withdrawals, QR payments, payment requests, everyday services, transaction history and statements.",
+      tags: serviceNames
     },
     {
-      title: "For Businesses",
+      id: "business",
+      title: "For businesses",
       icon: "store",
       body: "Businesses can accept customer payments, generate QR codes, track transactions, request payouts, create invoices, quotes and proforma invoices, and access business learning tools."
     },
     {
-      title: "Fees & Transparency",
+      id: "fees",
+      title: "Fees and transparency",
       icon: "wallet",
       body: "TitoPay shows applicable fees before a transaction is confirmed, so users can review the cost clearly before they act."
     },
     {
-      title: "Safety & Verification",
+      id: "safety",
+      title: "Safety and verification",
       icon: "shield",
-      body: "TitoPay supports secure login, OTP verification, wallet lock, device and session controls, FICA document submission and transaction records. Never share your PIN, password or OTP.\n\nFor more: www.titopay.co.za.",
-      href: "https://www.titopay.co.za"
+      body: "TitoPay supports secure login, OTP verification, wallet lock, device and session controls, FICA document submission and transaction records. Never share your PIN, password or OTP.",
+      links: [{ label: "titopay.co.za", href: "https://www.titopay.co.za" }]
     },
     {
-      title: "Privacy Policy",
+      id: "legal",
+      title: "Privacy and terms",
       icon: "lock",
-      body: "TitoPay uses personal information to provide wallet, verification, security, transaction and support services. Your information should only be used for legitimate TitoPay account activity.",
-      href: "https://titopay.co.za/legal#legal-privacy"
+      body: "TitoPay uses personal information to provide wallet, verification, security, transaction and support services. Wallet limits, service availability, transaction confirmations, fees and acceptable platform use are set out in the terms.",
+      links: [
+        { label: "Privacy policy", href: "https://titopay.co.za/legal#legal-privacy" },
+        { label: "Terms and conditions", href: "https://titopay.co.za/legal#legal-terms" }
+      ]
     },
     {
-      title: "Terms & Conditions",
-      icon: "list",
-      body: "TitoPay users should understand wallet limits, service availability, transaction confirmations, fees, account security responsibilities and acceptable platform use.",
-      href: "https://titopay.co.za/legal#legal-terms"
-    },
-    {
-      title: "Contact Us",
+      id: "contact",
+      title: "Contact us",
       icon: "chat",
-      body: "For fast help, sign in and use the free TitoPay Customer Care chatbot. If you cannot log in, WhatsApp us on 0726671183 or email support@titopay.co.za.",
-      href: "mailto:support@titopay.co.za",
-      cta: "Email support"
+      body: "Signed in, the free TitoPay Customer Care chatbot is the fastest route. If you cannot sign in, reach us on WhatsApp or by email.",
+      links: [
+        { label: "WhatsApp 072 667 1183", href: "https://wa.me/27726671183" },
+        { label: "support@titopay.co.za", href: "mailto:support@titopay.co.za" }
+      ]
     }
   ];
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Menu</p><h2>TitoPay</h2></div>
+      <div><p class="eyebrow">Menu</p><h2>TitoPay</h2><p class="lead">What TitoPay is, what it costs, and how to reach us.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${securityTipCard()}
-    <section class="activity-list">
-      ${items.map((item) => `<article class="activity-item"><span class="icon-bubble">${icon(item.icon)}</span><div><p><strong>${esc(item.title)}</strong></p><small>${esc(item.body).replace(/\n/g, "<br>")}</small>${item.href ? `<a class="text-link" href="${esc(item.href)}" target="_blank" rel="noopener">${esc(item.cta || "Read more")}</a>` : ""}</div></article>`).join("")}
-    </section>
+    <div class="menu-sections">
+      ${sections.map(landingMenuSection).join("")}
+    </div>
     <footer class="landing-menu-footer" aria-label="TitoPay company information">
       <p><strong>TitoPay (Pty) Ltd.</strong></p>
       <p>Reg No: 2026/399418/07</p>
-      <p>Version 1.0.0</p>
-      <p>© 2026 TitoPay (Pty) Ltd.<br>All Rights Reserved.</p>
+      <p>App build ${esc(appBuildVersion())}</p>
+      <p>© 2026 TitoPay (Pty) Ltd. All rights reserved.</p>
     </footer>
   `);
 }
