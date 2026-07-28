@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v168-landing-art-direction";
+const CACHE_NAME = "titopay-pwa-v169-vas-provider-journey";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=168",
+  "./styles.css?v=169",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=168",
+  "./app.js?v=169",
   "./services-default.json?v=154",
-  "./manifest.webmanifest?v=166",
+  "./manifest.webmanifest?v=169",
   "./offline.html",
   "./assets/titopay-logo.jpg",
   "./assets/icon-192.png?v=165",

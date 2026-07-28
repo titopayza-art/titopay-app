@@ -82,6 +82,7 @@ const state = {
   sessionWarningShown: false,
   modalScrollY: 0,
   modalOpener: null,
+  modalOpenerSelector: "",
   profilePhotoCrop: null,
   notifications: [],
   merchantSale: null,
@@ -10282,11 +10283,49 @@ function modalIsDismissible(card) {
   return Boolean(closer && !closer.disabled);
 }
 
+// A completed transaction calls render(), which replaces #app and destroys the
+// control that opened the flow. Remembering how to find that control again --
+// not just the element itself -- lets focus return to it afterwards, without
+// touching render() or the navigation architecture.
+const MODAL_OPENER_ATTRIBUTES = ["data-service", "data-route", "data-transaction-open", "data-receipt-open", "data-action"];
+
+function modalOpenerSelector(element) {
+  if (!(element instanceof HTMLElement)) return "";
+  for (let index = 0; index < MODAL_OPENER_ATTRIBUTES.length; index += 1) {
+    const attribute = MODAL_OPENER_ATTRIBUTES[index];
+    const value = element.getAttribute(attribute);
+    if (value == null || value === "") continue;
+    return `[${attribute}="${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+  }
+  return "";
+}
+
+function isFocusRestorationTarget(element) {
+  return element instanceof HTMLElement
+    && element !== document.body
+    && element !== document.documentElement;
+}
+
+function resolveModalOpener(opener, selector) {
+  if (isFocusRestorationTarget(opener) && document.contains(opener)) return opener;
+  if (!selector) return null;
+  let replacement = null;
+  try {
+    replacement = document.querySelector(selector);
+  } catch (error) {
+    return null;
+  }
+  return isFocusRestorationTarget(replacement) && replacement.offsetParent !== null ? replacement : null;
+}
+
 function openModal(html) {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  const opener = active && active.closest(".modal-backdrop") ? state.modalOpener : active;
+  const keepPrevious = !isFocusRestorationTarget(active) || Boolean(active.closest(".modal-backdrop"));
+  const opener = keepPrevious ? state.modalOpener : active;
+  const openerSelector = keepPrevious ? state.modalOpenerSelector : modalOpenerSelector(active);
   closeModal();
   state.modalOpener = opener;
+  state.modalOpenerSelector = openerSelector || "";
   lockPageScroll();
   const wrapper = document.createElement("div");
   wrapper.className = "modal-backdrop";
@@ -10373,8 +10412,12 @@ function closeModal() {
   document.body.classList.remove("modal-open");
   unlockPageScroll();
   const opener = state.modalOpener;
+  const openerSelector = state.modalOpenerSelector;
   state.modalOpener = null;
-  if (backdrop && opener && document.contains(opener)) opener.focus({ preventScroll: true });
+  state.modalOpenerSelector = "";
+  if (!backdrop) return;
+  const target = resolveModalOpener(opener, openerSelector);
+  if (target) target.focus({ preventScroll: true });
 }
 
 function lockPageScroll() {
