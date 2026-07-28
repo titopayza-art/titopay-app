@@ -6714,3 +6714,247 @@ select.is-picker-source {
     box-shadow: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Money forms: balance context and quick amounts
+   --------------------------------------------------------------------------- */
+
+.balance-context {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.balance-context strong {
+  color: var(--navy);
+  font-size: 1.02rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quick-amounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.quick-amount {
+  min-height: 44px;
+  padding-inline: 14px;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quick-amount-all {
+  flex: 1 1 100%;
+}
+
+.quick-amount.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.field-optional {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.field-label {
+  margin: 0 0 8px;
+  color: var(--navy);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------------------
+   Send Gift
+   --------------------------------------------------------------------------- */
+
+.gift-occasions,
+.gift-when {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gift-occasion,
+.gift-timing {
+  min-height: 44px;
+  padding-inline: 14px;
+}
+
+.gift-occasion.is-active,
+.gift-timing.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.gift-scan {
+  justify-self: start;
+  min-height: 44px;
+  padding-inline: 14px;
+}
+
+.gift-form [data-gift-counter].is-low {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   Tickets
+   --------------------------------------------------------------------------- */
+
+.ticket-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ticket-search {
+  display: grid;
+  min-width: 0;
+}
+
+.ticket-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "date body"
+    "cta  cta";
+  gap: 10px 14px;
+  align-items: start;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  transition: border-color 0.18s var(--ease-premium), box-shadow 0.18s var(--ease-premium);
+}
+
+.ticket-card:hover {
+  border-color: var(--blue-2);
+  box-shadow: var(--shadow-soft);
+}
+
+.ticket-card.is-loading,
+.ticket-card.is-sold-out:hover {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.ticket-card.is-sold-out {
+  opacity: 0.72;
+}
+
+.ticket-date {
+  grid-area: date;
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  width: 56px;
+  padding: 8px 4px;
+  border-radius: 14px;
+  background: var(--soft-blue);
+}
+
+.ticket-date span {
+  color: var(--blue);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ticket-date strong {
+  color: var(--navy);
+  font-size: 1.3rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+}
+
+.ticket-body {
+  grid-area: body;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ticket-body > strong {
+  color: var(--navy);
+  font-size: 1rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.ticket-body small {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ticket-body small svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.ticket-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.ticket-price {
+  color: var(--blue);
+  font-size: 0.92rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ticket-cta {
+  grid-area: cta;
+  min-height: 44px;
+}
+
+.ticket-cta[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (min-width: 520px) {
+  .ticket-card {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "date body cta";
+    align-items: center;
+  }
+
+  .ticket-cta {
+    align-self: center;
+    padding-inline: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticket-card {
+    transition: none;
+  }
+}

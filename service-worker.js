@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v170-stockvel-savings-group";
+const CACHE_NAME = "titopay-pwa-v171-money-forms-tickets";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=170",
+  "./styles.css?v=171",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=170",
-  "./services-default.json?v=154",
-  "./manifest.webmanifest?v=170",
+  "./app.js?v=171",
+  "./services-default.json?v=171",
+  "./manifest.webmanifest?v=171",
   "./offline.html",
   "./assets/titopay-logo.jpg",
   "./assets/icon-192.png?v=165",

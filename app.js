@@ -90,7 +90,7 @@ const state = {
   pendingTransactionReview: null,
   pendingQrPaymentReview: null,
   stockvel: { status: "idle", groups: [], invitations: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
-  ticketing: { eligibility: null, events: [], loading: false },
+  ticketing: { eligibility: null, events: [], loading: false, search: "" },
   enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
   publicEvent: null,
   installPrompt: null,
@@ -510,7 +510,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=152", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=171", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -1989,6 +1989,26 @@ async function onClick(event) {
     else await refreshStockvelHub({ force: true });
     return;
   }
+  const quickAmount = event.target.closest("[data-quick-amount]");
+  if (quickAmount) {
+    applyQuickAmount(quickAmount);
+    return;
+  }
+  const giftOccasion = event.target.closest("[data-gift-occasion]");
+  if (giftOccasion) {
+    selectGiftOccasion(giftOccasion);
+    return;
+  }
+  const giftTiming = event.target.closest("[data-gift-timing]");
+  if (giftTiming) {
+    selectGiftTiming(giftTiming);
+    return;
+  }
+  const ticketRefresh = event.target.closest("[data-ticket-refresh]");
+  if (ticketRefresh) {
+    await refreshPublicTickets();
+    return;
+  }
   const stockvelInviteAccept = event.target.closest("[data-stockvel-invite-accept]");
   if (stockvelInviteAccept) {
     await respondToStockvelInvitation(stockvelInviteAccept.dataset.stockvelInviteAccept, true);
@@ -2205,6 +2225,29 @@ function onInput(event) {
     }
     return;
   }
+  const giftMessage = event.target.closest("[data-gift-message]");
+  if (giftMessage) {
+    updateGiftCounter(giftMessage);
+    return;
+  }
+  const ticketSearch = event.target.closest("[data-ticket-search]");
+  if (ticketSearch) {
+    state.ticketing.search = ticketSearch.value;
+    renderPublicTickets();
+    const refocus = document.querySelector("[data-ticket-search]");
+    if (refocus) {
+      refocus.focus();
+      refocus.setSelectionRange(refocus.value.length, refocus.value.length);
+    }
+    return;
+  }
+  const amountField = event.target.closest('.money-form [name="amount"], .gift-form [name="amount"]');
+  if (amountField) {
+    // A typed amount is no longer one of the presets.
+    amountField.closest("form")?.querySelectorAll("[data-quick-amount]").forEach((chip) => {
+      chip.classList.toggle("is-active", chip.dataset.quickAmount === amountField.value);
+    });
+  }
   const stockvelSearch = event.target.closest("[data-stockvel-search]");
   if (stockvelSearch) {
     state.stockvel.search = stockvelSearch.value;
@@ -2278,6 +2321,24 @@ function onChange(event) {
   if (chatLookupMethod) {
     const field = chatLookupMethod.closest("form")?.querySelector('input[name="identifier"]');
     if (field) updateRecipientAutoDetect(field);
+  }
+  const fundingMethod = event.target.closest("[data-funding-method]");
+  if (fundingMethod) {
+    const hint = fundingMethod.closest("form")?.querySelector("[data-funding-hint]");
+    if (hint) {
+      hint.textContent = fundingMethod.value === "eft_bank_transfer"
+        ? "Transfer from your bank using the TitoPay reference shown after you confirm, so the money can be matched to your wallet."
+        : "Paid by card through Peach Payments. Your wallet is credited once the payment is confirmed.";
+    }
+  }
+  const withdrawalSpeed = event.target.closest("[data-withdrawal-speed]");
+  if (withdrawalSpeed) {
+    const hint = withdrawalSpeed.closest("form")?.querySelector("[data-withdrawal-hint]");
+    if (hint) {
+      hint.textContent = withdrawalSpeed.value === "instant_peach_withdrawal"
+        ? "Sent for immediate payout through Peach Payments. The exact fee is shown on the review screen before you confirm."
+        : "Processed through Peach Payments. The exact fee is shown on the review screen before you confirm.";
+    }
   }
   const accountSelect = event.target.closest("[data-vas-account] select");
   if (accountSelect) captureVasAccountValues(accountSelect.closest("form"));
@@ -3218,6 +3279,9 @@ async function handleAction(action) {
   if (action === "open-stockvel-chat") {
     openStockvelChatModal();
   }
+  if (action === "ticketing-browse-public") {
+    await openPersonalTicketsDashboard();
+  }
   if (action === "stockvel-create") {
     openStockvelCreateWizard();
   }
@@ -3434,62 +3498,103 @@ function handleService(id) {
 }
 
 async function openPersonalTicketsDashboard() {
+  // Open immediately with a loading state rather than leaving the customer on a
+  // dead tap while the events request is in flight.
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">TitoPay Tickets</p>
+        <h2>What's on</h2>
+        <p class="lead">Verified TitoPay events with secure digital tickets.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="ticket-list" data-ticket-list aria-live="polite">
+      ${[0, 1, 2].map(() => `<div class="ticket-card is-loading" aria-hidden="true">
+        <span class="skeleton skeleton-circle"></span>
+        <div><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span></div>
+      </div>`).join("")}
+    </section>
+  `);
+  await refreshPublicTickets();
+}
+
+async function refreshPublicTickets() {
+  const host = document.querySelector("[data-ticket-list]");
+  if (!host) return;
   try {
     const result = await api("/v1/ticketing/public/events", { auth: false });
-    const events = Array.isArray(result.items) ? result.items : [];
-    openModal(`
-      <div class="modal-head">
-        <div>
-          <p class="eyebrow">TitoPay Tickets</p>
-          <h2>Approved events</h2>
-          <p class="lead">Browse verified TitoPay events and buy secure digital tickets.</p>
-        </div>
-        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-      </div>
-      <section class="settings-list">
-        ${events.length ? events.map(ticketingPublicEventRow).join("") : `
-          <article class="empty-state compact-state">
-            ${icon("ticket")}
-            <strong>No public events yet</strong>
-            <p>Approved TitoPay events will appear here when ticket sales open.</p>
-          </article>
-        `}
-      </section>
-    `);
+    state.ticketing.events = Array.isArray(result.items) ? result.items : [];
+    state.ticketing.search = "";
+    renderPublicTickets();
   } catch (error) {
-    openModal(`
-      <div class="modal-head">
-        <div>
-          <p class="eyebrow">TitoPay Tickets</p>
-          <h2>Events opening soon</h2>
-          <p class="lead">Approved TitoPay events will appear here as soon as ticket sales open.</p>
-        </div>
-        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-      </div>
+    const current = document.querySelector("[data-ticket-list]");
+    if (!current) return;
+    const offline = Number(error?.status || 0) === 0;
+    current.innerHTML = `
       <section class="empty-state compact-state">
         ${icon("ticket")}
-        <strong>No public events are available right now</strong>
-        <p>Please check again later. If you expected an event to be live, contact TitoPay Customer Care.</p>
-        <button class="btn secondary" type="button" data-action="refresh">${icon("refresh")} Refresh</button>
-      </section>
-    `);
+        <strong>${offline ? "Cannot reach TitoPay" : "No events available right now"}</strong>
+        <p>${offline ? "Check your connection and try again." : "Approved TitoPay events appear here as soon as ticket sales open."}</p>
+        <button class="btn secondary" type="button" data-ticket-refresh="1">${icon("refresh")} Try again</button>
+      </section>`;
   }
 }
+
+function renderPublicTickets() {
+  const host = document.querySelector("[data-ticket-list]");
+  if (!host) return;
+  const events = state.ticketing.events || [];
+  const needle = String(state.ticketing.search || "").trim().toLowerCase();
+  const matches = events.filter((event) => !needle || [event.eventName, event.venueName, event.city, event.category]
+    .filter(Boolean).some((value) => String(value).toLowerCase().includes(needle)));
+
+  if (!events.length) {
+    host.innerHTML = `
+      <section class="empty-state compact-state">
+        ${icon("ticket")}
+        <strong>No events on sale yet</strong>
+        <p>Approved TitoPay events appear here as soon as ticket sales open. Check back soon.</p>
+        <button class="btn secondary" type="button" data-ticket-refresh="1">${icon("refresh")} Refresh</button>
+      </section>`;
+    return;
+  }
+
+  host.innerHTML = `
+    ${events.length > 4 ? `<div class="ticket-search">
+      <label class="visually-hidden" for="ticket-search">Search events</label>
+      <input id="ticket-search" class="vas-search-input" type="search" autocomplete="off" data-ticket-search placeholder="Search events, venues or cities" value="${esc(state.ticketing.search || "")}">
+    </div>` : ""}
+    ${matches.length
+      ? matches.map(ticketingPublicEventRow).join("")
+      : `<section class="empty-state compact-state"><strong>No match</strong><p>Nothing matches "${esc(state.ticketing.search)}".</p></section>`}`;
+}
+
 
 function ticketingPublicEventRow(event = {}) {
   const tickets = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
   const prices = tickets.map((ticket) => Number(ticket.price || 0)).filter((price) => Number.isFinite(price));
   const lowestPrice = prices.length ? Math.min(...prices) : 0;
   const available = tickets.reduce((total, ticket) => total + Math.max(0, Number(ticket.quantityAvailable || 0) - Number(ticket.quantitySold || 0)), 0);
+  const date = event.eventDate ? new Date(event.eventDate) : null;
+  const validDate = date && !Number.isNaN(date.getTime());
+  const soldOut = tickets.length > 0 && available === 0;
   return `
-    <article class="settings-row">
-      <span class="icon-bubble">${icon("ticket")}</span>
-      <div>
-        <strong>${esc(event.eventName || "TitoPay Event")}</strong>
-        <small>${event.eventDate ? formatDate(event.eventDate).split(",")[0] : "Date to be confirmed"} · ${esc([event.venueName, event.city].filter(Boolean).join(", ") || "Venue to be confirmed")}</small>
-        <small>${prices.length ? `From ${money(lowestPrice)}` : "Ticket price to be confirmed"} · ${available} available</small>
+    <article class="ticket-card${soldOut ? " is-sold-out" : ""}">
+      <div class="ticket-date" aria-hidden="true">
+        <span>${esc(validDate ? date.toLocaleDateString("en-ZA", { month: "short" }) : "TBC")}</span>
+        <strong>${esc(validDate ? String(date.getDate()) : "--")}</strong>
       </div>
-      <button class="btn secondary mini" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}">View</button>
+      <div class="ticket-body">
+        <strong>${esc(event.eventName || "TitoPay Event")}</strong>
+        <small>${esc(validDate ? date.toLocaleDateString("en-ZA", { weekday: "short", day: "2-digit", month: "long", year: "numeric" }) : "Date to be confirmed")}</small>
+        <small>${icon("globe")} ${esc([event.venueName, event.city].filter(Boolean).join(", ") || "Venue to be confirmed")}</small>
+        <div class="ticket-meta">
+          <span class="ticket-price">${prices.length ? `From ${esc(money(lowestPrice))}` : "Price to be confirmed"}</span>
+          ${soldOut ? `<em class="sv-chip failed">Sold out</em>` : available ? `<em class="sv-chip settled">${available} available</em>` : ""}
+        </div>
+      </div>
+      <button class="btn secondary ticket-cta" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}"${soldOut ? " disabled" : ""}>${soldOut ? "Sold out" : "View"}</button>
     </article>
   `;
 }
@@ -3683,6 +3788,7 @@ async function openBusinessTicketingDashboard(options = {}) {
       </div>
       <div class="auth-actions">
         <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create Event</button>
+        <button class="btn secondary" type="button" data-action="ticketing-browse-public">${icon("ticket")} Browse events</button>
         <button class="btn secondary" type="button" data-action="ticketing-refresh">${icon("refresh")} Refresh</button>
       </div>
       ${options.staffFocus ? ticketingStaffForm(events) : ""}
@@ -3691,6 +3797,9 @@ async function openBusinessTicketingDashboard(options = {}) {
         ${events.length ? events.map((event) => ticketingEventRow(event)).join("") : `<p class="muted">No ticketing events yet. Create your first draft when your event details are ready.</p>`}
       </section>
     ` : `
+      <div class="auth-actions">
+        <button class="btn secondary" type="button" data-action="ticketing-browse-public">${icon("ticket")} Browse events</button>
+      </div>
       <section class="empty-state compact-state">
         ${icon("shield")}
         <strong>Business verification required</strong>
@@ -3969,31 +4078,72 @@ function openTransactionModal(service) {
   `);
 }
 
+// Available balance for the active wallet, or null when it has not loaded.
+// Never guessed: an absent balance is simply not shown.
+function walletAvailableBalance() {
+  const wallet = primaryWallet();
+  const raw = wallet ? (wallet.available_balance ?? wallet.availableBalance ?? wallet.balance) : null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+// Quick amounts save typing on the two actions people repeat most. They are
+// presets for an input the customer can always override, not products.
+const QUICK_AMOUNTS = [50, 100, 200, 500, 1000];
+
+function quickAmountLabel(amount) {
+  const value = Number(amount) || 0;
+  const whole = Number.isInteger(value);
+  return `R ${new Intl.NumberFormat("en-ZA", { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 }).format(value)}`;
+}
+
+function quickAmountChips(amounts = QUICK_AMOUNTS, { includeAll = false } = {}) {
+  const balance = walletAvailableBalance();
+  return `<div class="quick-amounts" role="group" aria-label="Quick amounts">
+    ${amounts.map((amount) => `<button class="chip quick-amount" type="button" data-quick-amount="${amount}" aria-label="${esc(money(amount))}">${esc(quickAmountLabel(amount))}</button>`).join("")}
+    ${includeAll && balance != null && balance > 0 ? `<button class="chip quick-amount quick-amount-all" type="button" data-quick-amount="${balance}" aria-label="Withdraw the full available balance, ${esc(money(balance))}">All ${esc(quickAmountLabel(balance))}</button>` : ""}
+  </div>`;
+}
+
+function balanceContextRow(label) {
+  const balance = walletAvailableBalance();
+  if (balance == null) return "";
+  return `<p class="balance-context">${esc(label)} <strong>${esc(money(balance))}</strong></p>`;
+}
+
 function openTopUpModal(service) {
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Top Up</p><h2>Add money to your wallet</h2><p class="lead">Card top ups are processed securely by Peach Payments. TitoPay will show the fee preview first.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid" data-form="transaction">
+    <form class="form-grid money-form" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="recipient" value="TitoPay Wallet">
       <input type="hidden" name="integrationFlow" value="wallet_top_up">
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      ${balanceContextRow("Wallet balance now")}
       <div class="field">
-        <label>Funding method</label>
-        <select name="fundingMethod">
-          <option value="peach_card">Card funding via Peach Payments</option>
-          <option value="eft_bank_transfer">EFT / bank transfer funding</option>
-        </select>
+        <label for="topup-amount">Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="topup-amount" name="amount" inputmode="decimal" required></div>
+        ${quickAmountChips()}
       </div>
-      <section class="integration-note" aria-label="Top up funding options">
-        <p>${icon("wallet")} <span><strong>Peach Payments:</strong> card funding uses Peach checkout, card verification and payment-status callbacks.</span></p>
-        <p>${icon("bank")} <span><strong>EFT funding:</strong> use your TitoPay reference so the top up can be matched securely.</span></p>
-      </section>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="Top up reference"></div>
+      <div class="field">
+        <label for="topup-method">How are you paying?</label>
+        <select id="topup-method" name="fundingMethod" data-funding-method>
+          <option value="peach_card">Card &middot; instant</option>
+          <option value="eft_bank_transfer">EFT or bank transfer</option>
+        </select>
+        <p class="field-hint" data-funding-hint>Paid by card through Peach Payments. Your wallet is credited once the payment is confirmed.</p>
+      </div>
+      <div class="field">
+        <label for="topup-reference">Reference <span class="field-optional">optional</span></label>
+        <input id="topup-reference" name="reference" placeholder="What is this top up for?">
+      </div>
       <button class="btn primary" type="submit">${icon("upload")} Preview top up</button>
     </form>
+    <section class="integration-note" aria-label="Top up security">
+      <p>${icon("shield")} <span><strong>You see the fee first.</strong> Nothing is charged until you confirm on the review screen.</span></p>
+    </section>
   `);
 }
 
@@ -4003,25 +4153,37 @@ function openWithdrawModal(service) {
       <div><p class="eyebrow">Withdraw</p><h2>Withdraw funds</h2><p class="lead">Withdrawals are handled through Peach Payments-supported payout processing after wallet checks and confirmation.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid" data-form="transaction">
+    <form class="form-grid money-form" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="integrationFlow" value="wallet_withdrawal">
-      <div class="field"><label>Bank account or beneficiary</label><input name="recipient" placeholder="Saved bank account or account reference" required></div>
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
+      ${balanceContextRow("Available to withdraw")}
       <div class="field">
-        <label>Withdrawal speed</label>
-        <select name="withdrawalSpeed">
-          <option value="standard_peach_withdrawal">Standard Peach Payments withdrawal</option>
-          <option value="instant_peach_withdrawal">Instant Peach Payments withdrawal</option>
-        </select>
+        <label for="wd-amount">Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="wd-amount" name="amount" inputmode="decimal" required></div>
+        ${quickAmountChips(QUICK_AMOUNTS, { includeAll: true })}
       </div>
-      <section class="integration-note" aria-label="Withdrawal processing options">
-        <p>${icon("bank")} <span><strong>Peach Payments payout:</strong> confirm the beneficiary and review the fee before submitting.</span></p>
-        <p>${icon("shield")} <span><strong>Security:</strong> withdrawals are checked against wallet lock, fee preview and confirmation before processing.</span></p>
-      </section>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="Withdrawal reference"></div>
+      <div class="field">
+        <label for="wd-account">Where should it go?</label>
+        <input id="wd-account" name="recipient" autocomplete="off" placeholder="Bank account number or saved beneficiary" required>
+        <p class="field-hint">Enter the account you have already given TitoPay, or its reference.</p>
+      </div>
+      <div class="field">
+        <label for="wd-speed">How soon do you need it?</label>
+        <select id="wd-speed" name="withdrawalSpeed" data-withdrawal-speed>
+          <option value="standard_peach_withdrawal">Standard</option>
+          <option value="instant_peach_withdrawal">Instant</option>
+        </select>
+        <p class="field-hint" data-withdrawal-hint>Processed through Peach Payments. The exact fee is shown on the review screen before you confirm.</p>
+      </div>
+      <div class="field">
+        <label for="wd-reference">Reference <span class="field-optional">optional</span></label>
+        <input id="wd-reference" name="reference" placeholder="What is this withdrawal for?">
+      </div>
       <button class="btn primary" type="submit">${icon("withdraw")} Preview withdrawal</button>
     </form>
+    <section class="integration-note" aria-label="Withdrawal security">
+      <p>${icon("shield")} <span><strong>Checked before it leaves.</strong> Wallet lock, beneficiary and fee are all confirmed on the review screen.</span></p>
+    </section>
   `);
 }
 
@@ -5274,28 +5436,131 @@ function openBillSplitModal(service) {
 }
 
 function openSendGiftModal(service) {
+  // Occasions as chips rather than a twelve-item dropdown: a gift is chosen, not
+  // filled in, and every option is visible at a glance.
   const occasions = ["Birthday", "Wedding", "Graduation", "Thank You", "Anniversary", "Christmas", "Eid", "Mother's Day", "Father's Day", "Valentine's Day", "Congratulations", "Custom"];
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Send Gift</p><h2>Send a digital gift</h2><p class="lead">Choose an occasion, recipient, message and optional scheduled delivery date.</p></div>
+      <div><p class="eyebrow">Send Gift</p><h2>Send a digital gift</h2><p class="lead">Pick the occasion, the amount and a message. You will see everything before it sends.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form" data-form="transaction">
+    <form class="form-grid stable-service-form gift-form" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="transactionType" value="send_gift">
+
+      <div class="field">
+        <p class="field-label" id="gift-occasion-label">Occasion</p>
+        <div class="gift-occasions" role="group" aria-labelledby="gift-occasion-label">
+          ${occasions.map((item, index) => `<button class="chip gift-occasion${index === 0 ? " is-active" : ""}" type="button" data-gift-occasion="${esc(item)}" aria-pressed="${index === 0 ? "true" : "false"}">${esc(item)}</button>`).join("")}
+        </div>
+        <input type="hidden" name="occasion" value="${esc(occasions[0])}" data-gift-occasion-value>
+      </div>
+      <div class="field hidden" data-custom-occasion>
+        <label for="gift-custom">Custom occasion</label>
+        <input id="gift-custom" name="customOccasion" maxlength="48" placeholder="e.g. Matric celebration, new home, team thank-you">
+      </div>
+
       ${recipientMethodField("auto")}
-      <div class="field"><label>Recipient</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
+      <div class="field">
+        <label for="gift-recipient">Who is it for?</label>
+        <input id="gift-recipient" name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" required>
+      </div>
       ${contactSuggestions()}
-      <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan recipient QR</button>
+      <button class="btn ghost gift-scan" type="button" data-action="start-qr-scan">${icon("scan")} Scan their TitoPay QR</button>
       <div id="qr-scanner-output" class="empty-state hidden"></div>
-      <div class="field"><label>Gift amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Occasion</label><select name="occasion">${occasions.map((item) => `<option>${esc(item)}</option>`).join("")}</select></div>
-      <div class="field hidden" data-custom-occasion><label>Custom occasion</label><input name="customOccasion" maxlength="48" placeholder="e.g. Matric celebration, new home, team thank-you"></div>
-      <div class="field"><label>Scheduled delivery</label><input name="scheduledDelivery" type="datetime-local"></div>
-      <div class="field"><label>Gift message</label><textarea name="message" maxlength="240" placeholder="Write the message the recipient will see"></textarea></div>
+
+      <div class="field">
+        <label for="gift-amount">Gift amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="gift-amount" name="amount" inputmode="decimal" required></div>
+        ${quickAmountChips([50, 100, 200, 500])}
+      </div>
+
+      <div class="field">
+        <label for="gift-message">Message <span class="field-optional">optional</span></label>
+        <textarea id="gift-message" name="message" maxlength="240" data-gift-message placeholder="Write the message they will see with the gift"></textarea>
+        <p class="field-hint" data-gift-counter aria-live="polite">240 characters left</p>
+      </div>
+
+      <div class="field">
+        <p class="field-label" id="gift-when-label">When should it arrive?</p>
+        <div class="gift-when" role="group" aria-labelledby="gift-when-label">
+          <button class="chip gift-timing is-active" type="button" data-gift-timing="now" aria-pressed="true">Send now</button>
+          <button class="chip gift-timing" type="button" data-gift-timing="later" aria-pressed="false">Schedule it</button>
+        </div>
+      </div>
+      <div class="field hidden" data-gift-schedule>
+        <label for="gift-when">Delivery date and time</label>
+        <input id="gift-when" name="scheduledDelivery" type="datetime-local">
+      </div>
+
       <button class="btn primary" type="submit">${icon("gift")} Preview gift</button>
     </form>
   `);
+}
+
+function applyQuickAmount(button) {
+  const form = button.closest("form");
+  const field = form ? form.querySelector('[name="amount"]') : null;
+  if (!field) return;
+  field.value = String(Number(button.dataset.quickAmount) || "");
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  form.querySelectorAll("[data-quick-amount]").forEach((chip) => {
+    chip.classList.toggle("is-active", chip === button);
+  });
+  field.focus();
+}
+
+function selectGiftOccasion(button) {
+  const form = button.closest("form");
+  if (!form) return;
+  const value = button.dataset.giftOccasion;
+  form.querySelectorAll("[data-gift-occasion]").forEach((chip) => {
+    const active = chip === button;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const hidden = form.querySelector("[data-gift-occasion-value]");
+  if (hidden) hidden.value = value;
+  const custom = form.querySelector("[data-custom-occasion]");
+  if (custom) {
+    const isCustom = value === "Custom";
+    custom.classList.toggle("hidden", !isCustom);
+    const input = custom.querySelector("input");
+    if (input) {
+      input.required = isCustom;
+      if (!isCustom) input.value = "";
+      else input.focus();
+    }
+  }
+}
+
+// "Send now" versus "Schedule it" is an explicit choice. An empty date field
+// left the customer guessing whether a blank meant now or nothing.
+function selectGiftTiming(button) {
+  const form = button.closest("form");
+  if (!form) return;
+  const later = button.dataset.giftTiming === "later";
+  form.querySelectorAll("[data-gift-timing]").forEach((chip) => {
+    const active = chip === button;
+    chip.classList.toggle("is-active", active);
+    chip.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const schedule = form.querySelector("[data-gift-schedule]");
+  if (!schedule) return;
+  schedule.classList.toggle("hidden", !later);
+  const input = schedule.querySelector("input");
+  if (!input) return;
+  input.required = later;
+  if (!later) input.value = "";
+  else input.focus();
+}
+
+function updateGiftCounter(field) {
+  const counter = field.closest("form")?.querySelector("[data-gift-counter]");
+  if (!counter) return;
+  const left = 240 - field.value.length;
+  counter.textContent = `${left} character${left === 1 ? "" : "s"} left`;
+  counter.classList.toggle("is-low", left <= 20);
 }
 
 function openPayoutModal(service) {

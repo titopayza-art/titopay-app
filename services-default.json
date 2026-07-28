@@ -108,7 +108,7 @@
       "commission": 0,
       "status": "active",
       "personal_visible": true,
-      "business_visible": false,
+      "business_visible": true,
       "sort_order": 80,
       "feature_badge": "none"
     },
@@ -374,7 +374,7 @@
       "commission": 0,
       "status": "active",
       "personal_visible": true,
-      "business_visible": false,
+      "business_visible": true,
       "sort_order": 185,
       "feature_badge": "new"
     },
