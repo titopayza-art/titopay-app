@@ -920,7 +920,15 @@ a { text-decoration: none; color: inherit; }
 }
 .page-header p { margin: 0; max-width: 720px; color: var(--ink-500); font-size: var(--fs-sm); line-height: 1.55; }
 
-.page-actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+/* Pages such as Attendance carry five actions. When they wrap, the overflow
+   row stays flush right instead of floating mid-header. */
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
 .page-actions > * { white-space: nowrap; }
 
 .tabs {
