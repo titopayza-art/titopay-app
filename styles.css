@@ -4114,13 +4114,6 @@ body.landing-static .landing-flow.auth-screen {
   padding-inline: 12px;
 }
 
-#qr-scanner-output video {
-  width: 100%;
-  max-height: 280px;
-  border-radius: 16px;
-  object-fit: cover;
-}
-
 .merchant-pos-home {
   display: grid;
   gap: 16px;
@@ -9355,4 +9348,35 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
   body.landing-static .business-landing h1 {
     font-size: clamp(1.8rem, 4.4vh, 2.6rem);
   }
+}
+
+
+/* ---------------------------------------------------------------------------
+   QR scanner frame
+
+   The camera video used to be appended with no sizing: zero-height until the
+   stream started, then it snapped to the camera's native dimensions, overflowed
+   the card, and collapsed again into a one-line note on capture. Every state
+   change bounced the whole modal -- the "wobble". The frame now reserves its
+   box before the camera starts and keeps it through every state, and the video
+   fills that box instead of dictating it.
+   --------------------------------------------------------------------------- */
+#qr-scanner-output:not(.hidden) {
+  min-height: 300px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 12px;
+  border-radius: 20px;
+}
+
+#qr-scanner-output video {
+  width: 100%;
+  height: 276px;
+  display: block;
+  object-fit: cover;
+  border-radius: 14px;
+  background: #0b1220;
 }

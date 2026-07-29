@@ -743,6 +743,35 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
     await ctx.close();
   }
 
+  // ---- 7b. The QR scanner frame reserves its box -------------------------
+  //
+  // CI has no camera, but the wobble was purely geometric: the output box had
+  // no reserved height, so every scanner state change resized the modal. The
+  // reservation is what this asserts; a fake-camera run verified the live
+  // stream holds the same height to the pixel.
+  {
+    const { ctx, page } = await authed(browser, { acct: "personal" });
+    await page.evaluate(() => { if (typeof openQrPayModal === "function") openQrPayModal(); });
+    await sleep(700);
+    const m = await page.evaluate(() => {
+      const output = document.querySelector("#qr-scanner-output");
+      if (!output) return null;
+      const before = Math.round(document.querySelector(".modal-card").getBoundingClientRect().height);
+      output.classList.remove("hidden");
+      output.innerHTML = "<strong>Starting camera</strong>";
+      const withText = Math.round(output.getBoundingClientRect().height);
+      output.innerHTML = "<strong>QR captured</strong><p>Review the QR ID and amount, then pay.</p>";
+      const withCapture = Math.round(output.getBoundingClientRect().height);
+      return { before, withText, withCapture, reserved: parseFloat(getComputedStyle(output).minHeight) };
+    });
+    check("QR scanner frame exists on the pay modal", Boolean(m));
+    if (m) {
+      check("scanner frame reserves its height before the camera starts", m.reserved >= 280, `${m.reserved}px`);
+      check("scanner frame holds the same height across states", m.withText === m.withCapture && m.withText >= 280, JSON.stringify(m));
+    }
+    await ctx.close();
+  }
+
   // ---- 8. Bulk Distribution: tile for approved orgs, truth for blocked ---
   {
     const { ctx, page } = await authed(browser, { acct: "business", eligible: true });

@@ -1,1 +1,1 @@
-TitoPay PWA build: desktop-fit-bulk-access-v189-20260729
+TitoPay PWA build: scanner-frame-v190-20260729
