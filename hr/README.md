@@ -49,6 +49,27 @@ zip -X ../hr.zip hr-session.js titopay-logo.png favicon.ico index.html .htaccess
 
 `*.zip` is git-ignored, so the archive is built on demand rather than tracked.
 
+## Nested-route asset rewrite
+
+`index.html` references `./hr-session.js` and `./titopay-logo.png` relatively.
+On a one-segment route such as `/attendance` those resolve to the site root and
+load fine. On a **two-segment** route — `/employees/42`, the only one the app
+has — the browser asks for `/employees/hr-session.js`, which does not exist, so
+the SPA fallback answers with `index.html`. The session shim is then parsed as
+HTML, throws `SyntaxError: Unexpected token '<'`, and never installs: stale
+access tokens are not replaced and a 401 no longer triggers a refresh.
+
+`.htaccess` now maps those filenames back to the root before the SPA fallback
+runs:
+
+```apache
+RewriteRule ^.+/(hr-session\.js|titopay-logo\.png|favicon\.ico)$ /$1 [L]
+```
+
+Fixing it in the rewrite rules rather than in `index.html` keeps the compiled
+bundle byte-identical. If the portal is ever moved to a host without
+`mod_rewrite`, make those two `src` attributes root-relative instead.
+
 ## Known issue, not fixable in CSS
 
 `.donut` on the dashboard draws its ring from a fixed `conic-gradient`

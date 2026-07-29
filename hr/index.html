@@ -1864,7 +1864,9 @@ tbody tr[onclick] { cursor: pointer; }
   height: 52px;
   margin: 0 auto var(--sp-5);
   border-radius: var(--r-lg);
-  background: #fff url(titopay-logo.png) center / contain no-repeat;
+  /* Absolute: a relative url() here would resolve against a nested route
+     such as /employees/42 and miss. */
+  background: #fff url(/titopay-logo.png) center / contain no-repeat;
   color: transparent;
   box-shadow: none;
 }
