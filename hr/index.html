@@ -203,8 +203,9 @@ a { text-decoration: none; color: inherit; }
 }
 
 /* The compiled bundle still renders these nodes; they are superseded by the
-   official artwork below and stay hidden rather than being ripped out. */
-.logo-symbol, .logo b { display: none !important; }
+   official artwork below and stay hidden rather than being ripped out. No
+   other rule gives them a box, so this needs no !important. */
+.logo-symbol, .logo b { display: none; }
 .logo-symbol span:first-child, .logo-symbol span:last-child { display: none; }
 
 .official-logo {
@@ -409,13 +410,17 @@ a { text-decoration: none; color: inherit; }
 }
 .table-tools select:hover, .filter:hover { border-color: var(--ink-200); }
 
-.upload-zone {
+/* The dropzone is a <label>, so it collides with `.modal label`. Matching on
+   the element as well raises specificity to a tie, and source order settles
+   it — which is what the two !important declarations here used to do. */
+label.upload-zone, .upload-zone {
   display: block;
-  padding: var(--sp-6) var(--sp-5) !important;
+  margin: 0;
+  padding: var(--sp-6) var(--sp-5);
   border: 1px dashed var(--brand-200);
   border-radius: var(--r-lg);
   background: var(--brand-50);
-  color: var(--brand-500) !important;
+  color: var(--brand-500);
   text-align: center;
   cursor: pointer;
   transition: border-color .16s var(--ease), background-color .16s var(--ease);
