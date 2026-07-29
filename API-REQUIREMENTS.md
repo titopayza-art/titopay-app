@@ -32,6 +32,7 @@ in the second half of the document. Read the status first.
 | P2-2 invoice posts a transaction | Open — depends on P0-2 |
 | P2-3 fee preview `debits` | Open |
 | P2-4 chat transport | Partly answered — a socket layer exists in `src/realtime/` |
+| P1-5 payment notifications + SMS preference | **Open** — confirmed: no transaction notifications, no preference endpoint; client derives payments from `/v1/transactions` meanwhile |
 
 ---
 
@@ -454,6 +455,56 @@ number. This is a compliance exposure, not only a data-loss one.
 The original P0-2 specification below still stands unchanged.
 
 ---
+
+---
+
+## P1-5 — Payment notifications and the SMS preference
+
+**Screens:** the notification centre (bell), SMS alerts toggle.
+
+**Today, verified against the API source:** nothing in the transaction path
+creates a notification — `transaction-service.js` never calls
+`createNotification`; only ticketing and bulk distribution do. And there is no
+notification-preference endpoint anywhere: the app's "Enable SMS alerts"
+toggle can only store the choice on the device, which the UI now says in so
+many words. The pricing rule (`optional_sms_notifications`, R0.30) exists;
+nothing consumes it.
+
+The client closes what it can honestly close: as of v186 the notification
+centre derives payment entries from `/v1/transactions` — real data the account
+already owns — and polls it on the 15-second heartbeat so money movements
+reach the bell without a manual refresh. What the client cannot do is send an
+SMS or know about a credit the moment it lands. That needs:
+
+**1. Transaction events create notifications.** On every completed
+transaction, one `in_app` notification for each party, written through the
+existing `createNotification` (`notifications` table already has the shape):
+
+```
+recipient: type "payment_received", title "Money received",
+           body "R 250.00 from Naledi Trading · Ref TP-4108"
+sender:    type "payment_sent", title "Payment sent",
+           body "R 250.00 to Thabo Ndlovu · Ref TP-4108"
+```
+
+Wrap the call so a notification failure can never fail the transaction.
+
+**2. A preference the server owns.**
+
+```
+GET  /v1/users/me/notification-preferences   { smsPayments: false, inApp: true }
+PUT  /v1/users/me/notification-preferences   { smsPayments: true }
+```
+
+One boolean column (or a JSONB prefs field) on `users`. The client will switch
+its toggle to this endpoint the release it exists.
+
+**3. SMS dispatch honours the preference.** When `smsPayments` is true, the
+transaction event also calls the existing `deliverSms` (SIMcloud is already
+wired for OTP), charging per the `optional_sms_notifications` pricing rule,
+with critical security SMS remaining free. Until 1-3 land, no SMS payment
+alert is sent to anyone, whatever the toggle shows — which is why the toggle
+now says exactly that.
 
 ---
 

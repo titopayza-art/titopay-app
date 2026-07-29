@@ -621,7 +621,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=185", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=186", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -839,6 +839,62 @@ function addInAppNotification(data = {}) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Transactions in the notification centre
+//
+// Every entry here is derived from /v1/transactions -- the same real data the
+// Activity tab shows. Nothing is invented: the API does not emit payment
+// notifications yet (documented in API-REQUIREMENTS.md P1-5), so the client
+// presents the transactions it already has. A per-user seen-list makes the
+// first sync a silent backfill -- old history must not arrive as 12 unread
+// alerts -- and everything after that lands unread, which is what moves the
+// bell badge when money moves.
+// ---------------------------------------------------------------------------
+
+function notificationSeenTxKey() {
+  const user = state.user || {};
+  return `titopay_tx_seen_v1_${user.id || user.username || "anon"}`;
+}
+
+function transactionNotificationItem(tx, unread) {
+  const credit = String(tx.direction || "").toLowerCase() === "credit";
+  const amount = Number(tx.amount ?? tx.total ?? 0);
+  const parts = [
+    tx.service_name || tx.serviceName || "Wallet transaction",
+    Number.isFinite(amount) && amount > 0 ? money(amount) : "",
+    tx.reference ? `Ref ${tx.reference}` : ""
+  ].filter(Boolean);
+  return {
+    id: `tx-${tx.id || tx.reference}`,
+    type: credit ? "payment-in" : "payment-out",
+    title: credit ? "Money received" : "Payment sent",
+    body: parts.join(" \u00b7 "),
+    unread,
+    createdAt: tx.created_at || tx.createdAt || new Date().toISOString(),
+    metadata: { txId: tx.id || "", txReference: tx.reference || "", direction: credit ? "credit" : "debit", category: "payment" }
+  };
+}
+
+function syncTransactionNotifications() {
+  if (!state.user || !Array.isArray(state.transactions) || !state.transactions.length) return false;
+  const seenKey = notificationSeenTxKey();
+  const stored = readJson(seenKey);
+  const firstSync = !Array.isArray(stored);
+  const seen = new Set(Array.isArray(stored) ? stored : []);
+  let changed = false;
+  // Oldest first, so the inbox reads in the order things happened.
+  [...state.transactions].reverse().forEach((tx) => {
+    const key = String(tx.id || tx.reference || "");
+    if (!key) return;
+    const isNew = !seen.has(key);
+    seen.add(key);
+    // Backfill quietly on first sync; only genuinely new movements are unread.
+    if (addInAppNotification(transactionNotificationItem(tx, isNew && !firstSync))) changed = true;
+  });
+  writeJson(seenKey, [...seen].slice(-300));
+  return changed;
+}
+
 async function syncTitoPayChatNotifications() {
   if (!state.auth || !state.auth.accessToken || !state.user) return false;
   const result = await api("/v1/chat/notifications");
@@ -998,6 +1054,7 @@ async function loadAccount() {
     state.enterpriseDistribution.eligibility = enterpriseDistribution.eligibility || null;
     state.accountType = profile.user && (profile.user.accountType || profile.user.account_type) || state.accountType;
     loadInAppNotifications();
+    syncTransactionNotifications();
   } catch (error) {
     showToast(error.message || "Session expired", "error");
     clearAuth();
@@ -1029,10 +1086,47 @@ function startTitoPayAccountSync() {
   }, 15000);
 }
 
+// Rewrites only the bell badge. A full render() here would replace the whole
+// screen and wipe whatever form the user is typing into, fifteen seconds in.
+function refreshNotificationBadge() {
+  const bell = document.querySelector("[data-app-topbar] .notification-avatar");
+  if (!bell) return;
+  const unread = unreadNotificationCount();
+  const existing = bell.querySelector(".notification-count");
+  if (!unread) {
+    if (existing) existing.remove();
+    return;
+  }
+  const label = unread > 9 ? "9+" : String(unread);
+  if (existing) {
+    existing.textContent = label;
+    existing.setAttribute("aria-label", `${unread} unread notifications`);
+    return;
+  }
+  const badge = document.createElement("span");
+  badge.className = "notification-count";
+  badge.setAttribute("aria-label", `${unread} unread notifications`);
+  badge.textContent = label;
+  bell.appendChild(badge);
+}
+
 async function syncTitoPayAccountStatus(options = {}) {
   if (!state.auth || !state.auth.accessToken) return false;
   const wasLocked = isWalletLocked();
   const previousStatus = String(state.user?.status || state.user?.accountStatus || "").toLowerCase();
+  // Money movements should reach the bell without waiting for a manual
+  // refresh. Same endpoint the Activity tab uses; any failure is ignored so a
+  // flaky poll can never break the session heartbeat below.
+  try {
+    const latest = await api("/v1/transactions");
+    if (Array.isArray(latest.items)) {
+      state.transactions = latest.items;
+      if (syncTransactionNotifications()) refreshNotificationBadge();
+    }
+  } catch (error) {
+    // Auth failures fall through to the profile call below, which owns
+    // session-expiry handling; anything else is just a missed poll.
+  }
   try {
     const profile = await api("/v1/auth/me");
     const nextUser = hydrateAccountMedia(Object.assign({}, state.user || {}, profile.user || {}));
@@ -1811,26 +1905,80 @@ function notificationActionAttributes(item = {}) {
   if (metadata.receiptId) return `data-notification-receipt="${esc(metadata.receiptId)}" role="button" tabindex="0"`;
   const ticketRef = metadata.ticketRef || metadata.ticketId;
   if (ticketRef) return `data-notification-support="${esc(ticketRef)}" role="button" tabindex="0"`;
+  if (metadata.txId || metadata.txReference) return `data-notification-tx="${esc(metadata.txId || metadata.txReference)}" role="button" tabindex="0"`;
   return "";
 }
 
+// Which drawer of the inbox a notification belongs in. Payments come from the
+// transaction sync; messages are chat and support; everything security-marked
+// or critical is security; the rest is account noise.
+function notificationCategory(item = {}) {
+  const metadata = item.metadata || {};
+  if (metadata.category === "payment" || String(item.type || "").startsWith("payment-")) return "payments";
+  const serverType = String(metadata.notificationType || item.type || "").toLowerCase();
+  if (/chat|support|message/.test(serverType) || metadata.ticketRef || metadata.ticketId) return "messages";
+  if (item.critical || /security|otp|pin|password|lock/.test(serverType)) return "security";
+  return "account";
+}
+
+const NOTIFICATION_FILTERS = [
+  ["all", "All"],
+  ["payments", "Payments"],
+  ["messages", "Messages"],
+  ["security", "Security"]
+];
+
+function notificationItemIcon(item) {
+  const category = notificationCategory(item);
+  if (category === "payments") return item.metadata?.direction === "credit" ? "qr-receive" : "send";
+  if (category === "messages") return "chat";
+  if (category === "security") return "shield";
+  return "bell";
+}
+
+// "2 min ago" for the recent past, a dated stamp beyond a week -- the same
+// convention every wallet inbox uses, because "29/07/2026 10:41" tells you
+// nothing at a glance about whether the money moved just now.
+function notificationTimeLabel(value) {
+  const then = new Date(value).getTime();
+  if (!Number.isFinite(then)) return "";
+  const minutes = Math.round((Date.now() - then) / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return formatDate(value);
+}
+
 function notificationListHtml() {
-  const items = state.notifications || [];
+  const filter = state.notificationFilter || "all";
+  const all = state.notifications || [];
+  const items = filter === "all" ? all : all.filter((item) => notificationCategory(item) === filter);
+  const chips = `<div class="notification-filters" role="tablist" aria-label="Notification filters">${NOTIFICATION_FILTERS.map(([id, label]) => {
+    const count = id === "all" ? all.length : all.filter((item) => notificationCategory(item) === id).length;
+    return `<button type="button" role="tab" aria-selected="${filter === id}" class="chip ${filter === id ? "is-active" : ""}" data-notification-filter="${id}">${esc(label)}${count ? ` (${count})` : ""}</button>`;
+  }).join("")}</div>`;
   if (!items.length) {
-    return `<section class="empty-state">${icon("bell")}<strong>No unread messages</strong><p>Notifications, support updates and chat alerts will appear here.</p></section>`;
+    return `${chips}<section class="empty-state">${icon("bell")}<strong>${filter === "all" ? "Nothing here yet" : "Nothing in this view"}</strong><p>${filter === "payments" ? "Money in and out will appear here as it happens." : "Notifications, support updates and chat alerts will appear here."}</p></section>`;
   }
-  return `<section class="notification-list">${items.map((item) => `
-    <article class="notification-item ${item.unread ? "unread" : ""}" ${notificationActionAttributes(item)}>
-      <span class="icon-bubble">${icon(item.critical ? "shield" : "bell")}</span>
+  return `${chips}<section class="notification-list">${items.map((item) => {
+    const category = notificationCategory(item);
+    const credit = item.metadata?.direction === "credit";
+    return `
+    <article class="notification-item ${item.unread ? "unread" : ""} notice-${category}" ${notificationActionAttributes(item)}>
+      <span class="icon-bubble ${category === "payments" ? (credit ? "notice-bubble-credit" : "notice-bubble-debit") : ""}">${icon(notificationItemIcon(item))}</span>
       <div>
         <div class="notification-meta">
           <strong>${esc(item.title)}</strong>
           ${item.unread ? `<span class="notification-dot" aria-label="Unread"></span>` : ""}
         </div>
         <p>${esc(item.body)}</p>
-        <small>${esc(formatDate(item.createdAt))}</small>
+        <small>${esc(notificationTimeLabel(item.createdAt))}</small>
       </div>
-    </article>`).join("")}</section>`;
+    </article>`;
+  }).join("")}</section>`;
 }
 
 function openNotificationsModal() {
@@ -1839,7 +1987,7 @@ function openNotificationsModal() {
   const unread = unreadNotificationCount();
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Unread Messages</p><h2>Notifications</h2><p class="lead">Support updates, chat alerts and important TitoPay messages.</p></div>
+      <div><p class="eyebrow">Notification Centre</p><h2>Notifications</h2><p class="lead">Payments, chat, support and security -- everything that happened on your account.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="notification-inbox-summary">
@@ -1873,9 +2021,9 @@ function openSmsNotificationPreview() {
       ${settingsRow("In-app notifications", "Free and always available inside TitoPay.", "bell")}
       ${settingsRow("SMS notifications", "R0.30 per SMS for optional non-critical SMS alerts that you choose to enable.", "phone")}
       ${settingsRow("Free critical SMS", "PIN reset, password reset, OTP reset and important security notifications are free.", "shield")}
-      ${settingsRow("Current SMS status", enabled ? "Enabled" : "Not enabled", enabled ? "shield" : "phone")}
+      ${settingsRow("Current SMS status", enabled ? "Enabled on this device" : "Not enabled", enabled ? "shield" : "phone")}
     </section>
-    <p class="field-hint">You will see applicable SMS fees before enabling paid SMS alerts. SMS is optional; in-app notifications remain free.</p>
+    <p class="field-hint">Your choice is saved on this device now. Payment SMS alerts start going out the moment TitoPay's SMS notification service is switched on for customer accounts, and you will see the R0.30 fee before any paid SMS is sent. In-app notifications are free and always on.</p>
     <div class="auth-actions">
       <button class="btn secondary" data-action="notifications">${icon("bell")} Back</button>
       <button class="btn primary" data-action="${enabled ? "disable-sms-notifications" : "enable-sms-notifications"}">${icon("phone")} ${enabled ? "Turn off SMS alerts" : "Enable SMS alerts"}</button>
@@ -1888,7 +2036,7 @@ function setSmsNotifications(enabled) {
   addInAppNotification({
     title: enabled ? "SMS alerts enabled" : "SMS alerts disabled",
     body: enabled
-      ? "Optional SMS notifications are enabled. Non-critical SMS alerts cost R0.30 per SMS. Critical OTP, PIN and password reset SMS messages remain free."
+      ? "SMS alerts are enabled on this device. Payment SMS messages begin once TitoPay activates the SMS notification service for customer accounts; non-critical SMS then cost R0.30 each, while OTP, PIN and password reset SMS stay free."
       : "Optional SMS notifications are off. In-app notifications remain free and active.",
     critical: false
   });
@@ -2376,6 +2524,24 @@ async function onClick(event) {
   const receiptShare = event.target.closest("[data-receipt-share]");
   if (receiptShare) {
     await shareReceipt(receiptShare.dataset.receiptShare).catch((error) => showToast(error.message || "Receipt sharing failed.", "error"));
+    return;
+  }
+  const notificationFilterBtn = event.target.closest("[data-notification-filter]");
+  if (notificationFilterBtn) {
+    state.notificationFilter = notificationFilterBtn.dataset.notificationFilter || "all";
+    openNotificationsModal();
+    return;
+  }
+  const notificationTx = event.target.closest("[data-notification-tx]");
+  if (notificationTx) {
+    const key = notificationTx.dataset.notificationTx;
+    const target = (state.transactions || []).find((tx) => String(tx.id) === key || String(tx.reference) === key);
+    if (target) {
+      openTransactionDetailModal(String(target.id || target.reference));
+    } else {
+      closeModal();
+      location.hash = "activity";
+    }
     return;
   }
   const notificationReceipt = event.target.closest("[data-notification-receipt]");

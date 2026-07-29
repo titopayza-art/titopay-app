@@ -9213,3 +9213,32 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
     min-height: clamp(44px, 5.4vh, 72px);
   }
 }
+
+
+/* ---------------------------------------------------------------------------
+   Notification centre: filters and payment rows
+   --------------------------------------------------------------------------- */
+
+.notification-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 4px;
+}
+
+.notification-filters .chip.is-active {
+  color: #fff;
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+/* Money in and money out must read apart at a glance, before the words. */
+.icon-bubble.notice-bubble-credit {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.12);
+}
+
+.icon-bubble.notice-bubble-debit {
+  color: var(--navy);
+  background: var(--soft);
+}

@@ -13,6 +13,9 @@ const SERVICES = JSON.parse(fs.readFileSync(CATALOGUE, "utf8"));
 
 const QR_IMAGE = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjMDAwIi8+PC9zdmc+";
 
+const TX_STATE = { items: [] };
+const makeTx = (i, direction) => ({ id: `t${i}`, reference: `TP-${4100 + i}`, service_name: direction === "credit" ? "Send Money" : "Airtime & Data", direction, amount: 120 + i, total: 122.5 + i, status: "completed", created_at: new Date(Date.now() - i * 3600000).toISOString() });
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const failures = [];
 const check = (name, ok, detail = "") => {
@@ -57,7 +60,10 @@ function mock(acct, eligible) {
     if (u.pathname === "/v1/maintenance/public") return J({ maintenance: { pwa: { enabled: false } } });
     if (u.pathname === "/v1/services") return J(SERVICES);
     if (u.pathname === "/v1/wallets") return J({ items: [{ wallet_id: "81234567", available_balance: 25000 }] });
-    if (u.pathname === "/v1/transactions") return J({ items: [] });
+    if (u.pathname === "/v1/transactions") return J({ items: TX_STATE.items });
+    if (u.pathname === "/v1/chatbot/messages") return J({ answer: "You can top up from the Top Up service using your linked card.", conversationId: "conv-1", status: "BOT_ACTIVE" });
+    if (u.pathname === "/v1/chat/threads") return J({ items: [{ id: "th1", threadId: "th1", title: "Thabo Ndlovu", subtitle: "@thabo", mode: "direct", updatedAt: new Date().toISOString(), participant: { id: "u2", name: "Thabo Ndlovu", username: "thabo" }, messages: [{ id: "m1", sender: "them", text: "Hi, did the payment go through?", createdAt: new Date(Date.now() - 300000).toISOString(), status: "delivered" }] }] });
+    if (u.pathname.startsWith("/v1/chat/") && route.request().method() === "POST") return J({ ok: true, message: { id: `m-${Date.now()}`, status: "sent" } });
     if (u.pathname === "/v1/qr/profile") return J({ qr: { id: "TPQR-81234567", reference: "TPQR-81234567", imageDataUrl: QR_IMAGE, deepLink: "https://app.titopay.co.za/pay/81234567" } });
     if (u.pathname === "/v1/qr/generate-static") return J({ qr: { id: "TIP-4471", reference: "TIP-4471", imageDataUrl: QR_IMAGE, deepLink: "https://app.titopay.co.za/pay/TIP-4471" } });
     if (u.pathname === "/v1/enterprise-distribution/eligibility") {
@@ -194,6 +200,119 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
       return { registered: result.registered, lookupFailed: Boolean(result.lookupFailed) };
     });
     check(`lookup reports not-registered only when the server said so (${label})`, verdict.registered === false && verdict.lookupFailed === expectUnavailable, JSON.stringify(verdict));
+    await ctx.close();
+  }
+
+  // ---- 2d. Notification centre -------------------------------------------
+  {
+    TX_STATE.items = [makeTx(1, "credit"), makeTx(2, "debit"), makeTx(3, "credit")];
+    const { ctx, page } = await authed(browser, { acct: "personal" });
+    // Backfill: history must arrive read, so the badge only counts the
+    // welcome notice, not three old transactions.
+    const backfill = await page.evaluate(() => ({
+      unread: unreadNotificationCount(),
+      txNotices: (state.notifications || []).filter((n) => String(n.id).startsWith("tx-")).length
+    }));
+    check("old transactions backfill silently", backfill.txNotices === 3 && backfill.unread <= 1, JSON.stringify(backfill));
+
+    // A new credit lands on the poll: it must arrive unread and move the bell.
+    TX_STATE.items = [makeTx(0, "credit"), ...TX_STATE.items];
+    await page.evaluate(() => syncTitoPayAccountStatus({ silent: true }));
+    await sleep(600);
+    const afterPoll = await page.evaluate(() => ({
+      unread: unreadNotificationCount(),
+      badge: document.querySelector("[data-app-topbar] .notification-count")?.textContent || "",
+      newest: (state.notifications || [])[0]?.title || ""
+    }));
+    check("a new payment becomes an unread notification", afterPoll.newest === "Money received", afterPoll.newest);
+    check("the bell badge updates without a re-render", afterPoll.badge !== "" && Number(afterPoll.unread) >= 1, JSON.stringify(afterPoll));
+
+    // The centre: payments filter, real amounts, tap-through to the receipt.
+    await page.click('[data-action="notifications"]');
+    await sleep(700);
+    await page.click('[data-notification-filter="payments"]');
+    await sleep(500);
+    const centre = await page.evaluate(() => {
+      const card = document.querySelector(".modal-card");
+      return {
+        rows: card.querySelectorAll(".notification-item").length,
+        firstTitle: card.querySelector(".notification-item strong")?.textContent || "",
+        showsAmount: /R\s?12[\d,.]*/.test(card.innerText),
+        showsRef: /TP-41\d\d/.test(card.innerText),
+        relativeTime: /ago|Just now/i.test(card.innerText),
+        filters: card.querySelectorAll("[data-notification-filter]").length
+      };
+    });
+    check("payments filter shows only payment rows", centre.rows === 4, `${centre.rows}`);
+    check("payment rows carry real amount and reference", centre.showsAmount && centre.showsRef, JSON.stringify(centre));
+    check("notification times read as relative", centre.relativeTime);
+    check("filter chips are present", centre.filters === 4, `${centre.filters}`);
+
+    await page.click(".notification-item[data-notification-tx]");
+    await sleep(700);
+    const detail = await page.evaluate(() => /Transaction/i.test(document.querySelector(".modal-card")?.innerText || ""));
+    check("tapping a payment notification opens the transaction", detail);
+    await page.evaluate(() => document.querySelector(".modal-backdrop [data-close]")?.click());
+    await sleep(400);
+
+    // Mark all read clears the badge.
+    await page.click('[data-action="notifications"]');
+    await sleep(600);
+    await page.click('[data-action="mark-notifications-read"]');
+    await sleep(600);
+    const cleared = await page.evaluate(() => ({ unread: unreadNotificationCount(), badge: Boolean(document.querySelector("[data-app-topbar] .notification-count")) }));
+    check("mark all read zeroes the badge", cleared.unread === 0, JSON.stringify(cleared));
+
+    // The SMS flow must not claim server-side alerts exist.
+    await page.click('[data-action="preview-sms-notifications"]');
+    await sleep(600);
+    const sms = await page.evaluate(() => document.querySelector(".modal-card")?.innerText || "");
+    check("SMS flow states the preference is device-local for now", /saved on this device/i.test(sms) && /R0\.30/.test(sms), sms.slice(0, 120));
+    TX_STATE.items = [];
+    await ctx.close();
+  }
+
+  // ---- 2e. Chatbot and TitoPay chat --------------------------------------
+  {
+    const { ctx, page } = await authed(browser, { acct: "personal" });
+    await page.click('[data-action="chatbot"]');
+    await sleep(800);
+    await page.fill('form[data-form="chatbot"] input[name="message"]', "How do I top up my wallet?");
+    await page.click('form[data-form="chatbot"] button[type="submit"]');
+    await sleep(1200);
+    const bot = await page.evaluate(() => document.querySelector(".modal-card")?.innerText || "");
+    check("chatbot renders the user message", /How do I top up my wallet\?/.test(bot));
+    check("chatbot renders the server answer", /linked card/.test(bot), bot.slice(-160));
+
+    await page.evaluate(() => { if (typeof openTitoPayChatModal === "function") openTitoPayChatModal(); });
+    await sleep(1500);
+    const chat = await page.evaluate(() => document.querySelector(".modal-card")?.innerText || "");
+    check("TitoPay chat lists the thread", /Thabo Ndlovu/.test(chat), chat.slice(0, 120));
+    await ctx.close();
+  }
+
+  // ---- 2f. Every active service opens cleanly ----------------------------
+  for (const acct of ["personal", "business"]) {
+    const { ctx, page, errors } = await authed(browser, { acct });
+    await page.evaluate(() => { location.hash = "services"; });
+    await sleep(900);
+    const tiles = await page.evaluate(() => [...document.querySelectorAll(".screen .service-grid [data-service]")].map((t) => t.dataset.service));
+    let opened = 0;
+    const broken = [];
+    for (const svc of tiles) {
+      await page.evaluate(() => document.querySelector(".modal-backdrop [data-close]")?.click());
+      await sleep(250);
+      await page.evaluate(() => { location.hash = "services"; });
+      await sleep(300);
+      const tile = await page.$(`.screen [data-service="${svc}"]`);
+      if (!tile) continue;
+      await tile.click().catch(() => {});
+      await sleep(700);
+      const responded = await page.evaluate(() => Boolean(document.querySelector(".modal-backdrop")) || location.hash !== "#services");
+      if (responded) opened += 1; else broken.push(svc);
+    }
+    check(`every active service responds (${acct})`, broken.length === 0, broken.join(", ") || `${opened}/${tiles.length}`);
+    check(`service sweep raises no page errors (${acct})`, errors.length === 0, errors.slice(0, 3).join(" | "));
     await ctx.close();
   }
 
