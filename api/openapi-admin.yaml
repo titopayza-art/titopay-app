@@ -545,7 +545,7 @@ paths:
         them at all.
       parameters:
         - { name: status, in: query, schema: { type: string, enum: [open, awaiting_customer, resolved, closed] } }
-        - { name: mode, in: query, schema: { type: string, enum: [live_chat, callback, queue] } }
+        - { name: mode, in: query, schema: { type: string, enum: [live_chat, callback, wait] } }
         - { name: assignedTo, in: query, schema: { type: string } }
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
       responses:
@@ -653,7 +653,7 @@ paths:
       tags: [Users]
       summary: Search customers
       parameters:
-        - { name: search, in: query, schema: { type: string, description: Username, cellphone, email or wallet number. } }
+        - { name: search, in: query, schema: { type: string, description: "Username, cellphone", email or wallet number. } }
         - { name: accountType, in: query, schema: { type: string, enum: [personal, business] } }
         - { name: status, in: query, schema: { type: string, enum: [active, locked, suspended, closed] } }
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
@@ -980,7 +980,7 @@ components:
           nullable: true
           description: When the batch entered `funded`. This is the organisation's clock — sort the queue by it.
         released_at: { type: string, format: date-time, nullable: true }
-        released_by: { type: string, nullable: true, description: Shown to the organisation. A name or role, not an internal id. }
+        released_by: { type: string, nullable: true, description: "Shown to the organisation. A name or role, not an internal id." }
         failure_reason: { type: string, nullable: true, description: Shown to the organisation verbatim. }
         rows:
           type: array
@@ -1039,7 +1039,7 @@ components:
             type: object
             properties:
               type: { type: string, enum: [id_document, proof_of_address, selfie, business_registration] }
-              url: { type: string, format: uri, description: Signed, 5-minute expiry. Every access is audited. }
+              url: { type: string, format: uri, description: "Signed, 5-minute expiry. Every access is audited." }
               filename: { type: string }
               uploadedAt: { type: string, format: date-time }
 
@@ -1071,7 +1071,7 @@ components:
             fullName: { type: string }
             username: { type: string }
             accountType: { type: string, enum: [personal, business] }
-        mode: { type: string, enum: [live_chat, callback, queue] }
+        mode: { type: string, enum: [live_chat, callback, wait] }
         subject: { type: string }
         message: { type: string }
         status: { type: string, enum: [open, awaiting_customer, resolved, closed] }
@@ -1142,7 +1142,7 @@ components:
         currentValue: { type: string }
         requestedValue: { type: string }
         reason: { type: string, nullable: true }
-        supportingDocumentUrl: { type: string, format: uri, nullable: true, description: Signed, 5-minute expiry. }
+        supportingDocumentUrl: { type: string, format: uri, nullable: true, description: "Signed, 5-minute expiry." }
         status: { type: string, enum: [pending, approved, declined] }
         requestedAt: { type: string, format: date-time }
         decidedAt: { type: string, format: date-time, nullable: true }

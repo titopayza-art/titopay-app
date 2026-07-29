@@ -10,13 +10,21 @@ The complete API contract across all three surfaces, with every fix from
 | `openapi-app.yaml` | **App** | The PWA — personal and business accounts |
 | `openapi-admin.yaml` | **Admin** | The internal TitoPay console |
 | `openapi-hr.yaml` | **HR / Bulk Distribution** | Approved organisations paying many people at once |
+| `chat-socket.md` | **App** | The chat websocket — the one surface OpenAPI cannot express |
 | `catalogue/services-catalogue.json` | — | The corrected service catalogue, in full |
 | `catalogue/catalogue-patch.json` | — | Just the deltas, as a JSON patch |
 | `catalogue/catalogue-fix.sql` | — | The same deltas as SQL |
 | `CHANGELOG.md` | — | Every fix, traced to the endpoint that carries it |
 
-All three specs are OpenAPI 3.1 and parse clean. Open them in Swagger UI,
-Redoc, Stoplight or Postman, or generate a server stub from them.
+All three specs validate against the OpenAPI 3.1 schema. Open them in Swagger
+UI, Redoc, Stoplight or Postman, or generate a server stub from them.
+
+**Verified against the shipped client.** Every `/v1/…` path in `app.js` was
+extracted and matched against these specs, path and HTTP method. Every endpoint
+and method the client calls is specified, and the request bodies below are the
+ones it actually sends — not an idealised version of them. Where the client
+sends the same value under three names, the spec says so rather than pretending
+it sends one.
 
 ## The three surfaces
 

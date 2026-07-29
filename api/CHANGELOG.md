@@ -1,5 +1,51 @@
 # Fixes applied
 
+---
+
+## Verification pass — the specs now match the shipped client
+
+Every `/v1/…` call site in `app.js` was extracted and matched against the specs
+by path **and HTTP method**. That found twelve places where the spec described
+something the client does not do. All are corrected; the list is here because
+each one would have produced a working backend that the app could not talk to.
+
+| Corrected | Was specified as | The client actually does |
+|---|---|---|
+| `/v1/auth/me/photo` | `POST { kind, image }` | `PUT { mediaType, dataUrl }` |
+| `/v1/chat/calls/{callId}/end` | `POST /v1/chat/calls/{threadId}` with an action enum | Only `/end` over HTTP; setup is on the socket |
+| `/v1/chat/threads/{id}/mute`, `/unmute` | absent | `POST`, empty body |
+| `/v1/chat/threads/{id}/messages` | absent | `GET` and `POST` — first link in both fallback chains |
+| `/v1/chat/users/lookup` | `GET ?q=` | `POST` with `lookupMethod`, and `GET ?identifier=` |
+| `/v1/chat/messages` | `GET` absent; `POST { threadId, body }` | `GET` too, and a `POST` body carrying every field under 2–3 names |
+| `/v1/services` | no query parameters | `?audience=all`, unauthenticated |
+| `/v1/support/conversations/{id}/messages`, `/read` | absent | `GET`, `POST` and a read receipt |
+| `/v1/ticketing/business/events/{id}/submit` | absent | `POST` — submit a draft for approval |
+| `/v1/ticketing/business/events/{id}/staff` | absent | `POST { identifier, role, permissions }` |
+| Support conversation status | `open`, `awaiting_customer`, `resolved`, `closed` | `ESCALATED`, `WAITING_FOR_AGENT`, `AGENT_ACTIVE`, `REOPENED` — uppercase |
+| Escalation `mode` | `live_chat`, `callback`, `queue` | `live_chat`, `callback`, **`wait`** |
+
+Two of these are worth calling out because they are silent failures rather than
+obvious ones:
+
+**The support status vocabulary is uppercase and exact.** The client compares
+`conversation.status` against those four strings to decide whether the user's
+next message goes to a live agent or back to the bot. A lowercase or unexpected
+value does not error — it routes the customer's message to the chatbot while
+they believe they are talking to a person.
+
+**`POST /v1/chat/messages` must be idempotent on `clientMessageId`.** The
+websocket send and the REST fallback carry the same value, and the client falls
+back after a 7-second ack timeout. A slow ack is the normal case, not an edge
+case; without idempotency it duplicates the message every time.
+
+**Also added:** `chat-socket.md`, documenting the websocket — subprotocol
+authentication, the reconnect backoff, all six server event types and the
+`chat:send` frame. It is the only part of the client's API surface that cannot
+be expressed as an OpenAPI path, and it was previously described only in prose
+on `GET /v1/chat/config`.
+
+---
+
 Every item from `API-REQUIREMENTS.md` and `API-CATALOGUE-FIX.md`, traced to the
 endpoint that carries it. Priorities are the ones from the source documents: P0
 means users are actively misled or data is at risk.

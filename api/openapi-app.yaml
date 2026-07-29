@@ -242,23 +242,30 @@ paths:
               schema: { $ref: '#/components/schemas/Me' }
 
   /v1/auth/me/photo:
-    post:
+    put:
       tags: [Auth]
       summary: Upload a profile photo or business logo
       description: |
         **FIX.** Photos and logos are currently held in `localStorage` under
         `titopay_profile_photo_v1` / `titopay_business_logo_v1` and are lost when
         browser data is cleared or the device changes.
+
+        The method is **PUT** and the body fields are `mediaType` and `dataUrl` —
+        this is what the shipped client sends. The client crops client-side and
+        rejects anything that is not a `data:image/…` URL before calling.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [image]
+              required: [mediaType, dataUrl]
               properties:
-                kind: { type: string, enum: [avatar, business_logo], default: avatar }
-                image:
+                mediaType:
+                  type: string
+                  enum: [avatar, business_logo]
+                  description: Which image this replaces.
+                dataUrl:
                   type: string
                   description: Data URL, `data:image/png;base64,…`. Max 2 MB decoded.
       responses:
@@ -702,6 +709,14 @@ paths:
       tags: [Services]
       summary: The service catalogue
       security: []
+      parameters:
+        - name: audience
+          in: query
+          schema: { type: string, enum: [all, personal, business], default: all }
+          description: |
+            The client calls `?audience=all` unauthenticated and filters by
+            `personal_visible` / `business_visible` itself, so one cached
+            response serves both account types. Return every row for `all`.
       description: |
         Drives every tile in the app: the Services grid, Home quick services and
         the landing preview. Fetched on load; the bundled
@@ -895,7 +910,7 @@ paths:
               type: object
               required: [payload]
               properties:
-                payload: { type: string, description: The decoded QR string, verbatim. }
+                payload: { type: string, description: "The decoded QR string, verbatim." }
                 amount:
                   type: number
                   format: double
@@ -1643,6 +1658,95 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OrganiserEvent' }
 
+  /v1/ticketing/business/events/{eventId}/submit:
+    parameters:
+      - { name: eventId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Ticketing (organiser)]
+      summary: Submit a draft event for approval
+      description: |
+        Moves the event from `draft` to `pending_approval` and puts it in the
+        Admin queue at `GET /v1/admin/ticketing/events`. Empty body — the event
+        is already saved.
+
+        Reject with `422` and a `fieldErrors` map if the draft is incomplete;
+        the client shows those against the form rather than a generic toast.
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Submitted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrganiserEvent' }
+        '409':
+          description: Not in `draft`, or already submitted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/ticketing/business/events/{eventId}/staff:
+    parameters:
+      - { name: eventId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Ticketing (organiser)]
+      summary: Staff assigned to this event
+      description: Backs the *Ticketing Staff* screen (`business-ticketing-staff`).
+      responses:
+        '200':
+          description: Assigned staff.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/EventStaff' }
+    post:
+      tags: [Ticketing (organiser)]
+      summary: Assign a verified TitoPay user to an event
+      description: |
+        `identifier` is resolved the same way a recipient is — and the same rule
+        applies: an `outcome: "unavailable"` must not be reported to the
+        organiser as "no such user". Only verified users may be assigned;
+        reject an unverified one with `422` and say so in `error`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, role]
+              properties:
+                identifier: { type: string, description: "Username, cellphone or email." }
+                role: { type: string, enum: [scanner, manager], default: scanner }
+                permissions:
+                  type: array
+                  items: { type: string, enum: [scan, refund, guest_list] }
+                  description: The client sends `["scan"]` for a scanner.
+      responses:
+        '201':
+          description: Assigned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventStaff' }
+        '422':
+          description: Not a verified TitoPay user, or already assigned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Ticketing (organiser)]
+      summary: Remove an assigned staff member
+      parameters:
+        - { name: staffId, in: query, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Removed. }
+
   /v1/ticketing/scanner/validate:
     post:
       tags: [Ticketing (organiser)]
@@ -1664,7 +1768,7 @@ paths:
               required: [eventId, payload]
               properties:
                 eventId: { type: string }
-                payload: { type: string, description: The decoded QR string, verbatim. }
+                payload: { type: string, description: "The decoded QR string, verbatim." }
       responses:
         '200':
           description: Decision.
@@ -1773,25 +1877,84 @@ paths:
         '204': { description: Removed from my list. }
 
   /v1/chat/messages:
+    get:
+      tags: [Chat]
+      summary: Messages, by thread or participant
+      description: |
+        The **second** endpoint in the client's history fallback chain, after
+        `/v1/chat/threads/{threadId}/messages` and before `/v1/messages`.
+      parameters:
+        - { name: threadId, in: query, schema: { type: string } }
+        - { name: identifier, in: query, schema: { type: string } }
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        '200':
+          description: The client accepts the array under `messages` or `items`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatMessage' }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatMessage' }
     post:
       tags: [Chat]
       summary: Send a message
-      description: Canonical send path. The client stops trying the second, undocumented one.
+      description: |
+        The primary REST send path, and the first fallback when the websocket
+        does not acknowledge within 7 seconds — see `chat-socket.md`.
+
+        **Must be idempotent on `clientMessageId`.** The socket send and this
+        call carry the same value, so a slow ack followed by a REST retry is the
+        normal case, not an edge case. Without idempotency it produces a
+        duplicate message every time the socket is slow.
+
+        The body below is what the client actually posts: it is also the socket
+        `chat:send` payload, unchanged. Several concepts arrive under more than
+        one name because the canonical one was never documented — they always
+        carry the same value. Say which you want and the duplicates come out of
+        the client.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [threadId, body]
+              required: [clientMessageId]
               properties:
-                threadId: { type: string }
-                body: { type: string }
+                threadId:
+                  type: string
+                  description: The server's thread id, when the thread exists server-side.
+                clientThreadId:
+                  type: string
+                  description: |
+                    The client's own id for a thread it created locally. This is
+                    how the first message in a brand-new conversation identifies
+                    itself, before the server has ever seen the thread. Worth
+                    keeping even after the other duplicates are removed.
+                participantId: { type: string, description: The other party's user id. }
+                identifier: { type: string, description: "Username, cellphone or email — an alias of participantId." }
+                recipient:
+                  type: object
+                  additionalProperties: true
+                  description: The resolved participant object, sent whole.
+                body: { type: string, description: The message text. Preferred name. }
+                message: { type: string, description: Alias of `body`. }
+                text: { type: string, description: Alias of `body`. }
                 clientMessageId:
                   type: string
                   description: |
-                    Client-generated. Echoed back on the stored message so the
-                    optimistic bubble can be reconciled instead of duplicated.
+                    Client-generated and the idempotency key for this message.
+                    Echoed back on the stored message so the optimistic bubble
+                    reconciles instead of duplicating.
+                localMessageId: { type: string, description: Alias of `clientMessageId`. }
+                type: { type: string, enum: [text], default: text }
+                mode: { type: string, nullable: true }
                 attachment:
                   type: object
                   properties:
@@ -1801,6 +1964,11 @@ paths:
       responses:
         '201':
           description: Sent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatMessage' }
+        '200':
+          description: Idempotent replay of an already-stored `clientMessageId`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ChatMessage' }
@@ -1843,48 +2011,175 @@ paths:
       responses:
         '204': { description: Marked. }
 
-  /v1/chat/calls/{threadId}:
+  /v1/chat/calls/{callId}/end:
     parameters:
-      - { name: threadId, in: path, required: true, schema: { type: string } }
+      - { name: callId, in: path, required: true, schema: { type: string } }
     post:
       tags: [Chat]
-      summary: Start or signal a call
+      summary: End a call
+      description: |
+        The only call endpoint the client reaches over HTTP. Setup and
+        signalling — ring, accept, decline — go over the websocket; see
+        `chat-socket.md`. The client holds the server's `callId` as `apiCallId`
+        and posts here when the user hangs up.
+
+        The client sends an empty body and **swallows any error** — the call has
+        already ended on their screen. Do not rely on this call to close out
+        billing or state; treat a socket disconnect as an end too.
       requestBody:
-        required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [action]
-              properties:
-                action: { type: string, enum: [ring, accept, decline, end] }
-                mode: { type: string, enum: [voice, video] }
+            schema: { type: object }
       responses:
         '200':
-          description: Call state.
+          description: Ended.
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   callId: { type: string }
-                  state: { type: string, enum: [ringing, active, ended, declined] }
-        '503':
-          description: Calling is not available. The client hides the call buttons.
+                  state: { type: string, enum: [ended] }
+                  durationSeconds: { type: integer }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/chat/threads/{threadId}/mute:
+    parameters:
+      - { name: threadId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Chat]
+      summary: Mute a thread
+      description: Empty body. The client flips its local `muted` flag on success and leaves it unchanged on failure.
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Muted.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                type: object
+                properties:
+                  muted: { type: boolean, const: true }
+
+  /v1/chat/threads/{threadId}/unmute:
+    parameters:
+      - { name: threadId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Chat]
+      summary: Unmute a thread
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Unmuted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  muted: { type: boolean, const: false }
+
+  /v1/chat/threads/{threadId}/messages:
+    parameters:
+      - { name: threadId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Chat]
+      summary: Messages in a thread
+      description: |
+        **FIX — P2-4.** This is the **first** endpoint in the client's history
+        fallback chain: it tries this, then `/v1/chat/messages`, then
+        `/v1/messages`, taking the first that answers. Implement this one and
+        the other two stop being reached.
+      parameters:
+        - { name: identifier, in: query, schema: { type: string }, description: "The other party, as the client resolved them." }
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        '200':
+          description: |
+            The client accepts the array under `messages` or `items`. Prefer
+            `messages`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatMessage' }
+                  items:
+                    type: array
+                    description: Accepted alias of `messages`.
+                    items: { $ref: '#/components/schemas/ChatMessage' }
+    post:
+      tags: [Chat]
+      summary: Send a message to a thread
+      description: |
+        **FIX — P2-4.** The **second** endpoint in the client's send chain: it
+        posts to `/v1/chat/messages` first and falls back to this one. Both must
+        accept the same body. Confirm which is canonical and the other will be
+        removed from the client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string }
+                clientMessageId: { type: string }
+      responses:
+        '201':
+          description: Sent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatMessage' }
 
   /v1/chat/users/lookup:
-    get:
+    post:
       tags: [Chat]
       deprecated: true
       summary: (Deprecated) Chat user lookup
       description: |
-        **FIX — P0-1.** One of the three lookups the client used to try in
-        sequence. Use `POST /v1/recipients/resolve`.
+        **FIX — P0-1.** One of the lookups in the client's fallback chain. Use
+        `POST /v1/recipients/resolve`.
+
+        The client sends `lookupMethod` alongside the resolve body — `"auto"`
+        when it is guessing the identifier type, or the type the user picked in
+        the Chat lookup form. Must return the same `outcome` envelope as
+        `/v1/recipients/resolve`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/ResolveRequest'
+                - type: object
+                  properties:
+                    lookupMethod:
+                      type: string
+                      enum: [auto, username, cellphone, email]
+                      default: auto
+      responses:
+        '200':
+          description: Same envelope as `/v1/recipients/resolve`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolveResponse' }
+    get:
+      tags: [Chat]
+      deprecated: true
+      summary: (Deprecated) Chat user lookup by query string
+      description: The last link in the fallback chain. Same envelope.
       parameters:
-        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: identifier, in: query, required: true, schema: { type: string } }
       responses:
         '200':
           description: Same envelope as `/v1/recipients/resolve`.
@@ -1943,17 +2238,37 @@ paths:
           application/json:
             schema:
               type: object
-              required: [conversationId]
+              required: [mode, message]
               properties:
-                conversationId: { type: string }
-                mode: { type: string, enum: [live_chat, callback, queue] }
-                note: { type: string }
+                mode:
+                  type: string
+                  enum: [live_chat, callback, wait]
+                  description: |
+                    These are the three values the shipped client sends —
+                    "Live chat", "Callback request", "Continue waiting". Note
+                    `wait`, not `queue`: `API-REQUIREMENTS.md` said `queue`, but
+                    the client has always sent `wait`. Accept both if you
+                    prefer; `wait` is the one that arrives today.
+                message: { type: string }
+                conversationId:
+                  type: string
+                  description: Omitted entirely when there is no conversation yet.
       responses:
         '201':
-          description: Ticket created.
+          description: |
+            Ticket created. The client reads the reference from `ticketRef`,
+            `ticket_ref` or `ticket.reference`, the id from `ticket.id` or `id`,
+            and picks up `conversation.id` and `conversation.status` to route
+            the user's next message. Returning `ticket` and `conversation` as
+            below satisfies all of those readers.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SupportTicket' }
+              schema:
+                type: object
+                properties:
+                  ticket: { $ref: '#/components/schemas/SupportTicket' }
+                  ticketRef: { type: string, description: Duplicated at the top level for the client's first reader. }
+                  conversation: { $ref: '#/components/schemas/SupportConversation' }
 
   /v1/chatbot/ratings:
     post:
@@ -2003,7 +2318,7 @@ paths:
               type: object
               required: [mode, message]
               properties:
-                mode: { type: string, enum: [live_chat, callback, queue] }
+                mode: { type: string, enum: [live_chat, callback, wait] }
                 message: { type: string }
                 context:
                   type: object
@@ -2026,26 +2341,88 @@ paths:
       - { name: conversationId, in: path, required: true, schema: { type: string } }
     get:
       tags: [Support]
-      summary: A support conversation with its replies
+      summary: A support conversation and its state
+      description: |
+        The client reads `conversation.status` from this response and caches it
+        in `sessionStorage`. That value decides where the next thing the user
+        types is sent: while the status is `ESCALATED`, `WAITING_FOR_AGENT`,
+        `AGENT_ACTIVE` or `REOPENED` the message goes to a human at
+        `/messages` below; otherwise it goes back to the bot at
+        `/v1/chatbot/messages`.
+
+        Getting this value wrong routes a customer's message into the void, so
+        the enum on `SupportConversationStatus` is exact.
       responses:
         '200':
-          description: Conversation.
+          description: Conversation. Note the `conversation` wrapper — the client reads `result.conversation.status`.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  id: { type: string }
-                  status: { type: string, enum: [open, awaiting_customer, resolved, closed] }
+                  conversation: { $ref: '#/components/schemas/SupportConversation' }
+
+  /v1/support/conversations/{conversationId}/messages:
+    parameters:
+      - { name: conversationId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Support]
+      summary: Messages in a support conversation
+      responses:
+        '200':
+          description: |
+            The client accepts the array under `messages` or `items`, and reads
+            each body from `body` or `message`. Prefer `messages` and `body`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
                   messages:
                     type: array
-                    items:
-                      type: object
-                      properties:
-                        id: { type: string }
-                        from: { type: string, enum: [customer, agent, assistant] }
-                        body: { type: string }
-                        sentAt: { type: string, format: date-time }
+                    items: { $ref: '#/components/schemas/SupportMessage' }
+                  items:
+                    type: array
+                    description: Accepted alias of `messages`.
+                    items: { $ref: '#/components/schemas/SupportMessage' }
+    post:
+      tags: [Support]
+      summary: Send a message to a live agent
+      description: |
+        Used instead of `/v1/chatbot/messages` once the conversation has reached
+        a human — see the status list on the parent resource.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string }
+                clientMessageId:
+                  type: string
+                  description: Client-generated, so an optimistic bubble reconciles instead of duplicating.
+      responses:
+        '201':
+          description: Sent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupportMessage' }
+
+  /v1/support/conversations/{conversationId}/read:
+    parameters:
+      - { name: conversationId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Support]
+      summary: Mark the conversation read
+      description: Empty body. The client fires this after rendering and ignores any error.
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '204': { description: Marked. }
 
   /v1/support/reviews:
     post:
@@ -2588,7 +2965,7 @@ components:
       properties:
         amount: { type: number, format: double }
         fee: { type: number, format: double, description: TitoPay's fee. }
-        thirdPartyFee: { type: number, format: double, description: Peach Payments or provider fee, passed through. }
+        thirdPartyFee: { type: number, format: double, description: "Peach Payments or provider fee, passed through." }
         total: { type: number, format: double, description: What leaves the wallet. Zero when `debits` is false. }
         recipientAmount: { type: number, format: double }
         debits:
@@ -2651,7 +3028,7 @@ components:
         primary:
           type: boolean
           description: The one field shown on the summary line. At most one per provider.
-        pattern: { type: string, description: JavaScript-compatible regex, applied client-side before submit. }
+        pattern: { type: string, description: "JavaScript-compatible regex, applied client-side before submit." }
         hint: { type: string }
         options:
           type: array
@@ -2895,12 +3272,68 @@ components:
         sentAt: { type: string, format: date-time }
         readAt: { type: string, format: date-time, nullable: true }
 
+    SupportConversationStatus:
+      type: string
+      description: |
+        **Uppercase, and exact.** The client compares against these strings to
+        decide whether the user's next message goes to a human or back to the
+        bot. `ESCALATED`, `WAITING_FOR_AGENT`, `AGENT_ACTIVE` and `REOPENED`
+        route to the agent; anything else routes to `/v1/chatbot/messages`.
+        An unrecognised value falls through to the bot.
+      enum: [BOT, ESCALATED, WAITING_FOR_AGENT, AGENT_ACTIVE, REOPENED, RESOLVED, CLOSED]
+
+    SupportConversation:
+      type: object
+      properties:
+        id: { type: string }
+        status: { $ref: '#/components/schemas/SupportConversationStatus' }
+        ticketRef: { type: string, nullable: true }
+        agentName: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/SupportMessage' }
+
+    SupportMessage:
+      type: object
+      properties:
+        id: { type: string }
+        conversationId: { type: string }
+        senderType:
+          type: string
+          enum: [CUSTOMER, AGENT, BOT, SYSTEM]
+          description: |
+            Uppercase. The client renders `CUSTOMER` as the user's own bubble
+            and **everything else** as the other side — so a value outside this
+            set is displayed as an agent reply rather than dropped.
+        body: { type: string }
+        message:
+          type: string
+          description: Accepted alias of `body`. Prefer `body`.
+        clientMessageId: { type: string, nullable: true }
+        sentAt: { type: string, format: date-time }
+
+    EventStaff:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        displayName: { type: string }
+        username: { type: string, nullable: true }
+        role: { type: string, enum: [scanner, manager] }
+        permissions:
+          type: array
+          items: { type: string, enum: [scan, refund, guest_list] }
+        verified: { type: boolean }
+        assignedAt: { type: string, format: date-time }
+
     SupportTicket:
       type: object
       properties:
         id: { type: string }
         reference: { type: string, example: SUP-2026-0031 }
-        mode: { type: string, enum: [live_chat, callback, queue] }
+        mode: { type: string, enum: [live_chat, callback, wait] }
         subject: { type: string }
         message: { type: string }
         status: { type: string, enum: [open, awaiting_customer, resolved, closed] }
