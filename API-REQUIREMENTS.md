@@ -11,6 +11,28 @@ because there is nowhere to put it.
 Priority is P0 (users are actively misled or data is at risk), P1 (a shipped
 feature has no backend), P2 (correctness and consistency).
 
+## Status after reading the API
+
+The first half of this document was written from the client side without sight
+of the backend. The API has since been read directly, and several items were
+either already satisfied or turned out to be client bugs. **The original
+specifications are kept below unchanged**, and each one now has a status entry
+in the second half of the document. Read the status first.
+
+| Item | Status |
+|---|---|
+| P0-1 recipient lookup `outcome` | **Done** — patched in `security-service.js` |
+| P0-2 business documents persistence | **Open** — confirmed, no route exists |
+| P0-3 ticket issuance in the response | **Already provided** — the spec was wrong |
+| P1-1 Stockvel backend | **Open** — confirmed, no route exists; tile hidden by the catalogue migration |
+| P1-2 VAS catalogue and validation | Unverified — no VAS route in the supplied API |
+| P1-3 support tickets | **Already provided** — the spec was wrong |
+| P1-4 bulk distribution report and release state | **Done** — both were already on the wire; the client was not reading them |
+| P2-1 catalogue corrections | **SQL supplied** — `src/db/migrations/2026-07-29-service-catalogue-corrections.sql` |
+| P2-2 invoice posts a transaction | Open — depends on P0-2 |
+| P2-3 fee preview `debits` | Open |
+| P2-4 chat transport | Partly answered — a socket layer exists in `src/realtime/` |
+
 ---
 
 ## P0-1 — Recipient lookup must distinguish "not found" from "could not check"
@@ -330,52 +352,108 @@ fallback chain masks failures and the polling costs battery on mobile.
 
 ---
 
-## P1-4 — Bulk Distribution: the validation report and the release state
+## P1-4 — Bulk Distribution — RESOLVED, and three corrections to this document
 
-The Bulk Distribution client was rebuilt in v182 to show what the API returns
-instead of a single toast. Three gaps surfaced while doing it. None of them
-block the feature; all of them limit it.
+This section previously asked the API for three things. Having now read the
+API, two of them already existed and one is a client bug we introduced. The
+corrections are recorded here rather than quietly deleted, because the earlier
+version of this file was used to plan backend work that is not needed.
 
-**1. Per-row rejection reasons.** `POST /v1/enterprise-distribution/batches`
-returns `invalid_rows` as a count. An organisation uploading 400 rows is told
-"7 rejected" and has no way to learn which seven or why. The client already
-renders per-row detail when it is present — it looks for an array on
-`batch.rows`, `batch.invalid_row_details` or `batch.errors`, where each entry
-carries an identifier and one of `error` / `reason` / `message`:
+**1. Per-row rejection reasons — already provided.** `POST
+/v1/enterprise-distribution/batches` returns `validationReport` alongside
+`batch`: one entry per row as `{ rowNumber, row, errors[], status }`, with the
+reasons already written for a human — "Active TitoPay wallet was not found",
+"Amount must be greater than zero", "Duplicate beneficiary in this batch". The
+rows are also persisted to `enterprise_distribution_batch_items.validation_errors`.
+The client was discarding the report and rendering the count alone. Fixed in
+v184; no API change.
 
-```json
-{
-  "batch": {
-    "id": "…", "batch_name": "…", "batch_reference": "…",
-    "valid_rows": 393, "invalid_rows": 7, "valid_total": 98250.00,
-    "rows": [
-      { "line": 12, "uniqueBeneficiaryId": "STU-10022", "amount": 250.00,
-        "error": "Beneficiary has no TitoPay wallet number" }
-    ]
-  }
-}
-```
+**2. Release visibility — already provided.** `GET
+/v1/enterprise-distribution/batches` is a `SELECT *`, so `released_at` has
+always been on the wire. The client was not reading it. Every batch row now
+states where it stands — "Locked. Waiting for TitoPay Admin to release." or
+"Released 12 Mar 2026 14:22". Fixed in v184; no API change.
 
-Until this lands the client says plainly that TitoPay reported a count but not
-which rows — it does not guess a reason.
+**3. Status vocabulary — read from the service.** The set is `draft`,
+`draft_validated`, `draft_validation_failed`, `funding_locked`, `released`,
+`processing`, `completed`, `failed`, `cancelled`. The client now names each one
+in plain words and only offers funding on `draft_validated`, which is the only
+status `lockBatchFunding` accepts.
 
-**2. Batch status vocabulary.** The client styles `draft_validated` as the one
-state that can be funded, and prints every other status verbatim. Please
-confirm the full set of values and which of them are terminal, so a released
-or rejected batch reads correctly rather than as raw snake_case.
+**Still open, and genuinely server-side:** batch payouts are wallet-only.
+`lockBatchFunding` marks any non-wallet row `payout_service_required` and the
+client says as much. If bank beneficiaries are ever meant to run through a
+batch rather than through Payouts, that is a product decision with a real
+implementation behind it, not a UI change.
 
-**3. No release visibility.** Step 5 of the flow is "TitoPay Admin releases the
-batch", and the app has no way to show whether that has happened, when, or by
-whom — `GET /v1/enterprise-distribution/batches` returns no released timestamp
-or actor. An organisation that has locked R98 250 of its own money currently
-has to phone TitoPay to find out where the batch is. A `released_at`,
-`released_by` and, on failure, `failure_reason` on the batch record would close
-this.
+---
 
-**Not requested:** any change to the funding or release control flow. The
-client deliberately keeps lock and release as two separate, human-triggered
-steps, and v182 replaced a browser `confirm()` with a review screen that
-restates the amount before the lock call is made.
+## P1-3 — Support tickets — RESOLVED
+
+`POST /v1/support/tickets` exists and writes to `support_tickets` with a
+generated `ticket_ref`, status `open` and assignment to the Customer Care
+queue, alongside a full conversation API. This section previously stated the
+endpoint was missing. It was not.
+
+---
+
+## P0-3 — Ticket issuance — RESOLVED
+
+`purchaseTickets` issues a unique numeric `ticket_code` per ticket and a QR
+payload of `{ type: "titopay_ticket", ticketId, ticketCode, orderReference,
+eventId }`, returns them on the purchase response, and delivers the order
+asynchronously. This section previously asked for issuance in the response. It
+was already there.
+
+---
+
+## P0-1 — Recipient lookup — RESOLVED in this change
+
+`verifyRecipient` returned `registered: true|false` with no way to tell "we
+looked and found nobody" from "the lookup itself failed". Both branches now
+carry an additive `outcome` field, `"found"` or `"not_found"`, and the client
+trusts it in preference to its own heuristic. Every existing field keeps its
+meaning; nothing was removed.
+
+Patch: `src/services/security-service.js`, three return sites.
+
+---
+
+## P2-1 — Service catalogue corrections — SQL supplied
+
+The table is `service_config` and the client reads it through `GET
+/v1/services`. A migration is supplied at
+`src/db/migrations/2026-07-29-service-catalogue-corrections.sql`: nine field
+values across seven rows, idempotent, and a no-op for any row absent from a
+given environment. The most important line hides Stockvel.
+
+---
+
+## P1-1 — Stockvel still has no backend — CONFIRMED, and now urgent
+
+There is no stockvel route in this API. `transaction-service.js` recognises
+`stockvel` and `stockvel_contribution` as service codes, and nothing else
+exists: no groups, no members, no contributions, no ledger. The app renders a
+complete savings-group interface against `/v1/stockvels`, which returns 404.
+
+The catalogue migration above hides the tile. That is containment, not a fix.
+A savings product visible to customers with no ledger behind it is the single
+largest risk in this codebase, and hiding the tile is what should happen today
+while the endpoints are built.
+
+---
+
+## P0-2 — Business documents still have no backend — CONFIRMED
+
+`invoice`, `quote` and `proforma-invoice` are published in `service_config`
+and there is no route, service or table for any of them. Everything the app
+saves lives in browser storage and is lost when the cache clears. Numbering is
+client-side, so two devices on the same business will issue the same invoice
+number. This is a compliance exposure, not only a data-loss one.
+
+The original P0-2 specification below still stands unchanged.
+
+---
 
 ---
 

@@ -621,7 +621,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=183", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=184", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -3271,6 +3271,10 @@ async function lookupRegisteredRecipient(recipient, serviceCode) {
   // is that nothing could be checked. lookupFailed carries that distinction;
   // registered keeps its existing meaning so current callers are unaffected.
   let completedCleanly = false;
+  // The server states the difference directly when it can: outcome:"not_found"
+  // means it looked and there is nobody, which is a stronger signal than a
+  // request that merely came back without an error.
+  let serverSaidNotFound = false;
   for (let index = 0; index < lookupRequests.length; index += 1) {
     try {
       const result = await lookupRequests[index]();
@@ -3281,13 +3285,18 @@ async function lookupRegisteredRecipient(recipient, serviceCode) {
         rememberLocalTitoPayUser(user);
         return { registered: true, user, source: "user_lookup" };
       }
+      if (result.outcome === "not_found") serverSaidNotFound = true;
       if (result.invite) invite = result.invite;
     } catch (error) {
       if (error.status === 401 || error.status === 403) throw error;
     }
   }
   if (localUser) return { registered: true, user: localUser, source: "local_lookup" };
-  return { registered: false, lookupFailed: !completedCleanly, invite: invite || defaultRecipientInvite(recipient) };
+  return {
+    registered: false,
+    lookupFailed: !serverSaidNotFound && !completedCleanly,
+    invite: invite || defaultRecipientInvite(recipient)
+  };
 }
 
 async function register(data) {
@@ -4594,19 +4603,47 @@ function enterpriseHowItWorks() {
   `;
 }
 
+// The API's status vocabulary, said in words a person can act on rather than
+// raw snake_case.
+const ENTERPRISE_BATCH_STATUS = {
+  draft: "Draft",
+  draft_validated: "Validated",
+  draft_validation_failed: "Rejected rows",
+  funding_locked: "Funds locked",
+  released: "Released",
+  processing: "Paying out",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled"
+};
+
 function enterpriseBatchStatusLabel(status) {
-  return String(status || "draft").replaceAll("_", " ");
+  const key = String(status || "draft");
+  return ENTERPRISE_BATCH_STATUS[key] || key.replaceAll("_", " ");
+}
+
+// Where the money is, in one line. An organisation that has locked six figures
+// should not have to phone TitoPay to find out whether the batch has gone out.
+function enterpriseBatchProgress(batch = {}) {
+  const status = String(batch.status || "draft");
+  if (batch.released_at) return `Released ${formatDate(batch.released_at)}`;
+  if (status === "funding_locked") return "Locked. Waiting for TitoPay Admin to release.";
+  if (status === "draft_validated") return "Validated. Nothing reserved yet.";
+  if (status === "draft_validation_failed") return "Fix the rejected rows and validate again.";
+  return "";
 }
 
 function enterpriseBatchRow(batch = {}) {
   const status = String(batch.status || "draft");
   const validated = status === "draft_validated";
   const invalid = Number(batch.invalid_rows) || 0;
+  const progress = enterpriseBatchProgress(batch);
   return `
     <article class="ed-row">
       <div class="ed-row-main">
         <strong>${esc(batch.batch_name || "Untitled batch")}</strong>
         <small>${esc(batch.batch_reference || "")}</small>
+        ${progress ? `<small class="ed-progress">${esc(progress)}</small>` : ""}
       </div>
       <div class="ed-row-meta">
         <span class="ed-status ed-status-${esc(status)}">${esc(enterpriseBatchStatusLabel(status))}</span>
@@ -4723,11 +4760,37 @@ function loadEnterpriseCsvFile(file) {
 // Whatever the validator reports is what gets shown. Counts and per-row
 // reasons are rendered when the API returns them and simply omitted when it
 // does not -- this screen never invents a reason a row failed.
-function openEnterpriseBatchResult(batch = {}) {
+// The validator's report is the deliverable. Each entry is
+// { rowNumber, row, errors[], status } and every rejection reason is already
+// spelled out -- "Active TitoPay wallet was not found", "Amount must be
+// greater than zero". Nothing here is inferred.
+function enterpriseRejectedRows(batch = {}, report = []) {
+  const fromReport = (Array.isArray(report) ? report : [])
+    .filter((item) => item && item.status === "invalid" && (item.errors || []).length)
+    .map((item) => ({
+      label: item.row?.uniqueBeneficiaryId || item.row?.beneficiaryNumber || item.row?.walletNumber
+        || item.row?.reference || `Row ${item.rowNumber}`,
+      rowNumber: item.rowNumber,
+      amount: item.row?.amount,
+      reasons: item.errors
+    }));
+  if (fromReport.length) return fromReport;
+  // Older responses carried only a flat list; keep reading it.
+  const legacy = batch.rows || batch.invalid_row_details || batch.errors || [];
+  return (Array.isArray(legacy) ? legacy : [])
+    .filter((row) => row && (row.error || row.reason || row.message))
+    .map((row) => ({
+      label: row.uniqueBeneficiaryId || row.unique_beneficiary_id || row.reference || `Row ${row.line || row.row || ""}`,
+      rowNumber: row.line || row.row,
+      amount: row.amount,
+      reasons: [row.error || row.reason || row.message]
+    }));
+}
+
+function openEnterpriseBatchResult(batch = {}, report = []) {
   const invalid = Number(batch.invalid_rows) || 0;
   const valid = Number(batch.valid_rows ?? batch.total_rows - invalid);
-  const rows = batch.rows || batch.invalid_row_details || batch.errors || [];
-  const rowList = Array.isArray(rows) ? rows.filter((row) => row && (row.error || row.reason || row.message)) : [];
+  const rowList = enterpriseRejectedRows(batch, report);
   openModal(`
     <div class="modal-head">
       <div>
@@ -4747,7 +4810,13 @@ function openEnterpriseBatchResult(batch = {}) {
     ${rowList.length ? `
       <section class="section-head compact"><h2>Rejected rows</h2></section>
       <section class="ed-list">
-        ${rowList.slice(0, 25).map((row) => `<article class="ed-row"><div class="ed-row-main"><strong>${esc(row.uniqueBeneficiaryId || row.unique_beneficiary_id || row.reference || `Row ${row.line || row.row || ""}`)}</strong><small class="ed-invalid">${esc(row.error || row.reason || row.message)}</small></div>${row.amount != null ? `<div class="ed-row-meta"><strong>${esc(money(row.amount))}</strong></div>` : ""}</article>`).join("")}
+        ${rowList.slice(0, 25).map((row) => `<article class="ed-row">
+          <div class="ed-row-main">
+            <strong>${esc(row.label)}${row.rowNumber ? ` <span class="ed-row-number">line ${esc(String(row.rowNumber))}</span>` : ""}</strong>
+            ${row.reasons.map((reason) => `<small class="ed-invalid">${esc(reason)}</small>`).join("")}
+          </div>
+          ${row.amount != null ? `<div class="ed-row-meta"><strong>${esc(money(row.amount))}</strong></div>` : ""}
+        </article>`).join("")}
         ${rowList.length > 25 ? `<p class="field-hint">Showing 25 of ${rowList.length} rejected rows.</p>` : ""}
       </section>
     ` : invalid ? `<section class="integration-note"><strong>${invalid} row${invalid === 1 ? "" : "s"} rejected</strong><p>TitoPay reported the count but not which rows. Check the CSV against your beneficiary list, or ask TitoPay support for the validation report.</p></section>` : ""}
@@ -4814,7 +4883,9 @@ async function submitEnterpriseBatch(data) {
   await api("/v1/enterprise-distribution/batches")
     .then((res) => { state.enterpriseDistribution.batches = res.items || []; })
     .catch(() => {});
-  openEnterpriseBatchResult(batch);
+  // The validator returns a row-by-row report alongside the batch. It always
+  // did; this screen used to throw it away and show a bare count.
+  openEnterpriseBatchResult(batch, result.validationReport || result.validation_report || []);
 }
 
 async function lockEnterpriseDistributionFunding(batchId) {

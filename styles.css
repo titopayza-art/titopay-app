@@ -8521,6 +8521,35 @@ select.is-picker-source {
   border-radius: 999px;
 }
 
+.ed-progress {
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.ed-row-number {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.ed-status-released,
+.ed-status-completed {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.1);
+  border-color: rgba(11, 159, 106, 0.24);
+}
+
+.ed-status-draft_validation_failed,
+.ed-status-failed {
+  color: var(--danger);
+  background: rgba(217, 66, 66, 0.08);
+  border-color: rgba(217, 66, 66, 0.22);
+}
+
+.ed-status-funding_locked {
+  color: var(--navy);
+  background: var(--soft);
+}
+
 .ed-status-draft_validated {
   color: var(--blue);
   background: var(--soft-blue);

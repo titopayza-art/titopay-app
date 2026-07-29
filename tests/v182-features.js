@@ -27,22 +27,27 @@ const BENEFICIARIES = [
 
 const BATCHES = [
   { id: "bt1", batch_name: "March student allowances", batch_reference: "BD-2026-0031", status: "draft_validated", valid_total: 18400, locked_total: 0, invalid_rows: 2, valid_rows: 46 },
-  { id: "bt2", batch_name: "February payroll", batch_reference: "BD-2026-0022", status: "released", valid_total: 96500, locked_total: 96500, invalid_rows: 0, valid_rows: 120 }
+  { id: "bt2", batch_name: "February payroll", batch_reference: "BD-2026-0022", status: "released", valid_total: 96500, locked_total: 96500, invalid_rows: 0, valid_rows: 120, released_at: "2026-03-12T14:22:00Z" },
+  { id: "bt3", batch_name: "January rentals", batch_reference: "BD-2026-0011", status: "funding_locked", valid_total: 42000, locked_total: 42000, invalid_rows: 0, valid_rows: 28 }
 ];
 
+// Shaped exactly as the API returns it: the batch, plus a per-row
+// validationReport with the validator's own wording.
 const VALIDATED = {
   id: "bt3",
   batch_name: "April allowances",
   batch_reference: "BD-2026-0044",
-  status: "draft_validated",
+  status: "draft_validation_failed",
   valid_total: 12750,
   valid_rows: 48,
-  invalid_rows: 2,
-  rows: [
-    { uniqueBeneficiaryId: "STU-10022", amount: 250, error: "Beneficiary has no TitoPay wallet number" },
-    { uniqueBeneficiaryId: "STU-19999", amount: 300, error: "No beneficiary matches this ID" }
-  ]
+  invalid_rows: 2
 };
+
+const VALIDATION_REPORT = [
+  { rowNumber: 1, status: "valid", errors: [], row: { uniqueBeneficiaryId: "STU-10021", amount: 250 } },
+  { rowNumber: 2, status: "invalid", errors: ["Active TitoPay wallet was not found"], row: { uniqueBeneficiaryId: "STU-10022", amount: 250 } },
+  { rowNumber: 3, status: "invalid", errors: ["Amount must be greater than zero", "Duplicate beneficiary in this batch"], row: { uniqueBeneficiaryId: "STU-19999", amount: 0 } }
+];
 
 function mock(acct, eligible) {
   return (route) => {
@@ -60,7 +65,7 @@ function mock(acct, eligible) {
     }
     if (u.pathname === "/v1/enterprise-distribution/beneficiaries") return J({ items: BENEFICIARIES });
     if (u.pathname === "/v1/enterprise-distribution/batches") {
-      if (route.request().method() === "POST") return J({ batch: VALIDATED });
+      if (route.request().method() === "POST") return J({ batch: VALIDATED, validationReport: VALIDATION_REPORT });
       return J({ items: BATCHES });
     }
     if (u.pathname === "/v1/auth/me") {
@@ -166,6 +171,32 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
     await ctx.close();
   }
 
+  // ---- 2c. The server's lookup outcome is trusted over the heuristic -----
+  //
+  // A directory that answers "we looked, nobody there" must read differently
+  // from a directory that could not be reached. Telling someone their contact
+  // is not on TitoPay when nothing was checked is a false statement made
+  // during a payment.
+  for (const [label, body, status, expectUnavailable] of [
+    ["server says not_found", { ok: true, registered: false, outcome: "not_found", invite: { url: "https://app.titopay.co.za", message: "Join me on TitoPay" } }, 200, false],
+    ["directory unreachable", { error: "Directory temporarily unavailable" }, 503, true]
+  ]) {
+    const { ctx, page } = await authed(browser, { acct: "personal" });
+    await page.route("https://api.titopay.co.za/v1/**", (route) => {
+      const u = new URL(route.request().url());
+      if (/resolve|lookup|recipient\/verify/.test(u.pathname)) {
+        return route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+      }
+      return route.fallback();
+    });
+    const verdict = await page.evaluate(async () => {
+      const result = await lookupRegisteredRecipient("+27821119999", "wallet_transfer");
+      return { registered: result.registered, lookupFailed: Boolean(result.lookupFailed) };
+    });
+    check(`lookup reports not-registered only when the server said so (${label})`, verdict.registered === false && verdict.lookupFailed === expectUnavailable, JSON.stringify(verdict));
+    await ctx.close();
+  }
+
   // ---- 3. Landing menu ---------------------------------------------------
   {
     const ctx = await browser.newContext({ viewport: { width: 440, height: 956 }, isMobile: true, hasTouch: true });
@@ -221,15 +252,20 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
         lockButtons: card.querySelectorAll('[data-action^="enterprise-fund:"]').length,
         beneficiaryNamed: /Naledi Mokoena/.test(card.innerText),
         missingWalletFlagged: /No wallet number/i.test(card.innerText),
-        adminStated: /Admin/i.test(card.innerText)
+        adminStated: /Admin/i.test(card.innerText),
+        releaseStated: /Released 12 Mar 2026/i.test(card.innerText),
+        lockedStated: /Waiting for TitoPay Admin to release/i.test(card.innerText),
+        progressText: [...card.querySelectorAll(".ed-progress")].map((n) => n.textContent).join(" | ")
       };
     });
     check("bulk distribution states the five steps", dash.steps === 5, `${dash.steps}`);
-    check("bulk distribution lists batches and beneficiaries", dash.batches >= 4, `${dash.batches} rows`);
+    check("bulk distribution lists batches and beneficiaries", dash.batches >= 5, `${dash.batches} rows`);
     check("bulk distribution offers funding only on validated batches", dash.lockButtons === 1, `${dash.lockButtons}`);
     check("bulk distribution shows beneficiary names", dash.beneficiaryNamed);
     check("bulk distribution flags a beneficiary with no wallet", dash.missingWalletFlagged);
     check("bulk distribution states Admin release", dash.adminStated);
+    check("bulk distribution reports a released batch and when", dash.releaseStated, dash.progressText);
+    check("bulk distribution says a locked batch is waiting", dash.lockedStated);
 
     // Build a batch: template, file guidance, validation result.
     await page.click('[data-action="enterprise-new-batch"]');
@@ -257,13 +293,19 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
       return {
         text: card.innerText,
         rejectedRows: card.querySelectorAll(".ed-list .ed-row").length,
-        showsReason: /no TitoPay wallet number/i.test(card.innerText),
+        showsReason: /Active TitoPay wallet was not found/i.test(card.innerText),
+        showsEveryReason: /Amount must be greater than zero/i.test(card.innerText) && /Duplicate beneficiary in this batch/i.test(card.innerText),
+        showsLineNumbers: /line 2/i.test(card.innerText) && /line 3/i.test(card.innerText),
+        listsValidRow: /STU-10021/.test(card.innerText),
         showsCounts: /Rows rejected/i.test(card.innerText),
         saysNotReserved: /no funds have been reserved/i.test(card.innerText)
       };
     });
     check("validation result names the rejected rows", result.rejectedRows === 2, `${result.rejectedRows}`);
     check("validation result gives the reason per row", result.showsReason);
+    check("validation result shows every reason on a row", result.showsEveryReason);
+    check("validation result cites the CSV line number", result.showsLineNumbers);
+    check("validation result does not list accepted rows as rejected", result.listsValidRow === false);
     check("validation result reports counts", result.showsCounts);
     check("validation result states nothing is reserved", result.saysNotReserved);
 
