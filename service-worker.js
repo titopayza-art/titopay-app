@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v186-notification-centre";
+const CACHE_NAME = "titopay-pwa-v187-chat-surface";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=186",
+  "./styles.css?v=187",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=186",
-  "./services-default.json?v=186",
-  "./manifest.webmanifest?v=186",
+  "./app.js?v=187",
+  "./services-default.json?v=187",
+  "./manifest.webmanifest?v=187",
   "./offline.html",
   "./assets/titopay-logo.png",
   "./assets/icon-192.png?v=165",

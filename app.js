@@ -12,6 +12,7 @@ const TITOPAY_CHAT_INVITES_KEY = "titopay_chat_invites_v1";
 const TITOPAY_CHAT_BLOCKS_KEY = "titopay_chat_blocks_v1";
 const TITOPAY_CALL_HISTORY_KEY = "titopay_call_history_v1";
 const IN_APP_NOTIFICATIONS_KEY = "titopay_in_app_notifications_v1";
+const TITOPAY_CHAT_CLEARED_KEY = "titopay_chat_cleared_at_v1";
 const PWA_REVIEW_QUEUE_KEY = "titopay_pending_pwa_reviews_v1";
 const TITOPAY_RECEIPTS_KEY = "titopay_receipts_v1";
 const INSTALL_DISMISSED_KEY = "titopay_install_dismissed_v1";
@@ -621,7 +622,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=186", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=187", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -1467,7 +1468,7 @@ function dashboardView() {
   return `
     <section class="dashboard-grid">
       <div>
-        <section class="wallet-card">
+        <section class="wallet-card${state.accountType === "business" ? " wallet-card-business" : ""}">
           <p class="eyebrow muted">${state.accountType === "business" ? "Business Wallet" : "Personal Wallet"}</p>
           <div class="wallet-balance-line">
             <div class="wallet-balance">${state.loading && !state.wallets.length ? '<span class="skeleton skeleton-balance" aria-hidden="true"></span>' : displayMoney(wallet ? wallet.available_balance : undefined)}</div>
@@ -1902,11 +1903,36 @@ function settingsRow(label, value, iconName, emphasis = "") {
 
 function notificationActionAttributes(item = {}) {
   const metadata = item.metadata || {};
-  if (metadata.receiptId) return `data-notification-receipt="${esc(metadata.receiptId)}" role="button" tabindex="0"`;
+  const idAttr = `data-notice-id="${esc(item.id || "")}"`;
+  if (metadata.receiptId) return `${idAttr} data-notification-receipt="${esc(metadata.receiptId)}" role="button" tabindex="0"`;
   const ticketRef = metadata.ticketRef || metadata.ticketId;
-  if (ticketRef) return `data-notification-support="${esc(ticketRef)}" role="button" tabindex="0"`;
-  if (metadata.txId || metadata.txReference) return `data-notification-tx="${esc(metadata.txId || metadata.txReference)}" role="button" tabindex="0"`;
+  if (ticketRef) return `${idAttr} data-notification-support="${esc(ticketRef)}" role="button" tabindex="0"`;
+  if (metadata.txId || metadata.txReference) return `${idAttr} data-notification-tx="${esc(metadata.txId || metadata.txReference)}" role="button" tabindex="0"`;
+  // A chat notification opens the conversation it is about. The server does
+  // not always name the thread; when it does not, the chat home is still the
+  // right landing, not a dead row.
+  if (notificationCategory(item) === "messages") {
+    const threadRef = metadata.threadId || metadata.thread_id || metadata.chatThreadId || metadata.conversationId || "";
+    return `${idAttr} data-notification-chat="${esc(threadRef)}" role="button" tabindex="0"`;
+  }
   return "";
+}
+
+// A tapped notification is a read notification, whatever it opened.
+function markNotificationReadById(noticeId) {
+  if (!noticeId) return;
+  let changed = false;
+  state.notifications = (state.notifications || []).map((item) => {
+    if (item.id === noticeId && item.unread) {
+      changed = true;
+      return { ...item, unread: false };
+    }
+    return item;
+  });
+  if (changed) {
+    persistInAppNotifications();
+    refreshNotificationBadge();
+  }
 }
 
 // Which drawer of the inbox a notification belongs in. Payments come from the
@@ -2532,8 +2558,20 @@ async function onClick(event) {
     openNotificationsModal();
     return;
   }
+  const notificationChat = event.target.closest("[data-notification-chat]");
+  if (notificationChat) {
+    markNotificationReadById(notificationChat.dataset.noticeId);
+    const threadRef = notificationChat.dataset.notificationChat || "";
+    const thread = threadRef
+      ? titoPayChatThreads().find((item) => [item.id, item.apiThreadId, item.threadId, item.clientThreadId].map(String).includes(String(threadRef)))
+      : null;
+    if (thread) openTitoPayChatThread(thread.id);
+    else openTitoPayChatModal();
+    return;
+  }
   const notificationTx = event.target.closest("[data-notification-tx]");
   if (notificationTx) {
+    markNotificationReadById(notificationTx.dataset.noticeId);
     const key = notificationTx.dataset.notificationTx;
     const target = (state.transactions || []).find((tx) => String(tx.id) === key || String(tx.reference) === key);
     if (target) {
@@ -2546,11 +2584,13 @@ async function onClick(event) {
   }
   const notificationReceipt = event.target.closest("[data-notification-receipt]");
   if (notificationReceipt) {
+    markNotificationReadById(notificationReceipt.dataset.noticeId);
     openReceiptModal(notificationReceipt.dataset.notificationReceipt);
     return;
   }
   const notificationSupport = event.target.closest("[data-notification-support]");
   if (notificationSupport) {
+    markNotificationReadById(notificationSupport.dataset.noticeId);
     openChatbotModal();
     setTimeout(() => renderSupportRating(notificationSupport.dataset.notificationSupport), 0);
     return;
@@ -3803,6 +3843,28 @@ async function handleAction(action) {
   if (action === "chat-back") {
     sessionStorage.removeItem("titopay_active_chat_thread");
     openTitoPayChatModal();
+  }
+  if (action === "chat-clear-thread") {
+    openChatClearConfirm("thread");
+    return;
+  }
+  if (action === "chat-back-to-thread") {
+    const threadId = sessionStorage.getItem("titopay_active_chat_thread");
+    if (threadId) openTitoPayChatThread(threadId);
+    else openTitoPayChatModal();
+    return;
+  }
+  if (action === "chat-clear-all") {
+    openChatClearConfirm("all");
+    return;
+  }
+  if (action === "chat-clear-thread-confirm") {
+    clearTitoPayChatHistory("thread");
+    return;
+  }
+  if (action === "chat-clear-all-confirm") {
+    clearTitoPayChatHistory("all");
+    return;
   }
   if (action === "chat-retry-lookup") {
     const trigger = event.target.closest("[data-chat-identifier]");
@@ -12926,6 +12988,7 @@ function openTitoPayChatModal() {
       </section>
       <h3 class="section-title small-title">Recent chats</h3>
       <div data-chat-thread-list>${renderTitoPayChatThreadList()}</div>
+      <button class="btn ghost chat-clear-all-btn" type="button" data-action="chat-clear-all">${icon("refresh")} Clear chat history on this device</button>
     </section>
   `);
   // Paint new threads into the list rather than reopening this modal. The old
@@ -13119,6 +13182,7 @@ function openTitoPayChatThread(threadId) {
       <div class="chat-header-actions">
         ${customerCareThread ? `<button class="chat-action-btn primary" type="button" data-action="chatbot" aria-label="Contact Customer Care">${icon("phone")}<span>Call</span></button>` : ""}
         <button class="chat-action-btn" type="button" data-action="chat-mute" aria-label="${thread.muted ? "Unmute conversation" : "Mute conversation"}">${icon("bell")}<span>${thread.muted ? "Unmute" : "Mute"}</span></button>
+        <button class="chat-action-btn" type="button" data-action="chat-clear-thread" aria-label="Clear this chat from this device">${icon("refresh")}<span>Clear</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-report" aria-label="Report conversation">${icon("shield")}<span>Report</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-block" aria-label="${blocked ? "Conversation blocked" : "Block conversation"}">${icon("x")}<span>${blocked ? "Blocked" : "Block"}</span></button>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
@@ -13135,6 +13199,8 @@ function openTitoPayChatThread(threadId) {
     </form>
     <button class="btn ghost" type="button" data-action="chat-back">${icon("arrow-left")} Back to chats</button>
   `);
+  const card = document.querySelector(".modal-card");
+  if (card) card.classList.add("titopay-chat-thread-card");
   const windowEl = document.querySelector(".titopay-chat-window");
   if (windowEl) windowEl.scrollTop = windowEl.scrollHeight;
   restoreChatDraft(threadId);
@@ -13198,10 +13264,16 @@ function repaintChatThread(threadId) {
   if (sessionStorage.getItem("titopay_active_chat_thread") !== threadId) return;
   const thread = titoPayChatThreads().find((item) => item.id === threadId);
   if (!thread) return;
+  // A signature of ids and statuses. If the conversation on screen already
+  // matches, do not touch the DOM at all -- replacing identical nodes is what
+  // stopped scroll momentum dead and dropped text selections.
+  const signature = thread.messages.map((message) => `${message.id}:${message.status || ""}`).join("|");
+  if (windowEl.dataset.chatSignature === signature) return;
   // Only follow the conversation down if the user was already reading the end
   // of it. Yanking someone back from older messages is its own bug.
   const atBottom = windowEl.scrollHeight - windowEl.scrollTop - windowEl.clientHeight < 48;
   windowEl.innerHTML = thread.messages.map(renderTitoPayChatMessage).join("");
+  windowEl.dataset.chatSignature = signature;
   if (atBottom) windowEl.scrollTop = windowEl.scrollHeight;
 }
 
@@ -13237,6 +13309,61 @@ async function toggleActiveChatMute() {
   saveTitoPayChatThreads(threads);
   openTitoPayChatThread(thread.id);
   showToast(muted ? "Conversation muted" : "Conversation unmuted");
+}
+
+// ---------------------------------------------------------------------------
+// Clearing chat history
+//
+// Chat threads and messages are cached on the device (localStorage) so
+// conversations open instantly. Clearing removes that local copy -- which is
+// what frees space -- and says so; it does not pretend to delete anything from
+// the other person's phone or from TitoPay's servers, because no API for that
+// exists.
+// ---------------------------------------------------------------------------
+
+function openChatClearConfirm(scope) {
+  const threadId = scope === "thread" ? sessionStorage.getItem("titopay_active_chat_thread") : "";
+  const thread = threadId ? titoPayChatThreads().find((item) => item.id === threadId) : null;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">TitoPay Chat</p>
+        <h2>${scope === "thread" ? `Clear chat with ${esc(thread ? thread.title : "this user")}?` : "Clear all chat history?"}</h2>
+        <p class="lead">${scope === "thread"
+          ? "The messages in this conversation are removed from this device to free space. The other person keeps their copy, and you can keep chatting afterwards."
+          : "All conversations and messages are removed from this device to free space. Blocked users stay blocked. This does not delete messages from anyone else's phone."}</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-action="${scope === "thread" ? "chat-back-to-thread" : "titopay-chat"}">Cancel</button>
+      <button class="btn primary" type="button" data-action="${scope === "thread" ? "chat-clear-thread-confirm" : "chat-clear-all-confirm"}">${icon("refresh")} Clear ${scope === "thread" ? "this chat" : "everything"}</button>
+    </section>
+  `);
+}
+
+function clearTitoPayChatHistory(scope) {
+  if (scope === "thread") {
+    const threadId = sessionStorage.getItem("titopay_active_chat_thread");
+    const threads = titoPayChatThreads();
+    const thread = threads.find((item) => item.id === threadId);
+    if (thread) {
+      thread.messages = [];
+      thread.clearedAt = new Date().toISOString();
+      saveTitoPayChatThreads(threads);
+      clearChatDraft(threadId);
+    }
+    showToast("Chat cleared on this device.");
+    if (thread) openTitoPayChatThread(threadId);
+    else openTitoPayChatModal();
+    return;
+  }
+  saveTitoPayChatThreads([]);
+  localStorage.setItem(TITOPAY_CHAT_CLEARED_KEY, new Date().toISOString());
+  chatDrafts.clear();
+  sessionStorage.removeItem("titopay_active_chat_thread");
+  showToast("Chat history cleared on this device.");
+  openTitoPayChatModal();
 }
 
 function stopTitoPayChatPolling() {
@@ -13308,7 +13435,17 @@ function normalizeTitoPayChatApiMessage(item, thread) {
 
 function mergeTitoPayChatMessages(thread, messages) {
   let changed = false;
-  const incoming = messages.map((item) => normalizeTitoPayChatApiMessage(item, thread)).filter(Boolean);
+  // Cleared is cleared: without this watermark the very next poll would pull
+  // the same history straight back from the server, and "clear chat to save
+  // space" would last five seconds. New messages still arrive normally.
+  const clearedAt = Math.max(
+    new Date(thread.clearedAt || 0).getTime() || 0,
+    new Date(localStorage.getItem(TITOPAY_CHAT_CLEARED_KEY) || 0).getTime() || 0
+  );
+  const incoming = messages
+    .map((item) => normalizeTitoPayChatApiMessage(item, thread))
+    .filter(Boolean)
+    .filter((item) => !clearedAt || (new Date(item.createdAt).getTime() || Date.now()) > clearedAt);
   if (!Array.isArray(thread.messages)) thread.messages = [];
   incoming.forEach((item) => {
     const index = thread.messages.findIndex((existing) => {
@@ -13317,11 +13454,19 @@ function mergeTitoPayChatMessages(thread, messages) {
       return false;
     });
     if (index >= 0) {
-      thread.messages[index] = Object.assign({}, thread.messages[index], item, {
-        text: item.text || thread.messages[index].text,
-        status: item.status || thread.messages[index].status
+      const existing = thread.messages[index];
+      const next = Object.assign({}, existing, item, {
+        text: item.text || existing.text,
+        status: item.status || existing.status
       });
-      changed = true;
+      // The poll returns the same messages every five seconds. Reporting
+      // "changed" for an identical merge made the caller rebuild the message
+      // list on every tick -- which is what made the open chat jump around
+      // under the reader's finger. Only a real difference counts.
+      if (next.text !== existing.text || next.status !== existing.status || next.id !== existing.id) {
+        thread.messages[index] = next;
+        changed = true;
+      }
     } else {
       thread.messages.push(item);
       changed = true;

@@ -9242,3 +9242,69 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
   color: var(--navy);
   background: var(--soft);
 }
+
+
+/* ---------------------------------------------------------------------------
+   Business wallet card: dark navy
+
+   Personal stays TitoPay blue; business goes dark navy, so a user who runs
+   both accounts knows which wallet is on screen before reading a word.
+   --------------------------------------------------------------------------- */
+.wallet-card.wallet-card-business {
+  background: linear-gradient(150deg, #0b2350 0%, var(--navy) 100%);
+  box-shadow: 0 10px 26px rgba(6, 26, 61, 0.32);
+}
+
+/* ---------------------------------------------------------------------------
+   Chat thread: a real chat surface
+
+   The thread used to be ordinary modal content: the card scrolled, the message
+   window scrolled inside it, and the two fought -- scrolling messages spilled
+   into scrolling the card, the composer drifted off-screen, and the keyboard
+   made it worse. Now the card is the chat: fixed header, the message window is
+   the single flexible, single scrollable row, composer pinned beneath it. On a
+   phone it is simply full-screen, which is what a chat is.
+   --------------------------------------------------------------------------- */
+.modal-card.titopay-chat-thread-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  height: min(88svh, 820px);
+  max-height: min(88svh, 820px);
+  overflow: hidden;
+}
+
+.titopay-chat-thread-card .titopay-chat-window {
+  min-height: 0;
+  max-height: none;
+  height: auto;
+}
+
+.titopay-chat-thread-card .modal-head {
+  margin-bottom: 0;
+}
+
+@media (max-width: 599px) {
+  .modal-backdrop:has(.titopay-chat-thread-card) {
+    padding: 0;
+  }
+
+  .modal-card.titopay-chat-thread-card {
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    padding: calc(10px + var(--safe-top)) 12px calc(10px + var(--safe-bottom));
+    border-radius: 0;
+  }
+}
+
+/* The typing indicator reserves its line permanently. Appearing and
+   disappearing text used to shove the composer up and down. */
+.chat-typing-status {
+  min-height: 20px;
+  margin: 0;
+}
+
+.chat-clear-all-btn {
+  justify-self: start;
+}

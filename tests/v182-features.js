@@ -291,6 +291,107 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
     await ctx.close();
   }
 
+  // ---- 2e2. The wallet cards are told apart by colour --------------------
+  for (const acct of ["personal", "business"]) {
+    const { ctx, page } = await authed(browser, { acct });
+    const m = await page.evaluate(() => {
+      const card = document.querySelector(".wallet-card");
+      return {
+        businessClass: card.classList.contains("wallet-card-business"),
+        background: getComputedStyle(card).backgroundImage || getComputedStyle(card).backgroundColor
+      };
+    });
+    if (acct === "business") {
+      check("business wallet card is dark navy", m.businessClass && /11, 35, 80|6, 26, 61/.test(m.background), m.background);
+    } else {
+      check("personal wallet card stays TitoPay blue", !m.businessClass && !/6, 26, 61/.test(m.background), m.background);
+    }
+    await ctx.close();
+  }
+
+  // ---- 2e3. Chat behaves like a chat -------------------------------------
+  {
+    const { ctx, page } = await authed(browser, { acct: "personal" });
+    await page.evaluate(() => { if (typeof openTitoPayChatModal === "function") openTitoPayChatModal(); });
+    await sleep(1600);
+    // open the thread
+    await page.click(".titopay-chat-shell [data-chat-thread-list] article, .titopay-chat-shell [data-chat-thread-list] button");
+    await sleep(1200);
+    const layout = await page.evaluate(() => {
+      const card = document.querySelector(".modal-card");
+      const windowEl = document.querySelector(".titopay-chat-window");
+      return {
+        isChatCard: card.classList.contains("titopay-chat-thread-card"),
+        cardOverflow: getComputedStyle(card).overflow,
+        composer: Boolean(document.querySelector('form[data-form="titopay-chat-message"] textarea'))
+      };
+    });
+    check("chat thread uses the dedicated chat surface", layout.isChatCard);
+    check("chat card is the single scroll container", layout.cardOverflow === "hidden", layout.cardOverflow);
+    check("chat composer is present", layout.composer);
+
+    // An idle poll must not rebuild the message list. Tag a live DOM node,
+    // wait through a full poll cycle, and expect the same node to survive.
+    await page.evaluate(() => { const el = document.querySelector(".titopay-user-message"); if (el) el.dataset.probe = "alive"; });
+    await sleep(6000);
+    const stable = await page.evaluate(() => document.querySelector('.titopay-user-message[data-probe="alive"]') !== null);
+    check("an idle poll does not rebuild the open conversation", stable);
+
+    // Sending appends the message and keeps the keyboard.
+    await page.fill('form[data-form="titopay-chat-message"] textarea', "On my way now.");
+    await page.click(".chat-send-btn");
+    await sleep(900);
+    const sent = await page.evaluate(() => ({
+      appended: /On my way now\./.test(document.querySelector(".titopay-chat-window")?.innerText || ""),
+      focused: document.activeElement === document.querySelector('form[data-form="titopay-chat-message"] textarea')
+    }));
+    check("sent message appears in the conversation", sent.appended);
+    check("composer keeps focus after sending", sent.focused);
+
+    // Clear this chat: history goes and stays gone through the next poll.
+    await page.click('[data-action="chat-clear-thread"]');
+    await sleep(700);
+    const confirmCopy = await page.evaluate(() => document.querySelector(".modal-card")?.innerText || "");
+    check("clear-chat confirm says it is device-local", /this device/i.test(confirmCopy), confirmCopy.slice(0, 100));
+    await page.click('[data-action="chat-clear-thread-confirm"]');
+    await sleep(1000);
+    await sleep(5500);
+    const cleared = await page.evaluate(() => document.querySelectorAll(".titopay-chat-window .titopay-user-message").length);
+    check("cleared chat stays cleared through the next poll", cleared === 0, `${cleared} messages`);
+    await ctx.close();
+  }
+
+  // ---- 2e4. A chat notification opens the conversation -------------------
+  {
+    const { ctx, page } = await authed(browser, { acct: "personal" });
+    await page.evaluate(() => { if (typeof openTitoPayChatModal === "function") openTitoPayChatModal(); });
+    await sleep(1600);
+    await page.evaluate(() => document.querySelector(".modal-backdrop [data-close]")?.click());
+    await sleep(400);
+    await page.evaluate(() => {
+      const thread = titoPayChatThreads()[0];
+      addInAppNotification({
+        id: "chat-notice-1",
+        title: "New message from Thabo Ndlovu",
+        body: "Hi, did the payment go through?",
+        metadata: { notificationType: "chat_message", threadId: thread ? thread.id : "" }
+      });
+      refreshNotificationBadge();
+    });
+    await page.click('[data-action="notifications"]');
+    await sleep(700);
+    await page.click('[data-notification-chat]');
+    await sleep(1200);
+    const opened = await page.evaluate(() => ({
+      chatCard: Boolean(document.querySelector(".titopay-chat-thread-card")),
+      title: document.querySelector(".chat-thread-title h2")?.textContent || "",
+      noticeRead: !(state.notifications || []).find((n) => n.id === "chat-notice-1")?.unread
+    }));
+    check("tapping a chat notification opens the conversation", opened.chatCard && /Thabo/.test(opened.title), JSON.stringify(opened));
+    check("the tapped notification is marked read", opened.noticeRead);
+    await ctx.close();
+  }
+
   // ---- 2f. Every active service opens cleanly ----------------------------
   for (const acct of ["personal", "business"]) {
     const { ctx, page, errors } = await authed(browser, { acct });
