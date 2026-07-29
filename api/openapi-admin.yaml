@@ -1,0 +1,1181 @@
+openapi: 3.1.0
+info:
+  title: TitoPay Admin API
+  version: "1.0.0"
+  summary: The internal console API — approvals, releases, reviews and the levers that control what the app shows.
+  description: |
+    This is the **TitoPay Admin** surface. Nothing here is reachable from the
+    customer PWA. It is the other half of several flows that the app can only
+    half-complete on its own:
+
+    | The app can… | Admin must… |
+    |---|---|
+    | Upload and fund a distribution batch | **Release it.** Step 5 of Bulk Distribution. |
+    | Apply for bulk distribution access | Approve the organisation. |
+    | Submit FICA documents | Decide the verification. |
+    | Create a draft event | Approve it before it lists publicly. |
+    | Raise a support ticket | Answer and resolve it. |
+    | Request a name or ID change | Approve or decline it. |
+    | Read the service catalogue | **Edit it.** |
+
+    ## Why the catalogue lives here
+
+    `services-default.json` in the deployment package is a **fallback only**,
+    used when `GET /v1/services` fails. The live catalogue overrides it on every
+    successful load. Editing that file in the deployment zip has no effect in
+    production — which is why the corrections in `API-CATALOGUE-FIX.md` have to
+    be applied through `PATCH /v1/admin/services/{serviceCode}` or directly
+    against the catalogue source. `api/catalogue/` in this package holds the
+    corrected catalogue, a JSON patch and the equivalent SQL.
+
+    ## Separation of duties
+
+    Two rules hold across this API and are not negotiable:
+
+    1. **The party that funds a batch may not release it.** Funding is the
+       organisation; release is TitoPay. An admin account that also administers
+       the funding organisation must be refused with `403`.
+    2. **Every state-changing call is attributed and logged.** `POST` and
+       `PATCH` here write to `/v1/admin/audit-log` with the acting admin, the
+       target, the before and after values, and the reason where one is
+       required. The audit log is append-only.
+
+    ## Conventions
+
+    Bearer auth as in the app API, but tokens are minted with
+    `scope: "admin"` and carry a `role` claim. `403` responses state the role
+    that would have been required. Admin sessions are short-lived: 30 minutes
+    idle, 8 hours absolute.
+  contact:
+    name: TitoPay Engineering
+    email: dev@titopay.co.za
+
+servers:
+  - url: https://api.titopay.co.za
+    description: Production
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Admin auth
+  - name: Distribution
+  - name: KYC review
+  - name: Catalogue
+  - name: Support
+  - name: Events
+  - name: Users
+  - name: Platform
+  - name: Audit
+
+paths:
+
+  # ──────────────────────────── Admin auth ────────────────────────────
+
+  /v1/admin/auth/login:
+    post:
+      tags: [Admin auth]
+      summary: Sign in to the admin console
+      security: []
+      description: |
+        A second factor is **mandatory** for every admin account. There is no
+        configuration that turns it off, and `otpRequired` is always true on a
+        correct password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Password accepted. A second factor is always required.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  otpRequired: { type: boolean, const: true }
+                  challengeId: { type: string }
+                  channel: { type: string, enum: [totp, sms, email] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: Too many attempts. The account is throttled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/admin/auth/verify-otp:
+    post:
+      tags: [Admin auth]
+      summary: Complete the admin second factor
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, otp]
+              properties:
+                challengeId: { type: string }
+                otp: { type: string }
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken: { type: string }
+                  refreshToken: { type: string }
+                  expiresIn: { type: integer, description: Seconds. Admin sessions are short. }
+                  admin: { $ref: '#/components/schemas/AdminUser' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/admin/auth/me:
+    get:
+      tags: [Admin auth]
+      summary: The signed-in admin and their permissions
+      responses:
+        '200':
+          description: Admin.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUser' }
+
+  # ─────────────────────────── Distribution ───────────────────────────
+
+  /v1/admin/distribution/batches:
+    get:
+      tags: [Distribution]
+      summary: The release queue
+      description: |
+        Batches awaiting a decision, and their history. `funded` is the queue
+        that matters — an organisation has locked real money and is waiting.
+
+        Sort by `funded_at` ascending by default: oldest wait first.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, draft_validated, funded, releasing, released, partially_released, rejected, failed, cancelled]
+        - { name: organisationId, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: perPage, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: Batches.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminBatch' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+                  queue:
+                    type: object
+                    description: Counters for the console header.
+                    properties:
+                      awaiting_release: { type: integer }
+                      awaiting_release_total: { type: number, format: double }
+                      oldest_waiting_since: { type: string, format: date-time, nullable: true }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/admin/distribution/batches/{batchId}:
+    parameters:
+      - { name: batchId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Distribution]
+      summary: Batch detail with the full row report
+      responses:
+        '200':
+          description: Batch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminBatch' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/admin/distribution/batches/{batchId}/release:
+    parameters:
+      - { name: batchId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Distribution]
+      summary: Release a funded batch — beneficiaries are paid
+      description: |
+        **Step 5 of Bulk Distribution, and the step the app currently has no
+        visibility into.** An organisation that has locked R98 250 of its own
+        money has, today, no way to see whether this has happened, when, or by
+        whom — it has to phone TitoPay.
+
+        This operation is what populates `released_at` and `released_by` on the
+        batch record the organisation reads through
+        `GET /v1/enterprise-distribution/batches`.
+
+        **Preconditions.**
+
+        - `status` must be `funded`. Any other status returns `409`.
+        - The acting admin must not administer the funding organisation.
+          Separation of duties is enforced server-side, not by console
+          navigation — return `403` and log the attempt.
+        - `expectedTotal` and `expectedRows` must match the batch. This is a
+          deliberate typed confirmation: releasing money is not a button an
+          approver should be able to hit by muscle memory.
+
+        Release is asynchronous. The batch moves to `releasing` and settles on
+        `released`, `partially_released` or `failed`. A partial release must set
+        `failure_reason` on the batch **and** `status: failed` with a per-row
+        `error` on each row that did not pay.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedTotal, expectedRows]
+              properties:
+                expectedTotal:
+                  type: number
+                  format: double
+                  description: Typed by the approver. Must equal `valid_total`.
+                expectedRows:
+                  type: integer
+                  description: Typed by the approver. Must equal `valid_rows`.
+                note: { type: string, description: Recorded on the audit log entry. }
+      responses:
+        '202':
+          description: Release started. The batch is `releasing`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminBatch' }
+        '403':
+          description: |
+            Insufficient role, or the acting admin is connected to the funding
+            organisation. Logged either way.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: |
+            Not in `funded` status, or the typed confirmation does not match the
+            batch. `error` states the actual total and row count.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/admin/distribution/batches/{batchId}/reject:
+    parameters:
+      - { name: batchId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Distribution]
+      summary: Reject a funded batch and return the funds
+      description: |
+        Releases the hold back to the organisation's available balance and sets
+        `status: rejected`.
+
+        `reason` is **required and is shown to the organisation verbatim** — it
+        lands in `failure_reason` on the batch record they read. Write it as an
+        explanation the organisation can act on, not an internal note.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 10
+                  description: Shown to the organisation. Explain what to fix.
+                  example: Three beneficiary wallet numbers could not be verified. Please correct rows 12, 88 and 205 and re-upload.
+      responses:
+        '200':
+          description: Rejected, funds returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminBatch' }
+        '409':
+          description: Not in a rejectable status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/admin/distribution/applications:
+    get:
+      tags: [Distribution]
+      summary: Bulk distribution access applications
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, declined] } }
+      responses:
+        '200':
+          description: Applications, oldest pending first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/DistributionApplication' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+
+  /v1/admin/distribution/applications/{applicationId}:
+    parameters:
+      - { name: applicationId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Distribution]
+      summary: Application detail
+      responses:
+        '200':
+          description: Application.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DistributionApplication' }
+    patch:
+      tags: [Distribution]
+      summary: Approve or decline an application
+      description: |
+        Approving sets limits. Declining requires a `reason`, which the
+        organisation reads verbatim on
+        `GET /v1/enterprise-distribution/applications`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, decline] }
+                reason: { type: string, description: Required on decline. Shown to the organisation. }
+                limits:
+                  type: object
+                  description: Set on approval.
+                  properties:
+                    max_batch_total: { type: number, format: double }
+                    max_rows_per_batch: { type: integer }
+                    monthly_total: { type: number, format: double }
+      responses:
+        '200':
+          description: Decided.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DistributionApplication' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  # ──────────────────────────── KYC review ────────────────────────────
+
+  /v1/admin/kyc/fica:
+    get:
+      tags: [KYC review]
+      summary: FICA review queue
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, verified, declined] } }
+        - { name: accountType, in: query, schema: { type: string, enum: [personal, business] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Submissions, oldest pending first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/FicaSubmission' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+
+  /v1/admin/kyc/fica/{submissionId}:
+    parameters:
+      - { name: submissionId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [KYC review]
+      summary: Submission with document links
+      description: |
+        Document URLs are short-lived signed links, valid for 5 minutes, and
+        every access is written to the audit log. These are identity documents —
+        the access record matters as much as the access control.
+      responses:
+        '200':
+          description: Submission.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FicaSubmission' }
+
+  /v1/admin/kyc/fica/{submissionId}/decision:
+    parameters:
+      - { name: submissionId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [KYC review]
+      summary: Verify or decline a FICA submission
+      description: |
+        On decline, `reason` is shown to the user verbatim on their Security
+        screen, and `outstandingDocuments` tells the app exactly what to ask for
+        again. A decline with no actionable reason produces a support ticket
+        within the day — write it as an instruction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [verify, decline] }
+                reason:
+                  type: string
+                  description: Required on decline. Shown to the user.
+                  example: The proof of address is older than three months. Please upload one issued in the last 90 days.
+                outstandingDocuments:
+                  type: array
+                  items: { type: string, enum: [id_document, proof_of_address, selfie, business_registration] }
+                limits:
+                  type: object
+                  description: Transaction limits granted on verification.
+                  properties:
+                    perTransaction: { type: number, format: double }
+                    monthly: { type: number, format: double }
+      responses:
+        '200':
+          description: Decided.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FicaSubmission' }
+
+  # ───────────────────────────── Catalogue ────────────────────────────
+
+  /v1/admin/services:
+    get:
+      tags: [Catalogue]
+      summary: The full catalogue, including hidden rows
+      description: |
+        Unlike the public `GET /v1/services`, this returns every row regardless
+        of `status` and visibility flags.
+      responses:
+        '200':
+          description: Catalogue.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Service' }
+
+  /v1/admin/services/{serviceCode}:
+    parameters:
+      - { name: serviceCode, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Catalogue]
+      summary: Change a catalogue row
+      description: |
+        The mechanism for applying `API-CATALOGUE-FIX.md`. The corrections are
+        nine field values across seven rows; the client reads these fields
+        directly, so no app deployment is needed — the catalogue is fetched on
+        load.
+
+        ```
+        PATCH /v1/admin/services/stockvel        { "personal_visible": false }
+        PATCH /v1/admin/services/bill-split      { "business_visible": false }
+        PATCH /v1/admin/services/withdraw        { "business_visible": false }
+        PATCH /v1/admin/services/send-gift       { "business_visible": true  }
+        PATCH /v1/admin/services/tickets         { "business_visible": true  }
+        PATCH /v1/admin/services/airtime         { "personal_visible": false, "business_visible": false }
+        PATCH /v1/admin/services/data            { "personal_visible": false, "business_visible": false }
+        PATCH /v1/admin/services/payment-request { "description": "Request money by username, cellphone number or email." }
+        ```
+
+        **`stockvel.personal_visible` stays `false` until the Stokvel ledger
+        endpoints are live.** Flipping it back on before then re-exposes a
+        savings-group interface with no ledger behind it.
+
+        After applying, verify in the app rather than in the database — sign in
+        and check that Personal shows no Stokvel tile and one Airtime & Data
+        tile, and Business shows no Bill Split or Withdraw but does show Send
+        Gift and Tickets. If a tile does not change, the client fell back to the
+        bundled `services-default.json`, which means `GET /v1/services` errored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                service_name: { type: string }
+                description: { type: string }
+                service_icon: { type: string }
+                fee: { type: number, format: double }
+                commission: { type: number, format: double }
+                status: { type: string, enum: [active, coming_soon, disabled] }
+                personal_visible: { type: boolean }
+                business_visible: { type: boolean }
+                sort_order: { type: integer }
+                feature_badge: { type: string, enum: [none, new, beta] }
+      responses:
+        '200':
+          description: Updated. Takes effect on the next client load.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Service' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ────────────────────────────── Support ─────────────────────────────
+
+  /v1/admin/support/tickets:
+    get:
+      tags: [Support]
+      summary: The support queue
+      description: |
+        Every ticket raised from the app — chatbot escalations and direct
+        Customer Care requests. Before the support endpoints existed these were
+        written to the customer's `localStorage` and Customer Care never saw
+        them at all.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, awaiting_customer, resolved, closed] } }
+        - { name: mode, in: query, schema: { type: string, enum: [live_chat, callback, queue] } }
+        - { name: assignedTo, in: query, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Tickets, oldest open first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminSupportTicket' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+
+  /v1/admin/support/tickets/{ticketId}:
+    parameters:
+      - { name: ticketId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Support]
+      summary: Ticket with its conversation
+      responses:
+        '200':
+          description: Ticket.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminSupportTicket' }
+    patch:
+      tags: [Support]
+      summary: Assign, reply to, or resolve a ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assignTo: { type: string, description: Admin user id. }
+                status: { type: string, enum: [open, awaiting_customer, resolved, closed] }
+                reply:
+                  type: string
+                  description: Appended to the conversation and delivered to the customer.
+                internalNote:
+                  type: string
+                  description: Never shown to the customer.
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminSupportTicket' }
+
+  # ────────────────────────────── Events ──────────────────────────────
+
+  /v1/admin/ticketing/events:
+    get:
+      tags: [Events]
+      summary: Event approval queue
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending_approval, approved, declined, cancelled] } }
+      responses:
+        '200':
+          description: Events.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminEvent' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+
+  /v1/admin/ticketing/events/{eventId}:
+    parameters:
+      - { name: eventId, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Events]
+      summary: Approve or decline an event
+      description: |
+        An approved event becomes publicly listed on
+        `GET /v1/ticketing/public/events` and can sell tickets. Declining
+        requires a reason, which the organiser reads on their event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, decline, cancel] }
+                reason: { type: string, description: Required on decline or cancel. Shown to the organiser. }
+      responses:
+        '200':
+          description: Decided.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminEvent' }
+
+  # ─────────────────────────────── Users ──────────────────────────────
+
+  /v1/admin/users:
+    get:
+      tags: [Users]
+      summary: Search customers
+      parameters:
+        - { name: search, in: query, schema: { type: string, description: Username, cellphone, email or wallet number. } }
+        - { name: accountType, in: query, schema: { type: string, enum: [personal, business] } }
+        - { name: status, in: query, schema: { type: string, enum: [active, locked, suspended, closed] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Customers.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminCustomer' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+
+  /v1/admin/users/{userId}:
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Users]
+      summary: Customer detail
+      responses:
+        '200':
+          description: Customer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCustomer' }
+
+  /v1/admin/users/{userId}/wallet-lock:
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Users]
+      summary: Lock or unlock a customer's wallet
+      description: |
+        An admin lock sets `canSelfUnlock: false` on the customer's wallet lock
+        state, so the app tells them to contact support instead of offering the
+        OTP unlock flow. Unlocking restores self-service.
+
+        `reason` is required in both directions and appears in the customer's
+        own lock history — they can see that TitoPay acted, and why.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, reason]
+              properties:
+                action: { type: string, enum: [lock, unlock] }
+                reason: { type: string, minLength: 10 }
+      responses:
+        '200':
+          description: Applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  locked: { type: boolean }
+                  lockedBy: { type: string, const: admin }
+                  reason: { type: string }
+                  canSelfUnlock: { type: boolean }
+
+  /v1/admin/users/{userId}/profile-change-requests:
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Users]
+      summary: Outstanding change requests for this customer
+      responses:
+        '200':
+          description: Requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProfileChangeRequest' }
+
+  /v1/admin/profile-change-requests/{requestId}:
+    parameters:
+      - { name: requestId, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Users]
+      summary: Approve or decline a name, ID or registration change
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, decline] }
+                reason: { type: string, description: Required on decline. Shown to the customer. }
+      responses:
+        '200':
+          description: Decided. On approval the field is written to the customer's profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileChangeRequest' }
+
+  # ───────────────────────────── Platform ─────────────────────────────
+
+  /v1/admin/maintenance:
+    get:
+      tags: [Platform]
+      summary: Current maintenance configuration
+      responses:
+        '200':
+          description: Configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Maintenance' }
+    put:
+      tags: [Platform]
+      summary: Set the maintenance notice
+      description: |
+        Drives `GET /v1/maintenance/public`, which the app polls on load.
+
+        `blocking: true` puts every customer into a full-screen maintenance
+        state and stops them transacting. `message` is rendered verbatim — write
+        it for a customer, and give an `endsAt` if one is known. A blocking
+        notice with no end time reads as an outage of unknown length.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Maintenance' }
+      responses:
+        '200':
+          description: Applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Maintenance' }
+
+  /v1/admin/messages:
+    post:
+      tags: [Platform]
+      summary: Send a notice to customers
+      description: Delivered to `GET /v1/messages`. Targeted by account type or an explicit user list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body, kind, audience]
+              properties:
+                title: { type: string }
+                body: { type: string }
+                kind: { type: string, enum: [announcement, transactional, security, marketing] }
+                audience:
+                  type: object
+                  properties:
+                    accountType: { type: string, enum: [personal, business, all] }
+                    userIds:
+                      type: array
+                      items: { type: string }
+      responses:
+        '202':
+          description: Queued for delivery.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  recipientCount: { type: integer }
+
+  # ─────────────────────────────── Audit ──────────────────────────────
+
+  /v1/admin/audit-log:
+    get:
+      tags: [Audit]
+      summary: The audit trail
+      description: |
+        Append-only. Every state-changing admin action lands here with the
+        acting admin, the target, the before and after values, and the reason
+        where one was required.
+
+        There is no delete and no edit on this collection by design. If a record
+        is wrong, the correction is another record.
+      parameters:
+        - { name: adminId, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: targetType, in: query, schema: { type: string, enum: [batch, application, fica, service, ticket, event, user, maintenance] } }
+        - { name: targetId, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEntry' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Admin tokens carry `scope: "admin"` and a `role` claim.'
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Not signed in, or the token is no longer valid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Signed in, but the role does not permit this. `error` states the required role.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No such resource.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unprocessable:
+      description: Validation failed.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  fieldErrors:
+                    type: object
+                    additionalProperties: { type: string }
+
+  schemas:
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        ok: { type: boolean, const: false }
+        error: { type: string }
+        code: { type: string }
+        requestId: { type: string }
+
+    Pagination:
+      type: object
+      properties:
+        page: { type: integer }
+        perPage: { type: integer }
+        total: { type: integer }
+        hasMore: { type: boolean }
+
+    AdminRole:
+      type: string
+      description: |
+        - `support` — support tickets only.
+        - `reviewer` — FICA and profile change decisions.
+        - `approver` — event approval, distribution applications, **batch release**.
+        - `operator` — catalogue, maintenance, customer notices.
+        - `superadmin` — all of the above, plus admin user management.
+      enum: [support, reviewer, approver, operator, superadmin]
+
+    AdminUser:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/AdminRole' }
+        permissions:
+          type: array
+          items: { type: string }
+          description: Effective permission strings, so the console can hide what this admin cannot do.
+        lastLoginAt: { type: string, format: date-time }
+
+    AdminBatch:
+      type: object
+      properties:
+        id: { type: string }
+        batch_name: { type: string }
+        batch_reference: { type: string }
+        distribution_type:
+          type: string
+          enum: [student_allowance, payroll, vendor_payment, grant, rental, refund, custom]
+        status:
+          type: string
+          enum: [draft, draft_validated, funded, releasing, released, partially_released, rejected, failed, cancelled]
+        terminal: { type: boolean }
+        organisation:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+            registration_number: { type: string }
+        valid_rows: { type: integer }
+        invalid_rows: { type: integer }
+        valid_total: { type: number, format: double }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
+        funded_at: { type: string, format: date-time, nullable: true }
+        waiting_since:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the batch entered `funded`. This is the organisation's clock — sort the queue by it.
+        released_at: { type: string, format: date-time, nullable: true }
+        released_by: { type: string, nullable: true, description: Shown to the organisation. A name or role, not an internal id. }
+        failure_reason: { type: string, nullable: true, description: Shown to the organisation verbatim. }
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              line: { type: integer }
+              uniqueBeneficiaryId: { type: string }
+              beneficiaryName: { type: string, nullable: true }
+              amount: { type: number, format: double }
+              outcome: { type: string, enum: [valid, invalid] }
+              error: { type: string, nullable: true }
+              status: { type: string, nullable: true, enum: [pending, paid, failed] }
+
+    DistributionApplication:
+      type: object
+      properties:
+        id: { type: string }
+        organisationName: { type: string }
+        registrationNumber: { type: string }
+        institutionType:
+          type: string
+          enum: [University, Corporate, NGO, Municipality, Landlord, Payroll Provider, Other]
+        fundingPurpose: { type: string }
+        expectedMonthlyVolume: { type: number, format: double }
+        expectedBeneficiaries: { type: integer }
+        fundingSource: { type: string }
+        status: { type: string, enum: [pending, approved, declined] }
+        decline_reason: { type: string, nullable: true }
+        submitted_at: { type: string, format: date-time }
+        decided_at: { type: string, format: date-time, nullable: true }
+        decided_by: { type: string, nullable: true }
+        business:
+          type: object
+          properties:
+            userId: { type: string }
+            businessName: { type: string }
+            ficaStatus: { type: string, enum: [not_started, pending, verified, declined] }
+
+    FicaSubmission:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        fullName: { type: string }
+        accountType: { type: string, enum: [personal, business] }
+        idNumber: { type: string }
+        status: { type: string, enum: [pending, verified, declined] }
+        submittedAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        decidedBy: { type: string, nullable: true }
+        declineReason: { type: string, nullable: true }
+        documents:
+          type: array
+          items:
+            type: object
+            properties:
+              type: { type: string, enum: [id_document, proof_of_address, selfie, business_registration] }
+              url: { type: string, format: uri, description: Signed, 5-minute expiry. Every access is audited. }
+              filename: { type: string }
+              uploadedAt: { type: string, format: date-time }
+
+    Service:
+      type: object
+      properties:
+        service_code: { type: string }
+        service_name: { type: string }
+        service_icon: { type: string }
+        action: { type: string }
+        description: { type: string }
+        fee: { type: number, format: double }
+        commission: { type: number, format: double }
+        status: { type: string, enum: [active, coming_soon, disabled] }
+        personal_visible: { type: boolean }
+        business_visible: { type: boolean }
+        sort_order: { type: integer }
+        feature_badge: { type: string, enum: [none, new, beta] }
+
+    AdminSupportTicket:
+      type: object
+      properties:
+        id: { type: string }
+        reference: { type: string }
+        customer:
+          type: object
+          properties:
+            id: { type: string }
+            fullName: { type: string }
+            username: { type: string }
+            accountType: { type: string, enum: [personal, business] }
+        mode: { type: string, enum: [live_chat, callback, queue] }
+        subject: { type: string }
+        message: { type: string }
+        status: { type: string, enum: [open, awaiting_customer, resolved, closed] }
+        assignedTo: { type: string, nullable: true }
+        context:
+          type: object
+          additionalProperties: true
+          description: Screen, service code, transaction reference and app build version as sent by the client.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        conversation:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              from: { type: string, enum: [customer, agent, assistant] }
+              body: { type: string }
+              internal: { type: boolean, description: True for internal notes. Never delivered to the customer. }
+              sentAt: { type: string, format: date-time }
+
+    AdminEvent:
+      type: object
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        eventName: { type: string }
+        eventDate: { type: string, format: date-time }
+        venueName: { type: string }
+        city: { type: string }
+        description: { type: string }
+        bannerUrl: { type: string, format: uri, nullable: true }
+        status: { type: string, enum: [draft, pending_approval, approved, declined, cancelled, completed] }
+        declineReason: { type: string, nullable: true }
+        organiser:
+          type: object
+          properties:
+            userId: { type: string }
+            businessName: { type: string }
+            ficaStatus: { type: string }
+        ticketsSold: { type: integer }
+        grossSales: { type: number, format: double }
+        submittedAt: { type: string, format: date-time }
+
+    AdminCustomer:
+      type: object
+      properties:
+        id: { type: string }
+        fullName: { type: string }
+        username: { type: string }
+        email: { type: string, format: email }
+        cellphone: { type: string }
+        accountType: { type: string, enum: [personal, business] }
+        businessName: { type: string, nullable: true }
+        status: { type: string, enum: [active, locked, suspended, closed] }
+        ficaStatus: { type: string, enum: [not_started, pending, verified, declined] }
+        walletNumber: { type: string }
+        balance: { type: number, format: double }
+        registeredAt: { type: string, format: date-time }
+        lastActiveAt: { type: string, format: date-time }
+
+    ProfileChangeRequest:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        field: { type: string, enum: [fullName, idNumber, businessName, registrationNumber, bankAccount] }
+        currentValue: { type: string }
+        requestedValue: { type: string }
+        reason: { type: string, nullable: true }
+        supportingDocumentUrl: { type: string, format: uri, nullable: true, description: Signed, 5-minute expiry. }
+        status: { type: string, enum: [pending, approved, declined] }
+        requestedAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        decidedBy: { type: string, nullable: true }
+        declineReason: { type: string, nullable: true }
+
+    Maintenance:
+      type: object
+      properties:
+        active: { type: boolean }
+        blocking: { type: boolean, description: True puts every customer into a full-screen maintenance state. }
+        message: { type: string, description: Rendered verbatim to customers. }
+        startsAt: { type: string, format: date-time, nullable: true }
+        endsAt: { type: string, format: date-time, nullable: true }
+        affectedServices:
+          type: array
+          items: { type: string, description: Service codes. }
+
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string }
+        at: { type: string, format: date-time }
+        admin:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+            role: { $ref: '#/components/schemas/AdminRole' }
+        action: { type: string, example: distribution.batch.release }
+        targetType: { type: string, enum: [batch, application, fica, service, ticket, event, user, maintenance] }
+        targetId: { type: string }
+        before: { type: object, additionalProperties: true, nullable: true }
+        after: { type: object, additionalProperties: true, nullable: true }
+        reason: { type: string, nullable: true }
+        ipMasked: { type: string }

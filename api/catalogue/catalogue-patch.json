@@ -1,0 +1,10 @@
+[
+  { "service_code": "stockvel",        "personal_visible": false },
+  { "service_code": "bill-split",      "business_visible": false },
+  { "service_code": "withdraw",        "business_visible": false },
+  { "service_code": "send-gift",       "business_visible": true  },
+  { "service_code": "tickets",         "business_visible": true  },
+  { "service_code": "airtime",         "personal_visible": false, "business_visible": false },
+  { "service_code": "data",            "personal_visible": false, "business_visible": false },
+  { "service_code": "payment-request", "description": "Request money by username, cellphone number or email." }
+]

@@ -1,0 +1,2920 @@
+openapi: 3.1.0
+info:
+  title: TitoPay App API
+  version: "1.0.0"
+  summary: The API consumed by the TitoPay PWA (personal and business accounts).
+  description: |
+    Authoritative contract for the customer-facing application at
+    `https://titopay.co.za`. Every path here is either already called by the
+    shipped client or is required by a screen that is built and waiting for a
+    backend.
+
+    All fixes from `API-REQUIREMENTS.md` and `API-CATALOGUE-FIX.md` are applied.
+    Items marked **FIX** in an operation description did not exist, or behaved
+    differently, before this revision.
+
+    ## Conventions
+
+    - Base URL `https://api.titopay.co.za`. The client hard-codes this.
+    - `Authorization: Bearer <accessToken>` on everything except the endpoints
+      marked `security: []`.
+    - Request and response bodies are JSON. The client sets
+      `Content-Type: application/json` on every call including GETs.
+    - The client aborts any request that has not responded in **15 seconds**.
+      Anything slower than that must return a job handle, not a slow response.
+    - On `401` the client transparently calls `POST /v1/auth/refresh` once and
+      replays the original request. A second `401` signs the user out.
+    - Every response may carry `ok: false` with an `error` string. The client
+      treats `ok: false` as a failure even on HTTP 200, and renders `error`
+      **directly to the user**, so error strings must be human-readable and must
+      never contain stack traces, SQL, or internal hostnames.
+
+    ## Idempotency
+
+    The client sends **both** `Idempotency-Key` as a header and
+    `clientIdempotencyKey` in the body on every money-moving request. The server
+    honours the **header**; the body field is accepted and ignored. A replay
+    returns the original response with `replayed: true`.
+  contact:
+    name: TitoPay Engineering
+    email: dev@titopay.co.za
+
+servers:
+  - url: https://api.titopay.co.za
+    description: Production
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+  - name: Wallets
+  - name: Recipients
+  - name: Transactions
+  - name: Services
+  - name: VAS
+  - name: QR
+  - name: Business documents
+  - name: Stokvel
+  - name: Tickets
+  - name: Ticketing (organiser)
+  - name: Chat
+  - name: Support
+  - name: Security
+  - name: KYC
+  - name: Platform
+
+paths:
+
+  # ─────────────────────────────── Auth ───────────────────────────────
+
+  /v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Create an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fullName, email, cellphone, password, accountType]
+              properties:
+                fullName: { type: string }
+                email: { type: string, format: email }
+                cellphone: { type: string, example: "0721234567" }
+                username: { type: string, description: Without the leading @. }
+                password: { type: string, format: password, minLength: 8 }
+                accountType: { $ref: '#/components/schemas/AccountType' }
+                businessName: { type: string, description: Required when accountType is business. }
+      responses:
+        '201':
+          description: Created. An OTP has been dispatched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  otpRequired: { type: boolean }
+                  otpChannel: { type: string, enum: [sms, email] }
+                  userId: { type: string }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier:
+                  type: string
+                  description: Username, cellphone number or email address.
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Signed in, or an OTP challenge.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Session'
+                  - type: object
+                    required: [otpRequired]
+                    properties:
+                      otpRequired: { type: boolean, const: true }
+                      otpChannel: { type: string, enum: [sms, email] }
+                      challengeId: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '423':
+          description: Account or wallet is locked. `error` explains the route back in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/auth/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Complete an OTP challenge
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [otp]
+              properties:
+                challengeId: { type: string }
+                identifier: { type: string }
+                otp: { type: string, pattern: '^[0-9]{4,8}$' }
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a refresh token for a new access token
+      security: []
+      description: |
+        The client calls this automatically on a `401` and de-duplicates
+        concurrent refreshes into a single in-flight call. `scope` is always
+        `"customer"` from the PWA.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+                scope: { type: string, enum: [customer], default: customer }
+      responses:
+        '200':
+          description: New token pair.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401':
+          description: Refresh token is expired or revoked. The client signs the user out.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current session
+      responses:
+        '204': { description: Signed out. }
+
+  /v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: The signed-in user
+      responses:
+        '200':
+          description: Profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [Auth]
+      summary: Update self-service profile fields
+      description: |
+        Only fields the user may change without review. Name, ID number and
+        business registration go through `profile-change-requests`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username: { type: string }
+                email: { type: string, format: email }
+                cellphone: { type: string }
+                address: { type: string }
+                notificationPreferences:
+                  type: object
+                  additionalProperties: { type: boolean }
+      responses:
+        '200':
+          description: Updated profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+
+  /v1/auth/me/photo:
+    post:
+      tags: [Auth]
+      summary: Upload a profile photo or business logo
+      description: |
+        **FIX.** Photos and logos are currently held in `localStorage` under
+        `titopay_profile_photo_v1` / `titopay_business_logo_v1` and are lost when
+        browser data is cleared or the device changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                kind: { type: string, enum: [avatar, business_logo], default: avatar }
+                image:
+                  type: string
+                  description: Data URL, `data:image/png;base64,…`. Max 2 MB decoded.
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string, format: uri }
+        '413':
+          description: Image too large.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/auth/me/profile-change-requests:
+    post:
+      tags: [Auth]
+      summary: Request a change to a reviewed field
+      description: Name, identity number, business name and registration number. Queued for Admin review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [field, requestedValue]
+              properties:
+                field:
+                  type: string
+                  enum: [fullName, idNumber, businessName, registrationNumber, bankAccount]
+                requestedValue: { type: string }
+                reason: { type: string }
+                supportingDocument:
+                  type: string
+                  description: Data URL of the supporting document.
+      responses:
+        '202':
+          description: Queued for review.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string, enum: [pending] }
+    get:
+      tags: [Auth]
+      summary: My outstanding change requests
+      responses:
+        '200':
+          description: List.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        field: { type: string }
+                        requestedValue: { type: string }
+                        status: { type: string, enum: [pending, approved, declined] }
+                        decidedAt: { type: string, format: date-time, nullable: true }
+                        declineReason: { type: string, nullable: true }
+
+  /v1/auth/password-reset/request:
+    post:
+      tags: [Auth]
+      summary: Start a password reset
+      security: []
+      description: |
+        Always returns `202` whether or not the identifier exists. Do not leak
+        account existence here — the client shows the same message either way.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              properties:
+                identifier: { type: string }
+      responses:
+        '202': { description: "If the account exists, a reset code has been sent." }
+
+  /v1/auth/password-reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Complete a password reset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, otp, newPassword]
+              properties:
+                identifier: { type: string }
+                otp: { type: string }
+                newPassword: { type: string, format: password, minLength: 8 }
+      responses:
+        '200':
+          description: Password changed, signed in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ────────────────────────────── Wallets ─────────────────────────────
+
+  /v1/wallets:
+    get:
+      tags: [Wallets]
+      summary: The user's wallets
+      responses:
+        '200':
+          description: Wallet list. The PWA shows the primary wallet balance on Home.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Wallet' }
+
+  /v1/wallets/invites:
+    get:
+      tags: [Wallets]
+      summary: Invitations this user has sent
+      responses:
+        '200':
+          description: List.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Invite' }
+    post:
+      tags: [Wallets]
+      summary: Invite an unregistered contact
+      description: |
+        Only called after `POST /v1/recipients/resolve` returned
+        `outcome: "not_found"`. It must never be reachable from an
+        `outcome: "unavailable"` — see that operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, channel]
+              properties:
+                identifier: { type: string }
+                channel: { type: string, enum: [sms, email, whatsapp, link] }
+                message: { type: string }
+                context: { type: string, enum: [send_money, bill_split, payment_request, stockvel, chat] }
+      responses:
+        '201':
+          description: Invitation created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invite' }
+
+  /v1/wallets/invites/{inviteId}/events:
+    post:
+      tags: [Wallets]
+      summary: Record an invitation event
+      parameters:
+        - { name: inviteId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event]
+              properties:
+                event: { type: string, enum: [shared, opened, resent, dismissed] }
+      responses:
+        '204': { description: Recorded. }
+
+  /v1/wallets/recipient/verify:
+    post:
+      tags: [Recipients]
+      deprecated: true
+      summary: (Deprecated) Recipient lookup
+      description: |
+        **FIX — P0-1.** Superseded by `POST /v1/recipients/resolve`, which is now
+        the single canonical lookup. The client used to try this, plus
+        `/v1/chat/users/lookup`, plus a `GET` form of `/v1/recipients/resolve`,
+        in sequence, because none of them was documented as authoritative — and
+        that fallback chain is exactly what made a directory outage
+        indistinguishable from "this person is not registered".
+
+        Retained only so older cached bundles keep working. It must return the
+        same `outcome` envelope as `/v1/recipients/resolve`. Remove once the
+        service worker has cycled all clients past v183.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveRequest' }
+      responses:
+        '200':
+          description: Same envelope as `/v1/recipients/resolve`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolveResponse' }
+
+  # ──────────────────────────── Recipients ────────────────────────────
+
+  /v1/recipients/resolve:
+    post:
+      tags: [Recipients]
+      summary: Resolve an identifier to a TitoPay user
+      description: |
+        **FIX — P0-1. The single canonical recipient lookup.** Used by Send
+        Money, Bill Split, Payment Request, Chat and Stokvel member invite.
+
+        The response **must** distinguish "this person is not registered" from
+        "the directory could not answer". Before this fix the client inferred
+        the difference from whether a `fetch` threw, and told real customers
+        they were not on TitoPay — during a payment — whenever the directory was
+        unreachable.
+
+        Rules the server must hold to:
+
+        - `outcome: "found"` — a user exists. `user` is present.
+        - `outcome: "not_found"` — the directory answered authoritatively and
+          there is no such user. `invite` is present.
+        - `outcome: "unavailable"` — dependency down, timeout, partial index, or
+          any other case where the answer is not trustworthy. Return `503`.
+
+        **A `200` with `registered: false` must only ever mean a genuine,
+        authoritative miss.** If the index is degraded, return `unavailable` —
+        the client renders a retryable "could not check" state for it and does
+        not offer to send an invitation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveRequest' }
+      responses:
+        '200':
+          description: The directory answered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolveResponse' }
+              examples:
+                found:
+                  summary: Registered user
+                  value:
+                    outcome: found
+                    registered: true
+                    user:
+                      id: u_123
+                      displayName: Thabo Ndlovu
+                      username: thabo
+                      accountType: personal
+                      verified: true
+                notFound:
+                  summary: Authoritative miss
+                  value:
+                    outcome: not_found
+                    registered: false
+                    invite:
+                      url: https://titopay.co.za/i/9fK2
+                      message: Thabo, join me on TitoPay.
+        '503':
+          description: |
+            The directory could not answer. The client shows a retryable
+            "could not check" state and **does not** offer an invitation.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Error'
+                  - type: object
+                    properties:
+                      outcome: { type: string, const: unavailable }
+              example:
+                outcome: unavailable
+                ok: false
+                error: We could not check this number right now. Please try again.
+    get:
+      tags: [Recipients]
+      deprecated: true
+      summary: (Deprecated) Query-string form of resolve
+      description: Use the `POST` form. Same envelope; kept for cached bundles only.
+      parameters:
+        - { name: identifier, in: query, required: true, schema: { type: string } }
+        - { name: serviceCode, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Same envelope as the POST form.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolveResponse' }
+
+  # ─────────────────────────── Transactions ───────────────────────────
+
+  /v1/transactions:
+    get:
+      tags: [Transactions]
+      summary: Transaction history
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: perPage, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: serviceCode, in: query, schema: { type: string } }
+        - { name: direction, in: query, schema: { type: string, enum: [in, out] } }
+        - { name: search, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Transaction' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+    post:
+      tags: [Transactions]
+      summary: Execute a transaction
+      description: |
+        The single write path for every money movement in the app — the
+        `serviceCode` selects the behaviour.
+
+        See `POST /v1/transactions/fee-preview`: any `serviceCode` that returns
+        `debits: false` on the preview must not move money here either. Invoice,
+        Quote and Proforma creation are the current examples (**FIX — P2-2**);
+        they post a record, not a debit.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionRequest' }
+      responses:
+        '201':
+          description: Executed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transaction: { $ref: '#/components/schemas/Transaction' }
+                  replayed:
+                    type: boolean
+                    description: True when this is the replay of an earlier `Idempotency-Key`.
+        '402':
+          description: Insufficient balance. `error` is shown to the user verbatim.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '423':
+          description: Wallet is locked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/transactions/fee-preview:
+    post:
+      tags: [Transactions]
+      summary: Preview the cost of a transaction before confirming
+      description: |
+        **FIX — P2-3.** The preview now states *whether the wallet is actually
+        debited*, and describes the charge in words.
+
+        Before this, the review screen had to infer intent from the service
+        code, which is how invoice creation ended up labelled
+        "Total debit R9,850.00" on a screen that also said creation was free
+        (P2-2). With `debits` and `description` present, the client describes any
+        flow correctly without hard-coding an assumption per service.
+
+        - `debits: true` — the wallet balance will drop by `total`.
+        - `debits: false` — nothing is taken. A record is written. The client
+          renders "No charge" instead of a debit line.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [serviceCode, amount]
+              properties:
+                serviceCode: { type: string }
+                amount: { type: number, format: double }
+                recipient: { type: string }
+                metadata: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Fee breakdown.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeePreview' }
+              examples:
+                debit:
+                  summary: A real debit
+                  value:
+                    amount: 500
+                    fee: 0.5
+                    thirdPartyFee: 0
+                    total: 500.5
+                    recipientAmount: 500
+                    debits: true
+                    description: R500.00 to Thabo Ndlovu, plus a R0.50 QR payment fee.
+                recordOnly:
+                  summary: Document creation — no money moves
+                  value:
+                    amount: 9850
+                    fee: 0
+                    thirdPartyFee: 0
+                    total: 0
+                    recipientAmount: 0
+                    debits: false
+                    recordOnly: true
+                    description: Creating this invoice is free. The R2.50 PDF fee applies only when you download it.
+
+  # ──────────────────────────── Services ──────────────────────────────
+
+  /v1/services:
+    get:
+      tags: [Services]
+      summary: The service catalogue
+      security: []
+      description: |
+        Drives every tile in the app: the Services grid, Home quick services and
+        the landing preview. Fetched on load; the bundled
+        `services-default.json` is used **only** when this call fails.
+
+        **FIX — P2-1 / catalogue fix.** Nine field values across seven rows.
+        `api/catalogue/services-catalogue.json` in this package is the corrected
+        catalogue in full; `catalogue-patch.json` and `catalogue-fix.sql` apply
+        just the deltas.
+
+        - `stockvel.personal_visible → false` until the ledger in
+          `openapi-app.yaml` §Stokvel is live. Shipping a savings-group UI with
+          no ledger behind it is the single riskiest thing in the app.
+        - `bill-split.business_visible → false` — splitting a bill between
+          friends has no merchant meaning.
+        - `withdraw.business_visible → false` — duplicates Payouts, and a
+          merchant has no way to choose between them. Business settles through
+          `payouts`.
+        - `send-gift.business_visible → true`, `tickets.business_visible → true`.
+        - `airtime` and `data` hidden on both; only `airtime-data` is published.
+          The client collapses all three into one tile regardless.
+        - `payment-request.description` drops the word "customer" — a personal
+          account is not dealing with customers.
+      responses:
+        '200':
+          description: Catalogue.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Service' }
+
+  # ────────────────────────────── VAS ─────────────────────────────────
+
+  /v1/vas/catalogue:
+    get:
+      tags: [VAS]
+      summary: Providers, their form fields and their products
+      description: |
+        **FIX — P1-2.** Drives Airtime & Data, Electricity, Vouchers and Pay
+        Bills. The client is provider-driven by design: it renders whatever
+        fields the provider declares rather than hard-coding a form per service,
+        so a new provider needs no app release.
+
+        `required` **must be explicit on every field.** The client treats an
+        absent `required` as optional. Defaulting it to true once blocked bill
+        submission on a select that legitimately had no value.
+      parameters:
+        - name: journey
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [airtime, data, sms, voice, electricity, voucher, bill]
+      responses:
+        '200':
+          description: Providers for this journey.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers:
+                    type: array
+                    items: { $ref: '#/components/schemas/VasProvider' }
+        '503':
+          description: No provider reachable. The client says the journey is unavailable rather than showing an empty product list.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/vas/validate:
+    post:
+      tags: [VAS]
+      summary: Validate a meter or account number with the provider
+      description: |
+        **FIX — P1-2. Never return a synthesised validation.** If the upstream
+        provider cannot be reached, return `503`. Do not return
+        `valid: true` with a guessed or cached name.
+
+        A false positive here sends a real payment to the wrong meter, and the
+        client cannot detect it — it has no independent source of truth for whose
+        meter this is. The client never fabricates a confirmation itself.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, journey, fields]
+              properties:
+                provider: { type: string, example: ESKOM }
+                journey: { type: string, enum: [airtime, data, sms, voice, electricity, voucher, bill] }
+                fields:
+                  type: object
+                  additionalProperties: { type: string }
+                  example: { meterNumber: "01234567890" }
+      responses:
+        '200':
+          description: The provider answered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid]
+                properties:
+                  valid: { type: boolean }
+                  reason:
+                    type: string
+                    description: Required when `valid` is false. Shown to the user.
+                  account:
+                    type: object
+                    description: Present when `valid` is true.
+                    properties:
+                      name: { type: string }
+                      address: { type: string }
+                      tariff: { type: string }
+              examples:
+                valid:
+                  value: { valid: true, account: { name: T Tshiloane, address: "12 Main Rd, Soweto" } }
+                invalid:
+                  value: { valid: false, reason: Meter number not recognised }
+        '503':
+          description: Validation service unavailable. **Do not substitute a synthetic pass.**
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─────────────────────────────── QR ─────────────────────────────────
+
+  /v1/qr/generate-static:
+    post:
+      tags: [QR]
+      summary: Generate a reusable QR (profile, tip jar, shopfront)
+      description: |
+        The QR image must be rendered **server-side**. The client bundles `jsQR`,
+        which is a reader only — it has no generator, and a client-drawn payment
+        code would not be trustworthy in any case.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                purpose: { type: string, enum: [profile, tip, shopfront], default: profile }
+                label: { type: string }
+      responses:
+        '200':
+          description: QR.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QrCode' }
+
+  /v1/qr/generate-dynamic:
+    post:
+      tags: [QR]
+      summary: Generate a single-use QR for a specific amount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: { type: number, format: double }
+                reference: { type: string }
+                expiresInSeconds: { type: integer, default: 900 }
+      responses:
+        '200':
+          description: QR.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QrCode' }
+
+  /v1/qr/pay:
+    post:
+      tags: [QR]
+      summary: Pay a scanned QR
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                payload: { type: string, description: The decoded QR string, verbatim. }
+                amount:
+                  type: number
+                  format: double
+                  description: Required for static QRs, which carry no amount.
+                clientIdempotencyKey: { type: string }
+      responses:
+        '201':
+          description: Paid.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transaction: { $ref: '#/components/schemas/Transaction' }
+        '410':
+          description: QR expired or already used.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/qr/profile:
+    get:
+      tags: [QR]
+      summary: My standing QR profile
+      responses:
+        '200':
+          description: QR plus display name and handle.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  qr: { $ref: '#/components/schemas/QrCode' }
+                  displayName: { type: string }
+                  username: { type: string }
+
+  /v1/qr/share:
+    post:
+      tags: [QR]
+      summary: Record that a QR was shared
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                qrId: { type: string }
+                channel: { type: string, enum: [whatsapp, sms, email, copy, download, print] }
+      responses:
+        '204': { description: Recorded. }
+
+  # ─────────────────────── Business documents ─────────────────────────
+
+  /v1/business/documents:
+    get:
+      tags: [Business documents]
+      summary: List invoices, quotes and proformas
+      description: |
+        **FIX — P0-2. New.** Documents are currently written to `localStorage`
+        under `titopay_business_documents_v1`, capped at 40 entries, and stored
+        nowhere else. Clearing browser data destroys a merchant's entire
+        document history; a second device shows an empty list.
+
+        This is a records-retention exposure, not only a feature gap — SARS
+        expects business records to be retained and the app currently guarantees
+        nothing.
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [Invoice, Quote, Proforma Invoice] } }
+        - { name: status, in: query, schema: { type: string, enum: [draft, issued, paid, cancelled] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: perPage, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/BusinessDocument' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+    post:
+      tags: [Business documents]
+      summary: Create a document and assign its number
+      description: |
+        **Numbering must be owned by the server.** The client currently derives
+        `INV-2026-0001` by counting the documents it happens to hold locally, so
+        two devices belonging to the same merchant produce the same number.
+
+        The server owns one sequence **per business, per document kind**, and
+        returns the assigned `documentNumber` on create. The client does not
+        send one and will display whatever comes back.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BusinessDocumentInput' }
+      responses:
+        '201':
+          description: Created, with the assigned number.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusinessDocument' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/business/documents/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Business documents]
+      summary: A single document
+      responses:
+        '200':
+          description: Document.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusinessDocument' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Business documents]
+      summary: Mark paid, cancelled, or record a PDF issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [issued, paid, cancelled] }
+                paidAt: { type: string, format: date-time }
+                pdfIssued:
+                  type: boolean
+                  description: |
+                    Set when the merchant downloads the PDF. This is the point
+                    the R2.50 PDF fee is charged — creation itself is free.
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BusinessDocument' }
+
+  # ───────────────────────────── Stokvel ──────────────────────────────
+
+  /v1/stockvels:
+    get:
+      tags: [Stokvel]
+      summary: Groups the user belongs to
+      description: |
+        **FIX — P1-1. New; nothing is behind this path today.** The client ships
+        a complete savings-group interface — hub, create wizard, dashboard,
+        members, contributions, withdrawals, invitations, statement — built
+        against `/v1/stockvels`, and every screen currently renders empty or
+        errors. This is the largest single gap in the app.
+
+        **Regulatory position, carried in the client and binding on the API:**
+        the group holds only what its members contribute. TitoPay adds no
+        interest and no return. Eleven flags in the client's `STOCKVEL_FEATURES`
+        — investment portfolios, lending, credit scoring, BNPL and similar — are
+        all `false` and must stay off until there is a legal position on them.
+        **The API must not expose those concepts at all**, not even as null
+        fields, because a field that exists gets populated eventually.
+
+        Until these endpoints are live, `stockvel.personal_visible` stays `false`
+        in the service catalogue.
+      responses:
+        '200':
+          description: Groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Stockvel' }
+    post:
+      tags: [Stokvel]
+      summary: Create a group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, contributionAmount, frequency]
+              properties:
+                name: { type: string }
+                purpose: { type: string }
+                contributionAmount: { type: number, format: double }
+                frequency: { type: string, enum: [weekly, fortnightly, monthly] }
+                payoutRule: { type: string, enum: [rotating, on_request, end_of_term] }
+                startDate: { type: string, format: date }
+                rules: { type: string, description: Free-text constitution agreed by the members. }
+      responses:
+        '201':
+          description: Created. The creator is the organiser.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stockvel' }
+
+  /v1/stockvels/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Stokvel]
+      summary: Group detail — members, rules, balance
+      responses:
+        '200':
+          description: Detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockvelDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/stockvels/{id}/members:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Stokvel]
+      summary: Members
+      responses:
+        '200':
+          description: Members.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/StockvelMember' }
+    post:
+      tags: [Stokvel]
+      summary: Invite a member
+      description: |
+        Resolve the identifier through `POST /v1/recipients/resolve` first. An
+        `outcome: "unavailable"` must not become an invitation to a stranger.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              properties:
+                identifier: { type: string }
+                role: { type: string, enum: [member, organiser], default: member }
+      responses:
+        '201':
+          description: Invited.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockvelMember' }
+        '403':
+          description: Only an organiser may invite.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/stockvels/{id}/members/{memberId}/respond:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: memberId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Stokvel]
+      summary: Accept or decline an invitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [response]
+              properties:
+                response: { type: string, enum: [accept, decline] }
+      responses:
+        '200':
+          description: Responded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockvelMember' }
+
+  /v1/stockvels/{id}/contributions:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Stokvel]
+      summary: Contribution ledger
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: perPage, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/StockvelContribution' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+                  totals:
+                    type: object
+                    properties:
+                      contributed: { type: number, format: double }
+                      withdrawn: { type: number, format: double }
+                      balance:
+                        type: number
+                        format: double
+                        description: Contributions less withdrawals. Nothing else contributes to this figure.
+    post:
+      tags: [Stokvel]
+      summary: Record a contribution
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: { type: number, format: double }
+                note: { type: string }
+                clientIdempotencyKey: { type: string }
+      responses:
+        '201':
+          description: Recorded and debited from the member's wallet.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockvelContribution' }
+        '402':
+          description: Insufficient balance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/stockvels/{id}/withdrawals:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Stokvel]
+      summary: Withdrawal requests
+      responses:
+        '200':
+          description: Requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/StockvelWithdrawal' }
+    post:
+      tags: [Stokvel]
+      summary: Request a payout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, reason]
+              properties:
+                amount: { type: number, format: double }
+                reason: { type: string }
+      responses:
+        '201':
+          description: Requested; awaiting organiser approval.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockvelWithdrawal' }
+
+  /v1/stockvels/{id}/withdrawals/{withdrawalId}/respond:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: withdrawalId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Stokvel]
+      summary: Approve or decline a payout request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [response]
+              properties:
+                response: { type: string, enum: [approve, decline] }
+                note: { type: string }
+      responses:
+        '200':
+          description: Decided. On approval the payout is executed against the group balance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockvelWithdrawal' }
+
+  /v1/stockvels/{id}/activity:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Stokvel]
+      summary: Audit trail
+      description: Every membership, contribution, withdrawal and rule change, in order. Drives the group statement.
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        at: { type: string, format: date-time }
+                        actor: { type: string }
+                        event:
+                          type: string
+                          enum: [created, member_invited, member_joined, member_left, contribution, withdrawal_requested, withdrawal_approved, withdrawal_declined, rules_changed, closed]
+                        description: { type: string }
+                        amount: { type: number, format: double, nullable: true }
+
+  /v1/stockvels/{id}/close:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Stokvel]
+      summary: Close the group
+      description: Organiser only. The remaining balance is distributed per the group's payout rule; the ledger stays readable afterwards.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Closed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockvelDetail' }
+
+  /v1/stockvels/invitations:
+    get:
+      tags: [Stokvel]
+      summary: Invitations addressed to me
+      responses:
+        '200':
+          description: Pending invitations.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        stockvelId: { type: string }
+                        memberId: { type: string }
+                        groupName: { type: string }
+                        invitedBy: { type: string }
+                        contributionAmount: { type: number, format: double }
+                        frequency: { type: string }
+                        invitedAt: { type: string, format: date-time }
+
+  # ────────────────────────────── Tickets ─────────────────────────────
+
+  /v1/ticketing/public/events:
+    get:
+      tags: [Tickets]
+      summary: Approved public events
+      security: []
+      parameters:
+        - { name: city, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: search, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Events.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PublicEvent' }
+
+  /v1/ticketing/public/events/{slug}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Tickets]
+      summary: Event detail and ticket types
+      security: []
+      responses:
+        '200':
+          description: Event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicEvent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/ticketing/public/events/{slug}/purchase:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Tickets]
+      summary: Buy tickets
+      description: |
+        **FIX — P0-3. The response must include the issued tickets.**
+
+        Today a completed purchase returns `order.orderReference`, `order.total`
+        and `order.deliveryStatus` and nothing else — no ticket, no entry code,
+        no QR. The buyer pays and never sees what they bought.
+
+        The client renders ticket stubs when `tickets` is present, and falls back
+        to "your ticket is being issued" when it is not. **It will not invent an
+        entry code.** The QR must be generated server-side: the client has a QR
+        reader only, and a client-generated entry code would not be trustworthy
+        at the gate in any case.
+
+        If issuance is genuinely asynchronous, return `deliveryStatus: "pending"`
+        and make the tickets retrievable from `GET /v1/ticketing/tickets`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [ticketTypeId, quantity]
+                    properties:
+                      ticketTypeId: { type: string }
+                      quantity: { type: integer, minimum: 1 }
+                      holderNames:
+                        type: array
+                        items: { type: string }
+                buyerName: { type: string }
+                buyerEmail: { type: string, format: email }
+                clientIdempotencyKey: { type: string }
+      responses:
+        '200':
+          description: Purchased, with the issued tickets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [order, tickets]
+                properties:
+                  order:
+                    type: object
+                    properties:
+                      orderReference: { type: string, example: TPO-2026-0042 }
+                      total: { type: number, format: double }
+                      deliveryStatus: { type: string, enum: [issued, pending, failed] }
+                  event:
+                    type: object
+                    properties:
+                      eventName: { type: string }
+                      eventDate: { type: string, format: date-time }
+                      venueName: { type: string }
+                      city: { type: string }
+                  tickets:
+                    type: array
+                    items: { $ref: '#/components/schemas/IssuedTicket' }
+              example:
+                order: { orderReference: TPO-2026-0042, total: 700, deliveryStatus: issued }
+                event: { eventName: Amapiano Summer Session, eventDate: "2026-12-12T18:00:00+02:00", venueName: The Yard, city: Johannesburg }
+                tickets:
+                  - ticketCode: AMA-4471-8890
+                    ticketTypeName: General
+                    holderName: Naledi Mokoena
+                    seat: GA
+                    qrImageDataUrl: "data:image/png;base64,iVBORw0KGgo…"
+        '402':
+          description: Payment failed or insufficient balance.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Sold out, or not enough remaining in this ticket type.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/ticketing/tickets:
+    get:
+      tags: [Tickets]
+      summary: My tickets
+      description: |
+        **FIX — P0-3. New.** There is currently no route back to a ticket once
+        the confirmation screen is closed. This is what "My tickets" reads.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [valid, used, refunded, expired] } }
+      responses:
+        '200':
+          description: Tickets, upcoming first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/IssuedTicket'
+                        - type: object
+                          properties:
+                            orderReference: { type: string }
+                            status: { type: string, enum: [valid, used, refunded, expired] }
+                            event:
+                              type: object
+                              properties:
+                                eventName: { type: string }
+                                eventDate: { type: string, format: date-time }
+                                venueName: { type: string }
+                                city: { type: string }
+
+  /v1/ticketing/eligibility:
+    get:
+      tags: [Ticketing (organiser)]
+      summary: Whether this business may run events
+      responses:
+        '200':
+          description: Eligibility and any outstanding blockers.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  eligible: { type: boolean }
+                  status: { type: string, enum: [not_applied, pending, approved, declined] }
+                  blockers:
+                    type: array
+                    items: { type: string }
+                    description: Human-readable and rendered verbatim in the readiness panel.
+
+  /v1/ticketing/business/events:
+    get:
+      tags: [Ticketing (organiser)]
+      summary: My events
+      responses:
+        '200':
+          description: Events.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/OrganiserEvent' }
+    post:
+      tags: [Ticketing (organiser)]
+      summary: Create an event
+      description: Created as `draft`. It becomes publicly listed only after Admin approval.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventName, eventDate, venueName, ticketTypes]
+              properties:
+                eventName: { type: string }
+                eventDate: { type: string, format: date-time }
+                venueName: { type: string }
+                city: { type: string }
+                description: { type: string }
+                bannerImage: { type: string, description: Data URL. }
+                ticketTypes:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, price, quantity]
+                    properties:
+                      name: { type: string }
+                      price: { type: number, format: double }
+                      quantity: { type: integer, minimum: 1 }
+      responses:
+        '201':
+          description: Created as a draft, pending approval.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrganiserEvent' }
+
+  /v1/ticketing/business/events/{eventId}:
+    parameters:
+      - { name: eventId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Ticketing (organiser)]
+      summary: Event detail with sales
+      responses:
+        '200':
+          description: Event.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrganiserEvent' }
+    patch:
+      tags: [Ticketing (organiser)]
+      summary: Update or cancel an event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                eventName: { type: string }
+                eventDate: { type: string, format: date-time }
+                venueName: { type: string }
+                description: { type: string }
+                status: { type: string, enum: [draft, cancelled] }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrganiserEvent' }
+
+  /v1/ticketing/scanner/validate:
+    post:
+      tags: [Ticketing (organiser)]
+      summary: Validate a ticket at the gate
+      description: |
+        Called by assigned ticketing staff. The decision is the server's — the
+        client scans the QR with `jsQR` and sends the decoded string, it does not
+        interpret it.
+
+        A code that has already been admitted returns `outcome: "already_used"`
+        with the original admission time, so the door staff can see it rather
+        than guess.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventId, payload]
+              properties:
+                eventId: { type: string }
+                payload: { type: string, description: The decoded QR string, verbatim. }
+      responses:
+        '200':
+          description: Decision.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [outcome]
+                properties:
+                  outcome: { type: string, enum: [valid, already_used, wrong_event, refunded, unknown] }
+                  ticketCode: { type: string }
+                  holderName: { type: string }
+                  ticketTypeName: { type: string }
+                  admittedAt: { type: string, format: date-time, nullable: true }
+                  message: { type: string, description: Shown to the door staff verbatim. }
+
+  # ─────────────────────────────── Chat ───────────────────────────────
+
+  /v1/chat/config:
+    get:
+      tags: [Chat]
+      summary: Chat transport configuration
+      description: |
+        **FIX — P2-4.** The client tries three endpoints in sequence for message
+        history and two for sending, because the canonical one was never
+        documented. It also opens `wss://api.titopay.co.za/v1/chat/socket` and
+        falls back to polling every few seconds when the socket does not
+        connect — which masks failures and costs battery on mobile.
+
+        This endpoint settles it at runtime. When `socketEnabled` is `false` the
+        client polls at `pollIntervalSeconds` and stops attempting the socket.
+      responses:
+        '200':
+          description: Transport configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  socketEnabled: { type: boolean }
+                  socketUrl: { type: string, format: uri, example: "wss://api.titopay.co.za/v1/chat/socket" }
+                  pollIntervalSeconds: { type: integer, default: 15 }
+                  maxAttachmentBytes: { type: integer }
+                  callsEnabled: { type: boolean }
+
+  /v1/chat/threads:
+    get:
+      tags: [Chat]
+      summary: My conversations
+      description: Canonical. The previously-tried alternatives are not to be used.
+      responses:
+        '200':
+          description: Threads, most recent activity first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatThread' }
+    post:
+      tags: [Chat]
+      summary: Open a conversation with a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participantId]
+              properties:
+                participantId: { type: string }
+      responses:
+        '201':
+          description: Thread, existing or new.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatThread' }
+
+  /v1/chat/threads/{threadId}:
+    parameters:
+      - { name: threadId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Chat]
+      summary: Thread with messages
+      parameters:
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        '200':
+          description: Thread and a page of messages, oldest first within the page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  thread: { $ref: '#/components/schemas/ChatThread' }
+                  messages:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChatMessage' }
+    delete:
+      tags: [Chat]
+      summary: Leave or hide a thread
+      responses:
+        '204': { description: Removed from my list. }
+
+  /v1/chat/messages:
+    post:
+      tags: [Chat]
+      summary: Send a message
+      description: Canonical send path. The client stops trying the second, undocumented one.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [threadId, body]
+              properties:
+                threadId: { type: string }
+                body: { type: string }
+                clientMessageId:
+                  type: string
+                  description: |
+                    Client-generated. Echoed back on the stored message so the
+                    optimistic bubble can be reconciled instead of duplicated.
+                attachment:
+                  type: object
+                  properties:
+                    kind: { type: string, enum: [image, document] }
+                    data: { type: string, description: Data URL. }
+                    filename: { type: string }
+      responses:
+        '201':
+          description: Sent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatMessage' }
+
+  /v1/chat/notifications:
+    get:
+      tags: [Chat]
+      summary: Unread counts and mentions
+      responses:
+        '200':
+          description: Counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unreadTotal: { type: integer }
+                  threads:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        threadId: { type: string }
+                        unread: { type: integer }
+
+  /v1/chat/notifications/read:
+    post:
+      tags: [Chat]
+      summary: Mark a thread read
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [threadId]
+              properties:
+                threadId: { type: string }
+                upTo: { type: string, format: date-time }
+      responses:
+        '204': { description: Marked. }
+
+  /v1/chat/calls/{threadId}:
+    parameters:
+      - { name: threadId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Chat]
+      summary: Start or signal a call
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [ring, accept, decline, end] }
+                mode: { type: string, enum: [voice, video] }
+      responses:
+        '200':
+          description: Call state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  callId: { type: string }
+                  state: { type: string, enum: [ringing, active, ended, declined] }
+        '503':
+          description: Calling is not available. The client hides the call buttons.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/chat/users/lookup:
+    get:
+      tags: [Chat]
+      deprecated: true
+      summary: (Deprecated) Chat user lookup
+      description: |
+        **FIX — P0-1.** One of the three lookups the client used to try in
+        sequence. Use `POST /v1/recipients/resolve`.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Same envelope as `/v1/recipients/resolve`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResolveResponse' }
+
+  # ────────────────────────────── Support ─────────────────────────────
+
+  /v1/chatbot/messages:
+    post:
+      tags: [Support]
+      summary: Send a message to the assistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string }
+                conversationId: { type: string }
+                context:
+                  type: object
+                  additionalProperties: true
+                  description: The screen the user was on, and the service code if any.
+      responses:
+        '200':
+          description: Reply.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversationId: { type: string }
+                  reply: { type: string }
+                  suggestions:
+                    type: array
+                    items: { type: string }
+                  escalationOffered: { type: boolean }
+
+  /v1/chatbot/escalations:
+    post:
+      tags: [Support]
+      summary: Escalate a bot conversation to a human
+      description: |
+        **FIX — P1-3.** Creates a real support ticket. Escalations were
+        previously written to `localStorage` under `titopay_support_requests`,
+        so Customer Care never saw them unless a separate channel happened to
+        pick them up — and the user's record of raising it vanished with their
+        browser data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [conversationId]
+              properties:
+                conversationId: { type: string }
+                mode: { type: string, enum: [live_chat, callback, queue] }
+                note: { type: string }
+      responses:
+        '201':
+          description: Ticket created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupportTicket' }
+
+  /v1/chatbot/ratings:
+    post:
+      tags: [Support]
+      summary: Rate an assistant reply
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [conversationId, rating]
+              properties:
+                conversationId: { type: string }
+                messageId: { type: string }
+                rating: { type: string, enum: [helpful, not_helpful] }
+                comment: { type: string }
+      responses:
+        '204': { description: Recorded. }
+
+  /v1/support/tickets:
+    get:
+      tags: [Support]
+      summary: My support tickets
+      description: |
+        **FIX — P1-3. New.** Gives the user a way to see that the ticket they
+        raised exists and where it stands.
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SupportTicket' }
+    post:
+      tags: [Support]
+      summary: Raise a support ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode, message]
+              properties:
+                mode: { type: string, enum: [live_chat, callback, queue] }
+                message: { type: string }
+                context:
+                  type: object
+                  additionalProperties: true
+                  description: |
+                    Screen, service code, transaction reference where relevant.
+                    Note: the client used to send a hard-coded
+                    `appVersion: "pwa-v134"` here, stale for 45 releases. It now
+                    sends the real build version. If nothing consumes it, say so
+                    and it will be dropped entirely.
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupportTicket' }
+
+  /v1/support/conversations/{conversationId}:
+    parameters:
+      - { name: conversationId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Support]
+      summary: A support conversation with its replies
+      responses:
+        '200':
+          description: Conversation.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string, enum: [open, awaiting_customer, resolved, closed] }
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        from: { type: string, enum: [customer, agent, assistant] }
+                        body: { type: string }
+                        sentAt: { type: string, format: date-time }
+
+  /v1/support/reviews:
+    post:
+      tags: [Support]
+      summary: Rate a resolved ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticketId, rating]
+              properties:
+                ticketId: { type: string }
+                rating: { type: integer, minimum: 1, maximum: 5 }
+                comment: { type: string }
+      responses:
+        '204': { description: Recorded. }
+
+  # ───────────────────────────── Security ─────────────────────────────
+
+  /v1/security/centre:
+    get:
+      tags: [Security]
+      summary: Security overview
+      responses:
+        '200':
+          description: The Security Centre screen in one call.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  walletLocked: { type: boolean }
+                  ficaStatus: { type: string, enum: [not_started, pending, verified, declined] }
+                  twoFactorEnabled: { type: boolean }
+                  trustedDeviceCount: { type: integer }
+                  lastLoginAt: { type: string, format: date-time }
+                  alerts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        severity: { type: string, enum: [info, warning, critical] }
+                        message: { type: string }
+
+  /v1/security/devices:
+    get:
+      tags: [Security]
+      summary: Trusted devices
+      responses:
+        '200':
+          description: Devices.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        lastSeenAt: { type: string, format: date-time }
+                        current: { type: boolean }
+                        location: { type: string }
+    delete:
+      tags: [Security]
+      summary: Revoke a trusted device
+      parameters:
+        - { name: deviceId, in: query, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Revoked. }
+
+  /v1/security/logins:
+    get:
+      tags: [Security]
+      summary: Recent sign-in attempts
+      responses:
+        '200':
+          description: Newest first, successes and failures.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        at: { type: string, format: date-time }
+                        outcome: { type: string, enum: [success, failed, blocked] }
+                        device: { type: string }
+                        location: { type: string }
+                        ipMasked: { type: string, description: Masked. Never return a full client IP to the app. }
+
+  /v1/security/wallet-lock:
+    get:
+      tags: [Security]
+      summary: Wallet lock state
+      responses:
+        '200':
+          description: State.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletLock' }
+    post:
+      tags: [Security]
+      summary: Lock the wallet
+      description: |
+        Locking is immediate and needs no verification — a user who thinks they
+        have been compromised must never be made to wait. Unlocking is the
+        two-step flow below.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, enum: [lost_device, suspicious_activity, precaution, other] }
+                note: { type: string }
+      responses:
+        '200':
+          description: Locked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletLock' }
+
+  /v1/security/wallet-lock/history:
+    get:
+      tags: [Security]
+      summary: Lock and unlock history
+      responses:
+        '200':
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        at: { type: string, format: date-time }
+                        action: { type: string, enum: [locked, unlock_requested, unlocked, unlock_failed] }
+                        reason: { type: string }
+                        actor: { type: string, enum: [customer, admin, system] }
+
+  /v1/security/wallet-lock/unlock/request:
+    post:
+      tags: [Security]
+      summary: Start an unlock
+      responses:
+        '202':
+          description: A one-time code has been sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challengeId: { type: string }
+                  channel: { type: string, enum: [sms, email] }
+
+  /v1/security/wallet-lock/unlock/verify:
+    post:
+      tags: [Security]
+      summary: Complete an unlock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challengeId, otp]
+              properties:
+                challengeId: { type: string }
+                otp: { type: string }
+      responses:
+        '200':
+          description: Unlocked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletLock' }
+        '401':
+          description: Wrong or expired code. The wallet stays locked.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─────────────────────────────── KYC ────────────────────────────────
+
+  /v1/kyc/fica:
+    get:
+      tags: [KYC]
+      summary: FICA verification status
+      responses:
+        '200':
+          description: Status and what is still outstanding.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [not_started, pending, verified, declined] }
+                  submittedAt: { type: string, format: date-time, nullable: true }
+                  decidedAt: { type: string, format: date-time, nullable: true }
+                  declineReason: { type: string, nullable: true }
+                  outstandingDocuments:
+                    type: array
+                    items: { type: string, enum: [id_document, proof_of_address, selfie, business_registration] }
+                  limits:
+                    type: object
+                    description: What the user may transact at the current verification level.
+                    properties:
+                      perTransaction: { type: number, format: double }
+                      monthly: { type: number, format: double }
+    post:
+      tags: [KYC]
+      summary: Submit FICA documents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [documents]
+              properties:
+                idNumber: { type: string }
+                documents:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, data]
+                    properties:
+                      type: { type: string, enum: [id_document, proof_of_address, selfie, business_registration] }
+                      data: { type: string, description: Data URL. }
+                      filename: { type: string }
+      responses:
+        '202':
+          description: Submitted for review.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: pending }
+                  submittedAt: { type: string, format: date-time }
+
+  # ───────────────────────────── Platform ─────────────────────────────
+
+  /v1/maintenance/public:
+    get:
+      tags: [Platform]
+      summary: Planned and active maintenance
+      security: []
+      description: Polled on load. Drives the maintenance banner and, when `blocking` is true, the full-screen maintenance state.
+      responses:
+        '200':
+          description: Maintenance state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active: { type: boolean }
+                  blocking: { type: boolean }
+                  message: { type: string, description: Rendered verbatim. }
+                  startsAt: { type: string, format: date-time, nullable: true }
+                  endsAt: { type: string, format: date-time, nullable: true }
+                  affectedServices:
+                    type: array
+                    items: { type: string, description: Service codes. }
+
+  /v1/messages:
+    get:
+      tags: [Platform]
+      summary: Notices addressed to this user
+      responses:
+        '200':
+          description: Notices, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                        body: { type: string }
+                        kind: { type: string, enum: [announcement, transactional, security, marketing] }
+                        read: { type: boolean }
+                        sentAt: { type: string, format: date-time }
+    post:
+      tags: [Platform]
+      summary: Mark notices read
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        '204': { description: Marked. }
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+      description: |
+        Client-generated, stable across retries of the same user intent. The
+        client also sends `clientIdempotencyKey` in the body; **the header is
+        authoritative** and the body field is accepted and ignored. A replay
+        returns the original response with `replayed: true`.
+
+  responses:
+    Unauthorized:
+      description: Not signed in, or the token is no longer valid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No such resource.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Already exists.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unprocessable:
+      description: Validation failed. `fieldErrors` maps a form field to its message.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  fieldErrors:
+                    type: object
+                    additionalProperties: { type: string }
+
+  schemas:
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        ok: { type: boolean, const: false }
+        error:
+          type: string
+          description: |
+            **Rendered directly to the user.** Human-readable, in plain South
+            African English. No stack traces, no SQL, no internal hostnames.
+            The client filters a handful of known-generic strings but it cannot
+            rewrite a leaked internal message.
+        code: { type: string, description: Stable machine-readable code for client branching. }
+        requestId: { type: string, description: Shown in small print on the error card so support can trace it. }
+
+    Pagination:
+      type: object
+      properties:
+        page: { type: integer }
+        perPage: { type: integer }
+        total: { type: integer }
+        hasMore: { type: boolean }
+
+    AccountType:
+      type: string
+      enum: [personal, business]
+
+    Session:
+      type: object
+      required: [accessToken, refreshToken]
+      properties:
+        ok: { type: boolean, const: true }
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: integer, description: Seconds. }
+        user: { $ref: '#/components/schemas/Me' }
+
+    Me:
+      type: object
+      properties:
+        id: { type: string }
+        fullName: { type: string }
+        username: { type: string }
+        email: { type: string, format: email }
+        cellphone: { type: string }
+        accountType: { $ref: '#/components/schemas/AccountType' }
+        businessName: { type: string, nullable: true }
+        verified: { type: boolean, description: FICA verified. }
+        photoUrl: { type: string, format: uri, nullable: true }
+        businessLogoUrl: { type: string, format: uri, nullable: true }
+        walletLocked: { type: boolean }
+
+    Wallet:
+      type: object
+      properties:
+        id: { type: string }
+        walletNumber: { type: string }
+        currency: { type: string, const: ZAR }
+        balance: { type: number, format: double }
+        availableBalance:
+          type: number
+          format: double
+          description: Balance less anything locked for a pending distribution batch.
+        primary: { type: boolean }
+        accountType: { $ref: '#/components/schemas/AccountType' }
+
+    Invite:
+      type: object
+      properties:
+        id: { type: string }
+        identifier: { type: string }
+        channel: { type: string, enum: [sms, email, whatsapp, link] }
+        url: { type: string, format: uri }
+        message: { type: string }
+        status: { type: string, enum: [created, sent, opened, accepted, expired] }
+        createdAt: { type: string, format: date-time }
+
+    ResolveRequest:
+      type: object
+      required: [identifier]
+      properties:
+        identifier:
+          type: string
+          description: As typed — `@thabo`, `thabo`, `0721234567` or an email address.
+          example: "@thabo"
+        lookupValues:
+          type: array
+          items: { type: string }
+          description: |
+            Normalisation variants the client has already derived, in preference
+            order — e.g. `["@thabo", "thabo"]`, or a cellphone in both `0…` and
+            `+27…` form. Try them in order and return the first authoritative
+            match.
+          example: ["@thabo", "thabo"]
+        purpose:
+          type: string
+          enum: [recipient_verification, chat, stockvel_invite, bill_split, payment_request]
+        serviceCode: { type: string, example: wallet_transfer }
+
+    ResolveResponse:
+      type: object
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [found, not_found, unavailable]
+          description: |
+            The whole point of this contract. `not_found` is a **claim about the
+            world** and must only be returned when the directory answered
+            authoritatively. Anything else is `unavailable`.
+        registered: { type: boolean }
+        user:
+          type: object
+          description: Present when `outcome` is `found`.
+          properties:
+            id: { type: string }
+            displayName: { type: string }
+            username: { type: string }
+            accountType: { $ref: '#/components/schemas/AccountType' }
+            verified: { type: boolean }
+        invite:
+          type: object
+          description: Present when `outcome` is `not_found`.
+          properties:
+            url: { type: string, format: uri }
+            message: { type: string }
+
+    TransactionRequest:
+      type: object
+      required: [serviceCode, amount]
+      properties:
+        serviceCode: { type: string, example: wallet_transfer }
+        amount: { type: number, format: double }
+        recipient:
+          type: string
+          description: Resolved user id, wallet number, or the identifier that was resolved.
+        reference: { type: string, description: Appears on both parties' records. }
+        note: { type: string }
+        clientIdempotencyKey:
+          type: string
+          description: Accepted and ignored. The `Idempotency-Key` header is authoritative.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Service-specific payload — VAS fields, document id, split id, ticket order.
+
+    Transaction:
+      type: object
+      properties:
+        id: { type: string }
+        reference: { type: string }
+        serviceCode: { type: string }
+        serviceName: { type: string }
+        direction: { type: string, enum: [in, out] }
+        amount: { type: number, format: double }
+        fee: { type: number, format: double }
+        total: { type: number, format: double }
+        status: { type: string, enum: [pending, completed, failed, reversed] }
+        counterparty:
+          type: object
+          properties:
+            displayName: { type: string }
+            username: { type: string, nullable: true }
+            accountType: { $ref: '#/components/schemas/AccountType' }
+        balanceAfter: { type: number, format: double }
+        createdAt: { type: string, format: date-time }
+        note: { type: string, nullable: true }
+
+    FeePreview:
+      type: object
+      required: [amount, fee, total, debits]
+      properties:
+        amount: { type: number, format: double }
+        fee: { type: number, format: double, description: TitoPay's fee. }
+        thirdPartyFee: { type: number, format: double, description: Peach Payments or provider fee, passed through. }
+        total: { type: number, format: double, description: What leaves the wallet. Zero when `debits` is false. }
+        recipientAmount: { type: number, format: double }
+        debits:
+          type: boolean
+          description: |
+            **FIX — P2-3.** Whether the wallet is actually debited. When `false`
+            the review screen shows "No charge" instead of a debit line.
+        recordOnly:
+          type: boolean
+          description: "Convenience alias of `debits: false`. Either is honoured by the client."
+        description:
+          type: string
+          description: One sentence describing the charge, rendered on the review screen.
+
+    Service:
+      type: object
+      required: [service_code, service_name, action, status, personal_visible, business_visible]
+      properties:
+        service_code: { type: string }
+        service_name: { type: string }
+        service_icon: { type: string }
+        action: { type: string, description: The client route this tile opens. }
+        description: { type: string }
+        fee: { type: number, format: double }
+        commission: { type: number, format: double }
+        status: { type: string, enum: [active, coming_soon, disabled] }
+        personal_visible: { type: boolean }
+        business_visible: { type: boolean }
+        sort_order: { type: integer }
+        feature_badge: { type: string, enum: [none, new, beta] }
+
+    VasProvider:
+      type: object
+      properties:
+        code: { type: string, example: VODACOM }
+        name: { type: string, example: Vodacom }
+        journeys:
+          type: array
+          items: { type: string, enum: [airtime, data, sms, voice, electricity, voucher, bill] }
+        fields:
+          type: array
+          items: { $ref: '#/components/schemas/VasField' }
+        products:
+          type: array
+          items: { $ref: '#/components/schemas/VasProduct' }
+
+    VasField:
+      type: object
+      required: [name, label, type, required]
+      properties:
+        name: { type: string, example: msisdn }
+        label: { type: string, example: Cellphone number }
+        type: { type: string, enum: [tel, text, number, select, email] }
+        required:
+          type: boolean
+          description: |
+            **Must be explicit.** The client treats an absent `required` as
+            optional — defaulting it to true once blocked bill submission on a
+            select that legitimately had no value.
+        primary:
+          type: boolean
+          description: The one field shown on the summary line. At most one per provider.
+        pattern: { type: string, description: JavaScript-compatible regex, applied client-side before submit. }
+        hint: { type: string }
+        options:
+          type: array
+          description: "For `type: select`."
+          items:
+            type: object
+            properties:
+              value: { type: string }
+              label: { type: string }
+
+    VasProduct:
+      type: object
+      properties:
+        code: { type: string, example: VOD-AIR-30 }
+        name: { type: string, example: R30 Airtime }
+        amount: { type: number, format: double, nullable: true }
+        openValue: { type: boolean, description: True when the user chooses the amount. }
+        minAmount: { type: number, format: double, nullable: true }
+        maxAmount: { type: number, format: double, nullable: true }
+
+    QrCode:
+      type: object
+      properties:
+        id: { type: string }
+        payload: { type: string, description: The string encoded in the image. }
+        imageDataUrl: { type: string, description: "`data:image/png;base64,…`. Rendered server-side." }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        amount: { type: number, format: double, nullable: true }
+
+    BusinessDocumentInput:
+      type: object
+      required: [kind, action, issueDate, customerName, items, totals]
+      properties:
+        kind: { type: string, enum: [Invoice, Quote, Proforma Invoice] }
+        action: { type: string, enum: [invoice, quote, proforma-invoice] }
+        issueDate: { type: string, format: date, example: "2026-07-28" }
+        dueDate: { type: string, format: date, example: "2026-08-27" }
+        customerName: { type: string }
+        customerEmail: { type: string, format: email }
+        customerAddress: { type: string }
+        businessAddress: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            required: [description, quantity, unit, total]
+            properties:
+              description: { type: string }
+              quantity: { type: number }
+              unit: { type: number, format: double }
+              total: { type: number, format: double }
+        totals:
+          type: object
+          properties:
+            subtotal: { type: number, format: double }
+            vat: { type: number, format: double }
+            total: { type: number, format: double }
+            vatIncluded: { type: boolean }
+        notes: { type: string }
+        disclaimer: { type: string }
+
+    BusinessDocument:
+      allOf:
+        - $ref: '#/components/schemas/BusinessDocumentInput'
+        - type: object
+          properties:
+            id: { type: string }
+            documentNumber:
+              type: string
+              example: INV-2026-0001
+              description: |
+                Assigned by the server from a sequence held per business, per
+                document kind. The client never generates this.
+            status: { type: string, enum: [draft, issued, paid, cancelled] }
+            pdfIssued: { type: boolean }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+
+    Stockvel:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        purpose: { type: string }
+        role: { type: string, enum: [organiser, member] }
+        memberCount: { type: integer }
+        contributionAmount: { type: number, format: double }
+        frequency: { type: string, enum: [weekly, fortnightly, monthly] }
+        balance:
+          type: number
+          format: double
+          description: |
+            Contributions less withdrawals, and nothing else. TitoPay adds no
+            interest and no return.
+        status: { type: string, enum: [active, closed] }
+        nextContributionDate: { type: string, format: date, nullable: true }
+
+    StockvelDetail:
+      allOf:
+        - $ref: '#/components/schemas/Stockvel'
+        - type: object
+          properties:
+            rules: { type: string }
+            payoutRule: { type: string, enum: [rotating, on_request, end_of_term] }
+            startDate: { type: string, format: date }
+            canManage: { type: boolean }
+            members:
+              type: array
+              items: { $ref: '#/components/schemas/StockvelMember' }
+
+    StockvelMember:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string, nullable: true }
+        displayName: { type: string }
+        username: { type: string, nullable: true }
+        role: { type: string, enum: [organiser, member] }
+        status: { type: string, enum: [invited, active, declined, left, removed] }
+        contributedTotal: { type: number, format: double }
+        joinedAt: { type: string, format: date-time, nullable: true }
+
+    StockvelContribution:
+      type: object
+      properties:
+        id: { type: string }
+        memberId: { type: string }
+        displayName: { type: string }
+        amount: { type: number, format: double }
+        note: { type: string, nullable: true }
+        transactionReference: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    StockvelWithdrawal:
+      type: object
+      properties:
+        id: { type: string }
+        memberId: { type: string }
+        displayName: { type: string }
+        amount: { type: number, format: double }
+        reason: { type: string }
+        status: { type: string, enum: [pending, approved, declined, paid] }
+        decidedBy: { type: string, nullable: true }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    PublicEvent:
+      type: object
+      properties:
+        slug: { type: string }
+        eventName: { type: string }
+        eventDate: { type: string, format: date-time }
+        venueName: { type: string }
+        city: { type: string }
+        description: { type: string }
+        bannerUrl: { type: string, format: uri, nullable: true }
+        organiserName: { type: string }
+        soldOut: { type: boolean }
+        ticketTypes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              price: { type: number, format: double }
+              remaining: { type: integer }
+              maxPerOrder: { type: integer }
+
+    OrganiserEvent:
+      type: object
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        eventName: { type: string }
+        eventDate: { type: string, format: date-time }
+        venueName: { type: string }
+        city: { type: string }
+        status: { type: string, enum: [draft, pending_approval, approved, declined, cancelled, completed] }
+        declineReason: { type: string, nullable: true }
+        ticketsSold: { type: integer }
+        grossSales: { type: number, format: double }
+        ticketTypes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+              price: { type: number, format: double }
+              quantity: { type: integer }
+              sold: { type: integer }
+
+    IssuedTicket:
+      type: object
+      required: [ticketCode, ticketTypeName]
+      properties:
+        ticketCode: { type: string, example: AMA-4471-8890 }
+        ticketTypeName: { type: string, example: General }
+        holderName: { type: string }
+        seat: { type: string, example: GA }
+        qrImageDataUrl:
+          type: string
+          description: |
+            `data:image/png;base64,…`, generated server-side. The client has a QR
+            reader only — it cannot draw one, and a client-drawn entry code would
+            not be trustworthy at the gate.
+
+    ChatThread:
+      type: object
+      properties:
+        id: { type: string }
+        participant:
+          type: object
+          properties:
+            id: { type: string }
+            displayName: { type: string }
+            username: { type: string }
+            accountType: { $ref: '#/components/schemas/AccountType' }
+            photoUrl: { type: string, format: uri, nullable: true }
+        lastMessage: { type: string, nullable: true }
+        lastMessageAt: { type: string, format: date-time, nullable: true }
+        unread: { type: integer }
+
+    ChatMessage:
+      type: object
+      properties:
+        id: { type: string }
+        threadId: { type: string }
+        clientMessageId: { type: string, nullable: true, description: Echoed back so the optimistic bubble reconciles instead of duplicating. }
+        from: { type: string, description: User id of the sender. }
+        body: { type: string }
+        attachment:
+          type: object
+          nullable: true
+          properties:
+            kind: { type: string, enum: [image, document] }
+            url: { type: string, format: uri }
+            filename: { type: string }
+        sentAt: { type: string, format: date-time }
+        readAt: { type: string, format: date-time, nullable: true }
+
+    SupportTicket:
+      type: object
+      properties:
+        id: { type: string }
+        reference: { type: string, example: SUP-2026-0031 }
+        mode: { type: string, enum: [live_chat, callback, queue] }
+        subject: { type: string }
+        message: { type: string }
+        status: { type: string, enum: [open, awaiting_customer, resolved, closed] }
+        conversationId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    WalletLock:
+      type: object
+      properties:
+        locked: { type: boolean }
+        lockedAt: { type: string, format: date-time, nullable: true }
+        reason: { type: string, nullable: true }
+        lockedBy: { type: string, enum: [customer, admin, system], nullable: true }
+        canSelfUnlock:
+          type: boolean
+          description: False when Admin locked the wallet — the user must contact support.
