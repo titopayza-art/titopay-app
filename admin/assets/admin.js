@@ -1776,7 +1776,22 @@ async function renderSupport() {
         }
       }
       const thread = document.querySelector(".support-thread");
-      if (thread) thread.scrollTop = thread.scrollHeight;
+      if (thread) {
+        const holdPosition = PAGE_EXPORTS.supportThreadPinned === false && !PAGE_EXPORTS.supportThreadForceBottom;
+        if (!holdPosition) {
+          // A forced jump also re-arms following, otherwise the next refresh
+          // would restore the position the agent had scrolled away from.
+          PAGE_EXPORTS.supportThreadPinned = true;
+        }
+        const target = () => {
+          thread.scrollTop = holdPosition ? Number(PAGE_EXPORTS.supportThreadScroll) || 0 : thread.scrollHeight;
+        };
+        target();
+        // Run again after layout: scrollHeight is not final in the same frame
+        // the markup is written, which left the transcript sitting at the top.
+        requestAnimationFrame(target);
+      }
+      PAGE_EXPORTS.supportThreadForceBottom = false;
       return;
     } catch (error) {
       PAGE_EXPORTS.openSupportConversationId = null;
@@ -1974,6 +1989,18 @@ function renderSupportThread(messages = []) {
 /* The draft reply is preserved across the re-renders that incoming support
    events trigger, so another agent's activity cannot wipe a half-typed reply. */
 function captureSupportWorkspace() {
+  const thread = document.querySelector(".support-thread");
+  // A deliberate action (opening a chat, taking it over, sending a reply) asks
+  // for the newest message and must not be overridden by wherever the agent
+  // happened to be scrolled.
+  if (thread && !PAGE_EXPORTS.supportThreadForceBottom) {
+    // Standard chat behaviour otherwise: follow new messages only while the
+    // reader is already at the bottom. Scrolling up to read earlier messages
+    // must not be undone by the next incoming message or the ten-second poll.
+    const distanceFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+    PAGE_EXPORTS.supportThreadPinned = distanceFromBottom <= 40;
+    PAGE_EXPORTS.supportThreadScroll = thread.scrollTop;
+  }
   const composer = document.getElementById("support-agent-message");
   if (!composer) return;
   PAGE_EXPORTS.supportDraft = composer.value;
@@ -3638,6 +3665,7 @@ document.addEventListener("submit", async (event) => {
       });
       supportReplyForm.reset();
       PAGE_EXPORTS.supportDraft = "";
+      PAGE_EXPORTS.supportThreadForceBottom = true;
       PAGE_EXPORTS.openSupportConversationId = supportReplyForm.dataset.supportConversationId;
       await renderSupport();
       showToast("Reply sent");
@@ -4182,6 +4210,7 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({})
       });
       showToast("Support chat taken over");
+      PAGE_EXPORTS.supportThreadForceBottom = true;
       PAGE_EXPORTS.openSupportConversationId = id;
       await renderSupport();
     } catch (error) {
@@ -4190,6 +4219,7 @@ document.addEventListener("click", async (event) => {
   }
   const supportChatHistory = event.target.closest("[data-support-chat-history]");
   if (supportChatHistory) {
+    PAGE_EXPORTS.supportThreadForceBottom = true;
     PAGE_EXPORTS.openSupportConversationId = supportChatHistory.dataset.supportChatHistory;
     await renderSupport();
     return;
