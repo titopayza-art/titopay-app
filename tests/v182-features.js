@@ -324,7 +324,7 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
       const card = document.querySelector(".modal-card");
       const windowEl = document.querySelector(".titopay-chat-window");
       return {
-        isChatCard: card.classList.contains("titopay-chat-thread-card"),
+        isChatCard: card.classList.contains("titopay-chat-thread-modal"),
         cardOverflow: getComputedStyle(card).overflow,
         composer: Boolean(document.querySelector('form[data-form="titopay-chat-message"] textarea'))
       };
@@ -364,6 +364,49 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
     await ctx.close();
   }
 
+  // ---- 2e3b. The thread holds its shape on a phone -----------------------
+  //
+  // The modal card once shared a class name with the thread-list rows and
+  // inherited their three-column grid: messages rendered beside the header
+  // and off the right edge, and Back to chats sat next to the composer.
+  // These checks pin the geometry: everything inside the viewport, rows
+  // stacked in order, header actions one compact row.
+  {
+    const { ctx, page } = await authed(browser, { acct: "personal", width: 440, height: 956 });
+    await page.evaluate(() => { if (typeof openTitoPayChatModal === "function") openTitoPayChatModal(); });
+    await sleep(1600);
+    await page.click(".titopay-chat-shell [data-chat-thread-list] article, .titopay-chat-shell [data-chat-thread-list] button");
+    await sleep(1200);
+    const g = await page.evaluate(() => {
+      const card = document.querySelector(".modal-card");
+      const cr = card.getBoundingClientRect();
+      const bubbles = [...document.querySelectorAll(".titopay-user-message")].map((b) => b.getBoundingClientRect());
+      const composer = document.querySelector('form[data-form="titopay-chat-message"]').getBoundingClientRect();
+      const back = document.querySelector('.modal-card [data-action="chat-back"]').getBoundingClientRect();
+      const actions = document.querySelector(".chat-header-actions").getBoundingClientRect();
+      const win = document.querySelector(".titopay-chat-window").getBoundingClientRect();
+      const head = document.querySelector(".titopay-chat-head").getBoundingClientRect();
+      return {
+        innerW: window.innerWidth,
+        cardRight: Math.round(cr.right),
+        cardOverflowX: card.scrollWidth - card.clientWidth,
+        maxBubbleRight: Math.round(Math.max(0, ...bubbles.map((b) => b.right))),
+        bubbleCount: bubbles.length,
+        windowBelowHead: win.top >= head.bottom - 1,
+        composerBelowWindow: composer.top >= win.bottom - 1,
+        backBelowComposer: back.top >= composer.bottom - 1,
+        actionsHeight: Math.round(actions.height)
+      };
+    });
+    check("chat card fits the phone with no sideways overflow", g.cardRight <= g.innerW + 1 && g.cardOverflowX <= 0, JSON.stringify(g));
+    check("no message bubble is clipped off-screen", g.bubbleCount > 0 && g.maxBubbleRight <= g.innerW, `right ${g.maxBubbleRight} vs ${g.innerW}`);
+    check("messages sit below the header, not beside it", g.windowBelowHead);
+    check("composer sits below the messages", g.composerBelowWindow);
+    check("back to chats sits under the composer", g.backBelowComposer);
+    check("header actions hold one compact row on a phone", g.actionsHeight <= 48, `${g.actionsHeight}px`);
+    await ctx.close();
+  }
+
   // ---- 2e4. A chat notification opens the conversation -------------------
   {
     const { ctx, page } = await authed(browser, { acct: "personal" });
@@ -386,7 +429,7 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
     await page.click('[data-notification-chat]');
     await sleep(1200);
     const opened = await page.evaluate(() => ({
-      chatCard: Boolean(document.querySelector(".titopay-chat-thread-card")),
+      chatCard: Boolean(document.querySelector(".modal-card.titopay-chat-thread-modal")),
       title: document.querySelector(".chat-thread-title h2")?.textContent || "",
       noticeRead: !(state.notifications || []).find((n) => n.id === "chat-notice-1")?.unread
     }));

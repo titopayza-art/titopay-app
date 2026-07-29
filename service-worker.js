@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v192-install-pill-landing";
+const CACHE_NAME = "titopay-pwa-v193-chat-surface";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=192",
+  "./styles.css?v=193",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=192",
-  "./services-default.json?v=192",
-  "./manifest.webmanifest?v=192",
+  "./app.js?v=193",
+  "./services-default.json?v=193",
+  "./manifest.webmanifest?v=193",
   "./offline.html",
   "./assets/titopay-logo.png",
   "./assets/icon-192.png?v=165",

@@ -9258,8 +9258,9 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
    the single flexible, single scrollable row, composer pinned beneath it. On a
    phone it is simply full-screen, which is what a chat is.
    --------------------------------------------------------------------------- */
-.modal-card.titopay-chat-thread-card {
+.modal-card.titopay-chat-thread-modal {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   gap: 10px;
   height: min(88svh, 820px);
@@ -9267,27 +9268,44 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
   overflow: hidden;
 }
 
-.titopay-chat-thread-card .titopay-chat-window {
+.titopay-chat-thread-modal .titopay-chat-window {
   min-height: 0;
   max-height: none;
   height: auto;
 }
 
-.titopay-chat-thread-card .modal-head {
+.titopay-chat-thread-modal .modal-head {
   margin-bottom: 0;
 }
 
 @media (max-width: 599px) {
-  .modal-backdrop:has(.titopay-chat-thread-card) {
+  .modal-backdrop:has(.modal-card.titopay-chat-thread-modal) {
     padding: 0;
   }
 
-  .modal-card.titopay-chat-thread-card {
+  .modal-card.titopay-chat-thread-modal {
     width: 100%;
     height: 100dvh;
     max-height: 100dvh;
     padding: calc(10px + var(--safe-top)) 12px calc(10px + var(--safe-bottom));
     border-radius: 0;
+  }
+
+  /* Five labelled pills do not fit a phone header; they wrapped into two
+     bulky rows that crushed the contact's name. The labels go, the
+     aria-labels stay, and the actions hold one compact row. */
+  .titopay-chat-thread-modal .chat-action-btn span {
+    display: none;
+  }
+
+  .titopay-chat-thread-modal .chat-action-btn {
+    min-width: 40px;
+    padding: 8px;
+  }
+
+  .titopay-chat-thread-modal .chat-header-actions {
+    gap: 6px;
+    flex-wrap: nowrap;
   }
 }
 

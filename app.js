@@ -622,7 +622,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=192", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=193", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -13268,7 +13268,7 @@ function openTitoPayChatThread(threadId) {
         <button class="chat-action-btn" type="button" data-action="chat-mute" aria-label="${thread.muted ? "Unmute conversation" : "Mute conversation"}">${icon("bell")}<span>${thread.muted ? "Unmute" : "Mute"}</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-clear-thread" aria-label="Clear this chat from this device">${icon("refresh")}<span>Clear</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-report" aria-label="Report conversation">${icon("shield")}<span>Report</span></button>
-        <button class="chat-action-btn" type="button" data-action="chat-block" aria-label="${blocked ? "Conversation blocked" : "Block conversation"}">${icon("x")}<span>${blocked ? "Blocked" : "Block"}</span></button>
+        <button class="chat-action-btn" type="button" data-action="chat-block" aria-label="${blocked ? "Conversation blocked" : "Block conversation"}">${icon("ban")}<span>${blocked ? "Blocked" : "Block"}</span></button>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
     </div>
@@ -13284,7 +13284,11 @@ function openTitoPayChatThread(threadId) {
     <button class="btn ghost" type="button" data-action="chat-back">${icon("arrow-left")} Back to chats</button>
   `);
   const card = document.querySelector(".modal-card");
-  if (card) card.classList.add("titopay-chat-thread-card");
+  // The list rows already own the name "titopay-chat-thread-card" with a
+  // three-column grid; giving the modal card the same class handed it those
+  // columns and scattered the thread sideways. The modal surface gets its
+  // own name.
+  if (card) card.classList.add("titopay-chat-thread-modal");
   const windowEl = document.querySelector(".titopay-chat-window");
   if (windowEl) windowEl.scrollTop = windowEl.scrollHeight;
   restoreChatDraft(threadId);
@@ -15616,7 +15620,8 @@ function icon(name) {
     maintenance: `<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>`,
     menu: `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
     "more-horizontal": `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>`,
-    x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`
+    x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
+    ban: `<circle cx="12" cy="12" r="9"/><path d="m5.9 5.9 12.2 12.2"/>`
   };
   return `<svg ${common}>${paths[resolvedName] || paths.grid}</svg>`;
 }
