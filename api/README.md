@@ -5,8 +5,15 @@ The complete API contract across all three surfaces, with every fix from
 
 ## What is in this package
 
+**Start with `APPLY.md`** — one ordered runbook covering admin, app and HR
+together, so the whole set can be worked through in a single pass. The two
+`verify-*.sh` scripts tell you what has actually landed.
+
 | File | Surface | Who calls it |
 |---|---|---|
+| `APPLY.md` | **All three** | The ordered apply-everything runbook — read first |
+| `verify-auth-fix.sh` | **All three** | Proves the 500-vs-401 fix landed |
+| `verify-catalogue.sh` | **App / Admin** | Proves the catalogue corrections landed |
 | `openapi-app.yaml` | **App** | The PWA — personal and business accounts |
 | `openapi-admin.yaml` | **Admin** | The internal TitoPay console |
 | `openapi-hr.yaml` | **HR / Bulk Distribution** | Approved organisations paying many people at once |
