@@ -9319,9 +9319,23 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
     display: none;
   }
 
+  /* Centring banked the leftover height above the logo -- ~150px of blank
+     band up top while the rows below sat squeezed together. Distributing
+     instead pins the bar near the top and spends the leftover between the
+     rows, which is where the eye wants it. */
+  body.landing-static .landing-flow.auth-screen:has(.landing-cta-footer),
+  body.landing-static .business-landing.auth-screen:has(.landing-cta-footer) {
+    align-content: space-between;
+    padding-top: calc(max(18px, var(--safe-top)) + 4px);
+    /* space-between parks the last row exactly on the content-box edge, so
+       the reservation must cover the footer's real height (proof points
+       included), not its minimum. */
+    padding-bottom: calc(160px + var(--safe-bottom));
+  }
+
   body.landing-static .landing-flow.auth-screen,
   body.landing-static .business-landing.auth-screen {
-    row-gap: clamp(16px, 3.4vh, 30px);
+    row-gap: clamp(16px, 3.4vh, 34px);
   }
 
   body.landing-static .landing-flow .preview-grid .service-tile,

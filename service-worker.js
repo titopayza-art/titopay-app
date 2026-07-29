@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v190-scanner-frame";
+const CACHE_NAME = "titopay-pwa-v191-desktop-rhythm";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=190",
+  "./styles.css?v=191",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=190",
-  "./services-default.json?v=190",
-  "./manifest.webmanifest?v=190",
+  "./app.js?v=191",
+  "./services-default.json?v=191",
+  "./manifest.webmanifest?v=191",
   "./offline.html",
   "./assets/titopay-logo.png",
   "./assets/icon-192.png?v=165",

@@ -684,6 +684,7 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
           overflowX: document.documentElement.scrollWidth - window.innerWidth,
           visibleTiles: [...document.querySelectorAll(".preview-grid .service-tile")].filter((t) => getComputedStyle(t).display !== "none").length,
           tileFooterGap: Math.round(r.top - Math.max(...[...document.querySelectorAll(".preview-grid .service-tile")].filter((t) => getComputedStyle(t).display !== "none").map((t) => t.getBoundingClientRect().bottom))),
+          barTop: Math.round(document.querySelector(".landing-flow .topbar").getBoundingClientRect().top),
           tallestTile: Math.round(Math.max(...[...document.querySelectorAll(".preview-grid .service-tile")].filter((t) => getComputedStyle(t).display !== "none").map((t) => t.getBoundingClientRect().height))),
           footerCta: Boolean(el.querySelector(".landing-cta-btn"))
         };
@@ -699,6 +700,9 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
         check(`landing tiles are not stretched (${label} ${acct})`, m.tallestTile <= 170, `${m.tallestTile}px`);
         check(`landing footer carries the QR action (${label} ${acct})`, m.footerCta);
         check(`no tile sits under the footer (${label} ${acct})`, m.tileFooterGap >= 8, `gap ${m.tileFooterGap}px`);
+        if (label === "macbook-air" || label === "laptop-short") {
+          check(`no blank band above the logo (${label} ${acct})`, m.barTop <= 60, `bar starts at ${m.barTop}px`);
+        }
       }
       await ctx.close();
     }
