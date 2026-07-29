@@ -603,14 +603,21 @@ body[data-page="login"] {
   gap: 12px;
 }
 
-.auth-brand-logo {
-  display: block;
-  width: min(168px, 30vw);
-  max-height: 58px;
-  padding: 6px 10px;
-  border-radius: var(--tp-radius);
-  background: rgba(255, 255, 255, 0.97);
-  object-fit: contain;
+/* The logo artwork is a JPEG with a baked-in white background, so placing it on
+   the dark panel produced a white sticker floating over the gradient. The
+   wordmark is set in type here instead: nothing sits behind it, and it stays
+   sharp at any resolution. The artwork is still used on the light panel, where
+   its white background is invisible. */
+.auth-brand-wordmark {
+  color: #fff;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.auth-brand-wordmark span {
+  color: #6fb2ff;
 }
 
 .auth-brand-tag {
@@ -2156,6 +2163,144 @@ table button:focus-visible {
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+/* Support conversation workspace ------------------------------------------ */
+
+.support-conversation {
+  display: grid;
+  gap: 14px;
+}
+
+.support-conversation-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--tp-muted);
+  font-size: 0.8125rem;
+}
+
+.support-conversation-meta strong {
+  color: var(--tp-text-strong);
+  font-weight: 600;
+}
+
+.support-thread {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  margin: 0;
+  padding: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface-sunken);
+}
+
+.support-msg {
+  max-width: 78%;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+}
+
+.support-msg[data-sender="customer"] {
+  justify-self: start;
+  border-color: var(--tp-border);
+}
+
+.support-msg[data-sender="agent"] {
+  justify-self: end;
+  border-color: var(--tp-blue-line);
+  background: var(--tp-blue-soft);
+}
+
+.support-msg[data-sender="bot"] {
+  justify-self: start;
+  background: var(--tp-surface);
+  border-style: dashed;
+}
+
+.support-msg[data-sender="system"] {
+  justify-self: center;
+  max-width: 100%;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: var(--tp-radius-pill);
+  background: var(--tp-neutral-soft);
+  text-align: center;
+}
+
+.support-msg-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 3px;
+  color: var(--tp-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.support-msg[data-sender="system"] .support-msg-meta {
+  display: none;
+}
+
+.support-msg-meta span {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.support-msg-body {
+  margin: 0;
+  color: var(--tp-text);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+
+.support-msg[data-sender="system"] .support-msg-body {
+  color: var(--tp-muted);
+  font-size: 0.8125rem;
+}
+
+/* Lifecycle actions for the open conversation. Sits outside a table, so it
+   needs its own separation from the transcript below it. */
+.support-conversation-actions {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--tp-border-soft);
+}
+
+.support-composer {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.support-composer .field {
+  width: 100%;
+}
+
+.support-notes summary {
+  color: var(--tp-muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.support-notes ul {
+  margin: 10px 0 0;
+  padding-left: 1.1rem;
+  color: var(--tp-text);
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 
 /* Chat monitor ------------------------------------------------------------ */

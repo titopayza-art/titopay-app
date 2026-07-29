@@ -809,26 +809,44 @@ function showModuleSkeleton() {
 function renderStandaloneModuleError(error) {
   const shell = document.querySelector(".admin-shell");
   if (!shell) return;
-  const message = adminErrorMessage(error?.message || "Unable to load this module.");
+  // status 0 means the browser never received a response at all: the API is
+  // down, unreachable, or rejecting the request before it can answer. That is a
+  // different problem from the API answering with an error, and it needs a
+  // different instruction, so the two are not collapsed into one message.
+  const offline = error?.status === 0;
   const requestId = error?.requestId || error?.payload?.requestId || "";
-  const detailRows = [
-    ["Status", error?.status === 0 ? "Connection unavailable" : `Service response ${error?.status || "unavailable"}`],
-    ["Reference", requestId || "-"]
-  ];
+  const heading = offline ? "Cannot reach the TitoPay API" : "Admin module unavailable";
+  const message = offline
+    ? `The console loaded, but ${ADMIN_API_BASE.replace(/^https?:\/\//, "")} did not respond.`
+    : adminErrorMessage(error?.message || "Unable to load this module.");
+  const detailRows = offline
+    ? [
+      ["API endpoint", ADMIN_API_BASE],
+      ["Console origin", location.origin],
+      ["Result", "No response received"]
+    ]
+    : [
+      ["Result", `Service responded ${error?.status || "with an error"}`],
+      ["Reference", requestId || "-"]
+    ];
+  const guidance = offline
+    ? `Open <strong>${escapeHtml(ADMIN_API_BASE)}/../health</strong> in a new tab. If that does not load, the API process is not running or the domain is not resolving. If it loads but this page still fails, the API is not accepting requests from <strong>${escapeHtml(location.origin)}</strong> and its allowed-origins list needs that exact address.`
+    : "Retry the module. If the same response returns, the API needs attention.";
   shell.innerHTML = `
     <main class="main-area standalone-error">
       <div class="page-header">
         <div>
-          <h1>Admin module unavailable</h1>
+          <h1>${escapeHtml(heading)}</h1>
           <p>${escapeHtml(message)}</p>
         </div>
         <div class="header-actions">
-          <button class="secondary-btn admin-refresh-btn" type="button" data-window-refresh>Refresh</button>
+          <button class="secondary-btn admin-refresh-btn" type="button" data-window-refresh>Retry</button>
+          <button class="ghost-btn" type="button" data-admin-signout-local>Sign out</button>
         </div>
       </div>
       <section class="table-card">
-        <h3>Operational notice</h3>
-        <p class="table-card-note">Refresh this page first. If the issue continues, check that the latest API package is deployed and the TitoPay API process is online.</p>
+        <h3>What to check</h3>
+        <p class="table-card-note">${guidance}</p>
         ${renderKeyValueList(detailRows)}
       </section>
     </main>
@@ -1707,6 +1725,7 @@ async function renderWallets(me = {}) {
 }
 
 async function renderSupport() {
+  captureSupportWorkspace();
   const [ticketResult, conversationResult, profileChangeResult] = await Promise.all([
     apiFetch("/admin/support/tickets"),
     apiFetch("/admin/support/conversations").catch(() => ({ items: [] })),
@@ -1759,22 +1778,6 @@ async function renderSupport() {
         ["Profile Approvals", profilePending],
         ["SLA Overdue", profileOverdue],
       ])}
-      <section class="panel-grid support-grid">
-        <article class="panel">
-          <h3>Chatbot Escalations</h3>
-          <p>Live support conversations escalated from the TitoPay chatbot enter this queue. Agents can accept, escalate, resolve or reopen cases based on RBAC permissions.</p>
-          <div class="ops-list ops-list-two">
-            <span><strong>${open}</strong>Waiting or active</span>
-            <span><strong>${escalated}</strong>Needs specialist</span>
-            <span><strong>RBAC</strong>Profile and wallet context</span>
-            <span><strong>Audit</strong>Every action logged</span>
-          </div>
-        </article>
-        <article class="panel">
-          <h3>Agent Workflow</h3>
-          <p>Customer Care can take ownership, transfer complex cases to Compliance, Finance or Engineering, and close cases once the user confirms resolution.</p>
-        </article>
-      </section>
       <h3 class="section-title">Support Tickets</h3>
       ${renderRows(tickets, [
       { label: "Request", render: (row) => `<strong>${escapeHtml(row.subject)}</strong><br><small>${escapeHtml(row.category)} · ${escapeHtml(new Date(row.created_at || Date.now()).toLocaleDateString("en-ZA"))}</small>` },
@@ -1795,14 +1798,10 @@ async function renderSupport() {
       { label: "Waiting", render: (row) => `<strong>${escapeHtml(monitorAge(row.waitingSeconds || 0))}</strong><br><small>${escapeHtml(row.createdAt ? new Date(row.createdAt).toLocaleString("en-ZA") : "-")}</small>` },
       { label: "Last Message", render: (row) => `<small>${escapeHtml(String(row.last_message || "No messages yet").slice(0, 140))}</small>` },
       { label: "Assigned", render: (row) => escapeHtml(assignedTo(row)) },
-      { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "WAITING_FOR_AGENT")}</span>` },
+      { label: "Status", render: (row) => `<span class="chip ${supportStatusClass(row.status)}">${escapeHtml(String(row.status || "WAITING_FOR_AGENT").replace(/_/g, " "))}</span>` },
     ], (row) => `
-      <button data-support-chat-history="${row.id}">History</button>
-      <button data-support-chat-note="${row.id}">Add note</button>
-      ${["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status) ? `<button data-support-chat-takeover="${row.id}">TAKE OVER CHAT</button>` : ""}
-      ${["AGENT_ACTIVE", "REOPENED"].includes(row.status) ? `<button data-support-chat-reply="${row.id}">Reply</button><button data-support-chat-resolve="${row.id}">Resolve</button><button data-support-chat-unassign="${row.id}">Release</button><button data-support-chat-transfer="${row.id}">Transfer</button>` : ""}
-      ${row.status === "RESOLVED" ? `<button data-support-chat-reopen="${row.id}">Reopen</button><button data-support-chat-close="${row.id}">Close</button>` : ""}
-      ${row.status === "CLOSED" ? `<button data-support-chat-reopen="${row.id}">Reopen</button>` : ""}
+      <button data-support-chat-history="${row.id}">Open</button>
+      ${["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status) ? `<button data-support-chat-takeover="${row.id}">Take over</button>` : ""}
     `)}
       <h3 class="section-title">Profile Change Approvals</h3>
       ${renderRows(profileChanges, [
@@ -1818,41 +1817,128 @@ async function renderSupport() {
       <section id="support-context-host"></section>
     `
   );
+  restoreSupportWorkspace();
+}
+
+/* A support transcript is a conversation, not a dataset. Rendering it as a
+   table forced an agent to read one message per row across four columns; this
+   reads top to bottom the way the customer sees it. */
+const SUPPORT_SENDER_LABELS = { CUSTOMER: "Customer", AGENT: "Support agent", BOT: "TitoPay Assistant", SYSTEM: "System" };
+
+function supportMessageTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function renderSupportThread(messages = []) {
+  if (!messages.length) return `<div class="compact-empty">No messages in this conversation yet.</div>`;
+  return `
+    <ol class="support-thread">
+      ${messages.map((row) => {
+        const sender = String(row.senderType || row.sender_type || "SYSTEM").toUpperCase();
+        const who = row.senderName || row.sender_name || SUPPORT_SENDER_LABELS[sender] || "TitoPay";
+        const when = supportMessageTime(row.createdAt || row.created_at);
+        return `
+          <li class="support-msg" data-sender="${escapeHtml(sender.toLowerCase())}">
+            <p class="support-msg-meta"><strong>${escapeHtml(who)}</strong>${when ? `<span>${escapeHtml(when)}</span>` : ""}</p>
+            <p class="support-msg-body">${escapeHtml(row.body || row.message || "")}</p>
+          </li>
+        `;
+      }).join("")}
+    </ol>
+  `;
+}
+
+
+/* The conversation workspace renders below the queue tables, so an agent who
+   takes over or opens a chat would otherwise be left looking at the queue with
+   the workspace off-screen. */
+function mountSupportConversation(context, options = {}) {
+  const host = document.getElementById("support-context-host");
+  if (!host) return;
+  const conversationId = context?.conversation?.id;
+  host.innerHTML = renderSupportContext(context);
+  if (conversationId) PAGE_EXPORTS.openSupportConversationId = conversationId;
+  const composer = document.getElementById("support-agent-message");
+  if (composer && PAGE_EXPORTS.supportDraft) composer.value = PAGE_EXPORTS.supportDraft;
+  if (options.restore) return;
+  host.scrollIntoView({ block: "start", behavior: "smooth" });
+  composer?.focus({ preventScroll: true });
+}
+
+/* renderSupport() rebuilds the whole page, and it is called on every incoming
+   support event as well as by the agent's own actions. Without this, taking
+   over a chat — or simply another agent's activity landing on the socket —
+   destroyed the conversation the agent had open and threw away a half-typed
+   reply. The draft is captured before the rebuild and the open conversation is
+   put back after it. */
+function captureSupportWorkspace() {
+  const composer = document.getElementById("support-agent-message");
+  if (composer) PAGE_EXPORTS.supportDraft = composer.value;
+}
+
+async function restoreSupportWorkspace() {
+  const id = PAGE_EXPORTS.openSupportConversationId;
+  if (!id || !document.getElementById("support-context-host")) return;
+  try {
+    mountSupportConversation(await apiFetch(`/admin/support/conversations/${id}/context`), { restore: true });
+  } catch {
+    // The queue is still usable if a single conversation cannot be reloaded.
+  }
 }
 
 function renderSupportContext(context = {}) {
-  return tableCard("Conversation History", `
-    ${context.conversation ? `
-      <section class="panel">
-        <h3>${escapeHtml(context.conversation.customer?.name || "Customer")}</h3>
-        <p><strong>Status:</strong> ${escapeHtml(context.conversation.status)} · <strong>Assigned:</strong> ${escapeHtml(context.conversation.assignedAgent?.name || "Unassigned")}</p>
-        <form id="support-agent-reply-form" data-support-conversation-id="${escapeHtml(context.conversation.id)}">
-          <label for="support-agent-message">Reply to customer</label>
-          <textarea id="support-agent-message" name="message" rows="3" maxlength="4000" required></textarea>
-          <button type="submit">Send reply</button>
-        </form>
-      </section>
-    ` : ""}
-    <section class="panel-grid support-grid">
-      ${tableCard("Live Chat History", renderRows(context.messages || [], [
-        { label: "Sender", render: (row) => `<strong>${escapeHtml(row.sender_name || row.sender_username || "-")}</strong><br><small>${escapeHtml(row.sender_username || "-")}</small>` },
-        { label: "Message", render: (row) => `<small>${escapeHtml(String(row.body || "").slice(0, 180))}</small>` },
-        { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "-")}</span>` },
-        { label: "Sent", render: (row) => escapeHtml(row.created_at ? new Date(row.created_at).toLocaleString("en-ZA") : "-") },
-      ], () => ""), "Conversation content is shown only to authorized support staff for resolution and audit context.")}
-      ${tableCard("Voice Call History", renderRows(context.calls || [], [
-        { label: "Call", render: (row) => `<strong>${escapeHtml(row.call_type || "voice")}</strong><br><small>${escapeHtml(row.id ? compactId(row.id) : "-")}</small>` },
-        { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "-")}</span>` },
-        { label: "Duration", render: (row) => `${escapeHtml(row.duration_seconds || 0)}s` },
-        { label: "Started", render: (row) => escapeHtml(row.started_at ? new Date(row.started_at).toLocaleString("en-ZA") : "-") },
-      ], () => ""), "Voice call signalling history is retained for diagnosis and escalation.")}
-    </section>
-    ${tableCard("Internal Notes", renderRows(context.internalNotes || [], [
-      { label: "Admin", render: (row) => escapeHtml(row.createdByLabel || row.createdBy || "-") },
-      { label: "Note", render: (row) => `<small>${escapeHtml(row.note || "-")}</small>` },
-      { label: "Created", render: (row) => escapeHtml(row.createdAt ? new Date(row.createdAt).toLocaleString("en-ZA") : "-") },
-    ], () => ""), "Internal notes are not exposed to TitoPay users.")}
-  `);
+  const conversation = context.conversation;
+  if (!conversation) return "";
+  const canReply = ["AGENT_ACTIVE", "REOPENED"].includes(String(conversation.status || "").toUpperCase());
+  const notes = context.internalNotes || [];
+  return tableCard(
+    escapeHtml(conversation.customer?.name || "Customer"),
+    `
+      <div class="support-conversation">
+        <div class="support-conversation-meta">
+          <span class="chip ${supportStatusClass(conversation.status)}">${escapeHtml(String(conversation.status || "").replace(/_/g, " "))}</span>
+          <span>Assigned to <strong>${escapeHtml(conversation.assignedAgent?.name || "nobody yet")}</strong></span>
+          ${conversation.ticketRef ? `<span>Reference <strong>${escapeHtml(conversation.ticketRef)}</strong></span>` : ""}
+        </div>
+
+        <div class="action-row support-conversation-actions">
+          ${["ESCALATED", "WAITING_FOR_AGENT"].includes(String(conversation.status || "").toUpperCase()) ? `<button data-support-chat-takeover="${escapeHtml(conversation.id)}">Take over</button>` : ""}
+          ${canReply ? `
+            <button data-support-chat-resolve="${escapeHtml(conversation.id)}">Resolve</button>
+            <button data-support-chat-unassign="${escapeHtml(conversation.id)}">Release</button>
+            <button data-support-chat-transfer="${escapeHtml(conversation.id)}">Transfer</button>
+          ` : ""}
+          ${String(conversation.status || "").toUpperCase() === "RESOLVED" ? `<button data-support-chat-reopen="${escapeHtml(conversation.id)}">Reopen</button><button data-support-chat-close="${escapeHtml(conversation.id)}">Close</button>` : ""}
+          ${String(conversation.status || "").toUpperCase() === "CLOSED" ? `<button data-support-chat-reopen="${escapeHtml(conversation.id)}">Reopen</button>` : ""}
+          <button data-support-chat-note="${escapeHtml(conversation.id)}">Add internal note</button>
+        </div>
+
+        ${renderSupportThread(context.messages)}
+
+        ${canReply ? `
+          <form id="support-agent-reply-form" class="support-composer" data-support-conversation-id="${escapeHtml(conversation.id)}">
+            <div class="field">
+              <label for="support-agent-message">Reply to customer</label>
+              <textarea id="support-agent-message" name="message" rows="3" maxlength="4000" placeholder="Type your reply. The customer sees this immediately." required></textarea>
+            </div>
+            <button class="primary-btn" type="submit">Send reply</button>
+          </form>
+        ` : `<p class="table-card-note">Take over this conversation before replying.</p>`}
+
+        ${notes.length ? `
+          <details class="support-notes">
+            <summary>Internal notes (${notes.length}) — never shown to the customer</summary>
+            <ul>
+              ${notes.map((row) => `<li><strong>${escapeHtml(row.createdByLabel || row.createdBy || "Admin")}</strong> · ${escapeHtml(supportMessageTime(row.createdAt))}<br>${escapeHtml(row.note || "")}</li>`).join("")}
+            </ul>
+          </details>
+        ` : ""}
+      </div>
+    `,
+    "Conversation content is visible to authorised support staff only and is retained for audit."
+  );
 }
 
 function monitorAge(seconds) {
@@ -2389,6 +2475,17 @@ async function renderPricing() {
       { label: "Status", render: (row) => `<span class="chip ${row.enabled !== false && row.active !== false ? "green" : "red"}">${row.enabled !== false && row.active !== false ? "Enabled" : "Disabled"}</span>` },
     ], (row) => `<button data-pricing-edit="${row.id}">Edit rule</button>`), "Pricing updates are written through the TitoPay API and reflected wherever pricing rules are consumed.", "API controlled")}
   `;
+}
+
+/* Support conversation statuses are uppercase with underscores
+   (WAITING_FOR_AGENT, AGENT_ACTIVE, ...) and do not match the generic
+   chipClass keywords, so they were all rendering the same neutral blue. */
+function supportStatusClass(status = "") {
+  const value = String(status || "").toLowerCase();
+  if (["agent_active", "reopened", "resolved"].includes(value)) return "green";
+  if (["escalated", "waiting_for_agent"].includes(value)) return "orange";
+  if (value === "closed") return "red";
+  return "blue";
 }
 
 function integrationStatusClass(status = "") {
@@ -3410,8 +3507,7 @@ document.addEventListener("submit", async (event) => {
       });
       supportReplyForm.reset();
       const context = await apiFetch(`/admin/support/conversations/${supportReplyForm.dataset.supportConversationId}/context`);
-      const host = document.getElementById("support-context-host");
-      if (host) host.innerHTML = renderSupportContext(context);
+      mountSupportConversation(context);
       showToast("Reply sent");
     } catch (error) {
       showToast(adminErrorMessage(error.message));
@@ -3489,6 +3585,14 @@ document.addEventListener("click", async (event) => {
   if (windowRefresh) {
     event.preventDefault();
     window.location.reload();
+    return;
+  }
+  // Escape hatch when the API is unreachable: the normal Sign Out calls the API
+  // to revoke the session, which cannot succeed while it is down.
+  const localSignOut = event.target.closest("[data-admin-signout-local]");
+  if (localSignOut) {
+    event.preventDefault();
+    logoutToLogin("Signed out on this device");
     return;
   }
   const adminPageRefresh = event.target.closest("[data-admin-page-refresh]");
@@ -3871,10 +3975,9 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({})
       });
       showToast("Support chat taken over");
+      PAGE_EXPORTS.openSupportConversationId = id;
       await renderSupport();
-      const context = await apiFetch(`/admin/support/conversations/${id}/context`);
-      const host = document.getElementById("support-context-host");
-      if (host) host.innerHTML = renderSupportContext(context);
+      mountSupportConversation(await apiFetch(`/admin/support/conversations/${id}/context`));
     } catch (error) {
       showToast(adminErrorMessage(error.message));
     }
@@ -3883,11 +3986,7 @@ document.addEventListener("click", async (event) => {
   if (supportChatHistory) {
     try {
       const context = await apiFetch(`/admin/support/conversations/${supportChatHistory.dataset.supportChatHistory}/context`);
-      const host = document.getElementById("support-context-host");
-      if (host) {
-        host.innerHTML = renderSupportContext(context);
-        host.scrollIntoView({ block: "start" });
-      }
+      mountSupportConversation(context);
     } catch (error) {
       showToast(adminErrorMessage(error.message));
     }
@@ -3896,12 +3995,7 @@ document.addEventListener("click", async (event) => {
   if (supportChatReply) {
     try {
       const context = await apiFetch(`/admin/support/conversations/${supportChatReply.dataset.supportChatReply}/context`);
-      const host = document.getElementById("support-context-host");
-      if (host) {
-        host.innerHTML = renderSupportContext(context);
-        host.scrollIntoView({ block: "start" });
-        host.querySelector("#support-agent-message")?.focus();
-      }
+      mountSupportConversation(context);
     } catch (error) {
       showToast(adminErrorMessage(error.message));
     }
@@ -3968,8 +4062,7 @@ document.addEventListener("click", async (event) => {
         });
         showToast("Internal note saved");
         const context = await apiFetch(`/admin/support/conversations/${supportChatNote.dataset.supportChatNote}/context`);
-        const host = document.getElementById("support-context-host");
-        if (host) host.innerHTML = renderSupportContext(context);
+        mountSupportConversation(context);
       } catch (error) {
         showToast(adminErrorMessage(error.message));
       }

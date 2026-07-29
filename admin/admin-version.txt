@@ -1,22 +1,28 @@
 TitoPay Admin
-Build: admin-console-v31
-Date: 2026-07-28
+Build: admin-console-v32
+Date: 2026-07-29
 
-v31 - Sign-in page rebuilt as a staff sign-in for a regulated system: anchored
-three-band layout, environment badge shown before sign-in, password reveal,
-Caps Lock warning, pending submit state, colour-coded sign-in feedback, and a
-recorded-access notice. One h1 per page and a labelled reset disclosure.
+v32 - Support workspace and stability
+  - Fixed: any support event rebuilt the Support Desk and destroyed the
+    conversation an agent had open, including a half-typed reply. The open
+    conversation and the draft are now preserved across every rebuild.
+  - Fixed: Content-Security-Policy allowed https://api.titopay.co.za but not
+    wss://api.titopay.co.za, so the live support socket was blocked in every
+    previous build and the desk silently fell back to 10-second polling.
+  - The conversation transcript is a readable thread instead of a four-column
+    table. Sender names and timestamps now resolve (they read snake_case keys
+    the API does not send).
+  - Queue rows carry two actions (Open, Take over); Resolve, Release, Transfer
+    and notes moved into the conversation workspace where the agent has context.
+  - Support statuses map to semantic colours instead of all rendering blue.
+  - Sign-in page: build stamp removed; the wordmark is set in type so the logo
+    artwork's white background no longer floats on the dark panel.
+  - "Cannot reach the TitoPay API" replaces the generic module error when the
+    API does not respond, naming the endpoint and origin, with a local sign-out.
 
-v30 - Operations console front-end rebuild. Single-layer stylesheet (no stacked
-override passes), persistent console chrome with sidebar + topbar, banking-grade
-data tables with a correctly pinned Actions column, module filter, environment
-badge, SAST clock, optional dark appearance, off-canvas navigation on tablet and
-phone widths, and full keyboard/screen-reader landmarks.
+v31 - Sign-in page rebuilt for a regulated system.
+v30 - Operations console front-end rebuild on a single-layer stylesheet.
 
-No API, endpoint, authentication, routing or permission behaviour was changed in
-either build. Presentation only.
-
-If admin.titopay.co.za still shows the previous layout after this file is visible,
-the browser is serving a cached page or the files were extracted into the wrong
-document root. Assets are versioned with ?v=admin-console-v31, so a hard refresh
-(Ctrl+F5 / Cmd+Shift+R) clears it.
+No API endpoint, authentication, routing or permission behaviour is changed by
+the admin package. Assets are versioned ?v=admin-console-v32; hard refresh
+(Ctrl+F5 / Cmd+Shift+R) if an old layout persists.
