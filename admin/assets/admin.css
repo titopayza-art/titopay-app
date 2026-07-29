@@ -2078,6 +2078,27 @@ table button:focus-visible {
   overflow-wrap: anywhere;
 }
 
+/* RBAC editor ------------------------------------------------------------- */
+
+.rbac-full {
+  margin-bottom: 12px;
+}
+
+.rbac-permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.rbac-permission-grid .check-row {
+  font-weight: 550;
+  text-transform: capitalize;
+}
+
+.rbac-permission-grid input:disabled + span {
+  color: var(--tp-faint);
+}
+
 /* Security controls ------------------------------------------------------- */
 
 .security-control-list,

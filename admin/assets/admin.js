@@ -1415,124 +1415,137 @@ async function renderDashboard(me) {
   `;
 }
 
+const SEARCH_TABS = [
+  ["people", "People"],
+  ["businesses", "Businesses"],
+  ["wallets", "Wallets"],
+  ["transactions", "Transactions"],
+];
+
+/* Global Search has the same two modes as the Support Desk: a result list, and
+   the record you picked. Showing four result tables plus a detail card at once
+   meant the answer to a search was never the thing you were looking at. */
 async function renderSearch() {
   const result = await apiFetch("/admin/global-search");
-  const state = {
+  PAGE_EXPORTS.searchState = {
     users: result.users || result.items?.users || [],
     merchants: result.merchants || result.items?.merchants || [],
     wallets: result.wallets || result.items?.wallets || [],
     transactions: result.transactions || result.items?.transactions || [],
   };
-  PAGE_EXPORTS.searchState = state;
-  const runSearch = (term = "") => {
-    const query = normalizeSearchText(term);
-    const userMatches = !query ? state.users.slice(0, 12) : state.users.filter((row) => normalizeSearchText([
-      row.full_name,
-      row.username,
-      row.email,
-      row.phone,
-      row.wallet_id,
-      row.business_name,
-      row.fica_status,
-      row.id,
-    ].join(" ")).includes(query));
-    const merchantMatches = !query ? state.merchants.slice(0, 8) : state.merchants.filter((row) => normalizeSearchText([
-      row.business_name,
-      row.username,
-      row.email,
-      row.phone,
-      row.id,
-    ].join(" ")).includes(query));
-    const walletMatches = !query ? state.wallets.slice(0, 8) : state.wallets.filter((row) => normalizeSearchText([
-      row.id,
-      row.kind,
-      row.full_name,
-      row.business_name,
-      row.username,
-      row.status,
-    ].join(" ")).includes(query));
-    const transactionMatches = !query ? state.transactions.slice(0, 8) : state.transactions.filter((row) => normalizeSearchText([
-      row.reference,
-      row.service_name,
-      row.service_code,
-      row.status,
-      row.id,
-    ].join(" ")).includes(query));
-    PAGE_EXPORTS.search = [
-      ...userMatches.map((row) => ({ type: "user", ...row })),
-      ...merchantMatches.map((row) => ({ type: "merchant", ...row })),
-      ...walletMatches.map((row) => ({ type: "wallet", ...row })),
-      ...transactionMatches.map((row) => ({ type: "transaction", ...row })),
-    ];
-    const preferredDetail = userMatches[0]
-      ? { type: "user", id: userMatches[0].id }
-      : merchantMatches[0]
-        ? { type: "merchant", id: merchantMatches[0].id }
-        : walletMatches[0]
-          ? { type: "wallet", id: walletMatches[0].id }
-          : transactionMatches[0]
-            ? { type: "transaction", id: transactionMatches[0].id || transactionMatches[0].reference }
-            : null;
-    document.getElementById("search-results").innerHTML = `
-      <div id="search-detail-host">
-        ${preferredDetail ? renderSearchDetail(preferredDetail.type, preferredDetail.id) : tableCard("Record Details", `<div class="empty">No matching TitoPay record found for this search.</div>`)}
-      </div>
-      <section class="panel-grid search-result-grid">
-        ${tableCard("People", renderRows(userMatches, [
-          { label: "Profile", render: (row) => `<div class="mini-profile">${profileAvatarHtml(row)}<span><strong>${escapeHtml(row.full_name || "-")}</strong><br><small>${escapeHtml(row.username || "-")}</small></span></div>` },
-          { label: "Contact", render: (row) => `${escapeHtml(row.phone || "-")}<br><small>${escapeHtml(row.email || "-")}</small>` },
-          { label: "Wallet", render: (row) => `<strong>${escapeHtml(row.wallet_id ? compactId(row.wallet_id) : "-")}</strong><br><small>${escapeHtml(row.wallet_type || row.account_type || "-")}</small>` },
-          { label: "Business", render: (row) => escapeHtml(row.business_name || "-") },
-          { label: "Verification", render: (row) => `<span class="chip ${chipClass(row.fica_status)}">${escapeHtml(row.fica_status || "Not submitted")}</span>` },
-          { label: "Risk / Devices", render: (row) => `${escapeHtml(Array.isArray(row.risk_flags) && row.risk_flags.length ? row.risk_flags.join(", ") : "None")}<br><small>${escapeHtml(row.linked_devices ?? 0)} linked devices</small>` },
-        ], (row) => `
-          <button data-search-detail="user" data-search-id="${escapeHtml(row.id)}">View</button>
-          <button data-user-refresh="${escapeHtml(row.id)}">Refresh</button>
-          <button data-user-action="${row.status === "suspended" ? "activate" : "suspend"}" data-user-id="${escapeHtml(row.id)}">${row.status === "suspended" ? "Activate" : "Suspend"}</button>
-          <button data-user-action="${row.profile_locked ? "unlock" : "lock"}" data-user-id="${escapeHtml(row.id)}">${row.profile_locked ? "Unlock" : "Lock"}</button>
-        `))}
-        ${tableCard("Businesses", renderRows(merchantMatches, [
-          { label: "Business", render: (row) => `<strong>${escapeHtml(row.business_name || "-")}</strong><br><small>${escapeHtml(row.username || "-")}</small>` },
-          { label: "Contact", render: (row) => `${escapeHtml(row.email || "-")}<br><small>${escapeHtml(row.phone || "-")}</small>` },
-          { label: "Verification", render: (row) => `<span class="chip ${chipClass(row.verification_status)}">${escapeHtml(row.verification_status || "-")}</span>` },
-          { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "-")}</span>` },
-        ], (row) => `<button data-search-detail="merchant" data-search-id="${escapeHtml(row.id)}">View</button>`))}
-      </section>
-      <section class="panel-grid search-result-grid">
-        ${tableCard("Wallet Summary", renderRows(walletMatches, [
-          { label: "Wallet ID", render: (row) => `<strong>${escapeHtml(compactId(row.id))}</strong><br><small>${escapeHtml(row.kind || "-")}</small>` },
-          { label: "Owner", render: (row) => `${escapeHtml(row.full_name || row.business_name || "System")}<br><small>${escapeHtml(row.username || "-")}</small>` },
-          { label: "Available", render: (row) => money(row.available_balance) },
-          { label: "Reserved", render: (row) => money(row.reserved_balance) },
-        ], (row) => `<button data-search-detail="wallet" data-search-id="${escapeHtml(row.id)}">View</button>`))}
-        ${tableCard("Recent Transactions", renderRows(transactionMatches, [
-          { label: "Reference", key: "reference" },
-          { label: "Service", render: (row) => `<strong>${escapeHtml(row.service_name || "-")}</strong><br><small>${escapeHtml(row.service_code || "-")}</small>` },
-          { label: "Amount", render: (row) => money(row.amount) },
-          { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "-")}</span>` },
-        ], (row) => `<button data-search-detail="transaction" data-search-id="${escapeHtml(row.id || row.reference)}">View</button>`))}
-      </section>
-    `;
+  PAGE_EXPORTS.searchQuery = "";
+  PAGE_EXPORTS.openSearchRecord = null;
+  renderSearchView();
+}
+
+function searchMatches(query) {
+  const state = PAGE_EXPORTS.searchState || { users: [], merchants: [], wallets: [], transactions: [] };
+  const q = normalizeSearchText(query);
+  const match = (row, fields) => normalizeSearchText(fields.map((f) => row[f]).join(" ")).includes(q);
+  return {
+    people: !q ? state.users.slice(0, 25) : state.users.filter((row) => match(row, ["full_name", "username", "email", "phone", "wallet_id", "business_name", "fica_status", "id"])),
+    businesses: !q ? state.merchants.slice(0, 25) : state.merchants.filter((row) => match(row, ["business_name", "username", "email", "phone", "id"])),
+    wallets: !q ? state.wallets.slice(0, 25) : state.wallets.filter((row) => match(row, ["id", "kind", "full_name", "business_name", "username", "status"])),
+    transactions: !q ? state.transactions.slice(0, 25) : state.transactions.filter((row) => match(row, ["reference", "service_name", "service_code", "status", "id"])),
   };
-  document.getElementById("page-content").innerHTML = `
+}
+
+function renderSearchView() {
+  const page = document.getElementById("page-content");
+  if (!page) return;
+  const query = PAGE_EXPORTS.searchQuery || "";
+  const found = searchMatches(query);
+
+  PAGE_EXPORTS.search = [
+    ...found.people.map((row) => ({ type: "user", ...row })),
+    ...found.businesses.map((row) => ({ type: "merchant", ...row })),
+    ...found.wallets.map((row) => ({ type: "wallet", ...row })),
+    ...found.transactions.map((row) => ({ type: "transaction", ...row })),
+  ];
+
+  const searchBar = `
     <section class="panel search-panel">
-      <h3>Global User Search</h3>
-      <p>Search by full name, TitoPay ID, email, mobile number, business name, wallet ID, or transaction reference.</p>
       <form id="global-search-form" class="search-form">
         <div class="field">
-          <label>Search TitoPay records</label>
-          <input name="query" placeholder="Name, @username, +27 number, email, wallet ID..." autocomplete="off">
+          <label for="global-search-input">Search customers, businesses, wallets and transactions</label>
+          <input id="global-search-input" name="query" value="${escapeHtml(query)}" placeholder="Name, @username, +27 number, email, wallet ID, reference..." autocomplete="off" spellcheck="false">
         </div>
         <button class="primary-btn" type="submit">Search</button>
       </form>
     </section>
-    <div id="search-results"></div>
   `;
-  document.getElementById("global-search-form")?.addEventListener("submit", (event) => {
+
+  const open = PAGE_EXPORTS.openSearchRecord;
+  if (open) {
+    page.innerHTML = `
+      ${searchBar}
+      <section class="table-card">
+        <div class="action-row"><button class="secondary-btn" type="button" data-search-back>&larr; Back to results</button></div>
+      </section>
+      <div id="search-detail-host">${renderSearchDetail(open.type, open.id)}</div>
+    `;
+    bindSearchForm();
+    return;
+  }
+
+  const total = found.people.length + found.businesses.length + found.wallets.length + found.transactions.length;
+  const tab = SEARCH_TABS.some(([key]) => key === PAGE_EXPORTS.searchTab) ? PAGE_EXPORTS.searchTab : "people";
+
+  const panels = {
+    people: () => renderRows(found.people, [
+      { label: "Customer", render: (row) => `<div class="mini-profile">${profileAvatarHtml(row)}<span><strong>${escapeHtml(row.full_name || "-")}</strong><br><small>${escapeHtml(row.username || "-")}</small></span></div>` },
+      { label: "Contact", render: (row) => `${escapeHtml(row.phone || "-")}<br><small>${escapeHtml(row.email || "-")}</small>` },
+      { label: "Wallet", render: (row) => `<strong>${escapeHtml(row.wallet_id ? compactId(row.wallet_id) : "-")}</strong><br><small>${escapeHtml(row.wallet_type || row.account_type || "-")}</small>` },
+      { label: "Verification", render: (row) => `<span class="chip ${chipClass(row.fica_status)}">${escapeHtml(row.fica_status || "Not submitted")}</span>` },
+    ], (row) => `<button data-search-detail="user" data-search-id="${escapeHtml(row.id)}">Open</button>`),
+
+    businesses: () => renderRows(found.businesses, [
+      { label: "Business", render: (row) => `<strong>${escapeHtml(row.business_name || "-")}</strong><br><small>${escapeHtml(row.username || "-")}</small>` },
+      { label: "Contact", render: (row) => `${escapeHtml(row.email || "-")}<br><small>${escapeHtml(row.phone || "-")}</small>` },
+      { label: "Verification", render: (row) => `<span class="chip ${chipClass(row.verification_status)}">${escapeHtml(row.verification_status || "-")}</span>` },
+      { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "-")}</span>` },
+    ], (row) => `<button data-search-detail="merchant" data-search-id="${escapeHtml(row.id)}">Open</button>`),
+
+    wallets: () => renderRows(found.wallets, [
+      { label: "Wallet", render: (row) => `<strong>${escapeHtml(row.wallet_number || compactId(row.id))}</strong><br><small>${escapeHtml(row.kind || "-")}</small>` },
+      { label: "Owner", render: (row) => `${escapeHtml(row.full_name || row.business_name || "System")}<br><small>${escapeHtml(row.username || "-")}</small>` },
+      { label: "Available", render: (row) => money(row.available_balance) },
+      { label: "Reserved", render: (row) => money(row.reserved_balance) },
+    ], (row) => `<button data-search-detail="wallet" data-search-id="${escapeHtml(row.id)}">Open</button>`),
+
+    transactions: () => renderRows(found.transactions, [
+      { label: "Reference", render: (row) => `<strong>${escapeHtml(row.reference || "-")}</strong>` },
+      { label: "Service", render: (row) => `<strong>${escapeHtml(row.service_name || "-")}</strong><br><small>${escapeHtml(row.service_code || "-")}</small>` },
+      { label: "Amount", render: (row) => money(row.amount) },
+      { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "-")}</span>` },
+    ], (row) => `<button data-search-detail="transaction" data-search-id="${escapeHtml(row.id || row.reference)}">Open</button>`),
+  };
+
+  page.innerHTML = `
+    ${searchBar}
+    <section class="table-card">
+      <nav class="segmented" aria-label="Result types">
+        ${SEARCH_TABS.map(([key, label]) => `
+          <button type="button" class="segmented-btn ${tab === key ? "active" : ""}" data-search-tab="${key}" aria-pressed="${tab === key}">
+            ${escapeHtml(label)}${found[key].length ? `<span class="segmented-count">${found[key].length}</span>` : ""}
+          </button>
+        `).join("")}
+      </nav>
+      ${total ? panels[tab]() : `<div class="empty">${query ? "No TitoPay record matches that search." : "Search above to find a customer, business, wallet or transaction."}</div>`}
+    </section>
+  `;
+  bindSearchForm();
+}
+
+function bindSearchForm() {
+  const form = document.getElementById("global-search-form");
+  form?.addEventListener("submit", (event) => {
     event.preventDefault();
-    runSearch(new FormData(event.currentTarget).get("query"));
+    PAGE_EXPORTS.searchQuery = String(new FormData(event.currentTarget).get("query") || "");
+    PAGE_EXPORTS.openSearchRecord = null;
+    renderSearchView();
+    document.getElementById("global-search-input")?.focus();
   });
-  runSearch("");
 }
 
 async function renderUsers() {
@@ -2976,25 +2989,116 @@ async function renderSettings() {
   });
 }
 
+/* RBAC editor. Reading the matrix stays available to anyone with the
+   engineering permission; editing is offered only when the API says this
+   session may manage roles (owner, root, super_admin or developer). The API
+   enforces that independently — this only decides what is worth showing. */
 async function renderRbacPermissions() {
-  const roles = await apiFetch("/admin/roles");
-  const rows = Object.entries(roles.roles || {}).map(([role, permissions]) => ({
-    role,
-    access: permissions.includes("*") ? "Full platform access" : "Limited by listed permissions",
-    permissions
+  const result = await apiFetch("/admin/roles");
+  const items = result.items || Object.entries(result.roles || {}).map(([role, permissions]) => ({
+    role, permissions, builtin: true, protected: ["owner", "root", "super_admin"].includes(role), customised: false
   }));
-  PAGE_EXPORTS["rbac-permissions"] = rows;
+  const available = result.availablePermissions || [];
+  const canManage = Boolean(result.canManage);
+  PAGE_EXPORTS["rbac-permissions"] = items.map((row) => ({
+    role: row.role,
+    access: row.permissions.includes("*") ? "Full platform access" : `${row.permissions.length} permissions`,
+    permissions: row.permissions.join(", ")
+  }));
+
+  const editing = PAGE_EXPORTS.rbacEditing;
+  const editRow = editing ? items.find((row) => row.role === editing) : null;
+
+  const permissionChecklist = (selected, disabled) => {
+    const all = selected.includes("*");
+    return `
+      <label class="toggle-row rbac-full">
+        <input type="checkbox" name="fullAccess" ${all ? "checked" : ""} ${disabled ? "disabled" : ""}>
+        <span>Full platform access (*)</span>
+      </label>
+      <div class="rbac-permission-grid">
+        ${available.map((perm) => `
+          <label class="check-row">
+            <input type="checkbox" name="permissions" value="${escapeHtml(perm)}" ${selected.includes(perm) ? "checked" : ""} ${all || disabled ? "disabled" : ""}>
+            <span>${escapeHtml(perm.replace(/_/g, " "))}</span>
+          </label>
+        `).join("")}
+      </div>
+    `;
+  };
+
   document.getElementById("page-content").innerHTML = `
-    <section class="panel">
-      <h3>RBAC / Permissions</h3>
-      <p>Owner, Root, CEO and Super Admin have full access. Operational roles are limited to the exact permissions below.</p>
-    </section>
-    ${tableCard("Role Permission Matrix", renderRows(rows, [
-      { label: "Role", render: (row) => `<strong>${escapeHtml(row.role)}</strong>` },
-      { label: "Access", render: (row) => `<span class="chip ${row.permissions.includes("*") ? "green" : "blue"}">${escapeHtml(row.access)}</span>` },
-      { label: "Permissions", render: (row) => escapeHtml(row.permissions.join(", ")) },
-    ], () => ""))}
+    ${editRow ? `
+      <section class="table-card">
+        <div class="table-card-header">
+          <div>
+            <h3>Edit role: ${escapeHtml(editRow.role)}</h3>
+            <p class="table-card-note">${editRow.protected
+              ? "This role must keep full access so the console cannot lock everyone out."
+              : "Changes apply to every staff account with this role, immediately."}</p>
+          </div>
+          <button class="secondary-btn" type="button" data-rbac-cancel>Cancel</button>
+        </div>
+        <form id="rbac-edit-form" data-rbac-role="${escapeHtml(editRow.role)}">
+          ${permissionChecklist(editRow.permissions, editRow.protected)}
+          <div class="form-actions">
+            <button class="primary-btn" type="submit" ${editRow.protected ? "disabled" : ""}>Save permissions</button>
+            ${!editRow.builtin ? `<button class="ghost-btn" type="button" data-rbac-delete="${escapeHtml(editRow.role)}">Delete role</button>` : ""}
+          </div>
+        </form>
+      </section>
+    ` : ""}
+
+    ${canManage && !editRow ? `
+      <section class="table-card">
+        <div class="table-card-header">
+          <div>
+            <h3>Add a role</h3>
+            <p class="table-card-note">New roles start with no access. Grant only what the job needs.</p>
+          </div>
+        </div>
+        <form id="rbac-create-form" class="form-grid">
+          <div class="field">
+            <label for="rbac-new-role">Role name</label>
+            <input id="rbac-new-role" name="role" placeholder="e.g. risk_analyst" autocomplete="off" spellcheck="false" required>
+          </div>
+          <div class="field">
+            <label for="rbac-new-description">Description</label>
+            <input id="rbac-new-description" name="description" placeholder="What this role is for" autocomplete="off">
+          </div>
+          <div class="field-full">${permissionChecklist([], false)}</div>
+          <div class="form-actions"><button class="primary-btn" type="submit">Create role</button></div>
+        </form>
+      </section>
+    ` : ""}
+
+    ${tableCard("Role permissions", renderRows(items, [
+      { label: "Role", render: (row) => `<strong>${escapeHtml(row.role.replace(/_/g, " "))}</strong><br><small>${row.builtin ? "Built-in" : "Custom"}${row.customised && row.builtin ? " · edited" : ""}</small>` },
+      { label: "Access", render: (row) => `<span class="chip ${row.permissions.includes("*") ? "green" : "blue"}">${row.permissions.includes("*") ? "Full access" : `${row.permissions.length} permissions`}</span>` },
+      { label: "Permissions", render: (row) => row.permissions.includes("*")
+        ? "<small>Every module and action</small>"
+        : `<small>${escapeHtml(row.permissions.map((p) => p.replace(/_/g, " ")).join(", ") || "None")}</small>` },
+    ], (row) => canManage ? `<button data-rbac-edit="${escapeHtml(row.role)}">Edit</button>` : "")
+    , canManage ? "" : "Only the platform owner or developer can change roles and permissions.")}
   `;
+
+  document.getElementById("rbac-edit-form")?.addEventListener("change", syncRbacFullAccess);
+  document.getElementById("rbac-create-form")?.addEventListener("change", syncRbacFullAccess);
+}
+
+/* Granting "*" makes the individual permissions meaningless, so they are
+   disabled rather than left looking selectable. */
+function syncRbacFullAccess(event) {
+  const form = event.currentTarget;
+  const full = form.querySelector('[name="fullAccess"]')?.checked;
+  form.querySelectorAll('[name="permissions"]').forEach((box) => {
+    box.disabled = Boolean(full);
+  });
+}
+
+function rbacFormPermissions(form) {
+  if (form.querySelector('[name="fullAccess"]')?.checked) return ["*"];
+  return Array.from(form.querySelectorAll('[name="permissions"]:checked')).map((box) => box.value);
 }
 
 async function renderStaffManagement() {
@@ -3550,6 +3654,44 @@ document.addEventListener("submit", async (event) => {
     return;
   }
 
+  const rbacEditForm = event.target.closest("#rbac-edit-form");
+  if (rbacEditForm) {
+    event.preventDefault();
+    try {
+      await apiFetch(`/admin/roles/${encodeURIComponent(rbacEditForm.dataset.rbacRole)}`, {
+        method: "PUT",
+        body: JSON.stringify({ permissions: rbacFormPermissions(rbacEditForm) }),
+      });
+      PAGE_EXPORTS.rbacEditing = null;
+      showToast("Role permissions updated");
+      await renderRbacPermissions();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+    return;
+  }
+
+  const rbacCreateForm = event.target.closest("#rbac-create-form");
+  if (rbacCreateForm) {
+    event.preventDefault();
+    const data = new FormData(rbacCreateForm);
+    try {
+      await apiFetch("/admin/roles", {
+        method: "POST",
+        body: JSON.stringify({
+          role: data.get("role"),
+          description: data.get("description"),
+          permissions: rbacFormPermissions(rbacCreateForm),
+        }),
+      });
+      showToast("Role created");
+      await renderRbacPermissions();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+    return;
+  }
+
   const staffForm = event.target.closest("#staff-create-form");
   if (staffForm) {
     event.preventDefault();
@@ -3789,8 +3931,7 @@ document.addEventListener("click", async (event) => {
       const page = document.querySelector(".admin-shell[data-page]")?.dataset.page;
       if (page === "search") {
         updateSearchUserRecord(refreshedUser);
-        const detailHost = document.getElementById("search-detail-host");
-        if (detailHost) detailHost.innerHTML = renderSearchDetail("user", refreshedUser.id);
+        renderSearchView();
       } else {
         await renderUsers();
       }
@@ -3834,13 +3975,51 @@ document.addEventListener("click", async (event) => {
     const host = document.getElementById("pricing-editor-host");
     if (host) host.innerHTML = "";
   }
+  const rbacEdit = event.target.closest("[data-rbac-edit]");
+  if (rbacEdit) {
+    PAGE_EXPORTS.rbacEditing = rbacEdit.dataset.rbacEdit;
+    await renderRbacPermissions();
+    document.getElementById("rbac-edit-form")?.scrollIntoView({ block: "start" });
+    return;
+  }
+  const rbacCancel = event.target.closest("[data-rbac-cancel]");
+  if (rbacCancel) {
+    PAGE_EXPORTS.rbacEditing = null;
+    await renderRbacPermissions();
+    return;
+  }
+  const rbacDelete = event.target.closest("[data-rbac-delete]");
+  if (rbacDelete) {
+    const role = rbacDelete.dataset.rbacDelete;
+    if (!window.confirm(`Delete the "${role}" role? Staff accounts using it must be moved first.`)) return;
+    try {
+      await apiFetch(`/admin/roles/${encodeURIComponent(role)}`, { method: "DELETE" });
+      PAGE_EXPORTS.rbacEditing = null;
+      showToast("Role deleted");
+      await renderRbacPermissions();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+    return;
+  }
+
   const searchDetail = event.target.closest("[data-search-detail]");
   if (searchDetail) {
-    const host = document.getElementById("search-detail-host");
-    if (host) {
-      host.innerHTML = renderSearchDetail(searchDetail.dataset.searchDetail, searchDetail.dataset.searchId);
-      host.scrollIntoView({ block: "start" });
-    }
+    PAGE_EXPORTS.openSearchRecord = { type: searchDetail.dataset.searchDetail, id: searchDetail.dataset.searchId };
+    renderSearchView();
+    return;
+  }
+  const searchBack = event.target.closest("[data-search-back]");
+  if (searchBack) {
+    PAGE_EXPORTS.openSearchRecord = null;
+    renderSearchView();
+    return;
+  }
+  const searchTab = event.target.closest("[data-search-tab]");
+  if (searchTab) {
+    PAGE_EXPORTS.searchTab = searchTab.dataset.searchTab;
+    renderSearchView();
+    return;
   }
   const integrationTest = event.target.closest("[data-integration-test]");
   if (integrationTest) {

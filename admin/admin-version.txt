@@ -1,27 +1,25 @@
 TitoPay Admin
-Build: admin-console-v34
+Build: admin-console-v35
 Date: 2026-07-29
 
-v34 - Support Desk rebuilt as a workspace
-  - Taking over a chat now opens that conversation as the page, with one "Back
-    to queue" control. Previously the conversation was appended below three
-    stacked tables, so an agent who took over was left looking at the queue with
-    the conversation off-screen.
-  - The queue shows one list at a time behind tabs (Live conversations,
-    Tickets, Profile approvals) instead of three tables on one page.
-  - Metrics reduced from eight tiles to the four a support desk acts on.
-  - Conversation queue trimmed to five columns so nothing is hidden under the
-    pinned action column.
-  - Fixed: a customer's incoming message did not appear while the agent had the
-    reply box focused, which is exactly when an agent is waiting for it. The
-    draft, the caret position and focus now survive the live refresh, so the
-    guard that suppressed it is gone.
+v35 - Global Search decluttered; RBAC becomes editable
+  - Global Search showed four result tables and a record card at once. It now
+    has one result list at a time behind tabs (People, Businesses, Wallets,
+    Transactions) with match counts, and opening a record replaces the results
+    with that record and a "Back to results" control.
+  - RBAC / Permissions is now an editor, not a read-only matrix. The platform
+    owner and the developer role can change any role's permissions, create new
+    roles and delete custom ones. Requires the matching API package.
 
+v34 - Support Desk rebuilt as a workspace; taking over a chat opens it.
 v33 - Rate-limit and lockout messages reach the operator verbatim.
 v32 - Support workspace preserved across refreshes; CSP allows the chat socket.
 v31 - Sign-in page rebuilt for a regulated system.
 v30 - Operations console front-end rebuild on a single-layer stylesheet.
 
-No API endpoint, authentication, routing or permission behaviour is changed by
-the admin package. Assets are versioned ?v=admin-console-v34; hard refresh
-(Ctrl+F5 / Cmd+Shift+R) if an old layout persists.
+RBAC editing needs the API package of the same date: it adds the
+admin_role_permissions table and the role endpoints. Without it the page still
+renders read-only and the console behaves exactly as before.
+
+Assets are versioned ?v=admin-console-v35; hard refresh (Ctrl+F5 /
+Cmd+Shift+R) if an old layout persists.
