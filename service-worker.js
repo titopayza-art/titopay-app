@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v183-landing-footer-posters";
+const CACHE_NAME = "titopay-pwa-v184-session-recovery";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=183",
+  "./styles.css?v=184",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=183",
-  "./services-default.json?v=183",
-  "./manifest.webmanifest?v=183",
+  "./app.js?v=184",
+  "./services-default.json?v=184",
+  "./manifest.webmanifest?v=184",
   "./offline.html",
   "./assets/titopay-logo.png",
   "./assets/icon-192.png?v=165",

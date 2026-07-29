@@ -106,6 +106,23 @@ Ruled out by probing, so nobody spends time here:
   hostname, and it surfaces a `requestId`. It is reporting a real server fault,
   not creating one.
 
+## Client-side mitigation shipped in PWA v184
+
+The PWA now attempts one session refresh on a `500` as well as a `401`
+(`app.js`, in `api()`), so a customer whose access token expires mid-session
+recovers on their own instead of being stranded on a server error.
+
+It is guarded: only on an authenticated request, only when a token was actually
+sent, only once per request, never on `/v1/auth/refresh` itself, and if the
+refresh does not help the original `500` is reported unchanged — a genuine
+server fault still surfaces as one.
+
+**This is a workaround, not the fix.** It covers customers on the PWA only. It
+does nothing for the admin console (separate codebase, still crashes) or for any
+HR integration. The server-side fix below is still required, and once
+`verify-auth-fix.sh` passes, the `500` arm should be removed — it is marked in
+the source with that instruction.
+
 ## The fix
 
 In the API's authentication middleware, catch verification failures and return

@@ -490,16 +490,36 @@ async function api(path, options = {}) {
     } catch (error) {
       payload = { error: text || "Unexpected API response" };
     }
-    if (
-      response.status === 401 &&
+    const recoverableSession =
       options.auth !== false &&
       options.authRetried !== true &&
       path !== "/v1/auth/refresh" &&
       state.auth &&
-      state.auth.refreshToken
-    ) {
+      state.auth.refreshToken;
+    if (response.status === 401 && recoverableSession) {
       await refreshCustomerSession();
       return api(path, { ...options, authRetried: true });
+    }
+    // The API answers 500, not 401, when an access token has expired or is
+    // otherwise invalid, so recovery cannot be gated on 401 alone. Without this
+    // arm a customer whose token expires mid-session lands on a server error on
+    // whatever screen they were using, and the only way back is signing out and
+    // in again — the same trap the admin console falls into.
+    //
+    // Only attempted when a token was actually sent, and only once. A 500 may
+    // equally be a genuine server fault, so if the refresh does not help we
+    // report what the original request returned rather than the refresh error.
+    //
+    // Remove this arm once the API returns 401 for an invalid token; run
+    // api/verify-auth-fix.sh to confirm before doing so. See
+    // api/INCIDENT-admin-500.md.
+    if (response.status === 500 && recoverableSession && state.auth.accessToken) {
+      try {
+        await refreshCustomerSession();
+        return api(path, { ...options, authRetried: true });
+      } catch (refreshError) {
+        // Fall through to the original 500 below.
+      }
     }
     if (!response.ok || payload.ok === false) {
       const error = new Error(payload.error || `Request failed (${response.status})`);
@@ -621,7 +641,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=183", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=184", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
