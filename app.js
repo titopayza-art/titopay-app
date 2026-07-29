@@ -621,7 +621,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=182", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=183", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -902,7 +902,10 @@ function comingSoonServices() {
   return visibleServices().filter((service) => service.status === "coming_soon");
 }
 
-const LANDING_PREVIEW_COUNT = 6;
+// Three rows. Two rows left ~200px of height to absorb on a 6.9" screen, and
+// stretching six cards to swallow it made them tall and empty. A third row of
+// real services fills the same space with something worth looking at.
+const LANDING_PREVIEW_COUNT = 9;
 
 // Each entry is a list of aliases, because the live catalogue does not always
 // use the same code as the fallback. The airtime slot in particular was a
@@ -917,7 +920,10 @@ const LANDING_PREVIEW_KEYS = {
     ["send-money", "send"],
     ["airtime-data", "airtime-and-data", "airtime-&-data", "airtime"],
     ["pay-bills"],
-    ["tickets"]
+    ["tickets"],
+    ["electricity", "prepaid-electricity"],
+    ["payment-request", "request-payment"],
+    ["vouchers", "voucher"]
   ],
   business: [
     ["top-up"],
@@ -925,7 +931,10 @@ const LANDING_PREVIEW_KEYS = {
     ["payouts"],
     ["ticketing"],
     ["invoice"],
-    ["statements", "transactions"]
+    ["statements", "transactions"],
+    ["payment-request", "request-payment"],
+    ["quote", "quotes"],
+    ["learn", "business-learn"]
   ]
 };
 
@@ -1160,17 +1169,20 @@ function authView() {
         <button class="btn secondary" data-auth-tab="register">${isBusiness ? "Create Business Account" : "Create Account"}</button>
       </section>
 
-      <section class="scan-card">
+      <footer class="scan-card landing-cta-footer" aria-label="${isBusiness ? "Accept payment" : "Scan to pay"}">
         <span class="icon-bubble">${icon(isBusiness ? "qr" : "scan")}</span>
-        <div>
+        <div class="landing-cta-copy">
+          <p class="landing-cta-eyebrow">TitoPay QR</p>
           <h3>${isBusiness ? "Accept Payment" : "Scan To Pay"}</h3>
-          <p>${isBusiness ? "Show your QR to accept payments." : "Scan any TitoPay QR to pay."}</p>
+          <p class="landing-cta-lead">${isBusiness ? "Take payment straight into your business wallet." : "Pay straight from your wallet, in seconds."}</p>
+          <ul class="landing-cta-points">
+            ${(isBusiness
+              ? ["One QR for every customer", "Money lands in your wallet", "Every sale receipted"]
+              : ["Scan any TitoPay QR", "See the amount before you pay", "Paid in seconds"]
+            ).map((point) => `<li>${icon("check-circle")}<span>${esc(point)}</span></li>`).join("")}
+          </ul>
         </div>
-        <button class="btn secondary" data-auth-tab="login" aria-label="${isBusiness ? "Sign in to show your payment QR" : "Sign in to scan a TitoPay QR"}">Sign in</button>
-      </section>
-
-      <footer class="landing-site-footer" aria-label="TitoPay website">
-        <a href="https://www.titopay.co.za" target="_blank" rel="noopener">www.titopay.co.za</a>
+        <button class="btn primary landing-cta-btn" data-auth-tab="login" aria-label="${isBusiness ? "Sign in to show your payment QR" : "Sign in to scan a TitoPay QR"}">${icon(isBusiness ? "qr" : "scan")} ${isBusiness ? "Show my QR" : "Scan to pay"}</button>
       </footer>
 
     </main>
@@ -1560,6 +1572,7 @@ function profileView() {
       ${profileFeature("Unread Messages", `${unreadNotificationCount()} unread notification${unreadNotificationCount() === 1 ? "" : "s"} · chat, support and account alerts.`, "message-check", "account-activity")}
       ${profileFeature("Help us improve", "Rate your TitoPay experience and send product feedback.", "feedback", "pwa-review")}
       ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
+      ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
       ${isBusiness ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
       ${profileFeature("Support", "Get help from TitoPay Customer Care.", "send", "support")}
     </section>
@@ -3409,7 +3422,11 @@ async function handleAction(action) {
     return;
   }
   if (action === "qr-poster") {
-    await openBusinessQrPosterModal();
+    await openQrPosterModal("payment");
+    return;
+  }
+  if (action === "tip-poster") {
+    await openQrPosterModal("tip");
     return;
   }
   if (action === "print-qr-poster") {
@@ -7183,15 +7200,37 @@ function openReceiveModal() {
 }
 
 // ---------------------------------------------------------------------------
-// Printable payment QR poster
+// Printable A4 QR posters
 //
-// A shop needs one thing on the counter: a sheet a customer can scan. This
-// builds it from the QR the account already has -- /v1/qr/profile if the
-// account carries a permanent one, otherwise the same static QR the Receive
-// Money screen generates. Nothing here invents a code: if neither call returns
-// an image, the poster says so rather than printing a placeholder a customer
-// would try to scan.
+// A shop needs one thing on the counter: a sheet a customer can scan. Two
+// variants share the layout -- a payment poster and a tip poster -- because a
+// tip jar and a till are different asks and a business may want both on the
+// wall. Both are built from a QR the account actually has. Nothing here
+// invents a code: if the API returns no image, the poster says so rather than
+// printing a placeholder a customer would try to scan.
 // ---------------------------------------------------------------------------
+
+const BRAND_TAGLINE = "Smart Payments. Simplified.";
+
+const QR_POSTER_KINDS = {
+  payment: {
+    eyebrow: "Receive Payment",
+    modalTitle: "Payment QR poster",
+    heading: "Pay with TitoPay",
+    steps: "Open TitoPay \u00b7 Scan this code \u00b7 Confirm the amount",
+    filename: "titopay-payment-qr",
+    labelSuffix: ""
+  },
+  tip: {
+    eyebrow: "Tips",
+    modalTitle: "Tip QR poster",
+    heading: "Tip with TitoPay",
+    banner: "Tips",
+    steps: "Open TitoPay \u00b7 Scan this code \u00b7 Choose your tip",
+    filename: "titopay-tip-qr",
+    labelSuffix: "tips"
+  }
+};
 
 function posterQrFrom(qr) {
   if (!qr) return null;
@@ -7202,26 +7241,32 @@ function posterQrFrom(qr) {
   return { image, id, link };
 }
 
-async function ensurePosterQr() {
-  const existing = posterQrFrom(state.profileQr);
-  if (existing && existing.image) return existing;
+// The payment poster prefers the permanent profile QR when the account has
+// one. A tip QR is always generated, because it carries its own label.
+async function ensurePosterQr(kind) {
+  if (kind === "payment") {
+    const existing = posterQrFrom(state.profileQr);
+    if (existing && existing.image) return existing;
+  }
+  const config = QR_POSTER_KINDS[kind] || QR_POSTER_KINDS.payment;
   const result = await api("/v1/qr/generate-static", {
     method: "POST",
-    body: { label: defaultQrLabel(), codeType: "static", amount: null }
+    body: { label: defaultQrLabel(config.labelSuffix), codeType: "static", amount: null }
   });
   const generated = posterQrFrom(result.qr);
-  if (!generated) throw new Error("TitoPay could not return a payment QR for this account.");
-  state.profileQr = result.qr || state.profileQr;
+  if (!generated) throw new Error("TitoPay could not return a QR code for this account.");
+  if (kind === "payment") state.profileQr = result.qr || state.profileQr;
   return generated;
 }
 
-async function openBusinessQrPosterModal() {
+async function openQrPosterModal(kind = "payment") {
+  const config = QR_POSTER_KINDS[kind] || QR_POSTER_KINDS.payment;
   let qr = null;
   let failure = "";
   try {
-    qr = await ensurePosterQr();
+    qr = await ensurePosterQr(kind);
   } catch (error) {
-    failure = error.message || "TitoPay could not return a payment QR right now.";
+    failure = error.message || "TitoPay could not return a QR code right now.";
   }
   const name = state.accountType === "business" ? businessProfileName() : qrOwnerName();
   const wallet = primaryWallet();
@@ -7229,26 +7274,28 @@ async function openBusinessQrPosterModal() {
   openModal(`
     <div class="modal-head">
       <div>
-        <p class="eyebrow">Receive Payment</p>
-        <h2>Payment QR poster</h2>
+        <p class="eyebrow">${esc(config.eyebrow)}</p>
+        <h2>${esc(config.modalTitle)}</h2>
         <p class="lead">An A4 sheet for your counter, window or table. Print it, or save it as a PDF from the print dialog.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${failure ? `<section class="empty-state">${icon("qr")}<strong>QR unavailable</strong><p>${esc(failure)} Your wallet is unaffected. Try again once you are back online.</p></section>` : `
-      <article class="qr-poster" data-qr-poster aria-label="Printable payment QR poster">
+      <article class="qr-poster qr-poster-${esc(kind)}" data-qr-poster aria-label="Printable ${esc(config.modalTitle)}">
         <header class="qr-poster-head">
           <img src="./assets/titopay-logo.png" alt="TitoPay" class="qr-poster-logo">
+          <p class="qr-poster-tagline">${esc(BRAND_TAGLINE)}</p>
         </header>
         <div class="qr-poster-body">
-          <p class="qr-poster-eyebrow">Pay with TitoPay</p>
+          ${config.banner ? `<p class="qr-poster-banner">${esc(config.banner)}</p>` : ""}
+          <p class="qr-poster-eyebrow">${esc(config.heading)}</p>
           <h3 class="qr-poster-name">${esc(name)}</h3>
           <div class="qr-poster-qr">
             ${qr.image
-              ? `<img src="${esc(qr.image)}" alt="Payment QR code for ${esc(name)}">`
+              ? `<img src="${esc(qr.image)}" alt="${esc(config.modalTitle)} for ${esc(name)}">`
               : `<div class="qr-poster-qr-missing"><strong>QR image unavailable</strong><p>Use the code below.</p></div>`}
           </div>
-          <p class="qr-poster-steps">Open TitoPay &middot; Scan this code &middot; Confirm the amount</p>
+          <p class="qr-poster-steps">${esc(config.steps)}</p>
         </div>
         <footer class="qr-poster-foot">
           ${qr.id ? `<p class="qr-poster-id"><span>QR ID</span><strong>${esc(qr.id)}</strong></p>` : ""}
@@ -7258,9 +7305,9 @@ async function openBusinessQrPosterModal() {
       </article>
       <section class="auth-actions">
         <button class="btn primary" type="button" data-action="print-qr-poster">${icon("download")} Print or save as PDF</button>
-        ${qr.image ? `<button class="btn secondary" type="button" data-download-qr="${esc(qr.image)}" data-qr-filename="${esc(qr.id || "titopay-qr")}">${icon("qr")} Download QR image</button>` : ""}
+        ${qr.image ? `<button class="btn secondary" type="button" data-download-qr="${esc(qr.image)}" data-qr-filename="${esc(qr.id || config.filename)}">${icon("qr")} Download QR image</button>` : ""}
       </section>
-      <p class="field-hint">The sheet prints at A4. In the print dialog choose A4, portrait, and set margins to none for the full-bleed layout.</p>
+      <p class="field-hint">The sheet prints at A4. In the print dialog choose A4 and portrait.</p>
     `}
   `);
 }
@@ -7303,6 +7350,7 @@ function openTipModal() {
       <button class="btn primary" type="submit">${icon("tip")} Generate Tip QR</button>
     </form>
     <div class="auth-actions">
+      <button class="btn secondary" data-action="tip-poster">${icon("qr")} Tip A4 poster</button>
       <button class="btn secondary" data-action="export-csv">${icon("download")} Tip CSV</button>
       <button class="btn secondary" data-action="export-pdf">${icon("download")} Tip statement</button>
     </div>
@@ -10926,7 +10974,10 @@ function openLandingMenu() {
       title: "About TitoPay",
       icon: "home",
       body: "TitoPay is a South African digital wallet for people and businesses. It helps you send and receive money, accept QR payments, buy everyday services, manage wallet activity and keep transactions in one secure app.",
-      links: [{ label: "About us", href: "https://titopay.co.za/about" }]
+      links: [
+        { label: "www.titopay.co.za", href: "https://www.titopay.co.za" },
+        { label: "About us", href: "https://titopay.co.za/about" }
+      ]
     },
     {
       id: "why",
@@ -10991,6 +11042,7 @@ function openLandingMenu() {
       ${sections.map(landingMenuSection).join("")}
     </div>
     <footer class="landing-menu-footer" aria-label="TitoPay company information">
+      <p><a class="text-link" href="https://www.titopay.co.za" target="_blank" rel="noopener">www.titopay.co.za</a></p>
       <p><strong>TitoPay (Pty) Ltd.</strong></p>
       <p>Reg No: 2026/399418/07</p>
       <p>App build ${esc(appBuildVersion())}</p>

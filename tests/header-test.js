@@ -55,7 +55,14 @@ const TX = Array.from({ length: 24 }, (_, i) => ({
     await page.evaluate((top) => document.documentElement.style.setProperty("--safe-top", `${top}px`), safeTop);
     await page.waitForTimeout(300);
 
-    const per = { case: name, size: `${w}x${h}`, safeTop, routes: {} };
+    // Read the bar tokens off the page so the expectation tracks the design
+    // instead of duplicating it.
+    const tokens = await page.evaluate(() => {
+      const cs = getComputedStyle(document.documentElement);
+      const px = (v) => parseFloat(cs.getPropertyValue(v)) || 0;
+      return { barRow: px("--app-bar-row"), barMinRow: px("--app-bar-min-row") };
+    });
+    const per = { case: name, size: `${w}x${h}`, safeTop, barRow: tokens.barRow, barMinRow: tokens.barMinRow, routes: {} };
 
     for (const route of ROUTES) {
       await page.evaluate((r) => { location.hash = r; }, route);
@@ -146,11 +153,17 @@ const TX = Array.from({ length: 24 }, (_, i) => ({
   const failures = [];
   report.forEach((r) => {
     Object.entries(r.routes).forEach(([route, m]) => {
-      const expected = Math.max(64, 44 + r.safeTop);
+      // The bar is the safe-area inset plus a content row. The row size is a
+      // token, so read it rather than restating it here -- v183 raised it from
+      // 44px to 56px so the two icon buttons (48px) stop touching both edges,
+      // and a hard-coded 44 turned a deliberate change into 20 failures.
+      const expected = Math.max(r.barRow, r.barMinRow + r.safeTop);
       if (m.position !== "fixed") failures.push(`${r.case}/${route}: position=${m.position}`);
       if (m.top !== 0 || m.barTop !== 0) failures.push(`${r.case}/${route}: bar not pinned (top=${m.top}, afterScroll=${m.barTop})`);
       if (Math.abs(m.height - expected) > 1) failures.push(`${r.case}/${route}: height=${m.height} expected=${expected}`);
       if (m.overlapCount) failures.push(`${r.case}/${route}: ${m.overlapCount} overlap(s) ${m.overlaps.join(",")}`);
+      // Whatever the token says, the row has to clear the 48px buttons.
+      if (m.height - r.safeTop < 48) failures.push(`${r.case}/${route}: content row ${m.height - r.safeTop}px is under the 48px button height`);
       if (m.docOverflowX) failures.push(`${r.case}/${route}: horizontal overflow`);
       if (m.shadowAtTop) failures.push(`${r.case}/${route}: shadow shown at top`);
       if (!m.shadowOnScroll && m.scrollY > 2) failures.push(`${r.case}/${route}: no shadow after scroll`);

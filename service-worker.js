@@ -1,12 +1,12 @@
-const CACHE_NAME = "titopay-pwa-v182-pos-menu-bulk-poster";
+const CACHE_NAME = "titopay-pwa-v183-landing-footer-posters";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=182",
+  "./styles.css?v=183",
   "./assets/jsQR.min.js?v=137",
-  "./app.js?v=182",
-  "./services-default.json?v=182",
-  "./manifest.webmanifest?v=182",
+  "./app.js?v=183",
+  "./services-default.json?v=183",
+  "./manifest.webmanifest?v=183",
   "./offline.html",
   "./assets/titopay-logo.png",
   "./assets/icon-192.png?v=165",

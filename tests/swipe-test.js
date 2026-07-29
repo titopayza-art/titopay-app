@@ -28,6 +28,14 @@ const fs = require("fs");
   const cy = box.y + box.h*0.35;
   await page.mouse.move(box.x+box.w*0.75, cy);
   await page.touchscreen.tap(box.x+box.w*0.75, cy).catch(()=>{});
+  // That priming tap lands wherever the layout puts it, and on the landing a
+  // service tile is a sign-in affordance. Close whatever it opened so the
+  // gesture assertions below are about the segment and nothing else.
+  const dismissModal = async () => {
+    await page.evaluate(() => document.querySelector(".modal-backdrop [data-close]")?.click());
+    await page.waitForTimeout(250);
+  };
+  await dismissModal();
   await page.evaluate(({x1,x2,y})=>{
     const el=document.querySelector("[data-landing-swipe]");
     const opt=(cx)=>({bubbles:true,cancelable:true,clientX:cx,clientY:y,pointerType:"touch",pointerId:1});
@@ -58,6 +66,7 @@ const fs = require("fs");
   await page.waitForTimeout(600);
   R.afterVerticalDrag = await read();
   // tap still works
+  await dismissModal();
   await page.click('[data-account="business"]');
   await page.waitForTimeout(600);
   R.afterTap = await read();

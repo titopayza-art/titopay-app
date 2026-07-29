@@ -275,7 +275,12 @@ body:not(.landing-static) .screen > *:first-child {
    there is never a strip of page colour above it. */
 :root {
   --app-bar-row: 64px;
-  --app-header-h: max(var(--app-bar-row), calc(44px + var(--safe-top)));
+  /* The content row has to clear the 48px buttons, not just fit the wordmark.
+     At 44px they were pressed against both edges of the bar and the logo had
+     to shrink to match; 56px gives all three room and uses the white space
+     that was sitting empty under the status bar. */
+  --app-bar-min-row: 56px;
+  --app-header-h: max(var(--app-bar-row), calc(var(--app-bar-min-row) + var(--safe-top)));
 }
 
 .app-topbar {
@@ -304,11 +309,23 @@ body:not(.landing-static) .screen > *:first-child {
 }
 
 /* Sized by height, not width, so the wordmark can never be taller than the
-   bar's content row on a device with a large safe-area inset. */
+   bar's content row on a device with a large safe-area inset. The bar row is
+   44-64px and the wordmark was taking 32 of it, which left the mark small and
+   the two buttons crowded into the corner beside a band of empty white. */
+.topbar.app-topbar {
+  gap: clamp(12px, 4vw, 24px);
+}
+
 .topbar.app-topbar .brand-logo {
   flex: 0 0 auto;
   width: auto;
-  height: clamp(26px, calc(var(--app-header-h) - var(--safe-top) - 12px), 34px);
+  height: clamp(30px, calc(var(--app-header-h) - var(--safe-top) - 6px), 42px);
+}
+
+/* The chat and notification buttons had a 10px gap and sat hard against the
+   right inset. Both now breathe. */
+.app-topbar > div {
+  gap: clamp(10px, 3vw, 16px);
 }
 
 .topbar > div {
@@ -1033,6 +1050,129 @@ h3 {
 .landing-flow .scan-card p {
   margin-bottom: 8px;
   line-height: 1.36;
+}
+
+/* The landing closes on its call to action rather than on a link. The card
+   runs to the edges of the screen and carries a tinted ground so it reads as
+   the foot of the page instead of one more tile in the stack -- the website
+   link that used to sit under it moved into the menu. */
+.landing-flow .scan-card.landing-cta-footer {
+  border: 0;
+  border-top: 1px solid rgba(10, 77, 255, 0.16);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(79, 163, 255, 0.1), rgba(79, 163, 255, 0.18));
+  box-shadow: none;
+}
+
+/* The footer is the QR pitch, so it is built as a band rather than a strip:
+   a navy ground, the mark at poster size, the claim, three proof points and a
+   filled action. It is the last thing on the page and the first thing the
+   product is about. */
+.landing-flow .scan-card.landing-cta-footer {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: clamp(12px, 3vw, 22px);
+  color: #fff;
+  background: linear-gradient(135deg, #06214f 0%, #0a4dff 100%);
+  border-top: 0;
+}
+
+.landing-cta-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.landing-cta-eyebrow {
+  margin: 0;
+  color: var(--blue-2);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.landing-cta-footer h3 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(1.14rem, 4.6vw, 1.6rem);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.landing-flow .scan-card.landing-cta-footer p.landing-cta-lead {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: clamp(0.82rem, 3vw, 0.95rem);
+  line-height: 1.4;
+}
+
+.landing-cta-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.landing-cta-points li {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.landing-cta-points svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--blue-2);
+}
+
+.landing-cta-footer .icon-bubble {
+  width: clamp(48px, 13vw, 64px);
+  height: clamp(48px, 13vw, 64px);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.landing-cta-footer .icon-bubble svg {
+  width: 55%;
+  height: 55%;
+}
+
+.landing-flow .scan-card.landing-cta-footer .btn.landing-cta-btn {
+  min-height: 52px;
+  padding-inline: clamp(16px, 4vw, 26px);
+  color: #06214f;
+  font-weight: 800;
+  white-space: nowrap;
+  background: #fff;
+  border-color: #fff;
+  box-shadow: 0 10px 24px rgba(3, 15, 65, 0.28);
+}
+
+/* On a phone the three-column row squeezes the claim into four wrapped lines
+   and the band grows to 250px. The action moves under the copy and runs the
+   full width instead, and the proof points -- which are a desktop nicety --
+   stand down. The band lands at ~150px, which is a footer. */
+@media (max-width: 599px) {
+  .landing-flow .scan-card.landing-cta-footer {
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: 12px;
+  }
+
+  .landing-flow .scan-card.landing-cta-footer .btn.landing-cta-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .landing-cta-points {
+    display: none;
+  }
 }
 
 .landing-site-footer {
@@ -6212,8 +6352,8 @@ body.landing-static .business-landing.auth-screen {
       "bar   bar"
       "hero  grid"
       "trust grid"
-      "cta   scan"
-      "foot  foot";
+      "cta   grid";
+    align-content: space-between;
     align-content: center;
     justify-content: center;
     column-gap: clamp(36px, 4.6vw, 68px);
@@ -6224,9 +6364,13 @@ body.landing-static .business-landing.auth-screen {
   body.landing-static .landing-flow .landing-hero { grid-area: hero; }
   body.landing-static .landing-flow .trust-strip { grid-area: trust; }
   body.landing-static .landing-flow .preview-grid { grid-area: grid; align-self: center; }
-  body.landing-static .landing-flow .auth-actions { grid-area: cta; }
-  body.landing-static .landing-flow .scan-card { grid-area: scan; }
-  body.landing-static .landing-flow .landing-site-footer { grid-area: foot; }
+  body.landing-static .landing-flow .auth-actions { grid-area: cta; align-self: start; }
+
+  body.landing-static .landing-flow .scan-card.landing-cta-footer,
+  body.landing-static .business-landing .scan-card.landing-cta-footer {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+  }
 
   /* The left column reads as a column of text, so it aligns left. */
   body.landing-static .landing-flow .landing-hero {
@@ -6320,7 +6464,7 @@ body.landing-static .business-landing.auth-screen {
   body.landing-static .landing-flow.auth-screen,
   body.landing-static .business-landing.auth-screen {
     align-content: center;
-    gap: clamp(14px, 1.6vh, 22px);
+    gap: clamp(16px, 2.8vh, 42px);
     padding-top: calc(max(20px, var(--safe-top)) + 4px);
     padding-bottom: calc(24px + var(--safe-bottom));
   }
@@ -6603,20 +6747,81 @@ button.activity-item:focus-visible {
    logo to its ink returned another 20px on top of that. Spend it on the cards
    and the rhythm so the composition reaches the edges of the screen. The gate
    is 880px because at 800-850 the same numbers push the block past the fold. */
+/* The tile row absorbs whatever height is left over, so these are the minimum
+   sizes rather than the target ones -- the cards grow into the space that used
+   to sit empty above and below the block. */
+/* The third row of services appears only where there is height for it. Nine
+   tiles on a screen that cannot hold them push the footer off the bottom, so
+   the default below tablet-landscape is two full rows -- six tiles, no orphan
+   -- and the third row is switched back on at the heights that measured clear.
+   The business thresholds are higher because its headline runs to two lines
+   and its labels are longer. */
+@media (max-width: 899px) {
+  body.landing-static .landing-flow .preview-grid .service-tile:nth-child(n + 7) {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) and (min-height: 880px) {
+  body.landing-static .landing-flow:not(.business-landing) .preview-grid .service-tile:nth-child(n + 7) {
+    display: grid;
+  }
+}
+
+@media (max-width: 767px) and (min-height: 950px) {
+  body.landing-static .business-landing .preview-grid .service-tile:nth-child(n + 7) {
+    display: grid;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 899px) and (min-height: 1120px) {
+  body.landing-static .landing-flow:not(.business-landing) .preview-grid .service-tile:nth-child(n + 7) {
+    display: grid;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 899px) and (min-height: 1260px) {
+  body.landing-static .business-landing .preview-grid .service-tile:nth-child(n + 7) {
+    display: grid;
+  }
+}
+
 @media (max-width: 767px) and (min-height: 880px) {
   body.landing-static .landing-flow.auth-screen,
   body.landing-static .business-landing.auth-screen {
-    gap: clamp(18px, 3.1vh, 32px);
+    gap: clamp(12px, 1.8vh, 19px);
   }
 
   body.landing-static .landing-flow .preview-grid .service-tile,
   body.landing-static .business-landing .preview-grid .service-tile {
-    min-height: clamp(84px, 11vh, 106px);
+    min-height: clamp(72px, 8.1vh, 92px);
   }
 
   body.landing-static .landing-flow .trust-item,
   body.landing-static .business-landing .trust-item {
-    min-height: clamp(60px, 7.4vh, 74px);
+    min-height: clamp(56px, 6.4vh, 68px);
+  }
+}
+
+@media (max-width: 767px) and (min-height: 780px) and (max-height: 879px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    gap: clamp(9px, 1.5vh, 16px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(68px, 7.8vh, 82px);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(50px, 5.8vh, 60px);
+  }
+
+  /* The proof points are the first thing to go when the sheet is short. */
+  body.landing-static .landing-cta-points {
+    display: none;
   }
 }
 
@@ -6624,6 +6829,10 @@ button.activity-item:focus-visible {
    browser chrome): a moderate scale increase that still fits, rather than
    forcing the full scale and scrolling. */
 @media (max-width: 767px) and (max-height: 779px) {
+  body.landing-static .landing-cta-points {
+    display: none;
+  }
+
   .landing-flow .brand-logo,
   body.landing-static .landing-flow .brand-logo,
   body.landing-static .business-landing .brand-logo {
@@ -8345,12 +8554,38 @@ select.is-picker-source {
 .qr-poster-head {
   display: grid;
   justify-items: center;
+  gap: clamp(4px, 1.2%, 12px);
 }
 
+/* The wordmark is the first thing read from across a shop, so it carries the
+   top of the sheet rather than sitting on it as a credit. */
 .qr-poster-logo {
-  width: 34%;
-  min-width: 96px;
+  width: 62%;
+  min-width: 150px;
+  max-width: 118mm;
   height: auto;
+}
+
+.qr-poster-tagline {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(0.7rem, 2.2cqw, 0.98rem);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* The tip sheet has to be distinguishable from the payment sheet at a glance
+   on a wall, so it leads with what it is. */
+.qr-poster-banner {
+  margin: 0;
+  padding: 0.5% 5%;
+  color: #fff;
+  font-size: clamp(1rem, 3.6cqw, 1.7rem);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--navy);
+  border-radius: 999px;
 }
 
 .qr-poster-body {
@@ -8495,6 +8730,11 @@ select.is-picker-source {
 
   body.qr-poster-printing .qr-poster-qr {
     width: min(62%, 120mm);
+  }
+
+  body.qr-poster-printing .qr-poster-logo {
+    width: 62%;
+    max-width: 118mm;
   }
 }
 
@@ -8745,4 +8985,125 @@ select.is-picker-source {
   .ticket-card {
     transition: none;
   }
+}
+
+
+/* ---------------------------------------------------------------------------
+   Landing footer: the page ends on the call to action
+
+   The container gives up its bottom padding to the footer so the band sits
+   flush against the bottom of the screen, and the footer carries the safe-area
+   inset -- and the clearance for the install pill when that is showing.
+   --------------------------------------------------------------------------- */
+/* Reaching the bottom of the page, without reserving a guessed height.
+   The footer stays in normal flow as the last row; the tile row above it is
+   the one that takes the leftover height. So the block always ends flush at
+   the foot of the screen, the slack that used to sit above and below it goes
+   into the cards, and nothing can ever overlap the footer when its copy wraps
+   to a second line. */
+@media (max-width: 899px) {
+  body.landing-static .landing-flow.auth-screen:has(.landing-cta-footer),
+  body.landing-static .business-landing.auth-screen:has(.landing-cta-footer) {
+    /* Giving one row the leftover height turned it into a void inside that
+       row instead of above the block. Distributing it across the section gaps
+       keeps the rhythm even and still ends the page on the footer. */
+    align-content: space-between;
+    padding-bottom: 0;
+  }
+}
+
+/* Geometry last, so it survives the later .scan-card padding rules that the
+   card shared when it was still a card in the middle of the page.
+
+   Full bleed at every width: 50% is half the column the footer sits in and
+   50vw is half the screen, so the negative margin is exactly the distance from
+   the column edge to the screen edge -- the phone gutter, the centred tablet
+   column, or the desktop grid. The same figure returns as padding so the text
+   stays on the column. The shared max-width:100% has to go, or it caps the
+   border box at the column width and the margins only shift the band. */
+body.landing-static .landing-flow .scan-card.landing-cta-footer,
+body.landing-static .business-landing .scan-card.landing-cta-footer {
+  width: auto;
+  max-width: none;
+  align-content: center;
+  margin: 0 calc(50% - 50vw);
+  padding: clamp(16px, 2.4vh, 24px) max(calc(50vw - 50%), var(--screen-pad-x), var(--safe-right))
+    calc(clamp(16px, 2.4vh, 24px) + var(--safe-bottom))
+    max(calc(50vw - 50%), var(--screen-pad-x), var(--safe-left));
+}
+
+/* The two-column grid area is not the same width as the visible column, so the
+   desktop gutter is measured off the column itself. */
+@media (min-width: 900px) {
+  body.landing-static .landing-flow .scan-card.landing-cta-footer,
+  body.landing-static .business-landing .scan-card.landing-cta-footer {
+    padding-inline: max(calc((100vw - min(1080px, 92vw)) / 2), var(--screen-pad-x));
+  }
+
+  /* From tablet landscape up there is far more height than the composition
+     needs, and spreading it across four gaps pushed them to 90px. The block
+     stays centred and the footer is pinned to the foot of the page instead --
+     safe at this width because its copy is a single line. */
+  body.landing-static .landing-flow.auth-screen:has(.landing-cta-footer),
+  body.landing-static .business-landing.auth-screen:has(.landing-cta-footer) {
+    position: relative;
+    align-content: center;
+    padding-bottom: calc(112px + var(--safe-bottom));
+  }
+
+  /* The containing block is the centred 1080px column, so left:0 would anchor
+     to the column edge. The column is centred on the viewport, so centring the
+     band on the column and giving it 100vw is exact full bleed. */
+  body.landing-static .landing-flow .scan-card.landing-cta-footer,
+  body.landing-static .business-landing .scan-card.landing-cta-footer {
+    position: absolute;
+    left: 50%;
+    right: auto;
+    bottom: 0;
+    width: 100vw;
+    transform: translateX(-50%);
+    min-height: calc(112px + var(--safe-bottom));
+    margin: 0;
+  }
+}
+
+/* Tablet portrait has the most height to give away, so the cards take the
+   largest share of it -- otherwise the section gaps grow to 80px and the page
+   reads as five strips floating apart. */
+@media (min-width: 700px) and (max-width: 899px) {
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(78px, 7.5vh, 120px);
+  }
+
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(54px, 4.7vh, 74px);
+  }
+
+  body.landing-static .landing-flow h1,
+  body.landing-static .business-landing h1 {
+    font-size: clamp(2rem, 3.2vh, 2.9rem);
+  }
+}
+
+/* 360x800 with the business copy wrapping to three lines was 3px over. */
+@media (max-width: 380px) and (max-height: 820px) {
+  body.landing-static .landing-flow .scan-card.landing-cta-footer,
+  body.landing-static .business-landing .scan-card.landing-cta-footer {
+    padding-block: 12px calc(12px + var(--safe-bottom));
+  }
+}
+
+
+
+/* The install pill floats over the foot of the page, so the footer clears it
+   instead of the container reserving that space a second time. */
+body:has(.install-float-wrap.public-install) .auth-screen:has(.landing-cta-footer) {
+  padding-bottom: 0;
+}
+
+body:has(.install-float-wrap.public-install) .landing-flow .scan-card.landing-cta-footer,
+body:has(.install-float-wrap.public-install) .business-landing .scan-card.landing-cta-footer {
+  padding-bottom: calc(clamp(16px, 2.4vh, 24px) + 56px + var(--safe-bottom));
 }

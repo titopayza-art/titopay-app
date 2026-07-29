@@ -11,6 +11,8 @@ const { CATALOGUE, BASE_URL, launchOptions } = require("./lib/env");
 
 const SERVICES = JSON.parse(fs.readFileSync(CATALOGUE, "utf8"));
 
+const QR_IMAGE = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjMDAwIi8+PC9zdmc+";
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const failures = [];
 const check = (name, ok, detail = "") => {
@@ -51,7 +53,8 @@ function mock(acct, eligible) {
     if (u.pathname === "/v1/services") return J(SERVICES);
     if (u.pathname === "/v1/wallets") return J({ items: [{ wallet_id: "81234567", available_balance: 25000 }] });
     if (u.pathname === "/v1/transactions") return J({ items: [] });
-    if (u.pathname === "/v1/qr/profile") return J({ qr: { id: "TPQR-81234567", reference: "TPQR-81234567", imageDataUrl: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMCAxMCI+PHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjMDAwIi8+PC9zdmc+", deepLink: "https://app.titopay.co.za/pay/81234567" } });
+    if (u.pathname === "/v1/qr/profile") return J({ qr: { id: "TPQR-81234567", reference: "TPQR-81234567", imageDataUrl: QR_IMAGE, deepLink: "https://app.titopay.co.za/pay/81234567" } });
+    if (u.pathname === "/v1/qr/generate-static") return J({ qr: { id: "TIP-4471", reference: "TIP-4471", imageDataUrl: QR_IMAGE, deepLink: "https://app.titopay.co.za/pay/TIP-4471" } });
     if (u.pathname === "/v1/enterprise-distribution/eligibility") {
       return J({ eligibility: eligible ? { eligible: true, organisation: { organisation_name: "Naledi Trading Foundation" } } : { eligible: false, blockers: ["FICA verification incomplete"] } });
     }
@@ -135,6 +138,31 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
     await sleep(800);
     const activityHasList = await page.evaluate(() => Boolean(document.querySelector(".screen .activity-list, .screen .empty-state")));
     check(`Activity route still renders history (${acct})`, activityHasList);
+    await ctx.close();
+  }
+
+  // ---- 2b. The fixed app bar has room for the wordmark and both buttons --
+  for (const [safeTop, label] of [[59, "notched"], [0, "flat"]]) {
+    const { ctx, page } = await authed(browser, { acct: "business" });
+    await page.evaluate((t) => document.documentElement.style.setProperty("--safe-top", t + "px"), safeTop);
+    await sleep(400);
+    const m = await page.evaluate(() => {
+      const bar = document.querySelector("[data-app-topbar]");
+      const logo = bar.querySelector(".brand-logo");
+      const b = bar.getBoundingClientRect();
+      const l = logo.getBoundingClientRect();
+      const buttons = [...bar.querySelectorAll(".icon-btn, .avatar")].map((el) => el.getBoundingClientRect());
+      return {
+        logoH: Math.round(l.height),
+        clipped: buttons.some((r) => r.bottom > b.bottom + 0.5 || r.top < -0.5) || l.bottom > b.bottom + 0.5,
+        buttonGap: buttons.length === 2 ? Math.round(buttons[1].left - buttons[0].right) : -1,
+        rightInset: buttons.length ? Math.round(window.innerWidth - buttons[buttons.length - 1].right) : -1
+      };
+    });
+    check(`app bar wordmark is legible (${label})`, m.logoH >= 36, `${m.logoH}px`);
+    check(`app bar clips nothing (${label})`, m.clipped === false);
+    check(`app bar buttons are not squashed together (${label})`, m.buttonGap >= 10, `${m.buttonGap}px`);
+    check(`app bar buttons clear the edge (${label})`, m.rightInset >= 10, `${m.rightInset}px`);
     await ctx.close();
   }
 
@@ -305,13 +333,114 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
     await ctx.close();
   }
 
-  // Personal accounts keep Receive Money and do not get the business poster.
+  // Personal accounts keep Receive Money and do not get the business poster,
+  // but they do get the tip poster.
   {
     const { ctx, page } = await authed(browser, { acct: "personal" });
     await page.evaluate(() => { location.hash = "profile"; });
     await sleep(900);
-    const hasPoster = await page.evaluate(() => Boolean(document.querySelector('[data-action="qr-poster"]')));
-    check("personal profile does not show the business poster", hasPoster === false);
+    const m = await page.evaluate(() => ({
+      payment: Boolean(document.querySelector('[data-action="qr-poster"]')),
+      tip: Boolean(document.querySelector('[data-action="tip-poster"]'))
+    }));
+    check("personal profile does not show the business payment poster", m.payment === false);
+    check("personal profile offers the tip poster", m.tip);
+    await ctx.close();
+  }
+
+  // ---- 5b. Tip poster, both account types --------------------------------
+  for (const acct of ["personal", "business"]) {
+    const { ctx, page } = await authed(browser, { acct });
+    await page.evaluate(() => { location.hash = "profile"; });
+    await sleep(900);
+    await page.click('[data-action="tip-poster"]');
+    await sleep(1300);
+    const poster = await page.evaluate(() => {
+      const card = document.querySelector(".modal-card");
+      const el = card.querySelector("[data-qr-poster]");
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const logo = el.querySelector(".qr-poster-logo").getBoundingClientRect();
+      return {
+        ratio: Number((r.width / r.height).toFixed(3)),
+        isTip: el.classList.contains("qr-poster-tip"),
+        banner: (el.querySelector(".qr-poster-banner") || {}).textContent || "",
+        tagline: (el.querySelector(".qr-poster-tagline") || {}).textContent || "",
+        logoShare: Number((logo.width / r.width).toFixed(2)),
+        tipSteps: /choose your tip/i.test(el.innerText),
+        printBtn: Boolean(card.querySelector('[data-action="print-qr-poster"]'))
+      };
+    });
+    check(`tip poster renders (${acct})`, Boolean(poster));
+    if (poster) {
+      check(`tip poster is A4 portrait (${acct})`, Math.abs(poster.ratio - 210 / 297) < 0.02, `ratio ${poster.ratio}`);
+      check(`tip poster is headed Tips (${acct})`, /tips/i.test(poster.banner), poster.banner);
+      check(`tip poster carries the tagline (${acct})`, /Smart Payments/.test(poster.tagline), poster.tagline);
+      check(`tip poster logo is at least half the sheet width (${acct})`, poster.logoShare >= 0.5, `${poster.logoShare}`);
+      check(`tip poster tells the tipper to choose an amount (${acct})`, poster.tipSteps);
+      check(`tip poster can be printed (${acct})`, poster.printBtn);
+    }
+    await ctx.close();
+  }
+
+  // ---- 7. Landing footer -------------------------------------------------
+  for (const [w, h, label] of [[440, 956, "phone"], [820, 1180, "tablet"], [1440, 900, "desktop"]]) {
+    for (const acct of ["personal", "business"]) {
+      const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: w < 768, hasTouch: w < 768 });
+      await ctx.route("https://api.titopay.co.za/**", mock(acct, false));
+      const page = await ctx.newPage();
+      await page.goto(`${BASE_URL}/index.html`, { waitUntil: "networkidle" }).catch(() => {});
+      await sleep(2600);
+      if (acct === "business") { await page.click('[data-account="business"]').catch(() => {}); await sleep(700); }
+      await page.evaluate(() => document.querySelector(".install-float-wrap button:last-child")?.click());
+      await sleep(400);
+      const m = await page.evaluate(() => {
+        const el = document.querySelector(".landing-cta-footer");
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return {
+          isFooter: el.tagName === "FOOTER",
+          fullBleed: Math.round(r.left) === 0 && Math.round(r.right) === window.innerWidth,
+          atBottom: Math.abs(Math.round(window.innerHeight - r.bottom)) <= 1,
+          heading: (el.querySelector("h3") || {}).textContent || "",
+          siteLinkGone: !document.querySelector(".landing-flow .landing-site-footer"),
+          overflowY: document.documentElement.scrollHeight - window.innerHeight,
+          overflowX: document.documentElement.scrollWidth - window.innerWidth,
+          visibleTiles: [...document.querySelectorAll(".preview-grid .service-tile")].filter((t) => getComputedStyle(t).display !== "none").length,
+          tallestTile: Math.round(Math.max(...[...document.querySelectorAll(".preview-grid .service-tile")].filter((t) => getComputedStyle(t).display !== "none").map((t) => t.getBoundingClientRect().height))),
+          footerCta: Boolean(el.querySelector(".landing-cta-btn"))
+        };
+      });
+      check(`landing CTA is a footer (${label} ${acct})`, Boolean(m && m.isFooter));
+      if (m) {
+        check(`landing footer spans the screen (${label} ${acct})`, m.fullBleed);
+        check(`landing footer sits at the bottom (${label} ${acct})`, m.atBottom);
+        check(`landing footer heading (${label} ${acct})`, m.heading.trim() === (acct === "business" ? "Accept Payment" : "Scan To Pay"), m.heading);
+        check(`website link no longer on the landing (${label} ${acct})`, m.siteLinkGone);
+        check(`landing does not scroll (${label} ${acct})`, m.overflowY <= 0 && m.overflowX <= 0, `y=${m.overflowY} x=${m.overflowX}`);
+        check(`landing service grid has no orphan tile (${label} ${acct})`, m.visibleTiles % 3 === 0 && m.visibleTiles >= 6, `${m.visibleTiles} tiles`);
+        check(`landing tiles are not stretched (${label} ${acct})`, m.tallestTile <= 170, `${m.tallestTile}px`);
+        check(`landing footer carries the QR action (${label} ${acct})`, m.footerCta);
+      }
+      await ctx.close();
+    }
+  }
+
+  // The website moved into the menu.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 440, height: 956 }, isMobile: true, hasTouch: true });
+    await ctx.route("https://api.titopay.co.za/**", mock("personal", false));
+    const page = await ctx.newPage();
+    await page.goto(`${BASE_URL}/index.html`, { waitUntil: "networkidle" }).catch(() => {});
+    await sleep(2600);
+    await page.evaluate(() => document.querySelector(".install-float-wrap button:last-child")?.click());
+    await page.click('[data-action="landing-menu"]');
+    await sleep(700);
+    const inMenu = await page.evaluate(() => {
+      const card = document.querySelector(".modal-card");
+      return [...card.querySelectorAll("a")].some((a) => /www\.titopay\.co\.za/i.test(a.textContent));
+    });
+    check("website address is in the menu", inMenu);
     await ctx.close();
   }
 
