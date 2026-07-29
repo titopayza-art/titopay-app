@@ -46,6 +46,16 @@ info:
     `scope: "admin"` and carry a `role` claim. `403` responses state the role
     that would have been required. Admin sessions are short-lived: 30 minutes
     idle, 8 hours absolute.
+
+    **An invalid, malformed, expired or revoked token must return `401`, never
+    `500`.** Short sessions make this the most-exercised path in the console —
+    every admin hits an expired token several times a day. The console refreshes
+    only on `401`; a `500` skips that branch entirely and it retries the same
+    dead token indefinitely, which is what the operator sees as "Admin module
+    unavailable" on every screen until they sign out and back in.
+
+    Production returns `500` for this today, on every admin endpoint. Diagnosis,
+    reproduction and the fix are in `INCIDENT-admin-500.md`.
   contact:
     name: TitoPay Engineering
     email: dev@titopay.co.za

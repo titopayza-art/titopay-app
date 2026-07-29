@@ -24,6 +24,12 @@ info:
       Anything slower than that must return a job handle, not a slow response.
     - On `401` the client transparently calls `POST /v1/auth/refresh` once and
       replays the original request. A second `401` signs the user out.
+    - **An invalid, malformed, expired or revoked token is a `401`, never a
+      `500`.** This is load-bearing, not a preference: recovery is gated on the
+      status code, so a `500` here means the client never refreshes and retries
+      the same dead token forever. Production returns `500` for this today —
+      see `INCIDENT-admin-500.md`. The same rule binds `/v1/auth/refresh`
+      itself: a bad refresh token is a `401`.
     - Every response may carry `ok: false` with an `error` string. The client
       treats `ok: false` as a failure even on HTTP 200, and renders `error`
       **directly to the user**, so error strings must be human-readable and must

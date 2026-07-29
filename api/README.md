@@ -11,6 +11,7 @@ The complete API contract across all three surfaces, with every fix from
 | `openapi-admin.yaml` | **Admin** | The internal TitoPay console |
 | `openapi-hr.yaml` | **HR / Bulk Distribution** | Approved organisations paying many people at once |
 | `chat-socket.md` | **App** | The chat websocket — the one surface OpenAPI cannot express |
+| `INCIDENT-admin-500.md` | **Admin** | Live bug: invalid tokens return `500`, so the console cannot recover |
 | `catalogue/services-catalogue.json` | — | The corrected service catalogue, in full |
 | `catalogue/catalogue-patch.json` | — | Just the deltas, as a JSON patch |
 | `catalogue/catalogue-fix.sql` | — | The same deltas as SQL |
