@@ -1,4 +1,78 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="icon" type="image/x-icon" href="/favicon.ico?v=6" /><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" /><meta http-equiv="Pragma" content="no-cache" /><meta http-equiv="Expires" content="0" /><meta name="theme-color" content="#0a3680" /><meta name="description" content="TitoPay HR Management System" /><title>TitoPay HR</title><meta name="color-scheme" content="light" /><link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><style>
+<!doctype html><html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="icon" type="image/x-icon" href="/favicon.ico?v=6" /><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" /><meta http-equiv="Pragma" content="no-cache" /><meta http-equiv="Expires" content="0" /><meta name="theme-color" content="#0a3680" /><meta name="description" content="TitoPay HR Management System" /><title>TitoPay HR</title><meta name="color-scheme" content="light" /><link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><script>/* Attendance ring truth-fix.
+ *
+ * The compiled bundle draws the dashboard donut from a fixed conic-gradient
+ * (82/93/97%) while the figure in its centre and the legend beside it come
+ * from live data — so the ring could read 82% while the label read 89%.
+ * Correcting it properly means one line in the React source, which is not in
+ * this artefact.
+ *
+ * This reads the percentages the app has already rendered into the legend and
+ * writes them back as a custom property the stylesheet uses for the ring. It
+ * only ever reflects numbers the app itself printed; it never invents one. If
+ * it cannot read a legend, it leaves the ring on its neutral fallback track
+ * rather than showing a shape that means nothing.
+ *
+ * Remove this once the ring is data-driven in source.
+ */
+(function () {
+  "use strict";
+  var SEGMENTS = ["#2672e6", "#22b8d8", "#f0a53c", "#c0303c"];
+  var TRACK = "#e6ebf3";
+
+  function sync() {
+    var donuts = document.querySelectorAll(".donut");
+    for (var d = 0; d < donuts.length; d++) {
+      var donut = donuts[d];
+      var wrap = donut.parentElement;
+      if (!wrap || wrap.className.indexOf("donut-wrap") === -1) continue;
+      var rows = wrap.querySelectorAll(".legend > div");
+      if (!rows.length) continue;
+
+      var stops = [];
+      var used = 0;
+      var read = 0;
+      for (var i = 0; i < rows.length && used < 100; i++) {
+        var cell = rows[i].querySelector("b");
+        if (!cell) continue;
+        var value = parseFloat(String(cell.textContent).replace(/[^0-9.]/g, ""));
+        if (!isFinite(value) || value < 0) continue;
+        read++;
+        var start = used;
+        var end = Math.min(100, used + value);
+        if (end <= start) continue;
+        used = end;
+        stops.push(SEGMENTS[i % SEGMENTS.length] + " " + start + "% " + end + "%");
+      }
+      if (!read || !stops.length) continue;
+      if (used < 100) stops.push(TRACK + " " + used + "% 100%");
+
+      var ring = "conic-gradient(" + stops.join(",") + ")";
+      if (donut.style.getPropertyValue("--donut-ring") !== ring) {
+        donut.style.setProperty("--donut-ring", ring);
+      }
+    }
+  }
+
+  var pending;
+  function schedule() {
+    clearTimeout(pending);
+    pending = setTimeout(sync, 60);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", schedule);
+  } else {
+    schedule();
+  }
+  // React re-renders the dashboard on navigation and on refresh; re-read then.
+  if (typeof MutationObserver === "function") {
+    new MutationObserver(schedule).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+  }
+})();</script><style>
 /* Pre-render shell. Values are hard-coded rather than tokenised so this
    screen still renders correctly if the main stylesheet never arrives. */
 #root:empty::before{content:"Loading TitoPay HR…";display:grid;place-items:center;min-height:100vh;font:600 15px/1.5 "DM Sans",system-ui,sans-serif;color:#0a3680;background:#f4f7fc}
@@ -1051,6 +1125,10 @@ label.upload-zone, .upload-zone {
 }
 
 .donut-wrap { display: flex; flex-direction: column; align-items: center; }
+/* The ring is driven by --donut-ring, set from the percentages the app has
+   already rendered into the legend (see the inline script in <head>). The
+   fallback is a plain track, not a fabricated split: a ring with invented
+   proportions next to a real number is worse than no ring at all. */
 .donut {
   position: relative;
   display: grid;
@@ -1058,7 +1136,7 @@ label.upload-zone, .upload-zone {
   width: 136px;
   height: 136px;
   border-radius: 50%;
-  background: conic-gradient(var(--brand-400) 0 82%, var(--accent-400) 82% 93%, #f0a53c 93% 97%, var(--neg-500) 97%);
+  background: var(--donut-ring, conic-gradient(#e6ebf3 0 100%));
 }
 .donut::after {
   content: "";
