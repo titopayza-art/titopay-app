@@ -963,6 +963,11 @@ h3 {
   padding-bottom: 22px;
 }
 
+/* A page that fits must feel fixed: no rubber-band scroll on the landing. */
+body.landing-static {
+  overscroll-behavior-y: none;
+}
+
 .landing-flow {
   gap: clamp(10px, 2.2vw, 14px);
 }
@@ -6762,13 +6767,13 @@ button.activity-item:focus-visible {
   }
 }
 
-@media (max-width: 767px) and (min-height: 880px) {
-  body.landing-static .landing-flow:not(.business-landing) .preview-grid .service-tile:nth-child(n + 7) {
-    display: grid;
-  }
-}
-
+/* One threshold for both account types. Personal used to gain its third row
+   at 880px while business waited for 950px, so in the 880-949 band -- which is
+   exactly a big iPhone running Safari with its chrome visible -- personal
+   overflowed and scrolled while business sat fixed. The two sides of the same
+   page must behave identically. */
 @media (max-width: 767px) and (min-height: 950px) {
+  body.landing-static .landing-flow .preview-grid .service-tile:nth-child(n + 7),
   body.landing-static .business-landing .preview-grid .service-tile:nth-child(n + 7) {
     display: grid;
   }
@@ -8719,24 +8724,40 @@ select.is-picker-source {
   font-weight: 700;
 }
 
+/* The poster isolates itself whenever it is on screen and the page prints --
+   including from the browser's own share-sheet print, which never runs our
+   print handler and used to print the entire app around the poster. The
+   body class from printQrPoster() remains as the fallback for engines
+   without :has(). Sizing is aspect-ratio, never 100vh: viewport units inside
+   a paged context are what tore the layout apart on iOS. */
 @media print {
-  body.qr-poster-printing > *:not(.modal-backdrop) {
+  body.qr-poster-printing > *:not(.modal-backdrop),
+  body:has(.modal-backdrop [data-qr-poster]) > *:not(.modal-backdrop) {
     display: none !important;
   }
 
-  body.qr-poster-printing .modal-backdrop {
+  html,
+  body.qr-poster-printing,
+  body:has(.modal-backdrop [data-qr-poster]) {
+    background: #fff !important;
+  }
+
+  body.qr-poster-printing .modal-backdrop,
+  body:has(.modal-backdrop [data-qr-poster]) .modal-backdrop {
     position: static;
     display: block;
     padding: 0;
-    background: none;
+    background: #fff;
     backdrop-filter: none;
   }
 
-  body.qr-poster-printing .modal-card {
+  body.qr-poster-printing .modal-card,
+  body:has(.modal-backdrop [data-qr-poster]) .modal-card {
     width: 100%;
     max-width: none;
     max-height: none;
     overflow: visible;
+    margin: 0;
     padding: 0;
     border: 0;
     border-radius: 0;
@@ -8745,23 +8766,29 @@ select.is-picker-source {
     backdrop-filter: none;
   }
 
-  body.qr-poster-printing .modal-card > *:not(.qr-poster) {
+  body.qr-poster-printing .modal-card > *:not(.qr-poster),
+  body:has(.modal-backdrop [data-qr-poster]) .modal-card > *:not(.qr-poster) {
     display: none !important;
   }
 
-  body.qr-poster-printing .qr-poster {
+  body.qr-poster-printing .qr-poster,
+  body:has(.modal-backdrop [data-qr-poster]) .qr-poster {
     width: 100%;
-    height: 100vh;
-    aspect-ratio: auto;
+    height: auto;
+    aspect-ratio: 210 / 297;
+    margin: 0;
     border: 0;
     border-radius: 0;
+    page-break-inside: avoid;
   }
 
-  body.qr-poster-printing .qr-poster-qr {
+  body.qr-poster-printing .qr-poster-qr,
+  body:has(.modal-backdrop [data-qr-poster]) .qr-poster-qr {
     width: min(62%, 120mm);
   }
 
-  body.qr-poster-printing .qr-poster-logo {
+  body.qr-poster-printing .qr-poster-logo,
+  body:has(.modal-backdrop [data-qr-poster]) .qr-poster-logo {
     width: 62%;
     max-width: 118mm;
   }
@@ -9135,4 +9162,54 @@ body:has(.install-float-wrap.public-install) .auth-screen:has(.landing-cta-foote
 body:has(.install-float-wrap.public-install) .landing-flow .scan-card.landing-cta-footer,
 body:has(.install-float-wrap.public-install) .business-landing .scan-card.landing-cta-footer {
   padding-bottom: calc(clamp(16px, 2.4vh, 24px) + 56px + var(--safe-bottom));
+}
+
+
+/* ---------------------------------------------------------------------------
+   Landing: fit by construction, not by tuning
+
+   Every earlier attempt sized the tiles per height band and hoped the bands
+   covered reality. They could not: media queries cannot see safe-area insets,
+   so an installed PWA lost ~93px the maths never knew about, and the page
+   scrolled by exactly the difference -- a few px on some phones, 70px on a
+   6.9" screen with the third service row. The user-visible symptom was one
+   account type scrolling while the other sat fixed.
+
+   This block replaces the guessing for every one-column landing (phones and
+   portrait tablets): the container is the dynamic viewport, the service grid
+   is the one flexible row, and the tiles shrink into whatever height is left
+   after the insets take theirs. The page cannot overflow, so it cannot
+   scroll; the cap keeps tiles card-shaped when there is room to spare.
+   --------------------------------------------------------------------------- */
+@media (max-width: 899px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    height: 100dvh;
+    min-height: 100svh;
+    align-content: stretch;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+    overflow: hidden;
+  }
+
+  body.landing-static .landing-flow .preview-grid,
+  body.landing-static .business-landing .preview-grid {
+    min-height: 0;
+    align-content: stretch;
+    grid-auto-rows: minmax(0, 1fr);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: 44px;
+    height: auto;
+    max-height: 160px;
+    align-self: stretch;
+  }
+
+  /* The rigid rows give back a little too, so the flexible row is never asked
+     to go below a usable tile. */
+  body.landing-static .landing-flow .trust-item,
+  body.landing-static .business-landing .trust-item {
+    min-height: clamp(44px, 5.4vh, 72px);
+  }
 }

@@ -371,6 +371,11 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
       check("poster carries the TitoPay logo", poster.logo);
       check("poster shows the QR image", poster.qrImage);
       check("poster can be printed", poster.printBtn);
+      const download = await Promise.all([
+        page.waitForEvent("download", { timeout: 15000 }).catch(() => null),
+        page.click('[data-action="download-qr-poster-pdf"]')
+      ]).then(([d]) => d);
+      check("poster downloads as a real PDF", Boolean(download && /\.pdf$/i.test(download.suggestedFilename())), download ? download.suggestedFilename() : "no download event");
     }
     await ctx.close();
   }
@@ -421,14 +426,20 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
       check(`tip poster logo is at least half the sheet width (${acct})`, poster.logoShare >= 0.5, `${poster.logoShare}`);
       check(`tip poster tells the tipper to choose an amount (${acct})`, poster.tipSteps);
       check(`tip poster can be printed (${acct})`, poster.printBtn);
+      const download = await Promise.all([
+        page.waitForEvent("download", { timeout: 15000 }).catch(() => null),
+        page.click('[data-action="download-qr-poster-pdf"]')
+      ]).then(([d]) => d);
+      check(`tip poster downloads as a PDF (${acct})`, Boolean(download && /tip.*\.pdf$/i.test(download.suggestedFilename())), download ? download.suggestedFilename() : "no download event");
     }
     await ctx.close();
   }
 
   // ---- 7. Landing footer -------------------------------------------------
-  for (const [w, h, label] of [[440, 956, "phone"], [820, 1180, "tablet"], [1440, 900, "desktop"]]) {
+  for (const [w, h, label, safe] of [[440, 956, "phone", 0], [440, 956, "phone-insets", 1], [393, 852, "iphone15-insets", 1], [820, 1180, "tablet", 0], [1440, 900, "desktop", 0]]) {
     for (const acct of ["personal", "business"]) {
       const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: w < 768, hasTouch: w < 768 });
+      if (safe) await ctx.addInitScript(() => { document.addEventListener("DOMContentLoaded", () => { document.documentElement.style.setProperty("--safe-top", "59px"); document.documentElement.style.setProperty("--safe-bottom", "34px"); }); });
       await ctx.route("https://api.titopay.co.za/**", mock(acct, false));
       const page = await ctx.newPage();
       await page.goto(`${BASE_URL}/index.html`, { waitUntil: "networkidle" }).catch(() => {});

@@ -621,7 +621,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=184", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=185", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -3440,6 +3440,10 @@ async function handleAction(action) {
   }
   if (action === "print-qr-poster") {
     printQrPoster();
+    return;
+  }
+  if (action === "download-qr-poster-pdf") {
+    await downloadQrPosterPdf();
     return;
   }
   if (String(action || "").startsWith("enterprise-fund:")) {
@@ -7342,6 +7346,7 @@ async function openQrPosterModal(kind = "payment") {
   const name = state.accountType === "business" ? businessProfileName() : qrOwnerName();
   const wallet = primaryWallet();
   const walletId = displayWalletId(wallet || {});
+  state.qrPosterContext = qr ? { kind, config, name, qr, walletId: walletId !== "Generating" ? walletId : "" } : null;
   openModal(`
     <div class="modal-head">
       <div>
@@ -7375,12 +7380,257 @@ async function openQrPosterModal(kind = "payment") {
         </footer>
       </article>
       <section class="auth-actions">
-        <button class="btn primary" type="button" data-action="print-qr-poster">${icon("download")} Print or save as PDF</button>
+        <button class="btn primary" type="button" data-action="download-qr-poster-pdf">${icon("download")} Download A4 PDF</button>
+        <button class="btn secondary" type="button" data-action="print-qr-poster">${icon("statement")} Print</button>
         ${qr.image ? `<button class="btn secondary" type="button" data-download-qr="${esc(qr.image)}" data-qr-filename="${esc(qr.id || config.filename)}">${icon("qr")} Download QR image</button>` : ""}
       </section>
-      <p class="field-hint">The sheet prints at A4. In the print dialog choose A4 and portrait.</p>
+      <p class="field-hint">The PDF is a finished A4 sheet: download it, then print it from any device or send it to a print shop.</p>
     `}
   `);
+}
+
+// ---------------------------------------------------------------------------
+// A4 poster PDF
+//
+// The print dialog turned out to be the wrong delivery mechanism: printing
+// from the browser menu bypasses the poster isolation entirely and prints the
+// whole app, and iOS treats 100vh inside a paged context unpredictably. So
+// the poster is drawn once, at 200dpi on a canvas, and wrapped in a real
+// single-page A4 PDF. What downloads is a finished sheet -- no dialog
+// settings, no browser involved in the layout.
+// ---------------------------------------------------------------------------
+
+const POSTER_INK = { navy: "#061a3d", blue: "#0a4dff", muted: "#62708a", line: "#dfe7f5" };
+
+function posterFont(weight, size) {
+  return `${weight} ${size}px -apple-system, "Segoe UI", Inter, Roboto, sans-serif`;
+}
+
+function posterRoundRectPath(g, x, y, w, h, r) {
+  if (typeof g.roundRect === "function") {
+    g.beginPath();
+    g.roundRect(x, y, w, h, r);
+    return;
+  }
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+function posterLoadImage(src) {
+  return new Promise((resolve) => {
+    if (!src) return resolve(null);
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = src;
+  });
+}
+
+// Shrinks a line until it fits the column rather than letting it clip. The
+// value is real data (a business name, a UUID), so it must all be on the sheet.
+function posterFitText(g, textValue, weight, startSize, maxWidth, minSize = 22) {
+  let size = startSize;
+  g.font = posterFont(weight, size);
+  while (size > minSize && g.measureText(textValue).width > maxWidth) {
+    size -= 2;
+    g.font = posterFont(weight, size);
+  }
+  return size;
+}
+
+async function renderQrPosterCanvas(context) {
+  const W = 1654;
+  const H = 2339; // A4 portrait at 200dpi
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const g = canvas.getContext("2d");
+  const centerX = W / 2;
+  const colW = W - 300;
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, W, H);
+  g.textAlign = "center";
+  g.textBaseline = "alphabetic";
+
+  const [logo, qrImage] = await Promise.all([
+    posterLoadImage("./assets/titopay-logo.png"),
+    posterLoadImage(context.qr.image || "")
+  ]);
+
+  let y = 240;
+  if (logo) {
+    const logoW = 980;
+    const logoH = logoW * (logo.naturalHeight / logo.naturalWidth);
+    g.drawImage(logo, centerX - logoW / 2, y - logoH / 2, logoW, logoH);
+    y += logoH / 2;
+  } else {
+    g.fillStyle = POSTER_INK.navy;
+    g.font = posterFont(800, 120);
+    g.fillText("TitoPay", centerX, y + 40);
+    y += 80;
+  }
+
+  y += 84;
+  g.fillStyle = POSTER_INK.muted;
+  g.font = posterFont(600, 46);
+  g.fillText(BRAND_TAGLINE, centerX, y);
+
+  if (context.config.banner) {
+    y += 130;
+    const label = String(context.config.banner).toUpperCase();
+    g.font = posterFont(800, 60);
+    const pillW = g.measureText(label).width + 220;
+    g.fillStyle = POSTER_INK.navy;
+    posterRoundRectPath(g, centerX - pillW / 2, y - 74, pillW, 110, 55);
+    g.fill();
+    g.fillStyle = "#ffffff";
+    g.fillText(label.split("").join("\u2009"), centerX, y + 8);
+    y += 40;
+  } else {
+    y += 40;
+  }
+
+  y += 116;
+  g.fillStyle = POSTER_INK.blue;
+  g.font = posterFont(800, 52);
+  g.fillText(String(context.config.heading).toUpperCase().split("").join("\u2009"), centerX, y);
+
+  y += 110;
+  g.fillStyle = POSTER_INK.navy;
+  posterFitText(g, context.name, 800, 96, colW, 44);
+  g.fillText(context.name, centerX, y);
+
+  // QR block. The tip sheet carries an extra banner row, so its QR gives back
+  // a little height to keep the whole composition on one visual rhythm.
+  const qrBox = context.config.banner ? 840 : 900;
+  const qrPad = 52;
+  y += 84;
+  g.strokeStyle = POSTER_INK.navy;
+  g.lineWidth = 6;
+  posterRoundRectPath(g, centerX - qrBox / 2, y, qrBox, qrBox, 44);
+  g.stroke();
+  if (qrImage) {
+    g.imageSmoothingEnabled = false;
+    g.drawImage(qrImage, centerX - qrBox / 2 + qrPad, y + qrPad, qrBox - qrPad * 2, qrBox - qrPad * 2);
+    g.imageSmoothingEnabled = true;
+  } else {
+    g.fillStyle = POSTER_INK.navy;
+    g.font = posterFont(700, 44);
+    g.fillText("QR image unavailable", centerX, y + qrBox / 2 - 20);
+    g.fillStyle = POSTER_INK.muted;
+    g.font = posterFont(600, 36);
+    g.fillText("Use the QR ID below", centerX, y + qrBox / 2 + 44);
+  }
+  y += qrBox;
+
+  // Footer geometry is computed from the bottom up, so the divider always
+  // sits between the steps and the IDs with clear air on both sides --
+  // whatever the header above cost.
+  const footRows = [];
+  if (context.qr.id) footRows.push(["QR ID", String(context.qr.id)]);
+  if (context.walletId) footRows.push(["Wallet ID", String(context.walletId)]);
+  const siteY = H - 150;
+  const rowsTop = siteY - 84 - (footRows.length - 1) * 64;
+  const ruleY = rowsTop - 96;
+  const stepsY = Math.min(y + 130, ruleY - 70);
+
+  g.fillStyle = POSTER_INK.navy;
+  g.font = posterFont(700, 44);
+  g.fillText(context.config.steps, centerX, stepsY);
+
+  g.strokeStyle = POSTER_INK.line;
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(150, ruleY);
+  g.lineTo(W - 150, ruleY);
+  g.stroke();
+
+  let footY = rowsTop;
+  const footRow = (label, value) => {
+    g.font = posterFont(700, 34);
+    g.fillStyle = POSTER_INK.muted;
+    const labelText = label.toUpperCase().split("").join("\u2009") + "   ";
+    g.font = posterFont(700, Math.min(40, posterFitText(g, labelText + value, 700, 40, colW)));
+    const labelW = (() => { g.font = posterFont(700, 34); return g.measureText(labelText).width; })();
+    const size = posterFitText(g, value, 800, 40, colW - labelW);
+    const totalW = labelW + g.measureText(value).width;
+    g.textAlign = "left";
+    g.fillStyle = POSTER_INK.muted;
+    g.font = posterFont(700, 34);
+    g.fillText(labelText, centerX - totalW / 2, footY);
+    g.fillStyle = POSTER_INK.navy;
+    g.font = posterFont(800, size);
+    g.fillText(value, centerX - totalW / 2 + labelW, footY);
+    g.textAlign = "center";
+    footY += 64;
+  };
+  footRows.forEach(([label, value]) => footRow(label, value));
+  g.fillStyle = POSTER_INK.blue;
+  g.font = posterFont(800, 40);
+  g.fillText("titopay.co.za", centerX, siteY);
+
+  return canvas;
+}
+
+// A single-page PDF whose only content is the poster JPEG, scaled to the A4
+// media box. Built by hand like every other PDF in this app.
+function posterJpegToPdf(jpegDataUrl, imageWidth, imageHeight) {
+  const base64 = String(jpegDataUrl).split(",")[1] || "";
+  const binary = atob(base64);
+  const jpeg = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) jpeg[i] = binary.charCodeAt(i);
+  const encoder = new TextEncoder();
+  const chunks = [];
+  const offsets = {};
+  let offset = 0;
+  const push = (part) => {
+    const bytes = typeof part === "string" ? encoder.encode(part) : part;
+    chunks.push(bytes);
+    offset += bytes.length;
+  };
+  push("%PDF-1.4\n");
+  offsets[1] = offset;
+  push("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+  offsets[2] = offset;
+  push("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+  offsets[3] = offset;
+  push("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
+  offsets[4] = offset;
+  push(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);
+  push(jpeg);
+  push("\nendstream\nendobj\n");
+  const content = "q 595.28 0 0 841.89 0 0 cm /Im1 Do Q";
+  offsets[5] = offset;
+  push(`5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`);
+  const xrefStart = offset;
+  let xref = "xref\n0 6\n0000000000 65535 f \n";
+  for (let i = 1; i <= 5; i += 1) xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  push(`${xref}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`);
+  const out = new Uint8Array(offset);
+  let position = 0;
+  chunks.forEach((chunk) => {
+    out.set(chunk, position);
+    position += chunk.length;
+  });
+  return out;
+}
+
+async function downloadQrPosterPdf() {
+  const context = state.qrPosterContext;
+  if (!context) {
+    showToast("Open the poster before downloading it.", "error");
+    return;
+  }
+  const canvas = await renderQrPosterCanvas(context);
+  const jpeg = canvas.toDataURL("image/jpeg", 0.92);
+  const pdf = posterJpegToPdf(jpeg, canvas.width, canvas.height);
+  downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${context.config.filename}-a4.pdf`);
+  showToast("A4 poster downloaded as a PDF.");
 }
 
 // Mirrors the statement print path: hide the app, leave the poster, restore
