@@ -1,33 +1,27 @@
 TitoPay Admin
-Build: admin-console-v33
+Build: admin-console-v34
 Date: 2026-07-29
 
-v33 - Rate-limit and lockout messages from the API now reach the operator
-  verbatim. The generic error filter matched "try again later" and replaced
-  "Too many attempts. Please try again later." with advice to refresh, which
-  makes a rate limit worse. Found while sign-in testing across six roles.
+v34 - Support Desk rebuilt as a workspace
+  - Taking over a chat now opens that conversation as the page, with one "Back
+    to queue" control. Previously the conversation was appended below three
+    stacked tables, so an agent who took over was left looking at the queue with
+    the conversation off-screen.
+  - The queue shows one list at a time behind tabs (Live conversations,
+    Tickets, Profile approvals) instead of three tables on one page.
+  - Metrics reduced from eight tiles to the four a support desk acts on.
+  - Conversation queue trimmed to five columns so nothing is hidden under the
+    pinned action column.
+  - Fixed: a customer's incoming message did not appear while the agent had the
+    reply box focused, which is exactly when an agent is waiting for it. The
+    draft, the caret position and focus now survive the live refresh, so the
+    guard that suppressed it is gone.
 
-v32 - Support workspace and stability
-  - Fixed: any support event rebuilt the Support Desk and destroyed the
-    conversation an agent had open, including a half-typed reply. The open
-    conversation and the draft are now preserved across every rebuild.
-  - Fixed: Content-Security-Policy allowed https://api.titopay.co.za but not
-    wss://api.titopay.co.za, so the live support socket was blocked in every
-    previous build and the desk silently fell back to 10-second polling.
-  - The conversation transcript is a readable thread instead of a four-column
-    table. Sender names and timestamps now resolve (they read snake_case keys
-    the API does not send).
-  - Queue rows carry two actions (Open, Take over); Resolve, Release, Transfer
-    and notes moved into the conversation workspace where the agent has context.
-  - Support statuses map to semantic colours instead of all rendering blue.
-  - Sign-in page: build stamp removed; the wordmark is set in type so the logo
-    artwork's white background no longer floats on the dark panel.
-  - "Cannot reach the TitoPay API" replaces the generic module error when the
-    API does not respond, naming the endpoint and origin, with a local sign-out.
-
+v33 - Rate-limit and lockout messages reach the operator verbatim.
+v32 - Support workspace preserved across refreshes; CSP allows the chat socket.
 v31 - Sign-in page rebuilt for a regulated system.
 v30 - Operations console front-end rebuild on a single-layer stylesheet.
 
 No API endpoint, authentication, routing or permission behaviour is changed by
-the admin package. Assets are versioned ?v=admin-console-v33; hard refresh
+the admin package. Assets are versioned ?v=admin-console-v34; hard refresh
 (Ctrl+F5 / Cmd+Shift+R) if an old layout persists.

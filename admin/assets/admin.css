@@ -2165,31 +2165,115 @@ table button:focus-visible {
   text-transform: uppercase;
 }
 
-/* Support conversation workspace ------------------------------------------ */
+/* Support desk ------------------------------------------------------------ */
 
-.support-conversation {
+/* One queue visible at a time. Three stacked tables on one page was the whole
+   clutter problem. */
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 3px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface-sunken);
+}
+
+.segmented-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border: 0;
+  border-radius: var(--tp-radius-sm);
+  background: transparent;
+  color: var(--tp-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.segmented-btn:hover {
+  color: var(--tp-text-strong);
+}
+
+.segmented-btn.active {
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  box-shadow: var(--tp-shadow-card);
+}
+
+.segmented-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--tp-focus);
+}
+
+.segmented-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: var(--tp-radius-pill);
+  background: var(--tp-blue-soft);
+  color: var(--tp-blue);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.segmented-btn.active .segmented-count {
+  background: var(--tp-blue);
+  color: #fff;
+}
+
+/* Conversation workspace: replaces the queue, so it owns the page. */
+.support-workspace {
   display: grid;
   gap: 14px;
 }
 
-.support-conversation-meta {
+.support-workspace-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 14px;
+  gap: 10px 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--tp-border-soft);
+}
+
+.support-workspace-who {
+  display: grid;
+  line-height: 1.3;
+}
+
+.support-workspace-who strong {
+  color: var(--tp-text-strong);
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.support-workspace-who small {
   color: var(--tp-muted);
   font-size: 0.8125rem;
 }
 
-.support-conversation-meta strong {
+.support-workspace-meta {
+  color: var(--tp-muted);
+  font-size: 0.8125rem;
+}
+
+.support-workspace-meta strong {
   color: var(--tp-text-strong);
   font-weight: 600;
+}
+
+.support-workspace-actions {
+  margin-left: auto;
 }
 
 .support-thread {
   display: grid;
   gap: 8px;
-  max-height: 420px;
+  max-height: min(52vh, 520px);
   margin: 0;
   padding: 14px;
   overflow-y: auto;
@@ -2282,6 +2366,10 @@ table button:focus-visible {
   display: grid;
   gap: 10px;
   justify-items: start;
+}
+
+.support-composer .primary-btn {
+  min-width: 140px;
 }
 
 .support-composer .field {

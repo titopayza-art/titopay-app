@@ -435,7 +435,7 @@ function ensureAdminSupportSocket() {
     if (!supportFallbackRefreshTimer) {
       supportFallbackRefreshTimer = setInterval(() => {
         const page = document.querySelector(".admin-shell[data-page]")?.dataset.page;
-        if (["support", "chatbot-escalations"].includes(page) && !document.querySelector("#support-agent-message:focus")) {
+        if (["support", "chatbot-escalations"].includes(page)) {
           renderSupport().catch(() => null);
         }
       }, 10000);
@@ -451,7 +451,7 @@ function ensureAdminSupportSocket() {
       const payload = JSON.parse(event.data || "{}");
       if (!String(payload.type || "").startsWith("support:")) return;
       const page = document.querySelector(".admin-shell[data-page]")?.dataset.page;
-      if (["support", "chatbot-escalations"].includes(page) && !document.querySelector("#support-agent-message:focus")) {
+      if (["support", "chatbot-escalations"].includes(page)) {
         renderSupport().catch(() => null);
       }
     } catch {}
@@ -461,7 +461,7 @@ function ensureAdminSupportSocket() {
     if (!supportFallbackRefreshTimer) {
       supportFallbackRefreshTimer = setInterval(() => {
         const page = document.querySelector(".admin-shell[data-page]")?.dataset.page;
-        if (["support", "chatbot-escalations"].includes(page) && !document.querySelector("#support-agent-message:focus")) {
+        if (["support", "chatbot-escalations"].includes(page)) {
           renderSupport().catch(() => null);
         }
       }, 10000);
@@ -1731,23 +1731,60 @@ async function renderWallets(me = {}) {
   `;
 }
 
+const SUPPORT_TABS = [
+  ["conversations", "Live conversations"],
+  ["tickets", "Tickets"],
+  ["approvals", "Profile approvals"],
+];
+
+/* The Support Desk has two modes. The queue lists work waiting to be picked up;
+   opening a conversation replaces the queue entirely so the agent is
+   unambiguously inside that chat, with one way back. Rendering the conversation
+   below the queue meant taking over a chat left the agent still looking at the
+   queue with the conversation off-screen. */
 async function renderSupport() {
   captureSupportWorkspace();
+  ensureAdminSupportSocket();
+  const page = document.getElementById("page-content");
+  if (!page) return;
+
+  const openId = PAGE_EXPORTS.openSupportConversationId;
+  if (openId) {
+    try {
+      const context = await apiFetch(`/admin/support/conversations/${openId}/context`);
+      page.innerHTML = renderSupportConversationView(context);
+      const composer = document.getElementById("support-agent-message");
+      if (composer) {
+        if (PAGE_EXPORTS.supportDraft) composer.value = PAGE_EXPORTS.supportDraft;
+        if (PAGE_EXPORTS.supportDraftFocused !== false) {
+          composer.focus({ preventScroll: true });
+          const caret = Number(PAGE_EXPORTS.supportDraftCaret);
+          if (Number.isFinite(caret)) composer.setSelectionRange(caret, caret);
+        }
+      }
+      const thread = document.querySelector(".support-thread");
+      if (thread) thread.scrollTop = thread.scrollHeight;
+      return;
+    } catch (error) {
+      PAGE_EXPORTS.openSupportConversationId = null;
+      showToast(adminErrorMessage(error.message || "Unable to open that conversation."));
+    }
+  }
+
   const [ticketResult, conversationResult, profileChangeResult] = await Promise.all([
-    apiFetch("/admin/support/tickets"),
+    apiFetch("/admin/support/tickets").catch(() => ({ items: [] })),
     apiFetch("/admin/support/conversations").catch(() => ({ items: [] })),
     apiFetch("/admin/profile-change-requests").catch(() => ({ items: [], metrics: {} })),
   ]);
   const tickets = ticketResult.items || [];
   const conversations = conversationResult.items || [];
-  const conversationCounts = conversationResult.counts || {};
+  const counts = conversationResult.counts || {};
   const profileChanges = profileChangeResult.items || [];
-  const open = tickets.filter((row) => ["open", "in_progress", "pending"].includes(row.status)).length;
-  const escalated = tickets.filter((row) => row.status === "escalated").length;
-  const resolved = tickets.filter((row) => ["resolved", "closed"].includes(row.status)).length;
-  const activeChats = Number(conversationCounts.active ?? conversations.filter((row) => ["AGENT_ACTIVE", "REOPENED"].includes(row.status)).length);
+  const openTickets = tickets.filter((row) => ["open", "in_progress", "pending"].includes(row.status)).length;
+  const waiting = Number(counts.waiting ?? conversations.filter((row) => ["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status)).length);
+  const activeChats = Number(counts.active ?? conversations.filter((row) => ["AGENT_ACTIVE", "REOPENED"].includes(row.status)).length);
   const profilePending = profileChanges.filter((row) => ["pending", "in_review"].includes(row.status)).length;
-  const profileOverdue = profileChanges.filter((row) => ["pending", "in_review"].includes(row.status) && row.dueAt && new Date(row.dueAt).getTime() < Date.now()).length;
+
   PAGE_EXPORTS.support = tickets.concat(conversations.map((row) => ({
     type: "chat",
     id: row.id,
@@ -1764,67 +1801,127 @@ async function renderSupport() {
     fields: Object.keys(row.requestedChanges || {}).join(", "),
     due_at: row.dueAt
   })));
+
+  const tab = SUPPORT_TABS.some(([key]) => key === PAGE_EXPORTS.supportTab)
+    ? PAGE_EXPORTS.supportTab
+    : "conversations";
+  const tabCounts = { conversations: waiting + activeChats, tickets: openTickets, approvals: profilePending };
   const chatParticipant = (participant) => {
     if (!participant) return "-";
     const name = participant.full_name || participant.username || participant.email || participant.phone || "TitoPay user";
     const handle = participant.username ? `@${participant.username}` : participant.email || participant.phone || participant.account_type || "";
     return `<strong>${escapeHtml(name)}</strong><br><small>${escapeHtml(handle)}</small>`;
   };
-  const assignedTo = (row) => row.assignedAgent?.name || row.metadata?.assigned_to || row.metadata?.assignedTo || "Customer Care Queue";
-  ensureAdminSupportSocket();
-  document.getElementById("page-content").innerHTML = tableCard(
-    "Customer Support Centre",
-    `
-      ${renderMetrics([
-        ["Open Queue", open],
-        ["Escalated", escalated],
-        ["Resolved", resolved],
-        ["Active Chats", activeChats],
-        ["Waiting", Number(conversationCounts.waiting || 0)],
-        ["Assigned to Me", Number(conversationCounts.mine || 0)],
-        ["Profile Approvals", profilePending],
-        ["SLA Overdue", profileOverdue],
-      ])}
-      <h3 class="section-title">Support Tickets</h3>
-      ${renderRows(tickets, [
-      { label: "Request", render: (row) => `<strong>${escapeHtml(row.subject)}</strong><br><small>${escapeHtml(row.category)} · ${escapeHtml(new Date(row.created_at || Date.now()).toLocaleDateString("en-ZA"))}</small>` },
+  const assignedTo = (row) => row.assignedAgent?.name || row.metadata?.assigned_to || row.metadata?.assignedTo || "Unassigned";
+
+  const panels = {
+    conversations: () => renderRows(conversations, [
+      { label: "Customer", render: (row) => chatParticipant(row.customer || row.participant_a) },
+      { label: "Reference", render: (row) => `<strong>${escapeHtml(row.ticketRef || compactId(row.id))}</strong>` },
+      { label: "Waiting", render: (row) => `<strong>${escapeHtml(monitorAge(row.waitingSeconds || 0))}</strong>` },
+      { label: "Last message", render: (row) => `<small>${escapeHtml(String(row.last_message || "No messages yet").slice(0, 90))}</small>` },
+      { label: "Status", render: (row) => `<span class="chip ${supportStatusClass(row.status)}">${escapeHtml(String(row.status || "WAITING_FOR_AGENT").replace(/_/g, " "))}</span><br><small>${escapeHtml(assignedTo(row))}</small>` },
+    ], (row) => ["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status)
+      ? `<button data-support-chat-takeover="${escapeHtml(row.id)}">Take over</button>`
+      : `<button data-support-chat-history="${escapeHtml(row.id)}">Open</button>`),
+
+    tickets: () => renderRows(tickets, [
+      { label: "Request", render: (row) => `<strong>${escapeHtml(row.subject)}</strong><br><small>${escapeHtml(row.category || "-")} · ${escapeHtml(new Date(row.created_at || Date.now()).toLocaleDateString("en-ZA"))}</small>` },
       { label: "Customer", render: (row) => `${escapeHtml(row.full_name || "-")}<br><small>${escapeHtml(row.username || "-")}</small>` },
-      { label: "Details", render: (row) => `<small>${escapeHtml(String(row.message || "").slice(0, 140))}${String(row.message || "").length > 140 ? "..." : ""}</small>` },
-      { label: "Assigned", render: (row) => escapeHtml(row.assigned_to || "Customer Care Queue") },
+      { label: "Details", render: (row) => `<small>${escapeHtml(String(row.message || "").slice(0, 120))}${String(row.message || "").length > 120 ? "..." : ""}</small>` },
+      { label: "Assigned", render: (row) => escapeHtml(row.assigned_to || "Unassigned") },
       { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status)}</span>` },
     ], (row) => `
       <button data-support-status="in_progress" data-support-id="${row.id}">Take over</button>
-      <button data-support-status="escalated" data-support-id="${row.id}">Escalate</button>
       <button data-support-status="resolved" data-support-id="${row.id}">Resolve</button>
-      <button data-support-status="pending" data-support-id="${row.id}">Reopen</button>
-    `)}
-      <h3 class="section-title">Escalated Support Conversations</h3>
-      ${renderRows(conversations, [
-      { label: "Customer", render: (row) => chatParticipant(row.customer || row.participant_a) },
-      { label: "Reference / Reason", render: (row) => `<strong>${escapeHtml(row.ticketRef || compactId(row.id))}</strong><br><small>${escapeHtml(String(row.escalationReason || "-").slice(0, 140))}</small>` },
-      { label: "Waiting", render: (row) => `<strong>${escapeHtml(monitorAge(row.waitingSeconds || 0))}</strong><br><small>${escapeHtml(row.createdAt ? new Date(row.createdAt).toLocaleString("en-ZA") : "-")}</small>` },
-      { label: "Last Message", render: (row) => `<small>${escapeHtml(String(row.last_message || "No messages yet").slice(0, 140))}</small>` },
-      { label: "Assigned", render: (row) => escapeHtml(assignedTo(row)) },
-      { label: "Status", render: (row) => `<span class="chip ${supportStatusClass(row.status)}">${escapeHtml(String(row.status || "WAITING_FOR_AGENT").replace(/_/g, " "))}</span>` },
-    ], (row) => `
-      <button data-support-chat-history="${row.id}">Open</button>
-      ${["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status) ? `<button data-support-chat-takeover="${row.id}">Take over</button>` : ""}
-    `)}
-      <h3 class="section-title">Profile Change Approvals</h3>
-      ${renderRows(profileChanges, [
+    `),
+
+    approvals: () => renderRows(profileChanges, [
       { label: "User", render: (row) => `<strong>${escapeHtml(row.user?.fullName || row.user?.username || "-")}</strong><br><small>${escapeHtml(row.user?.phone || row.user?.email || "-")}</small>` },
-      { label: "Requested Changes", render: (row) => Object.entries(row.requestedChanges || {}).map(([key, value]) => `<small><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value)}</small>`).join("<br>") || "-" },
-      { label: "Current", render: (row) => Object.entries(row.currentSnapshot || {}).filter(([key]) => ["fullName", "username", "email", "phone", "businessName"].includes(key)).map(([key, value]) => `<small><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value || "-")}</small>`).join("<br>") || "-" },
-      { label: "SLA", render: (row) => `<strong>${escapeHtml(row.dueAt ? new Date(row.dueAt).toLocaleString("en-ZA") : "-")}</strong><br><small>${row.dueAt && new Date(row.dueAt).getTime() < Date.now() && ["pending", "in_review"].includes(row.status) ? "Overdue" : "72-hour review"}</small>` },
+      { label: "Requested changes", render: (row) => Object.entries(row.requestedChanges || {}).map(([key, value]) => `<small><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value)}</small>`).join("<br>") || "-" },
+      { label: "SLA", render: (row) => `<strong>${escapeHtml(row.dueAt ? new Date(row.dueAt).toLocaleDateString("en-ZA") : "-")}</strong><br><small>${row.dueAt && new Date(row.dueAt).getTime() < Date.now() && ["pending", "in_review"].includes(row.status) ? "Overdue" : "72-hour review"}</small>` },
       { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "pending")}</span>` },
     ], (row) => ["pending", "in_review"].includes(row.status) ? `
       <button data-profile-change-approve="${escapeHtml(row.id)}">Approve</button>
       <button data-profile-change-reject="${escapeHtml(row.id)}">Reject</button>
-    ` : "")}
-      <section id="support-context-host"></section>
-    `
-  );
-  restoreSupportWorkspace();
+    ` : ""),
+  };
+
+  page.innerHTML = `
+    ${renderMetrics([
+      ["Waiting for an agent", waiting],
+      ["Active chats", activeChats],
+      ["Open tickets", openTickets],
+      ["Profile approvals", profilePending],
+    ])}
+    <section class="table-card">
+      <nav class="segmented" aria-label="Support queues">
+        ${SUPPORT_TABS.map(([key, label]) => `
+          <button type="button" class="segmented-btn ${tab === key ? "active" : ""}" data-support-tab="${key}" aria-pressed="${tab === key}">
+            ${escapeHtml(label)}${tabCounts[key] ? `<span class="segmented-count">${tabCounts[key]}</span>` : ""}
+          </button>
+        `).join("")}
+      </nav>
+      ${panels[tab]()}
+    </section>
+  `;
+}
+
+function renderSupportConversationView(context = {}) {
+  const conversation = context.conversation;
+  if (!conversation) return `<div class="empty">This conversation is no longer available.</div>`;
+  const status = String(conversation.status || "").toUpperCase();
+  const canReply = ["AGENT_ACTIVE", "REOPENED"].includes(status);
+  const notes = context.internalNotes || [];
+  const id = escapeHtml(conversation.id);
+  return `
+    <section class="table-card support-workspace">
+      <header class="support-workspace-head">
+        <button class="secondary-btn" type="button" data-support-back>&larr; Back to queue</button>
+        <div class="support-workspace-who">
+          <strong>${escapeHtml(conversation.customer?.name || "Customer")}</strong>
+          <small>${escapeHtml(conversation.customer?.accountIdentifier || conversation.customer?.username || "")}</small>
+        </div>
+        <span class="chip ${supportStatusClass(status)}">${escapeHtml(status.replace(/_/g, " "))}</span>
+        <span class="support-workspace-meta">
+          ${conversation.ticketRef ? `Ref <strong>${escapeHtml(conversation.ticketRef)}</strong> · ` : ""}
+          Assigned to <strong>${escapeHtml(conversation.assignedAgent?.name || "nobody")}</strong>
+        </span>
+        <div class="action-row support-workspace-actions">
+          ${["ESCALATED", "WAITING_FOR_AGENT"].includes(status) ? `<button data-support-chat-takeover="${id}">Take over</button>` : ""}
+          ${canReply ? `
+            <button data-support-chat-resolve="${id}">Resolve</button>
+            <button data-support-chat-unassign="${id}">Release</button>
+            <button data-support-chat-transfer="${id}">Transfer</button>
+          ` : ""}
+          ${status === "RESOLVED" ? `<button data-support-chat-reopen="${id}">Reopen</button><button data-support-chat-close="${id}">Close</button>` : ""}
+          ${status === "CLOSED" ? `<button data-support-chat-reopen="${id}">Reopen</button>` : ""}
+          <button data-support-chat-note="${id}">Add note</button>
+        </div>
+      </header>
+
+      ${renderSupportThread(context.messages)}
+
+      ${canReply ? `
+        <form id="support-agent-reply-form" class="support-composer" data-support-conversation-id="${id}">
+          <div class="field">
+            <label class="visually-hidden" for="support-agent-message">Reply to customer</label>
+            <textarea id="support-agent-message" name="message" rows="3" maxlength="4000" placeholder="Type your reply. The customer sees it immediately." required></textarea>
+          </div>
+          <button class="primary-btn" type="submit">Send reply</button>
+        </form>
+      ` : `<p class="table-card-note">Take over this conversation before replying.</p>`}
+
+      ${notes.length ? `
+        <details class="support-notes">
+          <summary>Internal notes (${notes.length}) — never shown to the customer</summary>
+          <ul>
+            ${notes.map((row) => `<li><strong>${escapeHtml(row.createdByLabel || row.createdBy || "Admin")}</strong> · ${escapeHtml(supportMessageTime(row.createdAt))}<br>${escapeHtml(row.note || "")}</li>`).join("")}
+          </ul>
+        </details>
+      ` : ""}
+    </section>
+  `;
 }
 
 /* A support transcript is a conversation, not a dataset. Rendering it as a
@@ -1861,91 +1958,14 @@ function renderSupportThread(messages = []) {
 /* The conversation workspace renders below the queue tables, so an agent who
    takes over or opens a chat would otherwise be left looking at the queue with
    the workspace off-screen. */
-function mountSupportConversation(context, options = {}) {
-  const host = document.getElementById("support-context-host");
-  if (!host) return;
-  const conversationId = context?.conversation?.id;
-  host.innerHTML = renderSupportContext(context);
-  if (conversationId) PAGE_EXPORTS.openSupportConversationId = conversationId;
-  const composer = document.getElementById("support-agent-message");
-  if (composer && PAGE_EXPORTS.supportDraft) composer.value = PAGE_EXPORTS.supportDraft;
-  if (options.restore) return;
-  host.scrollIntoView({ block: "start", behavior: "smooth" });
-  composer?.focus({ preventScroll: true });
-}
-
-/* renderSupport() rebuilds the whole page, and it is called on every incoming
-   support event as well as by the agent's own actions. Without this, taking
-   over a chat — or simply another agent's activity landing on the socket —
-   destroyed the conversation the agent had open and threw away a half-typed
-   reply. The draft is captured before the rebuild and the open conversation is
-   put back after it. */
+/* The draft reply is preserved across the re-renders that incoming support
+   events trigger, so another agent's activity cannot wipe a half-typed reply. */
 function captureSupportWorkspace() {
   const composer = document.getElementById("support-agent-message");
-  if (composer) PAGE_EXPORTS.supportDraft = composer.value;
-}
-
-async function restoreSupportWorkspace() {
-  const id = PAGE_EXPORTS.openSupportConversationId;
-  if (!id || !document.getElementById("support-context-host")) return;
-  try {
-    mountSupportConversation(await apiFetch(`/admin/support/conversations/${id}/context`), { restore: true });
-  } catch {
-    // The queue is still usable if a single conversation cannot be reloaded.
-  }
-}
-
-function renderSupportContext(context = {}) {
-  const conversation = context.conversation;
-  if (!conversation) return "";
-  const canReply = ["AGENT_ACTIVE", "REOPENED"].includes(String(conversation.status || "").toUpperCase());
-  const notes = context.internalNotes || [];
-  return tableCard(
-    escapeHtml(conversation.customer?.name || "Customer"),
-    `
-      <div class="support-conversation">
-        <div class="support-conversation-meta">
-          <span class="chip ${supportStatusClass(conversation.status)}">${escapeHtml(String(conversation.status || "").replace(/_/g, " "))}</span>
-          <span>Assigned to <strong>${escapeHtml(conversation.assignedAgent?.name || "nobody yet")}</strong></span>
-          ${conversation.ticketRef ? `<span>Reference <strong>${escapeHtml(conversation.ticketRef)}</strong></span>` : ""}
-        </div>
-
-        <div class="action-row support-conversation-actions">
-          ${["ESCALATED", "WAITING_FOR_AGENT"].includes(String(conversation.status || "").toUpperCase()) ? `<button data-support-chat-takeover="${escapeHtml(conversation.id)}">Take over</button>` : ""}
-          ${canReply ? `
-            <button data-support-chat-resolve="${escapeHtml(conversation.id)}">Resolve</button>
-            <button data-support-chat-unassign="${escapeHtml(conversation.id)}">Release</button>
-            <button data-support-chat-transfer="${escapeHtml(conversation.id)}">Transfer</button>
-          ` : ""}
-          ${String(conversation.status || "").toUpperCase() === "RESOLVED" ? `<button data-support-chat-reopen="${escapeHtml(conversation.id)}">Reopen</button><button data-support-chat-close="${escapeHtml(conversation.id)}">Close</button>` : ""}
-          ${String(conversation.status || "").toUpperCase() === "CLOSED" ? `<button data-support-chat-reopen="${escapeHtml(conversation.id)}">Reopen</button>` : ""}
-          <button data-support-chat-note="${escapeHtml(conversation.id)}">Add internal note</button>
-        </div>
-
-        ${renderSupportThread(context.messages)}
-
-        ${canReply ? `
-          <form id="support-agent-reply-form" class="support-composer" data-support-conversation-id="${escapeHtml(conversation.id)}">
-            <div class="field">
-              <label for="support-agent-message">Reply to customer</label>
-              <textarea id="support-agent-message" name="message" rows="3" maxlength="4000" placeholder="Type your reply. The customer sees this immediately." required></textarea>
-            </div>
-            <button class="primary-btn" type="submit">Send reply</button>
-          </form>
-        ` : `<p class="table-card-note">Take over this conversation before replying.</p>`}
-
-        ${notes.length ? `
-          <details class="support-notes">
-            <summary>Internal notes (${notes.length}) — never shown to the customer</summary>
-            <ul>
-              ${notes.map((row) => `<li><strong>${escapeHtml(row.createdByLabel || row.createdBy || "Admin")}</strong> · ${escapeHtml(supportMessageTime(row.createdAt))}<br>${escapeHtml(row.note || "")}</li>`).join("")}
-            </ul>
-          </details>
-        ` : ""}
-      </div>
-    `,
-    "Conversation content is visible to authorised support staff only and is retained for audit."
-  );
+  if (!composer) return;
+  PAGE_EXPORTS.supportDraft = composer.value;
+  PAGE_EXPORTS.supportDraftCaret = composer.selectionStart;
+  PAGE_EXPORTS.supportDraftFocused = document.activeElement === composer;
 }
 
 function monitorAge(seconds) {
@@ -3513,8 +3533,9 @@ document.addEventListener("submit", async (event) => {
         })
       });
       supportReplyForm.reset();
-      const context = await apiFetch(`/admin/support/conversations/${supportReplyForm.dataset.supportConversationId}/context`);
-      mountSupportConversation(context);
+      PAGE_EXPORTS.supportDraft = "";
+      PAGE_EXPORTS.openSupportConversationId = supportReplyForm.dataset.supportConversationId;
+      await renderSupport();
       showToast("Reply sent");
     } catch (error) {
       showToast(adminErrorMessage(error.message));
@@ -3984,28 +4005,34 @@ document.addEventListener("click", async (event) => {
       showToast("Support chat taken over");
       PAGE_EXPORTS.openSupportConversationId = id;
       await renderSupport();
-      mountSupportConversation(await apiFetch(`/admin/support/conversations/${id}/context`));
     } catch (error) {
       showToast(adminErrorMessage(error.message));
     }
   }
   const supportChatHistory = event.target.closest("[data-support-chat-history]");
   if (supportChatHistory) {
-    try {
-      const context = await apiFetch(`/admin/support/conversations/${supportChatHistory.dataset.supportChatHistory}/context`);
-      mountSupportConversation(context);
-    } catch (error) {
-      showToast(adminErrorMessage(error.message));
-    }
+    PAGE_EXPORTS.openSupportConversationId = supportChatHistory.dataset.supportChatHistory;
+    await renderSupport();
+    return;
+  }
+  const supportBack = event.target.closest("[data-support-back]");
+  if (supportBack) {
+    PAGE_EXPORTS.openSupportConversationId = null;
+    PAGE_EXPORTS.supportDraft = "";
+    await renderSupport();
+    return;
+  }
+  const supportTab = event.target.closest("[data-support-tab]");
+  if (supportTab) {
+    PAGE_EXPORTS.supportTab = supportTab.dataset.supportTab;
+    await renderSupport();
+    return;
   }
   const supportChatReply = event.target.closest("[data-support-chat-reply]");
   if (supportChatReply) {
-    try {
-      const context = await apiFetch(`/admin/support/conversations/${supportChatReply.dataset.supportChatReply}/context`);
-      mountSupportConversation(context);
-    } catch (error) {
-      showToast(adminErrorMessage(error.message));
-    }
+    PAGE_EXPORTS.openSupportConversationId = supportChatReply.dataset.supportChatReply;
+    await renderSupport();
+    return;
   }
   const supportChatResolve = event.target.closest("[data-support-chat-resolve]");
   if (supportChatResolve) {
@@ -4068,8 +4095,8 @@ document.addEventListener("click", async (event) => {
           body: JSON.stringify({ note }),
         });
         showToast("Internal note saved");
-        const context = await apiFetch(`/admin/support/conversations/${supportChatNote.dataset.supportChatNote}/context`);
-        mountSupportConversation(context);
+        PAGE_EXPORTS.openSupportConversationId = supportChatNote.dataset.supportChatNote;
+        await renderSupport();
       } catch (error) {
         showToast(adminErrorMessage(error.message));
       }
