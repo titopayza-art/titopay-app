@@ -9308,3 +9308,51 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
 .chat-clear-all-btn {
   justify-self: start;
 }
+
+
+/* ---------------------------------------------------------------------------
+   Desktop landing on short viewports
+
+   The two-column landing always showed all nine tiles. A MacBook Air running
+   Safari with its toolbars has ~750px of page height, and the third tile row
+   slid underneath the QR footer band -- squeezed exactly where the photo
+   showed it, with spare room sitting above. Below 860px of height the desktop
+   drops to two full rows and compacts its rhythm; the space that is there
+   gets used, and nothing ever sits under the footer.
+   --------------------------------------------------------------------------- */
+@media (min-width: 900px) and (max-height: 859px) {
+  body.landing-static .landing-flow .preview-grid .service-tile:nth-child(n + 7),
+  body.landing-static .business-landing .preview-grid .service-tile:nth-child(n + 7) {
+    display: none;
+  }
+
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    row-gap: clamp(16px, 3.4vh, 30px);
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(108px, 16vh, 150px);
+  }
+}
+
+/* Even shorter -- a small laptop with devtools or a half-height window: the
+   composition compacts further rather than colliding with the footer. */
+@media (min-width: 900px) and (max-height: 719px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    row-gap: clamp(10px, 2vh, 18px);
+    padding-bottom: calc(100px + var(--safe-bottom));
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile,
+  body.landing-static .business-landing .preview-grid .service-tile {
+    min-height: clamp(88px, 13vh, 118px);
+  }
+
+  body.landing-static .landing-flow h1,
+  body.landing-static .business-landing h1 {
+    font-size: clamp(1.8rem, 4.4vh, 2.6rem);
+  }
+}

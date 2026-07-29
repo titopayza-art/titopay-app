@@ -67,6 +67,9 @@ function mock(acct, eligible) {
     if (u.pathname === "/v1/qr/profile") return J({ qr: { id: "TPQR-81234567", reference: "TPQR-81234567", imageDataUrl: QR_IMAGE, deepLink: "https://app.titopay.co.za/pay/81234567" } });
     if (u.pathname === "/v1/qr/generate-static") return J({ qr: { id: "TIP-4471", reference: "TIP-4471", imageDataUrl: QR_IMAGE, deepLink: "https://app.titopay.co.za/pay/TIP-4471" } });
     if (u.pathname === "/v1/enterprise-distribution/eligibility") {
+      if (eligible === "approved-blocked") {
+        return J({ eligibility: { eligible: false, approved: true, organisation: { organisation_name: "Naledi Trading Foundation" }, blockers: ["Business FICA must be approved.", "Merchant verification must be approved.", "Enterprise Bulk Distribution licence is not active."] } });
+      }
       return J({ eligibility: eligible ? { eligible: true, organisation: { organisation_name: "Naledi Trading Foundation" } } : { eligible: false, blockers: ["FICA verification incomplete"] } });
     }
     if (u.pathname === "/v1/enterprise-distribution/beneficiaries") return J({ items: BENEFICIARIES });
@@ -656,7 +659,7 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
   }
 
   // ---- 7. Landing footer -------------------------------------------------
-  for (const [w, h, label, safe] of [[440, 956, "phone", 0], [440, 956, "phone-insets", 1], [393, 852, "iphone15-insets", 1], [820, 1180, "tablet", 0], [1440, 900, "desktop", 0]]) {
+  for (const [w, h, label, safe] of [[440, 956, "phone", 0], [440, 956, "phone-insets", 1], [393, 852, "iphone15-insets", 1], [820, 1180, "tablet", 0], [1440, 900, "desktop", 0], [1440, 760, "macbook-air", 0], [1280, 660, "laptop-short", 0]]) {
     for (const acct of ["personal", "business"]) {
       const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: w < 768, hasTouch: w < 768 });
       if (safe) await ctx.addInitScript(() => { document.addEventListener("DOMContentLoaded", () => { document.documentElement.style.setProperty("--safe-top", "59px"); document.documentElement.style.setProperty("--safe-bottom", "34px"); }); });
@@ -680,6 +683,7 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
           overflowY: document.documentElement.scrollHeight - window.innerHeight,
           overflowX: document.documentElement.scrollWidth - window.innerWidth,
           visibleTiles: [...document.querySelectorAll(".preview-grid .service-tile")].filter((t) => getComputedStyle(t).display !== "none").length,
+          tileFooterGap: Math.round(r.top - Math.max(...[...document.querySelectorAll(".preview-grid .service-tile")].filter((t) => getComputedStyle(t).display !== "none").map((t) => t.getBoundingClientRect().bottom))),
           tallestTile: Math.round(Math.max(...[...document.querySelectorAll(".preview-grid .service-tile")].filter((t) => getComputedStyle(t).display !== "none").map((t) => t.getBoundingClientRect().height))),
           footerCta: Boolean(el.querySelector(".landing-cta-btn"))
         };
@@ -694,6 +698,7 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
         check(`landing service grid has no orphan tile (${label} ${acct})`, m.visibleTiles % 3 === 0 && m.visibleTiles >= 6, `${m.visibleTiles} tiles`);
         check(`landing tiles are not stretched (${label} ${acct})`, m.tallestTile <= 170, `${m.tallestTile}px`);
         check(`landing footer carries the QR action (${label} ${acct})`, m.footerCta);
+        check(`no tile sits under the footer (${label} ${acct})`, m.tileFooterGap >= 8, `gap ${m.tileFooterGap}px`);
       }
       await ctx.close();
     }
@@ -735,6 +740,57 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
     check("ineligible organisation gets the application form", m.form);
     check("ineligible organisation sees its blockers", m.blocker);
     check("ineligible organisation gets no batch tools", m.noDashboard);
+    await ctx.close();
+  }
+
+  // ---- 8. Bulk Distribution: tile for approved orgs, truth for blocked ---
+  {
+    const { ctx, page } = await authed(browser, { acct: "business", eligible: true });
+    await page.evaluate(() => { location.hash = "services"; });
+    await sleep(900);
+    const tile = await page.$('.screen [data-service="enterprise-distribution"]');
+    check("approved business gets a Bulk Distribution service tile", Boolean(tile));
+    if (tile) {
+      // The tile is the last in the grid; a minimal auto-scroll parks its
+      // click point under the fixed bottom nav, and the 15s background sync
+      // can re-render mid-retry. Scroll past it and click through the DOM.
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await sleep(300);
+      await page.evaluate(() => document.querySelector('.screen [data-service="enterprise-distribution"]')?.click());
+      await sleep(1400);
+      const opened = await page.evaluate(() => document.querySelectorAll(".modal-card .ed-steps li").length);
+      check("the tile opens the Bulk Distribution dashboard", opened === 5, `${opened} steps`);
+    }
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await authed(browser, { acct: "personal", eligible: true });
+    await page.evaluate(() => { location.hash = "services"; });
+    await sleep(900);
+    const tile = await page.$('.screen [data-service="enterprise-distribution"]');
+    check("personal accounts never see the Bulk Distribution tile", tile === null);
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await authed(browser, { acct: "business", eligible: "approved-blocked" });
+    await page.evaluate(() => { location.hash = "profile"; });
+    await sleep(900);
+    await page.click('[data-action="enterprise-distribution"]');
+    await sleep(1200);
+    const m = await page.evaluate(() => {
+      const card = document.querySelector(".modal-card");
+      return {
+        licenceStated: /Licence approved/i.test(card.innerText),
+        blockerShown: /Business FICA must be approved/i.test(card.innerText),
+        licenceBlockerHidden: !/licence is not active/i.test(card.innerText),
+        noForm: !card.querySelector('[data-form="enterprise-distribution-application"]'),
+        ficaButton: Boolean(card.querySelector('[data-action="fica-verification"]'))
+      };
+    });
+    check("approved-but-blocked org sees its licence acknowledged", m.licenceStated);
+    check("approved-but-blocked org sees the real outstanding checks", m.blockerShown && m.licenceBlockerHidden, JSON.stringify(m));
+    check("approved-but-blocked org is not asked to reapply", m.noForm);
+    check("a FICA blocker links to FICA verification", m.ficaButton);
     await ctx.close();
   }
 

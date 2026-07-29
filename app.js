@@ -622,7 +622,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=188", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=189", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
@@ -1032,8 +1032,33 @@ function landingPreviewServices() {
   return selected.slice(0, Math.min(selected.length >= 3 ? complete : selected.length, LANDING_PREVIEW_COUNT));
 }
 
+// The catalogue has no enterprise-distribution row, so an approved
+// organisation had no tile in Services and could only reach Bulk Distribution
+// through the profile. The tile is synthesised client-side, gated on the
+// eligibility the API itself returns -- it never appears for anyone the
+// server would turn away.
+function enterpriseDistributionTileService() {
+  return {
+    id: "enterprise-distribution",
+    label: "Bulk Distribution",
+    icon: "bulk-distribution",
+    service_icon: "bulk-distribution",
+    action: "enterprise-distribution",
+    type: "enterpriseDistribution",
+    status: "active",
+    description: "Pay many TitoPay wallets from one validated batch."
+  };
+}
+
+function enterpriseDistributionTileVisible() {
+  return state.accountType === "business" && Boolean(state.enterpriseDistribution?.eligibility?.eligible);
+}
+
 function serviceById(id) {
-  return state.services.find((service) => service.id === id || service.action === id);
+  const found = state.services.find((service) => service.id === id || service.action === id);
+  if (found) return found;
+  if (id === "enterprise-distribution" && enterpriseDistributionTileVisible()) return enterpriseDistributionTileService();
+  return undefined;
 }
 
 async function loadAccount() {
@@ -1522,6 +1547,9 @@ function servicesView() {
     return !hiddenServiceTiles.has(action) && !hiddenServiceTiles.has(id);
   };
   const active = hideDuplicateAirtimeDataTiles(activeServices().filter(shouldShowServiceTile));
+  if (enterpriseDistributionTileVisible() && !active.some((service) => String(service.action || service.id) === "enterprise-distribution")) {
+    active.push(enterpriseDistributionTileService());
+  }
   const soon = hideDuplicateAirtimeDataTiles(comingSoonServices().filter(shouldShowServiceTile));
   return `
     ${state.serviceError ? promoCarousel() : ""}
@@ -3660,6 +3688,10 @@ async function handleAction(action) {
     await lockEnterpriseDistributionFunding(action.split(":")[1]);
     return;
   }
+  if (action === "enterprise-show-application") {
+    await openEnterpriseDistributionDashboard({ showForm: true });
+    return;
+  }
   if (action === "enterprise-add-beneficiary") {
     openEnterpriseBeneficiaryModal();
     return;
@@ -4733,14 +4765,65 @@ async function submitTicketingScan(data) {
 function enterpriseDistributionStatusCopy(eligibility = {}) {
   if (eligibility?.eligible) return "Approved organisation. Phase 1 tools are active.";
   if (state.accountType !== "business") return "Enterprise Bulk Distribution is available to approved TitoPay Business accounts only.";
+  if (eligibility?.approved || eligibility?.organisation) return "Licence approved. Complete the outstanding account checks to activate the tools.";
+  if (localStorage.getItem(enterpriseApplicationKey())) return "Application submitted. Awaiting TitoPay approval.";
   return "Submit an organisation application. TitoPay must approve your licence before bulk distribution tools are enabled.";
 }
 
-async function openEnterpriseDistributionDashboard() {
+function enterpriseApplicationKey() {
+  const user = state.user || {};
+  return `titopay_ed_application_v1_${user.id || user.username || "anon"}`;
+}
+
+async function openEnterpriseDistributionDashboard(options = {}) {
   const eligibilityResult = await api("/v1/enterprise-distribution/eligibility");
   state.enterpriseDistribution.eligibility = eligibilityResult.eligibility;
   const eligibility = state.enterpriseDistribution.eligibility || {};
   if (!eligibility.eligible) {
+    // Three different situations used to share one screen -- the application
+    // form -- and an approved organisation blocked by a FICA or merchant
+    // check read it as "the feature is broken". Each state now says what is
+    // actually true and what to do next.
+    const licenceApproved = Boolean(eligibility.approved || eligibility.organisation);
+    const appliedAt = localStorage.getItem(enterpriseApplicationKey());
+    const blockers = (eligibility.blockers || []).filter((item) => item !== "Enterprise Bulk Distribution licence is not active." || !licenceApproved);
+    if (licenceApproved) {
+      return openModal(`
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Bulk Distribution</p>
+            <h2>Licence approved -- checks outstanding</h2>
+            <p class="lead">${esc(eligibility.organisation?.organisation_name || "Your organisation")} holds an active Bulk Distribution licence. The tools unlock as soon as every account check below passes.</p>
+          </div>
+          <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+        </div>
+        <section class="activity-list review-transaction-list">
+          ${blockers.length ? blockers.map((blocker) => settingsRow("Outstanding", blocker, "shield")).join("") : settingsRow("Checks", "Re-checking your account now. Pull refresh if this persists.", "refresh")}
+        </section>
+        <section class="auth-actions">
+          ${blockers.some((b) => /FICA/i.test(b)) ? `<button class="btn primary" type="button" data-action="fica-verification">${icon("shield")} Complete FICA verification</button>` : ""}
+          <button class="btn secondary" type="button" data-action="enterprise-distribution">${icon("refresh")} Re-check now</button>
+        </section>
+        <p class="field-hint">Merchant profile and wallet checks are completed by TitoPay once your business verification is through. If every item above looks done and this screen persists, contact Customer Care with your organisation name.</p>
+      `);
+    }
+    if (appliedAt && !options.showForm) {
+      return openModal(`
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Bulk Distribution</p>
+            <h2>Application submitted</h2>
+            <p class="lead">Your organisation application went to TitoPay on ${esc(formatDate(appliedAt))}. Approval is manual; the tools unlock here the moment it is granted.</p>
+          </div>
+          <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+        </div>
+        ${blockers.length ? `<section class="activity-list review-transaction-list">${blockers.map((blocker) => settingsRow("To resolve meanwhile", blocker, "shield")).join("")}</section>` : ""}
+        <section class="auth-actions">
+          <button class="btn secondary" type="button" data-action="enterprise-distribution">${icon("refresh")} Check approval status</button>
+          <button class="btn ghost" type="button" data-action="enterprise-show-application">${icon("list")} Submit a new application</button>
+        </section>
+      `);
+    }
     return openModal(`
       <div class="modal-head">
         <div>
@@ -4750,7 +4833,7 @@ async function openEnterpriseDistributionDashboard() {
         </div>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
-      ${eligibility.blockers?.length ? `<section class="empty-state">${icon("shield")}<strong>Readiness checks</strong><p>${eligibility.blockers.map(esc).join("<br>")}</p></section>` : ""}
+      ${blockers.length ? `<section class="empty-state">${icon("shield")}<strong>Readiness checks</strong><p>${blockers.map(esc).join("<br>")}</p></section>` : ""}
       <form class="form-grid" data-form="enterprise-distribution-application">
         <div class="field"><label>Organisation name</label><input name="organisationName" value="${esc(eligibility.business?.business_name || eligibility.business?.full_name || "")}" required></div>
         <div class="field"><label>Registration number</label><input name="registrationNumber" required></div>
@@ -5095,6 +5178,7 @@ function openEnterpriseFundingReview(batchId) {
 
 async function submitEnterpriseDistributionApplication(data) {
   await api("/v1/enterprise-distribution/applications", { method: "POST", body: data });
+  localStorage.setItem(enterpriseApplicationKey(), new Date().toISOString());
   showToast("Application submitted for TitoPay approval.");
   await loadAccount();
   closeModal();

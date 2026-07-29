@@ -508,6 +508,25 @@ now says exactly that.
 
 ---
 
+## P2-5 — Applicant-visible Bulk Distribution application status
+
+`GET /v1/enterprise-distribution/eligibility` reports `approved` and
+`blockers`, but nothing tells the applicant whether an application is
+`submitted`, `under_review` or `rejected` — `listApplications` is admin-only.
+The client remembers "you applied on this device" locally, which survives
+neither a new device nor a cleared cache. Add the caller's own latest
+application to the eligibility response:
+
+```
+{ "eligible": false, "approved": false,
+  "application": { "status": "under_review", "submittedAt": "…", "adminNote": "…" },
+  "blockers": [ … ] }
+```
+
+A rejected application currently looks identical to one never made.
+
+---
+
 ## Cross-cutting
 
 **Idempotency.** The client sends `clientIdempotencyKey` in the body and
