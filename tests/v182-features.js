@@ -659,7 +659,10 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
   }
 
   // ---- 7. Landing footer -------------------------------------------------
-  for (const [w, h, label, safe] of [[440, 956, "phone", 0], [440, 956, "phone-insets", 1], [393, 852, "iphone15-insets", 1], [820, 1180, "tablet", 0], [1440, 900, "desktop", 0], [1440, 760, "macbook-air", 0], [1280, 660, "laptop-short", 0]]) {
+  // Rows with pill=1 keep the "Download TitoPay" install pill on screen -- the
+  // footer grows 56px to clear it, which is the state a first visit actually
+  // sees, and the state the sign-in row slid under the band in.
+  for (const [w, h, label, safe, pill] of [[440, 956, "phone", 0, 0], [440, 956, "phone-insets", 1, 0], [393, 852, "iphone15-insets", 1, 0], [820, 1180, "tablet", 0, 0], [1440, 900, "desktop", 0, 0], [1440, 760, "macbook-air", 0, 0], [1280, 660, "laptop-short", 0, 0], [1440, 900, "desktop-pill", 0, 1], [1440, 760, "macbook-air-pill", 0, 1], [1280, 660, "laptop-short-pill", 0, 1]]) {
     for (const acct of ["personal", "business"]) {
       const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: w < 768, hasTouch: w < 768 });
       if (safe) await ctx.addInitScript(() => { document.addEventListener("DOMContentLoaded", () => { document.documentElement.style.setProperty("--safe-top", "59px"); document.documentElement.style.setProperty("--safe-bottom", "34px"); }); });
@@ -668,7 +671,12 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
       await page.goto(`${BASE_URL}/index.html`, { waitUntil: "networkidle" }).catch(() => {});
       await sleep(2600);
       if (acct === "business") { await page.click('[data-account="business"]').catch(() => {}); await sleep(700); }
-      await page.evaluate(() => document.querySelector(".install-float-wrap button:last-child")?.click());
+      if (pill) {
+        const pillShown = await page.evaluate(() => Boolean(document.querySelector(".install-float-wrap.public-install")));
+        check(`install pill is on screen for the pill row (${label} ${acct})`, pillShown);
+      } else {
+        await page.evaluate(() => document.querySelector(".install-float-wrap button:last-child")?.click());
+      }
       await sleep(400);
       const m = await page.evaluate(() => {
         const el = document.querySelector(".landing-cta-footer");
@@ -700,7 +708,7 @@ async function authed(browser, { acct = "business", eligible = true, width = 440
         check(`landing tiles are not stretched (${label} ${acct})`, m.tallestTile <= 170, `${m.tallestTile}px`);
         check(`landing footer carries the QR action (${label} ${acct})`, m.footerCta);
         check(`no tile sits under the footer (${label} ${acct})`, m.tileFooterGap >= 8, `gap ${m.tileFooterGap}px`);
-        if (label === "macbook-air" || label === "laptop-short") {
+        if (label === "macbook-air" || label === "laptop-short" || label === "macbook-air-pill" || label === "laptop-short-pill") {
           check(`no blank band above the logo (${label} ${acct})`, m.barTop <= 60, `bar starts at ${m.barTop}px`);
         }
       }

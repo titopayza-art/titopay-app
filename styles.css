@@ -9333,9 +9333,42 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
     padding-bottom: calc(160px + var(--safe-bottom));
   }
 
+  /* When the install pill is showing, the footer grows 56px taller to clear
+     it -- so the reservation grows too, and the footer sheds its proof-point
+     row to give some of that height back. Without both, the sign-in row slid
+     under the band on a first visit and the business page scrolled. */
+  body:has(.install-float-wrap.public-install) .landing-flow .landing-cta-points,
+  body:has(.install-float-wrap.public-install) .business-landing .landing-cta-points {
+    display: none;
+  }
+
+  body:has(.install-float-wrap.public-install) .landing-flow.auth-screen:has(.landing-cta-footer),
+  body:has(.install-float-wrap.public-install) .business-landing.auth-screen:has(.landing-cta-footer) {
+    padding-bottom: calc(192px + var(--safe-bottom));
+  }
+
+  body:has(.install-float-wrap.public-install) .landing-flow .preview-grid .service-tile,
+  body:has(.install-float-wrap.public-install) .business-landing .preview-grid .service-tile {
+    min-height: clamp(88px, 13vh, 126px);
+  }
+
   body.landing-static .landing-flow.auth-screen,
   body.landing-static .business-landing.auth-screen {
     row-gap: clamp(16px, 3.4vh, 34px);
+  }
+
+  /* Pill state again: the taller footer costs the rows 56px of working
+     height, so the rhythm between them tightens to match and the hero eases
+     off a step. Business carries one more line than personal, which is the
+     page that tipped into scroll without this. */
+  body.landing-static:has(.install-float-wrap.public-install) .landing-flow.auth-screen,
+  body.landing-static:has(.install-float-wrap.public-install) .business-landing.auth-screen {
+    row-gap: clamp(12px, 2.6vh, 26px);
+  }
+
+  body.landing-static:has(.install-float-wrap.public-install) .landing-flow h1,
+  body.landing-static:has(.install-float-wrap.public-install) .business-landing h1 {
+    font-size: clamp(1.7rem, 4.4vh, 2.6rem);
   }
 
   body.landing-static .landing-flow .preview-grid .service-tile,
@@ -9393,4 +9426,14 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
   object-fit: cover;
   border-radius: 14px;
   background: #0b1220;
+}
+
+
+/* Tall desktop with the install pill: the pinned footer grows 56px, so the
+   centred block's reservation grows with it. */
+@media (min-width: 900px) and (min-height: 860px) {
+  body:has(.install-float-wrap.public-install) .landing-flow.auth-screen:has(.landing-cta-footer),
+  body:has(.install-float-wrap.public-install) .business-landing.auth-screen:has(.landing-cta-footer) {
+    padding-bottom: calc(172px + var(--safe-bottom));
+  }
 }
