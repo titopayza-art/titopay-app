@@ -2,6 +2,20 @@
 
 Diagnosed 29 July 2026 against live production. Reproducible on demand.
 
+## This is not only an admin problem
+
+Confirmed after the initial diagnosis: `GET /v1/wallets` with an invalid token
+also returns `500`, and the customer PWA gates its refresh on exactly the same
+condition (`app.js:494`, `response.status === 401`).
+
+So **every customer** whose access token expires mid-session hits the same
+trap: `500` instead of `401`, no refresh, a generic error on whichever screen
+they were on, and no recovery short of signing out and back in. The admin
+console is simply where it was noticed first, because admin sessions are short
+and expire several times a day.
+
+Treat the severity as customer-facing, not internal.
+
 ## Summary
 
 **The API returns `500` instead of `401` when an access token is invalid or
