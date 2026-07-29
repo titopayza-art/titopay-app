@@ -538,10 +538,28 @@ async function api(path, options = {}) {
       throw timeoutError;
     }
     if (!error.status) {
-      const networkError = new Error("TitoPay services are not reachable. Please check your connection and try again.");
+      // fetch() rejects with a TypeError for a genuine transport failure: DNS,
+      // TLS, a CORS rejection, the device being offline, or the server dropping
+      // the connection mid-flight — which is what a customer hits when the API
+      // restarts while their request is in the air. "Not reachable" is the right
+      // thing to say for those.
+      //
+      // Anything else arriving here is a fault in our own code between the
+      // response and the return. Reporting that as a network problem sends the
+      // customer to check their signal over a bug on our side, and hides the
+      // real message from whoever is reading the console. Carry the real text
+      // instead and record it.
+      const transportFailure = error instanceof TypeError;
+      const networkError = new Error(
+        transportFailure
+          ? "TitoPay services are not reachable. Please check your connection and try again."
+          : (error.message || "Something went wrong completing that request. Please try again.")
+      );
       networkError.status = 0;
       networkError.path = path;
       networkError.cause = error;
+      networkError.transportFailure = transportFailure;
+      if (!transportFailure) console.error("[api] unexpected client-side failure", { path, error });
       throw networkError;
     }
     throw error;
@@ -641,7 +659,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=184", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=185", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];
