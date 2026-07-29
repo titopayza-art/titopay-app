@@ -72,6 +72,83 @@
       characterData: true
     });
   }
+})();</script><script>/* Learning Hub enhancement.
+ *
+ * The compiled bundle renders each course as a flat card: an icon, a category
+ * eyebrow, a title, a paragraph, chips, a progress bar and a row of buttons.
+ * It exposes no hooks for theming, so CSS cannot tell a Compliance course from
+ * a Security one, or a mandatory course from an optional one.
+ *
+ * This reads what the app has already rendered and reflects it back as data
+ * attributes the stylesheet can use for course artwork, priority treatment and
+ * completion state. It reads only; it never invents a value and never changes
+ * text. Remove it once the Learning Hub is rebuilt in source.
+ */
+(function () {
+  "use strict";
+
+  // Category → artwork key. Anything unmapped falls back to a neutral treatment.
+  var CATEGORIES = {
+    fintech: "fintech", compliance: "compliance", security: "security",
+    onboarding: "onboarding", governance: "governance", policies: "policies",
+    support: "support", workforce: "workforce", people: "people",
+    product: "product", "hr operations": "operations", management: "management"
+  };
+
+  function slug(text) {
+    return String(text || "").trim().toLowerCase();
+  }
+
+  function decorate(card) {
+    var eyebrow = card.querySelector(".eyebrow");
+    var key = CATEGORIES[slug(eyebrow && eyebrow.textContent)] || "general";
+    if (card.getAttribute("data-course") !== key) card.setAttribute("data-course", key);
+
+    // "Mandatory" and "Assessment" are rendered as plain chips among format,
+    // level and duration. Tag them so required training reads differently.
+    var chips = card.querySelectorAll(".learning-meta span");
+    for (var i = 0; i < chips.length; i++) {
+      var label = slug(chips[i].textContent);
+      var kind = label === "mandatory" ? "required"
+        : label === "assessment" ? "assessment"
+          : /\bmin$/.test(label) ? "duration"
+            : i === 0 ? "format" : "level";
+      if (chips[i].getAttribute("data-chip") !== kind) chips[i].setAttribute("data-chip", kind);
+    }
+
+    var required = card.querySelector('[data-chip="required"]') ? "true" : "false";
+    if (card.getAttribute("data-required") !== required) card.setAttribute("data-required", required);
+
+    // Completion state, read from the progress figure the app printed.
+    var pct = card.querySelector(".progress-pill b");
+    var value = pct ? parseFloat(String(pct.textContent).replace(/[^0-9.]/g, "")) : NaN;
+    var state = !isFinite(value) ? "" : value >= 100 ? "complete" : value > 0 ? "started" : "new";
+    if (state && card.getAttribute("data-progress") !== state) {
+      card.setAttribute("data-progress", state);
+    }
+  }
+
+  function sync() {
+    var cards = document.querySelectorAll(".knowledge-card");
+    for (var i = 0; i < cards.length; i++) decorate(cards[i]);
+  }
+
+  var pending;
+  function schedule() {
+    clearTimeout(pending);
+    pending = setTimeout(sync, 60);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", schedule);
+  } else {
+    schedule();
+  }
+  if (typeof MutationObserver === "function") {
+    new MutationObserver(schedule).observe(document.documentElement, {
+      childList: true, subtree: true, characterData: true
+    });
+  }
 })();</script><style>
 /* Pre-render shell. Values are hard-coded rather than tokenised so this
    screen still renders correctly if the main stylesheet never arrives. */
@@ -1676,11 +1753,149 @@ tbody tr[onclick] { cursor: pointer; }
 .knowledge-hero p { max-width: 760px; margin: 0; color: var(--ink-500); font-size: var(--fs-sm); line-height: 1.6; }
 .knowledge-search { width: 100%; background: var(--surface); }
 
-.knowledge-card { display: flex; flex-direction: column; min-height: 230px; }
-.knowledge-card .report-icon { margin-bottom: var(--sp-3); }
-.knowledge-card .secondary { width: max-content; margin-top: auto; }
+/* --- Learning Hub course cards ------------------------------------------
+   The bundle renders a flat card with no theming hooks. learning.js reflects
+   the category, required flag and completion state the app already printed
+   back onto the element as data attributes, which everything below keys off.
+   Without the script the cards degrade to the plain treatment — readable, just
+   not themed. */
 
-.learning-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: var(--sp-4) 0; }
+.knowledge-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 288px;
+  padding: 0;
+  overflow: hidden;
+  transition: border-color .16s var(--ease), box-shadow .16s var(--ease), transform .16s var(--ease);
+}
+.knowledge-card:hover {
+  border-color: var(--brand-200);
+  box-shadow: var(--sh-3);
+  transform: translateY(-2px);
+}
+
+/* Artwork band. The icon the bundle renders becomes the subject of a themed
+   header rather than a small square floating above the text. */
+.knowledge-card .report-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 92px;
+  margin: 0 0 var(--sp-4);
+  border-radius: 0;
+  background: linear-gradient(135deg, var(--brand-700), var(--brand-500));
+  color: #fff;
+  overflow: hidden;
+}
+.knowledge-card .report-icon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, .12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .12) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: radial-gradient(ellipse at 22% 20%, #000, transparent 72%);
+  -webkit-mask-image: radial-gradient(ellipse at 22% 20%, #000, transparent 72%);
+}
+.knowledge-card .report-icon svg {
+  position: relative;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  opacity: .95;
+}
+
+/* Per-subject artwork. Compliance and security read as distinct from
+   onboarding or product, the way a real catalogue does. */
+.knowledge-card[data-course="fintech"]     .report-icon { background: linear-gradient(135deg, #06214f, #1255b5 70%, #22b8d8); }
+.knowledge-card[data-course="security"]    .report-icon { background: linear-gradient(135deg, #4a1530, #a5242f 70%, #d9564f); }
+.knowledge-card[data-course="compliance"]  .report-icon { background: linear-gradient(135deg, #17324d, #0f4aa3 70%, #159fc4); }
+.knowledge-card[data-course="governance"]  .report-icon { background: linear-gradient(135deg, #2b2350, #4b3aa8 70%, #7b6be0); }
+.knowledge-card[data-course="onboarding"]  .report-icon { background: linear-gradient(135deg, #063f36, #067a52 70%, #35c08a); }
+.knowledge-card[data-course="policies"]    .report-icon { background: linear-gradient(135deg, #2f2a1c, #8a5e12 70%, #d2a13c); }
+.knowledge-card[data-course="support"]     .report-icon { background: linear-gradient(135deg, #0a3a44, #0f7f95 70%, #38c0d4); }
+.knowledge-card[data-course="workforce"]   .report-icon { background: linear-gradient(135deg, #3a2412, #a2560f 70%, #e0913c); }
+.knowledge-card[data-course="people"]      .report-icon { background: linear-gradient(135deg, #40173a, #9c2a7d 70%, #d267b4); }
+.knowledge-card[data-course="product"]     .report-icon { background: linear-gradient(135deg, #10304f, #17639e 70%, #46a7dd); }
+.knowledge-card[data-course="operations"]  .report-icon { background: linear-gradient(135deg, #1d2939, #475467 70%, #7d8ba1); }
+.knowledge-card[data-course="management"]  .report-icon { background: linear-gradient(135deg, #29244a, #4a3f96 70%, #8d7fd8); }
+
+.knowledge-card > *:not(.report-icon) { margin-left: var(--sp-5); margin-right: var(--sp-5); }
+.knowledge-card > .eyebrow { color: var(--ink-400); }
+.knowledge-card h3 { margin: 6px 0 var(--sp-2); font-size: var(--fs-lg); }
+.knowledge-card p {
+  margin: 0;
+  color: var(--ink-500);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  /* Keep the grid tidy when descriptions vary in length. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Required training is the thing a compliance officer needs to spot from
+   across the grid, so it gets an edge and a coloured chip rather than
+   sitting among the neutral metadata. */
+.knowledge-card[data-required="true"] { box-shadow: var(--sh-2), inset 3px 0 var(--warn-500); }
+.knowledge-card[data-required="true"]:hover { box-shadow: var(--sh-3), inset 3px 0 var(--warn-500); }
+
+.learning-meta span[data-chip="required"] {
+  border-color: var(--warn-200);
+  background: var(--warn-50);
+  color: var(--warn-700);
+}
+.learning-meta span[data-chip="assessment"] {
+  border-color: var(--brand-200);
+  background: var(--brand-50);
+  color: var(--brand-700);
+}
+.learning-meta span[data-chip="duration"],
+.learning-meta span[data-chip="level"] {
+  border-color: var(--line);
+  background: var(--surface-sunk);
+  color: var(--ink-500);
+}
+
+/* Completed courses recede; in-progress ones stay prominent. */
+.knowledge-card[data-progress="complete"] .progress-pill i { background: var(--pos-500); }
+.knowledge-card[data-progress="complete"] .report-icon { filter: saturate(.55); }
+.knowledge-card[data-progress="complete"] .report-icon::before {
+  content: "\2713";
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-3);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--pos-500);
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.knowledge-card .progress-pill { margin: var(--sp-4) var(--sp-5) 0; }
+/* Three or four actions never fit one row inside a third-width card, and
+   wrapping them left a ragged tail. A two-column grid keeps the block square. */
+.knowledge-card .approval-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-2);
+  margin-top: auto;
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+}
+.knowledge-card .approval-actions > * { width: 100%; }
+.knowledge-card .approval-actions .secondary { min-height: 34px; padding: 0 var(--sp-3); font-size: var(--fs-xs); }
+.knowledge-card .secondary { width: auto; margin-top: 0; }
+.knowledge-card > a.secondary { margin-bottom: var(--sp-5); width: max-content; }
+
+.learning-meta { margin: var(--sp-4) 0 0; }
 .learning-meta span {
   padding: 4px 9px;
   border: 1px solid var(--info-200);
@@ -1689,6 +1904,7 @@ tbody tr[onclick] { cursor: pointer; }
   color: var(--info-500);
   font-size: var(--fs-2xs);
   font-weight: 600;
+  white-space: nowrap;
 }
 
 /* --- Projects ------------------------------------------------------------ */
