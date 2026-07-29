@@ -259,6 +259,13 @@ function adminErrorMessage(message) {
   if (isAuthModeBlockedError(text)) {
     return "Sign in failed because the API is still using an older admin authentication mode. Upload the latest API package or run the password-only migration, then try again.";
   }
+  // Rate limits and account lockouts must reach the operator verbatim: they are
+  // self-inflicted, temporary, and the wording tells them to wait rather than
+  // retry. The generic filter below matches "try again later" and was replacing
+  // them with advice to refresh, which makes the problem worse.
+  if (/too many attempts|too many requests|rate limit|temporarily locked|account is locked|try again in/i.test(text)) {
+    return text;
+  }
   if (
     !text ||
     /something went wrong|try again later|internal server error|unexpected api response|request failed|networkerror/i.test(text) ||

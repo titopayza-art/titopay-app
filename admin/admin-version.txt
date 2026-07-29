@@ -1,6 +1,11 @@
 TitoPay Admin
-Build: admin-console-v32
+Build: admin-console-v33
 Date: 2026-07-29
+
+v33 - Rate-limit and lockout messages from the API now reach the operator
+  verbatim. The generic error filter matched "try again later" and replaced
+  "Too many attempts. Please try again later." with advice to refresh, which
+  makes a rate limit worse. Found while sign-in testing across six roles.
 
 v32 - Support workspace and stability
   - Fixed: any support event rebuilt the Support Desk and destroyed the
@@ -24,5 +29,5 @@ v31 - Sign-in page rebuilt for a regulated system.
 v30 - Operations console front-end rebuild on a single-layer stylesheet.
 
 No API endpoint, authentication, routing or permission behaviour is changed by
-the admin package. Assets are versioned ?v=admin-console-v32; hard refresh
+the admin package. Assets are versioned ?v=admin-console-v33; hard refresh
 (Ctrl+F5 / Cmd+Shift+R) if an old layout persists.
