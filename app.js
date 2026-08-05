@@ -68,6 +68,9 @@ const state = {
   transactions: [],
   beneficiaries: [],
   beneficiarySearch: "",
+  // Holds the outcome of the verification step a new beneficiary has to pass
+  // before it can be saved. Cleared whenever the recipient field is edited.
+  beneficiaryVerification: null,
   pendingBeneficiarySave: null,
   businessDocuments: readJson(BUSINESS_DOCUMENTS_KEY) || [],
   activeBusinessDocumentId: "",
@@ -99,7 +102,7 @@ const state = {
   pendingTransactionReview: null,
   pendingQrPaymentReview: null,
   stockvel: { status: "idle", groups: [], invitations: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
-  ticketing: { eligibility: null, events: [], loading: false, search: "" },
+  ticketing: { eligibility: null, events: [], loading: false, search: "", myTickets: [], myTicketsStatus: "idle" },
   pendingTicketPurchase: null,
   learn: { search: "", category: "all", open: "" },
   enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
@@ -2642,6 +2645,10 @@ async function onSubmit(event) {
     showToast(friendlyFormError(error, form.dataset.form), "error");
   } finally {
     setBusy(form, false);
+    // setBusy re-enables every control in the form. The beneficiary save
+    // control is gated on the recipient having been verified, so it is put back
+    // under that gate rather than left open by a failed submit.
+    if (form.dataset.form === "beneficiary") paintBeneficiaryVerification();
   }
 }
 
@@ -3051,6 +3058,14 @@ async function onClick(event) {
 }
 
 function onInput(event) {
+  // Editing the recipient invalidates the check that was run against the old
+  // value, so the save control goes back to being locked.
+  const beneficiaryIdentifier = event.target.closest('[data-form="beneficiary"] [name="identifier"]');
+  if (beneficiaryIdentifier) {
+    state.beneficiaryVerification = null;
+    paintBeneficiaryVerification();
+    return;
+  }
   const beneficiarySearch = event.target.closest("[data-beneficiary-search]");
   if (beneficiarySearch) {
     state.beneficiarySearch = beneficiarySearch.value;
@@ -4154,6 +4169,10 @@ async function handleAction(action, actionElement = null) {
     openBeneficiaryForm();
     return;
   }
+  if (action === "beneficiary-verify") {
+    await verifyBeneficiaryIdentifier(actionElement);
+    return;
+  }
   if (action === "beneficiary-save-after-payment") {
     const pending = state.pendingBeneficiarySave;
     if (!pending) return;
@@ -4405,6 +4424,15 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "ticketing-browse-public") {
     await openPersonalTicketsDashboard();
+  }
+  if (action === "my-tickets") {
+    await openMyTicketsModal();
+  }
+  if (action === "my-tickets-refresh") {
+    await refreshMyTickets();
+  }
+  if (String(action || "").startsWith("ticket-apple-wallet:")) {
+    await addTicketToAppleWallet(action.split(":").slice(1).join(":"), actionElement);
   }
   if (action === "stockvel-create") {
     openStockvelCreateWizard();
@@ -4856,6 +4884,7 @@ async function openPersonalTicketsDashboard() {
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    <button class="btn secondary" type="button" data-action="my-tickets">${icon("ticket")} My Tickets</button>
     <section class="ticket-list" data-ticket-list aria-live="polite">
       ${[0, 1, 2].map(() => `<div class="ticket-card is-loading" aria-hidden="true">
         <span class="skeleton skeleton-circle"></span>
@@ -5158,6 +5187,76 @@ function ticketRecordsFromResult(result = {}, order = {}) {
   return Array.isArray(list) ? list : [];
 }
 
+// A pass has to be signed with Apple's Pass Type ID certificate, which only the
+// server holds, so the client never builds one. It links to the pass the ticket
+// record carries, and asks the ticketing service for one when the record does
+// not carry it yet.
+function ticketAppleWalletUrl(ticket = {}) {
+  const candidate = ticket.appleWalletUrl || ticket.apple_wallet_url
+    || ticket.applePassUrl || ticket.apple_pass_url
+    || ticket.pkpassUrl || ticket.pkpass_url
+    || ticket.walletPassUrl || ticket.wallet_pass_url
+    || ticket.passUrl || ticket.pass_url
+    || "";
+  // An empty value resolves to the page's own address, so it is rejected before
+  // parsing. The value ends up in an href and in a navigation, so only an
+  // http(s) address is accepted; anything else is treated as no pass at all.
+  if (!String(candidate).trim()) return "";
+  try {
+    const parsed = new URL(String(candidate), window.location.href);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function ticketCodeOf(ticket = {}) {
+  return ticket.ticketCode || ticket.ticket_code || ticket.reference || ticket.serial || "";
+}
+
+// Apple Wallet exists on Apple platforms only. Elsewhere the control is left
+// out rather than shown as a button that cannot do anything.
+function supportsAppleWallet() {
+  const environment = getInstallEnvironment();
+  return Boolean(environment.isIOS || environment.isMacOS);
+}
+
+function ticketAppleWalletControl(ticket = {}) {
+  if (!supportsAppleWallet()) return "";
+  const code = ticketCodeOf(ticket);
+  const passUrl = ticketAppleWalletUrl(ticket);
+  if (passUrl) {
+    // A plain link lets the browser hand the signed pass to Wallet itself,
+    // which is what raises the Add-to-Wallet sheet on an Apple device.
+    return `<a class="btn secondary ticket-wallet-btn" href="${esc(passUrl)}" rel="noopener">${icon("wallet")} Add to Apple Wallet</a>`;
+  }
+  if (!code) return "";
+  return `<button class="btn secondary ticket-wallet-btn" type="button" data-action="ticket-apple-wallet:${esc(code)}">${icon("wallet")} Add to Apple Wallet</button>`;
+}
+
+async function addTicketToAppleWallet(code, button) {
+  if (!code) return;
+  setButtonBusy(button, true);
+  try {
+    const result = await api(`/v1/ticketing/tickets/${encodeURIComponent(code)}/apple-wallet`);
+    const passUrl = ticketAppleWalletUrl(result || {}) || ticketAppleWalletUrl(result?.ticket || {});
+    if (!passUrl) throw new Error("The organiser has not issued an Apple Wallet pass for this ticket yet.");
+    // Cache it on the ticket already on screen so a second tap is a direct link.
+    const cached = (state.ticketing.myTickets || []).find((item) => ticketCodeOf(item) === code);
+    if (cached) cached.appleWalletUrl = passUrl;
+    window.location.assign(passUrl);
+  } catch (error) {
+    showToast(
+      Number(error?.status || 0) === 404
+        ? "This ticket does not have an Apple Wallet pass yet. The QR code above is still valid for entry."
+        : friendlyFormError(error, "ticketing"),
+      "error"
+    );
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
 function ticketStub(ticket = {}, order = {}, event = {}) {
   const holder = ticket.holderName || ticket.holder_name || order.buyerName || order.buyer_name
     || state.user?.fullName || state.user?.full_name || "";
@@ -5191,6 +5290,7 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
             : `<div class="ticket-stub-nocode">${icon("qr")}<span>Entry code is issued by the organiser</span></div>`}
         </div>
       </div>
+      ${ticketAppleWalletControl(ticket)}
       <footer class="ticket-stub-foot">Present this ticket at the entrance. Do not share the code publicly.</footer>
     </article>`;
 }
@@ -5219,11 +5319,89 @@ function openTicketConfirmation(result = {}, order = {}) {
       ${settingsRow("Total paid", money(order.total), "wallet")}
       ${settingsRow("Delivery", ticketingStatusLabel(order.deliveryStatus || "queued"), "send")}
     </div>
+    <button class="btn secondary" type="button" data-action="my-tickets">${icon("ticket")} Open My Tickets</button>
   `);
 }
 
 function ticketingStatusLabel(status = "") {
   return String(status || "draft").replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+// Closing the confirmation used to be the end of a ticket: nothing led back to
+// it. Tickets already bought are now retrievable, which is also what makes the
+// Apple Wallet control reachable after the purchase.
+async function openMyTicketsModal() {
+  if (!state.auth || !state.auth.accessToken) {
+    openInfoModal("My Tickets", "Sign in to see the tickets you have bought.");
+    return;
+  }
+  state.ticketing.myTicketsStatus = "loading";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay Tickets</p><h2>My Tickets</h2><p class="lead" data-my-tickets-lead>Loading your tickets.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="ticket-list" data-my-ticket-list aria-live="polite" aria-busy="true">
+      ${[0, 1].map(() => `<div class="ticket-card is-loading" aria-hidden="true">
+        <span class="skeleton skeleton-circle"></span>
+        <div><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span></div>
+      </div>`).join("")}
+    </section>
+  `);
+  await refreshMyTickets();
+}
+
+async function refreshMyTickets() {
+  const host = document.querySelector("[data-my-ticket-list]");
+  if (!host) return;
+  try {
+    const result = await api("/v1/ticketing/tickets");
+    state.ticketing.myTickets = Array.isArray(result.items) ? result.items : Array.isArray(result.tickets) ? result.tickets : [];
+    state.ticketing.myTicketsStatus = "ready";
+    renderMyTickets();
+  } catch (error) {
+    state.ticketing.myTicketsStatus = "error";
+    const current = document.querySelector("[data-my-ticket-list]");
+    if (!current) return;
+    const offline = Number(error?.status || 0) === 0;
+    current.removeAttribute("aria-busy");
+    setMyTicketsLead("Your tickets could not be loaded.");
+    current.innerHTML = `
+      <section class="empty-state compact-state">
+        ${icon("ticket")}
+        <strong>${offline ? "Cannot reach TitoPay" : "Tickets could not be loaded"}</strong>
+        <p>${offline ? "Check your connection and try again." : esc(friendlyFormError(error, "ticketing"))}</p>
+        <button class="btn secondary" type="button" data-action="my-tickets-refresh">${icon("refresh")} Try again</button>
+      </section>`;
+  }
+}
+
+function setMyTicketsLead(text) {
+  const lead = document.querySelector("[data-my-tickets-lead]");
+  if (lead) lead.textContent = text;
+}
+
+function renderMyTickets() {
+  const host = document.querySelector("[data-my-ticket-list]");
+  if (!host) return;
+  const tickets = state.ticketing.myTickets || [];
+  host.removeAttribute("aria-busy");
+  setMyTicketsLead(tickets.length
+    ? `${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"} ready to show at the entrance.`
+    : "Tickets you buy appear here.");
+  if (!tickets.length) {
+    host.innerHTML = `
+      <section class="empty-state compact-state">
+        ${icon("ticket")}
+        <strong>No tickets yet</strong>
+        <p>Tickets you buy from TitoPay events appear here, ready to show at the entrance.</p>
+        <button class="btn secondary" type="button" data-action="ticketing-browse-public">${icon("ticket")} Browse events</button>
+      </section>`;
+    return;
+  }
+  host.innerHTML = `<section class="ticket-stub-list">${tickets
+    .map((ticket) => ticketStub(ticket, ticket.order || {}, ticket.event || {}))
+    .join("")}</section>`;
 }
 
 async function openBusinessTicketingDashboard(options = {}) {
@@ -7341,19 +7519,21 @@ function filteredBeneficiaries() {
   );
 }
 
-function beneficiaryManagementList() {
-  const items = filteredBeneficiaries();
-  if (!items.length) {
-    const searching = Boolean(String(state.beneficiarySearch || "").trim());
-    return `<section class="empty-state compact-state">${icon(searching ? "search" : "user")}<strong>${searching ? "No beneficiaries match your search" : "No saved beneficiaries"}</strong><p>${searching ? "Try a different name, username, wallet number, QR reference or recipient type." : "Add a verified TitoPay recipient to pay them more quickly next time."}</p></section>`;
-  }
-  return `<section class="beneficiary-management-list">${items.map((item) => `
+function beneficiaryIsVerified(item = {}) {
+  const status = String(item.verificationStatus || item.verification_status || "").toLowerCase();
+  return status === "approved" || status === "verified" || Boolean(item.verified);
+}
+
+function beneficiaryCard(item) {
+  const verified = beneficiaryIsVerified(item);
+  return `
     <article class="beneficiary-card">
       <span class="chat-contact-avatar">${item.profilePhotoUrl ? `<img src="${esc(item.profilePhotoUrl)}" alt="">` : esc(beneficiaryDisplayName(item).slice(0, 1).toUpperCase())}</span>
       <div class="beneficiary-card-copy">
         <strong>${esc(beneficiaryDisplayName(item))}</strong>
         <small>${esc([displayUsername(item.username), item.walletId ? `Wallet ${item.walletId}` : "", item.qrReference ? `QR ${item.qrReference}` : "", item.accountType, item.relationshipType].filter(Boolean).join(" · "))}</small>
         <small>${item.lastPaidAt ? `Last paid ${esc(formatDate(item.lastPaidAt))}${item.lastPaymentAmount != null ? ` · ${esc(money(item.lastPaymentAmount))}` : ""}` : "Not paid yet"}</small>
+        <small><em class="sv-chip ${verified ? "settled" : "warn"}">${verified ? "Verified recipient" : "Verification pending"}</em></small>
       </div>
       <div class="beneficiary-card-actions">
         <button class="icon-btn${item.favourite ? " is-active" : ""}" type="button" data-action="beneficiary-favourite:${esc(item.id)}" aria-label="${item.favourite ? "Remove from favourites" : "Add to favourites"}" aria-pressed="${item.favourite ? "true" : "false"}" title="${item.favourite ? "Remove from favourites" : "Add to favourites"}">${icon("star")}</button>
@@ -7361,7 +7541,56 @@ function beneficiaryManagementList() {
         <button class="icon-btn" type="button" data-action="beneficiary-delete:${esc(item.id)}" aria-label="Delete ${esc(beneficiaryDisplayName(item))}">${icon("x")}</button>
       </div>
       <button class="btn secondary beneficiary-pay-btn" type="button" data-action="beneficiary-select:${esc(item.id)}">${icon("send")} Pay</button>
-    </article>`).join("")}</section>`;
+    </article>`;
+}
+
+function beneficiaryGroup(title, items, hint) {
+  if (!items.length) return "";
+  return `
+    <section class="beneficiary-group" aria-label="${esc(title)}">
+      <header class="beneficiary-group-head">
+        <p class="eyebrow">${esc(title)}</p>
+        <span class="beneficiary-group-count">${items.length}</span>
+      </header>
+      ${hint ? `<p class="field-hint">${esc(hint)}</p>` : ""}
+      <div class="beneficiary-management-list">${items.map(beneficiaryCard).join("")}</div>
+    </section>`;
+}
+
+// Grouped the way a bank statement of payees is grouped: the ones pinned for
+// speed first, then the ones recently paid, then the full book. A person
+// scanning for someone they pay every month should not have to read the whole
+// list to find them.
+function beneficiaryManagementList() {
+  const items = filteredBeneficiaries();
+  if (!items.length) {
+    const searching = Boolean(String(state.beneficiarySearch || "").trim());
+    return `<section class="empty-state compact-state">${icon(searching ? "search" : "user")}<strong>${searching ? "No beneficiaries match your search" : "No saved beneficiaries"}</strong><p>${searching ? "Try a different name, username, wallet number, QR reference or recipient type." : "Add a verified TitoPay recipient to pay them more quickly next time."}</p></section>`;
+  }
+  const favourites = items.filter((item) => item.favourite);
+  const recent = items.filter((item) => !item.favourite && (item.lastPaidAt || item.last_paid_at));
+  const others = items.filter((item) => !item.favourite && !(item.lastPaidAt || item.last_paid_at));
+  const grouped = `
+    ${beneficiaryGroup("Favourites", favourites, "Pinned for quick payment.")}
+    ${beneficiaryGroup("Recently paid", recent, "")}
+    ${beneficiaryGroup("All beneficiaries", others, "")}
+  `.trim();
+  return grouped || `<div class="beneficiary-management-list">${items.map(beneficiaryCard).join("")}</div>`;
+}
+
+function beneficiarySummaryStrip() {
+  const items = state.beneficiaries || [];
+  const favourites = items.filter((item) => item.favourite).length;
+  const verified = items.filter(beneficiaryIsVerified).length;
+  // Its own compact strip rather than the dashboard's .stats-grid: those tiles
+  // are sized for a full screen and stack into a tower inside a modal on a
+  // narrow phone.
+  return `
+    <section class="beneficiary-summary" aria-label="Beneficiary summary">
+      <div><strong>${items.length}</strong><span>Saved</span></div>
+      <div><strong>${favourites}</strong><span>Favourites</span></div>
+      <div><strong>${verified}</strong><span>Verified</span></div>
+    </section>`;
 }
 
 async function openSavedBeneficiariesModal({ refresh = false } = {}) {
@@ -7371,9 +7600,10 @@ async function openSavedBeneficiariesModal({ refresh = false } = {}) {
   }
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Payments</p><h2>Saved Beneficiaries</h2><p class="lead">Beneficiaries are shortcuts only. Every payment still uses TitoPay's existing security checks.</p></div>
+      <div><p class="eyebrow">Payments</p><h2>Saved Beneficiaries</h2><p class="lead">Every recipient is verified before it is saved. Each payment still runs TitoPay's existing security checks.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${beneficiarySummaryStrip()}
     <div class="field"><label for="beneficiary-search">Search beneficiaries</label><input id="beneficiary-search" type="search" data-beneficiary-search value="${esc(state.beneficiarySearch)}" placeholder="Name, nickname, username or wallet"></div>
     <div data-beneficiary-list>${beneficiaryManagementList()}</div>
     <button class="btn primary" type="button" data-action="beneficiary-add">${icon("plus")} Add Beneficiary</button>
@@ -7382,19 +7612,120 @@ async function openSavedBeneficiariesModal({ refresh = false } = {}) {
 
 function openBeneficiaryForm(item = null) {
   const business = state.accountType === "business";
+  // A new beneficiary starts unverified every time the form opens, so a result
+  // left over from a previous recipient can never carry across.
+  if (!item) state.beneficiaryVerification = null;
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Saved Beneficiaries</p><h2>${item ? "Edit beneficiary" : "Add Beneficiary"}</h2><p class="lead">${item ? "Update the nickname or recipient type." : "Add a verified TitoPay username, mobile number, email address or QR ID."}</p></div>
+      <div><p class="eyebrow">Saved Beneficiaries</p><h2>${item ? "Edit beneficiary" : "Add Beneficiary"}</h2><p class="lead">${item ? "Update the nickname or recipient type." : "Check the recipient on TitoPay, then confirm and save. Adding a beneficiary moves no money."}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="beneficiary">
-      ${item ? `<input type="hidden" name="id" value="${esc(item.id)}">` : `<div class="field"><label>Recipient</label><input name="identifier" autocomplete="off" placeholder="@username, +27 cellphone, email or QR ID" required></div>`}
+      ${item ? `<input type="hidden" name="id" value="${esc(item.id)}">` : `
+        <div class="field">
+          <label>Recipient</label>
+          <input name="identifier" autocomplete="off" placeholder="@username, +27 cellphone, email or QR ID" required>
+          <small class="field-hint">TitoPay checks this recipient before the beneficiary can be saved.</small>
+        </div>
+        <button class="btn secondary" type="button" data-action="beneficiary-verify">${icon("shield")} Verify recipient</button>
+        <div data-beneficiary-verify-host>${beneficiaryVerificationPanel()}</div>
+      `}
       <div class="field"><label>Nickname</label><input name="nickname" maxlength="80" value="${esc(item?.nickname || "")}" placeholder="Optional nickname"></div>
       ${business ? `<div class="field"><label>Recipient type</label><select name="relationshipType">${["customer", "supplier", "employee", "payout_recipient"].map((value) => `<option value="${value}" ${item?.relationshipType === value ? "selected" : ""}>${esc(value.replace("_", " "))}</option>`).join("")}</select></div>` : `<input type="hidden" name="relationshipType" value="personal">`}
       <label class="terms-agreement"><input type="checkbox" name="favourite" value="yes" ${item?.favourite ? "checked" : ""}><span>Pin as a favourite</span></label>
-      <button class="btn primary" type="submit">${icon("shield")} ${item ? "Save changes" : "Save beneficiary"}</button>
+      <button class="btn primary" type="submit" data-beneficiary-save ${item ? "" : "disabled"}>${icon("shield")} ${item ? "Save changes" : "Save beneficiary"}</button>
     </form>
   `);
+}
+
+// The recipient a beneficiary points at has to be an account that exists before
+// it is stored, so a mistyped number can never sit in the list waiting to be
+// paid. This renders the outcome of that check inside the live form, using the
+// same panel the transaction screens use for recipient verification.
+function beneficiaryVerificationPanel() {
+  const verification = state.beneficiaryVerification;
+  if (!verification) return "";
+  if (!verification.registered) {
+    const unchecked = Boolean(verification.lookupFailed);
+    return `
+      <div class="recipient-verify-result ${unchecked ? "is-unknown" : "is-missing"}">
+        <p class="${unchecked ? "rv-head-unknown" : "rv-head-missing"}">${unchecked ? "Could not check this recipient" : "Not a TitoPay account"}</p>
+        <div class="rv-row">
+          <span class="rv-icon">${icon(unchecked ? "refresh" : "ban")}</span>
+          <span><strong>${esc(verification.identifier)}</strong><small>${unchecked
+            ? "TitoPay could not reach the directory. Try again in a moment; the beneficiary cannot be saved until the check succeeds."
+            : "No TitoPay account uses this username, cellphone number, email address or QR ID. Check it with the recipient and try again."}</small></span>
+        </div>
+      </div>`;
+  }
+  const user = verification.user || {};
+  const name = user.fullName || user.full_name || user.businessName || user.business_name || user.username || verification.identifier;
+  const details = [
+    displayUsername(user.username),
+    user.walletId || user.wallet_id ? `Wallet ${user.walletId || user.wallet_id}` : "",
+    user.accountType || user.account_type
+  ].filter(Boolean).join(" · ");
+  return `
+    <div class="recipient-verify-result">
+      <p class="rv-head">Recipient verified on TitoPay</p>
+      <div class="rv-row">
+        <span class="rv-icon">${icon("shield")}</span>
+        <span><strong>${esc(name)}</strong><small>${esc(details || "Confirm this is the person or business you want to save.")}</small></span>
+      </div>
+    </div>`;
+}
+
+function paintBeneficiaryVerification() {
+  const form = document.querySelector('[data-form="beneficiary"]');
+  if (!form) return;
+  // Only the add form carries the verification host. The edit form has no
+  // recipient to check, so it is never gated.
+  const host = form.querySelector("[data-beneficiary-verify-host]");
+  if (!host) return;
+  host.innerHTML = beneficiaryVerificationPanel();
+  const save = form.querySelector("[data-beneficiary-save]");
+  if (save) save.disabled = !(state.beneficiaryVerification && state.beneficiaryVerification.registered);
+}
+
+// The identifier accepts a QR ID as well as the recipient formats the wallet
+// normalises, so a value the normaliser rejects is still looked up as typed.
+function beneficiaryLookupValue(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  try {
+    return normalizeRecipientInput(value, "auto") || value;
+  } catch (error) {
+    return value;
+  }
+}
+
+async function verifyBeneficiaryIdentifier(button) {
+  const form = button ? button.closest("form") : null;
+  const field = form ? form.querySelector('[name="identifier"]') : null;
+  if (!field) return;
+  const typed = String(field.value || "").trim();
+  if (!typed) {
+    showToast("Enter a username, +27 cellphone, email or QR ID first.", "error");
+    return;
+  }
+  setButtonBusy(button, true);
+  try {
+    const result = await lookupRegisteredRecipient(beneficiaryLookupValue(typed), "beneficiary_verification");
+    state.beneficiaryVerification = {
+      identifier: typed,
+      registered: Boolean(result && result.registered),
+      lookupFailed: Boolean(result && result.lookupFailed),
+      user: result ? result.user : null
+    };
+    paintBeneficiaryVerification();
+    if (state.beneficiaryVerification.registered) showToast("Recipient verified. Check the details, then save.");
+  } catch (error) {
+    state.beneficiaryVerification = null;
+    paintBeneficiaryVerification();
+    showToast(friendlyFormError(error, "verify-recipient"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 
 async function submitBeneficiary(data) {
@@ -7406,10 +7737,20 @@ async function submitBeneficiary(data) {
     });
     showToast("Beneficiary updated.");
   } else {
+    // Re-checked here rather than trusted from the button state, so a new
+    // beneficiary cannot be stored without the recipient having been verified.
+    const typed = String(data.identifier || "").trim();
+    const verification = state.beneficiaryVerification;
+    if (!verification || !verification.registered || verification.identifier !== typed) {
+      state.beneficiaryVerification = null;
+      paintBeneficiaryVerification();
+      throw new Error("Verify the recipient before saving this beneficiary.");
+    }
     await api("/v1/beneficiaries", {
       method: "POST",
       body: { identifier: data.identifier, nickname: data.nickname, favourite, relationshipType: data.relationshipType }
     });
+    state.beneficiaryVerification = null;
     showToast("Beneficiary saved.");
   }
   await openSavedBeneficiariesModal({ refresh: true });

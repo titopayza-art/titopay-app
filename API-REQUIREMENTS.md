@@ -173,7 +173,53 @@ The QR must come from the server. The client has a QR *reader* (`jsQR`) but no
 generator, and a client-generated entry code would not be trustworthy anyway.
 
 **Also required:** `GET /v1/ticketing/tickets` so a buyer can retrieve tickets
-after closing the confirmation. There is currently no route back to them.
+after closing the confirmation.
+
+The client now has that route back: **My Tickets** calls this endpoint and
+renders one stub per ticket. It expects the same ticket shape as the purchase
+response, optionally with the event and order the ticket belongs to:
+
+```
+GET /v1/ticketing/tickets
+
+200 {
+  "items": [
+    {
+      "ticketCode": "AMA-4471-8890",
+      "ticketTypeName": "General",
+      "holderName": "Naledi Mokoena",
+      "seat": "GA",
+      "qrImageDataUrl": "data:image/png;base64,…",
+      "appleWalletUrl": "https://api.titopay.co.za/v1/ticketing/passes/AMA-4471-8890.pkpass",
+      "event": { "eventName": "…", "eventDate": "…", "venueName": "…", "city": "…" },
+      "order": { "orderReference": "TPO-2026-0042" }
+    }
+  ]
+}
+```
+
+### Apple Wallet passes
+
+**Required for "Add to Apple Wallet" to work:** a signed `.pkpass`.
+
+A pass has to be signed with Apple's Pass Type ID certificate and its private
+key. That key can only live on the server — shipping it to the PWA would publish
+it — so the client never builds a pass. It links to one.
+
+Two ways to supply it, either is enough:
+
+1. Put a pass URL on the ticket record (`appleWalletUrl`, or any of
+   `applePassUrl` / `pkpassUrl` / `walletPassUrl` / `passUrl`, camel or snake
+   case). The client renders a direct link to it.
+2. Serve `GET /v1/ticketing/tickets/{ticketCode}/apple-wallet` returning
+   `200 { "appleWalletUrl": "…" }`. The client calls this when the ticket record
+   carries no URL, then hands the URL to the browser.
+
+The URL must serve the pass with `Content-Type: application/vnd.apple.pkpass`
+over HTTPS; that content type is what raises the Add-to-Wallet sheet on iOS and
+macOS. Until one of the two is in place the control reports that the organiser
+has not issued a pass yet, and the QR stub remains the entry method. The control
+is only rendered on Apple platforms.
 
 ---
 

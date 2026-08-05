@@ -2638,6 +2638,13 @@ body.landing-static .landing-flow.auth-screen {
   text-align: center;
 }
 
+/* Sits between the stub body and its footnote, inside the stub's own frame, so
+   the pass control reads as part of the ticket rather than a page action. */
+.ticket-wallet-btn {
+  width: calc(100% - 32px);
+  margin: 0 16px 14px;
+}
+
 .ticket-stub-foot {
   padding: 12px 16px 14px;
   border-top: 1px solid var(--line);
@@ -4238,6 +4245,80 @@ body.landing-static .landing-flow.auth-screen {
 
 .beneficiary-empty {
   margin: 6px 0;
+}
+
+/* Counts across the top of the payee book. Its own strip rather than the
+   dashboard's .stats-grid, which is sized for a full screen and stacks into a
+   tower inside a modal at 320px. */
+.beneficiary-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin-bottom: 4px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--line);
+}
+
+.beneficiary-summary > div {
+  display: grid;
+  gap: 2px;
+  padding: 10px 6px;
+  text-align: center;
+  background: var(--card);
+}
+
+.beneficiary-summary strong {
+  color: var(--navy);
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.beneficiary-summary span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+[data-beneficiary-list] {
+  margin-top: 16px;
+}
+
+/* Grouped payee book: a heading row per group, then the cards for that group.
+   The count sits opposite the heading so the size of each group reads at a
+   glance without counting cards. */
+.beneficiary-group + .beneficiary-group {
+  margin-top: 18px;
+}
+
+.beneficiary-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.beneficiary-group-head .eyebrow {
+  margin: 0;
+}
+
+.beneficiary-group-count {
+  flex: 0 0 auto;
+  min-width: 26px;
+  padding: 2px 9px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+}
+
+.beneficiary-group .field-hint {
+  margin: -4px 0 8px;
 }
 
 .chat-contact-avatar img {
