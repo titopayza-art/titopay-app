@@ -9859,16 +9859,19 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
    smallest phones and short embedded web views showed buttons on top of
    tiles. Each height below is the measured point, per width band, where the
    composition stops fitting; under it the landing keeps every tile and
-   scrolls instead. space-between keeps the rhythm of the fitting layout, so
+   scrolls instead. The lines carry a cushion above the measured crossing:
+   adversarial probing found narrow broken pockets a few px above some
+   crossings (vh-driven clamps do not shrink monotonically), and widths under
+   320px -- fold cover screens -- run much taller, so they get their own band. space-between keeps the rhythm of the fitting layout, so
    a viewport within a few pixels of its band's line renders almost
    identically either side of it. Above these lines nothing changes.
 
    The second block is the same gate for the Business landing, whose copy
    runs taller and therefore stops fitting a little sooner. */
-@media (max-width: 374px) and (max-height: 621px),
-       (min-width: 375px) and (max-width: 430px) and (max-height: 594px),
-       (min-width: 431px) and (max-width: 519px) and (max-height: 604px),
-       (min-width: 520px) and (max-width: 699px) and (max-height: 564px),
+@media (max-width: 319px) and (max-height: 920px),
+       (min-width: 320px) and (max-width: 374px) and (max-height: 621px),
+       (min-width: 375px) and (max-width: 519px) and (max-height: 620px),
+       (min-width: 520px) and (max-width: 699px) and (max-height: 604px),
        (min-width: 700px) and (max-width: 899px) and (max-height: 704px) {
   body.landing-static .landing-flow.auth-screen {
     height: auto;
@@ -9888,11 +9891,10 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
   }
 }
 
-@media (max-width: 374px) and (max-height: 643px),
-       (min-width: 375px) and (max-width: 429px) and (max-height: 634px),
-       (min-width: 430px) and (max-width: 499px) and (max-height: 617px),
-       (min-width: 500px) and (max-width: 519px) and (max-height: 624px),
-       (min-width: 520px) and (max-width: 699px) and (max-height: 594px),
+@media (max-width: 319px) and (max-height: 940px),
+       (min-width: 320px) and (max-width: 374px) and (max-height: 655px),
+       (min-width: 375px) and (max-width: 429px) and (max-height: 645px),
+       (min-width: 430px) and (max-width: 699px) and (max-height: 630px),
        (min-width: 700px) and (max-width: 899px) and (max-height: 799px) {
   body.landing-static .business-landing.auth-screen {
     height: auto;
