@@ -1599,6 +1599,10 @@ body.landing-static .landing-flow.auth-screen {
 .field {
   display: grid;
   gap: 8px;
+  /* A field is itself a grid item on the filter and form rows. Without this its
+     automatic minimum is its content, and a control that cannot wrap -- a date
+     input above all -- pushes the whole track past the edge of its card. */
+  min-width: 0;
 }
 
 .field label {
@@ -1611,6 +1615,8 @@ body.landing-static .landing-flow.auth-screen {
 .field select,
 .field textarea {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 58px;
   padding: 0 16px;
   color: var(--navy);
@@ -1621,6 +1627,37 @@ body.landing-static .landing-flow.auth-screen {
     border-color 160ms var(--ease-premium),
     box-shadow 160ms var(--ease-premium),
     background 160ms var(--ease-premium);
+}
+
+/* Date and time inputs are the one control that will not shrink on its own:
+   Safari gives them an intrinsic width from their internal value element, which
+   never wraps. As a grid item that intrinsic width becomes the row's minimum,
+   which is what pushed From and To past the edge of their panel. The clamps
+   above stop the row taking its minimum from the control; these stop the
+   control itself from exceeding the space it is given. The native appearance is
+   deliberately left alone so the field still looks and behaves like the date
+   picker the reader expects. */
+.field input[type="date"],
+.field input[type="time"],
+.field input[type="datetime-local"],
+.field input[type="month"] {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.field input[type="date"]::-webkit-date-and-time-value,
+.field input[type="time"]::-webkit-date-and-time-value,
+.field input[type="datetime-local"]::-webkit-date-and-time-value,
+.field input[type="month"]::-webkit-date-and-time-value {
+  margin: 0;
+  text-align: left;
+}
+
+.field input[type="date"]::-webkit-calendar-picker-indicator,
+.field input[type="time"]::-webkit-calendar-picker-indicator,
+.field input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+.field input[type="month"]::-webkit-calendar-picker-indicator {
+  margin-inline-start: auto;
 }
 
 .field input:focus,
@@ -5000,6 +5037,15 @@ body.landing-static .landing-flow.auth-screen {
   border-bottom: 1px solid var(--line);
 }
 
+/* A receipt value is real data -- an email address, a reference, a merchant
+   name -- and an email has no spaces to break at, so without this it runs past
+   the edge of the card instead of wrapping onto a second line. */
+.receipt-card dt,
+.receipt-card dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .receipt-card dt {
   color: var(--muted);
   font-weight: 600;
@@ -5010,6 +5056,21 @@ body.landing-static .landing-flow.auth-screen {
   color: var(--navy);
   font-weight: 700;
   text-align: right;
+}
+
+/* On a phone the value column is about half the card, which is narrower than an
+   email address. Giving the value the full width lets it read on one line
+   instead of breaking mid-word; the wrap above stays as the guarantee that
+   nothing can run past the edge whatever the value turns out to be. */
+@media (max-width: 480px) {
+  .receipt-card dl div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .receipt-card dd {
+    text-align: left;
+  }
 }
 
 .receipt-filters {
@@ -5551,9 +5612,11 @@ input[data-profile-photo-zoom] {
     --nav-space: calc(108px + var(--safe-bottom));
   }
 
+  /* minmax(0, 1fr), not 1fr: a bare 1fr track still takes its minimum from its
+     content, which is what let the date fields widen the row past the card. */
   .report-filters,
   .promo-carousel {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

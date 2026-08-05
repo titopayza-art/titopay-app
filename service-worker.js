@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v232-ticket-download-and-google-wallet";
+const CACHE_NAME = "titopay-pwa-v233-field-overflow";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=232",
-  "./app.min.js?v=232",
+  "./styles.min.css?v=233",
+  "./app.min.js?v=233",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=213",
   "./manifest.webmanifest?v=193",
