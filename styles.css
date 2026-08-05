@@ -9849,6 +9849,69 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Landing: scroll when it cannot fit
+
+   The block above compresses the landing into whatever height it is given,
+   but its tiles have a 44px floor. Below the heights listed here the floor
+   wins, the flexible row is asked for space that does not exist, and the
+   difference is painted straight over Sign In and Create Account -- the
+   smallest phones and short embedded web views showed buttons on top of
+   tiles. Each height below is the measured point, per width band, where the
+   composition stops fitting; under it the landing keeps every tile and
+   scrolls instead. space-between keeps the rhythm of the fitting layout, so
+   a viewport within a few pixels of its band's line renders almost
+   identically either side of it. Above these lines nothing changes.
+
+   The second block is the same gate for the Business landing, whose copy
+   runs taller and therefore stops fitting a little sooner. */
+@media (max-width: 374px) and (max-height: 621px),
+       (min-width: 375px) and (max-width: 430px) and (max-height: 594px),
+       (min-width: 431px) and (max-width: 519px) and (max-height: 604px),
+       (min-width: 520px) and (max-width: 699px) and (max-height: 564px),
+       (min-width: 700px) and (max-width: 899px) and (max-height: 704px) {
+  body.landing-static .landing-flow.auth-screen {
+    height: auto;
+    overflow: visible;
+    grid-template-rows: none;
+    align-content: space-between;
+  }
+
+  body.landing-static .landing-flow .preview-grid {
+    min-height: 0;
+    align-content: start;
+    grid-auto-rows: max-content;
+  }
+
+  body.landing-static .landing-flow .preview-grid .service-tile {
+    max-height: none;
+  }
+}
+
+@media (max-width: 374px) and (max-height: 643px),
+       (min-width: 375px) and (max-width: 429px) and (max-height: 634px),
+       (min-width: 430px) and (max-width: 499px) and (max-height: 617px),
+       (min-width: 500px) and (max-width: 519px) and (max-height: 624px),
+       (min-width: 520px) and (max-width: 699px) and (max-height: 594px),
+       (min-width: 700px) and (max-width: 899px) and (max-height: 799px) {
+  body.landing-static .business-landing.auth-screen {
+    height: auto;
+    overflow: visible;
+    grid-template-rows: none;
+    align-content: space-between;
+  }
+
+  body.landing-static .business-landing .preview-grid {
+    min-height: 0;
+    align-content: start;
+    grid-auto-rows: max-content;
+  }
+
+  body.landing-static .business-landing .preview-grid .service-tile {
+    max-height: none;
+  }
+}
+
 
 /* ---------------------------------------------------------------------------
    Notification centre: filters and payment rows
