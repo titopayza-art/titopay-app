@@ -171,6 +171,51 @@ function syncTopbarScrollState() {
   bar.classList.toggle("is-scrolled", currentScrollY() > 2);
 }
 
+function prefersReducedMotion() {
+  return Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+// The document carries scroll-behavior: smooth, which every scroll request
+// inherits unless it is told otherwise, so an immediate move has to switch the
+// property off for the one call. Setting it inline is what works in every
+// engine; the "instant" keyword is too new for the older Safari the app still
+// runs on.
+function scrollWindowTo(top, smooth) {
+  if (smooth) {
+    window.scrollTo({ top, behavior: "smooth" });
+    return;
+  }
+  const root = document.documentElement;
+  const previous = root.style.scrollBehavior;
+  root.style.scrollBehavior = "auto";
+  // Reading the property back flushes the change. Without that flush the scroll
+  // below is still resolved against the smooth default and animates anyway.
+  void getComputedStyle(root).scrollBehavior;
+  window.scrollTo(0, top);
+  root.style.scrollBehavior = previous;
+}
+
+// Services opened from the navigation used to paint the grid at whatever offset
+// the previous screen was left on and then travel up to the top, so the reader
+// met the middle of the grid before its heading. The navigation now owns one
+// controlled movement: the view is placed at the top of the grid in the same
+// turn as the route swap, and anything the browser's own scroll anchoring
+// leaves behind is eased away on the next frame rather than snapped a second
+// time. The fixed header needs no offset of its own here because .screen
+// already reserves its height, so the top of the grid is the top of the
+// document.
+let servicesNavPending = false;
+
+function settleServicesScroll() {
+  scrollWindowTo(0, false);
+  syncTopbarScrollState();
+  requestAnimationFrame(() => {
+    if (state.route !== "services") return;
+    if (currentScrollY() > 2) scrollWindowTo(0, !prefersReducedMotion());
+    syncTopbarScrollState();
+  });
+}
+
 window.addEventListener("scroll", syncTopbarScrollState, { passive: true });
 
 // ---------------------------------------------------------------------------
@@ -240,10 +285,15 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("hashchange", () => {
   const previousRoute = state.route;
+  const navigatedToServices = servicesNavPending;
+  servicesNavPending = false;
   rememberRouteScroll(previousRoute);
   state.route = location.hash.replace("#", "") || "dashboard";
   render();
-  restoreRouteScroll(state.route);
+  // Only a deliberate tap on Services settles at the top of the grid. Back and
+  // forward still restore the position the reader left the route on.
+  if (navigatedToServices && state.route === "services") settleServicesScroll();
+  else restoreRouteScroll(state.route);
 });
 
 document.addEventListener("submit", onSubmit);
@@ -2628,7 +2678,18 @@ async function onClick(event) {
   }
   const route = event.target.closest("[data-route]");
   if (route) {
-    location.hash = route.dataset.route;
+    const destination = route.dataset.route;
+    if (destination === "services") {
+      // Tapping Services while already on Services cannot fire a hash change,
+      // so the same controlled return to the top of the grid runs here.
+      if (state.route === "services") {
+        scrollWindowTo(0, !prefersReducedMotion());
+        syncTopbarScrollState();
+        return;
+      }
+      servicesNavPending = true;
+    }
+    location.hash = destination;
     return;
   }
   const action = event.target.closest("[data-action]");
@@ -11616,22 +11677,24 @@ function openInfoModal(title, message) {
   `);
 }
 
-function securityTipCard() {
+function securityTipCard(heading = "Stay safe") {
   return `
     <article class="security-tip-card">
-      <h3>Stay safe</h3>
+      <h3>${esc(heading)}</h3>
       <p>${esc(SECURITY_TIP_TEXT)}</p>
     </article>
   `;
 }
 
 function showSecurityTipModal() {
+  // The dialog is already titled "Stay safe with TitoPay", so the card inside it
+  // says what to do rather than repeating the title.
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Security Tip</p><h2>Stay safe with TitoPay</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    ${securityTipCard()}
+    ${securityTipCard("Protect your account")}
     <button class="btn primary" type="button" data-close>I understand</button>
   `);
 }
@@ -16574,6 +16637,15 @@ function resolveModalOpener(opener, selector) {
   return isFocusRestorationTarget(replacement) && replacement.offsetParent !== null ? replacement : null;
 }
 
+// Returns the field only when it sits inside the slice of the dialog that is on
+// screen the moment it opens. The card is still scrolled to the top here, so a
+// simple offset against its visible height is enough.
+function modalFieldInInitialView(card, field) {
+  if (!field) return null;
+  const cardTop = card.getBoundingClientRect().top;
+  return field.getBoundingClientRect().top - cardTop < card.clientHeight ? field : null;
+}
+
 function openModal(html) {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const keepPrevious = !isFocusRestorationTarget(active) || Boolean(active.closest(".modal-backdrop"));
@@ -16638,8 +16710,13 @@ function openModal(html) {
   }
 
   // Move focus into the dialog without stealing it from an autofocused field.
+  // Only a field the reader can already see may take it. The landing menu's
+  // first field belongs to the Contact form at the very bottom of the sheet, so
+  // focusing it opened the menu on the Contact form and, once a tap or the
+  // software keyboard resized the visual viewport, scrolled the sheet straight
+  // down to it. A field below the fold leaves focus on the dialog itself.
   const firstField = card.querySelector("input:not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled])");
-  (firstField || card).focus({ preventScroll: true });
+  (modalFieldInInitialView(card, firstField) || card).focus({ preventScroll: true });
 
   wrapper.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
