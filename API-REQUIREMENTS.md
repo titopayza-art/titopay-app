@@ -198,28 +198,49 @@ GET /v1/ticketing/tickets
 }
 ```
 
-### Apple Wallet passes
+### Wallet passes: Apple Wallet and Google Wallet
 
-**Required for "Add to Apple Wallet" to work:** a signed `.pkpass`.
+**Required for the "Add to … Wallet" control to work:** a signed pass.
 
-A pass has to be signed with Apple's Pass Type ID certificate and its private
-key. That key can only live on the server — shipping it to the PWA would publish
-it — so the client never builds a pass. It links to one.
+Both platforms sign with a key that can only live on the server — Apple's Pass
+Type ID certificate, or the Google service account that signs the save JWT.
+Shipping either into the PWA would publish it, so the client never builds a
+pass. It links to one. The client shows Apple on iOS and macOS, Google on
+Android, and nothing elsewhere.
 
-Two ways to supply it, either is enough:
+Two ways to supply each, either is enough:
 
-1. Put a pass URL on the ticket record (`appleWalletUrl`, or any of
-   `applePassUrl` / `pkpassUrl` / `walletPassUrl` / `passUrl`, camel or snake
-   case). The client renders a direct link to it.
-2. Serve `GET /v1/ticketing/tickets/{ticketCode}/apple-wallet` returning
-   `200 { "appleWalletUrl": "…" }`. The client calls this when the ticket record
-   carries no URL, then hands the URL to the browser.
+1. Put a pass URL on the ticket record. The client renders a direct link.
+   - Apple: `appleWalletUrl`, or `applePassUrl` / `pkpassUrl` / `walletPassUrl`
+     / `passUrl`.
+   - Google: `googleWalletUrl`, or `googlePassUrl` / `googlePayUrl` /
+     `saveToGoogleUrl`.
+   - Camel or snake case, both are read.
+2. Serve an endpoint the client calls when the ticket record carries no URL:
+   - `GET /v1/ticketing/tickets/{ticketCode}/apple-wallet` → `200 { "appleWalletUrl": "…" }`
+   - `GET /v1/ticketing/tickets/{ticketCode}/google-wallet` → `200 { "googleWalletUrl": "…" }`
 
-The URL must serve the pass with `Content-Type: application/vnd.apple.pkpass`
+   A `404` is read as "no pass issued yet" and reported as exactly that.
+
+The Apple URL must serve the pass as `Content-Type: application/vnd.apple.pkpass`
 over HTTPS; that content type is what raises the Add-to-Wallet sheet on iOS and
-macOS. Until one of the two is in place the control reports that the organiser
-has not issued a pass yet, and the QR stub remains the entry method. The control
-is only rendered on Apple platforms.
+macOS. The Google URL is the standard save link, `https://pay.google.com/gp/v/save/{jwt}`,
+where the JWT is signed with the issuer's service account key.
+
+Only `http(s)` URLs are accepted — anything else is treated as no pass at all.
+Until one of the two routes is in place, the control reports that the organiser
+has not issued a pass yet and the QR stub remains the entry method.
+
+### Ticket download
+
+**No backend work is required.** Every ticket offers a download, on every
+platform. The client draws the ticket onto a canvas and writes an A4 PDF
+locally, through the same path the QR poster already uses, so a ticket
+downloads without a round trip and without a library.
+
+If the organiser issues its own ticket file, put its URL on the ticket record as
+`ticketPdfUrl` (or `pdfUrl` / `downloadUrl` / `ticketFileUrl`, camel or snake
+case) and the client will hand that file over instead of drawing one.
 
 ---
 

@@ -2639,10 +2639,27 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 /* Sits between the stub body and its footnote, inside the stub's own frame, so
-   the pass control reads as part of the ticket rather than a page action. */
-.ticket-wallet-btn {
-  width: calc(100% - 32px);
-  margin: 0 16px 14px;
+   the download and pass controls read as part of the ticket rather than page
+   actions. They share the row where there is width for it. */
+.ticket-stub-actions {
+  display: grid;
+  gap: 10px;
+  padding: 0 16px 14px;
+}
+
+.ticket-stub-actions:empty {
+  display: none;
+}
+
+.ticket-stub-actions .btn {
+  width: 100%;
+  margin: 0;
+}
+
+@media (min-width: 420px) {
+  .ticket-stub-actions:has(.ticket-wallet-btn):has(.ticket-download-btn) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .ticket-stub-foot {

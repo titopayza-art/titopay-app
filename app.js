@@ -4431,8 +4431,12 @@ async function handleAction(action, actionElement = null) {
   if (action === "my-tickets-refresh") {
     await refreshMyTickets();
   }
-  if (String(action || "").startsWith("ticket-apple-wallet:")) {
-    await addTicketToAppleWallet(action.split(":").slice(1).join(":"), actionElement);
+  if (String(action || "").startsWith("ticket-wallet:")) {
+    const [, kind, ...rest] = String(action).split(":");
+    await addTicketToWallet(kind, rest.join(":"), actionElement);
+  }
+  if (String(action || "").startsWith("ticket-download:")) {
+    await downloadTicket(action.split(":").slice(1).join(":"), actionElement);
   }
   if (action === "stockvel-create") {
     openStockvelCreateWizard();
@@ -5187,21 +5191,40 @@ function ticketRecordsFromResult(result = {}, order = {}) {
   return Array.isArray(list) ? list : [];
 }
 
-// A pass has to be signed with Apple's Pass Type ID certificate, which only the
-// server holds, so the client never builds one. It links to the pass the ticket
-// record carries, and asks the ticketing service for one when the record does
-// not carry it yet.
-function ticketAppleWalletUrl(ticket = {}) {
-  const candidate = ticket.appleWalletUrl || ticket.apple_wallet_url
-    || ticket.applePassUrl || ticket.apple_pass_url
-    || ticket.pkpassUrl || ticket.pkpass_url
-    || ticket.walletPassUrl || ticket.wallet_pass_url
-    || ticket.passUrl || ticket.pass_url
-    || "";
-  // An empty value resolves to the page's own address, so it is rejected before
-  // parsing. The value ends up in an href and in a navigation, so only an
-  // http(s) address is accepted; anything else is treated as no pass at all.
-  if (!String(candidate).trim()) return "";
+// A wallet pass has to be signed with a key only the server can hold -- Apple's
+// Pass Type ID certificate, or the Google service account that signs the save
+// JWT -- so the client never builds one. It links to the pass the ticket record
+// carries, and asks the ticketing service for one when the record does not
+// carry it yet. The two platforms differ only in which fields and endpoint
+// carry the pass, so they share everything else.
+const TICKET_PASS_KINDS = {
+  apple: {
+    label: "Add to Apple Wallet",
+    endpoint: "apple-wallet",
+    cacheField: "appleWalletUrl",
+    fields: [
+      "appleWalletUrl", "apple_wallet_url", "applePassUrl", "apple_pass_url",
+      "pkpassUrl", "pkpass_url", "walletPassUrl", "wallet_pass_url", "passUrl", "pass_url"
+    ],
+    missing: "This ticket does not have an Apple Wallet pass yet. The QR code above is still valid for entry."
+  },
+  google: {
+    label: "Add to Google Wallet",
+    endpoint: "google-wallet",
+    cacheField: "googleWalletUrl",
+    fields: [
+      "googleWalletUrl", "google_wallet_url", "googlePassUrl", "google_pass_url",
+      "googlePayUrl", "google_pay_url", "saveToGoogleUrl", "save_to_google_url"
+    ],
+    missing: "This ticket does not have a Google Wallet pass yet. The QR code above is still valid for entry."
+  }
+};
+
+// An empty value resolves to the page's own address, so it is rejected before
+// parsing. The value ends up in an href and in a navigation, so only an http(s)
+// address is accepted; anything else is treated as no pass at all.
+function ticketSafeUrl(candidate) {
+  if (!String(candidate || "").trim()) return "";
   try {
     const parsed = new URL(String(candidate), window.location.href);
     return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : "";
@@ -5210,57 +5233,65 @@ function ticketAppleWalletUrl(ticket = {}) {
   }
 }
 
+function ticketPassUrl(ticket = {}, kind = "apple") {
+  const config = TICKET_PASS_KINDS[kind];
+  if (!config) return "";
+  const field = config.fields.find((name) => ticket[name]);
+  return field ? ticketSafeUrl(ticket[field]) : "";
+}
+
 function ticketCodeOf(ticket = {}) {
   return ticket.ticketCode || ticket.ticket_code || ticket.reference || ticket.serial || "";
 }
 
-// Apple Wallet exists on Apple platforms only. Elsewhere the control is left
-// out rather than shown as a button that cannot do anything.
-function supportsAppleWallet() {
+// Each platform only gets the wallet it actually has. Anywhere else the control
+// is left out rather than shown as a button that cannot do anything.
+function ticketWalletKind() {
   const environment = getInstallEnvironment();
-  return Boolean(environment.isIOS || environment.isMacOS);
+  if (environment.isIOS || environment.isMacOS) return "apple";
+  if (environment.isAndroid) return "google";
+  return "";
 }
 
-function ticketAppleWalletControl(ticket = {}) {
-  if (!supportsAppleWallet()) return "";
+function ticketWalletControl(ticket = {}) {
+  const kind = ticketWalletKind();
+  if (!kind) return "";
+  const config = TICKET_PASS_KINDS[kind];
   const code = ticketCodeOf(ticket);
-  const passUrl = ticketAppleWalletUrl(ticket);
+  const passUrl = ticketPassUrl(ticket, kind);
   if (passUrl) {
-    // A plain link lets the browser hand the signed pass to Wallet itself,
-    // which is what raises the Add-to-Wallet sheet on an Apple device.
-    return `<a class="btn secondary ticket-wallet-btn" href="${esc(passUrl)}" rel="noopener">${icon("wallet")} Add to Apple Wallet</a>`;
+    // A plain link lets the browser hand the signed pass to the wallet itself,
+    // which is what raises the save sheet on the device.
+    return `<a class="btn secondary ticket-wallet-btn" href="${esc(passUrl)}" rel="noopener">${icon("wallet")} ${esc(config.label)}</a>`;
   }
   if (!code) return "";
-  return `<button class="btn secondary ticket-wallet-btn" type="button" data-action="ticket-apple-wallet:${esc(code)}">${icon("wallet")} Add to Apple Wallet</button>`;
+  return `<button class="btn secondary ticket-wallet-btn" type="button" data-action="ticket-wallet:${esc(kind)}:${esc(code)}">${icon("wallet")} ${esc(config.label)}</button>`;
 }
 
-async function addTicketToAppleWallet(code, button) {
-  if (!code) return;
+async function addTicketToWallet(kind, code, button) {
+  const config = TICKET_PASS_KINDS[kind];
+  if (!config || !code) return;
   setButtonBusy(button, true);
   try {
-    const result = await api(`/v1/ticketing/tickets/${encodeURIComponent(code)}/apple-wallet`);
-    const passUrl = ticketAppleWalletUrl(result || {}) || ticketAppleWalletUrl(result?.ticket || {});
-    if (!passUrl) throw new Error("The organiser has not issued an Apple Wallet pass for this ticket yet.");
+    const result = await api(`/v1/ticketing/tickets/${encodeURIComponent(code)}/${config.endpoint}`);
+    const passUrl = ticketPassUrl(result || {}, kind) || ticketPassUrl(result?.ticket || {}, kind);
+    if (!passUrl) throw new Error(config.missing);
     // Cache it on the ticket already on screen so a second tap is a direct link.
     const cached = (state.ticketing.myTickets || []).find((item) => ticketCodeOf(item) === code);
-    if (cached) cached.appleWalletUrl = passUrl;
+    if (cached) cached[config.cacheField] = passUrl;
     window.location.assign(passUrl);
   } catch (error) {
-    showToast(
-      Number(error?.status || 0) === 404
-        ? "This ticket does not have an Apple Wallet pass yet. The QR code above is still valid for entry."
-        : friendlyFormError(error, "ticketing"),
-      "error"
-    );
+    showToast(Number(error?.status || 0) === 404 ? config.missing : friendlyFormError(error, "ticketing"), "error");
   } finally {
     setButtonBusy(button, false);
   }
 }
 
 function ticketStub(ticket = {}, order = {}, event = {}) {
+  rememberRenderedTicket(ticket, order, event);
   const holder = ticket.holderName || ticket.holder_name || order.buyerName || order.buyer_name
     || state.user?.fullName || state.user?.full_name || "";
-  const code = ticket.ticketCode || ticket.ticket_code || ticket.reference || ticket.serial || "";
+  const code = ticketCodeOf(ticket);
   const qrImage = ticket.qrImageDataUrl || ticket.qr_image_url || ticket.qrImage || ticket.qr_url || "";
   const seat = ticket.seat || ticket.seatNumber || ticket.seat_number || "";
   const typeName = ticket.ticketTypeName || ticket.ticket_type_name || ticket.typeName || ticket.name || "";
@@ -5290,9 +5321,184 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
             : `<div class="ticket-stub-nocode">${icon("qr")}<span>Entry code is issued by the organiser</span></div>`}
         </div>
       </div>
-      ${ticketAppleWalletControl(ticket)}
+      <div class="ticket-stub-actions">
+        ${code ? `<button class="btn secondary ticket-download-btn" type="button" data-action="ticket-download:${esc(code)}">${icon("download")} Download ticket</button>` : ""}
+        ${ticketWalletControl(ticket)}
+      </div>
       <footer class="ticket-stub-foot">Present this ticket at the entrance. Do not share the code publicly.</footer>
     </article>`;
+}
+
+// The download and wallet controls act on a ticket that was rendered earlier, so
+// the record behind each stub is kept where the handlers can find it. Keyed by
+// ticket code, which is what the control carries.
+const renderedTickets = new Map();
+
+function rememberRenderedTicket(ticket, order, event) {
+  const code = ticketCodeOf(ticket);
+  if (code) renderedTickets.set(code, { ticket, order, event });
+}
+
+function ticketFilename(code) {
+  const name = String(code || "titopay-ticket").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `titopay-ticket-${name || "entry"}.pdf`;
+}
+
+// A file the organiser issued always wins over one drawn here.
+function ticketIssuedFileUrl(ticket = {}) {
+  return ticketSafeUrl(
+    ticket.ticketPdfUrl || ticket.ticket_pdf_url
+    || ticket.pdfUrl || ticket.pdf_url
+    || ticket.downloadUrl || ticket.download_url
+    || ticket.ticketFileUrl || ticket.ticket_file_url
+    || ""
+  );
+}
+
+async function downloadTicket(code, button) {
+  const entry = renderedTickets.get(code);
+  if (!entry) {
+    showToast("Open the ticket again before downloading it.", "error");
+    return;
+  }
+  setButtonBusy(button, true);
+  try {
+    const issued = ticketIssuedFileUrl(entry.ticket);
+    if (issued) {
+      window.location.assign(issued);
+      return;
+    }
+    // Drawn locally through the same canvas -> JPEG -> PDF path the QR poster
+    // uses, so a ticket downloads without a round trip and without a library.
+    const canvas = await renderTicketCanvas(entry);
+    const jpeg = canvas.toDataURL("image/jpeg", 0.92);
+    const pdf = posterJpegToPdf(jpeg, canvas.width, canvas.height);
+    downloadBlob(new Blob([pdf], { type: "application/pdf" }), ticketFilename(code));
+    showToast("Ticket downloaded.");
+  } catch (error) {
+    showToast(error.message || "Ticket download failed.", "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+// A4 portrait at 200dpi, matching the poster sheet, so the same PDF writer can
+// carry it and it prints to a real page.
+async function renderTicketCanvas({ ticket = {}, order = {}, event = {} }) {
+  const W = 1654;
+  const H = 2339;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const g = canvas.getContext("2d");
+  const centerX = W / 2;
+  const margin = 190;
+  const colW = W - margin * 2;
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, W, H);
+  g.textAlign = "center";
+  g.textBaseline = "alphabetic";
+
+  const qrSource = ticket.qrImageDataUrl || ticket.qr_image_url || ticket.qrImage || ticket.qr_url || "";
+  const [logo, qrImage] = await Promise.all([
+    posterLoadImage("./assets/titopay-logo.png"),
+    posterLoadImage(qrSource)
+  ]);
+
+  let y = 230;
+  if (logo) {
+    const logoW = 760;
+    const logoH = logoW * (logo.naturalHeight / logo.naturalWidth);
+    g.drawImage(logo, centerX - logoW / 2, y - logoH / 2, logoW, logoH);
+    y += logoH / 2 + 40;
+  } else {
+    g.fillStyle = POSTER_INK.navy;
+    g.font = posterFont(800, 110);
+    g.fillText("TitoPay", centerX, y + 36);
+    y += 90;
+  }
+
+  y += 84;
+  g.fillStyle = POSTER_INK.blue;
+  g.font = posterFont(800, 46);
+  g.fillText("TITOPAY TICKET".split("").join(" "), centerX, y);
+
+  y += 106;
+  g.fillStyle = POSTER_INK.navy;
+  const eventName = ticket.eventName || event.eventName || order.eventName || "TitoPay event";
+  posterFitText(g, eventName, 800, 92, colW, 44);
+  g.fillText(eventName, centerX, y);
+
+  const eventDate = ticket.eventDate || event.eventDate || order.eventDate || "";
+  const venue = [ticket.venueName || event.venueName || order.venueName || "", ticket.city || event.city || ""].filter(Boolean).join(", ");
+  y += 78;
+  g.fillStyle = POSTER_INK.muted;
+  g.font = posterFont(600, 46);
+  g.fillText(eventDate ? formatDate(eventDate) : "Date to be confirmed", centerX, y);
+  if (venue) {
+    y += 62;
+    posterFitText(g, venue, 600, 46, colW, 28);
+    g.fillText(venue, centerX, y);
+  }
+
+  y += 84;
+  g.strokeStyle = POSTER_INK.line;
+  g.lineWidth = 4;
+  g.beginPath();
+  g.moveTo(margin, y);
+  g.lineTo(W - margin, y);
+  g.stroke();
+
+  const rows = [
+    ["Ticket", ticket.ticketTypeName || ticket.ticket_type_name || ticket.typeName || ticket.name || ""],
+    ["Holder", ticket.holderName || ticket.holder_name || order.buyerName || order.buyer_name || ""],
+    ["Seat", ticket.seat || ticket.seatNumber || ticket.seat_number || ""],
+    ["Ticket code", ticketCodeOf(ticket)],
+    ["Order", order.orderReference || order.order_reference || ""]
+  ].filter(([, value]) => String(value || "").trim());
+
+  y += 74;
+  rows.forEach(([label, value]) => {
+    g.textAlign = "left";
+    g.fillStyle = POSTER_INK.muted;
+    g.font = posterFont(600, 42);
+    g.fillText(label, margin, y);
+    g.textAlign = "right";
+    g.fillStyle = POSTER_INK.navy;
+    posterFitText(g, String(value), 800, 46, colW - 420, 26);
+    g.fillText(String(value), W - margin, y);
+    y += 74;
+  });
+  g.textAlign = "center";
+
+  const qrBox = 760;
+  y += 40;
+  g.strokeStyle = POSTER_INK.navy;
+  g.lineWidth = 6;
+  posterRoundRectPath(g, centerX - qrBox / 2, y, qrBox, qrBox, 44);
+  g.stroke();
+  if (qrImage) {
+    const pad = 48;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(qrImage, centerX - qrBox / 2 + pad, y + pad, qrBox - pad * 2, qrBox - pad * 2);
+    g.imageSmoothingEnabled = true;
+  } else {
+    g.fillStyle = POSTER_INK.navy;
+    g.font = posterFont(700, 44);
+    g.fillText("Entry code issued by the organiser", centerX, y + qrBox / 2 - 16);
+    g.fillStyle = POSTER_INK.muted;
+    g.font = posterFont(600, 38);
+    g.fillText("Show the ticket code above at the entrance", centerX, y + qrBox / 2 + 48);
+  }
+
+  g.fillStyle = POSTER_INK.muted;
+  g.font = posterFont(600, 38);
+  g.fillText("Present this ticket at the entrance.", centerX, H - 220);
+  g.fillText("Do not share the code publicly.", centerX, H - 168);
+  g.fillStyle = POSTER_INK.navy;
+  g.font = posterFont(700, 34);
+  g.fillText(BRAND_TAGLINE, centerX, H - 96);
+  return canvas;
 }
 
 function openTicketConfirmation(result = {}, order = {}) {
