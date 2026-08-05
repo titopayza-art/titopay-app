@@ -12,10 +12,13 @@ const TITOPAY_CHAT_INVITES_KEY = "titopay_chat_invites_v1";
 const TITOPAY_CHAT_BLOCKS_KEY = "titopay_chat_blocks_v1";
 const TITOPAY_CALL_HISTORY_KEY = "titopay_call_history_v1";
 const IN_APP_NOTIFICATIONS_KEY = "titopay_in_app_notifications_v1";
+const EMAIL_NOTIFICATION_PREFERENCES_PREFIX = "titopay_email_notification_preferences_v1";
 const TITOPAY_CHAT_CLEARED_KEY = "titopay_chat_cleared_at_v1";
 const PWA_REVIEW_QUEUE_KEY = "titopay_pending_pwa_reviews_v1";
 const TITOPAY_RECEIPTS_KEY = "titopay_receipts_v1";
 const INSTALL_DISMISSED_KEY = "titopay_install_dismissed_v1";
+const QUICK_SERVICES_STORAGE_PREFIX = "titopay_quick_services_v1";
+const QUICK_SERVICES_LIMIT = 6;
 const SESSION_TIMEOUT_MS = 15 * 60 * 1000;
 const SESSION_WARNING_MS = 60 * 1000;
 const SECURITY_TIP_TEXT = "Never share your PIN, password or verification codes. TitoPay will never ask for those by phone, email, WhatsApp, SMS or social media.";
@@ -63,6 +66,9 @@ const state = {
   user: null,
   wallets: [],
   transactions: [],
+  beneficiaries: [],
+  beneficiarySearch: "",
+  pendingBeneficiarySave: null,
   businessDocuments: readJson(BUSINESS_DOCUMENTS_KEY) || [],
   activeBusinessDocumentId: "",
   services: [],
@@ -86,8 +92,10 @@ const state = {
   modalOpenerSelector: "",
   profilePhotoCrop: null,
   notifications: [],
+  emailNotificationPreferences: null,
   merchantSale: null,
   receiptFilters: { search: "", range: "all", merchant: "" },
+  quickServiceDraft: null,
   pendingTransactionReview: null,
   pendingQrPaymentReview: null,
   stockvel: { status: "idle", groups: [], invitations: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
@@ -112,6 +120,9 @@ let titoPayIceServers = [{ urls: ["stun:stun.l.google.com:19302"] }];
 let titoPayPendingIceCandidates = [];
 let titoPayAccountSyncTimer = null;
 let authRefreshPromise = null;
+let defaultServicesPromise = null;
+let jsQrLoadPromise = null;
+let authKeyboardCleanup = null;
 
 const navItems = [
   ["dashboard", "Home", "home"],
@@ -317,15 +328,26 @@ boot();
 async function boot() {
   registerServiceWorker();
   renderConnectivityBanner();
-  await Promise.all([checkApiHealth(), loadServices(), loadMaintenanceMode(), loadPublicEventFromPath()]);
+  const defaults = await loadDefaultServices();
+  state.services = sortServices(defaults.map(normalizeService));
+  state.servicesLoaded = true;
+  render();
+  const publicDataPromise = Promise.all([
+    checkApiHealth(),
+    loadServices(defaults),
+    loadMaintenanceMode(),
+    loadPublicEventFromPath()
+  ]).then(() => {
+    const maintenanceEnabled = Boolean(state.maintenance?.pwa?.enabled);
+    if (state.auth?.accessToken || state.route === "services" || state.publicEvent || maintenanceEnabled) render();
+  });
   if (state.auth && state.auth.accessToken) {
-    await loadAccount();
+    await Promise.all([loadAccount(), publicDataPromise]);
     resetSessionTimers();
     startTitoPayAccountSync();
     connectTitoPayChatSocket();
     startTitoPayChatPolling();
   }
-  render();
 }
 
 function readJson(key) {
@@ -359,7 +381,10 @@ function clearAuth() {
   state.user = null;
   state.wallets = [];
   state.transactions = [];
+  state.beneficiaries = [];
+  state.pendingBeneficiarySave = null;
   state.notifications = [];
+  state.emailNotificationPreferences = null;
   state.transactionFilters = { search: "", from: "", to: "", direction: "all" };
   localStorage.removeItem(AUTH_KEY);
   sessionStorage.removeItem(SESSION_KEY);
@@ -439,11 +464,11 @@ async function refreshCustomerSession() {
       payload = { error: text || "Unexpected API response" };
     }
     if (!response.ok || payload.ok === false) {
-      const error = new Error(payload.error || "Your TitoPay session has expired. Please sign in again.");
+      clearAuth();
+      const error = new Error("Your TitoPay session has expired. Please sign in again.");
       error.status = response.status;
       error.details = payload;
       error.requestId = payload.requestId || null;
-      if (response.status === 401 || response.status === 403) clearAuth();
       throw error;
     }
     const nextAuth = {
@@ -536,6 +561,8 @@ function friendlyFormError(error, formName = "") {
   const rawMessage = String(error?.message || "").trim();
   const requestId = error?.requestId || error?.details?.requestId;
   const suffix = requestId ? ` Ref: ${requestId}` : "";
+  const remainingAttempts = Number(error?.details?.remainingAttempts);
+  const retryAfterSeconds = Number(error?.details?.retryAfterSeconds);
   if (formName === "login") {
     if (status === 0) return rawMessage || "TitoPay services are not reachable. Please try again.";
     if (status === 400) return "Enter your TitoPay cellphone, username or email and PIN.";
@@ -544,6 +571,19 @@ function friendlyFormError(error, formName = "") {
     if (status === 423) return rawMessage || "This account is temporarily locked. Please try again later.";
     if (status === 429) return "Too many login attempts. Please wait a few minutes and try again.";
     return `Unable to sign in right now. Please try again shortly.${suffix}`;
+  }
+  if (formName === "wallet-unlock" && Number.isFinite(remainingAttempts)) {
+    if (remainingAttempts > 0) return `Incorrect OTP. ${remainingAttempts} ${remainingAttempts === 1 ? "attempt" : "attempts"} remaining.`;
+    return "This OTP has been locked after too many incorrect attempts. Close this window and request a new OTP.";
+  }
+  if (status === 429) {
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+      const waitValue = retryAfterSeconds >= 60
+        ? `${Math.ceil(retryAfterSeconds / 60)} ${Math.ceil(retryAfterSeconds / 60) === 1 ? "minute" : "minutes"}`
+        : `${Math.ceil(retryAfterSeconds)} seconds`;
+      return `Too many attempts. Try again in ${waitValue}.`;
+    }
+    return `Too many attempts. Please wait a few minutes and try again.${suffix}`;
   }
   // api() falls back to "Request failed (NNN)" when the API sends no message of
   // its own. That is a developer string and must never reach a customer.
@@ -580,13 +620,11 @@ async function loadMaintenanceMode() {
   }
 }
 
-async function loadServices() {
+async function loadServices(defaults = null) {
   try {
-    const [defaults, result] = await Promise.all([
-      loadDefaultServices(),
-      api("/v1/services?audience=all", { auth: false })
-    ]);
-    const merged = mergeServiceCatalogue(defaults, result.items || []);
+    const fallback = defaults || await loadDefaultServices();
+    const result = await api("/v1/services?audience=all", { auth: false });
+    const merged = mergeServiceCatalogue(fallback, result.items || []);
     if (!merged.length) throw new Error("No TitoPay services returned");
     state.services = sortServices(merged.map(normalizeService));
     state.servicesLoaded = true;
@@ -621,14 +659,16 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 }
 
 async function loadDefaultServices() {
-  try {
-    const response = await fetch("./services-default.json?v=193", { cache: "no-store" });
-    if (!response.ok) throw new Error("Default service catalogue unavailable");
-    const payload = await response.json();
-    return payload.items || [];
-  } catch (error) {
-    return [];
+  if (!defaultServicesPromise) {
+    defaultServicesPromise = fetch("./services-default.json?v=213")
+      .then((response) => {
+        if (!response.ok) throw new Error("Default service catalogue unavailable");
+        return response.json();
+      })
+      .then((payload) => payload.items || [])
+      .catch(() => []);
   }
+  return defaultServicesPromise;
 }
 
 function sortServices(services) {
@@ -641,7 +681,9 @@ function normalizeService(item) {
   const serviceCode = String(item.service_code || item.serviceCode || action);
   const serviceLabel = serviceCode === "stockvel" || action === "stockvel"
     ? "Stokvel"
-    : (item.service_name || item.serviceName || serviceCode);
+    : serviceCode === "tickets" || action === "tickets"
+      ? "Event Tickets"
+      : (item.service_name || item.serviceName || serviceCode);
   const badge = String(item.feature_badge || item.featureBadge || "none");
   const isProfileSecurity = action === "profile-security" || serviceCode === "profile-security";
   return {
@@ -788,6 +830,15 @@ function notificationStorageKey() {
   return `${IN_APP_NOTIFICATIONS_KEY}:${state.accountType}:${identity}`;
 }
 
+function notificationClearedAtKey() {
+  return `${notificationStorageKey()}:cleared-at`;
+}
+
+function notificationClearedAt() {
+  const value = Number(localStorage.getItem(notificationClearedAtKey()) || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function defaultInAppNotifications() {
   return [
     {
@@ -808,7 +859,7 @@ function loadInAppNotifications() {
     return;
   }
   const stored = readJson(notificationStorageKey());
-  state.notifications = Array.isArray(stored) && stored.length ? stored : defaultInAppNotifications();
+  state.notifications = Array.isArray(stored) ? stored : defaultInAppNotifications();
   persistInAppNotifications();
 }
 
@@ -823,6 +874,9 @@ function unreadNotificationCount() {
 
 function addInAppNotification(data = {}) {
   if (!state.user) return false;
+  const createdAt = data.createdAt || new Date().toISOString();
+  const clearedAt = notificationClearedAt();
+  if (clearedAt && Date.parse(createdAt) <= clearedAt) return false;
   if (!Array.isArray(state.notifications) || !state.notifications.length) loadInAppNotifications();
   if (data.id && state.notifications.some((item) => item.id === data.id)) return false;
   const item = {
@@ -832,7 +886,7 @@ function addInAppNotification(data = {}) {
     body: data.body || "",
     critical: Boolean(data.critical),
     unread: data.unread !== false,
-    createdAt: data.createdAt || new Date().toISOString(),
+    createdAt,
     metadata: data.metadata || {}
   };
   state.notifications.unshift(item);
@@ -900,23 +954,74 @@ async function syncTitoPayChatNotifications() {
   if (!state.auth || !state.auth.accessToken || !state.user) return false;
   const result = await api("/v1/chat/notifications");
   let changed = false;
-  (result.notifications || []).forEach((item) => addInAppNotification({
-    id: item.metadata?.clientNotificationId || item.id,
-    title: item.title,
-    body: item.body,
-    category: item.notification_type || "chat",
-    unread: item.status !== "read",
-    createdAt: item.created_at || item.createdAt,
-    metadata: { ...(item.metadata || {}), serverNotificationId: item.id, notificationType: item.notification_type || "chat" }
-  }) && (changed = true));
+  (result.notifications || []).forEach((item) => {
+    const notice = {
+      id: item.metadata?.clientNotificationId || item.id,
+      type: item.metadata?.category || "info",
+      title: item.title,
+      body: item.body,
+      category: item.notification_type || "chat",
+      unread: item.status !== "read",
+      createdAt: item.created_at || item.createdAt,
+      metadata: { ...(item.metadata || {}), serverNotificationId: item.id, notificationType: item.notification_type || "chat" }
+    };
+    if (!addInAppNotification(notice)) return;
+    changed = true;
+    if (item.notification_type === "login_notification") {
+      showTitoPayDeviceNotification(notice).catch(() => null);
+    }
+  });
   return changed;
+}
+
+async function showTitoPayDeviceNotification(notice = {}) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return false;
+  const options = {
+    body: notice.body || "A login to your TitoPay account was recorded.",
+    icon: "./assets/icon-192.png?v=165",
+    badge: "./assets/favicon.png?v=165",
+    tag: `titopay-${notice.id || "login-notification"}`,
+    renotify: false,
+    data: { route: notice.metadata?.route || "profile" }
+  };
+  if ("serviceWorker" in navigator) {
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification(notice.title || "New TitoPay login", options);
+    return true;
+  }
+  new Notification(notice.title || "New TitoPay login", options);
+  return true;
 }
 
 function activeServices() {
   return visibleServices().filter((service) => service.status === "active");
 }
 
-function homeQuickServices() {
+function quickServiceStorageKey() {
+  const user = state.user || {};
+  const identity = user.id || user.email || user.username || user.phone || "guest";
+  return `${QUICK_SERVICES_STORAGE_PREFIX}:${state.accountType}:${identity}`;
+}
+
+function quickServiceCandidates() {
+  const hiddenServiceTiles = new Set(["transactions", "profile-security", "business-profile"]);
+  const services = hideDuplicateAirtimeDataTiles(activeServices()).filter((service) => {
+    const action = String(service.action || "").toLowerCase();
+    const id = String(service.id || service.serviceCode || service.service_code || "").toLowerCase();
+    return !hiddenServiceTiles.has(action) && !hiddenServiceTiles.has(id);
+  });
+  if (enterpriseDistributionTileVisible() && !services.some((service) => String(service.action || service.id) === "enterprise-distribution")) {
+    services.push(enterpriseDistributionTileService());
+  }
+  const unique = new Map();
+  services.forEach((service) => {
+    const id = String(service.id || service.serviceCode || "");
+    if (id && !unique.has(id)) unique.set(id, service);
+  });
+  return Array.from(unique.values());
+}
+
+function defaultHomeQuickServices() {
   const repeatedActions = new Set([
     "top-up",
     "topup",
@@ -943,7 +1048,7 @@ function homeQuickServices() {
   // left the standalone "Airtime" entry to represent it here while the Services
   // grid showed the combined "Airtime & Data" tile. One product, two names, two
   // screens. Both lists now collapse the trio the same way.
-  const source = hideDuplicateAirtimeDataTiles(activeServices());
+  const source = quickServiceCandidates();
   const sendMoney = source.find((service) => valuesFor(service).some((value) => value === "send" || value === "send-money"));
   const services = source.filter((service) => {
     const values = valuesFor(service);
@@ -953,6 +1058,118 @@ function homeQuickServices() {
     ...(sendMoney ? [sendMoney] : []),
     ...services.filter((service) => !sendMoney || service.id !== sendMoney.id)
   ].slice(0, 6);
+}
+
+function savedQuickServiceIds() {
+  const value = readJson(quickServiceStorageKey());
+  if (!Array.isArray(value)) return null;
+  return value.map((id) => String(id || "")).filter(Boolean).slice(0, QUICK_SERVICES_LIMIT);
+}
+
+function homeQuickServices() {
+  const candidates = quickServiceCandidates();
+  const byId = new Map(candidates.map((service) => [String(service.id), service]));
+  const saved = savedQuickServiceIds();
+  if (saved === null) return defaultHomeQuickServices();
+  return saved.map((id) => byId.get(id)).filter(Boolean).slice(0, QUICK_SERVICES_LIMIT);
+}
+
+function quickServicesCustomizerBody() {
+  const candidates = quickServiceCandidates();
+  const draft = Array.isArray(state.quickServiceDraft) ? state.quickServiceDraft : homeQuickServices().map((service) => String(service.id));
+  const selected = new Set(draft);
+  const byId = new Map(candidates.map((service) => [String(service.id), service]));
+  const ordered = [
+    ...draft.map((id) => byId.get(id)).filter(Boolean),
+    ...candidates.filter((service) => !selected.has(String(service.id)))
+  ];
+  return `
+    <div class="quick-service-customizer-summary">
+      <strong>${draft.length} of ${QUICK_SERVICES_LIMIT} selected</strong>
+      <span>Personal and Business layouts are saved separately.</span>
+    </div>
+    <section class="quick-service-options" aria-label="Available Quick Services">
+      ${ordered.map((service) => {
+        const id = String(service.id);
+        const isSelected = selected.has(id);
+        const position = draft.indexOf(id);
+        return `<article class="quick-service-option${isSelected ? " is-selected" : ""}">
+          <label>
+            <input type="checkbox" data-quick-service-toggle="${esc(id)}" ${isSelected ? "checked" : ""}>
+            <span class="icon-bubble">${icon(service.icon)}</span>
+            <span><strong>${esc(service.label)}</strong><small>${isSelected ? `Position ${position + 1}` : "Not shown on Home"}</small></span>
+          </label>
+          <div class="quick-service-order" aria-label="Reorder ${esc(service.label)}">
+            <button type="button" data-quick-service-move="up" data-quick-service-id="${esc(id)}" aria-label="Move ${esc(service.label)} up" ${!isSelected || position === 0 ? "disabled" : ""}>↑</button>
+            <button type="button" data-quick-service-move="down" data-quick-service-id="${esc(id)}" aria-label="Move ${esc(service.label)} down" ${!isSelected || position === draft.length - 1 ? "disabled" : ""}>↓</button>
+          </div>
+        </article>`;
+      }).join("")}
+    </section>
+    <div class="auth-actions quick-service-customizer-actions">
+      <button class="btn secondary" type="button" data-action="reset-quick-services">Use defaults</button>
+      <button class="btn primary" type="button" data-action="save-quick-services" ${draft.length ? "" : "disabled"}>Save Quick Services</button>
+    </div>`;
+}
+
+function openQuickServicesCustomizer() {
+  state.quickServiceDraft = homeQuickServices().map((service) => String(service.id));
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Home</p><h2>Customise Quick Services</h2><p class="lead">Choose up to ${QUICK_SERVICES_LIMIT} services and arrange their order.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div data-quick-service-customizer>${quickServicesCustomizerBody()}</div>
+  `);
+}
+
+function refreshQuickServicesCustomizer() {
+  const host = document.querySelector("[data-quick-service-customizer]");
+  if (host) host.innerHTML = quickServicesCustomizerBody();
+}
+
+function updateQuickServiceDraft(id, enabled) {
+  const next = Array.isArray(state.quickServiceDraft) ? [...state.quickServiceDraft] : [];
+  const currentIndex = next.indexOf(id);
+  if (enabled && currentIndex === -1) {
+    if (next.length >= QUICK_SERVICES_LIMIT) {
+      showToast(`Choose up to ${QUICK_SERVICES_LIMIT} Quick Services.`, "error");
+      refreshQuickServicesCustomizer();
+      return;
+    }
+    next.push(id);
+  }
+  if (!enabled && currentIndex !== -1) next.splice(currentIndex, 1);
+  state.quickServiceDraft = next;
+  refreshQuickServicesCustomizer();
+}
+
+function moveQuickService(id, direction) {
+  const next = Array.isArray(state.quickServiceDraft) ? [...state.quickServiceDraft] : [];
+  const index = next.indexOf(id);
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || target < 0 || target >= next.length) return;
+  [next[index], next[target]] = [next[target], next[index]];
+  state.quickServiceDraft = next;
+  refreshQuickServicesCustomizer();
+}
+
+function saveQuickServices() {
+  const selected = Array.isArray(state.quickServiceDraft) ? state.quickServiceDraft.slice(0, QUICK_SERVICES_LIMIT) : [];
+  if (!selected.length) {
+    showToast("Choose at least one Quick Service.", "error");
+    return;
+  }
+  writeJson(quickServiceStorageKey(), selected);
+  state.quickServiceDraft = null;
+  closeModal();
+  render();
+  showToast(`${state.accountType === "business" ? "Business" : "Personal"} Quick Services saved.`);
+}
+
+function resetQuickServices() {
+  state.quickServiceDraft = defaultHomeQuickServices().map((service) => String(service.id));
+  refreshQuickServicesCustomizer();
 }
 
 function comingSoonServices() {
@@ -1063,13 +1280,14 @@ function serviceById(id) {
 
 async function loadAccount() {
   try {
-    const [profile, wallets, transactions, profileQr, securityCentre, enterpriseDistribution] = await Promise.all([
+    const [profile, wallets, transactions, profileQr, securityCentre, enterpriseDistribution, beneficiaries] = await Promise.all([
       api("/v1/auth/me"),
       api("/v1/wallets"),
       api("/v1/transactions"),
       api("/v1/qr/profile").catch(() => ({ qr: null })),
       api("/v1/security/centre").catch(() => ({ centre: null })),
-      api("/v1/enterprise-distribution/eligibility").catch(() => ({ eligibility: null }))
+      api("/v1/enterprise-distribution/eligibility").catch(() => ({ eligibility: null })),
+      api("/v1/beneficiaries?limit=100").catch(() => ({ items: [] }))
     ]);
     state.user = hydrateAccountMedia(profile.user || {});
     rememberLocalTitoPayUser(state.user);
@@ -1078,6 +1296,7 @@ async function loadAccount() {
     state.profileQr = profileQr.qr || null;
     state.securityCentre = securityCentre.centre || null;
     state.enterpriseDistribution.eligibility = enterpriseDistribution.eligibility || null;
+    state.beneficiaries = beneficiaries.items || [];
     state.accountType = profile.user && (profile.user.accountType || profile.user.account_type) || state.accountType;
     loadInAppNotifications();
     syncTransactionNotifications();
@@ -1514,6 +1733,7 @@ function dashboardView() {
           <div>
             <h2>Quick services</h2>
           </div>
+          <button class="btn ghost quick-services-edit" type="button" data-action="customize-quick-services">${icon("list")} Customise</button>
         </section>
         <section class="service-grid quick-service-grid">
           ${quickServices.length ? quickServices.map((service) => serviceTile(service, true)).join("") : serviceEmptyState()}
@@ -1653,6 +1873,7 @@ function activityView() {
     <section class="auth-actions">
       <button class="btn secondary" data-action="export-csv">${icon("download")} Export CSV</button>
       <button class="btn secondary" data-action="export-pdf">${icon("download")} Export PDF</button>
+      <button class="btn primary activity-email-statement-action" data-action="email-statement">${icon("mail")} Email statement · R0.10</button>
     </section>
     <section class="panel activity-receipts-panel">
       <div>
@@ -1691,8 +1912,10 @@ function profileView() {
     <section class="section-head compact"><h2>Account</h2></section>
     <section class="profile-feature-grid">
       ${profileFeature("TitoPay Chat", isBusiness ? "Chat with customers before payments." : "Chat with TitoPay users before payments.", "chat", "titopay-chat", true)}
+      ${profileFeature("Saved Beneficiaries", isBusiness ? "Manage customers, suppliers, employees and payout recipients." : "Manage favourite and recent payment recipients.", "user", "saved-beneficiaries")}
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
       ${profileFeature("Unread Messages", `${unreadNotificationCount()} unread notification${unreadNotificationCount() === 1 ? "" : "s"} · chat, support and account alerts.`, "message-check", "account-activity")}
+      ${profileFeature("Share TitoPay", "Invite friends, family or customers by WhatsApp, SMS or any sharing app.", "share", "share-titopay")}
       ${profileFeature("Help us improve", "Rate your TitoPay experience and send product feedback.", "feedback", "pwa-review")}
       ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
       ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
@@ -1702,7 +1925,8 @@ function profileView() {
     <section class="section-head compact"><h2>Security & Verification</h2></section>
     <section class="profile-feature-grid">
       ${profileFeature(locked ? "Unlock Wallet" : "Lock Wallet", locked ? "Verify OTP to unlock outgoing payments." : "Block outgoing payments instantly.", locked ? "shield" : "lock", locked ? "unlock-wallet" : "lock-wallet", locked)}
-      ${profileFeature("Change PIN / Password", "Reset your secure TitoPay access using SMS OTP.", "lock", "change-password")}
+      ${profileFeature("Authentication Method", `${authenticationMethodLabel(currentAuthenticationMethod(user))} · saved to your TitoPay profile.`, "shield", "authentication-preference")}
+      ${profileFeature("Change PIN / Password", "Choose SMS OTP or Email OTP.", "lock", "change-password")}
     </section>
     <section class="profile-actions panel">
       <button class="btn secondary" data-action="refresh">${icon("refresh")} Refresh profile</button>
@@ -1936,6 +2160,11 @@ function notificationActionAttributes(item = {}) {
   const ticketRef = metadata.ticketRef || metadata.ticketId;
   if (ticketRef) return `${idAttr} data-notification-support="${esc(ticketRef)}" role="button" tabindex="0"`;
   if (metadata.txId || metadata.txReference) return `${idAttr} data-notification-tx="${esc(metadata.txId || metadata.txReference)}" role="button" tabindex="0"`;
+  const notificationType = String(metadata.notificationType || item.notification_type || "").toLowerCase();
+  const supportConversationId = metadata.conversationId || metadata.conversation_id;
+  if (supportConversationId && /^support_/.test(notificationType)) {
+    return `${idAttr} data-notification-support-chat="${esc(supportConversationId)}" role="button" tabindex="0"`;
+  }
   // A chat notification opens the conversation it is about. The server does
   // not always name the thread; when it does not, the chat home is still the
   // right landing, not a dead row.
@@ -2035,9 +2264,40 @@ function notificationListHtml() {
   }).join("")}</section>`;
 }
 
-function openNotificationsModal() {
+function emailNotificationPreferencesCacheKey() {
+  return `${EMAIL_NOTIFICATION_PREFERENCES_PREFIX}:${state.user?.id || "customer"}`;
+}
+
+function emailNotificationPreferences() {
+  return state.emailNotificationPreferences || readJson(emailNotificationPreferencesCacheKey()) || {
+    email: {
+      enabled: true,
+      transactionReceipts: true,
+      supportUpdates: true,
+      passwordResets: true,
+      criticalSecurity: true,
+      kycAndBusinessUpdates: true,
+      price: 0
+    }
+  };
+}
+
+function saveEmailNotificationPreferences(preferences) {
+  state.emailNotificationPreferences = preferences;
+  writeJson(emailNotificationPreferencesCacheKey(), preferences);
+}
+
+async function loadEmailNotificationPreferences() {
+  if (!state.auth?.accessToken) return emailNotificationPreferences();
+  const result = await api("/v1/auth/me/notification-preferences");
+  if (result.preferences) saveEmailNotificationPreferences(result.preferences);
+  return emailNotificationPreferences();
+}
+
+function openNotificationsModal(options = {}) {
   loadInAppNotifications();
   const smsEnabled = localStorage.getItem("titopay_sms_notifications_enabled") === "true";
+  const emailPreferences = emailNotificationPreferences().email;
   const unread = unreadNotificationCount();
   openModal(`
     <div class="modal-head">
@@ -2053,15 +2313,65 @@ function openNotificationsModal() {
         <span class="icon-bubble">${icon("phone")}</span>
         <div><strong>SMS alerts ${smsEnabled ? "enabled" : "off"}</strong><small>Optional SMS alerts cost R0.30. Critical OTP and reset SMS remain free.</small></div>
       </article>
+      <article>
+        <span class="icon-bubble">${icon("mail")}</span>
+        <div><strong>Email alerts ${emailPreferences.enabled ? "enabled" : "optional alerts off"}</strong><small>Transaction and support emails are free. Password reset and critical security emails remain on.</small></div>
+      </article>
     </section>
     ${notificationListHtml()}
     <div class="auth-actions">
       <button class="btn secondary" data-action="mark-notifications-read">${icon("check-circle")} Mark all read</button>
       <button class="btn secondary" data-action="enable-browser-notifications">${icon("bell")} Enable device alerts</button>
       <button class="btn secondary" data-action="preview-sms-notifications">${icon("phone")} ${smsEnabled ? "SMS enabled" : "Enable SMS alerts"}</button>
+      <button class="btn secondary" data-action="preview-email-notifications">${icon("mail")} ${emailPreferences.enabled ? "Email enabled" : "Enable email alerts"}</button>
       <button class="btn secondary" data-action="clear-notifications">${icon("x")} Clear inbox</button>
     </div>
   `);
+  if (options.refresh !== false && state.auth?.accessToken) {
+    loadEmailNotificationPreferences().then(() => {
+      const modal = document.querySelector(".modal-card");
+      if (modal && /Notification Centre/.test(modal.textContent || "")) openNotificationsModal({ refresh: false });
+    }).catch(() => null);
+  }
+}
+
+function openEmailNotificationPreferences() {
+  const preferences = emailNotificationPreferences().email;
+  const effectiveTransactions = preferences.enabled && preferences.transactionReceipts;
+  const effectiveSupport = preferences.enabled && preferences.supportUpdates;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Email Alerts</p><h2>Email notification preferences</h2><p class="lead">Choose the free optional emails you want TitoPay to send.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="notification-preferences">
+      ${settingsRow("Email notifications", preferences.enabled ? "Enabled for this TitoPay account" : "Optional email alerts are off", "mail")}
+      ${settingsRow("Transaction receipts", effectiveTransactions ? "Enabled · Free" : "Off", "receipt-list")}
+      ${settingsRow("Support updates", effectiveSupport ? "Enabled · Free" : "Off", "message-check")}
+      ${settingsRow("Password and PIN resets", "Always on · Free", "shield")}
+      ${settingsRow("Critical security alerts", "Always on · Free", "shield")}
+      ${settingsRow("Verification, KYC and business decisions", "Always on · Free", "check-circle")}
+    </section>
+    <p class="field-hint">Turning off optional email alerts never disables account recovery, password-change confirmations, login security, verification, KYC, business approval, or other required communications.</p>
+    <div class="auth-actions">
+      <button class="btn secondary" type="button" data-action="notifications">${icon("bell")} Back</button>
+      <button class="btn primary" type="button" data-action="toggle-email-notifications" data-enabled="${preferences.enabled ? "false" : "true"}">${icon("mail")} ${preferences.enabled ? "Turn off optional email" : "Enable optional email"}</button>
+      <button class="btn secondary" type="button" data-action="toggle-transaction-email-notifications" data-enabled="${preferences.transactionReceipts ? "false" : "true"}">${icon("receipt-list")} ${preferences.transactionReceipts ? "Turn off transaction emails" : "Enable transaction emails"}</button>
+      <button class="btn secondary" type="button" data-action="toggle-support-email-notifications" data-enabled="${preferences.supportUpdates ? "false" : "true"}">${icon("message-check")} ${preferences.supportUpdates ? "Turn off support emails" : "Enable support emails"}</button>
+    </div>
+  `);
+}
+
+async function updateEmailNotificationPreferences(patch, successMessage) {
+  try {
+    const result = await api("/v1/auth/me/notification-preferences", { method: "PUT", body: patch });
+    saveEmailNotificationPreferences(result.preferences);
+    addInAppNotification({ title: "Email preferences updated", body: successMessage, critical: false });
+    openEmailNotificationPreferences();
+    showToast(successMessage);
+  } catch (error) {
+    showToast(error.message || "Unable to update email preferences. Please try again.", "error");
+  }
 }
 
 function openSmsNotificationPreview() {
@@ -2109,6 +2419,7 @@ function markNotificationsRead() {
 }
 
 function clearNotifications() {
+  localStorage.setItem(notificationClearedAtKey(), String(Date.now()));
   state.notifications = [];
   persistInAppNotifications();
   closeModal();
@@ -2256,7 +2567,10 @@ async function onSubmit(event) {
     if (form.dataset.form === "qr-pay") await processQrPayment(data);
     if (form.dataset.form === "receive") await generateQr(data);
     if (form.dataset.form === "merchant-sale-note") saveMerchantSaleNote(data);
+    if (form.dataset.form === "wallet-unlock-request") await requestWalletUnlockOtp(data);
     if (form.dataset.form === "wallet-unlock") await verifyWalletUnlock(data);
+    if (form.dataset.form === "authentication-preference-request") await requestAuthenticationPreferenceUpdate(data);
+    if (form.dataset.form === "authentication-preference-verify") await verifyAuthenticationPreferenceUpdate(data);
     if (form.dataset.form === "fica-upload") await submitFica(form);
     if (form.dataset.form === "profile-photo") await submitProfilePhoto(form);
     if (form.dataset.form === "profile-details") await submitProfileDetails(data);
@@ -2267,7 +2581,9 @@ async function onSubmit(event) {
     if (form.dataset.form === "ticketing-scan") await submitTicketingScan(data);
     if (form.dataset.form === "enterprise-distribution-application") await submitEnterpriseDistributionApplication(data);
     if (form.dataset.form === "enterprise-beneficiary") await submitEnterpriseBeneficiary(data);
+    if (form.dataset.form === "beneficiary") await submitBeneficiary(data);
     if (form.dataset.form === "enterprise-batch") await submitEnterpriseBatch(data);
+    if (form.dataset.form === "public-contact") await submitPublicContact(data, form);
     if (form.dataset.form === "support") await submitSupportRequest(data);
     if (form.dataset.form === "chatbot") await submitChatbotMessage(data);
     if (form.dataset.form === "titopay-chat-lookup") await submitTitoPayChatLookup(data);
@@ -2316,6 +2632,11 @@ async function onClick(event) {
     return;
   }
   const action = event.target.closest("[data-action]");
+  const quickServiceMove = event.target.closest("[data-quick-service-move]");
+  if (quickServiceMove) {
+    moveQuickService(quickServiceMove.dataset.quickServiceId, quickServiceMove.dataset.quickServiceMove);
+    return;
+  }
   if (action && action.dataset.action === "pick-contact") {
     await pickPhoneContact(action);
     return;
@@ -2554,7 +2875,7 @@ async function onClick(event) {
   }
   if (action) {
     try {
-      await handleAction(action.dataset.action);
+      await handleAction(action.dataset.action, action);
     } catch (error) {
       showToast(error.message || "Action could not be completed.", "error");
     }
@@ -2584,6 +2905,13 @@ async function onClick(event) {
   if (notificationFilterBtn) {
     state.notificationFilter = notificationFilterBtn.dataset.notificationFilter || "all";
     openNotificationsModal();
+    return;
+  }
+  const notificationSupportChat = event.target.closest("[data-notification-support-chat]");
+  if (notificationSupportChat) {
+    markNotificationReadById(notificationSupportChat.dataset.noticeId);
+    sessionStorage.setItem("titopay_support_conversation_id", notificationSupportChat.dataset.notificationSupportChat || "");
+    openChatbotModal();
     return;
   }
   const notificationChat = event.target.closest("[data-notification-chat]");
@@ -2662,6 +2990,13 @@ async function onClick(event) {
 }
 
 function onInput(event) {
+  const beneficiarySearch = event.target.closest("[data-beneficiary-search]");
+  if (beneficiarySearch) {
+    state.beneficiarySearch = beneficiarySearch.value;
+    const host = document.querySelector("[data-beneficiary-list]");
+    if (host) host.innerHTML = beneficiaryManagementList();
+    return;
+  }
   const pickerInput = event.target.closest(".vas-picker-input");
   if (pickerInput) {
     const form = pickerInput.closest("form");
@@ -2782,6 +3117,11 @@ function onInput(event) {
 }
 
 function onChange(event) {
+  const quickServiceToggle = event.target.closest("[data-quick-service-toggle]");
+  if (quickServiceToggle) {
+    updateQuickServiceDraft(quickServiceToggle.dataset.quickServiceToggle, quickServiceToggle.checked);
+    return;
+  }
   if (event.target.closest("[data-document-form]")) syncDocumentTotals();
   if (event.target.closest("[data-split-form]")) syncBillSplit();
   const recipientMethod = event.target.closest("select[name='recipientMethod'], select[name='participantMethod'], select[name='memberMethod']");
@@ -3543,7 +3883,7 @@ async function register(data) {
   data.username = normalizeUsername(data.username);
   if (!isValidUsername(data.username)) throw new Error("Choose a unique username using 4-30 letters, numbers, dots or underscores.");
   if (isUsernameReserved(data.username)) throw new Error("That username is already reserved on this device. Choose another username.");
-  await api("/v1/auth/register", {
+  const registration = await api("/v1/auth/register", {
     method: "POST",
     auth: false,
     body: Object.assign({}, data, { accountType: state.accountType })
@@ -3563,20 +3903,35 @@ async function register(data) {
       <button class="btn ghost" data-auth-tab="register" type="button">${state.accountType === "business" ? "Create Business Account" : "Create Account"}</button>
     </div>
   `) || openAuthModal("login");
-  showToast("Wallet created. Sign in to continue.");
+  showToast(registration.user?.welcomeEmailQueued
+    ? "Your TitoPay account has been created successfully. Your welcome email is on its way."
+    : "Your TitoPay account has been created successfully. Sign in to continue.");
   showSecurityTipModal();
 }
 
 async function requestReset(data) {
-  const result = await api("/v1/auth/password-reset/request", {
-    method: "POST",
-    auth: false,
-    body: { identifier: data.identifier, userType: "customer" }
-  });
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(result));
+  const profileChange = data.resetContext === "profile" && Boolean(state.auth?.accessToken);
+  const channel = profileChange && data.otpChannel === "email" ? "email" : "sms";
+  const idempotencyKey = data.idempotencyKey || createClientTransactionKey("password-change-otp");
+  const result = profileChange
+    ? await api("/v1/auth/me/password-change/request", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: { channel, idempotencyKey }
+    })
+    : await api("/v1/auth/password-reset/request", {
+      method: "POST",
+      auth: false,
+      body: { identifier: data.identifier, userType: "customer" }
+    });
+  const resetSession = { ...result, resetContext: profileChange ? "profile" : "recovery", channel };
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(resetSession));
+  const channelLabel = channel === "email" ? "Email OTP" : "SMS OTP";
+  const destination = result.maskedDestination ? ` to ${result.maskedDestination}` : "";
   const html = `
     <form class="form-grid" data-form="reset-confirm">
-      <div class="field"><label>OTP code</label><input name="otp" aria-label="OTP code" inputmode="numeric" maxlength="6" required></div>
+      <p class="field-hint otp-delivery-confirmation">Enter the ${esc(channelLabel)} sent${esc(destination)}.</p>
+      <div class="field"><label>OTP code</label><input name="otp" aria-label="OTP code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" required></div>
       <div class="field"><label>New PIN or password</label><input name="newPassword" aria-label="New PIN or password" type="password" minlength="4" required></div>
       <div class="field"><label>Confirm PIN or password</label><input name="confirmNewPassword" aria-label="Confirm PIN or password" type="password" minlength="4" required></div>
       <button class="btn primary" type="submit">${icon("shield")} Reset PIN / Password</button>
@@ -3584,7 +3939,9 @@ async function requestReset(data) {
   const authPanel = document.querySelector("#auth-panel");
   if (authPanel) authPanel.innerHTML = `${html}<div class="auth-modal-links"><button class="btn ghost" data-auth-tab="login" type="button">Back to Sign In</button></div>`;
   else openModal(`<div class="modal-head"><div><p class="eyebrow">Security</p><h2>Confirm OTP</h2></div><button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>${html}`);
-  showToast("Reset OTP sent.");
+  showToast(result.deduplicated
+    ? `Your existing ${channelLabel} request is still active. No duplicate fee was charged.`
+    : `${channelLabel} sent${destination}.`);
 }
 
 async function confirmReset(data) {
@@ -3635,7 +3992,71 @@ async function verifyOtp(data) {
   showSecurityTipModal();
 }
 
-async function handleAction(action) {
+async function handleAction(action, actionElement = null) {
+  if (action === "customize-quick-services") {
+    openQuickServicesCustomizer();
+    return;
+  }
+  if (action === "save-quick-services") {
+    saveQuickServices();
+    return;
+  }
+  if (action === "reset-quick-services") {
+    resetQuickServices();
+    return;
+  }
+  if (action === "share-titopay") {
+    openShareTitoPayModal();
+    return;
+  }
+  if (String(action || "").startsWith("share-titopay:")) {
+    await shareTitoPayApp(action.split(":")[1]);
+    return;
+  }
+  if (String(action || "").startsWith("beneficiary-select:")) {
+    const id = action.split(":").slice(1).join(":");
+    const beneficiary = (state.beneficiaries || []).find((item) => item.id === id);
+    if (!beneficiary) throw new Error("Saved beneficiary was not found.");
+    openSendMoneyModal(coreWalletAction("send"), beneficiary);
+    return;
+  }
+  if (String(action || "").startsWith("beneficiary-edit:")) {
+    const id = action.split(":").slice(1).join(":");
+    const beneficiary = (state.beneficiaries || []).find((item) => item.id === id);
+    if (!beneficiary) throw new Error("Saved beneficiary was not found.");
+    openBeneficiaryForm(beneficiary);
+    return;
+  }
+  if (String(action || "").startsWith("beneficiary-favourite:")) {
+    const id = action.split(":").slice(1).join(":");
+    const beneficiary = (state.beneficiaries || []).find((item) => item.id === id);
+    if (!beneficiary) throw new Error("Saved beneficiary was not found.");
+    setButtonBusy(actionElement, true);
+    try {
+      await api(`/v1/beneficiaries/${encodeURIComponent(id)}`, { method: "PATCH", body: { favourite: !beneficiary.favourite } });
+      await openSavedBeneficiariesModal({ refresh: true });
+    } finally {
+      setButtonBusy(actionElement, false);
+    }
+    return;
+  }
+  if (String(action || "").startsWith("beneficiary-delete:")) {
+    const id = action.split(":").slice(1).join(":");
+    const beneficiary = (state.beneficiaries || []).find((item) => item.id === id);
+    if (!beneficiary) throw new Error("Saved beneficiary was not found.");
+    const destination = beneficiaryRecipient(beneficiary);
+    const confirmation = `Remove ${beneficiaryDisplayName(beneficiary)}${destination ? ` (${destination})` : ""} from Saved Beneficiaries?\n\nNo money will move and past transactions will remain in Activity.`;
+    if (!window.confirm(confirmation)) return;
+    setButtonBusy(actionElement, true);
+    try {
+      await api(`/v1/beneficiaries/${encodeURIComponent(id)}`, { method: "DELETE" });
+      showToast("Beneficiary removed. Past transactions are unchanged.");
+      await openSavedBeneficiariesModal({ refresh: true });
+    } finally {
+      setButtonBusy(actionElement, false);
+    }
+    return;
+  }
   if (String(action || "").startsWith("ticketing-open-event:")) {
     await openPublicTicketingEvent(action.split(":").slice(1).join(":"));
     return;
@@ -3662,6 +4083,29 @@ async function handleAction(action) {
   }
   if (action === "enterprise-distribution") {
     await openEnterpriseDistributionDashboard();
+    return;
+  }
+  if (action === "saved-beneficiaries") {
+    await openSavedBeneficiariesModal({ refresh: true });
+    return;
+  }
+  if (action === "beneficiary-add") {
+    openBeneficiaryForm();
+    return;
+  }
+  if (action === "beneficiary-save-after-payment") {
+    const pending = state.pendingBeneficiarySave;
+    if (!pending) return;
+    await api("/v1/beneficiaries", { method: "POST", body: pending });
+    state.pendingBeneficiarySave = null;
+    showToast("Beneficiary saved.");
+    await refreshData();
+    return;
+  }
+  if (action === "beneficiary-save-dismiss") {
+    state.pendingBeneficiarySave = null;
+    const prompt = document.querySelector("[data-beneficiary-save-prompt]");
+    if (prompt) prompt.remove();
     return;
   }
   if (action === "qr-poster") {
@@ -3782,6 +4226,14 @@ async function handleAction(action) {
   if (action === "export-pdf") {
     downloadTransactionsPdf();
   }
+  if (action === "email-statement") {
+    await openEmailStatementConfirmation();
+    return;
+  }
+  if (action === "confirm-email-statement") {
+    await confirmEmailStatement(actionElement);
+    return;
+  }
   if (action === "document-pdf") {
     await requestBusinessDocumentPdf();
   }
@@ -3799,6 +4251,9 @@ async function handleAction(action) {
   }
   if (action === "view-lock-history") {
     await showWalletLockHistory();
+  }
+  if (action === "authentication-preference") {
+    await openAuthenticationPreferenceModal();
   }
   if (action === "profile-photo") {
     openProfilePhotoModal();
@@ -3819,10 +4274,10 @@ async function handleAction(action) {
     openFicaVerificationModal();
   }
   if (action === "change-password") {
-    openPasswordResetFromProfile();
+    await openPasswordResetFromProfile();
   }
   if (action === "change-pin") {
-    openPasswordResetFromProfile();
+    await openPasswordResetFromProfile();
   }
   if (action === "device-management") {
     openDeviceManagementModal();
@@ -3847,6 +4302,30 @@ async function handleAction(action) {
   }
   if (action === "preview-sms-notifications") {
     openSmsNotificationPreview();
+  }
+  if (action === "preview-email-notifications") {
+    openEmailNotificationPreferences();
+  }
+  if (action === "toggle-email-notifications") {
+    if (!actionElement) return;
+    await updateEmailNotificationPreferences(
+      { emailNotificationsEnabled: actionElement.dataset.enabled === "true" },
+      actionElement.dataset.enabled === "true" ? "Optional email alerts enabled." : "Optional email alerts disabled. Critical emails remain on."
+    );
+  }
+  if (action === "toggle-transaction-email-notifications") {
+    if (!actionElement) return;
+    await updateEmailNotificationPreferences(
+      { transactionReceipts: actionElement.dataset.enabled === "true" },
+      actionElement.dataset.enabled === "true" ? "Transaction receipt emails enabled." : "Transaction receipt emails disabled."
+    );
+  }
+  if (action === "toggle-support-email-notifications") {
+    if (!actionElement) return;
+    await updateEmailNotificationPreferences(
+      { supportUpdates: actionElement.dataset.enabled === "true" },
+      actionElement.dataset.enabled === "true" ? "Support update emails enabled." : "Support update emails disabled."
+    );
   }
   if (action === "enable-sms-notifications") {
     setSmsNotifications(true);
@@ -3935,7 +4414,7 @@ async function handleAction(action) {
     await toggleActiveChatMute();
   }
   if (action === "chat-block") {
-    blockActiveChatThread();
+    toggleActiveChatBlock();
   }
   if (action === "business-documents") {
     openBusinessDocumentHistory();
@@ -3997,11 +4476,78 @@ function isPwaInstalled() {
   return Boolean(standalone && standalone.matches) || (typeof navigator !== "undefined" && navigator.standalone === true);
 }
 
+function getInstallEnvironment() {
+  const nav = typeof navigator === "undefined" ? {} : navigator;
+  const userAgent = String(nav.userAgent || "");
+  const platform = String((nav.userAgentData && nav.userAgentData.platform) || nav.platform || "");
+  const brands = nav.userAgentData && Array.isArray(nav.userAgentData.brands)
+    ? nav.userAgentData.brands.map((item) => String(item && item.brand || "")).join(" ")
+    : "";
+  const browserSignature = `${userAgent} ${brands}`;
+  const isIPad = /iPad/i.test(userAgent) || (/Mac/i.test(platform) && Number(nav.maxTouchPoints || 0) > 1);
+  const isIPhone = /iPhone|iPod/i.test(userAgent);
+  const isIOS = isIPad || isIPhone;
+  // Huawei Browser/HarmonyOS builds do not always include "Android" in the
+  // user agent. Treat their standards-based web app install flow like Android
+  // so the Download TitoPay control still provides a usable fallback.
+  const isHarmonyOS = /HarmonyOS|HOS|ArkWeb|HuaweiBrowser|Huawei/i.test(browserSignature);
+  const isAndroid = /Android/i.test(`${userAgent} ${platform}`) || isHarmonyOS;
+  const isEdge = /Edg(?:A|iOS)?\//i.test(userAgent) || /Microsoft Edge/i.test(brands);
+  const isSamsungInternet = /SamsungBrowser/i.test(userAgent);
+  const isOpera = /OPR\//i.test(userAgent) || /Opera/i.test(brands);
+  const isFirefox = /Firefox|FxiOS|Focus/i.test(userAgent);
+  const isChromium = !isFirefox && (
+    isEdge ||
+    isSamsungInternet ||
+    isOpera ||
+    /Chrome|CriOS|Chromium/i.test(browserSignature)
+  );
+  const isSafari = /Safari/i.test(userAgent) && !isChromium && !isFirefox;
+  const isMacOS = !isIOS && (/Macintosh|Mac OS X/i.test(userAgent) || /macOS|MacIntel/i.test(platform));
+  const isInAppBrowser = /FBAN|FBAV|Instagram|LinkedInApp|Line\/|MicroMessenger|TikTok|Twitter|Snapchat|Pinterest|WhatsApp/i.test(userAgent) ||
+    (isIOS && /AppleWebKit/i.test(userAgent) && !/Safari/i.test(userAgent) && !/CriOS|FxiOS|EdgiOS/i.test(userAgent)) ||
+    (isAndroid && (/; wv\)/i.test(userAgent) || /Version\/\d+(?:\.\d+)* Chrome\//i.test(userAgent)));
+
+  let browserName = "your browser";
+  if (isSamsungInternet) browserName = "Samsung Internet";
+  else if (isEdge) browserName = "Microsoft Edge";
+  else if (isOpera) browserName = "Opera";
+  else if (isFirefox) browserName = "Firefox";
+  else if (isSafari) browserName = "Safari";
+  else if (isHarmonyOS) browserName = "Huawei Browser";
+  else if (isChromium) browserName = "Chrome";
+
+  return {
+    isIPad,
+    isIPhone,
+    isIOS,
+    isAndroid,
+    isHarmonyOS,
+    isMacOS,
+    isSafari,
+    isChromium,
+    isFirefox,
+    isInAppBrowser,
+    browserName
+  };
+}
+
+function supportsGuidedPwaInstall() {
+  const environment = getInstallEnvironment();
+  return Boolean(
+    state.installPrompt ||
+    environment.isIOS ||
+    environment.isAndroid ||
+    environment.isChromium ||
+    (environment.isMacOS && environment.isSafari)
+  );
+}
+
 function shouldShowInstallButton() {
   if (state.installed || isPwaInstalled()) return false;
   if (sessionStorage.getItem(INSTALL_DISMISSED_KEY) === "true") return false;
   if (state.auth && state.auth.accessToken && state.user && state.route !== "dashboard") return false;
-  return true;
+  return supportsGuidedPwaInstall();
 }
 
 function renderInstallButton() {
@@ -4042,28 +4588,141 @@ async function installApp() {
     renderInstallButton();
     return;
   }
+
+  const environment = getInstallEnvironment();
+  if (environment.isIOS) {
+    openAppleInstallInstructions(environment);
+    return;
+  }
+  if (environment.isAndroid) {
+    openAndroidInstallInstructions(environment);
+    return;
+  }
+  if (environment.isMacOS && environment.isSafari) {
+    openSafariInstallInstructions();
+    return;
+  }
+  if (environment.isChromium) {
+    openDesktopBrowserInstallInstructions(environment);
+    return;
+  }
+  openUnsupportedInstallInstructions(environment);
+}
+
+function openAppleInstallInstructions(environment) {
+  const deviceLabel = environment.isIPad ? "iPad" : "iPhone";
+  const needsSafari = environment.isInAppBrowser || !environment.isSafari;
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">iPhone &amp; iPad</p><h2>Download TitoPay</h2></div>
+      <div><p class="eyebrow">${deviceLabel}</p><h2>Install TitoPay</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <section class="install-instructions" aria-label="How to add TitoPay to an iPhone home screen">
+    <section class="install-instructions" aria-label="How to add TitoPay to this ${deviceLabel} Home Screen">
+      ${needsSafari ? `
+        <div class="install-stage">
+          <strong>First, open TitoPay in Safari</strong>
+          <ol>
+            <li>Open the browser menu <b>•••</b></li>
+            <li>Tap <b>Open in Safari</b> or <b>Open in External Browser</b></li>
+          </ol>
+        </div>
+      ` : ""}
       <div class="install-stage">
-        <strong>Stage 1 — if opened inside another app</strong>
+        <strong>${needsSafari ? "Then, install from Safari" : "Install from Safari"}</strong>
         <ol>
-          <li>Tap <b>•••</b></li>
-          <li>Tap <b>Open in External Browser</b> or <b>Open in Safari</b></li>
-        </ol>
-      </div>
-      <div class="install-stage">
-        <strong>Stage 2 — once in Safari</strong>
-        <ol start="3">
           <li>Tap the <b>Share</b> icon ${icon("share")}</li>
           <li>Tap <b>Add to Home Screen</b></li>
           <li>Tap <b>Add</b></li>
         </ol>
       </div>
       <p class="install-hint">TitoPay will then appear on your Home Screen and open like an app.</p>
+    </section>
+  `);
+}
+
+function openAndroidInstallInstructions(environment) {
+  const platformLabel = environment.isHarmonyOS ? "HarmonyOS" : "Android";
+  const browserLabel = environment.isHarmonyOS ? "Huawei Browser" : environment.browserName;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${platformLabel}</p><h2>Install TitoPay</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="install-instructions" aria-label="How to install TitoPay on this ${platformLabel} device">
+      ${environment.isInAppBrowser ? `
+        <div class="install-stage">
+          <strong>First, open TitoPay in your browser</strong>
+          <ol>
+            <li>Open the in-app menu <b>⋮</b></li>
+            <li>Tap <b>Open in browser</b>, <b>Chrome</b>, or <b>Samsung Internet</b></li>
+          </ol>
+        </div>
+      ` : ""}
+      <div class="install-stage">
+        <strong>${environment.isInAppBrowser ? "Then, install from the browser" : `Install from ${browserLabel}`}</strong>
+        <ol>
+          <li>Open the browser menu <b>⋮</b></li>
+          <li>Tap <b>Install app</b> or <b>Add to Home screen</b></li>
+          <li>Confirm by tapping <b>Install</b> or <b>Add</b></li>
+        </ol>
+      </div>
+      <p class="install-hint">TitoPay will appear on your Home Screen and open like an app.</p>
+    </section>
+  `);
+}
+
+function openSafariInstallInstructions() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Safari on Mac</p><h2>Install TitoPay</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="install-instructions" aria-label="How to install TitoPay using Safari on Mac">
+      <div class="install-stage">
+        <strong>Add TitoPay to your Dock</strong>
+        <ol>
+          <li>Open the <b>File</b> menu in Safari</li>
+          <li>Choose <b>Add to Dock</b></li>
+          <li>Click <b>Add</b></li>
+        </ol>
+      </div>
+      <p class="install-hint">TitoPay will appear in your Dock and Applications folder.</p>
+    </section>
+  `);
+}
+
+function openDesktopBrowserInstallInstructions(environment) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${environment.browserName} on desktop</p><h2>Install TitoPay</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="install-instructions" aria-label="How to install TitoPay using ${environment.browserName}">
+      <div class="install-stage">
+        <strong>Install from the browser</strong>
+        <ol>
+          <li>Look for the <b>Install</b> icon in the address bar, or open the browser menu <b>⋮</b></li>
+          <li>Choose <b>Install TitoPay</b>, <b>Install app</b>, or <b>Apps</b></li>
+          <li>Confirm by selecting <b>Install</b></li>
+        </ol>
+      </div>
+      <p class="install-hint">If the option is not visible yet, refresh this page after it finishes loading.</p>
+    </section>
+  `);
+}
+
+function openUnsupportedInstallInstructions(environment) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${environment.browserName}</p><h2>Installation unavailable</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="install-instructions" aria-label="TitoPay installation is unavailable in this browser">
+      <div class="install-stage">
+        <strong>This browser cannot install TitoPay directly</strong>
+        <p>Open TitoPay in Safari on an Apple device, or Chrome, Edge, or Samsung Internet on a supported device.</p>
+      </div>
+      <p class="install-hint">You can continue using TitoPay safely in this browser without installing it.</p>
     </section>
   `);
 }
@@ -6542,16 +7201,50 @@ function contactSuggestions() {
     </div>`;
 }
 
-function openSendMoneyModal(service = coreWalletAction("send")) {
+function beneficiaryDisplayName(item = {}) {
+  return item.nickname || item.fullName || item.full_name || item.username || "TitoPay beneficiary";
+}
+
+function beneficiaryRecipient(item = {}) {
+  return item.username ? displayUsername(item.username) : item.walletId || item.wallet_id || "";
+}
+
+function beneficiaryPickerItems(items, emptyText) {
+  if (!items.length) return `<p class="muted beneficiary-empty">${esc(emptyText)}</p>`;
+  return `<div class="beneficiary-picker-list">${items.map((item) => `
+    <button class="beneficiary-picker-item" type="button" data-action="beneficiary-select:${esc(item.id)}">
+      <span class="chat-contact-avatar">${item.profilePhotoUrl ? `<img src="${esc(item.profilePhotoUrl)}" alt="">` : esc(beneficiaryDisplayName(item).slice(0, 1).toUpperCase())}</span>
+      <span><strong>${esc(beneficiaryDisplayName(item))}</strong><small>${esc([displayUsername(item.username), item.qrReference ? `QR ${item.qrReference}` : "", item.accountType, item.favourite ? "Favourite" : ""].filter(Boolean).join(" · "))}</small></span>
+      ${item.verificationStatus === "approved" ? `<span class="verified-pill">${icon("shield")} Verified</span>` : ""}
+    </button>`).join("")}</div>`;
+}
+
+function sendMoneyBeneficiaryPicker() {
+  const items = state.beneficiaries || [];
+  const favourites = items.filter((item) => item.favourite).slice(0, 6);
+  const recent = items.filter((item) => item.lastPaidAt && !item.favourite).slice(0, 6);
+  return `
+    <section class="beneficiary-picker" aria-label="Saved beneficiaries">
+      <div><p class="eyebrow">Favourite Beneficiaries</p>${beneficiaryPickerItems(favourites, "No favourites saved yet.")}</div>
+      <div><p class="eyebrow">Recent Beneficiaries</p>${beneficiaryPickerItems(recent, "Recently paid beneficiaries will appear here.")}</div>
+      <button class="btn ghost" type="button" data-action="saved-beneficiaries">${icon("user")} Search Beneficiaries</button>
+    </section>`;
+}
+
+function openSendMoneyModal(service = coreWalletAction("send"), selected = null) {
+  const selectedRecipient = selected ? beneficiaryRecipient(selected) : "";
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Send Money</p><h2>Send from your wallet</h2><p class="lead">Use a username, cellphone number or email address. TitoPay will show the fee preview before processing.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${sendMoneyBeneficiaryPicker()}
     <form class="form-grid stable-service-form" data-form="transaction">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode || "wallet_transfer")}">
+      ${selected ? `<input type="hidden" name="beneficiaryUserId" value="${esc(selected.beneficiaryUserId || "")}">` : ""}
       ${recipientMethodField("auto")}
-      <div class="field"><label>Recipient</label><input name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" required></div>
+      <div class="field"><label>Recipient</label><input name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" value="${esc(selectedRecipient)}" required></div>
+      ${selected ? `<div class="recipient-verify-result"><p class="rv-head">Saved beneficiary selected</p><div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(beneficiaryDisplayName(selected))}</strong><small>${esc([displayUsername(selected.username), selected.walletId ? `Wallet ${selected.walletId}` : "", selected.qrReference ? `QR ${selected.qrReference}` : "", selected.accountType].filter(Boolean).join(" · "))}</small></span></div></div>` : ""}
       ${contactSuggestions()}
       <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reference</label><input name="reference" placeholder="What is this payment for?"></div>
@@ -6559,6 +7252,106 @@ function openSendMoneyModal(service = coreWalletAction("send")) {
       <button class="btn primary" type="submit">${icon("send")} Preview send money</button>
     </form>
   `);
+}
+
+function filteredBeneficiaries() {
+  const query = String(state.beneficiarySearch || "").trim().toLowerCase();
+  const items = [...(state.beneficiaries || [])];
+  const filtered = query
+    ? items.filter((item) => [
+      item.nickname,
+      item.fullName,
+      item.full_name,
+      item.username,
+      item.walletId,
+      item.wallet_id,
+      item.qrReference,
+      item.qr_reference,
+      item.accountType,
+      item.account_type,
+      item.relationshipType,
+      item.relationship_type
+    ].some((value) => String(value || "").toLowerCase().includes(query)))
+    : items;
+  return filtered.sort((a, b) =>
+    Number(Boolean(b.favourite)) - Number(Boolean(a.favourite))
+    || (new Date(b.lastPaidAt || b.last_paid_at || 0).getTime() - new Date(a.lastPaidAt || a.last_paid_at || 0).getTime())
+    || beneficiaryDisplayName(a).localeCompare(beneficiaryDisplayName(b), "en-ZA")
+  );
+}
+
+function beneficiaryManagementList() {
+  const items = filteredBeneficiaries();
+  if (!items.length) {
+    const searching = Boolean(String(state.beneficiarySearch || "").trim());
+    return `<section class="empty-state compact-state">${icon(searching ? "search" : "user")}<strong>${searching ? "No beneficiaries match your search" : "No saved beneficiaries"}</strong><p>${searching ? "Try a different name, username, wallet number, QR reference or recipient type." : "Add a verified TitoPay recipient to pay them more quickly next time."}</p></section>`;
+  }
+  return `<section class="beneficiary-management-list">${items.map((item) => `
+    <article class="beneficiary-card">
+      <span class="chat-contact-avatar">${item.profilePhotoUrl ? `<img src="${esc(item.profilePhotoUrl)}" alt="">` : esc(beneficiaryDisplayName(item).slice(0, 1).toUpperCase())}</span>
+      <div class="beneficiary-card-copy">
+        <strong>${esc(beneficiaryDisplayName(item))}</strong>
+        <small>${esc([displayUsername(item.username), item.walletId ? `Wallet ${item.walletId}` : "", item.qrReference ? `QR ${item.qrReference}` : "", item.accountType, item.relationshipType].filter(Boolean).join(" · "))}</small>
+        <small>${item.lastPaidAt ? `Last paid ${esc(formatDate(item.lastPaidAt))}${item.lastPaymentAmount != null ? ` · ${esc(money(item.lastPaymentAmount))}` : ""}` : "Not paid yet"}</small>
+      </div>
+      <div class="beneficiary-card-actions">
+        <button class="icon-btn${item.favourite ? " is-active" : ""}" type="button" data-action="beneficiary-favourite:${esc(item.id)}" aria-label="${item.favourite ? "Remove from favourites" : "Add to favourites"}" aria-pressed="${item.favourite ? "true" : "false"}" title="${item.favourite ? "Remove from favourites" : "Add to favourites"}">${icon("star")}</button>
+        <button class="icon-btn" type="button" data-action="beneficiary-edit:${esc(item.id)}" aria-label="Edit ${esc(beneficiaryDisplayName(item))}">${icon("list")}</button>
+        <button class="icon-btn" type="button" data-action="beneficiary-delete:${esc(item.id)}" aria-label="Delete ${esc(beneficiaryDisplayName(item))}">${icon("x")}</button>
+      </div>
+      <button class="btn secondary beneficiary-pay-btn" type="button" data-action="beneficiary-select:${esc(item.id)}">${icon("send")} Pay</button>
+    </article>`).join("")}</section>`;
+}
+
+async function openSavedBeneficiariesModal({ refresh = false } = {}) {
+  if (refresh) {
+    const result = await api("/v1/beneficiaries?limit=100");
+    state.beneficiaries = result.items || [];
+  }
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Payments</p><h2>Saved Beneficiaries</h2><p class="lead">Beneficiaries are shortcuts only. Every payment still uses TitoPay's existing security checks.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="field"><label for="beneficiary-search">Search beneficiaries</label><input id="beneficiary-search" type="search" data-beneficiary-search value="${esc(state.beneficiarySearch)}" placeholder="Name, nickname, username or wallet"></div>
+    <div data-beneficiary-list>${beneficiaryManagementList()}</div>
+    <button class="btn primary" type="button" data-action="beneficiary-add">${icon("plus")} Add Beneficiary</button>
+  `);
+}
+
+function openBeneficiaryForm(item = null) {
+  const business = state.accountType === "business";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Saved Beneficiaries</p><h2>${item ? "Edit beneficiary" : "Add Beneficiary"}</h2><p class="lead">${item ? "Update the nickname or recipient type." : "Add a verified TitoPay username, mobile number, email address or QR ID."}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="beneficiary">
+      ${item ? `<input type="hidden" name="id" value="${esc(item.id)}">` : `<div class="field"><label>Recipient</label><input name="identifier" autocomplete="off" placeholder="@username, +27 cellphone, email or QR ID" required></div>`}
+      <div class="field"><label>Nickname</label><input name="nickname" maxlength="80" value="${esc(item?.nickname || "")}" placeholder="Optional nickname"></div>
+      ${business ? `<div class="field"><label>Recipient type</label><select name="relationshipType">${["customer", "supplier", "employee", "payout_recipient"].map((value) => `<option value="${value}" ${item?.relationshipType === value ? "selected" : ""}>${esc(value.replace("_", " "))}</option>`).join("")}</select></div>` : `<input type="hidden" name="relationshipType" value="personal">`}
+      <label class="terms-agreement"><input type="checkbox" name="favourite" value="yes" ${item?.favourite ? "checked" : ""}><span>Pin as a favourite</span></label>
+      <button class="btn primary" type="submit">${icon("shield")} ${item ? "Save changes" : "Save beneficiary"}</button>
+    </form>
+  `);
+}
+
+async function submitBeneficiary(data) {
+  const favourite = data.favourite === "yes";
+  if (data.id) {
+    await api(`/v1/beneficiaries/${encodeURIComponent(data.id)}`, {
+      method: "PATCH",
+      body: { nickname: data.nickname, favourite, relationshipType: data.relationshipType }
+    });
+    showToast("Beneficiary updated.");
+  } else {
+    await api("/v1/beneficiaries", {
+      method: "POST",
+      body: { identifier: data.identifier, nickname: data.nickname, favourite, relationshipType: data.relationshipType }
+    });
+    showToast("Beneficiary saved.");
+  }
+  await openSavedBeneficiariesModal({ refresh: true });
 }
 
 function openPaymentRequestModal(service) {
@@ -7691,10 +8484,8 @@ async function openQrPosterModal(kind = "payment") {
           <p class="qr-poster-site">titopay.co.za</p>
         </footer>
       </article>
-      <section class="auth-actions">
+      <section class="auth-actions qr-poster-actions">
         <button class="btn primary" type="button" data-action="download-qr-poster-pdf">${icon("download")} Download A4 PDF</button>
-        <button class="btn secondary" type="button" data-action="print-qr-poster">${icon("statement")} Print</button>
-        ${qr.image ? `<button class="btn secondary" type="button" data-download-qr="${esc(qr.image)}" data-qr-filename="${esc(qr.id || config.filename)}">${icon("qr")} Download QR image</button>` : ""}
       </section>
       <p class="field-hint">The PDF is a finished A4 sheet: download it, then print it from any device or send it to a print shop.</p>
     `}
@@ -10173,7 +10964,7 @@ async function startQrScanner() {
     let context = null;
     if ("BarcodeDetector" in window) {
       detector = new BarcodeDetector({ formats: ["qr_code"] });
-    } else if (typeof window.jsQR === "function") {
+    } else if (await ensureJsQrLoaded()) {
       canvas = document.createElement("canvas");
       context = canvas.getContext("2d", { willReadFrequently: true });
     } else {
@@ -10197,6 +10988,21 @@ async function startQrScanner() {
   } finally {
     if (stream) stream.getTracks().forEach((track) => track.stop());
   }
+}
+
+function ensureJsQrLoaded() {
+  if (typeof window.jsQR === "function") return Promise.resolve(true);
+  if (!jsQrLoadPromise) {
+    jsQrLoadPromise = new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = "./assets/jsQR.min.js?v=137";
+      script.async = true;
+      script.onload = () => resolve(typeof window.jsQR === "function");
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+  }
+  return jsQrLoadPromise;
 }
 
 async function detectQrWithBarcodeDetector(detector, video) {
@@ -10602,6 +11408,10 @@ function receiptRows(receipt) {
     ["Net Amount", money(receipt.netAmount ?? (Number(receipt.amount || 0) - Number(receipt.fees || 0)))],
     ["Payment Status", receipt.status || "PAID"]
   ];
+}
+
+function receiptRow(label, value) {
+  return `<div><dt>${esc(label)}</dt><dd>${esc(value || "-")}</dd></div>`;
 }
 
 function receiptHtml(receipt) {
@@ -11183,7 +11993,20 @@ async function confirmReviewedTransaction() {
         metadata: { stockvelGroupId: data.stockvelGroupId || "" }
       });
     }
-    openSuccessModal(result.transaction || result, context.preview, data.serviceCode, context.recipient);
+    const transaction = result.transaction || result;
+    const verifiedUser = context.verifiedRecipients?.[0]?.user || {};
+    const beneficiaryUserId = transaction.recipientUserId || transaction.recipient_user_id || verifiedUser.id || verifiedUser.userId || verifiedUser.user_id || "";
+    const beneficiaryEligible = ["wallet_transfer", "send_money", "send-money"].includes(String(data.serviceCode || ""))
+      && Boolean(context.recipient)
+      && !(state.beneficiaries || []).some((item) => item.beneficiaryUserId === beneficiaryUserId || beneficiaryRecipient(item) === context.recipient);
+    state.pendingBeneficiarySave = beneficiaryEligible ? {
+      beneficiaryUserId: beneficiaryUserId || undefined,
+      identifier: context.recipient,
+      nickname: "",
+      favourite: false,
+      relationshipType: state.accountType === "business" ? "customer" : "personal"
+    } : null;
+    openSuccessModal(transaction, context.preview, data.serviceCode, context.recipient);
   } catch (error) {
     const message = friendlyFormError(error, "transaction");
     showToast(message, "error");
@@ -11229,6 +12052,54 @@ function openInviteRecipientModal(identifier, invite = {}) {
       <button class="btn secondary" data-close>Close</button>
     </div>
   `);
+}
+
+const TITOPAY_PUBLIC_APP_URL = "https://app.titopay.co.za";
+const TITOPAY_PUBLIC_SHARE_TEXT = "Join me on TitoPay for simple, secure payments.";
+
+function openShareTitoPayModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Invite someone</p><h2>Share TitoPay</h2><p class="lead">Choose how you would like to share the TitoPay app.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="profile-feature-grid" aria-label="Share TitoPay options">
+      ${profileFeature("WhatsApp", "Share the TitoPay app in WhatsApp.", "send", "share-titopay:whatsapp")}
+      ${profileFeature("SMS", "Send the TitoPay app link by text message.", "phone", "share-titopay:sms")}
+      ${profileFeature("Copy Link", "Copy the TitoPay app link to your clipboard.", "copy", "share-titopay:copy")}
+      ${profileFeature("More", "Use another sharing app on this device.", "share", "share-titopay:more", true)}
+    </section>
+    <button class="btn secondary" type="button" data-close>Close</button>
+  `);
+}
+
+async function shareTitoPayApp(channel) {
+  const url = TITOPAY_PUBLIC_APP_URL;
+  const text = `${TITOPAY_PUBLIC_SHARE_TEXT} ${url}`;
+  if (channel === "whatsapp") {
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+    return;
+  }
+  if (channel === "sms") {
+    location.href = `sms:?&body=${encodeURIComponent(text)}`;
+    return;
+  }
+  if (channel === "copy") {
+    await copyTextValue(url, document.querySelector(".modal-card"));
+    showToast("TitoPay app link copied.");
+    return;
+  }
+  if (channel === "more" && navigator.share) {
+    try {
+      await navigator.share({ title: "Join TitoPay", text: TITOPAY_PUBLIC_SHARE_TEXT, url });
+    } catch (error) {
+      if (error && error.name === "AbortError") return;
+      throw error;
+    }
+    return;
+  }
+  await copyTextValue(url, document.querySelector(".modal-card"));
+  showToast("Sharing is not available here. TitoPay app link copied.");
 }
 
 async function shareInvite(identifier, message, url) {
@@ -11396,6 +12267,14 @@ function openSuccessModal(transaction, preview, serviceCode, recipient) {
       ${settingsRow("Total debited", money(preview && preview.total || record.total), "withdraw", "total")}
       ${settingsRow("Status", transactionStatusLabel(record.status), "sparkles")}
     </section>
+    ${state.pendingBeneficiarySave ? `
+      <section class="integration-note" data-beneficiary-save-prompt>
+        <p><strong>Would you like to save this recipient as a beneficiary?</strong></p>
+        <div class="auth-actions">
+          <button class="btn secondary" type="button" data-action="beneficiary-save-after-payment">Save</button>
+          <button class="btn ghost" type="button" data-action="beneficiary-save-dismiss">Not Now</button>
+        </div>
+      </section>` : ""}
     <div class="tx-detail-actions">
       <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} View in Activity</button>
       <button class="btn ghost" type="button" data-close>Done</button>
@@ -11594,6 +12473,7 @@ function landingMenuSection(section) {
       ${section.body ? `<p class="menu-section-body">${esc(section.body)}</p>` : ""}
       ${section.benefits ? `<dl class="menu-benefits">${section.benefits.map(([term, detail]) => `<div><dt>${esc(term)}</dt><dd>${esc(detail)}</dd></div>`).join("")}</dl>` : ""}
       ${section.tags && section.tags.length ? `<ul class="menu-tag-list">${section.tags.map((tag) => `<li>${esc(tag)}</li>`).join("")}</ul>` : ""}
+      ${section.form || ""}
       ${links.length ? `<div class="menu-section-links">${links.map((link) => `<a class="text-link" href="${esc(link.href)}"${link.href.startsWith("http") ? ' target="_blank" rel="noopener"' : ""}>${esc(link.label)}</a>`).join("")}</div>` : ""}
     </section>
   `;
@@ -11658,11 +12538,21 @@ function openLandingMenu() {
       id: "contact",
       title: "Contact us",
       icon: "chat",
-      body: "Signed in, the free TitoPay Customer Care chatbot is the fastest route. If you cannot sign in, reach us on WhatsApp or by email.",
-      links: [
-        { label: "WhatsApp 072 667 1183", href: "https://wa.me/27726671183" },
-        { label: "support@titopay.co.za", href: "mailto:support@titopay.co.za" }
-      ]
+      body: "Complete the form below and our Customer Care team will respond as soon as possible.",
+      form: `
+        <form class="form-grid landing-contact-form" data-form="public-contact">
+          <div class="field"><label>Full name</label><input name="fullName" minlength="2" maxlength="100" autocomplete="name" placeholder="Enter your full name" required></div>
+          <div class="field"><label>Cellphone number</label><input name="cellphone" type="tel" minlength="7" maxlength="24" autocomplete="tel" inputmode="tel" placeholder="Enter your cellphone number" required></div>
+          <div class="field"><label>Category</label><select name="category" required>
+            ${["General Enquiries", "Account Access", "Payments", "Withdrawals", "Airtime & Data", "QR Payments", "FICA", "Business", "Technical Support"].map((item) => `<option>${esc(item)}</option>`).join("")}
+          </select></div>
+          <div class="field"><label>Message</label><textarea name="message" minlength="10" maxlength="2000" required placeholder="How can TitoPay help?"></textarea></div>
+          <div class="contact-honeypot" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
+          <label class="contact-consent"><input type="checkbox" name="consent" value="true" required><span>I consent to TitoPay using these details to respond to my enquiry.</span></label>
+          <button class="btn primary" type="submit">${icon("send")} Send enquiry</button>
+          <p class="form-success" data-contact-success hidden></p>
+        </form>
+      `
     }
   ];
   openModal(`
@@ -11678,7 +12568,7 @@ function openLandingMenu() {
       <p><a class="text-link" href="https://www.titopay.co.za" target="_blank" rel="noopener">www.titopay.co.za</a></p>
       <p><strong>TitoPay (Pty) Ltd.</strong></p>
       <p>Reg No: 2026/399418/07</p>
-      <p>App build ${esc(appBuildVersion())}</p>
+      <p>App version 1</p>
       <p>© 2026 TitoPay (Pty) Ltd. All rights reserved.</p>
     </footer>
   `);
@@ -11820,15 +12710,48 @@ function openAccountActivityModal() {
   `);
 }
 
-function openPasswordResetFromProfile() {
+async function openPasswordResetFromProfile() {
+  let options;
+  try {
+    const result = await api("/v1/auth/me/password-change/options");
+    options = result.options || {};
+  } catch (_error) {
+    options = {
+      sms: { available: Boolean(state.user?.phone), fee: 0 },
+      email: { available: false, configured: false, fee: 0.10 }
+    };
+  }
+  const sms = options.sms || {};
+  const email = options.email || {};
+  const defaultChannel = sms.available ? "sms" : email.available ? "email" : "sms";
+  const noChannelAvailable = !sms.available && !email.available;
+  const idempotencyKey = createClientTransactionKey("password-change-otp");
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Security</p><h2>Change PIN / Password</h2><p class="lead">For safety, TitoPay changes your PIN or password through SMS OTP verification.</p></div>
+      <div><p class="eyebrow">Security</p><h2>Change PIN / Password</h2><p class="lead">Choose where TitoPay should send your verification code.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="reset">
-      <div class="field"><label>Email, username or cellphone</label><input name="identifier" value="${esc(state.user && (state.user.email || state.user.username || state.user.phone) || "")}" required></div>
-      <button class="btn primary" type="submit">${icon("send")} Send OTP</button>
+      <input type="hidden" name="resetContext" value="profile">
+      <input type="hidden" name="identifier" value="${esc(state.user && (state.user.email || state.user.username || state.user.phone) || "")}">
+      <input type="hidden" name="idempotencyKey" value="${esc(idempotencyKey)}">
+      <fieldset class="otp-channel-picker">
+        <legend>Verification method</legend>
+        <label class="otp-channel-option ${sms.available ? "" : "is-disabled"}">
+          <input type="radio" name="otpChannel" value="sms" ${defaultChannel === "sms" ? "checked" : ""} ${sms.available ? "" : "disabled"}>
+          <span class="icon-bubble">${icon("phone")}</span>
+          <span><strong>SMS OTP</strong><small>${sms.available ? `Send to ${esc(sms.maskedDestination || "your registered cellphone")}` : "A registered cellphone is required"}</small></span>
+          <b>Free</b>
+        </label>
+        <label class="otp-channel-option ${email.available ? "" : "is-disabled"}">
+          <input type="radio" name="otpChannel" value="email" ${defaultChannel === "email" ? "checked" : ""} ${email.available ? "" : "disabled"}>
+          <span class="icon-bubble">${icon("mail")}</span>
+          <span><strong>Email OTP</strong><small>${email.available ? `Send to ${esc(email.maskedDestination || "your registered email")}` : email.configured ? "A registered email address is required" : "Email OTP is currently unavailable"}</small></span>
+          <b>Free</b>
+        </label>
+      </fieldset>
+      <p class="field-hint">SMS and Email OTP are free. Your verification code is sent securely to your registered contact.</p>
+      <button class="btn primary" type="submit" ${noChannelAvailable ? "disabled" : ""}>${icon("send")} Send selected OTP</button>
     </form>
   `);
 }
@@ -11968,25 +12891,163 @@ async function lockWallet() {
   showToast("Wallet locked.");
 }
 
-async function requestWalletUnlock() {
-  const result = await api("/v1/security/wallet-lock/unlock/request", { method: "POST", body: {} });
+function currentAuthenticationMethod(user = state.user || {}) {
+  const method = String(user.preferredAuthenticationMethod || user.preferred_authentication_method || "PUSH").trim().toUpperCase();
+  return ["PUSH", "EMAIL", "SMS"].includes(method) ? method : "PUSH";
+}
+
+function authenticationMethodLabel(method) {
+  return { PUSH: "Push Authentication", EMAIL: "Email OTP", SMS: "SMS OTP" }[String(method || "").toUpperCase()] || "Push Authentication";
+}
+
+function authenticationMethodIcon(method) {
+  return { PUSH: "phone", EMAIL: "mail", SMS: "phone" }[String(method || "").toUpperCase()] || "shield";
+}
+
+async function openAuthenticationPreferenceModal() {
+  let preference;
+  try {
+    const response = await api("/v1/auth/me/authentication-preference");
+    preference = response.preference || {};
+  } catch (error) {
+    if (error.status === 401 || !state.auth?.accessToken) {
+      closeModal();
+      render();
+      showToast("Your TitoPay session has expired. Please sign in again.", "error");
+      return;
+    }
+    showToast(error.message || "Authentication preferences could not be loaded. Please try again.", "error");
+    return;
+  }
+  const current = String(preference.method || currentAuthenticationMethod()).toUpperCase();
+  const availability = preference.availability || {};
+  const methods = ["PUSH", "EMAIL", "SMS"];
+  const choices = methods.filter((method) => method !== current).map((method) => {
+    const status = availability[method] || {};
+    const contactAvailable = method === "EMAIL" ? Boolean(state.user?.email) : method === "SMS" ? Boolean(state.user?.phone) : true;
+    const unavailable = !contactAvailable;
+    const fallbackNote = method === "PUSH" && !status.available ? "Push will use Email or SMS recovery until Push Authentication is available on this device." :
+      method === "EMAIL" && !contactAvailable ? "Add a registered email address before selecting Email OTP." :
+      method === "SMS" && !contactAvailable ? "Add a registered cellphone number before selecting SMS OTP." :
+      "Changing this requires verification using your current authentication method.";
+    return `<label class="otp-channel-option ${unavailable ? "is-disabled" : ""}">
+      <input type="radio" name="preferenceMethod" value="${method}" ${unavailable ? "disabled" : ""} required>
+      <span class="icon-bubble">${icon(authenticationMethodIcon(method))}</span>
+      <span><strong>${esc(authenticationMethodLabel(method))}</strong><small>${esc(fallbackNote)}</small></span>
+    </label>`;
+  }).join("");
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Unlock Wallet</p><h2>OTP verification</h2><p class="lead">Enter the SMS OTP sent to your registered cellphone.</p></div>
+      <div><p class="eyebrow">Profile · Security</p><h2>Preferred Authentication Method</h2><p class="lead">TitoPay remembers this selection across login, refresh and app restarts.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="settings-list">
+      ${settingsRow("Current selection", authenticationMethodLabel(current), authenticationMethodIcon(current))}
+      ${settingsRow("Last updated", preference.updatedAt ? formatDate(preference.updatedAt) : "Default selection", "list")}
+    </section>
+    <form class="form-grid" data-form="authentication-preference-request">
+      <fieldset class="otp-channel-picker">
+        <legend>Choose a new method</legend>
+        ${choices}
+      </fieldset>
+      <p class="field-hint">Only your selected method is stored. Verification codes are never saved on this device.</p>
+      <button class="btn primary" type="submit">${icon("shield")} Verify and change method</button>
+    </form>
+  `);
+}
+
+async function requestAuthenticationPreferenceUpdate(data) {
+  const method = String(data.preferenceMethod || "").toUpperCase();
+  if (!["PUSH", "EMAIL", "SMS"].includes(method)) throw new Error("Choose Push Authentication, Email OTP or SMS OTP.");
+  const result = await api("/v1/auth/me/authentication-preference/request", {
+    method: "POST",
+    body: { method, deviceName: "TitoPay PWA", location: Intl.DateTimeFormat().resolvedOptions().timeZone || null }
+  });
+  const verificationMethod = String(result.selectedAuthenticationMethod || result.authenticationMethod || result.channel || "SMS").toUpperCase();
+  const destination = result.maskedDestination ? ` sent to ${result.maskedDestination}` : "";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Profile · Security</p><h2>Verify authentication change</h2><p class="lead">Enter the ${esc(authenticationMethodLabel(verificationMethod))}${esc(destination)}.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="authentication-preference-verify">
+      <input type="hidden" name="preferenceMethod" value="${esc(method)}">
+      <input type="hidden" name="challengeId" value="${esc(result.challengeId)}">
+      <div class="field"><label>Verification code</label><input name="otp" aria-label="Verification code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{6,8}" required></div>
+      <p class="field-hint">The code is single-use and expires automatically.</p>
+      <button class="btn primary" type="submit">${icon("shield")} Confirm authentication method</button>
+    </form>
+  `);
+  showToast(`${authenticationMethodLabel(verificationMethod)} sent${destination}.`);
+}
+
+async function verifyAuthenticationPreferenceUpdate(data) {
+  const method = String(data.preferenceMethod || "").toUpperCase();
+  const result = await api("/v1/auth/me/authentication-preference", {
+    method: "PUT",
+    body: { method, challengeId: data.challengeId, otp: data.otp }
+  });
+  const preference = result.preference || {};
+  state.user = Object.assign({}, state.user || {}, {
+    preferredAuthenticationMethod: preference.method || method,
+    preferred_authentication_method: preference.method || method,
+    authenticationMethodUpdatedAt: preference.updatedAt || new Date().toISOString(),
+    authentication_method_updated_at: preference.updatedAt || new Date().toISOString()
+  });
+  persistAccountMediaSession();
+  closeModal();
+  render();
+  showToast(`Preferred authentication changed to ${authenticationMethodLabel(preference.method || method)}.`);
+}
+
+async function requestWalletUnlock() {
+  try {
+    showToast("For your security, please verify your identity.");
+    const result = await api("/v1/security/wallet-lock/unlock/request", {
+      method: "POST",
+      body: { deviceName: "TitoPay PWA", location: Intl.DateTimeFormat().resolvedOptions().timeZone || null }
+    });
+    showWalletUnlockVerification(result);
+  } catch (error) {
+    showToast(friendlyFormError(error, "wallet-unlock-request"), "error");
+  }
+}
+
+async function requestWalletUnlockOtp(data) {
+  const channel = data.unlockChannel === "email" ? "email" : "sms";
+  const result = await api("/v1/security/wallet-lock/unlock/request", { method: "POST", body: { channel } });
+  showWalletUnlockVerification({ ...result, channel: result.channel || channel });
+}
+
+function showWalletUnlockVerification(result = {}) {
+  const method = String(result.selectedAuthenticationMethod || result.authenticationMethod || result.channel || "SMS").toUpperCase();
+  const channel = method === "EMAIL" ? "email" : method === "PUSH" ? "push" : "sms";
+  const channelLabel = authenticationMethodLabel(method);
+  const destination = result.maskedDestination ? ` to ${result.maskedDestination}` : "";
+  const remainingAttempts = Number(result.remainingAttempts);
+  const attemptGuidance = Number.isFinite(remainingAttempts) && remainingAttempts > 0
+    ? `You have ${remainingAttempts} verification ${remainingAttempts === 1 ? "attempt" : "attempts"}.`
+    : "The code is single-use and expires automatically.";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Unlock Wallet</p><h2>OTP verification</h2><p class="lead">Enter the ${channelLabel} sent${destination}.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="wallet-unlock">
       <input type="hidden" name="challengeId" value="${esc(result.challengeId)}">
-      <div class="field"><label>OTP code</label><input name="otp" aria-label="OTP code" inputmode="numeric" maxlength="6" required></div>
+      <input type="hidden" name="channel" value="${esc(channel)}">
+      <div class="field"><label>OTP code</label><input name="otp" aria-label="OTP code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required></div>
+      <p class="field-hint">${esc(attemptGuidance)}</p>
       <button class="btn primary" type="submit">${icon("shield")} Unlock wallet</button>
     </form>
   `);
+  showToast(`${channelLabel} sent${destination}.`);
 }
 
 async function verifyWalletUnlock(data) {
   const result = await api("/v1/security/wallet-lock/unlock/verify", {
     method: "POST",
-    body: { challengeId: data.challengeId, otp: data.otp }
+    body: { challengeId: data.challengeId, otp: data.otp, channel: data.channel || "sms" }
   });
   state.user = Object.assign({}, state.user, result.user || {}, { profileLocked: false, profile_locked: false });
   closeModal();
@@ -12320,6 +13381,32 @@ async function submitSupportRequest(data) {
   }
   closeModal();
   showToast("Support request submitted.");
+}
+
+async function submitPublicContact(data, form) {
+  const fullName = String(data.fullName || "").trim();
+  const cellphone = String(data.cellphone || "").trim();
+  const message = String(data.message || "").trim();
+  if (fullName.length < 2) throw new Error("Enter your full name.");
+  if (cellphone.replace(/\D/g, "").length < 7) throw new Error("Enter a valid cellphone number.");
+  if (message.length < 10) throw new Error("Enter at least 10 characters for your enquiry.");
+  if (data.consent !== "true") throw new Error("Please consent to TitoPay using these details to respond.");
+
+  const result = await api("/v1/support/public/contact", {
+    method: "POST",
+    auth: false,
+    body: {
+      fullName,
+      cellphone,
+      category: data.category,
+      message,
+      consent: true,
+      website: data.website || ""
+    }
+  });
+  form.reset();
+  closeModal();
+  showToast(`Enquiry submitted. Reference ${result.ticketRef}.`);
 }
 
 async function submitPwaReview(data) {
@@ -13268,7 +14355,7 @@ function openTitoPayChatThread(threadId) {
         <button class="chat-action-btn" type="button" data-action="chat-mute" aria-label="${thread.muted ? "Unmute conversation" : "Mute conversation"}">${icon("bell")}<span>${thread.muted ? "Unmute" : "Mute"}</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-clear-thread" aria-label="Clear this chat from this device">${icon("refresh")}<span>Clear</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-report" aria-label="Report conversation">${icon("shield")}<span>Report</span></button>
-        <button class="chat-action-btn" type="button" data-action="chat-block" aria-label="${blocked ? "Conversation blocked" : "Block conversation"}">${icon("ban")}<span>${blocked ? "Blocked" : "Block"}</span></button>
+        <button class="chat-action-btn" type="button" data-action="chat-block" aria-pressed="${blocked}" aria-label="${blocked ? "Unblock conversation" : "Block conversation"}">${icon("ban")}<span>${blocked ? "Unblock" : "Block"}</span></button>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
     </div>
@@ -14266,13 +15353,13 @@ function reportActiveChatThread() {
   showToast("Chat reported for review.");
 }
 
-function blockActiveChatThread() {
+function toggleActiveChatBlock() {
   const threadId = sessionStorage.getItem("titopay_active_chat_thread");
   if (!threadId) return;
   const blocks = titoPayChatBlocks();
-  if (!blocks.includes(threadId)) blocks.push(threadId);
-  saveTitoPayChatBlocks(blocks);
-  showToast("Chat blocked.");
+  const blocked = blocks.includes(threadId);
+  saveTitoPayChatBlocks(blocked ? blocks.filter((id) => id !== threadId) : [...blocks, threadId]);
+  showToast(blocked ? "Chat unblocked." : "Chat blocked.");
   openTitoPayChatThread(threadId);
 }
 
@@ -14335,6 +15422,12 @@ function openChatbotModal() {
       <button class="btn primary" type="submit" aria-label="Send message">${icon("send")}</button>
     </form>
   `);
+  const backdrop = document.querySelector(".modal-backdrop");
+  const card = backdrop?.querySelector(".modal-card");
+  if (backdrop && card) {
+    backdrop.classList.add("chatbot-modal-backdrop");
+    card.classList.add("chatbot-fullscreen-modal");
+  }
   const existingConversationId = sessionStorage.getItem("titopay_support_conversation_id");
   if (existingConversationId) hydrateSupportConversation(existingConversationId).catch(() => null);
 }
@@ -14342,13 +15435,25 @@ function openChatbotModal() {
 async function hydrateSupportConversation(conversationId) {
   const result = await api(`/v1/support/conversations/${encodeURIComponent(conversationId)}/messages`);
   const messages = result.messages || result.items || [];
-  const thread = document.querySelector(".chat-thread");
+  const thread = document.querySelector(".chatbot-fullscreen-modal .chat-thread");
   if (!thread) return;
-  thread.innerHTML = "";
-  messages.forEach((item) => appendChatMessage(
-    item.senderType === "CUSTOMER" ? "user" : "assistant",
-    item.body || item.message || ""
-  ));
+  const normalizedMessages = messages.map((item) => ({
+    id: String(item.id || item.messageId || item.message_id || ""),
+    role: item.senderType === "CUSTOMER" ? "user" : "assistant",
+    body: String(item.body || item.message || "")
+  }));
+  const signature = normalizedMessages.map((item) => `${item.id}\u001f${item.role}\u001f${item.body}`).join("\u001e");
+  if (thread.dataset.supportSignature !== signature) {
+    const wasAtBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48;
+    const previousScrollHeight = thread.scrollHeight;
+    const previousScrollTop = thread.scrollTop;
+    const fragment = document.createDocumentFragment();
+    normalizedMessages.forEach((item) => fragment.appendChild(createChatMessageElement(item.role, item.body, item.id)));
+    thread.replaceChildren(fragment);
+    thread.dataset.supportSignature = signature;
+    if (wasAtBottom) thread.scrollTop = thread.scrollHeight;
+    else thread.scrollTop = previousScrollTop + Math.max(0, thread.scrollHeight - previousScrollHeight);
+  }
   await api(`/v1/support/conversations/${encodeURIComponent(conversationId)}/read`, {
     method: "POST",
     body: {}
@@ -14405,26 +15510,34 @@ async function submitChatbotMessage(data) {
   if (needsEscalation) renderSupportEscalation(message);
 }
 
-function appendChatMessage(role, message, id = "") {
-  const thread = document.querySelector(".chat-thread");
-  if (!thread) return;
+function createChatMessageElement(role, message, id = "") {
   const article = document.createElement("article");
   article.className = `chat-message ${role}`;
   if (id) article.id = id;
   article.innerHTML = role === "assistant"
     ? `<span class="icon-bubble">${icon("chatbot")}</span><p>${esc(message)}</p>`
     : `<p>${esc(message)}</p>`;
+  return article;
+}
+
+function appendChatMessage(role, message, id = "") {
+  const thread = document.querySelector(".chatbot-fullscreen-modal .chat-thread");
+  if (!thread) return;
+  const article = createChatMessageElement(role, message, id);
   thread.appendChild(article);
+  thread.dataset.supportSignature = "";
   thread.scrollTop = thread.scrollHeight;
 }
 
 function renderSupportEscalation(message) {
-  const thread = document.querySelector(".chat-thread");
+  const thread = document.querySelector(".chatbot-fullscreen-modal .chat-thread");
   if (!thread) return;
+  const existing = thread.querySelector(".support-escalation");
+  if (existing && existing.dataset.supportMessage === String(message || "")) return;
   thread.querySelectorAll(".support-escalation").forEach((item) => item.remove());
   sessionStorage.setItem("titopay_pending_support_message", message);
   thread.insertAdjacentHTML("beforeend", `
-    <section class="support-escalation" aria-label="Customer care escalation">
+    <section class="support-escalation" data-support-message="${esc(message)}" aria-label="Customer care escalation">
       <strong>Please wait while we connect you to one of our Customer Care Specialists.</strong>
       <p>Estimated wait: 2-5 minutes. You can keep using TitoPay while the request is in the support queue.</p>
       <div class="support-actions">
@@ -14487,11 +15600,13 @@ async function requestSupportEscalation(mode) {
 }
 
 function renderSupportRating(ticketId) {
-  const thread = document.querySelector(".chat-thread");
+  const thread = document.querySelector(".chatbot-fullscreen-modal .chat-thread");
   if (!thread) return;
+  const existing = thread.querySelector(".support-rating");
+  if (existing && existing.dataset.supportTicket === String(ticketId || "")) return;
   thread.querySelectorAll(".support-rating").forEach((item) => item.remove());
   thread.insertAdjacentHTML("beforeend", `
-    <section class="support-rating" aria-label="Support rating">
+    <section class="support-rating" data-support-ticket="${esc(ticketId)}" aria-label="Support rating">
       <strong>Rate this support experience after it is resolved.</strong>
       <div class="support-rating-actions">
         ${[5, 4, 3, 2, 1].map((rating) => `<button type="button" class="chip" data-support-ticket="${esc(ticketId)}" data-support-rating="${rating}">${rating} star${rating === 1 ? "" : "s"}</button>`).join("")}
@@ -14715,6 +15830,58 @@ function openStatementsModal() {
   applyStatementPeriod("this-month");
 }
 
+async function openEmailStatementConfirmation() {
+  const wallet=primaryWallet();
+  if(!wallet?.id)throw new Error("Your TitoPay wallet is not available. Refresh and try again.");
+  const params=new URLSearchParams();
+  if(state.transactionFilters.from)params.set("from",state.transactionFilters.from);
+  if(state.transactionFilters.to)params.set("to",state.transactionFilters.to);
+  const query=params.toString();
+  const result=await api(`/v1/wallets/${encodeURIComponent(wallet.id)}/statement/email/preview${query?`?${query}`:""}`);
+  const preview=result.preview||{};
+  const idempotencyKey=createClientTransactionKey("email-statement");
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Email Statement</p>
+        <h2>Send statement to your email?</h2>
+        <p class="lead">Review the destination, period and fee before confirming.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="receipt-card">
+      <dl>
+        ${receiptRow("Email address",preview.recipient||state.user?.email||"Not available")}
+        ${receiptRow("Statement period",preview.period||statementPeriodLabel())}
+        ${receiptRow("Wallet movements",String(preview.transactionCount||0))}
+        ${receiptRow("Email statement fee",money(preview.fee??0.10))}
+      </dl>
+    </section>
+    <p class="field-hint">The R0.10 fee is charged only when your statement email is successfully requested. Other email notifications remain free.</p>
+    <div class="auth-actions">
+      <button class="btn secondary" type="button" data-close>Cancel</button>
+      <button class="btn primary" type="button" data-action="confirm-email-statement" data-wallet-id="${esc(wallet.id)}" data-statement-from="${esc(state.transactionFilters.from||"")}" data-statement-to="${esc(state.transactionFilters.to||"")}" data-idempotency-key="${esc(idempotencyKey)}">${icon("mail")} Confirm and email for ${esc(money(preview.fee??0.10))}</button>
+    </div>
+  `);
+}
+
+async function confirmEmailStatement(button) {
+  const walletId=String(button.dataset.walletId||"");
+  if(!walletId)throw new Error("Your TitoPay wallet is not available. Refresh and try again.");
+  button.disabled=true;
+  const result=await api(`/v1/wallets/${encodeURIComponent(walletId)}/statement/email`,{
+    method:"POST",
+    headers:{"Idempotency-Key":button.dataset.idempotencyKey},
+    body:{from:button.dataset.statementFrom||null,to:button.dataset.statementTo||null,idempotencyKey:button.dataset.idempotencyKey}
+  });
+  closeModal();
+  await loadAccount();
+  render();
+  showToast(result.deduplicated
+    ? "This Email Statement request was already received. No duplicate fee was charged."
+    : `Your statement is queued for ${result.recipient}. ${money(result.fee)} was charged.`);
+}
+
 function downloadTransactionsCsv() {
   const items = filteredTransactions();
   const rows = [
@@ -14744,12 +15911,13 @@ function csvCell(value) {
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-function downloadTransactionsPdf() {
+async function downloadTransactionsPdf() {
   const items = filteredTransactions();
   const now = new Date();
   const statementNo = `TPS-${dateStamp(now)}-${leftPad(String(Math.floor(Math.random() * 999999)), 6, "0")}`;
   const referenceNo = `TP-${dateStamp(now)}-${leftPad(String(state.transactions.length + 1), 6, "0")}`;
-  const pdf = statementPdf({ items, now, statementNo, referenceNo });
+  const logo = await loadStatementLogoJpeg();
+  const pdf = statementPdf({ items, now, statementNo, referenceNo, logo });
   downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${statementNo}.pdf`);
 }
 
@@ -14800,7 +15968,33 @@ function compactStatementReference(reference, maxChars = 24) {
   return value.length > maxChars ? `${value.slice(0, maxChars - 3)}...` : value;
 }
 
-function statementPdf({ items, now, statementNo, referenceNo }) {
+let statementLogoJpegPromise = null;
+
+function loadStatementLogoJpeg() {
+  if (statementLogoJpegPromise) return statementLogoJpegPromise;
+  statementLogoJpegPromise = new Promise((resolve) => {
+    if (typeof Image === "undefined" || typeof document === "undefined") return resolve(null);
+    const image = new Image();
+    image.onload = () => {
+      const width = image.naturalWidth || image.width || 881;
+      const height = image.naturalHeight || image.height || 224;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) return resolve(null);
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      resolve({ dataUrl: canvas.toDataURL("image/jpeg", 0.96), width, height });
+    };
+    image.onerror = () => resolve(null);
+    image.src = "./assets/titopay-logo.png";
+  });
+  return statementLogoJpegPromise;
+}
+
+function statementPdf({ items, now, statementNo, referenceNo, logo = null }) {
   const user = state.user || {};
   const wallet = primaryWallet() || {};
   const profileType = state.accountType === "business" ? "Business profile" : "Personal profile";
@@ -14835,14 +16029,28 @@ function statementPdf({ items, now, statementNo, referenceNo }) {
     commands.push(`q ${color} RG ${width} w ${cx + r} ${cy} m ${cx + r} ${cy + k} ${cx + k} ${cy + r} ${cx} ${cy + r} c ${cx - k} ${cy + r} ${cx - r} ${cy + k} ${cx - r} ${cy} c ${cx - r} ${cy - k} ${cx - k} ${cy - r} ${cx} ${cy - r} c ${cx + k} ${cy - r} ${cx + r} ${cy - k} ${cx + r} ${cy} c S Q`);
   };
 
-  fill(0, 720, 595, 92, "0.03 0.08 0.22");
+  fill(0, 720, 595, 92, "1 1 1");
   fill(0, 716, 595, 4, "0.00 0.34 1.00");
-  text(52, 770, "TitoPay", 24, "F2", "1 1 1");
-  text(52, 752, "Smart Payments. Simplified.", 8.6, "F1", "0.84 0.89 0.98");
-  rightText(545, 775, "ACCOUNT STATEMENT", 13, "F2", "1 1 1");
-  rightText(545, 758, profileType, 9, "F1", "0.90 0.94 1.00");
-  rightText(545, 744, `Issued ${issuedDate} at ${issuedTime}`, 8.5, "F1", "0.90 0.94 1.00");
-  rightText(545, 731, `Reference ${referenceNo}`, 8.5, "F1", "0.90 0.94 1.00");
+  // Use the supplied official wordmark in exported statements. The vector
+  // fallback keeps exports working if the asset cannot be loaded offline.
+  if (logo?.dataUrl) {
+    const logoBase64 = String(logo.dataUrl).split(",")[1] || "";
+    const logoBinary = atob(logoBase64);
+    const logoBytes = new Uint8Array(logoBinary.length);
+    for (let index = 0; index < logoBinary.length; index += 1) logoBytes[index] = logoBinary.charCodeAt(index);
+    logo.pdfBytes = logoBytes;
+    commands.push("q 180 0 0 46 52 756 cm /Im1 Do Q");
+  } else {
+    commands.push("q 0.18 0.54 0.95 rg 68 794 m 80 806 l 68 806 l h f Q");
+    text(52, 768, "Tito", 27, "F2", "0.03 0.08 0.22");
+    text(97, 768, "Pay", 27, "F2", "0.18 0.54 0.95");
+  }
+  text(52, 746, "Smart Payments. Simplified.", 8.6, "F1", "0.38 0.43 0.52");
+  const statementHeaderX = 352;
+  text(statementHeaderX, 776, "ACCOUNT STATEMENT", 15, "F2", "0.03 0.08 0.22");
+  text(statementHeaderX, 757, profileType, 9, "F1", "0.38 0.43 0.52");
+  text(statementHeaderX, 743, `Issued ${issuedDate} at ${issuedTime}`, 8.5, "F1", "0.38 0.43 0.52");
+  text(statementHeaderX, 730, `Reference ${referenceNo}`, 8.5, "F1", "0.38 0.43 0.52");
 
   fill(52, 538, 491, 138, "0.99 0.99 1.00");
   stroke(52, 538, 491, 138);
@@ -14864,21 +16072,24 @@ function statementPdf({ items, now, statementNo, referenceNo }) {
   fill(52, 463, 150, 44, "0.92 0.99 0.96");
   stroke(52, 463, 150, 44, "0.78 0.92 0.86");
   text(64, 489, "TOTAL IN", 8.5, "F1", "0.38 0.43 0.52");
-  text(64, 471, statementMoney(totalIn, "+"), 13, "F2", "0.03 0.50 0.38");
+  const totalInText = statementMoney(totalIn, "+");
+  text(64, 471, totalInText, statementAmountFontSize(totalInText, 126, 13), "F2", "0.03 0.50 0.38");
   fill(222, 463, 150, 44, "1.00 0.95 0.95");
   stroke(222, 463, 150, 44, "0.94 0.82 0.82");
   text(234, 489, "TOTAL OUT", 8.5, "F1", "0.38 0.43 0.52");
-  text(234, 471, statementMoney(totalOut, "-"), 13, "F2", "0.62 0.10 0.13");
+  const totalOutText = statementMoney(totalOut, "-");
+  text(234, 471, totalOutText, statementAmountFontSize(totalOutText, 126, 13), "F2", "0.62 0.10 0.13");
   fill(392, 463, 151, 44, "0.94 0.97 1.00");
   stroke(392, 463, 151, 44, "0.82 0.88 0.98");
   text(404, 489, "NET MOVEMENT", 8.5, "F1", "0.38 0.43 0.52");
-  text(404, 471, statementMoney(Math.abs(net), net >= 0 ? "+" : "-"), 13, "F2", "0.04 0.11 0.27");
+  const netText = statementMoney(Math.abs(net), net >= 0 ? "+" : "-");
+  text(404, 471, netText, statementAmountFontSize(netText, 126, 13), "F2", "0.04 0.11 0.27");
 
   text(52, 430, `${state.accountType === "business" ? "BUSINESS" : "PERSONAL"} ACTIVITY (${items.length})`, 10, "F2", "0.12 0.32 0.62");
   fill(52, 399, 491, 24, "0.03 0.08 0.22");
   text(64, 408, "DATE", 9, "F2", "1 1 1");
   text(155, 408, "DESCRIPTION", 9, "F2", "1 1 1");
-  rightText(532, 408, "AMOUNT", 9, "F2", "1 1 1");
+  rightText(528, 408, "AMOUNT", 9, "F2", "1 1 1");
 
   let y = 375;
   items.slice(0, 8).forEach((item, index) => {
@@ -14887,14 +16098,16 @@ function statementPdf({ items, now, statementNo, referenceNo }) {
     const title = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
     const detail = item.reference || item.recipient_reference || item.recipientReference || item.status || "Processed";
     text(64, y + 6, statementDateLabel(item.created_at || item.createdAt), 8.5, "F1", "0.42 0.46 0.55");
-    text(155, y + 8, title, 9, "F2");
-    text(155, y - 3, detail, 7.5, "F1", "0.42 0.46 0.55");
-    rightText(532, y + 4, statementMoney(statementAmountNumber(item), credit ? "+" : "-"), 9, "F2", credit ? "0.03 0.50 0.38" : "0.62 0.10 0.13");
+    text(155, y + 8, splitStatementText(title, 34, 1)[0], 9, "F2");
+    text(155, y - 3, splitStatementText(detail, 34, 1)[0], 7.5, "F1", "0.42 0.46 0.55");
+    const amountText = statementMoney(statementAmountNumber(item), credit ? "+" : "-");
+    rightText(528, y + 4, amountText, statementAmountFontSize(amountText), "F2", credit ? "0.03 0.50 0.38" : "0.62 0.10 0.13");
     y -= 25;
   });
   line(52, y + 13, 543, y + 13);
   text(52, y - 8, "Closing net for period", 10, "F2");
-  rightText(532, y - 8, statementMoney(Math.abs(net), net >= 0 ? "+" : "-"), 10, "F2", "0.04 0.11 0.27");
+  const closingNetText = statementMoney(Math.abs(net), net >= 0 ? "+" : "-");
+  rightText(528, y - 8, closingNetText, statementAmountFontSize(closingNetText, 120, 10), "F2", "0.04 0.11 0.27");
 
   fill(392, 108, 151, 58, "0.95 0.97 1.00");
   stroke(392, 108, 151, 58, "0.82 0.88 0.98");
@@ -14908,27 +16121,46 @@ function statementPdf({ items, now, statementNo, referenceNo }) {
   rightText(543, 34, "Page 1 of 1", 7, "F1", "0.42 0.46 0.55");
 
   const content = commands.join("\n");
-  const objects = [
-    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
-    "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
-    "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >> endobj",
-    "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
-    "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj",
-    `6 0 obj << /Length ${content.length} >> stream\n${content}\nendstream endobj`
-  ];
-  let pdf = "%PDF-1.4\n";
+  const hasLogo = Boolean(logo?.pdfBytes?.length);
+  const contentObjectNumber = hasLogo ? 7 : 6;
+  const resources = hasLogo
+    ? `/Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Im1 6 0 R >> >>`
+    : `/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >>`;
+  const encoder = new TextEncoder();
+  const chunks = [];
   const offsets = [0];
-  for (const object of objects) {
-    offsets.push(pdf.length);
-    pdf += object + "\n";
+  let byteOffset = 0;
+  const push = (part) => {
+    const bytes = typeof part === "string" ? encoder.encode(part) : part;
+    chunks.push(bytes);
+    byteOffset += bytes.length;
+  };
+  const object = (number, parts) => {
+    offsets[number] = byteOffset;
+    parts.forEach(push);
+    push("\n");
+  };
+  push("%PDF-1.4\n");
+  object(1, ["1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj"]);
+  object(2, ["2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj"]);
+  object(3, [`3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ${resources} /Contents ${contentObjectNumber} 0 R >> endobj`]);
+  object(4, ["4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj"]);
+  object(5, ["5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj"]);
+  if (hasLogo) {
+    object(6, [`6 0 obj << /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logo.pdfBytes.length} >> stream\n`, logo.pdfBytes, "\nendstream endobj"]);
   }
-  const xref = pdf.length;
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  offsets.slice(1).forEach((offset) => {
-    pdf += leftPad(String(offset), 10, "0") + " 00000 n \n";
+  object(contentObjectNumber, [`${contentObjectNumber} 0 obj << /Length ${encoder.encode(content).length} >> stream\n${content}\nendstream endobj`]);
+  const xref = byteOffset;
+  let crossReference = `xref\n0 ${contentObjectNumber + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index <= contentObjectNumber; index += 1) crossReference += `${leftPad(String(offsets[index]), 10, "0")} 00000 n \n`;
+  push(`${crossReference}trailer\n<< /Size ${contentObjectNumber + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  const output = new Uint8Array(byteOffset);
+  let position = 0;
+  chunks.forEach((chunk) => {
+    output.set(chunk, position);
+    position += chunk.length;
   });
-  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return pdf;
+  return output;
 }
 
 function makePdf(commands) {
@@ -15094,7 +16326,7 @@ function payoutReportPdf() {
   fill(0, 720, 595, 92, "0.03 0.08 0.22");
   fill(0, 716, 595, 4, "0.00 0.34 1.00");
   text(52, 774, "Tito", 22, "F2", "1 1 1");
-  text(92, 774, "Pay", 22, "F2", "0.25 0.67 1.00");
+  text(91, 774, "Pay", 22, "F2", "0.25 0.67 1.00");
   text(52, 756, "Smart Payments. Simplified.", 8.2, "F1", "0.84 0.89 0.98");
   text(52, 742, businessName, 8.8, "F1", "0.84 0.89 0.98");
   rightText(545, 775, "PAYOUT REPORT", 13, "F2", "1 1 1");
@@ -15164,6 +16396,11 @@ function statementMoney(value, prefix = "") {
     maximumFractionDigits: 2
   }).format(Math.abs(Number(value || 0))).replace(/\s/g, " ");
   return `${prefix}R ${amount}`;
+}
+
+function statementAmountFontSize(value, maxWidth = 92, maxSize = 9) {
+  const characters = Math.max(1, String(value || "").length);
+  return Math.max(6.4, Math.min(maxSize, maxWidth / (characters * 0.52)));
 }
 
 function statementDateLabel(value) {
@@ -15382,6 +16619,15 @@ function openModal(html) {
   enhanceContactPickerControls(wrapper);
 
   const card = wrapper.querySelector(".modal-card");
+  if (wrapper.querySelector("#auth-panel")) {
+    wrapper.classList.add("auth-modal-backdrop");
+    card.classList.add("auth-modal-card");
+    authKeyboardCleanup = attachAuthKeyboardBehavior(wrapper, card);
+  } else if (card.querySelector("input:not([type=hidden]), textarea, select")) {
+    wrapper.classList.add("keyboard-aware-backdrop");
+    card.classList.add("keyboard-aware-card");
+    authKeyboardCleanup = attachAuthKeyboardBehavior(wrapper, card);
+  }
   // Associate the dialog with its own heading for screen readers.
   const heading = card.querySelector("h2, h3");
   if (heading) {
@@ -15423,6 +16669,10 @@ function openModal(html) {
 }
 
 function closeModal() {
+  if (authKeyboardCleanup) {
+    authKeyboardCleanup();
+    authKeyboardCleanup = null;
+  }
   if (state.merchantSale && state.merchantSale.status === "waiting") stopMerchantSaleTimers();
   const backdrop = document.querySelector(".modal-backdrop");
   if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
@@ -15438,6 +16688,110 @@ function closeModal() {
   if (!backdrop) return;
   const target = resolveModalOpener(opener, openerSelector);
   if (target) target.focus({ preventScroll: true });
+}
+
+function attachAuthKeyboardBehavior(backdrop, card) {
+  const viewport = window.visualViewport;
+  const initialHeight = Math.max(window.innerHeight, viewport ? viewport.height : 0);
+  let frame = 0;
+  let focusTimer = 0;
+  let keyboardOpen = false;
+  let appliedHeight = "";
+  let appliedOffset = "";
+
+  const activeField = () => {
+    const active = document.activeElement;
+    return active instanceof HTMLElement
+      && card.contains(active)
+      && active.matches("input:not([type=hidden]), textarea, select")
+      ? active
+      : null;
+  };
+
+  const centreField = (field, visibleTop, visibleHeight) => {
+    if (!field || !keyboardOpen) return;
+    if (card.classList.contains("chatbot-fullscreen-modal") || card.classList.contains("titopay-chat-thread-modal")) return;
+    const rect = field.getBoundingClientRect();
+    const targetTop = visibleTop + Math.max(12, (visibleHeight - rect.height) / 2);
+    const delta = rect.top - targetTop;
+    if (Math.abs(delta) > 8) card.scrollTop += delta;
+  };
+
+  const update = () => {
+    frame = 0;
+    if (!document.contains(backdrop)) return;
+    const field = activeField();
+    const visibleHeight = Math.max(1, viewport ? viewport.height : window.innerHeight);
+    const visibleTop = Math.max(0, viewport ? viewport.offsetTop : 0);
+    const heightLoss = Math.max(0, initialHeight - visibleHeight - visibleTop);
+    const nextKeyboardOpen = Boolean(field) && heightLoss > 100;
+
+    if (nextKeyboardOpen) {
+      const nextHeight = `${Math.round(visibleHeight)}px`;
+      const nextOffset = `${Math.round(visibleTop)}px`;
+      if (appliedHeight !== nextHeight) {
+        backdrop.style.setProperty("--auth-viewport-height", nextHeight);
+        appliedHeight = nextHeight;
+      }
+      if (appliedOffset !== nextOffset) {
+        backdrop.style.setProperty("--auth-viewport-offset", nextOffset);
+        appliedOffset = nextOffset;
+      }
+      if (!keyboardOpen) backdrop.classList.add("keyboard-open");
+      keyboardOpen = true;
+      requestAnimationFrame(() => centreField(field, visibleTop, visibleHeight));
+    } else {
+      if (keyboardOpen) backdrop.classList.remove("keyboard-open");
+      if (appliedHeight) backdrop.style.removeProperty("--auth-viewport-height");
+      if (appliedOffset) backdrop.style.removeProperty("--auth-viewport-offset");
+      keyboardOpen = false;
+      appliedHeight = "";
+      appliedOffset = "";
+    }
+  };
+
+  const scheduleUpdate = () => {
+    if (frame) cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(update);
+  };
+
+  const onFocusIn = (event) => {
+    if (!(event.target instanceof HTMLElement) || !event.target.matches("input:not([type=hidden]), textarea, select")) return;
+    clearTimeout(focusTimer);
+    scheduleUpdate();
+    focusTimer = window.setTimeout(scheduleUpdate, 80);
+  };
+
+  const onFocusOut = () => {
+    clearTimeout(focusTimer);
+    focusTimer = window.setTimeout(() => {
+      scheduleUpdate();
+      if (!activeField()) card.scrollTop = 0;
+    }, 120);
+  };
+
+  card.addEventListener("focusin", onFocusIn);
+  card.addEventListener("focusout", onFocusOut);
+  if (viewport) {
+    viewport.addEventListener("resize", scheduleUpdate, { passive: true });
+    viewport.addEventListener("scroll", scheduleUpdate, { passive: true });
+  }
+  window.addEventListener("resize", scheduleUpdate, { passive: true });
+
+  return () => {
+    clearTimeout(focusTimer);
+    if (frame) cancelAnimationFrame(frame);
+    card.removeEventListener("focusin", onFocusIn);
+    card.removeEventListener("focusout", onFocusOut);
+    if (viewport) {
+      viewport.removeEventListener("resize", scheduleUpdate);
+      viewport.removeEventListener("scroll", scheduleUpdate);
+    }
+    window.removeEventListener("resize", scheduleUpdate);
+    backdrop.classList.remove("keyboard-open");
+    backdrop.style.removeProperty("--auth-viewport-height");
+    backdrop.style.removeProperty("--auth-viewport-offset");
+  };
 }
 
 function lockPageScroll() {
@@ -15572,6 +16926,7 @@ function icon(name) {
     ticketing: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M9 9h6"/><path d="M9 13h4"/><path d="M17 8v8"/>`,
     health: `<rect x="4" y="4" width="16" height="16" rx="4.5"/><path d="M12 8.8v6.4"/><path d="M8.8 12h6.4"/>`,
     sparkles: `<path d="m12 3.5 1.8 4.7 4.7 1.8-4.7 1.8-1.8 4.7-1.8-4.7L5.5 10l4.7-1.8z"/><path d="m18.3 15.7.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>`,
+    star: `<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>`,
     "check-circle": `<circle cx="12" cy="12" r="9"/><path d="m8.5 12.4 2.3 2.3 4.9-5.2"/>`,
     stockvel: `<circle cx="8.5" cy="6.8" r="2.6"/><circle cx="15.5" cy="6.8" r="2.6"/><path d="M4.5 20.5v-.5a5 5 0 0 1 5-5h5a5 5 0 0 1 5 5v.5"/><circle cx="12" cy="17.6" r="1.7"/>`,
     "piggy-bank": `<path d="M5 12a6 6 0 0 1 6-6h4a5 5 0 0 1 5 5v4a4 4 0 0 1-4 4H8a5 5 0 0 1-5-5v-1a3 3 0 0 1 2-2.8Z"/><path d="M16 6V4a2 2 0 0 0-2 2"/><path d="M7 19v2"/><path d="M17 19v2"/><path d="M19 11h2"/><path d="M9 10h.01"/>`,
@@ -15625,3 +16980,22 @@ function icon(name) {
   };
   return `<svg ${common}>${paths[resolvedName] || paths.grid}</svg>`;
 }
+
+// Customer Care notifications belong to the chatbot/support conversation, not
+// the separate peer-to-peer TitoPay Chat inbox. Capture the click before the
+// generic notification handler so older cached bundles remain safe as well.
+document.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-notification-support-chat], [data-notification-chat]");
+  if (!target) return;
+  const noticeId = target.dataset.noticeId || "";
+  const item = (state.notifications || []).find((notification) => String(notification.id) === String(noticeId));
+  const metadata = item?.metadata || {};
+  const notificationType = String(metadata.notificationType || item?.notification_type || "").toLowerCase();
+  const conversationId = target.dataset.notificationSupportChat || metadata.conversationId || metadata.conversation_id;
+  if (!conversationId || !/^support_/.test(notificationType)) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  markNotificationReadById(noticeId);
+  sessionStorage.setItem("titopay_support_conversation_id", String(conversationId));
+  openChatbotModal();
+}, true);

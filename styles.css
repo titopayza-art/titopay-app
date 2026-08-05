@@ -352,6 +352,11 @@ body:not(.landing-static) .screen > *:first-child {
   box-shadow: var(--shadow);
 }
 
+.icon-btn.is-active {
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
 .icon-btn:active {
   transform: scale(0.96);
 }
@@ -596,8 +601,8 @@ h3 {
 }
 
 .section-head.quick-services-head {
-  margin-top: 2px;
-  margin-bottom: -2px;
+  margin-top: 16px;
+  margin-bottom: 2px;
 }
 
 /* Home is meant to fit the screen. A stacked eyebrow and heading spent ~60px
@@ -741,11 +746,152 @@ h3 {
   font-size: clamp(0.76rem, 2.8vw, 0.84rem);
 }
 
+.section-head.quick-services-head {
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.section-head.quick-services-head h2 {
+  margin: 0;
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+}
+
+.quick-services-edit {
+  width: auto;
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 9px 13px;
+  gap: 7px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.quick-services-edit svg {
+  width: 18px;
+  height: 18px;
+}
+
+.quick-service-customizer-summary {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  color: var(--navy);
+  background: var(--soft-blue);
+  border: 1px solid rgba(10, 77, 255, 0.14);
+  border-radius: 16px;
+}
+
+.quick-service-customizer-summary span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.quick-service-options {
+  display: grid;
+  gap: 9px;
+}
+
+.quick-service-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 70px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+}
+
+.quick-service-option.is-selected {
+  border-color: rgba(10, 77, 255, 0.38);
+  background: rgba(235, 242, 255, 0.72);
+}
+
+.quick-service-option label {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.quick-service-option input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+
+.quick-service-option .icon-bubble {
+  width: 42px;
+  height: 42px;
+}
+
+.quick-service-option .icon-bubble svg {
+  width: 21px;
+  height: 21px;
+}
+
+.quick-service-option label > span:last-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.quick-service-option strong,
+.quick-service-option small {
+  overflow-wrap: anywhere;
+}
+
+.quick-service-option small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.quick-service-order {
+  display: flex;
+  gap: 5px;
+}
+
+.quick-service-order button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--blue);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.quick-service-order button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.quick-service-customizer-actions {
+  margin-top: 16px;
+}
+
 .auth-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
   margin-top: 2px;
+}
+
+.activity-email-statement-action {
+  grid-column: 1 / -1;
 }
 
 .auth-modal-panel {
@@ -1532,6 +1678,96 @@ body.landing-static .landing-flow.auth-screen {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.35;
+}
+
+.otp-channel-picker {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.otp-channel-picker legend {
+  margin-bottom: 8px;
+  color: var(--navy);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.otp-channel-option {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 12px;
+  background: #fbfdff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  cursor: pointer;
+  transition: border-color 160ms var(--ease-premium), box-shadow 160ms var(--ease-premium), background 160ms var(--ease-premium);
+}
+
+.otp-channel-option:has(input:checked) {
+  background: #f3f7ff;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(10, 77, 255, 0.1);
+}
+
+.otp-channel-option input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+
+.otp-channel-option .icon-bubble {
+  width: 40px;
+  height: 40px;
+}
+
+.otp-channel-option strong,
+.otp-channel-option small {
+  display: block;
+}
+
+.otp-channel-option small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.3;
+}
+
+.otp-channel-option > b {
+  color: var(--navy);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.otp-channel-option.is-disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
+.otp-delivery-confirmation {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--navy);
+  background: #f3f7ff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+@media (max-width: 420px) {
+  .otp-channel-option {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .otp-channel-option > b {
+    grid-column: 3;
+  }
 }
 
 .terms-agreement {
@@ -3840,6 +4076,177 @@ body.landing-static .landing-flow.auth-screen {
   backdrop-filter: blur(16px);
 }
 
+/* Authentication keyboard handling is deliberately scoped to the auth modal.
+   The visual viewport variables are set only while a software keyboard is
+   visible, so every other modal retains its existing positioning. */
+.auth-modal-backdrop.keyboard-open,
+.keyboard-aware-backdrop.keyboard-open {
+  top: 0;
+  bottom: auto;
+  height: var(--auth-viewport-height, 100dvh);
+  transform: translateY(var(--auth-viewport-offset, 0));
+  overflow: hidden;
+}
+
+.auth-modal-backdrop.keyboard-open .auth-modal-card,
+.keyboard-aware-backdrop.keyboard-open .keyboard-aware-card {
+  max-height: calc(var(--auth-viewport-height, 100dvh) - 32px - var(--safe-top) - var(--safe-bottom));
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  scroll-padding-block: max(16px, 12vh);
+  overscroll-behavior: contain;
+}
+
+/* TitoPay Assistant uses the same stable chat geometry as TitoPay Chat:
+   fixed header, one scrollable conversation region and a pinned composer. */
+.modal-card.chatbot-fullscreen-modal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  height: min(88dvh, 820px);
+  max-height: min(88dvh, 820px);
+  overflow: hidden;
+}
+
+.chatbot-fullscreen-modal .chatbot-head {
+  margin-bottom: 0;
+}
+
+.chatbot-fullscreen-modal .chatbot-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chatbot-fullscreen-modal .chat-thread {
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  scroll-padding-block: 14px;
+}
+
+.chatbot-fullscreen-modal .chatbot-compose {
+  margin-top: 0;
+}
+
+@media (max-width: 599px) {
+  :root {
+    --nav-space: calc(140px + var(--safe-bottom));
+  }
+
+  .chatbot-modal-backdrop {
+    align-items: stretch;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .modal-card.chatbot-fullscreen-modal {
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    padding: calc(10px + var(--safe-top)) 12px calc(10px + var(--safe-bottom));
+    border-radius: 0;
+  }
+
+  .chatbot-modal-backdrop.keyboard-open .chatbot-fullscreen-modal {
+    height: var(--auth-viewport-height, 100dvh);
+    max-height: var(--auth-viewport-height, 100dvh);
+    padding-bottom: 8px;
+  }
+
+  .chatbot-fullscreen-modal .chatbot-head .lead {
+    display: none;
+  }
+
+  .chatbot-fullscreen-modal .chatbot-head h2 {
+    margin-bottom: 0;
+  }
+}
+
+.beneficiary-picker {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.beneficiary-picker-list,
+.beneficiary-management-list {
+  display: grid;
+  gap: 10px;
+}
+
+.beneficiary-picker-item,
+.beneficiary-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.beneficiary-picker-item > span:nth-child(2),
+.beneficiary-card-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.beneficiary-picker-item strong,
+.beneficiary-card-copy strong {
+  color: var(--navy);
+  overflow-wrap: anywhere;
+}
+
+.beneficiary-picker-item small,
+.beneficiary-card-copy small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.beneficiary-card {
+  grid-template-areas: "avatar copy actions" "pay pay pay";
+}
+
+.beneficiary-card > .chat-contact-avatar {
+  grid-area: avatar;
+}
+
+.beneficiary-card-copy {
+  grid-area: copy;
+}
+
+.beneficiary-card-actions {
+  grid-area: actions;
+  display: flex;
+  gap: 6px;
+}
+
+.beneficiary-pay-btn {
+  grid-area: pay;
+  min-height: 44px;
+}
+
+.beneficiary-empty {
+  margin: 6px 0;
+}
+
+.chat-contact-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
 /* ---------------------------------------------------------------------------
    Landing menu
 
@@ -3943,6 +4350,38 @@ body.landing-static .landing-flow.auth-screen {
   min-height: 32px;
   display: inline-flex;
   align-items: center;
+}
+
+.landing-contact-form {
+  margin-top: 2px;
+}
+
+.landing-contact-form .btn {
+  width: 100%;
+}
+
+.contact-consent {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.contact-consent input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.contact-honeypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
 }
 
 .landing-menu-footer {
@@ -8578,6 +9017,14 @@ select.is-picker-source {
   overflow: hidden;
 }
 
+.qr-poster-actions {
+  grid-template-columns: 1fr;
+}
+
+.qr-poster-actions .btn {
+  width: 100%;
+}
+
 .qr-poster-head {
   display: grid;
   justify-items: center;
@@ -9453,5 +9900,262 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
   body:has(.install-float-wrap.public-install) .landing-flow.auth-screen:has(.landing-cta-footer),
   body:has(.install-float-wrap.public-install) .business-landing.auth-screen:has(.landing-cta-footer) {
     padding-bottom: calc(172px + var(--safe-bottom));
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Production UI stability and cross-platform protection — v205
+
+   These rules deliberately affect rendering only. They remove compositing
+   patterns that flicker in iOS WebKit, keep chat chrome fixed around its one
+   scrollable message list, and add final overflow guards for narrow phones,
+   tablets, foldables and landscape viewports.
+   --------------------------------------------------------------------------- */
+
+html {
+  scrollbar-gutter: stable;
+}
+
+/* Re-running a full-screen opacity animation after every route render made the
+   entire UI repaint and could flash beneath an opening modal. */
+.screen {
+  animation: none;
+}
+
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+button,
+input,
+select,
+textarea,
+.btn,
+.field,
+.form-grid,
+.modal-head > *,
+.section-head > *,
+.activity-item > *,
+.notification-item > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.btn,
+button,
+.activity-item,
+.notification-item,
+.settings-row,
+.profile-feature {
+  overflow-wrap: anywhere;
+}
+
+/* TitoPay Assistant: the opaque card is the single background layer. Neither
+   the backdrop nor the card uses live blur, so scrolling messages cannot make
+   the background stretch, jitter or repaint on iOS. */
+.chatbot-modal-backdrop {
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.modal-card.chatbot-fullscreen-modal {
+  position: relative;
+  width: min(100%, 720px);
+  overflow: hidden;
+  isolation: isolate;
+  contain: layout paint;
+  transform: none;
+  backface-visibility: visible;
+  background: #f8fbff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.chatbot-fullscreen-modal > *,
+.chatbot-fullscreen-modal .chatbot-panel,
+.chatbot-fullscreen-modal .chat-thread,
+.chatbot-fullscreen-modal .chatbot-compose {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chatbot-fullscreen-modal .chatbot-head,
+.chatbot-fullscreen-modal .chatbot-panel,
+.chatbot-fullscreen-modal .chatbot-compose,
+.chatbot-fullscreen-modal .chatbot-quick-title,
+.chatbot-fullscreen-modal .chatbot-suggestions {
+  contain: layout;
+}
+
+.chatbot-fullscreen-modal .chat-thread {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  contain: layout paint;
+  background: transparent;
+}
+
+.chatbot-fullscreen-modal .chat-message,
+.chatbot-fullscreen-modal .support-escalation,
+.chatbot-fullscreen-modal .support-rating {
+  contain: layout paint;
+  transition: none;
+  animation: none;
+}
+
+.chatbot-fullscreen-modal .chatbot-compose {
+  position: relative;
+  z-index: 2;
+  background: #f8fbff;
+}
+
+.chatbot-fullscreen-modal .chatbot-compose input {
+  min-width: 0;
+  font-size: max(16px, 1rem);
+}
+
+/* The small viewport is intentionally stable while browser chrome changes.
+   When the keyboard opens, the existing visualViewport measurement below
+   replaces this height with the exact visible pixel height. */
+@media (max-width: 599px) {
+  .chatbot-modal-backdrop {
+    background: #f8fbff;
+  }
+
+  .modal-card.chatbot-fullscreen-modal {
+    height: 100svh;
+    max-height: 100svh;
+    padding:
+      calc(10px + var(--safe-top))
+      max(12px, var(--safe-right))
+      calc(10px + var(--safe-bottom))
+      max(12px, var(--safe-left));
+  }
+
+  .chatbot-modal-backdrop.keyboard-open .chatbot-fullscreen-modal {
+    height: var(--auth-viewport-height, 100svh);
+    max-height: var(--auth-viewport-height, 100svh);
+    padding-bottom: 8px;
+  }
+
+  .modal-head {
+    gap: 12px;
+  }
+
+  .qr-actions {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+}
+
+/* Phones in landscape and compact foldable panes need the same full-screen
+   chat geometry even when their CSS width is wider than a portrait phone. */
+@media (max-width: 899px) and (max-height: 520px) and (orientation: landscape) {
+  .chatbot-modal-backdrop {
+    align-items: stretch;
+    padding: 0;
+    background: #f8fbff;
+  }
+
+  .modal-card.chatbot-fullscreen-modal {
+    width: 100%;
+    height: 100svh;
+    max-height: 100svh;
+    padding:
+      calc(8px + var(--safe-top))
+      max(12px, var(--safe-right))
+      calc(8px + var(--safe-bottom))
+      max(12px, var(--safe-left));
+    border-radius: 0;
+  }
+
+  .chatbot-fullscreen-modal .chatbot-head .eyebrow,
+  .chatbot-fullscreen-modal .chatbot-head .lead {
+    display: none;
+  }
+
+  .chatbot-fullscreen-modal .chatbot-head h2 {
+    margin: 0;
+    font-size: 1.12rem;
+  }
+}
+
+@media (max-width: 359px) {
+  .modal-card {
+    padding-inline: 14px;
+  }
+
+  .modal-head .icon-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+  }
+
+  .qr-actions,
+  .support-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 420px) {
+  .beneficiary-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "avatar copy"
+      "actions actions"
+      "pay pay";
+  }
+
+  .beneficiary-card-actions {
+    justify-content: flex-end;
+  }
+}
+
+/* The phone Home dashboard is a single-view surface: the fixed header and
+   bottom navigation frame the wallet, quick services and today's summary.
+   Keep that composition stationary on the tall phone viewports where the
+   complete dashboard fits, while compact phones retain normal scrolling. */
+@media (max-width: 759px) and (min-height: 890px) {
+  html:has(body:not(.modal-open) .dashboard-grid),
+  body:not(.modal-open):has(.dashboard-grid) {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .app-shell,
+  body:not(.modal-open):has(.dashboard-grid) .screen {
+    height: 100svh;
+    min-height: 100svh;
+    overflow: hidden;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .screen {
+    padding-bottom: calc(96px + var(--safe-bottom));
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .dashboard-grid {
+    gap: 10px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .home-summary-card {
+    padding: 14px 18px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .home-summary-head {
+    margin-bottom: 8px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .home-summary-card .stat {
+    min-height: 68px;
   }
 }

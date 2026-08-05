@@ -1,13 +1,15 @@
-const CACHE_NAME = "titopay-pwa-v193-chat-surface";
+const CACHE_NAME = "titopay-pwa-v229-quick-services-header";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=193",
-  "./assets/jsQR.min.js?v=137",
-  "./app.js?v=193",
-  "./services-default.json?v=193",
+  "./styles.min.css?v=229",
+  "./app.min.js?v=229",
+  "./notification-routing-fix.js?v=1",
+  "./services-default.json?v=213",
   "./manifest.webmanifest?v=193",
   "./offline.html",
+  "./verify-email/",
+  "./verify-email/verify-email.js?v=227",
   "./assets/titopay-logo.png",
   "./assets/icon-192.png?v=165",
   "./assets/icon-512.png?v=165",
@@ -54,4 +56,20 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const route = String(event.notification.data?.route || "profile").replace(/^#/, "");
+  const destination = new URL(`./#${route}`, self.registration.scope).href;
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (windows) => {
+      const existing = windows.find((client) => client.url.startsWith(self.registration.scope));
+      if (existing) {
+        await existing.navigate(destination);
+        return existing.focus();
+      }
+      return clients.openWindow(destination);
+    })
+  );
 });

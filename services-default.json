@@ -366,7 +366,7 @@
     },
     {
       "service_code": "tickets",
-      "service_name": "Tickets",
+      "service_name": "Event Tickets",
       "service_icon": "ticket",
       "action": "tickets",
       "description": "Browse approved TitoPay events and buy secure digital tickets.",
