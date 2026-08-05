@@ -9841,31 +9841,6 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
     align-self: stretch;
   }
 
-  /* Below this height the composition cannot hold two rows of tiles and the
-     sign-in actions at once. The tiles do not yield -- they keep their 44px
-     minimum and paint over the buttons beneath them, which left Sign In and
-     Create Account covered on the smallest phone. One row of tiles is dropped
-     so the block fits again, the same way the desktop sheet already drops its
-     third row on a short screen. The landing keeps its fixed height, so the
-     install pill still sits clear of the composition. */
-  @media (max-height: 660px) {
-    body.landing-static .landing-flow .preview-grid .service-tile:nth-child(n + 4),
-    body.landing-static .business-landing .preview-grid .service-tile:nth-child(n + 4) {
-      display: none;
-    }
-  }
-
-  /* By this height there is no room left for even one row: the row collapses to
-     around 24px while the tiles keep their minimum, and the difference is drawn
-     straight over Sign In and Create Account. The preview steps aside rather
-     than being drawn over the two things a visitor came here to press. */
-  @media (max-height: 600px) {
-    body.landing-static .landing-flow .preview-grid,
-    body.landing-static .business-landing .preview-grid {
-      display: none;
-    }
-  }
-
   /* The rigid rows give back a little too, so the flexible row is never asked
      to go below a usable tile. */
   body.landing-static .landing-flow .trust-item,
