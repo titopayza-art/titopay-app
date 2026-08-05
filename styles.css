@@ -805,7 +805,7 @@ h3 {
   gap: 10px;
   min-height: 70px;
   padding: 10px 11px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--card);
 }
@@ -862,16 +862,28 @@ h3 {
   gap: 5px;
 }
 
+/* 44px like every other tappable control, and the app's own chevron rather than
+   a bare arrow character, which was the only place a glyph stood in for an
+   icon. */
 .quick-service-order button {
-  width: 34px;
-  height: 34px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
   padding: 0;
   color: var(--blue);
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  font-size: 1rem;
-  font-weight: 800;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.quick-service-order button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.quick-service-order button[data-quick-service-move="up"] svg {
+  transform: rotate(180deg);
 }
 
 .quick-service-order button:disabled {
@@ -3438,8 +3450,8 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 .chatbot-suggestions .chip {
-  min-height: 34px;
-  padding-inline: 11px;
+  min-height: 44px;
+  padding-inline: 14px;
   font-size: 0.78rem;
   white-space: nowrap;
 }
@@ -4481,8 +4493,10 @@ body.landing-static .landing-flow.auth-screen {
   align-items: center;
 }
 
+/* These read as a row of buttons, not as links inside a sentence, so they are
+   held to the same 44px minimum as every other tappable thing in the app. */
 .menu-section-links .text-link {
-  min-height: 32px;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
 }
@@ -4534,6 +4548,14 @@ body.landing-static .landing-flow.auth-screen {
 
 .landing-menu-footer p {
   margin: 0;
+}
+
+/* The website address is the one link in this block, and it was a 21px target.
+   Held to the same minimum as the links in the sections above it. */
+.landing-menu-footer .text-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 
 .landing-menu-footer p + p {
@@ -5144,10 +5166,22 @@ body.landing-static .landing-flow.auth-screen {
 
 .profile-card {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 18px;
   align-items: center;
   padding: 20px;
+}
+
+/* The name and the username-and-email line are real data. An email has nothing
+   to break at, so without this the column takes its width from that line and
+   the whole header runs past the edge of the card on a small phone. */
+.profile-card > div {
+  min-width: 0;
+}
+
+.profile-card h2,
+.profile-card .lead {
+  overflow-wrap: anywhere;
 }
 
 .profile-avatar {
@@ -5471,7 +5505,7 @@ input[data-profile-photo-zoom] {
 /* The FICA status badge is the most-looked-at thing on the profile and it did
    nothing when tapped. As a button it needs a real target and a pressed state. */
 .badge-btn {
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 14px;
   border: 1px solid transparent;
   cursor: pointer;
@@ -9805,6 +9839,31 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
     height: auto;
     max-height: 160px;
     align-self: stretch;
+  }
+
+  /* Below this height the composition cannot hold two rows of tiles and the
+     sign-in actions at once. The tiles do not yield -- they keep their 44px
+     minimum and paint over the buttons beneath them, which left Sign In and
+     Create Account covered on the smallest phone. One row of tiles is dropped
+     so the block fits again, the same way the desktop sheet already drops its
+     third row on a short screen. The landing keeps its fixed height, so the
+     install pill still sits clear of the composition. */
+  @media (max-height: 660px) {
+    body.landing-static .landing-flow .preview-grid .service-tile:nth-child(n + 4),
+    body.landing-static .business-landing .preview-grid .service-tile:nth-child(n + 4) {
+      display: none;
+    }
+  }
+
+  /* By this height there is no room left for even one row: the row collapses to
+     around 24px while the tiles keep their minimum, and the difference is drawn
+     straight over Sign In and Create Account. The preview steps aside rather
+     than being drawn over the two things a visitor came here to press. */
+  @media (max-height: 600px) {
+    body.landing-static .landing-flow .preview-grid,
+    body.landing-static .business-landing .preview-grid {
+      display: none;
+    }
   }
 
   /* The rigid rows give back a little too, so the flexible row is never asked

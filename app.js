@@ -22,6 +22,12 @@ const QUICK_SERVICES_LIMIT = 6;
 const SESSION_TIMEOUT_MS = 15 * 60 * 1000;
 const SESSION_WARNING_MS = 60 * 1000;
 const SECURITY_TIP_TEXT = "Never share your PIN, password or verification codes. TitoPay will never ask for those by phone, email, WhatsApp, SMS or social media.";
+// Fees quoted in copy come from here and are rendered through money(), so the
+// sentence beside an amount always reads the same as the amount itself. Written
+// out by hand they drifted: money() gives "R 0.10" (and "R 0,10" where the
+// device formats in South African style), while the copy said "R0.10".
+const EMAIL_STATEMENT_FEE = 0.1;
+const SMS_ALERT_FEE = 0.3;
 const BALANCE_HIDDEN_KEY = "titopay_balance_hidden_v1";
 const OFFICIAL_APP_WARNING = "Use TitoPay only at https://app.titopay.co.za. Never enter your TitoPay details on any other website or link.";
 const BUSINESS_DOCUMENTS_KEY = "titopay_business_documents_v1";
@@ -898,7 +904,7 @@ function defaultInAppNotifications() {
       id: "welcome-in-app-notifications",
       type: "info",
       title: "In-app notifications enabled",
-      body: "In-app notifications are free. Optional SMS notifications cost R0.30 per SMS when enabled. PIN, password and OTP reset SMS messages are free because they are critical.",
+      body: `In-app notifications are free. Optional SMS notifications cost ${money(SMS_ALERT_FEE)} per SMS when enabled. PIN, password and OTP reset SMS messages are free because they are critical.`,
       critical: false,
       unread: true,
       createdAt: new Date().toISOString()
@@ -1153,8 +1159,8 @@ function quickServicesCustomizerBody() {
             <span><strong>${esc(service.label)}</strong><small>${isSelected ? `Position ${position + 1}` : "Not shown on Home"}</small></span>
           </label>
           <div class="quick-service-order" aria-label="Reorder ${esc(service.label)}">
-            <button type="button" data-quick-service-move="up" data-quick-service-id="${esc(id)}" aria-label="Move ${esc(service.label)} up" ${!isSelected || position === 0 ? "disabled" : ""}>↑</button>
-            <button type="button" data-quick-service-move="down" data-quick-service-id="${esc(id)}" aria-label="Move ${esc(service.label)} down" ${!isSelected || position === draft.length - 1 ? "disabled" : ""}>↓</button>
+            <button type="button" data-quick-service-move="up" data-quick-service-id="${esc(id)}" aria-label="Move ${esc(service.label)} up" ${!isSelected || position === 0 ? "disabled" : ""}>${icon("chevron-down")}</button>
+            <button type="button" data-quick-service-move="down" data-quick-service-id="${esc(id)}" aria-label="Move ${esc(service.label)} down" ${!isSelected || position === draft.length - 1 ? "disabled" : ""}>${icon("chevron-down")}</button>
           </div>
         </article>`;
       }).join("")}
@@ -1483,6 +1489,27 @@ async function expireSession() {
   showToast("Session timed out. Please sign in again.", "error");
 }
 
+// A field's label sits next to its control rather than being attached to it, so
+// a screen reader announced most of the app's inputs with no name at all. This
+// ties each label to the single control in its field after the markup lands.
+// Nothing visible changes; tapping the label now focuses its control, which is
+// what a label is for. Fields holding a group of controls are left alone, since
+// one label cannot name several of them.
+let fieldLabelSequence = 0;
+
+function associateFieldLabels(root) {
+  if (!root || typeof root.querySelectorAll !== "function") return;
+  root.querySelectorAll(".field > label:not([for])").forEach((label) => {
+    if (label.querySelector("input, select, textarea")) return;
+    const controls = label.parentElement.querySelectorAll("input:not([type=hidden]), select, textarea");
+    if (controls.length !== 1) return;
+    const control = controls[0];
+    if (control.getAttribute("aria-label") || control.getAttribute("aria-labelledby")) return;
+    if (!control.id) control.id = `titopay-field-${(fieldLabelSequence += 1)}`;
+    label.setAttribute("for", control.id);
+  });
+}
+
 function render() {
   if (state.publicEvent) {
     document.body.classList.remove("landing-static");
@@ -1500,11 +1527,13 @@ function render() {
     document.body.classList.add("landing-static");
     app.innerHTML = authView();
     renderInstallButton();
+    associateFieldLabels(app);
     return;
   }
   document.body.classList.remove("landing-static");
   app.innerHTML = appView();
   renderInstallButton();
+  associateFieldLabels(app);
   syncTopbarScrollState();
 }
 
@@ -1926,7 +1955,7 @@ function activityView() {
     <section class="auth-actions">
       <button class="btn secondary" data-action="export-csv">${icon("download")} Export CSV</button>
       <button class="btn secondary" data-action="export-pdf">${icon("download")} Export PDF</button>
-      <button class="btn primary activity-email-statement-action" data-action="email-statement">${icon("mail")} Email statement · R0.10</button>
+      <button class="btn primary activity-email-statement-action" data-action="email-statement">${icon("mail")} Email statement · ${money(EMAIL_STATEMENT_FEE)}</button>
     </section>
     <section class="panel activity-receipts-panel">
       <div>
@@ -1960,7 +1989,7 @@ function profileView() {
     <section class="profile-summary-card panel" aria-label="Profile summary">
       ${profileSummaryRow("Wallet", displayMoney(wallet ? wallet.available_balance : undefined), "wallet")}
       ${profileSummaryRow("Username", displayUsername(user.username), "user")}
-      ${profileSummaryRow("Type", state.accountType, "shield")}
+      ${profileSummaryRow("Type", enumLabel(state.accountType), "shield")}
     </section>
     <section class="section-head compact"><h2>Account</h2></section>
     <section class="profile-feature-grid">
@@ -2364,7 +2393,7 @@ function openNotificationsModal(options = {}) {
       </article>
       <article>
         <span class="icon-bubble">${icon("phone")}</span>
-        <div><strong>SMS alerts ${smsEnabled ? "enabled" : "off"}</strong><small>Optional SMS alerts cost R0.30. Critical OTP and reset SMS remain free.</small></div>
+        <div><strong>SMS alerts ${smsEnabled ? "enabled" : "off"}</strong><small>Optional SMS alerts cost ${money(SMS_ALERT_FEE)}. Critical OTP and reset SMS remain free.</small></div>
       </article>
       <article>
         <span class="icon-bubble">${icon("mail")}</span>
@@ -2436,11 +2465,11 @@ function openSmsNotificationPreview() {
     </div>
     <section class="notification-preferences">
       ${settingsRow("In-app notifications", "Free and always available inside TitoPay.", "bell")}
-      ${settingsRow("SMS notifications", "R0.30 per SMS for optional non-critical SMS alerts that you choose to enable.", "phone")}
+      ${settingsRow("SMS notifications", `${money(SMS_ALERT_FEE)} per SMS for optional non-critical SMS alerts that you choose to enable.`, "phone")}
       ${settingsRow("Free critical SMS", "PIN reset, password reset, OTP reset and important security notifications are free.", "shield")}
       ${settingsRow("Current SMS status", enabled ? "Enabled on this device" : "Not enabled", enabled ? "shield" : "phone")}
     </section>
-    <p class="field-hint">Your choice is saved on this device now. Payment SMS alerts start going out the moment TitoPay's SMS notification service is switched on for customer accounts, and you will see the R0.30 fee before any paid SMS is sent. In-app notifications are free and always on.</p>
+    <p class="field-hint">Your choice is saved on this device now. Payment SMS alerts start going out the moment TitoPay's SMS notification service is switched on for customer accounts, and you will see the ${money(SMS_ALERT_FEE)} fee before any paid SMS is sent. In-app notifications are free and always on.</p>
     <div class="auth-actions">
       <button class="btn secondary" data-action="notifications">${icon("bell")} Back</button>
       <button class="btn primary" data-action="${enabled ? "disable-sms-notifications" : "enable-sms-notifications"}">${icon("phone")} ${enabled ? "Turn off SMS alerts" : "Enable SMS alerts"}</button>
@@ -2453,7 +2482,7 @@ function setSmsNotifications(enabled) {
   addInAppNotification({
     title: enabled ? "SMS alerts enabled" : "SMS alerts disabled",
     body: enabled
-      ? "SMS alerts are enabled on this device. Payment SMS messages begin once TitoPay activates the SMS notification service for customer accounts; non-critical SMS then cost R0.30 each, while OTP, PIN and password reset SMS stay free."
+      ? `SMS alerts are enabled on this device. Payment SMS messages begin once TitoPay activates the SMS notification service for customer accounts; non-critical SMS then cost ${money(SMS_ALERT_FEE)} each, while OTP, PIN and password reset SMS stay free.`
       : "Optional SMS notifications are off. In-app notifications remain free and active.",
     critical: false
   });
@@ -5529,6 +5558,13 @@ function openTicketConfirmation(result = {}, order = {}) {
   `);
 }
 
+// Stored values reach the screen as they are stored: "personal",
+// "payout_recipient". Everything beside them is written for a reader, so they
+// are given the same treatment rather than showing the database's spelling.
+function enumLabel(value = "") {
+  return String(value || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function ticketingStatusLabel(status = "") {
   return String(status || "draft").replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -7659,7 +7695,7 @@ function beneficiaryPickerItems(items, emptyText) {
   return `<div class="beneficiary-picker-list">${items.map((item) => `
     <button class="beneficiary-picker-item" type="button" data-action="beneficiary-select:${esc(item.id)}">
       <span class="chat-contact-avatar">${item.profilePhotoUrl ? `<img src="${esc(item.profilePhotoUrl)}" alt="">` : esc(beneficiaryDisplayName(item).slice(0, 1).toUpperCase())}</span>
-      <span><strong>${esc(beneficiaryDisplayName(item))}</strong><small>${esc([displayUsername(item.username), item.qrReference ? `QR ${item.qrReference}` : "", item.accountType, item.favourite ? "Favourite" : ""].filter(Boolean).join(" · "))}</small></span>
+      <span><strong>${esc(beneficiaryDisplayName(item))}</strong><small>${esc([displayUsername(item.username), item.qrReference ? `QR ${item.qrReference}` : "", enumLabel(item.accountType), item.favourite ? "Favourite" : ""].filter(Boolean).join(" · "))}</small></span>
       ${item.verificationStatus === "approved" ? `<span class="verified-pill">${icon("shield")} Verified</span>` : ""}
     </button>`).join("")}</div>`;
 }
@@ -7689,7 +7725,7 @@ function openSendMoneyModal(service = coreWalletAction("send"), selected = null)
       ${selected ? `<input type="hidden" name="beneficiaryUserId" value="${esc(selected.beneficiaryUserId || "")}">` : ""}
       ${recipientMethodField("auto")}
       <div class="field"><label>Recipient</label><input name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" value="${esc(selectedRecipient)}" required></div>
-      ${selected ? `<div class="recipient-verify-result"><p class="rv-head">Saved beneficiary selected</p><div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(beneficiaryDisplayName(selected))}</strong><small>${esc([displayUsername(selected.username), selected.walletId ? `Wallet ${selected.walletId}` : "", selected.qrReference ? `QR ${selected.qrReference}` : "", selected.accountType].filter(Boolean).join(" · "))}</small></span></div></div>` : ""}
+      ${selected ? `<div class="recipient-verify-result"><p class="rv-head">Saved beneficiary selected</p><div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(beneficiaryDisplayName(selected))}</strong><small>${esc([displayUsername(selected.username), selected.walletId ? `Wallet ${selected.walletId}` : "", selected.qrReference ? `QR ${selected.qrReference}` : "", enumLabel(selected.accountType)].filter(Boolean).join(" · "))}</small></span></div></div>` : ""}
       ${contactSuggestions()}
       <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Reference</label><input name="reference" placeholder="What is this payment for?"></div>
@@ -7737,7 +7773,7 @@ function beneficiaryCard(item) {
       <span class="chat-contact-avatar">${item.profilePhotoUrl ? `<img src="${esc(item.profilePhotoUrl)}" alt="">` : esc(beneficiaryDisplayName(item).slice(0, 1).toUpperCase())}</span>
       <div class="beneficiary-card-copy">
         <strong>${esc(beneficiaryDisplayName(item))}</strong>
-        <small>${esc([displayUsername(item.username), item.walletId ? `Wallet ${item.walletId}` : "", item.qrReference ? `QR ${item.qrReference}` : "", item.accountType, item.relationshipType].filter(Boolean).join(" · "))}</small>
+        <small>${esc([displayUsername(item.username), item.walletId ? `Wallet ${item.walletId}` : "", item.qrReference ? `QR ${item.qrReference}` : "", enumLabel(item.accountType), enumLabel(item.relationshipType)].filter(Boolean).join(" · "))}</small>
         <small>${item.lastPaidAt ? `Last paid ${esc(formatDate(item.lastPaidAt))}${item.lastPaymentAmount != null ? ` · ${esc(money(item.lastPaymentAmount))}` : ""}` : "Not paid yet"}</small>
         <small><em class="sv-chip ${verified ? "settled" : "warn"}">${verified ? "Verified recipient" : "Verification pending"}</em></small>
       </div>
@@ -8873,7 +8909,7 @@ function currentBusinessDocument() {
 function openBusinessDocumentSavedModal(document, preview) {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">${esc(document.kind)}</p><h2>${esc(document.number)} saved</h2><p class="lead">The shareable link is free. PDF download is released after the R2.50 extraction fee is paid.</p></div>
+      <div><p class="eyebrow">${esc(document.kind)}</p><h2>${esc(document.number)} saved</h2><p class="lead">The shareable link is free. PDF download is released after the ${money(DOCUMENT_PDF_FEE)} extraction fee is paid.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="document-fee-card">
@@ -8905,7 +8941,7 @@ async function requestBusinessDocumentPdf() {
   }
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">PDF Extraction</p><h2>Pay R2.50 to download</h2><p class="lead">${esc(document.kind)} ${esc(document.number)} will be downloaded after the fee is processed.</p></div>
+      <div><p class="eyebrow">PDF Extraction</p><h2>Pay ${money(DOCUMENT_PDF_FEE)} to download</h2><p class="lead">${esc(document.kind)} ${esc(document.number)} will be downloaded after the fee is processed.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="document-fee-card">
@@ -9671,7 +9707,7 @@ const LEARN_LIBRARY = {
             "Send it the day the work is done. Invoicing late teaches customers to pay late.",
             "Keep every invoice. It is your record for tax, for disputes and for cash-flow planning."
           ],
-          titopay: "Invoices are built from itemised lines with VAT and totals calculated for you, and issue and due dates on the document. Creating and sending the link is free; the PDF download carries the R2.50 extraction fee."
+          titopay: `Invoices are built from itemised lines with VAT and totals calculated for you, and issue and due dates on the document. Creating and sending the link is free; the PDF download carries the ${money(DOCUMENT_PDF_FEE)} extraction fee.`
         },
         {
           title: "Quotes and Proforma",
@@ -11790,7 +11826,7 @@ async function generateMerchantSaleQr() {
   const sale = state.merchantSale || defaultMerchantSaleState();
   if (sale.generated || sale.generating) return;
   const amount = merchantSaleAmount();
-  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a sale amount greater than R0.00.");
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error(`Enter a sale amount greater than ${money(0)}.`);
   sale.generating = true;
   state.merchantSale = sale;
   renderMerchantSaleModal();
@@ -16266,7 +16302,7 @@ function chatbotFallbackAnswer(message) {
   if (text.includes("qr")) return { needsEscalation: false, answer: "Use QR to generate a receive code or scan a TitoPay merchant/customer QR before confirming payment." };
   if (text.includes("lock") || text.includes("security") || text.includes("fraud")) return { needsEscalation: false, answer: "Wallet Lock sits in Profile and Security. Never share your PIN, password or verification code." };
   if (text.includes("invoice") || text.includes("quote") || text.includes("proforma")) return { needsEscalation: false, answer: "Business documents support customer details, item lines, VAT, notes and paid PDF download." };
-  if (text.includes("fee")) return { needsEscalation: false, answer: "TitoPay shows fees before paid actions. SMS alerts are optional at R0.30 per SMS; in-app notifications are free." };
+  if (text.includes("fee")) return { needsEscalation: false, answer: `TitoPay shows fees before paid actions. SMS alerts are optional at ${money(SMS_ALERT_FEE)} per SMS; in-app notifications are free.` };
   if (text.includes("customer care") || text.includes("callback") || text.includes("agent") || text.includes("live chat")) return { needsEscalation: true, answer: "I can connect you to Customer Care. Choose live chat, request a callback, or continue waiting in the support queue." };
   return { needsEscalation: true, answer: "I can escalate this to Customer Care for a live chat or callback request." };
 }
@@ -16464,13 +16500,13 @@ async function openEmailStatementConfirmation() {
         ${receiptRow("Email address",preview.recipient||state.user?.email||"Not available")}
         ${receiptRow("Statement period",preview.period||statementPeriodLabel())}
         ${receiptRow("Wallet movements",String(preview.transactionCount||0))}
-        ${receiptRow("Email statement fee",money(preview.fee??0.10))}
+        ${receiptRow("Email statement fee",money(preview.fee??EMAIL_STATEMENT_FEE))}
       </dl>
     </section>
-    <p class="field-hint">The R0.10 fee is charged only when your statement email is successfully requested. Other email notifications remain free.</p>
+    <p class="field-hint">The ${money(EMAIL_STATEMENT_FEE)} fee is charged only when your statement email is successfully requested. Other email notifications remain free.</p>
     <div class="auth-actions">
       <button class="btn secondary" type="button" data-close>Cancel</button>
-      <button class="btn primary" type="button" data-action="confirm-email-statement" data-wallet-id="${esc(wallet.id)}" data-statement-from="${esc(state.transactionFilters.from||"")}" data-statement-to="${esc(state.transactionFilters.to||"")}" data-idempotency-key="${esc(idempotencyKey)}">${icon("mail")} Confirm and email for ${esc(money(preview.fee??0.10))}</button>
+      <button class="btn primary" type="button" data-action="confirm-email-statement" data-wallet-id="${esc(wallet.id)}" data-statement-from="${esc(state.transactionFilters.from||"")}" data-statement-to="${esc(state.transactionFilters.to||"")}" data-idempotency-key="${esc(idempotencyKey)}">${icon("mail")} Confirm and email for ${esc(money(preview.fee??EMAIL_STATEMENT_FEE))}</button>
     </div>
   `);
 }
@@ -17233,6 +17269,7 @@ function openModal(html) {
     }
   });
   document.body.appendChild(wrapper);
+  associateFieldLabels(wrapper);
   paintProgressBars(wrapper);
   document.body.classList.add("modal-open");
   enhanceContactPickerControls(wrapper);
