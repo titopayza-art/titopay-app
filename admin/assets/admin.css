@@ -4631,6 +4631,125 @@ a.table-card-meta:hover {
   border-color: #9a1c12;
 }
 
+/* Support quick replies ---------------------------------------------------- */
+
+.support-quick-replies {
+  margin-top: 12px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface-sunken);
+}
+
+.support-quick-replies summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  color: var(--tp-text-strong);
+  font-size: 0.8125rem;
+  font-weight: 650;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.support-quick-replies summary::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.8px solid var(--tp-muted);
+  border-bottom: 1.8px solid var(--tp-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.14s ease;
+}
+
+.support-quick-replies[open] summary::before {
+  transform: rotate(45deg);
+}
+
+.support-quick-replies summary::-webkit-details-marker {
+  display: none;
+}
+
+.support-quick-replies summary:focus-visible {
+  outline: none;
+  box-shadow: var(--tp-focus);
+  border-radius: var(--tp-radius);
+}
+
+.sqr-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 13px 13px;
+}
+
+.sqr-group {
+  display: grid;
+  gap: 7px;
+}
+
+.sqr-group-title {
+  color: var(--tp-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.sqr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+}
+
+.sqr-item {
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background-color 0.12s ease, transform 0.06s ease;
+}
+
+.sqr-item:hover {
+  border-color: var(--tp-blue-line);
+  background: var(--tp-blue-soft);
+}
+
+.sqr-item:active {
+  transform: translateY(1px);
+}
+
+.sqr-item:focus-visible {
+  outline: none;
+  box-shadow: var(--tp-focus);
+}
+
+.sqr-item strong {
+  color: var(--tp-text-strong);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.sqr-item small {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--tp-muted);
+  font-size: 0.71875rem;
+  line-height: 1.45;
+}
+
+.sqr-note {
+  color: var(--tp-faint);
+  font-size: 0.71875rem;
+}
+
 /* == 11  States =========================================================== */
 
 .empty,

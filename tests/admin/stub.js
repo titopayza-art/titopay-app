@@ -146,6 +146,20 @@ function startAdminStub(port) {
   const server = http.createServer((request, response) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
     if (url.pathname.startsWith("/v1/")) {
+      // Conversation context is path-parameterised; everything else is exact.
+      const contextMatch = url.pathname.match(/^\/v1\/admin\/support\/conversations\/([^/]+)\/context$/);
+      if (contextMatch) {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({
+          conversation: { id: contextMatch[1], status: "AGENT_ACTIVE", customer: { username: "customer1" } },
+          messages: [
+            { sender: "CUSTOMER", message: "Hi, I need help with a payment.", createdAt: new Date(NOW - 600000).toISOString() },
+            { sender: "AGENT", message: "Taking a look now.", createdAt: new Date(NOW - 300000).toISOString() },
+          ],
+          notes: [],
+        }));
+        return;
+      }
       const handler = ROUTES[url.pathname];
       if (!handler) {
         response.writeHead(404, { "Content-Type": "application/json" });

@@ -145,6 +145,26 @@ function checkVersionConsistency() {
   });
   check(badgeAfter === 0, "mark all read clears the badge");
 
+  // --- Support quick replies ----------------------------------------------
+  await page.goto(`${BASE}/support/`);
+  await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });
+  await page.waitForTimeout(500);
+  const historyButton = await page.$("[data-support-chat-history]");
+  if (historyButton) {
+    await historyButton.click();
+    await page.waitForSelector("#support-agent-message", { timeout: 15000 });
+    await page.waitForTimeout(400);
+    check(await page.$(".support-quick-replies") !== null, "support conversation carries the quick replies panel");
+    await page.click(".support-quick-replies summary");
+    await page.waitForTimeout(250);
+    await page.click('[data-support-quick-reply="0"]');
+    await page.waitForTimeout(250);
+    const inserted = await page.evaluate(() => document.getElementById("support-agent-message").value);
+    check(inserted.startsWith("Welcome to TitoPay Customer Care.") && inserted.includes("My name is Platform,"), "quick reply inserts with the agent's first name substituted");
+  } else {
+    failures.push("support queue offered no conversation to open");
+  }
+
   // --- Service Builder ----------------------------------------------------
   await page.goto(`${BASE}/service-builder/`);
   await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });

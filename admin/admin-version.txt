@@ -1,6 +1,21 @@
 TitoPay Admin
-Build: admin-console-v56
+Build: admin-console-v57
 Date: 2026-08-06
+
+v57 - Support Desk quick replies. The twelve Customer Care responses now
+live inside the conversation view, grouped by workflow stage: greeting and
+inactivity check-ins, investigation and escalation, resolution and closing.
+
+  - One click inserts the response into the reply box with [Agent Name]
+    substituted for the signed-in operator's first name. Nothing is sent until
+    the agent presses Send reply, so the wording can be adjusted first.
+  - Inserting into a reply that already has text appends on a new paragraph
+    rather than replacing what the agent typed, and the draft survives the
+    workspace's own refreshes exactly as typed text does.
+  - The panel appears only where the agent can reply, collapsed by default so
+    the transcript keeps its space.
+  - The CI gate covers it: the panel renders in a conversation and the
+    inserted greeting carries the operator's own name.
 
 v56 - Low-Code Service Builder. A new Platform module for creating and
 managing TitoPay service definitions entirely through configuration - never
@@ -211,5 +226,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v56; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v57; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

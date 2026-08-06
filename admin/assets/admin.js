@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v56";
+const ADMIN_ASSET_VERSION = "admin-console-v57";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -2337,6 +2337,7 @@ function renderSupportConversationView(context = {}) {
       ${renderSupportThread(context.messages)}
 
       ${canReply ? `
+        ${supportQuickReplyPanel()}
         <form id="support-agent-reply-form" class="support-composer" data-support-conversation-id="${id}">
           <div class="field">
             <label class="visually-hidden" for="support-agent-message">Reply to customer</label>
@@ -2362,6 +2363,55 @@ function renderSupportConversationView(context = {}) {
    table forced an agent to read one message per row across four columns; this
    reads top to bottom the way the customer sees it. */
 const SUPPORT_SENDER_LABELS = { CUSTOMER: "Customer", AGENT: "Support agent", BOT: "TitoPay Assistant", SYSTEM: "System" };
+
+/* Customer Care quick replies. [Agent Name] is substituted with the signed-in
+   operator's first name when the reply is inserted; the agent can still edit
+   everything before sending - inserting never sends. */
+const SUPPORT_QUICK_REPLIES = [
+  { group: "Greeting & check-ins", title: "Greeting", text: "Welcome to TitoPay Customer Care. My name is [Agent Name], and I'll be assisting you today. How may I help you?" },
+  { group: "Greeting & check-ins", title: "Inactive - 2 minutes", text: "Hi! Just checking in to see if you're still with us. I'm here and ready to assist whenever you're ready." },
+  { group: "Greeting & check-ins", title: "Inactive - 4 minutes", text: "We haven't received a response yet. If you're still available, simply reply to this chat and we'll continue assisting you." },
+  { group: "Greeting & check-ins", title: "Inactive - 5 minutes", text: "It looks like you've stepped away. We'll keep this conversation open for a little while longer. If you still need assistance, simply reply to this chat and we'll be happy to continue helping you." },
+  { group: "Greeting & check-ins", title: "Final warning - 7 minutes", text: "As we haven't received a response, this conversation will automatically close in approximately 2 minutes. Reply to any message to keep the conversation active." },
+  { group: "Greeting & check-ins", title: "Closed due to inactivity", text: "This conversation has been closed due to inactivity. If you still require assistance, simply start a new chat from the TitoPay app and one of our Customer Care Specialists will gladly assist you. Thank you for choosing TitoPay." },
+  { group: "Investigation & escalation", title: "Requesting information", text: "To help us investigate your request, could you please provide the following information:\n\n\u2022 A brief description of the issue\n\u2022 The date and approximate time it occurred\n\u2022 Any relevant reference or transaction number\n\u2022 A screenshot, if available" },
+  { group: "Investigation & escalation", title: "Waiting while investigating", text: "Thank you for your patience. We're currently reviewing your request. This may take a few moments, and we'll update you as soon as we have more information." },
+  { group: "Investigation & escalation", title: "Unable to verify the account", text: "For your security, we're currently unable to verify your account with the information provided. Please provide the requested verification details so we can continue assisting you." },
+  { group: "Investigation & escalation", title: "Escalating to another department", text: "Your request requires assistance from a specialist team. We've escalated your case, and you'll receive an update as soon as possible. Thank you for your patience." },
+  { group: "Resolution & closing", title: "Issue resolved", text: "We're pleased to confirm that your request has been resolved. If you have any further questions or require additional assistance, please don't hesitate to contact us. Thank you for choosing TitoPay." },
+  { group: "Resolution & closing", title: "Closing after resolution", text: "Thank you for contacting TitoPay Customer Care. We're glad we could assist you today. Have a wonderful day, and thank you for choosing TitoPay." },
+];
+
+function supportAgentFirstName() {
+  const me = PAGE_EXPORTS.currentMe || {};
+  const name = me.fullName || me.full_name || me.admin?.fullName || me.username || "";
+  return String(name).trim().split(/\s+/)[0] || "";
+}
+
+function supportQuickReplyPanel() {
+  const groups = [...new Set(SUPPORT_QUICK_REPLIES.map((reply) => reply.group))];
+  return `
+    <details class="support-quick-replies">
+      <summary>Quick replies <span class="segmented-count">${SUPPORT_QUICK_REPLIES.length}</span></summary>
+      <div class="sqr-body">
+        ${groups.map((group) => `
+          <div class="sqr-group">
+            <span class="sqr-group-title">${escapeHtml(group)}</span>
+            <div class="sqr-grid">
+              ${SUPPORT_QUICK_REPLIES.map((reply, index) => reply.group === group ? `
+                <button type="button" class="sqr-item" data-support-quick-reply="${index}" title="Insert into the reply box">
+                  <strong>${escapeHtml(reply.title)}</strong>
+                  <small>${escapeHtml(reply.text.replace(/\n/g, " ").slice(0, 84))}${reply.text.length > 84 ? "…" : ""}</small>
+                </button>
+              ` : "").join("")}
+            </div>
+          </div>
+        `).join("")}
+        <p class="sqr-note">Inserting fills the reply box - nothing is sent until you press Send reply, so you can adjust the wording first.</p>
+      </div>
+    </details>
+  `;
+}
 
 function supportMessageTime(value) {
   if (!value) return "";
@@ -5972,6 +6022,21 @@ document.addEventListener("click", async (event) => {
     } catch (error) {
       showToast(adminErrorMessage(error.message));
     }
+  }
+  const supportQuickReply = event.target.closest("[data-support-quick-reply]");
+  if (supportQuickReply) {
+    const reply = SUPPORT_QUICK_REPLIES[Number(supportQuickReply.dataset.supportQuickReply)];
+    const composer = document.getElementById("support-agent-message");
+    if (reply && composer) {
+      const firstName = supportAgentFirstName();
+      const text = firstName ? reply.text.replaceAll("[Agent Name]", firstName) : reply.text;
+      composer.value = composer.value.trim() ? `${composer.value.replace(/\s+$/, "")}\n\n${text}` : text;
+      PAGE_EXPORTS.supportDraft = composer.value;
+      composer.focus();
+      composer.setSelectionRange(composer.value.length, composer.value.length);
+      PAGE_EXPORTS.supportDraftCaret = composer.value.length;
+    }
+    return;
   }
   const supportChatHistory = event.target.closest("[data-support-chat-history]");
   if (supportChatHistory) {
