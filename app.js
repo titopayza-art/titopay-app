@@ -2764,6 +2764,13 @@ async function onClick(event) {
   const route = event.target.closest("[data-route]");
   if (route) {
     const destination = route.dataset.route;
+    // The bottom-nav centre button opens the Pay Hub sheet for signed-in
+    // users; the QR screen itself is the hub's first action. Everywhere else
+    // (and signed out) data-route="qr" still navigates directly.
+    if (destination === "qr" && route.closest(".bottom-nav") && state.user) {
+      openPayHub();
+      return;
+    }
     if (destination === "services") {
       // Tapping Services while already on Services cannot fire a hash change,
       // so the same controlled return to the top of the grid runs here.
@@ -4481,6 +4488,9 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "download-proof-of-account") {
     await downloadProofOfAccountPdf(actionElement);
+  }
+  if (action === "pay-hub-send") {
+    openSendMoneyModal();
   }
   if (action === "notifications") {
     openNotificationsModal();
@@ -7825,6 +7835,10 @@ function openSendMoneyModal(service = coreWalletAction("send"), selected = null)
       <div class="field"><label>Note</label><textarea name="note" placeholder="Optional message"></textarea></div>
       <button class="btn primary" type="submit">${icon("send")} Preview send money</button>
     </form>
+    ${trustChips([
+      ["shield", "Recipients verified on TitoPay"],
+      ["receipt-list", "Fees shown before you confirm"]
+    ])}
   `);
 }
 
@@ -12825,6 +12839,69 @@ function openWhyTrustModal() {
       <button class="btn ghost" type="button" data-close>Close</button>
     </div>
   `);
+}
+
+// ---------------------------------------------------------------------------
+// Pay Hub: the bottom-nav centre button opens a floating sheet of the three
+// payment entry points instead of jumping straight to the QR screen. Every
+// button in it reuses an existing handler (data-route / data-action), so
+// this is presentation only -- no payment flow gains or loses logic.
+// ---------------------------------------------------------------------------
+
+function payHubEscListener(event) {
+  if (event.key === "Escape") closePayHub();
+}
+
+function closePayHub() {
+  const backdrop = document.querySelector(".pay-hub-backdrop");
+  if (!backdrop) return;
+  document.removeEventListener("keydown", payHubEscListener);
+  backdrop.classList.remove("open");
+  const remove = () => backdrop.remove();
+  if (prefersReducedMotion()) remove();
+  else setTimeout(remove, 220);
+}
+
+function openPayHub() {
+  if (document.querySelector(".pay-hub-backdrop")) {
+    closePayHub();
+    return;
+  }
+  if (typeof navigator.vibrate === "function") {
+    try { navigator.vibrate(10); } catch (error) {}
+  }
+  const isBusiness = state.accountType === "business";
+  const receiveService = (state.services || []).find((service) => service.type === "receive");
+  const backdrop = document.createElement("div");
+  backdrop.className = "pay-hub-backdrop";
+  backdrop.innerHTML = `
+    <section class="pay-hub" role="dialog" aria-modal="true" aria-label="Pay" tabindex="-1">
+      <p class="pay-hub-title">Pay</p>
+      <div class="pay-hub-actions">
+        <button class="pay-hub-btn" type="button" data-route="qr">
+          <span class="icon-bubble">${icon("scan")}</span>
+          <span><strong>${isBusiness ? "Merchant POS" : "Scan to Pay"}</strong><small>${isBusiness ? "Start a sale and take payment by QR." : "Pay any TitoPay QR with your camera."}</small></span>
+        </button>
+        ${receiveService ? `
+        <button class="pay-hub-btn" type="button" data-service="${esc(receiveService.id)}">
+          <span class="icon-bubble">${icon(isBusiness ? "sale" : "qr-receive")}</span>
+          <span><strong>${isBusiness ? "Make a Sale" : "Receive Money"}</strong><small>${isBusiness ? "Generate a payment QR for a customer." : "Show your QR and get paid in seconds."}</small></span>
+        </button>` : ""}
+        <button class="pay-hub-btn" type="button" data-action="pay-hub-send">
+          <span class="icon-bubble">${icon("send")}</span>
+          <span><strong>Send Money</strong><small>To a @username, cellphone or email.</small></span>
+        </button>
+      </div>
+    </section>`;
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop || event.target.closest(".pay-hub-btn")) closePayHub();
+  });
+  document.body.appendChild(backdrop);
+  document.addEventListener("keydown", payHubEscListener);
+  const sheet = backdrop.querySelector(".pay-hub");
+  if (prefersReducedMotion()) backdrop.classList.add("open");
+  else requestAnimationFrame(() => backdrop.classList.add("open"));
+  if (sheet) sheet.focus({ preventScroll: true });
 }
 
 function openNotificationPermissionExplainer() {

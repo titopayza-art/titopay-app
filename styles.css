@@ -1503,6 +1503,175 @@ h3 {
   font-weight: 600;
 }
 
+/* Pay Hub: floating sheet opened by the bottom-nav centre button */
+.pay-hub-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px 16px calc(96px + var(--safe-bottom));
+  background: rgba(6, 26, 61, 0.42);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transition: opacity 200ms var(--ease-premium);
+}
+
+.pay-hub-backdrop.open {
+  opacity: 1;
+}
+
+.pay-hub {
+  width: min(100%, 420px);
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 24px 64px rgba(6, 26, 61, 0.35);
+  transform: translateY(18px) scale(0.98);
+  transition: transform 220ms var(--ease-premium);
+  outline: none;
+}
+
+.pay-hub-backdrop.open .pay-hub {
+  transform: none;
+}
+
+.pay-hub-title {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.pay-hub-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.pay-hub-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms var(--ease-premium), box-shadow 160ms var(--ease-premium);
+}
+
+.pay-hub-btn:active {
+  transform: scale(0.985);
+}
+
+.pay-hub-btn .icon-bubble {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+}
+
+.pay-hub-btn > span:not(.icon-bubble) {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.pay-hub-btn strong {
+  font-size: 0.98rem;
+}
+
+.pay-hub-btn small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+/* Design-system polish: entrance, focus, and press feedback */
+@keyframes modal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) translateZ(0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateZ(0);
+  }
+}
+
+.modal-card {
+  animation: modal-rise 220ms var(--ease-premium);
+}
+
+.btn:focus-visible,
+.icon-btn:focus-visible,
+.service-tile:focus-visible,
+.profile-feature:focus-visible,
+.pay-hub-btn:focus-visible,
+.bottom-nav button:focus-visible {
+  outline: 3px solid rgba(10, 77, 255, 0.42);
+  outline-offset: 2px;
+}
+
+.btn:active,
+.service-tile:active,
+.profile-feature:active {
+  transform: scale(0.985);
+}
+
+@media (hover: hover) {
+  .service-tile:hover,
+  .profile-feature:hover {
+    box-shadow: var(--shadow-lift);
+    transform: translateY(-1px);
+  }
+}
+
+.service-tile,
+.profile-feature {
+  transition: transform 160ms var(--ease-premium), box-shadow 160ms var(--ease-premium);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pay-hub-backdrop,
+  .pay-hub,
+  .pay-hub-btn,
+  .service-tile,
+  .profile-feature,
+  .btn {
+    transition: none;
+  }
+
+  .modal-card {
+    animation: none;
+  }
+
+  .btn:active,
+  .service-tile:active,
+  .profile-feature:active,
+  .pay-hub-btn:active {
+    transform: none;
+  }
+
+  @media (hover: hover) {
+    .service-tile:hover,
+    .profile-feature:hover {
+      transform: none;
+    }
+  }
+}
+
 @media (max-width: 419px) {
   .security-score {
     flex-direction: column;
