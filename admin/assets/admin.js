@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v53";
+const ADMIN_ASSET_VERSION = "admin-console-v54";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;

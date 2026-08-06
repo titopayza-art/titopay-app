@@ -41,6 +41,12 @@ jobs:
       - name: Run browser suites
         run: npm test
 
+      # The admin console has its own gate: it serves admin/ with a stub API
+      # and drives sign-in, all 38 routes, the table layer, the analytics
+      # permission gate and release-version consistency in a real Chromium.
+      - name: Run admin console gate
+        run: npm run test:admin
+
       - name: Upload screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4

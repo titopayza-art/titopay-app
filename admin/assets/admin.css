@@ -4057,6 +4057,39 @@ a.table-card-meta:hover {
   animation: tp-rise 0.2s ease both;
 }
 
+/* Branded HTTP error surface. Served by the .htaccess ErrorDocument rules for
+   403 and 404, so a mistyped address lands on console chrome, not an Apache
+   default page. Reuses the sign-in card primitives. */
+.error-body {
+  display: grid;
+  min-height: 100svh;
+  background:
+    radial-gradient(circle at 82% -8%, var(--tp-blue-soft) 0, transparent 46%),
+    var(--tp-surface-sunken);
+}
+
+.error-page {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.error-card {
+  max-width: 460px;
+}
+
+.error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.error-actions .primary-btn,
+.error-actions .secondary-btn {
+  flex: 1 1 160px;
+}
+
 .standalone-error {
   display: grid;
   align-content: start;

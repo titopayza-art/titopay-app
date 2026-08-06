@@ -1,6 +1,27 @@
 TitoPay Admin
-Build: admin-console-v53
+Build: admin-console-v54
 Date: 2026-08-06
+
+v54 - Bank-grade hardening beneath the interface, and the console gains a
+permanent regression gate. No console page behaviour changed.
+
+  - Transport and headers. The .htaccess now sends Strict-Transport-Security,
+    Cross-Origin-Opener-Policy and Cross-Origin-Resource-Policy alongside the
+    existing headers, denies dotfiles and repository documentation, and its
+    Content-Security-Policy drops unsafe-inline for styles and gains the
+    wss://api.titopay.co.za entry the pages already declared - without it, a
+    host with mod_headers active would have blocked the support chat socket.
+  - The sign-in page's own CSP also drops unsafe-inline: no page in the
+    console now permits inline styles.
+  - Failure surface. Branded 403 and 404 pages replace the server defaults,
+    wired through ErrorDocument, with routes back to the dashboard and sign-in.
+    robots.txt disallows everything, matching the noindex headers.
+  - Release integrity is now enforced, not assumed: a committed test gate
+    (tests/admin in the repository, run by CI on every push) verifies one
+    version string across all pages, the version file and the deployment
+    marker, then drives the real console in Chromium - credential sign-in to
+    the dashboard, all 38 routes rendering, the table layer, the analytics
+    permission gate and a zero-console-error run.
 
 v53 - The sign-in page is finished to the same enterprise standard as the
 console behind it. Presentation only: every element admin.js binds to - the
@@ -131,5 +152,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v53; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v54; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

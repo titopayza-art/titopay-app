@@ -1,0 +1,156 @@
+/* Admin console gate. Drives the real console in Chromium against the
+   deterministic stub in ./stub.js and fails the process on any regression:
+   a route that stops rendering, a sign-in flow that breaks, a console error,
+   a missing table control, an RBAC gate that opens, or a version string that
+   does not match across the release files.
+
+   Run: node tests/admin/run.js  (also wired as `npm run test:admin`). */
+const fs = require("fs");
+const path = require("path");
+const { chromium } = require("playwright");
+const { startAdminStub } = require("./stub");
+
+// The console pins its local API base to http://127.0.0.1:8110/v1 (see
+// ADMIN_API_BASE in admin/assets/admin.js), so the stub must listen there.
+const PORT = 8110;
+const BASE = `http://127.0.0.1:${PORT}`;
+const ADMIN = path.resolve(__dirname, "..", "..", "admin");
+
+const ROUTES = ["dashboard", "analytics", "search", "users", "merchants", "transactions", "wallets", "beneficiaries", "chat-monitor", "ticketing", "enterprise-distribution", "qr-management", "marketing", "pricing", "integrations", "feature-management", "api-provider-settings", "settings", "email-centre", "email-centre/analytics", "email-centre/templates", "email-centre/queue", "email-centre/logs", "email-centre/settings", "email-centre/otp", "support", "chatbot-escalations", "company-documents", "compliance", "revenue", "security", "system-logs", "audit", "development-tools", "engineering-tools", "database-health", "staff-management", "rbac-permissions"];
+
+const failures = [];
+const check = (ok, label) => {
+  console.log(`${ok ? "  ok " : "FAIL "} ${label}`);
+  if (!ok) failures.push(label);
+};
+
+/* Release integrity: one version string across every page, the version file
+   and the deployment marker. A mismatch ships a mixed build. */
+function checkVersionConsistency() {
+  const versions = new Set();
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".html")) {
+        for (const match of fs.readFileSync(full, "utf8").matchAll(/\?v=(admin-console-v\d+)/g)) versions.add(match[1]);
+      }
+    }
+  };
+  walk(ADMIN);
+  const versionFile = fs.readFileSync(path.join(ADMIN, "admin-version.txt"), "utf8");
+  const marker = fs.readFileSync(path.join(ADMIN, "DEPLOYMENT_BUILD_MARKER.txt"), "utf8");
+  const fromFile = (versionFile.match(/Build: (admin-console-v\d+)/) || [])[1];
+  const fromMarker = (marker.match(/(admin-console-v\d+)/) || [])[1];
+  check(versions.size === 1, `all pages reference one asset version (found: ${[...versions].join(", ")})`);
+  const single = [...versions][0];
+  check(fromFile === single, `admin-version.txt matches the pages (${fromFile})`);
+  check(fromMarker === single, `deployment marker matches the pages (${fromMarker})`);
+}
+
+(async () => {
+  checkVersionConsistency();
+
+  const server = await startAdminStub(PORT);
+  // CI installs the browser Playwright expects, so the default launch works
+  // there. A developer box with a system-provided Chromium (for example the
+  // PLAYWRIGHT_BROWSERS_PATH image this repo is developed in) may hold a
+  // different revision; fall back to the first Chromium found there.
+  let browser;
+  try {
+    browser = await chromium.launch();
+  } catch (error) {
+    const roots = [process.env.PLAYWRIGHT_BROWSERS_PATH, "/opt/pw-browsers"].filter(Boolean);
+    let executablePath = process.env.TP_ADMIN_CHROMIUM || "";
+    for (const root of roots) {
+      if (executablePath) break;
+      try {
+        const hit = fs.readdirSync(root).find((name) => /^chromium-\d+$/.test(name));
+        if (hit) executablePath = path.join(root, hit, "chrome-linux", "chrome");
+      } catch {}
+    }
+    if (!executablePath || !fs.existsSync(executablePath)) throw error;
+    browser = await chromium.launch({ executablePath });
+  }
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const consoleErrors = [];
+  page.on("pageerror", (error) => consoleErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error" && !/frame-ancestors|404|Failed to load resource/.test(message.text())) consoleErrors.push(message.text());
+  });
+
+  // --- Sign-in flow -------------------------------------------------------
+  await page.goto(`${BASE}/`);
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForTimeout(400);
+  const loginIds = ["admin-login-form", "identifier", "password", "caps-hint", "admin-login-submit", "show-reset", "reset-card", "admin-reset-request-form", "login-status", "login-environment"];
+  const missing = await page.evaluate((ids) => ids.filter((id) => !document.getElementById(id)), loginIds);
+  check(missing.length === 0, `sign-in page carries every scripted element${missing.length ? ` (missing ${missing.join(", ")})` : ""}`);
+
+  await page.fill("#identifier", "owner@titopay.co.za");
+  await page.fill("#password", "test-password");
+  await Promise.all([
+    page.waitForURL("**/dashboard/", { timeout: 20000 }),
+    page.click("#admin-login-submit"),
+  ]);
+  await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 20000 });
+  check((await page.textContent(".page-header h1")).includes("Infrastructure Dashboard"), "credential sign-in reaches the dashboard");
+
+  // --- Every route renders ------------------------------------------------
+  let rendered = 0;
+  for (const route of ROUTES) {
+    await page.goto(`${BASE}/${route}/`);
+    try {
+      await page.waitForSelector("#page-content", { timeout: 15000 });
+      await page.waitForTimeout(250);
+      const blocks = await page.evaluate(() => document.getElementById("page-content")?.children.length || 0);
+      if (blocks > 0) rendered += 1;
+      else failures.push(`${route} rendered no content`);
+    } catch {
+      failures.push(`${route} did not render`);
+    }
+  }
+  check(rendered === ROUTES.length, `all ${ROUTES.length} console routes render (${rendered} ok)`);
+
+  // --- Table enhancement layer -------------------------------------------
+  await page.goto(`${BASE}/users/`);
+  await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });
+  await page.waitForTimeout(400);
+  check(await page.$("th[data-tp-sortable]") !== null, "tables gain sortable headers");
+  check(await page.$(".tp-table-search input") !== null, "tables gain the row filter");
+  await page.click("#page-content thead th:first-child");
+  await page.waitForTimeout(200);
+  check(await page.getAttribute("#page-content thead th:first-child", "aria-sort") === "ascending", "sorting announces aria-sort");
+
+  // --- Analytics permission gate -----------------------------------------
+  const gatedPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await gatedPage.route("**/v1/admin/me", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ id: "adm", role: "customer_support", fullName: "Agent", username: "agent", permissions: ["support", "users"], session: {} }),
+  }));
+  await gatedPage.goto(`${BASE}/`);
+  await gatedPage.evaluate(() => localStorage.setItem("titopay_admin_auth_v1", JSON.stringify({ accessToken: "t", refreshToken: "r" })));
+  await gatedPage.goto(`${BASE}/analytics/`);
+  await gatedPage.waitForSelector("#page-content", { timeout: 15000 });
+  await gatedPage.waitForTimeout(800);
+  const gated = await gatedPage.evaluate(() => document.body.textContent.includes("Access restricted") && !document.getElementById("analytics-root"));
+  check(gated, "analytics stays gated for a role without the permission");
+  await gatedPage.close();
+
+  // --- No unexpected console errors --------------------------------------
+  check(consoleErrors.length === 0, `no console errors across the run${consoleErrors.length ? ` (first: ${consoleErrors[0].slice(0, 90)})` : ""}`);
+
+  await browser.close();
+  server.close();
+
+  if (failures.length) {
+    console.error(`\nadmin console gate FAILED (${failures.length}):\n- ${failures.join("\n- ")}`);
+    process.exit(1);
+  }
+  console.log("\nadmin console gate passed");
+})().catch((error) => {
+  console.error("admin console gate crashed:", error.message);
+  process.exit(1);
+});
