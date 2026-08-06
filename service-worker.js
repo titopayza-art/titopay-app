@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v266-summary-card-edges";
+const CACHE_NAME = "titopay-pwa-v267-stop-reload-loop";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=266",
-  "./app.min.js?v=266",
+  "./styles.min.css?v=267",
+  "./app.min.js?v=267",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=213",
   "./manifest.webmanifest?v=193",

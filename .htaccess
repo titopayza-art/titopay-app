@@ -1,0 +1,31 @@
+# TitoPay PWA — caching rules for Apache (cPanel) and any CDN in front of it.
+#
+# WHY THIS FILE EXISTS
+# service-worker.js was being edge-cached by the CDN for hours. After an upload,
+# different cache nodes held DIFFERENT versions of the worker, so the app kept
+# "updating" back and forth and reloaded itself in a loop — visible as the app
+# twitching/jumping. A service worker must always come straight from the origin.
+#
+# Cloudflare respects these origin Cache-Control headers by default, so this
+# file fixes the problem at the root for both browsers and the CDN.
+
+<IfModule mod_headers.c>
+  # The service worker is the update mechanism itself — never cache it anywhere.
+  <FilesMatch "^service-worker\.js$">
+    Header set Cache-Control "no-store, max-age=0"
+  </FilesMatch>
+
+  # The HTML shell, manifest and build marker must always revalidate so a new
+  # build is picked up immediately.
+  <FilesMatch "^(index\.html|offline\.html|manifest\.webmanifest|DEPLOYMENT_BUILD_MARKER\.txt|services-default\.json)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+
+  # Versioned assets (?v=N in their URLs) are immutable per version — cache hard.
+  <FilesMatch "\.(css|js)$">
+    Header setifempty Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "\.(png|jpg|ico|webmanifest)$">
+    Header setifempty Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>

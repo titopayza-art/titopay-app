@@ -18831,7 +18831,7 @@ async function registerServiceWorker() {
     location.hostname === "127.0.0.1";
   if (!canRegister) return;
   try {
-    const registration = await navigator.serviceWorker.register("./service-worker.js");
+    const registration = await navigator.serviceWorker.register("./service-worker.js", { updateViaCache: "none" });
     registration.update();
     // A new build activates immediately (the worker skips waiting), but the
     // page that is already open keeps its old assets until it navigates --
@@ -18849,6 +18849,24 @@ async function registerServiceWorker() {
         }
         if (window.titoPaySwReloaded) return;
         if (document.querySelector(".modal-backdrop") || state.pendingTransactionReview || state.pendingQrPaymentReview) return;
+        // A CDN mid-purge can hold OLD and NEW copies of the worker at once, so
+        // every foreground check may see a "different" build and this reload
+        // would fire over and over -- the app visibly reloading in a loop. One
+        // update reload per short window is enough: anything newer applies on
+        // the next natural launch. The stamp lives in sessionStorage so it
+        // survives our own reload but not a fresh open.
+        let lastReloadAt = 0;
+        try {
+          lastReloadAt = Number(sessionStorage.getItem("titopay_sw_reload_at")) || 0;
+        } catch (storageError) {
+          lastReloadAt = 0;
+        }
+        if (Date.now() - lastReloadAt < 90000) return;
+        try {
+          sessionStorage.setItem("titopay_sw_reload_at", String(Date.now()));
+        } catch (storageError) {
+          // Storage unavailable: fall back to the once-per-page-life guard above.
+        }
         window.titoPaySwReloaded = true;
         location.reload();
       });

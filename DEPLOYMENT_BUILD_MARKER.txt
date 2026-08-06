@@ -1,1 +1,1 @@
-TitoPay PWA build: summary-card-edges-v266-20260806
+TitoPay PWA build: stop-reload-loop-v267-20260806
