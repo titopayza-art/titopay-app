@@ -14,6 +14,7 @@ const TITOPAY_CALL_HISTORY_KEY = "titopay_call_history_v1";
 const IN_APP_NOTIFICATIONS_KEY = "titopay_in_app_notifications_v1";
 const EMAIL_NOTIFICATION_PREFERENCES_PREFIX = "titopay_email_notification_preferences_v1";
 const TITOPAY_CHAT_CLEARED_KEY = "titopay_chat_cleared_at_v1";
+const TITOPAY_CHAT_REMOVED_KEY = "titopay_chat_removed_v1";
 const PWA_REVIEW_QUEUE_KEY = "titopay_pending_pwa_reviews_v1";
 const TITOPAY_RECEIPTS_KEY = "titopay_receipts_v1";
 const INSTALL_DISMISSED_KEY = "titopay_install_dismissed_v1";
@@ -16079,11 +16080,64 @@ function openChatClearConfirm(scope) {
 // Remove a single conversation from the recent-chats list on this device.
 // Local only -- it clears the on-device thread and its draft; it never asks
 // the API to delete anything, matching the existing on-device clear model.
+// A removed/cleared chat kept coming straight back: the next thread sync
+// re-adds any server thread that is not stored locally. These tombstones
+// record what was removed on this device (and when), so the merge can keep it
+// gone -- while a genuinely newer message still revives the chat.
+function titoPayRemovedChatThreads() {
+  const value = readJson(TITOPAY_CHAT_REMOVED_KEY);
+  return value && typeof value === "object" ? value : {};
+}
+
+function chatThreadTombstoneKeys(thread) {
+  const keys = new Set();
+  [thread.id, thread.apiThreadId, thread.clientThreadId].forEach((value) => {
+    if (value) keys.add(`id:${chatThreadKey(value)}`);
+  });
+  const mode = thread.mode || "direct";
+  userLookupTokens(thread.participant || {}).forEach((token) => keys.add(`p:${chatThreadKey(token)}:${mode}`));
+  return Array.from(keys);
+}
+
+function markTitoPayChatThreadRemoved(thread) {
+  if (!thread) return;
+  const removed = titoPayRemovedChatThreads();
+  // Stamp the tombstone at least as recent as the thread's own last activity,
+  // so the thread it is suppressing cannot immediately out-date it -- only a
+  // strictly newer message lifts it.
+  const updatedAt = new Date(thread.updatedAt || thread.createdAt || 0).getTime() || 0;
+  const at = Math.max(Date.now(), updatedAt);
+  chatThreadTombstoneKeys(thread).forEach((key) => { removed[key] = at; });
+  writeJson(TITOPAY_CHAT_REMOVED_KEY, removed);
+}
+
+function untombstoneTitoPayChatThread(thread) {
+  if (!thread) return;
+  const removed = titoPayRemovedChatThreads();
+  let changed = false;
+  chatThreadTombstoneKeys(thread).forEach((key) => {
+    if (key in removed) { delete removed[key]; changed = true; }
+  });
+  if (changed) writeJson(TITOPAY_CHAT_REMOVED_KEY, removed);
+}
+
+// A remote thread stays removed only while it has no activity newer than the
+// moment it was cleared; a later message lifts the tombstone naturally.
+function chatThreadIsTombstoned(thread) {
+  const removed = titoPayRemovedChatThreads();
+  const updatedAt = new Date(thread.updatedAt || thread.createdAt || 0).getTime() || 0;
+  return chatThreadTombstoneKeys(thread).some((key) => {
+    const removedAt = removed[key];
+    return removedAt && updatedAt <= removedAt;
+  });
+}
+
 function removeTitoPayChatThread(threadId) {
   const threads = titoPayChatThreads();
   const thread = threads.find((item) => item.id === threadId);
   if (!thread) return;
   if (!confirm(`Remove your chat with ${thread.title} from this device? The other person keeps their copy.`)) return;
+  markTitoPayChatThreadRemoved(thread);
   saveTitoPayChatThreads(threads.filter((item) => item.id !== threadId));
   clearChatDraft(threadId);
   if (sessionStorage.getItem("titopay_active_chat_thread") === threadId) {
@@ -16110,6 +16164,7 @@ function clearTitoPayChatHistory(scope) {
     else openTitoPayChatModal();
     return;
   }
+  titoPayChatThreads().forEach((thread) => markTitoPayChatThreadRemoved(thread));
   saveTitoPayChatThreads([]);
   localStorage.setItem(TITOPAY_CHAT_CLEARED_KEY, new Date().toISOString());
   chatDrafts.clear();
@@ -16318,6 +16373,7 @@ function mergeTitoPayChatThreadsFromApi(remoteThreads = []) {
     const index = existing.findIndex((thread) => sameTitoPayChatThread(thread, remote));
     if (index >= 0) {
       const current = existing[index];
+      untombstoneTitoPayChatThread(current);
       current.apiThreadId = remote.apiThreadId || current.apiThreadId;
       current.clientThreadId = remote.clientThreadId || current.clientThreadId;
       current.participant = Object.assign({}, current.participant || {}, remote.participant || {});
@@ -16327,6 +16383,10 @@ function mergeTitoPayChatThreadsFromApi(remoteThreads = []) {
       if (remote.messages.length) mergeTitoPayChatMessages(current, remote.messages);
       changed = true;
     } else {
+      // A removed/cleared chat stays gone unless it has newer activity than
+      // when it was cleared; then the tombstone lifts and it returns normally.
+      if (chatThreadIsTombstoned(remote)) return;
+      untombstoneTitoPayChatThread(remote);
       remote.messages = remote.messages.length ? remote.messages : [{
         id: `msg-${Date.now()}-${chatThreadKey(remote.id)}`,
         sender: "system",
@@ -16344,6 +16404,9 @@ function mergeTitoPayChatThreadsFromApi(remoteThreads = []) {
 
 async function openTitoPayChatThreadOnServer(thread) {
   if (!state.auth || !state.auth.accessToken || !thread) return false;
+  // Deliberately opening or starting a chat with someone lifts any earlier
+  // removal tombstone for them, so the conversation behaves normally again.
+  untombstoneTitoPayChatThread(thread);
   const participant = thread.participant || {};
   const payload = {
     threadId: thread.clientThreadId || thread.id,

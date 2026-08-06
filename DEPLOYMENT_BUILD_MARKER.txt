@@ -1,1 +1,1 @@
-TitoPay PWA build: beneficiary-phone-v261-20260806
+TitoPay PWA build: chat-removal-sticks-v262-20260806
