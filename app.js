@@ -19,8 +19,8 @@ const TITOPAY_RECEIPTS_KEY = "titopay_receipts_v1";
 const INSTALL_DISMISSED_KEY = "titopay_install_dismissed_v1";
 const QUICK_SERVICES_STORAGE_PREFIX = "titopay_quick_services_v1";
 const QUICK_SERVICES_LIMIT = 6;
-const SESSION_TIMEOUT_MS = 15 * 60 * 1000;
-const SESSION_WARNING_MS = 60 * 1000;
+const SESSION_TIMEOUT_MS = 15 * 1000;
+const SESSION_WARNING_MS = 5 * 1000;
 const SECURITY_TIP_TEXT = "Never share your PIN, password or verification codes. TitoPay will never ask for those by phone, email, WhatsApp, SMS or social media.";
 // Fees quoted in copy come from here and are rendered through money(), so the
 // sentence beside an amount always reads the same as the amount itself. Written
@@ -12464,8 +12464,15 @@ function connectionIsEncrypted() {
   return location.protocol === "https:";
 }
 
-function sessionTimeoutMinutes() {
-  return Math.round(SESSION_TIMEOUT_MS / 60000);
+// Human label for the inactivity timeout, always derived from the constant
+// that actually enforces it so the copy can never disagree with behaviour.
+function sessionTimeoutLabel() {
+  if (SESSION_TIMEOUT_MS >= 60000) {
+    const minutes = Math.round(SESSION_TIMEOUT_MS / 60000);
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  const seconds = Math.round(SESSION_TIMEOUT_MS / 1000);
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
 }
 
 function currentDeviceLabel() {
@@ -12604,7 +12611,7 @@ function openSecurityCentreModal() {
     <section class="activity-list">
       ${connectionIsEncrypted() ? settingsRow("Encrypted connection", "This session runs over an encrypted HTTPS connection.", "lock") : ""}
       ${settingsRow("OTP verification", "Password changes and recovery always require a one-time code.", "shield")}
-      ${settingsRow("Automatic sign-out", `Inactive sessions end after ${sessionTimeoutMinutes()} minutes.`, "refresh")}
+      ${settingsRow("Automatic sign-out", `Inactive sessions end after ${sessionTimeoutLabel()}.`, "refresh")}
       ${settingsRow("Payment review", "Verified recipient and exact fees shown before every confirmation.", "receipt-list")}
       ${settingsRow("Duplicate protection", "Confirmations are protected against double taps and repeat submissions.", "check-circle")}
     </section>
@@ -12666,7 +12673,7 @@ function openActiveSessionsModal() {
         <span class="icon-bubble">${icon("check-circle")}</span>
         <div><p><strong>This device</strong></p><small>${esc(currentDeviceLabel())} · Signed in and active now</small></div>
       </article>
-      ${settingsRow("Automatic sign-out", `This session ends after ${sessionTimeoutMinutes()} minutes of inactivity.`, "refresh")}
+      ${settingsRow("Automatic sign-out", `This session ends after ${sessionTimeoutLabel()} of inactivity.`, "refresh")}
       ${settingsRow("End it yourself", "Sign out from your Profile to end this session immediately.", "lock")}
     </section>
     <button class="btn secondary" type="button" data-action="device-management">${icon("phone")} View device history</button>
@@ -12755,7 +12762,7 @@ function openWhyTrustModal() {
       ${settingsRow("Encrypted connection", connectionIsEncrypted() ? "You are connected over encrypted HTTPS right now, and the app talks to TitoPay servers the same way." : "TitoPay is served over encrypted HTTPS connections.", "lock")}
       ${settingsRow("Secure sign-in", "Your wallet is protected by your PIN or password. Password changes and recovery always require a one-time code sent to your registered cellphone or email.", "shield")}
       ${settingsRow("Codes stay off this device", "Verification codes go to your registered contacts and are never saved on this device.", "eye-off")}
-      ${settingsRow("Automatic sign-out", `Inactive sessions sign out after ${sessionTimeoutMinutes()} minutes to protect you on shared or lost devices.`, "refresh")}
+      ${settingsRow("Automatic sign-out", `Inactive sessions sign out after ${sessionTimeoutLabel()} to protect you on shared or lost devices.`, "refresh")}
       ${settingsRow("Device recognition", "Sign-ins are linked to device sessions you can review any time in the Security Centre.", "phone")}
       ${settingsRow("Identity verification", "Every TitoPay profile carries FICA identity verification with a clear status: Not Started, Pending Review, Approved or Rejected.", "check-circle")}
       ${settingsRow("Payments you can check first", "Every payment shows the verified recipient and the exact fees before you confirm, and confirmations are protected against duplicate taps.", "receipt-list")}
