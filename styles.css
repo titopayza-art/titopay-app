@@ -1188,7 +1188,7 @@ h3 {
   }
 }
 
-.trust-strip {
+.trust-chip-row {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;

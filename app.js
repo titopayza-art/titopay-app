@@ -12556,7 +12556,9 @@ function currentDeviceLabel() {
 
 function trustChips(items) {
   if (!items.length) return "";
-  return `<div class="trust-strip" role="note">${items.map(([iconName, label]) => `<span class="trust-chip">${icon(iconName)}<span>${esc(label)}</span></span>`).join("")}</div>`;
+  // Named trust-chip-row, NOT trust-strip: the landing page already owns the
+  // .trust-strip class and reusing it broke the landing's layout once.
+  return `<div class="trust-chip-row" role="note">${items.map(([iconName, label]) => `<span class="trust-chip">${icon(iconName)}<span>${esc(label)}</span></span>`).join("")}</div>`;
 }
 
 function authTrustStrip() {
