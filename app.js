@@ -2000,20 +2000,24 @@ function profileView() {
       ${profileFeature("Saved Beneficiaries", isBusiness ? "Manage customers, suppliers, employees and payout recipients." : "Manage favourite and recent payment recipients.", "user", "saved-beneficiaries")}
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
       ${profileFeature("Unread Messages", `${unreadNotificationCount()} unread notification${unreadNotificationCount() === 1 ? "" : "s"} · chat, support and account alerts.`, "message-check", "account-activity")}
+    </section>
+    <section class="section-head compact"><h2>Security</h2></section>
+    <section class="profile-feature-grid">
+      ${profileFeature("Security Centre", "Score, devices, sessions, alerts, PIN changes and privacy — all in one place.", "shield", "security-centre", true)}
+      ${profileFeature(locked ? "Unlock Wallet" : "Lock Wallet", locked ? "Verify OTP to unlock outgoing payments." : "Block outgoing payments instantly.", locked ? "shield" : "lock", locked ? "unlock-wallet" : "lock-wallet", locked)}
+    </section>
+    <section class="section-head compact"><h2>${isBusiness ? "Grow your business" : "Share & tools"}</h2></section>
+    <section class="profile-feature-grid">
       ${profileFeature("Share TitoPay", "Invite friends, family or customers by WhatsApp, SMS or any sharing app.", "share", "share-titopay")}
-      ${profileFeature("How TitoPay Works", "Take a quick guided tour of the app's key features.", "learn", "how-titopay-works")}
-      ${profileFeature("Help us improve", "Rate your TitoPay experience and send product feedback.", "feedback", "pwa-review")}
       ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
       ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
       ${isBusiness ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
-      ${profileFeature("Support", "Get help from TitoPay Customer Care.", "send", "support")}
     </section>
-    <section class="section-head compact"><h2>Security & Verification</h2></section>
+    <section class="section-head compact"><h2>Help & learning</h2></section>
     <section class="profile-feature-grid">
-      ${profileFeature("Security Centre", "Your protections, devices, sessions and privacy in one place.", "shield", "security-centre", true)}
-      ${profileFeature(locked ? "Unlock Wallet" : "Lock Wallet", locked ? "Verify OTP to unlock outgoing payments." : "Block outgoing payments instantly.", locked ? "shield" : "lock", locked ? "unlock-wallet" : "lock-wallet", locked)}
-      ${profileFeature("Authentication Method", `${authenticationMethodLabel(currentAuthenticationMethod(user))} · saved to your TitoPay profile.`, "shield", "authentication-preference")}
-      ${profileFeature("Change PIN / Password", "Choose SMS OTP or Email OTP.", "lock", "change-password")}
+      ${profileFeature("How TitoPay Works", "Take a quick guided tour of the app's key features.", "learn", "how-titopay-works")}
+      ${profileFeature("Support", "Get help from TitoPay Customer Care.", "send", "support")}
+      ${profileFeature("Help us improve", "Rate your TitoPay experience and send product feedback.", "feedback", "pwa-review")}
     </section>
     <section class="profile-actions panel">
       <button class="btn secondary" data-action="refresh">${icon("refresh")} Refresh profile</button>
@@ -13487,13 +13491,47 @@ async function processQrPayment(data) {
       body: { service: "qr_payment", amount }
     })
     : { preview: { amount: 0, fee: 0.50, total: 0.50, serviceCode: "qr_payment", serviceName: "QR Payment" } };
+  // Ask the API who owns this QR so the payer can check the name before
+  // confirming. The endpoint may ship after this build, so a failure only
+  // means the review shows an explicit "owner not confirmed" caution -- the
+  // payment flow itself is unchanged either way.
+  let qrDetails = null;
+  try {
+    const details = await api(`/v1/qr/${encodeURIComponent(String(data.qrId).trim())}/details`);
+    qrDetails = details.qr || details.details || null;
+  } catch (error) {
+    qrDetails = null;
+  }
   state.pendingQrPaymentReview = {
     idempotencyKey: createClientTransactionKey("qr-payment"),
     data: Object.assign({}, data),
     preview: preview.preview || preview,
+    qrDetails,
     createdAt: new Date().toISOString()
   };
   openQrPaymentReviewModal(state.pendingQrPaymentReview);
+}
+
+function qrOwnerCard(details) {
+  const owner = details && (details.owner || details.merchant || null);
+  const ownerName = owner && String(owner.displayName || owner.businessName || owner.business_name || owner.fullName || owner.full_name || owner.name || "").trim();
+  if (ownerName) {
+    const isBusiness = String(owner.accountType || owner.account_type || "").toLowerCase() === "business";
+    const meta = [
+      owner.username ? displayUsername(owner.username) : "",
+      isBusiness ? "Business" : "Personal",
+      "Confirmed by TitoPay"
+    ].filter(Boolean).join(" · ");
+    return `<section class="qr-owner-card is-confirmed" role="status" aria-label="QR code owner">
+      <span class="icon-bubble">${icon(isBusiness ? "store" : "user")}</span>
+      <div><p class="qr-owner-eyebrow">You are paying</p><strong>${esc(ownerName)}</strong><small>${esc(meta)}</small></div>
+      <span class="qr-owner-badge">${icon("check-circle")}</span>
+    </section>`;
+  }
+  return `<section class="qr-owner-card is-unknown" role="status" aria-label="QR code owner not confirmed">
+    <span class="icon-bubble">${icon("shield")}</span>
+    <div><p class="qr-owner-eyebrow">Owner not confirmed</p><strong>Check before you pay</strong><small>TitoPay could not confirm who owns this QR code. Only confirm if you trust where this code came from.</small></div>
+  </section>`;
 }
 
 function openQrPaymentReviewModal(context) {
@@ -13505,9 +13543,11 @@ function openQrPaymentReviewModal(context) {
       <div><p class="eyebrow">QR Payment Review</p><h2>Confirm QR payment</h2><p class="lead">No funds leave your wallet until you press Confirm.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${qrOwnerCard(context.qrDetails)}
     <section class="activity-list review-transaction-list">
       ${settingsRow("Service", "QR Payment", "qr")}
       ${settingsRow("QR ID", context.data.qrId, "scan")}
+      ${context.qrDetails && context.qrDetails.label ? settingsRow("QR label", context.qrDetails.label, "tag") : ""}
       ${settingsRow("Amount", amountText, "wallet")}
       ${settingsRow("TitoPay QR fee", money(Number(preview.fee || 0.50)), "shield")}
       ${settingsRow("Total debit", totalText, "withdraw")}

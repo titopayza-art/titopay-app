@@ -1419,6 +1419,73 @@ h3 {
   line-height: 1.45;
 }
 
+.qr-owner-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.qr-owner-card > div {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.qr-owner-card .icon-bubble {
+  flex: 0 0 auto;
+}
+
+.qr-owner-eyebrow {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.qr-owner-card strong {
+  font-size: 1.02rem;
+  overflow-wrap: anywhere;
+}
+
+.qr-owner-card small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.qr-owner-card.is-confirmed {
+  border-color: rgba(11, 159, 106, 0.25);
+  background: rgba(11, 159, 106, 0.05);
+}
+
+.qr-owner-card.is-confirmed .icon-bubble {
+  background: rgba(11, 159, 106, 0.12);
+  color: var(--success);
+}
+
+.qr-owner-badge {
+  flex: 0 0 auto;
+  color: var(--success);
+}
+
+.qr-owner-card.is-unknown {
+  border-color: rgba(183, 121, 31, 0.28);
+  background: #fff8ec;
+}
+
+.qr-owner-card.is-unknown .icon-bubble {
+  background: rgba(183, 121, 31, 0.12);
+  color: var(--warning);
+}
+
 @media (max-width: 419px) {
   .security-score {
     flex-direction: column;

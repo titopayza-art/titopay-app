@@ -608,3 +608,46 @@ leaked internal message.
 **`appVersion`.** The client sends `appVersion: "pwa-v134"` in support payloads
 and it has been stale for 45 releases. If nothing consumes it, we will remove it;
 if something does, tell us and we will wire it to the real build version.
+
+---
+
+## P0-4 — QR owner lookup before payment (new in pwa-v240)
+
+Users scanning a QR code cannot see who they are about to pay — only the raw
+QR ID. Paying the wrong QR is the single easiest money-losing mistake the UI
+allows. As of pwa-v240 the client calls, before showing the QR payment review:
+
+```
+GET /v1/qr/{qrId}/details          (authenticated)
+```
+
+Expected response:
+
+```json
+{
+  "qr": {
+    "id": "qr_abc123",
+    "label": "Counter 1",
+    "codeType": "static",
+    "amount": null,
+    "owner": {
+      "displayName": "Naledi's Kitchen",
+      "username": "naledis",
+      "accountType": "business"
+    }
+  }
+}
+```
+
+`owner.displayName` (or `businessName` / `fullName`) is the only required
+field for the confirmation card; `username` and `accountType` enrich it.
+The client also accepts the payload under `details` instead of `qr`.
+
+Until the endpoint exists the client degrades gracefully: the review shows an
+explicit **"Owner not confirmed — check before you pay"** caution instead of a
+name, and the payment flow is otherwise unchanged. No client update will be
+needed when the endpoint goes live — names appear automatically.
+
+Privacy note: this endpoint reveals an account holder's display name to anyone
+who scans their QR. That is the point of a payment QR, but the response should
+contain nothing beyond the fields above (no phone, email or wallet balance).
