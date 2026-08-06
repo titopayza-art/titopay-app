@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v265-crisper-card-edges";
+const CACHE_NAME = "titopay-pwa-v266-summary-card-edges";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=265",
-  "./app.min.js?v=265",
+  "./styles.min.css?v=266",
+  "./app.min.js?v=266",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=213",
   "./manifest.webmanifest?v=193",

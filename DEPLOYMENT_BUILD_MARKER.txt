@@ -1,1 +1,1 @@
-TitoPay PWA build: crisper-card-edges-v265-20260806
+TitoPay PWA build: summary-card-edges-v266-20260806
