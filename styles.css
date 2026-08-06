@@ -5264,7 +5264,7 @@ body.landing-static .landing-flow.auth-screen {
 .beneficiary-picker-item,
 .beneficiary-card {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 12px;
   align-items: center;
   width: 100%;
@@ -5297,8 +5297,19 @@ body.landing-static .landing-flow.auth-screen {
   overflow-wrap: anywhere;
 }
 
+/* The actions always sit on their own row below the copy, never beside the
+   long username/wallet/QR meta -- inline-right let the star overlap the text
+   when the meta wrapped. The card only ever renders inside a <=560px modal,
+   so nothing is lost by stacking on every width. */
 .beneficiary-card {
-  grid-template-areas: "avatar copy actions" "pay pay pay";
+  grid-template-areas:
+    "avatar copy"
+    "actions actions"
+    "pay pay";
+}
+
+.beneficiary-card-actions {
+  justify-content: flex-end;
 }
 
 .beneficiary-card > .chat-contact-avatar {
@@ -11483,20 +11494,6 @@ button,
   .qr-actions,
   .support-actions {
     grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 420px) {
-  .beneficiary-card {
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-areas:
-      "avatar copy"
-      "actions actions"
-      "pay pay";
-  }
-
-  .beneficiary-card-actions {
-    justify-content: flex-end;
   }
 }
 
