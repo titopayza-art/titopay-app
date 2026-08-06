@@ -129,6 +129,15 @@ const ROUTES = {
   "/v1/admin/support/tickets": () => ({ items: Array.from({ length: 12 }, (_, index) => ({ id: `tkt_${index}`, subject: `Request ${index}`, category: "Payments", message: "Reported issue.", full_name: `Customer ${index}`, username: `customer${index}`, assigned_to: index % 3 ? "agent1" : "", status: index % 3 === 0 ? "open" : "resolved", created_at: new Date(NOW - index * DAY).toISOString() })) }),
   "/v1/admin/support/conversations": () => ({ items: Array.from({ length: 8 }, (_, index) => ({ id: `cnv_${index}`, status: index % 2 ? "RESOLVED" : "ESCALATED", created_at: new Date(NOW - index * DAY).toISOString(), updated_at: new Date(NOW - index * DAY).toISOString(), last_message: "Thanks", waitingSeconds: 60 * index })), counts: { waiting: 4, active: 2 } }),
   "/v1/admin/profile-change-requests": () => ({ items: [], metrics: {} }),
+  "/v1/admin/roles": () => ({
+    canManage: true,
+    availablePermissions: ["dashboard", "users", "merchants", "transactions", "wallets", "support", "compliance", "revenue", "security", "audit", "ticketing"],
+    items: [
+      { role: "owner", permissions: ["*"], builtin: true, protected: true, customised: false },
+      { role: "customer_support", permissions: ["dashboard", "users", "support", "ticketing"], builtin: true, protected: false, customised: false },
+      { role: "finance", permissions: ["dashboard", "wallets", "transactions", "revenue"], builtin: true, protected: false, customised: false },
+    ],
+  }),
   "/v1/admin/security": () => ({
     otpPolicy: { authenticationMode: "password_only", otpRequired: false },
     smtp: {},

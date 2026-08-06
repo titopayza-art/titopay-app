@@ -165,6 +165,27 @@ function checkVersionConsistency() {
     failures.push("support queue offered no conversation to open");
   }
 
+  // --- RBAC editor --------------------------------------------------------
+  await page.goto(`${BASE}/rbac-permissions/`);
+  await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });
+  await page.waitForTimeout(500);
+  check(await page.$("#rbac-create-form") !== null, "rbac page offers the create-role form");
+  await page.click('[data-rbac-edit="customer_support"]');
+  await page.waitForSelector("#rbac-edit-form", { timeout: 15000 });
+  await page.waitForTimeout(300);
+  const catalogue = await page.$$eval('#rbac-edit-form [name="permissions"]', (boxes) => boxes.map((box) => box.value));
+  check(catalogue.includes("analytics") && catalogue.includes("service_builder"), "checklist offers the console's newer module permissions");
+  await page.fill("#rbac-new-permission", "reports_export");
+  await page.click('#rbac-edit-form [data-rbac-add-permission]');
+  await page.waitForTimeout(250);
+  const added = await page.evaluate(() => {
+    const box = document.querySelector('#rbac-edit-form [name="permissions"][value="reports_export"]');
+    return box ? box.checked : false;
+  });
+  check(added, "a typed permission is added to the role, ticked");
+  await page.click("[data-rbac-cancel]");
+  await page.waitForTimeout(300);
+
   // --- Service Builder ----------------------------------------------------
   await page.goto(`${BASE}/service-builder/`);
   await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });

@@ -951,7 +951,9 @@ body[data-page="login"] {
   border-radius: var(--tp-radius-sm);
 }
 
-.field-hint {
+/* Only the Caps Lock hint is a warning; every other .field-hint in the
+   console is informational and keeps the muted treatment from section 03. */
+#caps-hint {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -960,7 +962,7 @@ body[data-page="login"] {
   font-weight: 550;
 }
 
-.field-hint::before {
+#caps-hint::before {
   content: "";
   flex: 0 0 auto;
   width: 6px;
@@ -4748,6 +4750,33 @@ a.table-card-meta:hover {
 .sqr-note {
   color: var(--tp-faint);
   font-size: 0.71875rem;
+}
+
+/* RBAC: add-permission row ------------------------------------------------- */
+
+.rbac-add-permission {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.rbac-add-permission input {
+  flex: 1 1 240px;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  font-family: inherit;
+  font-size: 0.875rem;
+}
+
+.rbac-add-permission input:focus {
+  outline: none;
+  border-color: var(--tp-blue);
+  box-shadow: var(--tp-focus);
 }
 
 /* == 11  States =========================================================== */

@@ -1,6 +1,27 @@
 TitoPay Admin
-Build: admin-console-v57
+Build: admin-console-v58
 Date: 2026-08-06
+
+v58 - RBAC editor completed: permissions for the newer modules can now be
+granted, custom permissions can be added by name, and the create-role form the
+v35 handlers were built for is rendered again. Save, create and delete still
+use exactly the endpoints they always did.
+
+  - The permission checklist is now the union of what the API offers, every
+    permission already held by any role, and the console's own module gates -
+    so analytics, reporting and service_builder can finally be ticked, and a
+    permission a role already holds can never disappear from its own editor.
+  - An add-permission field lets the owner store any named permission on a
+    role (validated to letters, numbers, underscores, dots and dashes). The
+    page states plainly that the API enforces what a permission unlocks -
+    naming one here only stores it on the role.
+  - Create a new role: name, description and the same checklist, applied
+    through the existing POST /admin/roles handler.
+  - Informational field hints no longer render in the Caps Lock warning
+    style - that treatment now belongs to the Caps Lock hint alone.
+  - The CI gate covers the page: the create-role form renders, the checklist
+    offers the newer module permissions, and a typed permission lands in the
+    role ticked.
 
 v57 - Support Desk quick replies. The twelve Customer Care responses now
 live inside the conversation view, grouped by workflow stage: greeting and
@@ -226,5 +247,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v57; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v58; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v57";
+const ADMIN_ASSET_VERSION = "admin-console-v58";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -3603,7 +3603,17 @@ async function renderRbacPermissions() {
   const items = result.items || Object.entries(result.roles || {}).map(([role, permissions]) => ({
     role, permissions, builtin: true, protected: ["owner", "root", "super_admin"].includes(role), customised: false
   }));
-  const available = result.availablePermissions || [];
+  /* The API's availablePermissions list predates the console's newer modules,
+     so granting them was impossible from this screen. The checklist is now the
+     union of what the API offers, every permission already held by any role,
+     and the console's own module gates - deduplicated case-sensitively, since
+     permissions are matched exactly. */
+  const CONSOLE_MODULE_PERMISSIONS = ["analytics", "reporting", "service_builder"];
+  const available = [...new Set([
+    ...(result.availablePermissions || []),
+    ...items.flatMap((row) => row.permissions).filter((perm) => perm !== "*"),
+    ...CONSOLE_MODULE_PERMISSIONS,
+  ])].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
   const canManage = Boolean(result.canManage);
   PAGE_EXPORTS["rbac-permissions"] = items.map((row) => ({
     role: row.role,
@@ -3622,13 +3632,21 @@ async function renderRbacPermissions() {
         <span>Full platform access (*)</span>
       </label>
       <div class="rbac-permission-grid">
-        ${available.map((perm) => `
+        ${[...new Set([...available, ...selected.filter((perm) => perm !== "*")])].map((perm) => `
           <label class="check-row">
             <input type="checkbox" name="permissions" value="${escapeHtml(perm)}" ${selected.includes(perm) ? "checked" : ""} ${all || disabled ? "disabled" : ""}>
             <span>${escapeHtml(perm.replace(/_/g, " "))}</span>
           </label>
         `).join("")}
       </div>
+      ${disabled ? "" : `
+        <div class="rbac-add-permission">
+          <label class="visually-hidden" for="rbac-new-permission">Add a permission by name</label>
+          <input id="rbac-new-permission" placeholder="Add a permission by name, e.g. reports_export" maxlength="64" autocomplete="off" spellcheck="false">
+          <button class="secondary-btn" type="button" data-rbac-add-permission>Add permission</button>
+        </div>
+        <p class="field-hint">Letters, numbers, underscores, dots and dashes. The API enforces what each permission actually unlocks - adding a name here only stores it on the role.</p>
+      `}
     `;
   };
 
@@ -3649,6 +3667,21 @@ async function renderRbacPermissions() {
           <div class="form-actions">
             <button class="primary-btn" type="submit" ${editRow.protected ? "disabled" : ""}>Save permissions</button>
             ${!editRow.builtin ? `<button class="ghost-btn" type="button" data-rbac-delete="${escapeHtml(editRow.role)}">Delete role</button>` : ""}
+          </div>
+        </form>
+      </section>
+    ` : ""}
+
+    ${canManage && !editRow ? `
+      <section class="panel">
+        <h3>Create a new role</h3>
+        <p>Custom roles apply immediately to any staff account assigned to them, and can be edited or deleted here later.</p>
+        <form id="rbac-create-form" class="form-grid">
+          <label>Role name<input name="role" required maxlength="40" pattern="[a-z0-9_]+" placeholder="reports_analyst" autocapitalize="none" spellcheck="false"></label>
+          <label>Description<input name="description" maxlength="160" placeholder="What this role is for"></label>
+          <div class="field-full">${permissionChecklist([], false)}</div>
+          <div class="form-actions">
+            <button class="primary-btn" type="submit">Create role</button>
           </div>
         </form>
       </section>
@@ -5787,6 +5820,37 @@ document.addEventListener("click", async (event) => {
   if (pricingCancel) {
     const host = document.getElementById("pricing-editor-host");
     if (host) host.innerHTML = "";
+  }
+  const rbacAddPermission = event.target.closest("[data-rbac-add-permission]");
+  if (rbacAddPermission) {
+    const form = rbacAddPermission.closest("form");
+    const input = form?.querySelector("#rbac-new-permission, input[id^='rbac-new-permission']") || document.getElementById("rbac-new-permission");
+    const name = String(input?.value || "").trim();
+    if (!/^[A-Za-z0-9_.:-]{2,64}$/.test(name)) {
+      showToast("Permission names use letters, numbers, underscores, dots or dashes (2-64 characters).");
+      return;
+    }
+    const grid = form.querySelector(".rbac-permission-grid");
+    const existing = form.querySelector(`[name="permissions"][value="${CSS.escape(name)}"]`);
+    if (existing) {
+      existing.checked = true;
+      showToast("That permission is already in the list - it is now ticked.");
+    } else if (grid) {
+      const row = document.createElement("label");
+      row.className = "check-row";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.name = "permissions";
+      box.value = name;
+      box.checked = true;
+      const label = document.createElement("span");
+      label.textContent = name.replace(/_/g, " ");
+      row.append(box, label);
+      grid.appendChild(row);
+      showToast(`"${name}" added - save to apply it to the role`);
+    }
+    if (input) input.value = "";
+    return;
   }
   const rbacEdit = event.target.closest("[data-rbac-edit]");
   if (rbacEdit) {
