@@ -2084,7 +2084,20 @@ function profileView() {
     </section>
     <section class="profile-summary-card panel" aria-label="Profile summary">
       ${profileSummaryRow("Wallet", displayMoney(wallet ? wallet.available_balance : undefined), "wallet")}
-      ${profileSummaryRow("Username", displayUsername(user.username), "user")}
+      ${profileSummaryRow("Username", displayUsername(user.username), "user", displayUsername(user.username))}
+      ${(() => {
+        const phone = String(user.phone || user.msisdn || user.cellphone || user.mobile || "").trim();
+        return phone ? profileSummaryRow("Cellphone", phone, "phone", phone) : "";
+      })()}
+      ${user.email ? profileSummaryRow("Email", user.email, "mail", user.email) : ""}
+      ${(() => {
+        const walletIdValue = displayWalletId(wallet || {});
+        return walletIdValue && walletIdValue !== "Generating" ? profileSummaryRow("Wallet ID", walletIdValue, "wallet", walletIdValue) : "";
+      })()}
+      ${(() => {
+        const qrId = String(state.profileQr?.id || state.profileQr?.reference || "").trim();
+        return qrId ? profileSummaryRow("QR ID", qrId, "qr", qrId) : "";
+      })()}
       ${profileSummaryRow("Type", enumLabel(state.accountType), "shield")}
     </section>
     <section class="section-head compact"><h2>Account</h2></section>
@@ -2126,10 +2139,41 @@ function profileStat(label, value, iconName) {
   </article>`;
 }
 
-function profileSummaryRow(label, value, iconName) {
+// Quick copy for the customer's own identifiers (username, cellphone, email,
+// wallet ID, QR ID). Clipboard first; when a browser blocks clipboard access
+// the value is selected on screen instead, so it is never silently
+// unavailable — the same contract the VAS voucher tokens follow.
+async function copyIdentifierValue(button) {
+  const value = button.dataset.copyValue || "";
+  const label = button.dataset.copyLabel || "Value";
+  if (!value) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      showToast(`${label} copied.`);
+      return;
+    }
+    throw new Error("Clipboard unavailable");
+  } catch (error) {
+    const target = button.closest("article")?.querySelector("strong");
+    if (target && window.getSelection && document.createRange) {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      showToast(`${label} selected. Copy it from the screen.`);
+      return;
+    }
+    showToast(`${label} could not be copied.`, "error");
+  }
+}
+
+function profileSummaryRow(label, value, iconName, copyValue = "") {
   return `<article class="profile-summary-row">
     <span class="icon-bubble">${icon(iconName)}</span>
     <div><small>${esc(label)}</small><strong>${esc(value)}</strong></div>
+    ${copyValue ? `<button class="icon-btn summary-copy-btn" type="button" data-copy-value="${esc(copyValue)}" data-copy-label="${esc(label)}" aria-label="Copy ${esc(label.toLowerCase())}">${icon("copy")}</button>` : ""}
   </article>`;
 }
 
@@ -2928,6 +2972,11 @@ async function onClick(event) {
   const quickAmount = event.target.closest("[data-quick-amount]");
   if (quickAmount) {
     applyQuickAmount(quickAmount);
+    return;
+  }
+  const copyValueButton = event.target.closest("[data-copy-value]");
+  if (copyValueButton) {
+    await copyIdentifierValue(copyValueButton);
     return;
   }
   const splitRemove = event.target.closest("[data-split-remove]");
