@@ -7087,7 +7087,7 @@ li {
 .document-fee-card,
 .merchant-pos-mini,
 .receipts-preview {
-  border-color: rgba(214, 225, 244, 0.92);
+  border-color: #c6d3ea;
   box-shadow: var(--shadow-card);
 }
 
@@ -7169,7 +7169,7 @@ li {
 }
 
 .modal-card {
-  border: 1px solid rgba(214, 225, 244, 0.94);
+  border: 1px solid #c6d3ea;
 }
 
 .modal-head {
