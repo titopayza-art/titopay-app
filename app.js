@@ -14075,7 +14075,7 @@ function openLandingMenu() {
       <p><a class="text-link" href="https://www.titopay.co.za" target="_blank" rel="noopener">www.titopay.co.za</a></p>
       <p><strong>TitoPay (Pty) Ltd.</strong></p>
       <p>Reg No: 2026/399418/07</p>
-      <p>App version 1.0 · build ${esc(appBuildVersion())}</p>
+      <p>App version 1.0</p>
       <p>© 2026 TitoPay (Pty) Ltd. All rights reserved.</p>
     </footer>
   `);
