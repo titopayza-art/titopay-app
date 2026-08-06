@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v257-chat-remove-labels";
+const CACHE_NAME = "titopay-pwa-v258-profile-tile-date-fix";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=257",
-  "./app.min.js?v=257",
+  "./styles.min.css?v=258",
+  "./app.min.js?v=258",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=213",
   "./manifest.webmanifest?v=193",

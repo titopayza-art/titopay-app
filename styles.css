@@ -2582,6 +2582,18 @@ body.landing-static .landing-flow.auth-screen {
   text-align: left;
 }
 
+/* The Activity From/To date fields overflowed their right edge on iOS: the
+   native date control's intrinsic width spills past a narrow field. Dropping
+   the native inline appearance stops the spill (tapping still opens the iOS
+   date picker) and box-sizing keeps the field inside the card. */
+.report-filters input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
 .field input[type="date"]::-webkit-calendar-picker-indicator,
 .field input[type="time"]::-webkit-calendar-picker-indicator,
 .field input[type="datetime-local"]::-webkit-calendar-picker-indicator,
@@ -6290,23 +6302,26 @@ body.landing-static .landing-flow.auth-screen {
   gap: 10px;
 }
 
+/* One tile, three divider-separated rows -- was three separate cards that
+   stacked into a tall tower on phones. */
 .profile-summary-card {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 16px;
 }
 
 .profile-summary-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
-  min-height: 70px;
-  padding: 10px;
-  background: #f8fafd;
-  border: 1px solid rgba(219, 230, 248, 0.82);
-  border-radius: 16px;
+  gap: 12px;
+  min-height: 0;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.profile-summary-row:last-child {
+  border-bottom: 0;
 }
 
 .profile-stat {
@@ -6666,10 +6681,6 @@ input[data-profile-photo-zoom] {
   .profile-summary-grid,
   .profile-feature-grid,
   .profile-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .profile-summary-card {
     grid-template-columns: 1fr;
   }
 
