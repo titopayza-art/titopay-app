@@ -2060,6 +2060,11 @@ body.landing-static {
   border-radius: 16px;
 }
 
+.landing-menu-btn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 .landing-menu-btn svg {
   width: 22px;
   height: 22px;
@@ -3776,11 +3781,11 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 .balance-toggle {
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   display: inline-grid;
   place-items: center;
-  flex: 0 0 42px;
+  flex: 0 0 44px;
   color: rgba(255, 255, 255, 0.88);
   background: rgba(255, 255, 255, 0.16);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -4991,23 +4996,28 @@ body.landing-static .landing-flow.auth-screen {
 
 .install-float-dismiss {
   position: absolute;
-  top: -9px;
-  right: -9px;
+  top: -17px;
+  right: -17px;
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   color: #17355f;
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+
+.install-float-dismiss svg {
+  width: 28px;
+  height: 28px;
+  padding: 7px;
+  box-sizing: border-box;
   background: #fff;
   border: 1px solid rgba(23, 53, 95, 0.18);
   border-radius: 999px;
   box-shadow: 0 4px 14px rgba(6, 26, 61, 0.2);
-}
-
-.install-float-dismiss svg {
-  width: 15px;
-  height: 15px;
 }
 
 .install-instructions {
