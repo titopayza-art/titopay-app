@@ -5603,6 +5603,72 @@ body.landing-static .landing-flow.auth-screen {
   min-width: 0;
 }
 
+/* Gift presentation on the transaction detail (receiver and sender) */
+.gift-receipt-card {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 22px 18px 20px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(10, 77, 255, 0.14);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(165deg, var(--soft-blue) 0%, #f4f8ff 55%, #fff 100%);
+  text-align: center;
+}
+
+.gift-receipt-icon {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: linear-gradient(150deg, var(--blue), var(--blue-2));
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(10, 77, 255, 0.28);
+}
+
+.gift-receipt-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.gift-receipt-title {
+  font-size: 1.08rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.gift-receipt-occasion {
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(10, 77, 255, 0.1);
+  color: var(--deep-blue);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.gift-receipt-amount {
+  font-size: 1.7rem;
+  font-weight: 800;
+  color: var(--deep-blue);
+  font-variant-numeric: tabular-nums;
+}
+
+.gift-receipt-message {
+  max-width: 38ch;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-style: italic;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.gift-receipt-from {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
 .toast {
   position: fixed;
   left: 50%;

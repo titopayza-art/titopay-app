@@ -2224,6 +2224,19 @@ function receiptForTransaction(item = {}) {
   ) || null;
 }
 
+// A gift transaction carries its occasion and message in metadata; the
+// receiver (and sender) get a proper gift presentation in the detail view.
+// Only fields the payload actually carries are rendered.
+function transactionGiftDetails(item = {}) {
+  const code = String(item.service_code || item.serviceCode || "").toLowerCase().replace(/-/g, "_");
+  const name = String(item.service_name || item.serviceName || "").toLowerCase();
+  if (code !== "send_gift" && name !== "send gift") return null;
+  const metadata = item.metadata || {};
+  const occasion = metadata.customOccasion || metadata.custom_occasion || metadata.occasion || item.occasion || "";
+  const message = metadata.message || item.gift_message || item.giftMessage || "";
+  return { occasion: String(occasion || "").trim(), message: String(message || "").trim() };
+}
+
 function openTransactionDetailModal(key) {
   const item = findTransactionByKey(key);
   if (!item) {
@@ -2273,6 +2286,19 @@ function openTransactionDetailModal(key) {
       <div><p class="eyebrow">Transaction</p><h2>${esc(service)}</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${(() => {
+      const gift = transactionGiftDetails(item);
+      if (!gift) return "";
+      return `
+    <section class="gift-receipt-card" role="note" aria-label="Gift details">
+      <span class="gift-receipt-icon">${icon("gift")}</span>
+      <p class="gift-receipt-title">${direction === "credit" ? "You've received a gift" : "You sent a gift"}</p>
+      ${gift.occasion ? `<span class="gift-receipt-occasion">${esc(gift.occasion)}</span>` : ""}
+      <p class="gift-receipt-amount">${esc(money(amountValue))}</p>
+      ${gift.message ? `<p class="gift-receipt-message">“${esc(gift.message)}”</p>` : ""}
+      ${counterparty ? `<p class="gift-receipt-from">${direction === "credit" ? "From" : "To"} ${esc(counterparty)}</p>` : ""}
+    </section>`;
+    })()}
     <section class="tx-detail-summary" aria-label="Transaction amount and status">
       <p class="tx-detail-amount ${direction === "credit" ? "credit" : ""}">${direction === "credit" ? "+" : "-"}${esc(money(amountValue))}</p>
       <p class="tx-detail-status"><span class="tx-status ${statusClass}">${esc(statusLabel)}</span></p>
@@ -18364,14 +18390,10 @@ function openModal(html) {
     card.setAttribute("aria-label", "TitoPay dialog");
   }
 
-  // Move focus into the dialog without stealing it from an autofocused field.
-  // Only a field the reader can already see may take it. The landing menu's
-  // first field belongs to the Contact form at the very bottom of the sheet, so
-  // focusing it opened the menu on the Contact form and, once a tap or the
-  // software keyboard resized the visual viewport, scrolled the sheet straight
-  // down to it. A field below the fold leaves focus on the dialog itself.
-  const firstField = card.querySelector("input:not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled])");
-  (modalFieldInInitialView(card, firstField) || card).focus({ preventScroll: true });
+  // Focus the dialog itself, never a field. Autofocusing an input pops the
+  // software keyboard the instant any service opens, which reads as jumpy --
+  // the user chooses when to start typing. Keyboard users Tab straight in.
+  card.focus({ preventScroll: true });
 
   wrapper.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
