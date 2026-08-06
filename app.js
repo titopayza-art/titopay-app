@@ -1999,6 +1999,7 @@ function profileView() {
       ${profileFeature("TitoPay Chat", isBusiness ? "Chat with customers before payments." : "Chat with TitoPay users before payments.", "chat", "titopay-chat", true)}
       ${profileFeature("Saved Beneficiaries", isBusiness ? "Manage customers, suppliers, employees and payout recipients." : "Manage favourite and recent payment recipients.", "user", "saved-beneficiaries")}
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
+      ${profileFeature("Proof of Account", "Download an official stamped letter confirming your TitoPay account.", "document-invoice", "proof-of-account")}
       ${profileFeature("Unread Messages", `${unreadNotificationCount()} unread notification${unreadNotificationCount() === 1 ? "" : "s"} · chat, support and account alerts.`, "message-check", "account-activity")}
     </section>
     <section class="section-head compact"><h2>Security</h2></section>
@@ -4434,6 +4435,12 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "biometric-info") {
     openBiometricInfoModal();
+  }
+  if (action === "proof-of-account") {
+    openProofOfAccountModal();
+  }
+  if (action === "download-proof-of-account") {
+    await downloadProofOfAccountPdf(actionElement);
   }
   if (action === "notifications") {
     openNotificationsModal();
@@ -17329,6 +17336,229 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null }) {
   text(52, 27, `Generated ${generatedAt}. This statement is generated electronically and is valid without signature.`, 6.2, "F1", "0.42 0.46 0.55");
   rightText(543, 34, "Page 1 of 1", 7, "F1", "0.42 0.46 0.55");
 
+  const content = commands.join("\n");
+  const hasLogo = Boolean(logo?.pdfBytes?.length);
+  const contentObjectNumber = hasLogo ? 7 : 6;
+  const resources = hasLogo
+    ? `/Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Im1 6 0 R >> >>`
+    : `/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >>`;
+  const encoder = new TextEncoder();
+  const chunks = [];
+  const offsets = [0];
+  let byteOffset = 0;
+  const push = (part) => {
+    const bytes = typeof part === "string" ? encoder.encode(part) : part;
+    chunks.push(bytes);
+    byteOffset += bytes.length;
+  };
+  const object = (number, parts) => {
+    offsets[number] = byteOffset;
+    parts.forEach(push);
+    push("\n");
+  };
+  push("%PDF-1.4\n");
+  object(1, ["1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj"]);
+  object(2, ["2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj"]);
+  object(3, [`3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ${resources} /Contents ${contentObjectNumber} 0 R >> endobj`]);
+  object(4, ["4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj"]);
+  object(5, ["5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj"]);
+  if (hasLogo) {
+    object(6, [`6 0 obj << /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logo.pdfBytes.length} >> stream\n`, logo.pdfBytes, "\nendstream endobj"]);
+  }
+  object(contentObjectNumber, [`${contentObjectNumber} 0 obj << /Length ${encoder.encode(content).length} >> stream\n${content}\nendstream endobj`]);
+  const xref = byteOffset;
+  let crossReference = `xref\n0 ${contentObjectNumber + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index <= contentObjectNumber; index += 1) crossReference += `${leftPad(String(offsets[index]), 10, "0")} 00000 n \n`;
+  push(`${crossReference}trailer\n<< /Size ${contentObjectNumber + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  const output = new Uint8Array(byteOffset);
+  let position = 0;
+  chunks.forEach((chunk) => {
+    output.set(chunk, position);
+    position += chunk.length;
+  });
+  return output;
+}
+
+// ---------------------------------------------------------------------------
+// Proof of account letter
+//
+// An official one-page letter confirming the account, built with the same
+// A4 builder, wordmark and stamp badge as the exported statement so the two
+// documents read as siblings. Every download carries a unique TPL letter
+// number, and the letter states only what the profile actually records --
+// the account-opened date falls back to "On record with TitoPay" until the
+// API includes createdAt in the profile payload.
+// ---------------------------------------------------------------------------
+
+function accountOpenedLabel(user = state.user || {}) {
+  const raw = user.createdAt || user.created_at || user.registeredAt || user.registered_at || user.joinedAt || user.joined_at || user.memberSince || user.member_since;
+  if (!raw) return "On record with TitoPay";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return "On record with TitoPay";
+  return date.toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+}
+
+function openProofOfAccountModal() {
+  const user = state.user || {};
+  const wallet = primaryWallet() || {};
+  const isBusiness = state.accountType === "business";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Official Document</p><h2>Proof of Account</h2><p class="lead">A stamped letter confirming your TitoPay ${isBusiness ? "business" : "personal"} account — for landlords, employers, banks or anyone who asks.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${settingsRow("Account holder", statementAccountName(user), "user")}
+      ${settingsRow("Username", displayUsername(user.username) || "Not set", "user")}
+      ${settingsRow("Wallet ID", compactStatementReference(displayWalletId(wallet), 24), "wallet")}
+      ${settingsRow("Account type", isBusiness ? "Business" : "Personal", "shield")}
+      ${settingsRow("Account opened", accountOpenedLabel(user), "list")}
+      ${settingsRow("FICA status", ficaDisplayStatus(user.ficaStatus || user.fica_status), "check-circle")}
+    </section>
+    <p class="field-hint">Each letter carries a unique letter number and the official TitoPay stamp, is generated electronically, and is valid without a signature. Anyone can verify it with TitoPay Customer Care by quoting the letter number.</p>
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="download-proof-of-account">${icon("download")} Download letter (PDF)</button>
+      <button class="btn ghost" type="button" data-close>Close</button>
+    </div>
+  `);
+}
+
+async function downloadProofOfAccountPdf(button) {
+  setButtonBusy(button, true);
+  try {
+    const now = new Date();
+    const letterNo = `TPL-${dateStamp(now)}-${leftPad(String(Math.floor(Math.random() * 999999)), 6, "0")}`;
+    const logo = await loadStatementLogoJpeg();
+    const pdf = proofOfAccountPdf({ now, letterNo, logo });
+    downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${letterNo}.pdf`);
+    showToast("Proof of account letter downloaded.");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+function proofOfAccountPdf({ now, letterNo, logo = null }) {
+  const user = state.user || {};
+  const wallet = primaryWallet() || {};
+  const isBusiness = state.accountType === "business";
+  const profileType = isBusiness ? "Business profile" : "Personal profile";
+  const accountName = statementAccountName(user);
+  const ficaStatus = ficaDisplayStatus(user.ficaStatus || user.fica_status);
+  const issuedDate = now.toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
+  const issuedTime = now.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const generatedAt = now.toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" });
+  const commands = [];
+  const fill = (x, y, w, h, color) => commands.push(`q ${color} rg ${x} ${y} ${w} ${h} re f Q`);
+  const stroke = (x, y, w, h, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x} ${y} ${w} ${h} re S Q`);
+  const line = (x1, y1, x2, y2, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`);
+  const text = (x, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => commands.push(`BT /${font} ${size} Tf ${color} rg ${x} ${y} Td (${pdfEscape(value)}) Tj ET`);
+  const centerText = (centerX, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => {
+    const width = String(value || "").length * size * 0.48;
+    text(centerX - width / 2, y, value, size, font, color);
+  };
+  let cursorY = 0;
+  const paragraph = (value, startY, { size = 9.6, leading = 14, maxChars = 96, font = "F1", color = "0.13 0.18 0.29" } = {}) => {
+    let y = startY;
+    splitStatementText(value, maxChars, 12).forEach((lineValue) => {
+      text(52, y, lineValue, size, font, color);
+      y -= leading;
+    });
+    cursorY = y;
+    return y;
+  };
+
+  // Header: identical band, rule and wordmark to the exported statement.
+  fill(0, 720, 595, 92, "1 1 1");
+  fill(0, 716, 595, 4, "0.00 0.34 1.00");
+  if (logo?.dataUrl) {
+    const logoBase64 = String(logo.dataUrl).split(",")[1] || "";
+    const logoBinary = atob(logoBase64);
+    const logoBytes = new Uint8Array(logoBinary.length);
+    for (let index = 0; index < logoBinary.length; index += 1) logoBytes[index] = logoBinary.charCodeAt(index);
+    logo.pdfBytes = logoBytes;
+    commands.push("q 180 0 0 46 52 756 cm /Im1 Do Q");
+  } else {
+    commands.push("q 0.18 0.54 0.95 rg 68 794 m 80 806 l 68 806 l h f Q");
+    text(52, 768, "Tito", 27, "F2", "0.03 0.08 0.22");
+    text(97, 768, "Pay", 27, "F2", "0.18 0.54 0.95");
+  }
+  text(52, 746, "Smart Payments. Simplified.", 8.6, "F1", "0.38 0.43 0.52");
+  const headerX = 352;
+  text(headerX, 776, "PROOF OF ACCOUNT", 15, "F2", "0.03 0.08 0.22");
+  text(headerX, 757, profileType, 9, "F1", "0.38 0.43 0.52");
+  text(headerX, 743, `Issued ${issuedDate} at ${issuedTime}`, 8.5, "F1", "0.38 0.43 0.52");
+  text(headerX, 730, `Letter no ${letterNo}`, 8.5, "F1", "0.38 0.43 0.52");
+
+  text(52, 678, issuedDate, 9.5, "F1", "0.38 0.43 0.52");
+  text(52, 652, "TO WHOM IT MAY CONCERN", 13, "F2", "0.03 0.08 0.22");
+  line(52, 644, 543, 644, "0.00 0.34 1.00", 1.2);
+
+  paragraph(
+    `This letter serves to confirm that ${accountName} holds a ${isBusiness ? "business" : "personal"} account with TitoPay, the South African digital wallet at app.titopay.co.za. The details of the account, as recorded on the TitoPay profile at the time of issue, are set out below.`,
+    622
+  );
+
+  // Details card, same style as the statement's account details panel.
+  const cardTop = cursorY - 10;
+  const cardHeight = 148;
+  const cardBottom = cardTop - cardHeight;
+  fill(52, cardBottom, 491, cardHeight, "0.99 0.99 1.00");
+  stroke(52, cardBottom, 491, cardHeight);
+  text(66, cardTop - 22, "ACCOUNT DETAILS", 10, "F2", "0.12 0.32 0.62");
+  const leftX = 66;
+  const rightX = 322;
+  const label = (x, y, value) => text(x, y, value, 7.5, "F1", "0.38 0.43 0.52");
+  const value = (x, y, valueText, size = 9.2) => text(x, y, valueText, size, "F2");
+  const nameLines = splitStatementText(accountName, 34, 2);
+  label(leftX, cardTop - 42, "ACCOUNT HOLDER");
+  nameLines.forEach((lineValue, index) => value(leftX, cardTop - 55 - index * 11, lineValue, index ? 8.4 : 9.4));
+  label(leftX, cardTop - 82, "USERNAME");
+  value(leftX, cardTop - 95, displayUsername(user.username) || "Not set", 8.8);
+  label(leftX, cardTop - 116, "WALLET ID");
+  value(leftX, cardTop - 129, compactStatementReference(displayWalletId(wallet), 24), 8.8);
+  label(rightX, cardTop - 42, "ACCOUNT TYPE");
+  value(rightX, cardTop - 55, isBusiness ? "Business" : "Personal");
+  label(rightX, cardTop - 82, "ACCOUNT OPENED");
+  value(rightX, cardTop - 95, accountOpenedLabel(user), 8.8);
+  label(rightX, cardTop - 116, "FICA STATUS");
+  value(rightX, cardTop - 129, ficaStatus, 8.8);
+
+  paragraph(
+    `Contact on record: ${statementContactLine(user)}.`,
+    cardBottom - 20, { size: 8.8, leading: 13 }
+  );
+  paragraph(
+    "TitoPay verifies member identity through its FICA verification process. This letter reflects the account holder's TitoPay profile at the time of issue, was generated electronically at the account holder's request, and is valid without a signature.",
+    cursorY - 8
+  );
+  paragraph(
+    `To confirm the authenticity of this letter, contact TitoPay Customer Care at support@titopay.co.za and quote letter number ${letterNo}.`,
+    cursorY - 8
+  );
+
+  text(52, cursorY - 26, "Issued by", 8.5, "F1", "0.38 0.43 0.52");
+  text(52, cursorY - 40, "TitoPay Customer Care", 10, "F2", "0.03 0.08 0.22");
+  text(52, cursorY - 53, "support@titopay.co.za", 8.5, "F1", "0.38 0.43 0.52");
+
+  // Official stamp badge -- same style and position as the statement's.
+  fill(392, 108, 151, 58, "0.95 0.97 1.00");
+  stroke(392, 108, 151, 58, "0.82 0.88 0.98");
+  centerText(467, 146, "OFFICIAL TITOPAY DOCUMENT", 7.5, "F2", "0.12 0.32 0.62");
+  centerText(467, 133, compactStatementReference(letterNo, 22), 6.4, "F1", "0.06 0.10 0.20");
+  centerText(467, 121, issuedDate, 6.2, "F1", "0.42 0.46 0.55");
+
+  line(52, 86, 543, 86);
+  text(52, 56, "Smart Payments. Simplified.", 7, "F1", "0.42 0.46 0.55");
+  text(52, 27, `Generated ${generatedAt}. This letter is generated electronically and is valid without signature.`, 6.2, "F1", "0.42 0.46 0.55");
+  const pageLabel = "Page 1 of 1";
+  text(543 - pageLabel.length * 7 * 0.5, 34, pageLabel, 7, "F1", "0.42 0.46 0.55");
+
+  return assembleStatementStylePdf(commands, logo);
+}
+
+// The statement's document assembly (fonts, optional wordmark XObject, xref),
+// shared by the proof-of-account letter so both PDFs are built identically.
+function assembleStatementStylePdf(commands, logo = null) {
   const content = commands.join("\n");
   const hasLogo = Boolean(logo?.pdfBytes?.length);
   const contentObjectNumber = hasLogo ? 7 : 6;

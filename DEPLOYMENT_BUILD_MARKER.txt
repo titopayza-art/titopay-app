@@ -1,1 +1,1 @@
-TitoPay PWA build: auto-signout-15s-v242-20260806
+TitoPay PWA build: proof-of-account-v243-20260806
