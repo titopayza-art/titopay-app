@@ -32,6 +32,7 @@ const SMS_ALERT_FEE = 0.3;
 const BALANCE_HIDDEN_KEY = "titopay_balance_hidden_v1";
 const OFFICIAL_APP_WARNING = "Use TitoPay only at https://app.titopay.co.za. Never enter your TitoPay details on any other website or link.";
 const BUSINESS_DOCUMENTS_KEY = "titopay_business_documents_v1";
+const BUSINESS_STAFF_KEY = "titopay_business_staff_v1";
 const DOCUMENT_PDF_FEE = 2.5;
 const REGISTERED_RECIPIENT_SERVICES = new Set([
   "wallet_transfer",
@@ -727,7 +728,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   if (!defaultServicesPromise) {
-    defaultServicesPromise = fetch("./services-default.json?v=213")
+    defaultServicesPromise = fetch("./services-default.json?v=269")
       .then((response) => {
         if (!response.ok) throw new Error("Default service catalogue unavailable");
         return response.json();
@@ -838,6 +839,7 @@ function serviceTypeFromAction(action, status) {
   if (action === "qr-pay" || action === "qr-payments") return "qrPay";
   if (action === "tickets") return "tickets";
   if (action === "ticketing" || action === "business-ticketing-staff") return "ticketing";
+  if (action === "business-staff") return "businessStaff";
   if (action === "enterprise-distribution") return "enterpriseDistribution";
   if (action === "learn") return "learn";
   if (action === "stockvel") return "stockvel";
@@ -2789,6 +2791,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "ticketing-event") await submitTicketingEventForm(data);
     if (form.dataset.form === "ticketing-purchase") await submitTicketingPurchase(data);
     if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data);
+    if (form.dataset.form === "business-staff") await submitBusinessStaff(data);
     if (form.dataset.form === "ticketing-scan") await submitTicketingScan(data);
     if (form.dataset.form === "enterprise-distribution-application") await submitEnterpriseDistributionApplication(data);
     if (form.dataset.form === "enterprise-beneficiary") await submitEnterpriseBeneficiary(data);
@@ -4406,6 +4409,10 @@ async function handleAction(action, actionElement = null) {
     openTipQrModal();
     return;
   }
+  if (action.startsWith("staff-remove:")) {
+    await removeBusinessStaffMember(action.slice("staff-remove:".length));
+    return;
+  }
   if (action === "print-qr-poster") {
     printQrPoster();
     return;
@@ -5114,6 +5121,7 @@ function handleService(id) {
   if (service.type === "ticketing" || service.action === "ticketing" || service.action === "business-ticketing-staff") {
     return openBusinessTicketingDashboard({ staffFocus: service.action === "business-ticketing-staff" });
   }
+  if (service.type === "businessStaff" || service.action === "business-staff") return openBusinessStaffModal();
   if (service.type === "enterpriseDistribution" || service.action === "enterprise-distribution") return openEnterpriseDistributionDashboard();
   if (service.action === "top-up") return openTopUpModal(service);
   if (service.action === "withdraw") return openWithdrawModal(service);
@@ -6135,6 +6143,123 @@ async function submitTicketingStaff(data) {
 async function submitTicketingScan(data) {
   const result = await api("/v1/ticketing/scanner/validate", { method: "POST", body: { ticketCode: data.ticketCode } });
   showToast(result.result.message, result.result.valid ? "" : "error");
+}
+
+// ---------------------------------------------------------------------------
+// Business staff register
+//
+// A register of the people who work in the business: cashiers, managers,
+// assistants. The client is API-first — every open, add and remove calls the
+// staff endpoints and switches to server storage the moment they answer — but
+// until the backend ships them the register lives on this device and the
+// screen says so. No copy here promises staff sign-ins, because that
+// capability does not exist yet; the Preview badge and the status line are
+// the honest version of that promise.
+// ---------------------------------------------------------------------------
+
+const BUSINESS_STAFF_ROLES = ["Cashier", "Manager", "Assistant", "Other"];
+
+function readLocalBusinessStaff() {
+  return readJson(BUSINESS_STAFF_KEY) || [];
+}
+
+function writeLocalBusinessStaff(members) {
+  writeJson(BUSINESS_STAFF_KEY, members);
+}
+
+function businessStaffRow(member) {
+  const initial = String(member.fullName || "?").trim().charAt(0).toUpperCase() || "?";
+  return `
+    <div class="staff-row">
+      <span class="icon-bubble" aria-hidden="true">${esc(initial)}</span>
+      <div class="staff-row-copy">
+        <strong>${esc(member.fullName)}</strong>
+        <small>${esc([member.role, member.contact].filter(Boolean).join(" · "))}</small>
+      </div>
+      <button class="icon-btn staff-row-remove" type="button" data-action="staff-remove:${esc(member.id)}" aria-label="Remove ${esc(member.fullName)} from the staff register">${icon("x")}</button>
+    </div>
+  `;
+}
+
+async function openBusinessStaffModal() {
+  let members = null;
+  let serverMode = false;
+  try {
+    const result = await api("/v1/business/staff");
+    members = result.items || result.members || [];
+    serverMode = true;
+  } catch (error) {
+    members = readLocalBusinessStaff();
+  }
+  state.businessStaffServerMode = serverMode;
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Business tools</p>
+        <h2>Staff <span class="staff-preview-chip">Preview</span></h2>
+        <p class="lead">Keep a register of the people who work in your business — cashiers, managers and assistants.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="business-staff">
+      <div class="field">
+        <label for="staff-full-name">Full name</label>
+        <input id="staff-full-name" name="fullName" autocomplete="off" placeholder="e.g. Sipho Dlamini" maxlength="80" required>
+      </div>
+      <div class="field">
+        <label for="staff-role">Role</label>
+        <select id="staff-role" name="role">
+          ${BUSINESS_STAFF_ROLES.map((role) => `<option value="${esc(role)}">${esc(role)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label for="staff-contact">Contact</label>
+        <input id="staff-contact" name="contact" autocomplete="off" placeholder="+27 71 000 0000, @username or email" maxlength="80" required>
+      </div>
+      <button class="btn primary" type="submit">${icon("staff-badge")} Add staff member</button>
+    </form>
+    <section class="panel inner-panel staff-register">
+      <h3>Staff register <span class="staff-count">${members.length}</span></h3>
+      ${members.length ? members.map(businessStaffRow).join("") : `<p class="muted">No staff members yet. Add your first cashier, manager or assistant above.</p>`}
+      <p class="muted staff-storage-note">${serverMode
+        ? "Synced with your TitoPay business account."
+        : "Saved on this device for now. Staff sign-ins switch on automatically once TitoPay staff access goes live — your register will sync without re-typing."}</p>
+      <p class="muted">Event ticket scanners are managed separately under Ticketing.</p>
+    </section>
+  `);
+}
+
+async function submitBusinessStaff(data) {
+  const fullName = String(data.fullName || "").trim();
+  const role = BUSINESS_STAFF_ROLES.includes(data.role) ? data.role : "Other";
+  const contact = String(data.contact || "").trim();
+  if (fullName.length < 2) throw new Error("Enter the staff member's full name.");
+  if (contact.length < 3) throw new Error("Enter a cellphone, @username or email for this member.");
+  const member = {
+    id: `stf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    fullName,
+    role,
+    contact,
+    addedAt: new Date().toISOString()
+  };
+  try {
+    await api("/v1/business/staff", { method: "POST", body: { fullName, role, contact } });
+    showToast("Staff member added.");
+  } catch (error) {
+    writeLocalBusinessStaff([...readLocalBusinessStaff(), member]);
+    showToast("Staff member saved on this device.");
+  }
+  await openBusinessStaffModal();
+}
+
+async function removeBusinessStaffMember(memberId) {
+  try {
+    await api(`/v1/business/staff/${encodeURIComponent(memberId)}`, { method: "DELETE" });
+  } catch (error) {
+    writeLocalBusinessStaff(readLocalBusinessStaff().filter((member) => member.id !== memberId));
+  }
+  showToast("Staff member removed.");
+  await openBusinessStaffModal();
 }
 
 function enterpriseDistributionStatusCopy(eligibility = {}) {

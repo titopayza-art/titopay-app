@@ -651,3 +651,33 @@ needed when the endpoint goes live — names appear automatically.
 Privacy note: this endpoint reveals an account holder's display name to anyone
 who scans their QR. That is the point of a payment QR, but the response should
 contain nothing beyond the fields above (no phone, email or wallet balance).
+
+## P1-5 — Business staff register (shipped v268 as a device-local preview)
+
+**Screen:** Services → Staff (business accounts only, "Preview" badge).
+
+**Today:** the PWA keeps a register of staff members (full name, role,
+contact) in the browser's localStorage, and the screen says so. The client
+is API-first: every open, add and remove already calls the endpoints below
+and switches to server storage the moment they answer — no client change
+needed.
+
+```
+GET    /v1/business/staff
+{ "items": [ { "id": "stf_1", "fullName": "Sipho Dlamini",
+               "role": "Cashier", "contact": "+27710000000",
+               "addedAt": "2026-08-06T19:00:00Z" } ] }
+
+POST   /v1/business/staff        { fullName, role, contact }  → { member }
+DELETE /v1/business/staff/:id    → { ok: true }
+```
+
+Roles the client sends: `Cashier`, `Manager`, `Assistant`, `Other`. Scope the
+register per business account, and RBAC-gate all three routes to the business
+owner's session.
+
+**The larger design task this preview points at:** role-scoped staff
+*sign-ins* (a cashier logging in on their own phone with limited
+permissions). That is an authentication/HR-system feature the client cannot
+fake and does not claim — the register above is deliberately only a roster
+until that exists.

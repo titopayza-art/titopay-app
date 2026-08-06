@@ -11738,3 +11738,79 @@ button,
   width: 22px;
   height: 22px;
 }
+
+/* Business staff register */
+.staff-preview-chip {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 8px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--soft-blue);
+  color: var(--blue);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.staff-register h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.staff-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.staff-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--card-line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+}
+
+.staff-row .icon-bubble {
+  font-weight: 700;
+  color: var(--blue);
+}
+
+.staff-row-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.staff-row-copy strong {
+  overflow-wrap: anywhere;
+}
+
+.staff-row-copy small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.staff-row-remove {
+  flex: 0 0 auto;
+}
+
+.staff-storage-note {
+  margin-top: 10px;
+}

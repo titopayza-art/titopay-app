@@ -407,6 +407,20 @@
       "feature_badge": "new"
     },
     {
+      "service_code": "business-staff",
+      "service_name": "Staff",
+      "service_icon": "staff-badge",
+      "action": "business-staff",
+      "description": "Keep a register of your cashiers, managers and assistants.",
+      "fee": 0,
+      "commission": 0,
+      "status": "active",
+      "personal_visible": false,
+      "business_visible": true,
+      "sort_order": 302,
+      "feature_badge": "preview"
+    },
+    {
       "service_code": "enterprise-distribution",
       "service_name": "Bulk Distribution",
       "service_icon": "grid",
