@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v267-stop-reload-loop";
+const CACHE_NAME = "titopay-pwa-v268-send-a-tip";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=267",
-  "./app.min.js?v=267",
+  "./styles.min.css?v=268",
+  "./app.min.js?v=268",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=213",
   "./manifest.webmanifest?v=193",

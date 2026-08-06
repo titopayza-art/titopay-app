@@ -4402,6 +4402,10 @@ async function handleAction(action, actionElement = null) {
     await openQrPosterModal("tip");
     return;
   }
+  if (action === "tip-qr") {
+    openTipQrModal();
+    return;
+  }
   if (action === "print-qr-poster") {
     printQrPoster();
     return;
@@ -9663,6 +9667,55 @@ function printQrPoster() {
 }
 
 function openTipModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Tip</p><h2>Send a Tip</h2><p class="lead">Show appreciation for great service — send a tip to anyone on TitoPay instantly from your wallet.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${balanceContextRow("Wallet")}
+    <form class="form-grid stable-service-form" data-form="transaction">
+      <input type="hidden" name="serviceCode" value="tip">
+      <input type="hidden" name="recipientMethod" value="auto">
+      <div class="field">
+        <label for="tip-recipient">Tip recipient (username, phone or email)</label>
+        <input id="tip-recipient" name="recipient" autocomplete="off" placeholder="@username or +27 71 000 0000" required>
+      </div>
+      <div class="field">
+        <span class="field-label">Quick amounts</span>
+        ${quickAmountChips([5, 10, 20, 50, 100])}
+      </div>
+      <button class="tip-scan-btn" type="button" data-service="qr-pay">${icon("qr")} Or scan their TitoPay QR</button>
+      <div class="field">
+        <label for="tip-amount">Tip amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="tip-amount" name="amount" inputmode="decimal" required></div>
+      </div>
+      <div class="field">
+        <label for="tip-message">Message</label>
+        <select id="tip-message" name="reference">
+          <option value="Thank you" selected>Thank you</option>
+          <option value="Great service">Great service</option>
+          <option value="Keep the change">Keep the change</option>
+          <option value="For your help">For your help</option>
+          <option value="Well done">Well done</option>
+        </select>
+      </div>
+      <button class="btn primary" type="submit">${icon("tip")} Send Tip</button>
+    </form>
+    <section class="reassure-card" role="note" aria-label="Receiving tips">
+      <span class="icon-bubble">${icon("qr")}</span>
+      <div>
+        <strong>Receiving tips?</strong>
+        <small>Generate your own Tip QR or print the A4 counter poster, and every tip lands straight in your wallet.</small>
+      </div>
+    </section>
+    <div class="auth-actions">
+      <button class="btn secondary" data-action="tip-qr">${icon("tip")} Generate Tip QR</button>
+      <button class="btn secondary" data-action="tip-poster">${icon("qr")} Tip A4 poster</button>
+    </div>
+  `);
+}
+
+function openTipQrModal() {
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Tip</p><h2>Generate Tip QR</h2><p class="lead">Create a TitoPay Tip QR, share it, and track tips in transaction history.</p></div>

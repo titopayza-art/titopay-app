@@ -11706,3 +11706,35 @@ button,
 .balance-context {
   border-color: var(--card-line);
 }
+
+/* Send a Tip: the "or scan their QR" alternative reads as a distinct, optional
+   path — a dashed pill, deliberately different from the solid form controls
+   around it so the two ways of picking a recipient cannot be confused. */
+.tip-scan-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 16px;
+  border: 1.5px dashed rgba(10, 77, 255, 0.35);
+  border-radius: var(--radius-control);
+  background: rgba(234, 241, 255, 0.55);
+  color: var(--blue);
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 180ms var(--ease-premium), border-color 180ms var(--ease-premium);
+}
+
+.tip-scan-btn:hover {
+  background: var(--soft-blue);
+  border-color: rgba(10, 77, 255, 0.5);
+}
+
+.tip-scan-btn svg {
+  width: 22px;
+  height: 22px;
+}
