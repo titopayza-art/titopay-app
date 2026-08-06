@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v51";
+const ADMIN_ASSET_VERSION = "admin-console-v52";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -268,7 +268,20 @@ function chipClass(status = "") {
   return "blue";
 }
 
-function showToast(message) {
+/* Every existing caller passes a message and nothing else, so the tone is
+   read from the message itself. A confirmation and a failure no longer look
+   identical, and no call site had to change to get it. */
+const TOAST_ERROR_PATTERN = /\b(unable|failed|failure|cannot|can't|could not|error|invalid|expired|denied|rejected|not allowed|unavailable|no longer)\b/i;
+const TOAST_SUCCESS_PATTERN = /\b(saved|updated|created|added|sent|queued|approved|resolved|completed|refreshed|exported|disabled|enabled|assigned|closed|reopened|released|transferred|archived|acknowledged|reversed|verified|rotated|retried|cancelled|signed out|taken over|applied|reloaded)\b/i;
+
+function toastTone(message) {
+  const text = String(message || "");
+  if (TOAST_ERROR_PATTERN.test(text)) return "error";
+  if (TOAST_SUCCESS_PATTERN.test(text)) return "success";
+  return "info";
+}
+
+function showToast(message, tone) {
   let toast = document.querySelector(".toast");
   if (!toast) {
     toast = document.createElement("div");
@@ -277,7 +290,9 @@ function showToast(message) {
     toast.setAttribute("aria-live", "polite");
     document.body.appendChild(toast);
   }
-  toast.textContent = adminErrorMessage(message);
+  const text = adminErrorMessage(message);
+  toast.textContent = text;
+  toast.dataset.tone = tone || toastTone(text);
   clearTimeout(showToast._timer);
   showToast._timer = setTimeout(() => toast.remove(), 2600);
 }
@@ -568,6 +583,51 @@ function adminEnvironment() {
   return { label: "Non-production", nonProd: true };
 }
 
+const ADMIN_RAIL_KEY = "titopay_admin_rail_v1";
+
+/* Rail collapse. Persisted per browser so an operator who works in tables
+   keeps the wide workspace across navigations and sessions. The navigation
+   itself is untouched: every item keeps its route, icon and accessible name,
+   and the state is ignored below the tablet breakpoint where the rail is
+   already a drawer. */
+function storedRailState() {
+  try {
+    return localStorage.getItem(ADMIN_RAIL_KEY) === "collapsed" ? "collapsed" : "expanded";
+  } catch {
+    return "expanded";
+  }
+}
+
+function applyRailState(state) {
+  const next = state === "collapsed" ? "collapsed" : "expanded";
+  const shell = document.querySelector(".admin-shell");
+  if (shell) {
+    if (next === "collapsed") shell.dataset.rail = "collapsed";
+    else delete shell.dataset.rail;
+  }
+  const toggle = document.querySelector("[data-rail-toggle]");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", next === "collapsed" ? "false" : "true");
+    toggle.setAttribute("aria-label", next === "collapsed" ? "Expand navigation" : "Collapse navigation");
+    toggle.title = next === "collapsed" ? "Expand navigation" : "Collapse navigation";
+  }
+  document.querySelectorAll("#admin-nav .nav-link").forEach((link) => {
+    // Collapsed to icons, the label is the only thing that says where a link
+    // goes, so it moves to the tooltip rather than disappearing.
+    if (next === "collapsed") link.title = link.textContent.trim();
+    else link.removeAttribute("title");
+  });
+  try {
+    localStorage.setItem(ADMIN_RAIL_KEY, next);
+  } catch {}
+}
+
+/* A 2px line under the topbar while a module's first request is in flight. */
+function setRouteProgress(active) {
+  const bar = document.getElementById("route-progress");
+  if (bar) bar.dataset.active = active ? "true" : "false";
+}
+
 const ADMIN_THEME_KEY = "titopay_admin_theme_v1";
 
 function applyAdminTheme(theme) {
@@ -692,8 +752,12 @@ function renderTopbar(page, title) {
   const environment = adminEnvironment();
   return `
     <header class="admin-topbar">
+      <div class="route-progress" id="route-progress" data-active="false" aria-hidden="true"></div>
       <button class="nav-toggle" type="button" data-nav-toggle aria-label="Open navigation" aria-controls="admin-sidebar" aria-expanded="false">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <button class="rail-toggle" type="button" data-rail-toggle aria-controls="admin-sidebar" aria-expanded="true" aria-label="Collapse navigation" title="Collapse navigation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16M4 12h9M4 19h16m6-7-4 3.5V8.5L20 12Z"/></svg>
       </button>
       <nav class="topbar-crumbs" id="admin-crumbs" aria-label="Breadcrumb">
         <span class="crumb-section">${escapeHtml(navGroupTitleFor(page))}</span>
@@ -782,11 +846,24 @@ function bindConsoleChrome() {
     applyAdminTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   });
 
+  document.querySelector("[data-rail-toggle]")?.addEventListener("click", () => {
+    applyRailState(document.querySelector(".admin-shell")?.dataset.rail === "collapsed" ? "expanded" : "collapsed");
+  });
+
+  applyRailState(storedRailState());
+
   document.querySelector("[data-nav-toggle]")?.addEventListener("click", () => {
     setNavDrawer(document.querySelector(".admin-shell")?.dataset.nav !== "open");
   });
 
   document.querySelector("[data-nav-close]")?.addEventListener("click", () => setNavDrawer(false));
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.querySelector(".admin-shell")?.dataset.nav === "open") {
+      setNavDrawer(false);
+      document.querySelector("[data-nav-toggle]")?.focus();
+    }
+  });
 
   document.getElementById("admin-nav")?.addEventListener("click", (event) => {
     if (event.target.closest(".nav-link")) setNavDrawer(false);
@@ -835,6 +912,8 @@ function pageShell(page, me, title, subtitle, controls = "") {
     if (active) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
+
+  applyRailState(storedRailState());
 
   const crumbs = document.getElementById("admin-crumbs");
   if (crumbs) {
@@ -1139,7 +1218,9 @@ function renderMetrics(metrics) {
 }
 
 function renderRows(rows, columns, actions = () => "") {
-  if (!rows.length) return `<div class="empty">No records available.</div>`;
+  if (!rows.length) {
+    return `<div class="empty"><strong>Nothing to show yet</strong><small>The TitoPay API returned no records for this view. Adjust the filters above, or refresh once the queue has activity.</small></div>`;
+  }
   return `
     <div class="table-wrap">
       <table>
@@ -1442,19 +1523,118 @@ function dashboardQuickLinks(limit = 6) {
   return links ? `<div class="quick-link-grid">${links}</div>` : "";
 }
 
+/* == Dashboard ============================================================
+   The operational overview an operator lands on. It keeps the four figures the
+   previous build showed and the endpoint that produced them, then fills the
+   rest of the board from modules that were already live. The first paint is
+   driven by /admin/dashboard/overview alone, exactly as before; everything
+   else arrives afterwards and never blocks it.
+
+   A card whose source did not answer shows a dash. Nothing here is estimated.
+   ======================================================================== */
+
+function dashboardTile(label, value, meta = "", tone = "", id = "") {
+  const known = value !== null && value !== undefined && value !== "";
+  return `
+    <article class="metric-card"${id ? ` id="${escapeHtml(id)}"` : ""}>
+      ${tone ? `<span class="metric-indicator ${escapeHtml(tone)}" aria-hidden="true"></span>` : ""}
+      <span>${escapeHtml(label)}</span>
+      <strong>${known ? escapeHtml(String(value)) : "—"}</strong>
+      <small class="metric-meta">${escapeHtml(meta)}</small>
+    </article>
+  `;
+}
+
+function updateDashboardTile(id, value, meta, tone = "") {
+  const tile = document.getElementById(id);
+  if (!tile) return;
+  const known = value !== null && value !== undefined && value !== "";
+  tile.querySelector("strong").textContent = known ? String(value) : "—";
+  const metaNode = tile.querySelector(".metric-meta");
+  if (metaNode) metaNode.textContent = meta || "";
+  tile.querySelector(".metric-indicator")?.remove();
+  if (tone) {
+    const indicator = document.createElement("span");
+    indicator.className = `metric-indicator ${tone}`;
+    indicator.setAttribute("aria-hidden", "true");
+    tile.prepend(indicator);
+  }
+}
+
+function dashboardStatusRow(label, value, tone = "neutral", detail = "") {
+  const chipTone = { ok: "green", warn: "orange", bad: "red", info: "blue", neutral: "" }[tone] || "";
+  return `
+    <div class="tp-health-row">
+      <span class="tp-health-label">${escapeHtml(label)}</span>
+      <span class="tp-health-value">
+        <span class="chip ${chipTone}">${escapeHtml(value)}</span>
+        ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
+      </span>
+    </div>
+  `;
+}
+
+function dashboardActivityList(events) {
+  if (!events.length) {
+    return `<div class="empty"><strong>No recent activity</strong><small>Administrative actions appear here as they are written to the audit log.</small></div>`;
+  }
+  return `
+    <ol class="tp-activity">
+      ${events.map((event) => `
+        <li>
+          <span class="tp-activity-dot ${escapeHtml(event.tone || "")}" aria-hidden="true"></span>
+          <span class="tp-activity-body">
+            <strong>${escapeHtml(event.action)}</strong>
+            <small>${escapeHtml(event.detail)}</small>
+          </span>
+          <time>${escapeHtml(event.when)}</time>
+        </li>
+      `).join("")}
+    </ol>
+  `;
+}
+
+function dashboardRelativeTime(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "-";
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+  return date.toLocaleDateString("en-ZA", { day: "2-digit", month: "short" });
+}
+
+/* Best-effort read. A module that does not answer leaves its cards blank
+   rather than taking the dashboard down with it. */
+async function dashboardSource(path) {
+  try {
+    return { ok: true, data: await apiFetch(path) };
+  } catch {
+    return { ok: false, data: null };
+  }
+}
+
 async function renderDashboard(me) {
   const overview = await apiFetch("/admin/dashboard/overview");
   const page = document.getElementById("page-content");
   const lockedProfiles = Number(overview.lockedProfiles || 0);
   const pendingCompliance = Number(overview.pendingCompliance || 0);
   const attention = lockedProfiles + pendingCompliance;
+
   page.innerHTML = `
-    ${renderMetrics([
-      ["Users", overview.users],
-      ["Merchants", overview.merchants],
-      ["Transactions", overview.transactions],
-      ["Revenue", money(overview.revenue)],
-    ])}
+    <section class="metrics-grid">
+      ${dashboardTile("Users", overview.users, "Registered accounts")}
+      ${dashboardTile("Merchants", overview.merchants, "Businesses on the platform")}
+      ${dashboardTile("Transactions", overview.transactions, "Processed to date")}
+      ${dashboardTile("Revenue", money(overview.revenue), "Recorded platform revenue")}
+    </section>
+    <section class="metrics-grid" id="dashboard-secondary">
+      ${dashboardTile("Wallet Float", null, "Loading wallet balances", "", "tile-wallet-float")}
+      ${dashboardTile("Active Sessions", null, "Loading session activity", "", "tile-sessions")}
+      ${dashboardTile("Pending KYC", pendingCompliance, "Awaiting a compliance decision", pendingCompliance ? "orange" : "green", "tile-kyc")}
+      ${dashboardTile("Open Tickets", null, "Loading support queue", "", "tile-tickets")}
+    </section>
     <section class="admin-dashboard-grid">
       <article class="panel">
         <h3>Needs attention</h3>
@@ -1468,6 +1648,14 @@ async function renderDashboard(me) {
             <span>Pending compliance reviews</span>
             <strong>${escapeHtml(String(pendingCompliance))}</strong>
           </span>
+          <span>
+            <span>Merchants awaiting verification</span>
+            <strong id="dashboard-merchant-pending">—</strong>
+          </span>
+          <span>
+            <span>Security events flagged</span>
+            <strong id="dashboard-fraud-alerts">—</strong>
+          </span>
         </div>
         <p class="table-card-note">${attention
           ? `${attention} item${attention === 1 ? "" : "s"} open across the review queues.`
@@ -1475,8 +1663,13 @@ async function renderDashboard(me) {
         ${dashboardQuickLinks()}
       </article>
       <article class="panel">
-        <h3>Session</h3>
-        <p>Platform overview for the account you are signed in with.</p>
+        <h3>Platform health</h3>
+        <p>Live status of the API, the database and the connected providers.</p>
+        <div class="tp-health-list" id="dashboard-health">
+          ${dashboardStatusRow("API", "Responding", "ok", "Overview request answered")}
+          ${dashboardStatusRow("Database", "Checking", "info", "")}
+          ${dashboardStatusRow("Providers", "Checking", "info", "")}
+        </div>
         ${renderKeyValueList([
           ["Role", adminPositionLabel(me.role)],
           ["Environment", adminEnvironment().label],
@@ -1485,7 +1678,110 @@ async function renderDashboard(me) {
         <p class="table-card-note">The customer PWA stays isolated: the admin console and the TitoPay API operate as separate layers, and every sensitive action here is written to the audit log.</p>
       </article>
     </section>
+    <section class="table-card">
+      <div class="table-card-header">
+        <div>
+          <h3>Live activity</h3>
+          <p class="table-card-note">The most recent administrative actions written to the audit log.</p>
+        </div>
+        <a class="table-card-meta" href="/audit/">Open audit log</a>
+      </div>
+      <div id="dashboard-activity"><div class="admin-skeleton admin-skeleton-inline" aria-hidden="true"><span></span></div></div>
+    </section>
   `;
+
+  // Deliberately not awaited: the four primary figures are already on screen,
+  // so the first paint is no slower than it was before this board existed.
+  hydrateDashboard().catch(() => {
+    ["tile-wallet-float", "tile-sessions", "tile-tickets"].forEach((id) => updateDashboardTile(id, null, "Module unavailable"));
+    const activity = document.getElementById("dashboard-activity");
+    if (activity) activity.innerHTML = dashboardActivityList([]);
+  });
+}
+
+async function hydrateDashboard() {
+  const [wallets, merchants, tickets, security, health, audit, providers] = await Promise.all([
+    dashboardSource("/admin/wallets"),
+    dashboardSource("/admin/merchants"),
+    dashboardSource("/admin/support/tickets"),
+    dashboardSource("/admin/security"),
+    dashboardSource("/admin/module-health"),
+    dashboardSource("/admin/audit"),
+    dashboardSource("/admin/integrations/config"),
+  ]);
+
+  // The operator may have navigated away while these were in flight.
+  if (!document.getElementById("dashboard-secondary")) return;
+
+  const walletRows = wallets.ok ? (wallets.data.items || []) : null;
+  const merchantRows = merchants.ok ? (merchants.data.items || []) : null;
+  const ticketRows = tickets.ok ? (tickets.data.items || []) : null;
+  const sessions = security.ok ? (security.data.adminSessions || []) : null;
+  const tables = health.ok ? (health.data.tables || []) : null;
+  const auditRows = audit.ok ? (audit.data.items || []) : null;
+  const providerRows = providers.ok ? (providers.data.items || providers.data.providers || []) : null;
+
+  const walletFloat = walletRows
+    ? walletRows.reduce((total, row) => total + Number(row.available_balance || 0) + Number(row.reserved_balance || 0), 0)
+    : null;
+  const activeSessions = sessions ? sessions.filter((row) => !row.revoked_at).length : null;
+  const openTickets = ticketRows
+    ? ticketRows.filter((row) => ["open", "in_progress", "pending"].includes(String(row.status || "").toLowerCase())).length
+    : null;
+  const pendingMerchants = merchantRows
+    ? merchantRows.filter((row) => String(row.verification_status || "").toLowerCase() !== "verified").length
+    : null;
+  const flaggedEvents = auditRows
+    ? auditRows.filter((row) => /fraud|suspicious|alert|blocked|abuse|lock|revoke/i.test(String(row.action || ""))).length
+    : null;
+
+  updateDashboardTile("tile-wallet-float", walletFloat === null ? null : money(walletFloat), walletRows ? `Across ${walletRows.length} wallets` : "Wallet module unavailable");
+  updateDashboardTile("tile-sessions", activeSessions, sessions ? "Staff sessions not revoked" : "Security module unavailable");
+  updateDashboardTile("tile-tickets", openTickets, ticketRows ? `${ticketRows.length} tickets on record` : "Support module unavailable", openTickets ? "orange" : openTickets === 0 ? "green" : "");
+
+  setDashboardText("dashboard-merchant-pending", pendingMerchants === null ? "—" : String(pendingMerchants));
+  setDashboardText("dashboard-fraud-alerts", flaggedEvents === null ? "—" : String(flaggedEvents));
+
+  const healthHost = document.getElementById("dashboard-health");
+  if (healthHost) {
+    const present = tables ? tables.filter((row) => row.exists).length : 0;
+    const missing = tables ? tables.length - present : 0;
+    const providersLive = providerRows
+      ? providerRows.filter((row) => ["active", "enabled", "live", "connected", "ok", "configured"].includes(String(row.status || row.state || "").toLowerCase())).length
+      : null;
+    healthHost.innerHTML = `
+      ${dashboardStatusRow("API", "Responding", "ok", "Overview request answered")}
+      ${tables
+        ? dashboardStatusRow("Database", missing ? `${missing} table${missing === 1 ? "" : "s"} missing` : "All tables present", missing ? "bad" : "ok", `${present} of ${tables.length} required tables`)
+        : dashboardStatusRow("Database", "Not reported", "neutral", "Health module did not answer")}
+      ${providerRows
+        ? dashboardStatusRow("Providers", `${providersLive} of ${providerRows.length} active`, providersLive === providerRows.length ? "ok" : providersLive ? "warn" : "bad", "Third-party integrations")
+        : dashboardStatusRow("Providers", "Not reported", "neutral", "Integration module did not answer")}
+      ${sessions
+        ? dashboardStatusRow("Sessions", `${activeSessions} active`, "info", `${sessions.length} on record`)
+        : dashboardStatusRow("Sessions", "Not reported", "neutral", "Security module did not answer")}
+    `;
+  }
+
+  const activityHost = document.getElementById("dashboard-activity");
+  if (activityHost) {
+    const events = (auditRows || []).slice(0, 8).map((row) => {
+      const action = String(row.action || "action").replace(/[_-]+/g, " ");
+      const critical = /fraud|suspicious|blocked|lock|revoke|delete|reverse/i.test(action);
+      return {
+        action: action.replace(/\b\w/g, (letter) => letter.toUpperCase()),
+        detail: [row.actor_type, row.target_type, row.target_id].filter(Boolean).join(" · ") || "Platform event",
+        when: dashboardRelativeTime(row.created_at),
+        tone: critical ? "bad" : "ok",
+      };
+    });
+    activityHost.innerHTML = dashboardActivityList(events);
+  }
+}
+
+function setDashboardText(id, value) {
+  const element = document.getElementById(id);
+  if (element) element.textContent = value;
 }
 
 const SEARCH_TABS = [
@@ -3996,6 +4292,405 @@ async function renderAnalytics(me = {}) {
   await module.renderAnalytics(me, ANALYTICS_HOST);
 }
 
+/* == Table enhancement layer ==============================================
+   Every table the console renders gains sorting, a row filter, bulk selection,
+   export and column resizing. The layer works on the table that is already on
+   screen: it reorders, hides and reads rows, and never refetches, never calls
+   an endpoint and never changes what a module rendered. Modules were not
+   modified to receive it — a MutationObserver picks up each table as it
+   appears, including the ones modules re-render internally.
+   ======================================================================== */
+
+const TABLE_TOOLS_MIN_ROWS = 6;
+
+function tableBodyRows(table) {
+  return Array.from(table.tBodies?.[0]?.rows || []);
+}
+
+function tableHeaderCells(table) {
+  return Array.from(table.tHead?.rows?.[0]?.cells || []);
+}
+
+function tableCellText(row, index) {
+  return (row.cells?.[index]?.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+/* Reads a cell as a figure. Handles the two decimal conventions the console
+   emits — "R 1,234.56" from Intl and "1 234,56" from a locale that groups with
+   spaces — and returns null for anything that is not predominantly a number. */
+function tableNumericValue(text) {
+  if (!/\d/.test(text)) return null;
+  if (!/^[^\d]{0,4}[\d\s.,-]+[^\d]{0,4}$/.test(text)) return null;
+  let digits = text.replace(/[^\d.,-]/g, "");
+  if (!digits || !/\d/.test(digits)) return null;
+  const lastComma = digits.lastIndexOf(",");
+  const lastDot = digits.lastIndexOf(".");
+  digits = lastComma > lastDot ? digits.replace(/\./g, "").replace(",", ".") : digits.replace(/,/g, "");
+  const value = Number(digits);
+  return Number.isFinite(value) ? value : null;
+}
+
+function tableDateValue(text) {
+  if (!/\d{4}|\d{1,2}[/-]\d{1,2}/.test(text)) return null;
+  const time = Date.parse(text);
+  return Number.isNaN(time) ? null : time;
+}
+
+function compareTableCells(left, right) {
+  const leftNumber = tableNumericValue(left);
+  const rightNumber = tableNumericValue(right);
+  if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
+  const leftDate = tableDateValue(left);
+  const rightDate = tableDateValue(right);
+  if (leftDate !== null && rightDate !== null) return leftDate - rightDate;
+  // Blanks sort last in both directions rather than clustering at the top.
+  if (!left && right) return 1;
+  if (left && !right) return -1;
+  return left.localeCompare(right, "en-ZA", { numeric: true, sensitivity: "base" });
+}
+
+function sortTableBy(table, index, direction) {
+  const body = table.tBodies?.[0];
+  if (!body) return;
+  const rows = tableBodyRows(table);
+  if (direction === "none") {
+    rows
+      .slice()
+      .sort((a, b) => Number(a.dataset.tpRow || 0) - Number(b.dataset.tpRow || 0))
+      .forEach((row) => body.appendChild(row));
+  } else {
+    const factor = direction === "descending" ? -1 : 1;
+    rows
+      .slice()
+      .sort((a, b) => factor * compareTableCells(tableCellText(a, index), tableCellText(b, index)))
+      .forEach((row) => body.appendChild(row));
+  }
+  tableHeaderCells(table).forEach((cell, cellIndex) => {
+    const active = cellIndex === index && direction !== "none";
+    if (active) cell.setAttribute("aria-sort", direction);
+    else cell.removeAttribute("aria-sort");
+    const mark = cell.querySelector(".tp-sort-mark");
+    if (mark) mark.textContent = active ? (direction === "ascending" ? "▲" : "▼") : "↕";
+  });
+}
+
+/* Locks the current column widths in pixels before the first drag so the
+   dragged column is the only one that moves. Written through CSSOM, never as a
+   style attribute, so the console's `style-src 'self'` policy still holds. */
+function lockTableLayout(table) {
+  if (table.dataset.tpLocked) return;
+  const cells = tableHeaderCells(table);
+  const widths = cells.map((cell) => cell.getBoundingClientRect().width);
+  cells.forEach((cell, index) => {
+    const width = `${Math.round(widths[index])}px`;
+    cell.style.width = width;
+    cell.style.minWidth = width;
+    cell.style.maxWidth = width;
+  });
+  table.style.tableLayout = "fixed";
+  table.dataset.tpLocked = "1";
+}
+
+function bindColumnResize(table, cell) {
+  const handle = document.createElement("span");
+  handle.className = "tp-col-resize";
+  handle.setAttribute("aria-hidden", "true");
+  cell.appendChild(handle);
+
+  handle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    lockTableLayout(table);
+    const startX = event.clientX;
+    const startWidth = cell.getBoundingClientRect().width;
+    handle.classList.add("is-active");
+    handle.setPointerCapture(event.pointerId);
+
+    const move = (moveEvent) => {
+      const width = `${Math.max(64, Math.round(startWidth + (moveEvent.clientX - startX)))}px`;
+      cell.style.width = width;
+      cell.style.minWidth = width;
+      cell.style.maxWidth = width;
+    };
+    const stop = () => {
+      handle.classList.remove("is-active");
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  });
+}
+
+function tableVisibleRows(table) {
+  return tableBodyRows(table).filter((row) => !row.hidden);
+}
+
+function tableSelectedRows(table) {
+  return tableBodyRows(table).filter((row) => row.dataset.tpSelected === "1");
+}
+
+function updateTableCount(table) {
+  const tools = table.tpTools;
+  if (!tools) return;
+  const total = tableBodyRows(table).length;
+  const visible = tableVisibleRows(table).length;
+  tools.count.textContent = visible === total
+    ? `${total} row${total === 1 ? "" : "s"}`
+    : `${visible} of ${total} rows`;
+}
+
+function updateSelectionBar(table) {
+  const tools = table.tpTools;
+  if (!tools?.selectBar) return;
+  const selected = tableSelectedRows(table).length;
+  tools.selectBar.hidden = selected === 0;
+  if (selected) tools.selectLabel.textContent = `${selected} row${selected === 1 ? "" : "s"} selected`;
+  const selectAll = table.querySelector("th.tp-select-cell input");
+  if (selectAll) {
+    const visible = tableVisibleRows(table).length;
+    selectAll.checked = selected > 0 && selected === visible;
+    selectAll.indeterminate = selected > 0 && selected < visible;
+  }
+}
+
+function setRowSelected(row, selected) {
+  if (selected) row.dataset.tpSelected = "1";
+  else delete row.dataset.tpSelected;
+  const box = row.querySelector("td.tp-select-cell input");
+  if (box) box.checked = selected;
+}
+
+function setTableSelectionMode(table, enabled) {
+  const headRow = table.tHead?.rows?.[0];
+  if (!headRow) return;
+  if (enabled) {
+    if (headRow.querySelector("th.tp-select-cell")) return;
+    const headCell = document.createElement("th");
+    headCell.className = "tp-select-cell";
+    const selectAll = document.createElement("input");
+    selectAll.type = "checkbox";
+    selectAll.setAttribute("aria-label", "Select all visible rows");
+    selectAll.addEventListener("change", () => {
+      tableVisibleRows(table).forEach((row) => setRowSelected(row, selectAll.checked));
+      updateSelectionBar(table);
+    });
+    headCell.appendChild(selectAll);
+    headRow.insertBefore(headCell, headRow.firstElementChild);
+
+    tableBodyRows(table).forEach((row) => {
+      const cell = row.insertCell(0);
+      cell.className = "tp-select-cell";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.setAttribute("aria-label", "Select row");
+      box.addEventListener("change", () => {
+        setRowSelected(row, box.checked);
+        updateSelectionBar(table);
+      });
+      cell.appendChild(box);
+    });
+  } else {
+    headRow.querySelector("th.tp-select-cell")?.remove();
+    tableBodyRows(table).forEach((row) => {
+      row.querySelector("td.tp-select-cell")?.remove();
+      delete row.dataset.tpSelected;
+    });
+  }
+  updateSelectionBar(table);
+}
+
+/* Exports what is on screen, in the order it is on screen: the current sort,
+   the current filter and, when rows are ticked, only those rows. */
+function exportTableRows(table, onlySelected) {
+  const headers = tableHeaderCells(table)
+    .map((cell) => cell.textContent.replace(/[▲▼↕]/g, "").replace(/\s+/g, " ").trim())
+    .map((label, index) => label || `Column ${index + 1}`);
+  const source = onlySelected ? tableSelectedRows(table) : tableVisibleRows(table);
+  const rows = source.map((row) => {
+    const record = {};
+    Array.from(row.cells).forEach((cell, index) => {
+      const key = headers[index] || `Column ${index + 1}`;
+      if (key === "Actions" || cell.classList.contains("tp-select-cell")) return;
+      record[key] = (cell.textContent || "").replace(/\s+/g, " ").trim();
+    });
+    return record;
+  });
+  const page = document.querySelector(".admin-shell[data-page]")?.dataset.page || "table";
+  downloadCsv(`titopay-${page}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+}
+
+function buildTableTools(table) {
+  const tools = document.createElement("div");
+  tools.className = "tp-table-tools";
+
+  const main = document.createElement("div");
+  main.className = "tp-table-tools-main";
+
+  const searchLabel = document.createElement("label");
+  searchLabel.className = "tp-table-search";
+  searchLabel.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>`;
+  const search = document.createElement("input");
+  search.type = "search";
+  search.placeholder = "Filter rows on this page";
+  search.setAttribute("aria-label", "Filter the rows shown in this table");
+  searchLabel.appendChild(search);
+
+  const count = document.createElement("span");
+  count.className = "tp-table-count";
+  count.setAttribute("role", "status");
+
+  main.append(searchLabel, count);
+
+  const actions = document.createElement("div");
+  actions.className = "tp-table-tools-actions";
+
+  const selectToggle = document.createElement("button");
+  selectToggle.type = "button";
+  selectToggle.className = "tp-tool-btn";
+  selectToggle.setAttribute("aria-pressed", "false");
+  selectToggle.textContent = "Select rows";
+
+  const exportButton = document.createElement("button");
+  exportButton.type = "button";
+  exportButton.className = "tp-tool-btn";
+  exportButton.textContent = "Export table";
+
+  actions.append(selectToggle, exportButton);
+  tools.append(main, actions);
+
+  const selectBar = document.createElement("div");
+  selectBar.className = "tp-select-bar";
+  selectBar.hidden = true;
+  const selectLabel = document.createElement("strong");
+  const exportSelected = document.createElement("button");
+  exportSelected.type = "button";
+  exportSelected.className = "tp-tool-btn";
+  exportSelected.textContent = "Export selected";
+  const clearSelection = document.createElement("button");
+  clearSelection.type = "button";
+  clearSelection.className = "tp-tool-btn";
+  clearSelection.textContent = "Clear selection";
+  selectBar.append(selectLabel, exportSelected, clearSelection);
+
+  table.tpTools = { count, selectBar, selectLabel };
+
+  search.addEventListener("input", () => {
+    const query = search.value.trim().toLowerCase();
+    tableBodyRows(table).forEach((row) => {
+      row.hidden = Boolean(query) && !row.textContent.toLowerCase().includes(query);
+    });
+    updateTableCount(table);
+    updateSelectionBar(table);
+  });
+
+  selectToggle.addEventListener("click", () => {
+    const enabled = selectToggle.getAttribute("aria-pressed") !== "true";
+    selectToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+    selectToggle.textContent = enabled ? "Done selecting" : "Select rows";
+    setTableSelectionMode(table, enabled);
+  });
+
+  exportButton.addEventListener("click", () => {
+    exportTableRows(table, false);
+    showToast("Table exported", "success");
+  });
+
+  exportSelected.addEventListener("click", () => {
+    exportTableRows(table, true);
+    showToast("Selected rows exported", "success");
+  });
+
+  clearSelection.addEventListener("click", () => {
+    tableBodyRows(table).forEach((row) => setRowSelected(row, false));
+    updateSelectionBar(table);
+  });
+
+  return { tools, selectBar };
+}
+
+function enhanceTable(table) {
+  if (table.dataset.tpEnhanced) return;
+  table.dataset.tpEnhanced = "1";
+
+  const headerCells = tableHeaderCells(table);
+  const rows = tableBodyRows(table);
+  if (!headerCells.length) return;
+
+  rows.forEach((row, index) => {
+    row.dataset.tpRow = String(index);
+  });
+
+  // renderRows() closes every table it builds with an Actions column. Sorting
+  // or resizing that column means nothing, so it is left alone.
+  const lastIndex = headerCells.length - 1;
+  const actionsColumn = headerCells[lastIndex]?.textContent.trim().toLowerCase() === "actions";
+
+  headerCells.forEach((cell, index) => {
+    if (actionsColumn && index === lastIndex) return;
+    cell.dataset.tpSortable = "1";
+    cell.tabIndex = 0;
+    cell.setAttribute("role", "columnheader");
+    const mark = document.createElement("span");
+    mark.className = "tp-sort-mark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.textContent = "↕";
+    cell.appendChild(mark);
+
+    const cycle = () => {
+      const current = cell.getAttribute("aria-sort");
+      const next = current === "ascending" ? "descending" : current === "descending" ? "none" : "ascending";
+      sortTableBy(table, index, next);
+    };
+    cell.addEventListener("click", (event) => {
+      if (event.target.closest(".tp-col-resize")) return;
+      cycle();
+    });
+    cell.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        cycle();
+      }
+    });
+
+    if (index !== lastIndex) bindColumnResize(table, cell);
+  });
+
+  if (rows.length >= TABLE_TOOLS_MIN_ROWS) {
+    const { tools, selectBar } = buildTableTools(table);
+    const anchor = table.closest(".table-wrap") || table;
+    anchor.parentNode?.insertBefore(tools, anchor);
+    anchor.parentNode?.insertBefore(selectBar, anchor);
+    updateTableCount(table);
+  }
+}
+
+let tableEnhancementQueued = false;
+
+function queueTableEnhancement() {
+  if (tableEnhancementQueued) return;
+  tableEnhancementQueued = true;
+  requestAnimationFrame(() => {
+    tableEnhancementQueued = false;
+    document.querySelectorAll("#page-content table:not([data-tp-enhanced])").forEach((table) => {
+      try {
+        enhanceTable(table);
+      } catch {
+        // A table that cannot be enhanced stays exactly as the module rendered
+        // it. The console must never lose a table to a presentation helper.
+        table.dataset.tpEnhanced = "1";
+      }
+    });
+  });
+}
+
+function startTableEnhancement() {
+  queueTableEnhancement();
+  new MutationObserver(queueTableEnhancement).observe(document.body, { childList: true, subtree: true });
+}
+
 function adminPageDescriptors() {
   return {
     dashboard: ["Infrastructure Dashboard", "Operational overview for the TitoPay API and admin platform."],
@@ -4106,7 +4801,12 @@ async function renderAdminPage(page, me, options = {}) {
   if (root) root.dataset.page = page;
   pageShell(page, me, title, subtitle, controls);
   showModuleSkeleton();
-  await loaders[page](me);
+  setRouteProgress(true);
+  try {
+    await loaders[page](me);
+  } finally {
+    setRouteProgress(false);
+  }
   if (!options.preserveScroll) {
     document.querySelector(".main-area")?.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }
@@ -4954,6 +5654,7 @@ window.addEventListener("DOMContentLoaded", () => {
   } else {
     // Locks the document to the console's own scroll regions (rail + workspace).
     document.body.classList.add("admin-body");
+    startTableEnhancement();
     bootPage();
   }
 });

@@ -1,1 +1,1 @@
-TitoPay Admin build: admin-console-v51-20260806
+TitoPay Admin build: admin-console-v52-20260806

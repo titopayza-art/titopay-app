@@ -46,7 +46,7 @@
   --tp-text: #16233c;
   --tp-text-strong: #0b1f3f;
   --tp-muted: #5b6b86;
-  --tp-faint: #8895ab;
+  --tp-faint: #6d7c94;
 
   /* Lines */
   --tp-border: #dde3ec;
@@ -81,24 +81,39 @@
   --tp-chart-7: #b42318;
   --tp-chart-8: #4b5f7a;
 
-  /* Elevation — reserved for surfaces that float above the page */
-  --tp-shadow-card: 0 1px 2px rgba(11, 31, 63, 0.05);
+  /* Elevation — a shallow ramp, not a set of unrelated shadows. Each level
+     pairs a contact shadow with a wider ambient one so surfaces separate from
+     the page without the grey haze a single large blur produces. */
+  --tp-shadow-card: 0 1px 1px rgba(11, 31, 63, 0.04), 0 2px 6px -2px rgba(11, 31, 63, 0.07);
+  --tp-shadow-raised: 0 1px 2px rgba(11, 31, 63, 0.05), 0 10px 24px -12px rgba(11, 31, 63, 0.18);
+  --tp-shadow-sticky: 0 8px 12px -12px rgba(11, 31, 63, 0.5);
   --tp-shadow-overlay: 0 18px 44px rgba(11, 31, 63, 0.18), 0 2px 8px rgba(11, 31, 63, 0.08);
 
   /* Geometry */
   --tp-radius-sm: 6px;
-  --tp-radius: 8px;
-  --tp-radius-lg: 12px;
+  --tp-radius: 9px;
+  --tp-radius-lg: 14px;
   --tp-radius-pill: 999px;
 
+  /* Spacing ramp. Every new block sizes from this so padding and gaps stay on
+     one rhythm instead of drifting per module. */
+  --tp-space-1: 4px;
+  --tp-space-2: 8px;
+  --tp-space-3: 12px;
+  --tp-space-4: 16px;
+  --tp-space-5: 22px;
+  --tp-space-6: 30px;
+
   --tp-rail-width: 260px;
+  --tp-rail-width-collapsed: 68px;
   --tp-topbar-height: 56px;
 
   /* Type */
   --tp-font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --tp-font-mono: ui-monospace, "SF Mono", "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
 
-  --tp-focus: 0 0 0 3px rgba(27, 98, 214, 0.28);
+  --tp-focus: 0 0 0 2px var(--tp-surface), 0 0 0 4px rgba(27, 98, 214, 0.62);
+  --tp-focus-inverted: 0 0 0 2px var(--tp-rail), 0 0 0 4px rgba(120, 180, 255, 0.9);
 }
 
 /* == 02  Reset and base =================================================== */
@@ -142,12 +157,18 @@ body.admin-body {
   overscroll-behavior: none;
 }
 
+:focus-visible {
+  outline: 2px solid var(--tp-blue);
+  outline-offset: 2px;
+}
+
 h1, h2, h3, h4 {
   margin: 0;
   color: var(--tp-text-strong);
   font-weight: 650;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
+  letter-spacing: -0.012em;
+  line-height: 1.22;
+  text-wrap: balance;
 }
 
 p {
@@ -281,13 +302,22 @@ button, input, select, textarea {
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease, transform 0.06s ease;
+}
+
+/* A 1px press on activation. Small enough to read as a physical response
+   rather than a bounce, and dropped entirely under reduced motion. */
+.primary-btn:active,
+.secondary-btn:active,
+.ghost-btn:active {
+  transform: translateY(1px);
 }
 
 .primary-btn {
   background: var(--tp-blue);
   border-color: var(--tp-blue);
   color: #fff;
+  box-shadow: 0 1px 2px rgba(11, 31, 63, 0.16);
 }
 
 .primary-btn:hover {
@@ -334,8 +364,15 @@ button, input, select, textarea {
 .secondary-btn[disabled],
 .ghost-btn[disabled],
 button[disabled] {
-  opacity: 0.55;
+  opacity: 0.5;
+  box-shadow: none;
   cursor: not-allowed;
+}
+
+.primary-btn[disabled]:active,
+.secondary-btn[disabled]:active,
+.ghost-btn[disabled]:active {
+  transform: none;
 }
 
 .field {
@@ -362,6 +399,43 @@ button[disabled] {
 
 .field-full {
   grid-column: 1 / -1;
+}
+
+/* A required field is marked on the label, not only by a validation message
+   after the fact. :has() scopes it to the label that owns the input. */
+.field:has(input[required], select[required], textarea[required]) > label::after,
+.form-grid > label:has(> input[required], > select[required], > textarea[required])::after {
+  content: "*";
+  margin-left: 3px;
+  color: var(--tp-danger);
+  font-weight: 700;
+}
+
+.field-hint {
+  color: var(--tp-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.field-error {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--tp-danger);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.field input:user-invalid,
+.field select:user-invalid,
+.field textarea:user-invalid,
+.form-grid > label > input:user-invalid {
+  border-color: var(--tp-danger);
+}
+
+.field input:user-invalid:focus,
+.field textarea:user-invalid:focus {
+  box-shadow: 0 0 0 2px var(--tp-surface), 0 0 0 4px var(--tp-danger-line);
 }
 
 .field input,
@@ -1027,9 +1101,20 @@ body[data-page="login"] {
 }
 
 .nav-filter input:focus {
-  outline: none;
   border-color: rgba(90, 158, 245, 0.7);
   background-color: rgba(255, 255, 255, 0.1);
+}
+
+.nav-filter input:focus-visible {
+  outline: none;
+  box-shadow: var(--tp-focus-inverted);
+}
+
+.sidebar button:focus-visible,
+.sidebar-footer .secondary-btn:focus-visible,
+.sidebar-footer .ghost-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--tp-focus-inverted);
 }
 
 .sidebar-nav {
@@ -1208,6 +1293,7 @@ body[data-page="login"] {
 }
 
 .admin-topbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -1350,6 +1436,107 @@ body[data-page="login"] {
   grid-column: 1 / -1;
   height: 100vh;
   height: 100dvh;
+}
+
+/* Collapsed rail ---------------------------------------------------------
+   The rail collapses to icons so a dense table can use the full width. The
+   state is persisted per browser by admin.js. Nothing is removed from the
+   navigation: every item keeps its link, its icon and its accessible name. */
+
+.admin-shell[data-rail="collapsed"] {
+  grid-template-columns: var(--tp-rail-width-collapsed) minmax(0, 1fr);
+}
+
+.admin-shell[data-rail="collapsed"] .brand-copy,
+.admin-shell[data-rail="collapsed"] .nav-filter,
+.admin-shell[data-rail="collapsed"] .nav-group > span,
+.admin-shell[data-rail="collapsed"] .nav-link > span,
+.admin-shell[data-rail="collapsed"] .sidebar-user > div,
+.admin-shell[data-rail="collapsed"] .nav-empty {
+  display: none;
+}
+
+.admin-shell[data-rail="collapsed"] .sidebar .brand,
+.admin-shell[data-rail="collapsed"] .sidebar-user {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.admin-shell[data-rail="collapsed"] .sidebar-nav {
+  padding-top: 12px;
+}
+
+.admin-shell[data-rail="collapsed"] .nav-group {
+  gap: 3px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.admin-shell[data-rail="collapsed"] .nav-group:last-of-type {
+  border-bottom: 0;
+}
+
+.admin-shell[data-rail="collapsed"] .nav-link {
+  justify-content: center;
+  padding: 9px 0;
+}
+
+.admin-shell[data-rail="collapsed"] .nav-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-shell[data-rail="collapsed"] .sidebar-footer .secondary-btn,
+.admin-shell[data-rail="collapsed"] .sidebar-footer .ghost-btn {
+  padding: 0;
+  font-size: 0;
+}
+
+.admin-shell[data-rail="collapsed"] .sidebar-footer .secondary-btn::after {
+  content: "\21A9";
+  font-size: 0.9375rem;
+}
+
+.admin-shell[data-rail="collapsed"] .sidebar-footer .ghost-btn {
+  display: none;
+}
+
+.rail-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.rail-toggle:hover {
+  border-color: var(--tp-border-strong);
+  background: var(--tp-surface-sunken);
+  color: var(--tp-text-strong);
+}
+
+.rail-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--tp-focus);
+}
+
+.rail-toggle svg {
+  width: 17px;
+  height: 17px;
+  transition: transform 0.16s ease;
+}
+
+.admin-shell[data-rail="collapsed"] .rail-toggle svg {
+  transform: rotate(180deg);
 }
 
 /* == 06  Page header ====================================================== */
@@ -1510,11 +1697,23 @@ body[data-page="login"] {
   display: grid;
   align-content: start;
   gap: 4px;
-  padding: 14px 16px;
+  padding: 15px 17px;
   border: 1px solid var(--tp-border);
   border-radius: var(--tp-radius-lg);
   background: var(--tp-surface);
   box-shadow: var(--tp-shadow-card);
+  transition: box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
+}
+
+.metric-card:hover,
+.tp-kpi:hover {
+  border-color: var(--tp-border-strong);
+  box-shadow: var(--tp-shadow-raised);
+  transform: translateY(-1px);
+}
+
+.tp-kpi {
+  transition: box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
 }
 
 .metric-card span {
@@ -1607,6 +1806,7 @@ body[data-page="login"] {
   border: 1px solid var(--tp-border);
   border-radius: var(--tp-radius);
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .key-value-row,
@@ -1616,6 +1816,16 @@ body[data-page="login"] {
   gap: 14px;
   padding: 9px 13px;
   background: var(--tp-surface);
+}
+
+/* Inside a narrow panel the two columns have nowhere to go, so the value moves
+   under its label rather than colliding with it. */
+@container (max-width: 340px) {
+  .key-value-row,
+  .smtp-detail-grid > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
 }
 
 .key-value-row + .key-value-row,
@@ -1672,7 +1882,7 @@ table {
 
 th,
 td {
-  padding: 9px 12px;
+  padding: 10px 13px;
   border-bottom: 1px solid var(--tp-border-soft);
   font-size: 0.8438rem;
   line-height: 1.45;
@@ -1687,6 +1897,7 @@ th {
   z-index: 2;
   border-bottom: 1px solid var(--tp-border);
   background: var(--tp-surface-sunken);
+  box-shadow: var(--tp-shadow-sticky);
   color: var(--tp-muted);
   font-size: 0.6875rem;
   font-weight: 700;
@@ -1713,8 +1924,23 @@ tbody tr:last-child td {
   border-bottom: 0;
 }
 
+tbody tr {
+  transition: background-color 0.1s ease;
+}
+
 tbody tr:hover td {
   background: var(--tp-blue-soft);
+}
+
+/* A row carrying a red status is the one an operator must see first. The
+   accent is drawn from the status already in the row, so compliance, security,
+   transactions and support all gain it without a line of module code. */
+tbody tr:has(.chip.red) td:first-child {
+  box-shadow: inset 3px 0 0 var(--tp-danger);
+}
+
+tbody tr:has(.chip.orange) td:first-child {
+  box-shadow: inset 3px 0 0 var(--tp-warning);
 }
 
 /* Cells are written as `<strong>primary</strong><br><small>secondary</small>`.
@@ -1763,7 +1989,7 @@ td:last-child {
 th:last-child {
   z-index: 3;
   background: var(--tp-surface-sunken);
-  box-shadow: -7px 0 9px -7px rgba(11, 31, 63, 0.22), inset 1px 0 0 var(--tp-border);
+  box-shadow: -7px 0 9px -7px rgba(11, 31, 63, 0.22), inset 1px 0 0 var(--tp-border), var(--tp-shadow-sticky);
 }
 
 tbody tr:hover td:last-child {
@@ -1803,6 +2029,250 @@ table button:hover {
 table button:focus-visible {
   outline: none;
   box-shadow: var(--tp-focus);
+}
+
+/* Table toolbar ----------------------------------------------------------
+   Added to every table by the enhancement layer in admin.js. It filters,
+   sorts, selects and exports what is already on screen; it never refetches
+   and never changes what a module rendered. */
+
+.tp-table-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--tp-space-2);
+  margin-bottom: 10px;
+}
+
+.tp-table-tools-main,
+.tp-table-tools-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--tp-space-2);
+}
+
+.tp-table-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.tp-table-search input {
+  width: clamp(180px, 26vw, 320px);
+  min-height: 32px;
+  padding: 6px 10px 6px 30px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.tp-table-search input::placeholder {
+  color: var(--tp-faint);
+}
+
+.tp-table-search input:focus {
+  outline: none;
+  border-color: var(--tp-blue);
+  box-shadow: var(--tp-focus);
+}
+
+.tp-table-search svg {
+  position: absolute;
+  left: 9px;
+  width: 14px;
+  height: 14px;
+  color: var(--tp-faint);
+  pointer-events: none;
+}
+
+.tp-table-count {
+  color: var(--tp-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tp-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.tp-tool-btn:hover {
+  border-color: var(--tp-blue-line);
+  background: var(--tp-blue-soft);
+  color: var(--tp-blue-strong);
+}
+
+.tp-tool-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--tp-focus);
+}
+
+.tp-tool-btn[aria-pressed="true"] {
+  border-color: var(--tp-blue);
+  background: var(--tp-blue-soft);
+  color: var(--tp-blue-strong);
+}
+
+/* Selection bar. Slides in only once something is selected, so the resting
+   state of every table is unchanged. */
+.tp-select-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--tp-space-2);
+  margin-bottom: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--tp-blue-line);
+  border-radius: var(--tp-radius);
+  background: var(--tp-blue-soft);
+  color: var(--tp-blue-strong);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  animation: tp-rise 0.16s ease both;
+}
+
+.tp-select-bar strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-select-bar .tp-tool-btn {
+  margin-left: auto;
+}
+
+.tp-select-bar .tp-tool-btn + .tp-tool-btn {
+  margin-left: 0;
+}
+
+/* Sortable headers ------------------------------------------------------- */
+
+th[data-tp-sortable] {
+  cursor: pointer;
+  user-select: none;
+}
+
+th[data-tp-sortable]:hover {
+  color: var(--tp-text-strong);
+}
+
+th[data-tp-sortable]:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--tp-blue);
+}
+
+.tp-sort-mark {
+  display: inline-block;
+  width: 9px;
+  margin-left: 5px;
+  color: var(--tp-faint);
+  font-size: 0.625rem;
+  vertical-align: 1px;
+}
+
+th[aria-sort="ascending"],
+th[aria-sort="descending"] {
+  color: var(--tp-blue);
+}
+
+th[aria-sort="ascending"] .tp-sort-mark,
+th[aria-sort="descending"] .tp-sort-mark {
+  color: var(--tp-blue);
+}
+
+/* Column resize handle --------------------------------------------------- */
+
+.tp-col-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  z-index: 1;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.tp-col-resize::after {
+  content: "";
+  position: absolute;
+  top: 20%;
+  left: 3px;
+  width: 1px;
+  height: 60%;
+  background: var(--tp-border-strong);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+th:hover .tp-col-resize::after,
+.tp-col-resize.is-active::after {
+  opacity: 1;
+}
+
+.tp-col-resize.is-active::after {
+  background: var(--tp-blue);
+  width: 2px;
+}
+
+/* Selection column ------------------------------------------------------- */
+
+th.tp-select-cell,
+td.tp-select-cell {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 42px;
+  min-width: 42px;
+  max-width: 42px;
+  padding-left: 13px;
+  padding-right: 0;
+}
+
+th.tp-select-cell {
+  z-index: 4;
+}
+
+td.tp-select-cell {
+  background: var(--tp-surface);
+}
+
+.tp-select-cell input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--tp-blue);
+  cursor: pointer;
+}
+
+tbody tr[data-tp-selected] td {
+  background: var(--tp-blue-soft);
+}
+
+/* Numeric columns read as figures when they line up on the decimal. */
+td.tp-numeric,
+th.tp-numeric {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* == 09  Filters, toolbars, forms ========================================= */
@@ -1847,6 +2317,44 @@ table button:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* A couple of modules submit their filters with a bare <button>. It picked up
+   the browser's default chrome and read as disabled next to the console's own
+   buttons, so it is given the primary treatment it was always meant to have. */
+.admin-filter-actions > button:not([class]),
+.search-form > button:not([class]),
+.form-actions > button:not([class]) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--tp-blue);
+  border-radius: var(--tp-radius);
+  background: var(--tp-blue);
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(11, 31, 63, 0.16);
+  transition: background-color 0.12s ease, border-color 0.12s ease, transform 0.06s ease;
+}
+
+.admin-filter-actions > button:not([class]):hover,
+.search-form > button:not([class]):hover,
+.form-actions > button:not([class]):hover {
+  background: var(--tp-blue-strong);
+  border-color: var(--tp-blue-strong);
+}
+
+.admin-filter-actions > button:not([class]):active,
+.search-form > button:not([class]):active,
+.form-actions > button:not([class]):active {
+  transform: translateY(1px);
 }
 
 .search-form {
@@ -3163,20 +3671,182 @@ table button:focus-visible {
   font-size: 0.875rem;
 }
 
+/* Dashboard: health rows and activity feed -------------------------------- */
+
+.tp-health-list {
+  display: grid;
+  gap: 1px;
+  margin: 14px 0;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-border-soft);
+  overflow: hidden;
+}
+
+.tp-health-row {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  background: var(--tp-surface);
+}
+
+.tp-health-label {
+  color: var(--tp-text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.tp-health-value {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  min-width: 0;
+  text-align: right;
+}
+
+.tp-health-value .chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tp-health-value small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--tp-muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric-meta {
+  color: var(--tp-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.tp-activity {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-border-soft);
+  list-style: none;
+  overflow: hidden;
+}
+
+.tp-activity li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+  background: var(--tp-surface);
+  transition: background-color 0.11s ease;
+}
+
+.tp-activity li:hover {
+  background: var(--tp-surface-sunken);
+}
+
+.tp-activity-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tp-neutral);
+}
+
+.tp-activity-dot.ok {
+  background: var(--tp-success);
+  box-shadow: 0 0 0 3px var(--tp-success-soft);
+}
+
+.tp-activity-dot.bad {
+  background: var(--tp-danger);
+  box-shadow: 0 0 0 3px var(--tp-danger-soft);
+}
+
+.tp-activity-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tp-activity-body strong {
+  color: var(--tp-text-strong);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.tp-activity-body small {
+  overflow: hidden;
+  color: var(--tp-muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-activity time {
+  color: var(--tp-faint);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+a.table-card-meta:hover {
+  border-color: var(--tp-blue-line);
+  color: var(--tp-blue);
+  text-decoration: none;
+}
+
 /* == 11  States =========================================================== */
 
 .empty,
 .compact-empty {
   display: grid;
   place-items: center;
-  gap: 4px;
-  padding: 32px 20px;
+  gap: 6px;
+  padding: 38px 20px;
   border: 1px dashed var(--tp-border-strong);
   border-radius: var(--tp-radius);
   background: var(--tp-surface-sunken);
   color: var(--tp-muted);
   font-size: 0.875rem;
   text-align: center;
+}
+
+/* An empty result is a state, not an error. The mark gives it a shape so a
+   table that legitimately has no rows does not read as a failed load. */
+.empty::before {
+  content: "";
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background-color: var(--tp-surface);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a99b0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h16M4 12h10M4 18h7'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 19px 19px;
+}
+
+.empty strong {
+  display: block;
+  color: var(--tp-text-strong);
+  font-size: 0.9375rem;
+  font-weight: 650;
+}
+
+.empty small {
+  display: block;
+  max-width: 46ch;
+  color: var(--tp-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 
 .compact-empty {
@@ -3199,8 +3869,12 @@ table button:focus-visible {
   animation: tp-shimmer 1.3s ease-in-out infinite;
 }
 
-.admin-skeleton span:nth-child(2) { height: 220px; }
-.admin-skeleton span:nth-child(3) { height: 160px; }
+.admin-skeleton span:nth-child(1) { height: 84px; }
+.admin-skeleton span:nth-child(2) { height: 232px; }
+.admin-skeleton span:nth-child(3) { height: 168px; }
+
+/* A panel filling in on an already-painted page gets one block, not three. */
+.admin-skeleton.admin-skeleton-inline span:nth-child(1) { height: 128px; }
 
 @keyframes tp-shimmer {
   from { background-position: 200% 0; }
@@ -3212,14 +3886,102 @@ table button:focus-visible {
   right: 20px;
   bottom: 20px;
   z-index: 120;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
   max-width: min(420px, calc(100vw - 40px));
-  padding: 11px 15px;
+  padding: 12px 15px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: var(--tp-radius);
   background: var(--tp-text-strong);
   color: #fff;
   font-size: 0.875rem;
   line-height: 1.45;
   box-shadow: var(--tp-shadow-overlay);
+  animation: tp-toast-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.toast::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.16);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 11px 11px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 8v5m0 3.5v.01'/%3E%3C/svg%3E");
+}
+
+.toast[data-tone="success"]::before {
+  background-color: rgba(78, 195, 138, 0.24);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234ec38a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 13 4.5 4.5L19 7'/%3E%3C/svg%3E");
+  animation: tp-pop 0.28s ease both;
+}
+
+.toast[data-tone="error"]::before {
+  background-color: rgba(242, 139, 130, 0.24);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f28b82' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 6l12 12M18 6 6 18'/%3E%3C/svg%3E");
+}
+
+/* Route progress. A 2px line under the topbar while a module's first request
+   is in flight — the console's answer to "is it working?" without moving any
+   content on the page. */
+.route-progress {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  z-index: 60;
+  width: 100%;
+  height: 2px;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.route-progress[data-active="true"] {
+  opacity: 1;
+}
+
+.route-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  border-radius: var(--tp-radius-pill);
+  background: linear-gradient(90deg, transparent, var(--tp-blue), transparent);
+  animation: tp-progress 0.9s ease-in-out infinite;
+}
+
+@keyframes tp-progress {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+
+@keyframes tp-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes tp-toast-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes tp-pop {
+  0% { transform: scale(0.6); }
+  60% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+/* Module content settles in rather than snapping. Applied to the blocks a
+   module renders, so it plays once per navigation and never on scroll. */
+#page-content > * {
+  animation: tp-rise 0.2s ease both;
 }
 
 .standalone-error {
@@ -3286,6 +4048,65 @@ table button:focus-visible {
 
 /* Tablet and below: the rail becomes an off-canvas drawer */
 @media (max-width: 960px) {
+  /* The drawer is already the compact form of the rail; a collapsed rail on
+     top of it would hide the labels for no gain. */
+  .admin-shell[data-rail="collapsed"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-shell[data-rail="collapsed"] .brand-copy,
+  .admin-shell[data-rail="collapsed"] .nav-filter,
+  .admin-shell[data-rail="collapsed"] .nav-group > span,
+  .admin-shell[data-rail="collapsed"] .nav-link > span,
+  .admin-shell[data-rail="collapsed"] .sidebar-user > div,
+  .admin-shell[data-rail="collapsed"] .sidebar-footer .ghost-btn {
+    display: revert;
+  }
+
+  .admin-shell[data-rail="collapsed"] .nav-link {
+    justify-content: flex-start;
+    padding: 7px 10px;
+  }
+
+  .admin-shell[data-rail="collapsed"] .sidebar-footer .secondary-btn {
+    padding: 0 14px;
+    font-size: 0.875rem;
+  }
+
+  .admin-shell[data-rail="collapsed"] .sidebar-footer .secondary-btn::after {
+    content: none;
+  }
+
+  .rail-toggle {
+    display: none;
+  }
+
+  /* WCAG 2.2 target size: pointer targets reach 44px once the primary input
+     is a finger rather than a mouse. */
+  .primary-btn,
+  .secondary-btn,
+  .ghost-btn,
+  .tp-tool-btn,
+  .field input,
+  .field select,
+  .field textarea,
+  .admin-filter-grid input,
+  .admin-filter-grid select,
+  .tp-table-search input {
+    min-height: 44px;
+  }
+
+  .action-row button,
+  table button {
+    min-height: 36px;
+    padding: 0 12px;
+  }
+
+  .segmented-btn,
+  .tp-range-chip {
+    min-height: 40px;
+  }
+
   .email-chart-grid { grid-template-columns:1fr; }
   .tp-chart-grid-2,
   .tp-chart-grid-3 {
@@ -3525,7 +4346,7 @@ html[data-theme="dark"] {
   --tp-text: #d6e0ee;
   --tp-text-strong: #f1f5fb;
   --tp-muted: #93a3ba;
-  --tp-faint: #6c7d95;
+  --tp-faint: #8598b3;
 
   --tp-border: #1f2c42;
   --tp-border-soft: #1a2537;
@@ -3564,7 +4385,29 @@ html[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
 html[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
 
 html[data-theme="dark"] .toast {
-  background: #26364f;
+  background: #1d2b41;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* The light theme's shadows are tuned for ink on white. On the dark surfaces
+   they disappear, so the ramp is restated against the darker background. */
+html[data-theme="dark"] {
+  --tp-shadow-card: 0 1px 1px rgba(0, 0, 0, 0.34), 0 2px 6px -2px rgba(0, 0, 0, 0.44);
+  --tp-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 24px -12px rgba(0, 0, 0, 0.66);
+  --tp-shadow-sticky: 0 8px 12px -12px rgba(0, 0, 0, 0.9);
+  --tp-focus: 0 0 0 2px var(--tp-surface), 0 0 0 4px rgba(109, 166, 250, 0.75);
+}
+
+html[data-theme="dark"] th:last-child {
+  box-shadow: -7px 0 9px -7px rgba(0, 0, 0, 0.6), inset 1px 0 0 var(--tp-border), var(--tp-shadow-sticky);
+}
+
+html[data-theme="dark"] td:last-child {
+  box-shadow: -7px 0 9px -7px rgba(0, 0, 0, 0.6), inset 1px 0 0 var(--tp-border-soft);
+}
+
+html[data-theme="dark"] .empty::before {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237e8fa8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6h16M4 12h10M4 18h7'/%3E%3C/svg%3E");
 }
 
 html[data-theme="dark"] .admin-skeleton span {
@@ -3590,8 +4433,25 @@ html[data-theme="dark"] .auth-panel-logo {
   .admin-topbar,
   .header-actions,
   .toast,
-  .sidebar-scrim {
+  .sidebar-scrim,
+  .tp-table-tools,
+  .tp-select-bar,
+  .route-progress,
+  .tp-col-resize {
     display: none !important;
+  }
+
+  /* Screen animations must not hold an element at opacity 0 on paper. */
+  #page-content > *,
+  .tp-select-bar,
+  .toast {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  th {
+    box-shadow: none;
   }
 
   body.admin-body,

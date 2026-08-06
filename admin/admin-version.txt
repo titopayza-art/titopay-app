@@ -1,6 +1,51 @@
 TitoPay Admin
-Build: admin-console-v51
+Build: admin-console-v52
 Date: 2026-08-06
+
+v52 - Enterprise UI/UX pass. Presentation only: no endpoint, permission,
+route, payload or business rule was changed, and a control-by-control
+comparison of all 38 routes before and after shows zero removals.
+
+  - Design system. A two-stop elevation ramp replaces the single flat shadow,
+    radii and spacing move onto one scale, headings and figures tighten, and
+    the muted ink was darkened to clear WCAG AA on card surfaces. Buttons gain
+    press feedback and a consistent disabled state; a bare submit button in the
+    filter rows no longer renders as browser chrome.
+  - Navigation. The rail collapses to icons and remembers the choice per
+    browser. Nothing is removed when it does: every item keeps its route, icon
+    and accessible name, and the label moves to a tooltip. The state is ignored
+    below the tablet breakpoint, where the rail is already a drawer. Escape
+    closes the drawer.
+  - Tables. Every table in the console gains sortable headers with aria-sort
+    and a third click that restores the module's own order, a row filter with a
+    live count, bulk selection with select-all, per-table export of what is on
+    screen, column resizing, and a sticky header that reads as a layer. The
+    layer works on the rendered table through a MutationObserver, so no module
+    was modified to receive it and modules that re-render keep it.
+  - Prioritisation by colour. A row carrying a red or orange status now shows a
+    matching accent on its leading edge, so high-risk compliance reviews,
+    flagged transactions and queues waiting on an agent are visible without
+    reading. The accent is drawn from the status the module already rendered.
+  - Dashboard. Keeps the four figures and the endpoint that produced them, and
+    adds wallet float, active sessions, pending KYC, open tickets, merchant
+    onboarding, flagged security events, a platform health panel covering API,
+    database, providers and sessions, and a live activity feed from the audit
+    log. The first paint still comes from the overview endpoint alone;
+    everything else arrives after it and never blocks it. A source that does
+    not answer leaves a dash.
+  - States and feedback. Toasts carry a tone and an icon, inferred from the
+    message, so a confirmation and a failure no longer look identical. Empty
+    tables explain themselves. A progress line runs under the topbar while a
+    module loads. Content settles in rather than snapping, and every animation
+    is dropped under prefers-reduced-motion.
+  - Accessibility. A visible focus ring is guaranteed console-wide, including
+    the rail. Required fields are marked on the label. Pointer targets reach
+    44px below the tablet breakpoint. Sortable headers are keyboard operable
+    and announce their state.
+  - Verified: 38 routes render, no console errors, no horizontal overflow at
+    1440, 1280, 1024, 820 or 768, both themes, and page-load timings unchanged
+    within run-to-run noise apart from the dashboard, which paints about 30ms
+    later because the board is larger.
 
 v51 - Enterprise Analytics. A new Analytics module joins the Operations
 group in the sidebar with eight reporting sections: Executive, Financial,
@@ -64,5 +109,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v51; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v52; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
