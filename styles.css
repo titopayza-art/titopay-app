@@ -9,6 +9,7 @@
   --soft-blue: #eaf1ff;
   --card: #ffffff;
   --line: #dfe7f5;
+  --card-line: #c6d3ea;
   --success: #0b9f6a;
   --danger: #d94242;
   --warning: #b7791f;
@@ -7087,7 +7088,7 @@ li {
 .document-fee-card,
 .merchant-pos-mini,
 .receipts-preview {
-  border-color: #c6d3ea;
+  border-color: var(--card-line);
   box-shadow: var(--shadow-card);
 }
 
@@ -7169,7 +7170,7 @@ li {
 }
 
 .modal-card {
-  border: 1px solid #c6d3ea;
+  border: 1px solid var(--card-line);
 }
 
 .modal-head {
@@ -11636,4 +11637,73 @@ button,
   padding: 16px;
   box-sizing: border-box;
   stroke-width: 2;
+}
+
+/* One crisp, consistent edge for EVERY white/near-white content card.
+   The shared card rule above already carries var(--card-line); these are the
+   secondary cards that drew their own faint "1px solid var(--line)" (or a
+   bespoke faint rgba) and so read lighter than the panels beside them. This
+   recolours their edge ONLY — never their background, radius, width or shadow —
+   so the whole app reads with one edge weight.
+
+   Deliberately NOT here: form controls, inputs, chips, tabs, step-dots,
+   segmented controls and single-edge dividers keep the softer --line; the blue
+   balance card and the divider-grid strips (.stats-grid, .beneficiary-summary)
+   are left alone; and .doc-disclaimer is excluded because it carries a blue
+   border-left accent a border-color shorthand would overwrite. Every coloured
+   or muted STATE variant (.is-confirmed, .is-unknown, .is-selected, .is-open,
+   .settled/.warn/.failed, .unread, :hover, sold-out, danger, primary ...) is
+   higher-specificity and still wins, so all accents are preserved untouched. */
+.landing-card,
+.quick-service-option,
+.guide-step,
+.security-status-strip,
+.security-score,
+.score-item,
+.qr-owner-card,
+.frequent-card,
+.pay-hub-btn,
+.otp-channel-option,
+.switch-row,
+.doc-section,
+.doc-totals,
+.doc-item,
+.statement-summary,
+.split-summary,
+.ticket-event,
+.ticket-stub,
+.ticket-card,
+.payout-order-card,
+.integration-note,
+.learn-item,
+.learn-note,
+.titopay-chat-thread-card,
+.titopay-chat-window,
+.titopay-chat-controls,
+.call-panel,
+.install-stage,
+.beneficiary-picker-item,
+.beneficiary-card,
+.menu-section,
+.landing-menu-footer,
+.qr-frame,
+.qr-poster,
+.merchant-sale-note-card,
+.merchant-waiting-panel,
+.receipt-list-item,
+.notification-inbox-summary article,
+.vas-product,
+.vas-notice,
+.sv-card,
+.sv-goal-card,
+.sv-stat,
+.sv-cycle,
+.sv-member,
+.sv-withdrawal,
+.sv-empty,
+.sv-notice,
+.ed-steps,
+.ed-row,
+.balance-context {
+  border-color: var(--card-line);
 }
