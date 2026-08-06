@@ -1668,6 +1668,7 @@ function authModalHtml(mode = "login") {
       ${form}
       ${secondary}
     </section>
+    ${authTrustStrip()}
   `;
 }
 
@@ -1723,6 +1724,7 @@ function registerForm() {
         <input name="termsAccepted" type="checkbox" value="yes" required aria-label="Agree to TitoPay Terms and Conditions">
         <span>By registering an account I agree to TitoPay's <a href="https://www.titopay.co.za/legal#legal-terms" target="_blank" rel="noopener noreferrer">Terms and Conditions</a>.</span>
       </label>
+      <p class="field-hint register-privacy-hint">Your details are ${connectionIsEncrypted() ? "sent over an encrypted connection and " : ""}used to open and operate your TitoPay wallet. Verification codes are never stored on this device. <button class="link-btn" type="button" data-action="why-trust-titopay">How TitoPay protects you</button></p>
       <button class="btn primary" type="submit">${icon("lock")} Create TitoPay wallet</button>
     </form>
   `;
@@ -1835,6 +1837,7 @@ function dashboardView() {
         </section>
       </aside>
     </section>
+    ${securityStatusStrip()}
   `;
 }
 
@@ -2007,6 +2010,7 @@ function profileView() {
     </section>
     <section class="section-head compact"><h2>Security & Verification</h2></section>
     <section class="profile-feature-grid">
+      ${profileFeature("Security Centre", "Your protections, devices, sessions and privacy in one place.", "shield", "security-centre", true)}
       ${profileFeature(locked ? "Unlock Wallet" : "Lock Wallet", locked ? "Verify OTP to unlock outgoing payments." : "Block outgoing payments instantly.", locked ? "shield" : "lock", locked ? "unlock-wallet" : "lock-wallet", locked)}
       ${profileFeature("Authentication Method", `${authenticationMethodLabel(currentAuthenticationMethod(user))} · saved to your TitoPay profile.`, "shield", "authentication-preference")}
       ${profileFeature("Change PIN / Password", "Choose SMS OTP or Email OTP.", "lock", "change-password")}
@@ -4407,6 +4411,27 @@ async function handleAction(action, actionElement = null) {
   if (action === "guide-next") {
     stepHowItWorksGuide(1);
   }
+  if (action === "security-centre") {
+    openSecurityCentreModal();
+  }
+  if (action === "active-sessions") {
+    openActiveSessionsModal();
+  }
+  if (action === "privacy-controls") {
+    openPrivacyControlsModal();
+  }
+  if (action === "security-tips") {
+    openSecurityTipsModal();
+  }
+  if (action === "report-fraud") {
+    openReportFraudModal();
+  }
+  if (action === "why-trust-titopay") {
+    openWhyTrustModal();
+  }
+  if (action === "biometric-info") {
+    openBiometricInfoModal();
+  }
   if (action === "notifications") {
     openNotificationsModal();
   }
@@ -4417,6 +4442,14 @@ async function handleAction(action, actionElement = null) {
     clearNotifications();
   }
   if (action === "enable-browser-notifications") {
+    // Explain what alerts are for before the browser's permission prompt, but
+    // only while the choice is still open -- once granted or denied, the
+    // original flow already reports the outcome.
+    if ("Notification" in window && Notification.permission === "default") openNotificationPermissionExplainer();
+    else await enableBrowserNotifications();
+  }
+  if (action === "confirm-enable-browser-notifications") {
+    closeModal();
     await enableBrowserNotifications();
   }
   if (action === "preview-sms-notifications") {
@@ -11584,6 +11617,7 @@ function openQrPayModal(existing = {}) {
       <div class="field"><label>QR ID</label><input name="qrId" value="${esc(existing.qrId || "")}" required></div>
       <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" value="${esc(existing.amount || "")}"></div></div>
       <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan QR with camera</button>
+      <p class="field-hint camera-privacy-hint">Your camera is used only while the scanner is open. QR codes are read on your device — the video is never uploaded.</p>
       <div id="qr-scanner-output" class="empty-state hidden"></div>
       <button class="btn primary" type="submit">${icon("scan")} Review QR Payment</button>
     </form>
@@ -11595,7 +11629,7 @@ async function startQrScanner() {
   const input = document.querySelector('form[data-form="qr-pay"] input[name="qrId"]') || document.querySelector(".modal-card input[name='recipient']");
   if (!output || !input) return;
   output.classList.remove("hidden");
-  output.innerHTML = `${icon("scan")}<strong>Starting camera</strong><p>Allow camera access to scan a TitoPay QR code.</p>`;
+  output.innerHTML = `${icon("scan")}<strong>Starting camera</strong><p>Allow camera access to scan a TitoPay QR code. Scanning happens on your device — the video is never uploaded.</p>`;
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     output.innerHTML = `${icon("shield")}<strong>Camera unavailable</strong><p>This browser does not expose camera scanning. Enter the QR ID manually.</p>`;
@@ -12411,6 +12445,350 @@ function stepHowItWorksGuide(delta) {
   paintHowItWorksStep();
 }
 
+// ---------------------------------------------------------------------------
+// Security Centre and trust surfaces
+//
+// One place that gathers the protections the app already has -- device
+// sessions, login history, wallet lock, OTP password changes, alert
+// preferences -- and states plainly what each one does. Everything shown here
+// is backed by a real mechanism in this app or a live capability check; no
+// claim is rendered that the system cannot demonstrate. That is also why
+// there is no "fraud monitoring" badge and why the biometric row reports the
+// device capability instead of offering a toggle this build does not have.
+// ---------------------------------------------------------------------------
+
+function connectionIsEncrypted() {
+  return location.protocol === "https:";
+}
+
+function sessionTimeoutMinutes() {
+  return Math.round(SESSION_TIMEOUT_MS / 60000);
+}
+
+function currentDeviceLabel() {
+  const ua = navigator.userAgent;
+  const browser = /Edg\//.test(ua) ? "Microsoft Edge"
+    : /OPR\//.test(ua) ? "Opera"
+    : /SamsungBrowser\//.test(ua) ? "Samsung Internet"
+    : /Chrome\//.test(ua) ? "Chrome"
+    : /Firefox\//.test(ua) ? "Firefox"
+    : /Safari\//.test(ua) ? "Safari"
+    : "Browser";
+  const platform = /Android/.test(ua) ? "Android"
+    : /iPhone|iPad|iPod/.test(ua) ? "iOS"
+    : /Mac/.test(ua) ? "macOS"
+    : /Windows/.test(ua) ? "Windows"
+    : /Linux/.test(ua) ? "Linux"
+    : "this device";
+  return `${browser} on ${platform}`;
+}
+
+function trustChips(items) {
+  if (!items.length) return "";
+  return `<div class="trust-strip" role="note">${items.map(([iconName, label]) => `<span class="trust-chip">${icon(iconName)}<span>${esc(label)}</span></span>`).join("")}</div>`;
+}
+
+function authTrustStrip() {
+  const chips = [];
+  if (connectionIsEncrypted()) chips.push(["lock", "Encrypted connection"]);
+  chips.push(["shield", "OTP-protected recovery"]);
+  chips.push(["eye-off", "Codes never stored on this device"]);
+  return trustChips(chips);
+}
+
+function securityStatusStrip() {
+  const detail = [
+    connectionIsEncrypted() ? "Encrypted connection" : "",
+    "OTP-protected recovery",
+    `Auto sign-out after ${sessionTimeoutMinutes()} min`
+  ].filter(Boolean).join(" · ");
+  return `<button class="security-status-strip" type="button" data-action="security-centre" aria-label="Open the TitoPay Security Centre">
+    ${icon("shield")}
+    <span><strong>Protected by TitoPay Security</strong><small>${esc(detail)}</small></span>
+    <b class="security-status-cta">Security Centre</b>
+  </button>`;
+}
+
+// Every signal is read from live account state; the fix button routes to the
+// feature that changes it.
+function securityScoreSignals() {
+  const user = state.user || {};
+  const alertsGranted = "Notification" in window && Notification.permission === "granted";
+  return [
+    {
+      label: "Identity verified",
+      detail: "FICA verification protects your profile against impersonation.",
+      active: ficaDisplayStatus(user.ficaStatus || user.fica_status) === "Approved",
+      icon: "shield", action: "fica-verification", fix: "Verify"
+    },
+    {
+      label: "Cellphone on file",
+      detail: "Used for SMS OTP recovery and critical alerts.",
+      active: Boolean(user.phone),
+      icon: "phone", action: "profile-verification", fix: "Add"
+    },
+    {
+      label: "Email on file",
+      detail: "Used for email OTP, receipts and security alerts.",
+      active: Boolean(user.email),
+      icon: "mail", action: "profile-verification", fix: "Add"
+    },
+    {
+      label: "Device alerts",
+      detail: "Security notifications shown on this device.",
+      active: alertsGranted,
+      icon: "bell", action: "enable-browser-notifications", fix: "Enable"
+    }
+  ];
+}
+
+function securityCentreRow(title, subtitle, iconName, action, attrs = "") {
+  return `<button class="profile-feature" type="button" data-action="${esc(action)}" ${attrs}>
+    <span class="icon-bubble">${icon(iconName)}</span>
+    <span><strong>${esc(title)}</strong><small${attrs.includes("data-biometric-row") ? ' data-biometric-status=""' : ""}>${esc(subtitle)}</small></span>
+  </button>`;
+}
+
+function openSecurityCentreModal() {
+  const locked = isWalletLocked();
+  const signals = securityScoreSignals();
+  const active = signals.filter((signal) => signal.active).length;
+  const pct = Math.round((active / signals.length) * 100);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security Centre</p><h2>Your account protection</h2><p class="lead">Everything keeping your wallet safe, in one place.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="security-score" aria-label="Security score">
+      <div class="security-score-ring" data-score="${pct}" role="img" aria-label="Security score ${pct} percent"><strong>${pct}%</strong></div>
+      <div>
+        <h3>${active} of ${signals.length} protections active</h3>
+        <p>Your score reflects the protections active on this account right now — nothing is simulated.</p>
+      </div>
+    </section>
+    <section class="score-checklist" aria-label="Protection checklist">
+      ${signals.map((signal) => `
+        <article class="score-item ${signal.active ? "is-active" : ""}">
+          <span class="score-item-icon">${icon(signal.active ? "check-circle" : signal.icon)}</span>
+          <span><strong>${esc(signal.label)}</strong><small>${esc(signal.detail)}</small></span>
+          ${signal.active ? '<b class="score-state">On</b>' : `<button class="btn secondary score-fix" type="button" data-action="${esc(signal.action)}">${esc(signal.fix)}</button>`}
+        </article>`).join("")}
+    </section>
+    <section class="section-head compact"><h2>Sign-in & devices</h2></section>
+    <section class="profile-feature-grid">
+      ${securityCentreRow("Biometrics On This Device", "Checking availability…", "shield", "biometric-info", 'data-biometric-row=""')}
+      ${securityCentreRow("Trusted Devices", "Review devices linked to this TitoPay profile.", "phone", "device-management")}
+      ${securityCentreRow("Active Sessions", `Signed in on ${currentDeviceLabel()}.`, "check-circle", "active-sessions")}
+      ${securityCentreRow("Login History", "The audit trail of sign-ins and security activity.", "list", "login-history")}
+      ${securityCentreRow("Authentication Method", `${authenticationMethodLabel(currentAuthenticationMethod())} · change with verification.`, "shield", "authentication-preference")}
+      ${securityCentreRow("Change PIN / Password", "Verified with a free SMS or Email OTP.", "lock", "change-password")}
+    </section>
+    <section class="section-head compact"><h2>Alerts & privacy</h2></section>
+    <section class="profile-feature-grid">
+      ${securityCentreRow("Login & Security Alerts", "Critical security alerts are always on. Choose extra channels.", "bell", "notifications")}
+      ${securityCentreRow("Privacy Controls", "Balance privacy, alert preferences and what TitoPay stores.", "eye-off", "privacy-controls")}
+    </section>
+    <section class="section-head compact"><h2>Protect & respond</h2></section>
+    <section class="profile-feature-grid">
+      ${locked
+        ? securityCentreRow("Unlock Wallet", "Your wallet is locked. Verify an OTP to unlock outgoing payments.", "shield", "unlock-wallet")
+        : securityCentreRow("Freeze Wallet", "Block outgoing payments instantly. Unlock later with an OTP.", "lock", "lock-wallet")}
+      ${securityCentreRow("Report Fraud", "Something wrong? Lock first, then tell TitoPay what happened.", "send", "report-fraud")}
+      ${securityCentreRow("Security Tips", "Practical habits that keep your wallet safe.", "check-circle", "security-tips")}
+      ${securityCentreRow("Why Trust TitoPay?", "How your money and information are protected, in plain language.", "heart", "why-trust-titopay")}
+    </section>
+    <section class="section-head compact"><h2>Always-on protections</h2></section>
+    <section class="activity-list">
+      ${connectionIsEncrypted() ? settingsRow("Encrypted connection", "This session runs over an encrypted HTTPS connection.", "lock") : ""}
+      ${settingsRow("OTP verification", "Password changes and recovery always require a one-time code.", "shield")}
+      ${settingsRow("Automatic sign-out", `Inactive sessions end after ${sessionTimeoutMinutes()} minutes.`, "refresh")}
+      ${settingsRow("Payment review", "Verified recipient and exact fees shown before every confirmation.", "receipt-list")}
+      ${settingsRow("Duplicate protection", "Confirmations are protected against double taps and repeat submissions.", "check-circle")}
+    </section>
+  `);
+  paintSecurityScore();
+  updateBiometricAvailability();
+}
+
+function paintSecurityScore(root = document) {
+  root.querySelectorAll(".security-score-ring[data-score]").forEach((el) => {
+    el.style.setProperty("--score", Math.max(0, Math.min(100, Number(el.dataset.score) || 0)));
+  });
+}
+
+async function updateBiometricAvailability() {
+  let available = false;
+  try {
+    available = Boolean(window.PublicKeyCredential)
+      && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch (error) {
+    available = false;
+  }
+  const status = document.querySelector("[data-biometric-status]");
+  if (status) {
+    status.textContent = available
+      ? "Fingerprint or face unlock is available on this device."
+      : "Not available on this device or browser.";
+  }
+  const row = document.querySelector("[data-biometric-row]");
+  if (row) row.dataset.biometricAvailable = available ? "true" : "false";
+}
+
+function openBiometricInfoModal() {
+  const row = document.querySelector("[data-biometric-row]");
+  const available = row ? row.dataset.biometricAvailable === "true" : false;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security</p><h2>Biometrics on this device</h2><p class="lead">How fingerprint and face unlock work with TitoPay today.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${settingsRow("This device", available ? "Fingerprint or face unlock is available on this device." : "Fingerprint or face unlock was not detected on this device or browser.", available ? "check-circle" : "phone")}
+      ${settingsRow("Your TitoPay sign-in", "Access is protected by your PIN or password, with a one-time code required for password changes and recovery.", "shield")}
+      ${settingsRow("Protecting the app itself", "Your device's screen lock — PIN, fingerprint or face — protects TitoPay whenever your phone locks. Browsers and password managers can also require biometrics before filling your saved TitoPay password.", "lock")}
+      ${settingsRow("Your biometric data", "Fingerprints and face data stay on your device. They are never sent to or stored by TitoPay.", "eye-off")}
+    </section>
+    <button class="btn primary" type="button" data-close>Got it</button>
+  `);
+}
+
+function openActiveSessionsModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security</p><h2>Active session</h2><p class="lead">Where you are signed in right now.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      <article class="activity-item">
+        <span class="icon-bubble">${icon("check-circle")}</span>
+        <div><p><strong>This device</strong></p><small>${esc(currentDeviceLabel())} · Signed in and active now</small></div>
+      </article>
+      ${settingsRow("Automatic sign-out", `This session ends after ${sessionTimeoutMinutes()} minutes of inactivity.`, "refresh")}
+      ${settingsRow("End it yourself", "Sign out from your Profile to end this session immediately.", "lock")}
+    </section>
+    <button class="btn secondary" type="button" data-action="device-management">${icon("phone")} View device history</button>
+  `);
+}
+
+function openPrivacyControlsModal() {
+  const smsEnabled = localStorage.getItem("titopay_sms_notifications_enabled") === "true";
+  const emailPreferences = emailNotificationPreferences().email;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Privacy Controls</p><h2>Your information, your choice</h2><p class="lead">Control what TitoPay shows, sends and stores.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${settingsRow("Balance privacy", state.balanceHidden ? "Your balance is hidden on the Home screen." : "Tap the eye on your Home screen any time to hide your balance.", state.balanceHidden ? "eye-off" : "eye")}
+      ${settingsRow("Verification codes", "OTP codes are sent to your registered contacts and never saved on this device.", "shield")}
+      ${settingsRow("Feedback contact consent", "Your contact details travel with feedback only if you tick the permission box.", "feedback")}
+    </section>
+    <section class="section-head compact"><h2>Manage</h2></section>
+    <section class="profile-feature-grid">
+      ${securityCentreRow("Email Alert Preferences", emailPreferences.enabled ? "Optional email alerts are on. Choose which ones." : "Optional email alerts are off. Critical security email stays on.", "mail", "preview-email-notifications")}
+      ${securityCentreRow("SMS Alert Preferences", smsEnabled ? "Optional SMS alerts are enabled on this device." : "Optional SMS alerts are off. Critical OTP SMS stays free.", "phone", "preview-sms-notifications")}
+      ${securityCentreRow("Profile Photo", "Add, change or remove the photo stored on this device.", "user", "profile-photo")}
+      ${securityCentreRow("Clear Notification Inbox", "Remove the in-app notification history stored on this device.", "x", "clear-notifications")}
+    </section>
+  `);
+}
+
+function openSecurityTipsModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security Tips</p><h2>Stay safe with TitoPay</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${securityTipCard("Protect your account")}
+    <section class="activity-list">
+      ${settingsRow("Never share codes", "TitoPay will never ask for your PIN, password or OTP — not by phone, SMS, email or WhatsApp.", "lock")}
+      ${settingsRow("Check before you pay", "Read the verified recipient name and the fee preview before you press Confirm.", "check-circle")}
+      ${settingsRow("Keep contact details current", "Your registered cellphone and email are how you recover access.", "mail")}
+      ${settingsRow("Lock your wallet fast", "If something feels wrong, freeze outgoing payments from the Security Centre.", "shield")}
+      ${settingsRow("Beware of urgency", "Scammers rush you. TitoPay never pressures you to move money.", "bell")}
+      ${settingsRow("Use your device lock", "A device PIN, fingerprint or face unlock protects TitoPay if your phone is lost.", "phone")}
+    </section>
+    <button class="btn primary" type="button" data-close>I understand</button>
+  `);
+}
+
+function openReportFraudModal() {
+  const locked = isWalletLocked();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Report Fraud</p><h2>Act fast, then tell us</h2><p class="lead">If something looks wrong on your account, protect it first — then report it.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="fraud-first-aid" role="note" aria-label="Immediate protection steps">
+      <p class="fraud-first-aid-head">${icon("shield")} <strong>If money is at risk, do these first</strong></p>
+      <div class="auth-actions">
+        ${locked
+          ? `<button class="btn secondary" type="button" disabled>${icon("lock")} Wallet already locked</button>`
+          : `<button class="btn primary" type="button" data-action="lock-wallet">${icon("lock")} Lock my wallet now</button>`}
+        <button class="btn secondary" type="button" data-action="change-password">${icon("shield")} Change my PIN / password</button>
+      </div>
+      <p class="field-hint">Locking blocks outgoing payments immediately. You can unlock later with an OTP.</p>
+    </section>
+    <form class="form-grid" data-form="support">
+      <input type="hidden" name="category" value="Fraud & Security">
+      <div class="field">
+        <label>What happened?</label>
+        <textarea name="message" minlength="10" required placeholder="Describe what happened, when it happened, and any reference numbers from Activity"></textarea>
+      </div>
+      <button class="btn primary" type="submit">${icon("send")} Report to TitoPay</button>
+    </form>
+    <p class="field-hint">Your report goes to TitoPay Customer Care (support@titopay.co.za) as a Fraud &amp; Security request.</p>
+  `);
+}
+
+function openWhyTrustModal() {
+  const signedIn = Boolean(state.auth?.accessToken);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security &amp; Privacy</p><h2>Why trust TitoPay?</h2><p class="lead">Plain answers about how your money and information are protected.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${settingsRow("Encrypted connection", connectionIsEncrypted() ? "You are connected over encrypted HTTPS right now, and the app talks to TitoPay servers the same way." : "TitoPay is served over encrypted HTTPS connections.", "lock")}
+      ${settingsRow("Secure sign-in", "Your wallet is protected by your PIN or password. Password changes and recovery always require a one-time code sent to your registered cellphone or email.", "shield")}
+      ${settingsRow("Codes stay off this device", "Verification codes go to your registered contacts and are never saved on this device.", "eye-off")}
+      ${settingsRow("Automatic sign-out", `Inactive sessions sign out after ${sessionTimeoutMinutes()} minutes to protect you on shared or lost devices.`, "refresh")}
+      ${settingsRow("Device recognition", "Sign-ins are linked to device sessions you can review any time in the Security Centre.", "phone")}
+      ${settingsRow("Identity verification", "Every TitoPay profile carries FICA identity verification with a clear status: Not Started, Pending Review, Approved or Rejected.", "check-circle")}
+      ${settingsRow("Payments you can check first", "Every payment shows the verified recipient and the exact fees before you confirm, and confirmations are protected against duplicate taps.", "receipt-list")}
+      ${settingsRow("Wallet lock", "Freeze outgoing payments instantly, and unlock with an OTP when you are ready.", "lock")}
+      ${settingsRow("Account recovery", "Recover access with a one-time code to your registered cellphone or email. Critical security emails are always on.", "mail")}
+      ${settingsRow("Camera & QR privacy", "QR codes are read on your device. Camera video is used only while the scanner is open and is never uploaded.", "scan")}
+      ${settingsRow("Privacy commitment", "TitoPay asks only for the information needed to open and operate your wallet. Optional alerts are opt-in, and feedback contact details are shared only with your permission.", "user")}
+    </section>
+    <section class="section-head compact"><h2>Your part matters too</h2></section>
+    ${securityTipCard("Protect your account")}
+    <div class="auth-actions">
+      ${signedIn ? `<button class="btn primary" type="button" data-action="security-centre">${icon("shield")} Open Security Centre</button>` : ""}
+      <button class="btn ghost" type="button" data-close>Close</button>
+    </div>
+  `);
+}
+
+function openNotificationPermissionExplainer() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Device Alerts</p><h2>Why TitoPay asks for notifications</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${settingsRow("Security alerts", "Know immediately about sign-ins, locks and account changes.", "shield")}
+      ${settingsRow("Payment updates", "See when money arrives or a payment completes, even with the app closed.", "wallet")}
+      ${settingsRow("Always your choice", "Your browser asks for permission next, and you can change it any time in your browser or device settings.", "bell")}
+    </section>
+    <p class="field-hint">In-app notifications stay free and available either way.</p>
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="confirm-enable-browser-notifications">${icon("bell")} Continue</button>
+      <button class="btn ghost" type="button" data-close>Not now</button>
+    </div>
+  `);
+}
+
 async function processTransaction(data) {
   if (isWalletLocked()) throw new Error("Wallet locked. Unlock your wallet before making outgoing transactions.");
   const amount = Number(data.amount);
@@ -12625,6 +13003,11 @@ function openTransactionReviewModal(context) {
       <p>${icon("shield")} <span><strong>Safety:</strong> Confirm is protected against multiple taps. If this fails, TitoPay will state whether any funds were deducted.</span></p>
       <p>${icon("wallet")} <span><strong>Total debit:</strong> ${esc(money(total))}</span></p>
     </section>
+    ${trustChips([
+      ...(connectionIsEncrypted() ? [["lock", "Secure transaction · encrypted connection"]] : []),
+      ["check-circle", "Protected against duplicate taps"],
+      ["receipt-list", "Fees shown before you confirm"]
+    ])}
     <div class="auth-actions transaction-review-actions">
       <button class="btn primary" type="button" data-action="confirm-transaction-review">${icon("check-circle")} Confirm</button>
       <button class="btn secondary" type="button" data-action="edit-transaction-review">${icon("list")} Edit</button>
@@ -13041,7 +13424,12 @@ function openSuccessModal(transaction, preview, serviceCode, recipient) {
       ${settingsRow("Amount", money(preview && preview.amount || record.amount), "wallet", "strong")}
       ${settingsRow("Total debited", money(preview && preview.total || record.total), "withdraw", "total")}
       ${settingsRow("Status", transactionStatusLabel(record.status), "sparkles")}
+      ${settingsRow("Recorded at", formatDate(record.created_at || record.createdAt || new Date().toISOString()), "check-circle")}
     </section>
+    ${trustChips([
+      ...(connectionIsEncrypted() ? [["lock", "Sent over an encrypted connection"]] : []),
+      ["check-circle", "Duplicate-payment protection applied"]
+    ])}
     ${state.pendingBeneficiarySave ? `
       <section class="integration-note" data-beneficiary-save-prompt>
         <p><strong>Would you like to save this recipient as a beneficiary?</strong></p>
@@ -13570,7 +13958,7 @@ async function showLoginHistory() {
 }
 
 function openSupportModal() {
-  const categories = ["Account Access", "Payments", "Withdrawals", "Airtime & Data", "QR Payments", "FICA", "Business", "Technical Support", "General Enquiries"];
+  const categories = ["Account Access", "Payments", "Withdrawals", "Airtime & Data", "QR Payments", "FICA", "Fraud & Security", "Business", "Technical Support", "General Enquiries"];
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Support</p><h2>Contact TitoPay</h2><p class="lead">support@titopay.co.za</p></div>
