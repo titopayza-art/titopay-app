@@ -1,10 +1,52 @@
 # TitoPay Admin Afrihost Deployment
 
-Upload the contents of this `admin` folder to the document root for:
+Upload the contents of this package to the document root for:
 
 `admin.titopay.co.za`
 
-Do not upload the folder as `/admin` inside the domain root. The files below must be directly inside the domain root.
+Do not upload them inside an `/admin` folder. The files below must sit directly
+in the domain root.
+
+## Uploading admin.zip (cPanel File Manager)
+
+`admin.zip` is packed from the document root, so every entry in it is already
+at the level it must live at: `index.html`, `.htaccess` and `assets/` are at
+the top of the archive, not inside a folder. Extracting it in `public_html`
+overwrites the live build in place.
+
+1. Sign in to cPanel and open **File Manager**.
+2. Go to the document root for `admin.titopay.co.za` (usually `public_html`, or
+   `public_html/admin.titopay.co.za` on an addon domain). Confirm you are in the
+   right place: the current `index.html` and `assets/` folder are there.
+3. Take a backup first: select all, **Compress** to `admin-backup-<date>.zip`,
+   and download it. This build can be rolled back by extracting that file.
+4. **Upload** `admin.zip` into that folder.
+5. Select `admin.zip`, choose **Extract**, and confirm the target path is the
+   same document root. Choose **Overwrite** / **Replace all** when prompted.
+6. Delete `admin.zip` from the server once the extract finishes.
+7. Enable **Settings → Show Hidden Files (dotfiles)** and confirm `.htaccess` is
+   present. File Manager hides it by default, and the site's security headers
+   and clean URLs depend on it.
+
+If you deploy over FTP instead, upload `assets/` first, then the page folders,
+then the root files. Page HTML is served `no-store`, so a browser will ask for
+the new pages immediately; the stylesheet and script are requested at
+`?v=admin-console-v52`, so no cache clearing is needed.
+
+## After Uploading
+
+Open `https://admin.titopay.co.za/` and check:
+
+- `admin-version.txt` reads `Build: admin-console-v52`.
+- The sidebar shows **Analytics** under Operations, and the collapse control
+  sits next to the breadcrumb in the top bar.
+- A table page such as Users shows the filter, **Select rows** and
+  **Export table** controls above the table, and its column headers sort.
+- The Dashboard fills in wallet float, sessions, tickets, platform health and
+  the activity feed a moment after the four headline figures.
+
+Sign-in, permissions and every existing module are unchanged by this build. If
+a page looks like the previous layout, hard refresh once (Ctrl+F5 / Cmd+Shift+R).
 
 ## Required Server Structure
 
