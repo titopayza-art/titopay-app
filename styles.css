@@ -6314,11 +6314,14 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 /* One tile, three divider-separated rows -- was three separate cards that
-   stacked into a tall tower on phones. */
+   stacked into a tall tower on phones. Its own vertical margin keeps it
+   spaced from the profile card above and the Account heading below, instead
+   of jamming against them so the rounded corners pinch at the edges. */
 .profile-summary-card {
   display: flex;
   flex-direction: column;
   padding: 2px 16px;
+  margin: 12px 0 14px;
 }
 
 .profile-summary-row {
