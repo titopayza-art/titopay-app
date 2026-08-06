@@ -1572,15 +1572,29 @@ h3 {
 .pay-orbit-slot.pos-low-mid { grid-area: 3 / 2; }
 .pay-orbit-slot.pos-low-right { grid-area: 3 / 3; }
 
-.pay-orbit-centre {
+.pay-orbit-centre-slot {
   grid-area: 2 / 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: 96px;
-  height: 96px;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.pay-orbit-centre-slot small {
+  max-width: 96px;
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  text-shadow: 0 1px 6px rgba(6, 26, 61, 0.6);
+  white-space: nowrap;
+}
+
+.pay-orbit-centre {
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
   border-radius: 50%;
   background: linear-gradient(160deg, var(--blue-2) -20%, var(--blue) 55%, var(--deep-blue) 120%);
   color: #fff;
@@ -1588,16 +1602,8 @@ h3 {
 }
 
 .pay-orbit-centre svg {
-  width: 26px;
-  height: 26px;
-}
-
-.pay-orbit-centre span {
-  max-width: 80px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  line-height: 1.15;
-  text-align: center;
+  width: 32px;
+  height: 32px;
 }
 
 .pay-orbit-btn {
@@ -4888,54 +4894,46 @@ body.landing-static .landing-flow.auth-screen {
 }
 
 .bottom-nav button:nth-child(3) {
-  width: 66px;
-  inline-size: 66px;
-  min-width: 66px;
-  max-width: 66px;
-  height: 66px;
-  block-size: 66px;
-  min-height: 66px;
-  max-height: 66px;
-  aspect-ratio: 1 / 1;
   justify-self: center;
   align-self: center;
-  margin-top: -28px;
-  padding: 0;
-  color: #fff;
-  background: linear-gradient(145deg, var(--blue), var(--blue-2));
-  border-radius: 999px;
-  box-shadow: 0 8px 20px rgba(10, 77, 255, 0.3);
-  overflow: hidden;
-  contain: layout paint;
-  clip-path: circle(50% at 50% 50%);
-}
-
-.bottom-nav button:nth-child(3).active {
-  color: #fff;
-  background: linear-gradient(145deg, var(--blue), var(--blue-2));
-}
-
-.bottom-nav button:nth-child(3) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 2px;
+  justify-content: flex-start;
+  gap: 3px;
+  min-width: 66px;
+  margin-top: -32px;
+  padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.bottom-nav button:nth-child(3) svg {
+  flex: 0 0 auto;
+  width: 58px;
+  height: 58px;
+  padding: 16px;
+  box-sizing: border-box;
+  color: #fff;
+  background: linear-gradient(145deg, var(--blue), var(--blue-2));
+  border-radius: 50%;
+  box-shadow: 0 8px 20px rgba(10, 77, 255, 0.3);
+}
+
+.bottom-nav button:nth-child(3).active {
+  background: none;
 }
 
 .bottom-nav button:nth-child(3) span {
   display: block;
-  max-width: 58px;
-  color: #fff;
-  font-size: 0.55rem;
+  max-width: 66px;
+  font-size: 0.62rem;
   font-weight: 700;
   line-height: 1.1;
   text-align: center;
-}
-
-.bottom-nav button:nth-child(3) svg {
-  width: 22px;
-  height: 22px;
+  white-space: nowrap;
 }
 
 .install-float-wrap {
@@ -5594,6 +5592,15 @@ body.landing-static .landing-flow.auth-screen {
   justify-content: space-between;
   gap: 18px;
   margin-bottom: 16px;
+}
+
+.modal-back-btn {
+  flex: 0 0 auto;
+}
+
+.modal-back-btn + div {
+  flex: 1;
+  min-width: 0;
 }
 
 .toast {
@@ -11452,4 +11459,15 @@ button,
   body:not(.modal-open):has(.dashboard-grid) .home-summary-card .stat {
     min-height: 54px;
   }
+}
+
+/* The centre Pay button paints its circle on the icon itself with the label
+   below at full size; this sits last so the earlier icon-size refinement
+   passes cannot shrink it back. */
+.bottom-nav button:nth-child(3) svg {
+  width: 58px;
+  height: 58px;
+  padding: 16px;
+  box-sizing: border-box;
+  stroke-width: 2;
 }

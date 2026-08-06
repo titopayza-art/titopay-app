@@ -99,6 +99,9 @@ const state = {
   modalScrollY: 0,
   modalOpener: null,
   modalOpenerSelector: "",
+  modalActionStack: [],
+  currentModalAction: "",
+  modalBackNavigating: false,
   profilePhotoCrop: null,
   notifications: [],
   emailNotificationPreferences: null,
@@ -4169,7 +4172,42 @@ async function verifyOtp(data) {
   showSecurityTipModal();
 }
 
+// Modal openers that participate in back navigation: opening one of these on
+// top of another keeps a trail, and the injected back arrow replays the
+// previous opener. The openers all read live state, so replaying is exact.
+const MODAL_STACK_ACTIONS = new Set([
+  "security-centre", "device-management", "active-sessions", "login-history",
+  "biometric-info", "privacy-controls", "security-tips", "report-fraud",
+  "why-trust-titopay", "notifications", "preview-sms-notifications",
+  "preview-email-notifications", "authentication-preference", "change-password",
+  "fica-verification", "profile-verification", "saved-beneficiaries",
+  "proof-of-account", "how-titopay-works", "app-search", "support",
+  "pwa-review", "account-activity", "share-titopay"
+]);
+
 async function handleAction(action, actionElement = null) {
+  if (action === "modal-back") {
+    const previous = state.modalActionStack.pop();
+    if (previous) {
+      state.currentModalAction = previous;
+      state.modalBackNavigating = true;
+      try {
+        await handleAction(previous, actionElement);
+      } finally {
+        state.modalBackNavigating = false;
+      }
+    } else {
+      closeModal();
+    }
+    return;
+  }
+  if (!state.modalBackNavigating && MODAL_STACK_ACTIONS.has(action)) {
+    if (document.querySelector(".modal-backdrop") && state.currentModalAction && state.currentModalAction !== action) {
+      state.modalActionStack.push(state.currentModalAction);
+      if (state.modalActionStack.length > 12) state.modalActionStack.shift();
+    }
+    state.currentModalAction = action;
+  }
   if (action === "customize-quick-services") {
     openQuickServicesCustomizer();
     return;
@@ -12998,7 +13036,7 @@ function openPayHub() {
   backdrop.className = "pay-hub-backdrop";
   backdrop.innerHTML = `
     <section class="pay-orbit" role="dialog" aria-modal="true" aria-label="Pay" tabindex="-1">
-      <div class="pay-orbit-centre" aria-hidden="true">${icon("qr")}<span>${isBusiness ? "Accept Pay" : "Pay"}</span></div>
+      <div class="pay-orbit-centre-slot" aria-hidden="true"><div class="pay-orbit-centre">${icon("qr")}</div><small>${isBusiness ? "Accept Pay" : "Pay"}</small></div>
       ${bubbles}
       <button class="pay-orbit-close" type="button" data-pay-hub-close aria-label="Close Pay">${icon("x")}</button>
     </section>`;
@@ -18254,7 +18292,7 @@ function openModal(html) {
   const keepPrevious = !isFocusRestorationTarget(active) || Boolean(active.closest(".modal-backdrop"));
   const opener = keepPrevious ? state.modalOpener : active;
   const openerSelector = keepPrevious ? state.modalOpenerSelector : modalOpenerSelector(active);
-  closeModal();
+  closeModal({ preserveStack: true });
   state.modalOpener = opener;
   state.modalOpenerSelector = openerSelector || "";
   lockPageScroll();
@@ -18295,6 +18333,19 @@ function openModal(html) {
   enhanceContactPickerControls(wrapper);
 
   const card = wrapper.querySelector(".modal-card");
+  // A modal opened from another modal gets a back arrow to return there.
+  if (state.modalActionStack.length && card) {
+    const head = card.querySelector(".modal-head");
+    if (head && !head.querySelector(".modal-back-btn")) {
+      const backButton = document.createElement("button");
+      backButton.type = "button";
+      backButton.className = "icon-btn modal-back-btn";
+      backButton.dataset.action = "modal-back";
+      backButton.setAttribute("aria-label", "Back to previous screen");
+      backButton.innerHTML = icon("arrow-left");
+      head.insertBefore(backButton, head.firstChild);
+    }
+  }
   if (wrapper.querySelector("#auth-panel")) {
     wrapper.classList.add("auth-modal-backdrop");
     card.classList.add("auth-modal-card");
@@ -18349,7 +18400,13 @@ function openModal(html) {
   });
 }
 
-function closeModal() {
+function closeModal(options = {}) {
+  // A deliberate close (X, backdrop, Escape, or a flow that finished) ends
+  // the back trail; only openModal's internal swap preserves it.
+  if (!options.preserveStack) {
+    state.modalActionStack = [];
+    state.currentModalAction = "";
+  }
   if (authKeyboardCleanup) {
     authKeyboardCleanup();
     authKeyboardCleanup = null;
