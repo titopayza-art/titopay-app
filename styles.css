@@ -11005,7 +11005,7 @@ button,
    bottom navigation frame the wallet, quick services and today's summary.
    Keep that composition stationary on the tall phone viewports where the
    complete dashboard fits, while compact phones retain normal scrolling. */
-@media (max-width: 759px) and (min-height: 890px) {
+@media (min-width: 360px) and (max-width: 759px) and (min-height: 890px) {
   html:has(body:not(.modal-open) .dashboard-grid),
   body:not(.modal-open):has(.dashboard-grid) {
     height: 100%;
@@ -11038,5 +11038,53 @@ button,
 
   body:not(.modal-open):has(.dashboard-grid) .home-summary-card .stat {
     min-height: 68px;
+  }
+
+  /* The greeting line joined this fixed composition in v244; reclaim its
+     height from the composition's air so the summary still clears the nav
+     on the tightest band viewports (390x890, 360x912). */
+  body:not(.modal-open):has(.dashboard-grid) .dashboard-greeting {
+    margin: 0 0 6px;
+    font-size: 1.08rem;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .dashboard-grid {
+    gap: 8px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .wallet-card {
+    padding: 18px 20px 16px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .wallet-balance {
+    margin: 6px 0 8px;
+    font-size: clamp(2rem, 8vw, 2.6rem);
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .wallet-card .muted {
+    font-size: 0.78rem;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .wallet-actions button {
+    min-height: 54px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .quick-services-head {
+    margin-block: 4px 2px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .quick-service-grid .service-tile {
+    min-height: 82px;
+    padding-block: 8px;
+    gap: 6px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .quick-service-grid .icon-bubble {
+    width: 44px;
+    height: 44px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .home-summary-card .stat {
+    min-height: 56px;
   }
 }

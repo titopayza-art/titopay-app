@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v246-landing-trust-strip-restored";
+const CACHE_NAME = "titopay-pwa-v247-home-fits-again";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=246",
-  "./app.min.js?v=246",
+  "./styles.min.css?v=247",
+  "./app.min.js?v=247",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=213",
   "./manifest.webmanifest?v=193",
