@@ -1,6 +1,28 @@
 TitoPay Admin
-Build: admin-console-v54
+Build: admin-console-v55
 Date: 2026-08-06
+
+v55 - Alert Centre. The platform events that were flooding the owner's inbox
+as emails - sign-ins recorded, failed attempts, fraud flags, pending KYC,
+waiting customers, failed transactions - now live inside the console.
+
+  - A bell in the topbar of every page carries the unread count. Its panel
+    shows the most recent alerts and marks all read in one click.
+  - The new Alerts module (sidebar, under Dashboard) is the full centre:
+    severity tabs with counts, category filter, unread-only view, pagination,
+    mark all read, and every alert links to the module that owns the event.
+  - Alerts are derived live from the security, audit, compliance, support,
+    transaction, system-health and merchant modules - the same events the
+    emails describe. Nothing is invented; a source that does not answer
+    contributes no alerts. The feed refreshes every two minutes while the
+    console is open.
+  - Read state is stored per browser. The API has no alert-read endpoint yet,
+    and the page says so rather than pretending the state is shared.
+  - The alert emails themselves are sent by the TitoPay API, not this console.
+    Now that the events are visible here, the API's notification sender can be
+    switched off for routine sign-in mail without losing anything.
+  - The CI gate grew to cover it: the alerts route renders, the bell carries
+    an unread badge, the panel opens, and mark-all-read clears the badge.
 
 v54 - Bank-grade hardening beneath the interface, and the console gains a
 permanent regression gate. No console page behaviour changed.
@@ -152,5 +174,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v54; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v55; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

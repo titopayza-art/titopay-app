@@ -16,7 +16,7 @@ const PORT = 8110;
 const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN = path.resolve(__dirname, "..", "..", "admin");
 
-const ROUTES = ["dashboard", "analytics", "search", "users", "merchants", "transactions", "wallets", "beneficiaries", "chat-monitor", "ticketing", "enterprise-distribution", "qr-management", "marketing", "pricing", "integrations", "feature-management", "api-provider-settings", "settings", "email-centre", "email-centre/analytics", "email-centre/templates", "email-centre/queue", "email-centre/logs", "email-centre/settings", "email-centre/otp", "support", "chatbot-escalations", "company-documents", "compliance", "revenue", "security", "system-logs", "audit", "development-tools", "engineering-tools", "database-health", "staff-management", "rbac-permissions"];
+const ROUTES = ["dashboard", "alerts", "analytics", "search", "users", "merchants", "transactions", "wallets", "beneficiaries", "chat-monitor", "ticketing", "enterprise-distribution", "qr-management", "marketing", "pricing", "integrations", "feature-management", "api-provider-settings", "settings", "email-centre", "email-centre/analytics", "email-centre/templates", "email-centre/queue", "email-centre/logs", "email-centre/settings", "email-centre/otp", "support", "chatbot-escalations", "company-documents", "compliance", "revenue", "security", "system-logs", "audit", "development-tools", "engineering-tools", "database-health", "staff-management", "rbac-permissions"];
 
 const failures = [];
 const check = (ok, label) => {
@@ -122,6 +122,28 @@ function checkVersionConsistency() {
   await page.click("#page-content thead th:first-child");
   await page.waitForTimeout(200);
   check(await page.getAttribute("#page-content thead th:first-child", "aria-sort") === "ascending", "sorting announces aria-sort");
+
+  // --- Alert Centre -------------------------------------------------------
+  await page.goto(`${BASE}/alerts/`);
+  await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });
+  await page.waitForTimeout(600);
+  check(await page.$(".tp-alert-row") !== null, "alert centre lists derived alerts");
+  check(await page.$("[data-alert-bell]") !== null, "topbar carries the alert bell");
+  const badgeBefore = await page.evaluate(() => {
+    const badge = document.getElementById("alert-badge");
+    return badge && !badge.hidden ? Number(badge.textContent.replace("+", "")) : 0;
+  });
+  check(badgeBefore > 0, `bell badge shows unread alerts (${badgeBefore})`);
+  await page.click("[data-alert-bell]");
+  await page.waitForTimeout(300);
+  check(await page.evaluate(() => !document.getElementById("alert-panel").hidden), "bell opens the alert panel");
+  await page.click("[data-alert-mark-all]");
+  await page.waitForTimeout(300);
+  const badgeAfter = await page.evaluate(() => {
+    const badge = document.getElementById("alert-badge");
+    return badge && !badge.hidden ? Number(badge.textContent.replace("+", "")) : 0;
+  });
+  check(badgeAfter === 0, "mark all read clears the badge");
 
   // --- Analytics permission gate -----------------------------------------
   const gatedPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });

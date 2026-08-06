@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v54";
+const ADMIN_ASSET_VERSION = "admin-console-v55";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -35,6 +35,7 @@ let supportFallbackRefreshTimer = null;
 const NAV_GROUPS = [
   { title: "Operations", items: [
     ["/dashboard/", "dashboard", "Dashboard"],
+    ["/alerts/", "alerts", "Alerts"],
     ["/analytics/", "analytics", "Analytics"],
     ["/search/", "search", "Global Search"],
     ["/users/", "users", "Users"],
@@ -532,6 +533,7 @@ function ensureAdminSupportSocket() {
 
 const NAV_ICON_PATHS = {
   dashboard: "M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6V11h-6v9Zm0-16v5h6V4h-6Z",
+  alerts: "M12 4a5 5 0 0 0-5 5v3.4l-1.7 2.9a1 1 0 0 0 .9 1.5h11.6a1 1 0 0 0 .9-1.5L17 12.4V9a5 5 0 0 0-5-5Zm-2 14.8a2 2 0 0 0 4 0",
   analytics: "M4 4v16h16M8 16l3.2-4.2 3 2.4L19 8m0 0h-3.6M19 8v3.4",
   search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm9 16-4.2-4.2",
   users: "M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm11 10v-2a4 4 0 0 0-3-3.9M16 3.6a4 4 0 0 1 0 7.8",
@@ -658,6 +660,7 @@ function renderSidebar(page, me) {
     if (hasFullAdminAccess(me) || isPlatformOwnerRole(role)) return true;
     const map = {
       dashboard: "dashboard",
+      alerts: "__everyone__",
       analytics: "__analytics__",
       users: "users",
       merchants: "merchants",
@@ -698,6 +701,7 @@ function renderSidebar(page, me) {
       "rbac-permissions": "__owner__",
     };
     const required = map[slug] || slug;
+    if (required === "__everyone__") return true;
     if (required === "__analytics__") return hasAnalyticsAccess(me);
     if (required === "__super_admin__") return isSuperAdminRole(role);
     if (required === "__owner__") return isPlatformOwnerRole(role);
@@ -767,6 +771,20 @@ function renderTopbar(page, title) {
       <div class="topbar-meta">
         <span class="env-badge${environment.nonProd ? " env-nonprod" : ""}" title="Environment">${escapeHtml(environment.label)}</span>
         <span class="topbar-clock" id="admin-clock" title="South African Standard Time"></span>
+        <div class="tp-bell-wrap">
+          <button class="tp-bell" type="button" data-alert-bell aria-label="Alerts" aria-haspopup="true" aria-expanded="false" aria-controls="alert-panel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4a5 5 0 0 0-5 5v3.4l-1.7 2.9a1 1 0 0 0 .9 1.5h11.6a1 1 0 0 0 .9-1.5L17 12.4V9a5 5 0 0 0-5-5Zm-2 14.8a2 2 0 0 0 4 0"/></svg>
+            <span class="tp-bell-badge" id="alert-badge" hidden>0</span>
+          </button>
+          <div class="tp-bell-panel" id="alert-panel" hidden role="dialog" aria-label="Recent alerts">
+            <div class="tp-bell-panel-head">
+              <strong>Alerts</strong>
+              <button class="link-btn" type="button" data-alert-mark-all>Mark all read</button>
+            </div>
+            <div class="tp-bell-panel-list" id="alert-panel-list"></div>
+            <a class="tp-bell-panel-foot" href="/alerts/">View all alerts</a>
+          </div>
+        </div>
         <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch between light and dark appearance">
           <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.5 1.5m11.2 11.2 1.5 1.5M19.1 4.9l-1.5 1.5M6.4 17.6l-1.5 1.5"/></svg>
           <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.2 8.2 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg>
@@ -1516,7 +1534,9 @@ function printQrAsset(asset = {}) {
    offer modules this signed-in role is actually permitted to open. */
 function dashboardQuickLinks(limit = 6) {
   const links = Array.from(document.querySelectorAll("#admin-nav .nav-link"))
-    .filter((link) => link.dataset.navSlug !== "dashboard")
+    // Alerts is excluded: the topbar bell already reaches it from every page,
+    // and including it here pushed Wallets out of the six quick links.
+    .filter((link) => link.dataset.navSlug !== "dashboard" && link.dataset.navSlug !== "alerts")
     .slice(0, limit)
     .map((link) => `<a href="${escapeHtml(link.getAttribute("href"))}">${escapeHtml(link.textContent.trim())}</a>`)
     .join("");
@@ -4243,6 +4263,421 @@ async function renderEmailOtp(me={}) {
   document.querySelectorAll("[data-email-otp-admin-resend]").forEach((button)=>button.addEventListener("click",async()=>{if(!window.confirm("Queue a replacement Email OTP?"))return;try{await apiFetch(`/admin/email-otp/${button.dataset.emailOtpAdminResend}/resend`,{method:"POST",body:"{}"});showToast("Replacement Email OTP queued");await renderEmailOtp(me);}catch(error){showToast(adminErrorMessage(error.message));}}));
 }
 
+/* == Alert Centre =========================================================
+   The platform emails the owner on every security and operational event; the
+   Alert Centre keeps those same events inside the console instead. A bell in
+   the topbar carries the unread count on every page, its panel shows the most
+   recent alerts, and the /alerts/ module is the full centre with severity and
+   category filters, pagination and read state.
+
+   Every alert is derived from a response the API actually returned - the same
+   sources the dashboard and analytics already read. Nothing is invented, and a
+   source that does not answer simply contributes no alerts. Read state is
+   stored per browser (localStorage): the API has no endpoint for it, and the
+   page says so rather than pretending it is shared.
+   ======================================================================== */
+
+const ADMIN_ALERT_READS_KEY = "titopay_admin_alert_reads_v1";
+const ALERT_TTL_MS = 90 * 1000;
+const ALERT_POLL_MS = 2 * 60 * 1000;
+const ALERT_CAP = 250;
+const ALERTS_PAGE_SIZE = 20;
+
+let alertState = {
+  alerts: [],
+  builtAt: 0,
+  inFlight: null,
+  timer: null,
+  sources: { answered: 0, total: 0 },
+};
+
+function alertReads() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ADMIN_ALERT_READS_KEY) || "{}");
+    return { seen: parsed.seen || {}, first: parsed.first || {}, allReadAt: Number(parsed.allReadAt || 0) };
+  } catch {
+    return { seen: {}, first: {}, allReadAt: 0 };
+  }
+}
+
+function saveAlertReads(reads) {
+  try {
+    localStorage.setItem(ADMIN_ALERT_READS_KEY, JSON.stringify(reads));
+  } catch {}
+}
+
+function alertIsUnread(alert, reads) {
+  if (reads.seen[alert.id]) return false;
+  const firstSeen = Number(reads.first[alert.id] || 0);
+  return firstSeen > reads.allReadAt;
+}
+
+function alertTime(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+}
+
+async function alertSource(path) {
+  try {
+    return await apiFetch(path);
+  } catch {
+    return null;
+  }
+}
+
+/* Derives the alert list from the modules that already exist. Each alert has a
+   deterministic id, so read state survives refreshes and re-derivations. */
+async function buildAdminAlerts() {
+  const [security, audit, compliance, conversations, tickets, transactions, health, merchants] = await Promise.all([
+    alertSource("/admin/security"),
+    alertSource("/admin/audit"),
+    alertSource("/admin/compliance/queue"),
+    alertSource("/admin/support/conversations"),
+    alertSource("/admin/support/tickets"),
+    alertSource("/admin/transactions?limit=300"),
+    alertSource("/admin/module-health"),
+    alertSource("/admin/merchants"),
+  ]);
+  const answered = [security, audit, compliance, conversations, tickets, transactions, health, merchants].filter(Boolean).length;
+
+  const alerts = [];
+  const push = (id, severity, category, title, detail, at, href) => {
+    alerts.push({ id, severity, category, title, detail: detail || "", at: alertTime(at), href });
+  };
+
+  (security?.loginAttempts || []).slice(0, 80).forEach((row) => {
+    const failed = /fail|invalid|denied|lock/i.test(String(row.action || ""));
+    push(
+      `sec:${row.id || row.created_at}:${row.action}`,
+      failed ? "warning" : "info",
+      "Security",
+      failed ? "Failed sign-in attempt" : "Sign-in recorded",
+      [row.actor_type, row.actor_id].filter(Boolean).join(" · "),
+      row.created_at,
+      "/security/"
+    );
+  });
+
+  (security?.profileLockEvents || []).slice(0, 40).forEach((row) => {
+    push(`lock:${row.id || row.created_at}`, "warning", "Security", "Profile lock event", String(row.action || "").replace(/_/g, " "), row.created_at, "/security/");
+  });
+
+  (audit?.items || []).slice(0, 80).forEach((row) => {
+    const action = String(row.action || "");
+    const critical = /fraud|suspicious|blocked|abuse/i.test(action);
+    const notable = critical || /lock|revoke|reverse|suspend|delete|logout_all/i.test(action);
+    if (!notable) return;
+    push(
+      `aud:${row.id}`,
+      critical ? "critical" : "warning",
+      critical ? "Fraud" : "Operations",
+      action.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      [row.actor_type, row.target_type, row.target_id].filter(Boolean).join(" · "),
+      row.created_at,
+      "/audit/"
+    );
+  });
+
+  (compliance?.items || []).forEach((row) => {
+    if (!["pending", "in_review", "submitted"].includes(String(row.status || "").toLowerCase())) return;
+    push(`cmp:${row.id}`, "warning", "Compliance", `KYC review pending: ${row.full_name || row.username || row.id}`, row.review_type || "Verification review", row.created_at, "/compliance/");
+  });
+
+  (conversations?.items || []).forEach((row) => {
+    if (!["ESCALATED", "WAITING_FOR_AGENT"].includes(String(row.status || ""))) return;
+    push(`cnv:${row.id}`, "warning", "Support", "Customer waiting for an agent", String(row.last_message || "").slice(0, 80), row.updated_at || row.created_at, "/support/");
+  });
+
+  (tickets?.items || []).forEach((row) => {
+    if (!["open", "in_progress", "pending"].includes(String(row.status || "").toLowerCase())) return;
+    push(`tkt:${row.id}`, "info", "Support", `Ticket open: ${row.subject || row.id}`, [row.full_name, row.category].filter(Boolean).join(" · "), row.created_at, "/support/");
+  });
+
+  (transactions?.items || []).slice(0, 300).forEach((row) => {
+    const status = String(row.status || "").toLowerCase();
+    if (["failed", "declined", "rejected", "error"].includes(status)) {
+      push(`txf:${row.id}`, "warning", "Transactions", `Transaction failed: ${row.reference || row.id}`, [row.owner_name, money(row.amount)].filter(Boolean).join(" · "), row.created_at, "/transactions/");
+    } else if (String(row.reconciliation_status || "").toLowerCase() === "review") {
+      push(`txr:${row.id}`, "critical", "Transactions", `Reconciliation review: ${row.reference || row.id}`, [row.owner_name, money(row.amount)].filter(Boolean).join(" · "), row.created_at, "/transactions/");
+    }
+  });
+
+  (health?.tables || []).forEach((row) => {
+    if (row.exists) return;
+    push(`tbl:${row.table_name}`, "critical", "System", `Database table missing: ${row.table_name}`, "Reported by the health module", null, "/database-health/");
+  });
+
+  (merchants?.items || []).forEach((row) => {
+    if (String(row.verification_status || "").toLowerCase() === "verified") return;
+    push(`mer:${row.id}`, "info", "Merchants", `Merchant awaiting verification: ${row.business_name || row.id}`, row.merchant_number || "", row.created_at, "/merchants/");
+  });
+
+  alerts.sort((a, b) => b.at - a.at);
+  const capped = alerts.slice(0, ALERT_CAP);
+
+  // First-seen bookkeeping drives unread state for dated and undated alerts
+  // alike, and the map is pruned to the alerts that still exist.
+  const reads = alertReads();
+  const now = Date.now();
+  const nextFirst = {};
+  const nextSeen = {};
+  capped.forEach((alert) => {
+    nextFirst[alert.id] = reads.first[alert.id] || now;
+    if (reads.seen[alert.id]) nextSeen[alert.id] = reads.seen[alert.id];
+  });
+  saveAlertReads({ seen: nextSeen, first: nextFirst, allReadAt: reads.allReadAt });
+
+  return { alerts: capped, answered, total: 8 };
+}
+
+async function refreshAdminAlerts({ force = false } = {}) {
+  if (!getAuth()?.accessToken) return alertState.alerts;
+  if (alertState.inFlight) return alertState.inFlight;
+  if (!force && Date.now() - alertState.builtAt < ALERT_TTL_MS) return alertState.alerts;
+  alertState.inFlight = buildAdminAlerts()
+    .then(({ alerts, answered, total }) => {
+      alertState.alerts = alerts;
+      alertState.builtAt = Date.now();
+      alertState.sources = { answered, total };
+      updateAlertBadge();
+      renderAlertPanelList();
+      return alerts;
+    })
+    .finally(() => {
+      alertState.inFlight = null;
+    });
+  return alertState.inFlight;
+}
+
+function unreadAlertCount() {
+  const reads = alertReads();
+  return alertState.alerts.filter((alert) => alertIsUnread(alert, reads)).length;
+}
+
+function updateAlertBadge() {
+  const badge = document.getElementById("alert-badge");
+  const bell = document.querySelector("[data-alert-bell]");
+  if (!badge || !bell) return;
+  const unread = unreadAlertCount();
+  badge.textContent = unread > 99 ? "99+" : String(unread);
+  badge.hidden = unread === 0;
+  bell.setAttribute("aria-label", unread ? `Alerts, ${unread} unread` : "Alerts");
+}
+
+function markAllAlertsRead() {
+  const reads = alertReads();
+  saveAlertReads({ ...reads, allReadAt: Date.now(), seen: {} });
+  updateAlertBadge();
+  renderAlertPanelList();
+  if (document.querySelector(".admin-shell[data-page]")?.dataset.page === "alerts") {
+    renderAlertCentreView();
+  }
+}
+
+function markAlertRead(id) {
+  const reads = alertReads();
+  reads.seen[id] = Date.now();
+  saveAlertReads(reads);
+  updateAlertBadge();
+}
+
+function alertRelativeTime(timestamp) {
+  if (!timestamp) return "—";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
+  return new Date(timestamp).toLocaleDateString("en-ZA", { day: "2-digit", month: "short" });
+}
+
+const ALERT_SEVERITY_META = {
+  critical: ["Critical", "red"],
+  warning: ["Warning", "orange"],
+  info: ["Info", "blue"],
+};
+
+function alertRowHtml(alert, reads, compact = false) {
+  const unread = alertIsUnread(alert, reads);
+  return `
+    <a class="tp-alert-row${unread ? " is-unread" : ""}" href="${escapeHtml(alert.href)}" data-alert-read="${escapeHtml(alert.id)}">
+      <span class="tp-alert-dot ${escapeHtml(alert.severity)}" aria-hidden="true"></span>
+      <span class="tp-alert-body">
+        <strong>${escapeHtml(alert.title)}</strong>
+        ${alert.detail && !compact ? `<small>${escapeHtml(alert.detail)}</small>` : ""}
+        <small class="tp-alert-meta">${escapeHtml(alert.category)} · ${escapeHtml(alertRelativeTime(alert.at))}${unread ? " · Unread" : ""}</small>
+      </span>
+    </a>
+  `;
+}
+
+function renderAlertPanelList() {
+  const host = document.getElementById("alert-panel-list");
+  if (!host) return;
+  const reads = alertReads();
+  const recent = alertState.alerts.slice(0, 8);
+  host.innerHTML = recent.length
+    ? recent.map((alert) => alertRowHtml(alert, reads, true)).join("")
+    : `<p class="tp-alert-empty">No alerts right now. Platform events appear here as they happen.</p>`;
+}
+
+function setAlertPanel(open) {
+  const panel = document.getElementById("alert-panel");
+  const bell = document.querySelector("[data-alert-bell]");
+  if (!panel || !bell) return;
+  panel.hidden = !open;
+  bell.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) renderAlertPanelList();
+}
+
+function bindAlertBell() {
+  const bell = document.querySelector("[data-alert-bell]");
+  if (!bell || bell.dataset.bound) return;
+  bell.dataset.bound = "1";
+
+  bell.addEventListener("click", () => {
+    const panel = document.getElementById("alert-panel");
+    setAlertPanel(panel ? panel.hidden : true);
+  });
+
+  document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-alert-bell]") || event.target.closest("#alert-panel")) {
+      const readLink = event.target.closest("[data-alert-read]");
+      if (readLink) {
+        markAlertRead(readLink.dataset.alertRead);
+        setAlertPanel(false);
+      }
+      const markAll = event.target.closest("[data-alert-mark-all]");
+      if (markAll) markAllAlertsRead();
+      return;
+    }
+    setAlertPanel(false);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !document.getElementById("alert-panel")?.hidden) {
+      setAlertPanel(false);
+      bell.focus();
+    }
+  });
+}
+
+function startAlertEngine() {
+  bindAlertBell();
+  refreshAdminAlerts();
+  clearInterval(alertState.timer);
+  alertState.timer = setInterval(() => {
+    if (!document.hidden) refreshAdminAlerts();
+  }, ALERT_POLL_MS);
+}
+
+/* == Alert Centre page ==================================================== */
+
+document.addEventListener("change", (event) => {
+  const category = event.target.closest("[data-alert-category]");
+  if (category) {
+    const view = alertCentreFilters();
+    view.category = category.value;
+    view.page = 1;
+    renderAlertCentreView();
+  }
+});
+
+function alertCentreFilters() {
+  if (!PAGE_EXPORTS.alertsView) PAGE_EXPORTS.alertsView = { severity: "", category: "", unreadOnly: false, page: 1 };
+  return PAGE_EXPORTS.alertsView;
+}
+
+function renderAlertCentreView() {
+  const content = document.getElementById("page-content");
+  if (!content) return;
+  const view = alertCentreFilters();
+  const reads = alertReads();
+  const categories = [...new Set(alertState.alerts.map((alert) => alert.category))].sort();
+
+  let rows = alertState.alerts;
+  if (view.severity) rows = rows.filter((alert) => alert.severity === view.severity);
+  if (view.category) rows = rows.filter((alert) => alert.category === view.category);
+  if (view.unreadOnly) rows = rows.filter((alert) => alertIsUnread(alert, reads));
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / ALERTS_PAGE_SIZE));
+  view.page = Math.min(Math.max(1, view.page), totalPages);
+  const visible = rows.slice((view.page - 1) * ALERTS_PAGE_SIZE, view.page * ALERTS_PAGE_SIZE);
+
+  const unread = unreadAlertCount();
+  const counts = { critical: 0, warning: 0, info: 0 };
+  alertState.alerts.forEach((alert) => {
+    counts[alert.severity] = (counts[alert.severity] || 0) + 1;
+  });
+
+  PAGE_EXPORTS.alerts = alertState.alerts.map((alert) => ({
+    severity: alert.severity,
+    category: alert.category,
+    title: alert.title,
+    detail: alert.detail,
+    at: alert.at ? new Date(alert.at).toISOString() : "",
+    unread: alertIsUnread(alert, reads) ? "yes" : "no",
+  }));
+
+  content.innerHTML = `
+    ${renderMetrics([
+      ["Open Alerts", alertState.alerts.length],
+      ["Unread", unread],
+      ["Critical", counts.critical],
+      ["Sources Answering", `${alertState.sources.answered}/${alertState.sources.total}`],
+    ])}
+    <section class="tp-alert-controls">
+      <nav class="segmented" aria-label="Severity">
+        ${["", "critical", "warning", "info"].map((severity) => `
+          <button type="button" class="segmented-btn${view.severity === severity ? " active" : ""}" data-alert-severity="${escapeHtml(severity)}" aria-pressed="${view.severity === severity}">
+            ${severity ? ALERT_SEVERITY_META[severity][0] : "All"}${severity ? `<span class="segmented-count">${counts[severity] || 0}</span>` : `<span class="segmented-count">${alertState.alerts.length}</span>`}
+          </button>
+        `).join("")}
+      </nav>
+      <div class="tp-alert-actions">
+        <label class="tp-filter">
+          <span class="visually-hidden">Category</span>
+          <select data-alert-category>
+            <option value="">All categories</option>
+            ${categories.map((category) => `<option value="${escapeHtml(category)}"${view.category === category ? " selected" : ""}>${escapeHtml(category)}</option>`).join("")}
+          </select>
+        </label>
+        <button class="tp-tool-btn" type="button" data-alert-unread-toggle aria-pressed="${view.unreadOnly}">Unread only</button>
+        <button class="secondary-btn" type="button" data-alert-mark-all-page>Mark all as read</button>
+      </div>
+    </section>
+    <section class="table-card">
+      <div class="tp-alert-list">
+        ${visible.length
+          ? visible.map((alert) => alertRowHtml(alert, reads)).join("")
+          : `<div class="empty"><strong>No alerts match this view</strong><small>Change the severity or category filters, or switch off Unread only.</small></div>`}
+      </div>
+      ${totalPages > 1 ? `
+        <div class="tp-pager">
+          <button class="ghost-btn" type="button" data-alert-page="${view.page - 1}"${view.page <= 1 ? " disabled" : ""}>Previous</button>
+          <span>Page ${view.page} of ${totalPages} · ${rows.length} alerts</span>
+          <button class="ghost-btn" type="button" data-alert-page="${view.page + 1}"${view.page >= totalPages ? " disabled" : ""}>Next</button>
+        </div>
+      ` : ""}
+    </section>
+    ${tableCard(
+      "About these alerts",
+      renderKeyValueList([
+        ["Source", "Live security, audit, compliance, support, transaction, system and merchant modules"],
+        ["Read state", "Stored in this browser only; the API does not yet store alert reads"],
+        ["Alert emails", "Sent by the TitoPay API, not by this console. To stop the sign-in emails, the API's notification sender must be updated - this page carries the same events."],
+        ["Refresh", "Automatic every two minutes while the console is open"],
+      ]),
+      "The Alert Centre derives every entry from a live API response. Nothing here is estimated."
+    )}
+  `;
+}
+
+async function renderAlertCentre() {
+  await refreshAdminAlerts({ force: alertState.builtAt === 0 });
+  renderAlertCentreView();
+}
+
 /* Enterprise Analytics ----------------------------------------------------
    The module lives in its own file and is imported the first time an operator
    opens the Analytics page, so every other console page loads exactly the
@@ -4694,6 +5129,7 @@ function startTableEnhancement() {
 function adminPageDescriptors() {
   return {
     dashboard: ["Infrastructure Dashboard", "Operational overview for the TitoPay API and admin platform."],
+    alerts: ["Alert Centre", "Platform alerts kept inside the console: security, compliance, support, transactions and system events."],
     analytics: ["Enterprise Analytics", "Executive, financial, user, transaction, merchant, risk, support and system reporting."],
     users: ["User Management", "View, suspend, lock and unlock customer accounts."],
     merchants: ["Merchant Management", "Verify and monitor business merchants and payment channels."],
@@ -4738,6 +5174,7 @@ function adminPageDescriptors() {
 function adminPageLoaders() {
   return {
     dashboard: renderDashboard,
+    alerts: renderAlertCentre,
     analytics: renderAnalytics,
     users: renderUsers,
     merchants: renderMerchants,
@@ -4840,6 +5277,7 @@ async function bootPage() {
     startIdleGuard();
     const page = root.dataset.page;
     await renderAdminPage(page, me, { preserveScroll: true });
+    startAlertEngine();
   } catch (error) {
     if (error?.status === 401) {
       clearAuth();
@@ -5017,6 +5455,39 @@ document.addEventListener("click", async (event) => {
     event.preventDefault();
     logoutToLogin("Signed out on this device");
     return;
+  }
+  const alertSeverity = event.target.closest("[data-alert-severity]");
+  if (alertSeverity) {
+    const view = alertCentreFilters();
+    view.severity = alertSeverity.dataset.alertSeverity;
+    view.page = 1;
+    renderAlertCentreView();
+    return;
+  }
+  const alertUnreadToggle = event.target.closest("[data-alert-unread-toggle]");
+  if (alertUnreadToggle) {
+    const view = alertCentreFilters();
+    view.unreadOnly = !view.unreadOnly;
+    view.page = 1;
+    renderAlertCentreView();
+    return;
+  }
+  const alertMarkAllPage = event.target.closest("[data-alert-mark-all-page]");
+  if (alertMarkAllPage) {
+    markAllAlertsRead();
+    showToast("All alerts marked as read");
+    return;
+  }
+  const alertPage = event.target.closest("[data-alert-page]");
+  if (alertPage) {
+    alertCentreFilters().page = Number(alertPage.dataset.alertPage) || 1;
+    renderAlertCentreView();
+    return;
+  }
+  const alertRead = event.target.closest("#page-content [data-alert-read]");
+  if (alertRead) {
+    markAlertRead(alertRead.dataset.alertRead);
+    // Navigation continues through the internal-route handler below.
   }
   const adminPageRefresh = event.target.closest("[data-admin-page-refresh]");
   if (adminPageRefresh) {

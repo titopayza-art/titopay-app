@@ -3876,6 +3876,241 @@ a.table-card-meta:hover {
   text-decoration: none;
 }
 
+/* Alert Centre ------------------------------------------------------------
+   Topbar bell, its dropdown panel, and the /alerts/ module. */
+
+.tp-bell-wrap {
+  position: relative;
+}
+
+.tp-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.tp-bell:hover {
+  border-color: var(--tp-border-strong);
+  background: var(--tp-surface-sunken);
+  color: var(--tp-text-strong);
+}
+
+.tp-bell:focus-visible {
+  outline: none;
+  box-shadow: var(--tp-focus);
+}
+
+.tp-bell svg {
+  width: 17px;
+  height: 17px;
+}
+
+.tp-bell-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 17px;
+  padding: 1px 4px;
+  border: 2px solid var(--tp-surface);
+  border-radius: var(--tp-radius-pill);
+  background: var(--tp-danger);
+  color: #fff;
+  font-size: 0.625rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.tp-bell-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 95;
+  width: min(360px, calc(100vw - 32px));
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius-lg);
+  background: var(--tp-surface);
+  box-shadow: var(--tp-shadow-overlay);
+  animation: tp-rise 0.16s ease both;
+}
+
+.tp-bell-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--tp-border-soft);
+}
+
+.tp-bell-panel-head strong {
+  color: var(--tp-text-strong);
+  font-size: 0.875rem;
+}
+
+.tp-bell-panel-list {
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.tp-bell-panel-foot {
+  display: block;
+  padding: 11px 14px;
+  border-top: 1px solid var(--tp-border-soft);
+  color: var(--tp-blue);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.tp-bell-panel-foot:hover {
+  background: var(--tp-blue-soft);
+  color: var(--tp-blue-strong);
+  text-decoration: none;
+}
+
+.tp-alert-empty {
+  padding: 22px 14px;
+  color: var(--tp-muted);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+.tp-alert-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--tp-border-soft);
+  color: inherit;
+  transition: background-color 0.11s ease;
+}
+
+.tp-alert-row:last-child {
+  border-bottom: 0;
+}
+
+.tp-alert-row:hover {
+  background: var(--tp-surface-sunken);
+  text-decoration: none;
+}
+
+.tp-alert-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--tp-blue);
+}
+
+.tp-alert-row.is-unread {
+  background: var(--tp-blue-soft);
+}
+
+.tp-alert-row.is-unread:hover {
+  background: var(--tp-blue-soft);
+  filter: brightness(0.985);
+}
+
+.tp-alert-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--tp-neutral);
+}
+
+.tp-alert-dot.critical {
+  background: var(--tp-danger);
+  box-shadow: 0 0 0 3px var(--tp-danger-soft);
+}
+
+.tp-alert-dot.warning {
+  background: var(--tp-warning);
+  box-shadow: 0 0 0 3px var(--tp-warning-soft);
+}
+
+.tp-alert-dot.info {
+  background: var(--tp-info);
+  box-shadow: 0 0 0 3px var(--tp-info-soft);
+}
+
+.tp-alert-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tp-alert-body strong {
+  color: var(--tp-text-strong);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.tp-alert-body small {
+  overflow: hidden;
+  color: var(--tp-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-alert-body .tp-alert-meta {
+  color: var(--tp-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-alert-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tp-alert-controls .segmented {
+  margin-bottom: 0;
+}
+
+.tp-alert-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tp-alert-actions select {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  font-family: inherit;
+  font-size: 0.8125rem;
+}
+
+.tp-alert-actions .tp-tool-btn[aria-pressed="true"] {
+  border-color: var(--tp-blue);
+  background: var(--tp-blue-soft);
+  color: var(--tp-blue-strong);
+}
+
+.table-card .tp-alert-list {
+  margin: -18px;
+  margin-bottom: 0;
+}
+
 /* == 11  States =========================================================== */
 
 .empty,
