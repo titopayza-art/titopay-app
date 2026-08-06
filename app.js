@@ -19,8 +19,8 @@ const TITOPAY_RECEIPTS_KEY = "titopay_receipts_v1";
 const INSTALL_DISMISSED_KEY = "titopay_install_dismissed_v1";
 const QUICK_SERVICES_STORAGE_PREFIX = "titopay_quick_services_v1";
 const QUICK_SERVICES_LIMIT = 6;
-const SESSION_TIMEOUT_MS = 15 * 1000;
-const SESSION_WARNING_MS = 5 * 1000;
+const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
+const SESSION_WARNING_MS = 60 * 1000;
 const SECURITY_TIP_TEXT = "Never share your PIN, password or verification codes. TitoPay will never ask for those by phone, email, WhatsApp, SMS or social media.";
 // Fees quoted in copy come from here and are rendered through money(), so the
 // sentence beside an amount always reads the same as the amount itself. Written
@@ -1780,9 +1780,9 @@ function topbar() {
     <header class="topbar app-topbar" data-app-topbar>
       <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
       <div>
-        <button class="icon-btn" type="button" data-action="chatbot" aria-label="Open TitoPay chatbot">${icon("chatbot")}</button>
-        <button class="avatar notification-avatar" type="button" data-action="notifications" aria-label="Open notifications">
-          ${icon("bell")}
+        <button class="icon-btn topbar-labeled" type="button" data-action="chatbot" aria-label="Open TitoPay help chatbot">${icon("chatbot")}<small>Help</small></button>
+        <button class="avatar notification-avatar topbar-labeled" type="button" data-action="notifications" aria-label="Open alerts">
+          ${icon("bell")}<small>Alerts</small>
           ${unread ? `<span class="notification-count" aria-label="${unread} unread notifications">${unread > 9 ? "9+" : unread}</span>` : ""}
         </button>
       </div>
@@ -1895,10 +1895,17 @@ function servicesView() {
     active.push(enterpriseDistributionTileService());
   }
   const soon = hideDuplicateAirtimeDataTiles(comingSoonServices().filter(shouldShowServiceTile));
+  const searchTile = state.auth?.accessToken
+    ? `<button class="service-tile" type="button" data-action="app-search" aria-label="Search TitoPay services and features">
+        <span class="icon-bubble">${icon("search")}</span>
+        <span>Search</span>
+      </button>`
+    : "";
   return `
     ${state.auth?.accessToken ? securityStatusStrip() : ""}
     ${state.serviceError ? promoCarousel() : ""}
     <section class="service-grid">
+      ${searchTile}
       ${active.length ? active.map((service) => serviceTile(service, true)).join("") : serviceEmptyState()}
     </section>
     ${soon.length ? `
@@ -3156,6 +3163,12 @@ function onInput(event) {
     state.beneficiarySearch = beneficiarySearch.value;
     const host = document.querySelector("[data-beneficiary-list]");
     if (host) host.innerHTML = beneficiaryManagementList();
+    return;
+  }
+  const appSearch = event.target.closest("[data-app-search]");
+  if (appSearch) {
+    state.appSearchQuery = appSearch.value;
+    renderAppSearchResults();
     return;
   }
   const pickerInput = event.target.closest(".vas-picker-input");
@@ -4489,8 +4502,8 @@ async function handleAction(action, actionElement = null) {
   if (action === "download-proof-of-account") {
     await downloadProofOfAccountPdf(actionElement);
   }
-  if (action === "pay-hub-send") {
-    openSendMoneyModal();
+  if (action === "app-search") {
+    openAppSearchModal();
   }
   if (action === "notifications") {
     openNotificationsModal();
@@ -7805,13 +7818,32 @@ function beneficiaryPickerItems(items, emptyText) {
 
 function sendMoneyBeneficiaryPicker() {
   const items = state.beneficiaries || [];
-  const favourites = items.filter((item) => item.favourite).slice(0, 6);
-  const recent = items.filter((item) => item.lastPaidAt && !item.favourite).slice(0, 6);
+  const frequent = [
+    ...items.filter((item) => item.favourite),
+    ...items.filter((item) => item.lastPaidAt && !item.favourite)
+  ].slice(0, 8);
+  if (!frequent.length) {
+    return `
+      <section class="beneficiary-picker" aria-label="Saved beneficiaries">
+        <div class="frequent-head"><p class="eyebrow">Frequently Sent</p></div>
+        <p class="muted beneficiary-empty">Beneficiaries you save and pay will appear here for one-tap sending.</p>
+      </section>`;
+  }
   return `
     <section class="beneficiary-picker" aria-label="Saved beneficiaries">
-      <div><p class="eyebrow">Favourite Beneficiaries</p>${beneficiaryPickerItems(favourites, "No favourites saved yet.")}</div>
-      <div><p class="eyebrow">Recent Beneficiaries</p>${beneficiaryPickerItems(recent, "Recently paid beneficiaries will appear here.")}</div>
-      <button class="btn ghost" type="button" data-action="saved-beneficiaries">${icon("user")} Search Beneficiaries</button>
+      <div class="frequent-head">
+        <p class="eyebrow">Frequently Sent</p>
+        <button class="link-btn" type="button" data-action="saved-beneficiaries">View all</button>
+      </div>
+      <div class="frequent-row" role="list">
+        ${frequent.map((item) => `
+          <button class="frequent-card" type="button" role="listitem" data-action="beneficiary-select:${esc(item.id)}">
+            <span class="chat-contact-avatar">${item.profilePhotoUrl ? `<img src="${esc(item.profilePhotoUrl)}" alt="">` : esc(beneficiaryDisplayName(item).slice(0, 1).toUpperCase())}</span>
+            <strong>${esc(beneficiaryDisplayName(item))}</strong>
+            <small>${esc(displayUsername(item.username) || item.walletId || "")}</small>
+            ${beneficiaryIsVerified(item) ? `<span class="frequent-verified">${icon("check-circle")}</span>` : ""}
+          </button>`).join("")}
+      </div>
     </section>`;
 }
 
@@ -7819,7 +7851,7 @@ function openSendMoneyModal(service = coreWalletAction("send"), selected = null)
   const selectedRecipient = selected ? beneficiaryRecipient(selected) : "";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Send Money</p><h2>Send from your wallet</h2><p class="lead">Use a username, cellphone number or email address. TitoPay will show the fee preview before processing.</p></div>
+      <div><p class="eyebrow">Send Money</p><h2>Who are you sending to?</h2><p class="lead">TitoPay shows the fee preview before anything is processed.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${sendMoneyBeneficiaryPicker()}
@@ -7827,7 +7859,7 @@ function openSendMoneyModal(service = coreWalletAction("send"), selected = null)
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode || "wallet_transfer")}">
       ${selected ? `<input type="hidden" name="beneficiaryUserId" value="${esc(selected.beneficiaryUserId || "")}">` : ""}
       ${recipientMethodField("auto")}
-      <div class="field"><label>Recipient</label><input name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" value="${esc(selectedRecipient)}" required></div>
+      <div class="field"><label>Recipient</label><input name="recipient" autocomplete="off" placeholder="Search @username, +27 cellphone or email" value="${esc(selectedRecipient)}" required></div>
       ${selected ? `<div class="recipient-verify-result"><p class="rv-head">Saved beneficiary selected</p><div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(beneficiaryDisplayName(selected))}</strong><small>${esc([displayUsername(selected.username), selected.walletId ? `Wallet ${selected.walletId}` : "", selected.qrReference ? `QR ${selected.qrReference}` : "", enumLabel(selected.accountType)].filter(Boolean).join(" · "))}</small></span></div></div>` : ""}
       ${contactSuggestions()}
       <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
@@ -7835,10 +7867,13 @@ function openSendMoneyModal(service = coreWalletAction("send"), selected = null)
       <div class="field"><label>Note</label><textarea name="note" placeholder="Optional message"></textarea></div>
       <button class="btn primary" type="submit">${icon("send")} Preview send money</button>
     </form>
-    ${trustChips([
-      ["shield", "Recipients verified on TitoPay"],
-      ["receipt-list", "Fees shown before you confirm"]
-    ])}
+    <section class="reassure-card" role="note" aria-label="How this payment is protected">
+      <span class="icon-bubble">${icon("shield")}</span>
+      <div>
+        <strong>Your money is protected</strong>
+        <small>Recipients are checked against the TitoPay directory, every fee shows before you confirm, and confirmations are protected against duplicate taps.</small>
+      </div>
+    </section>
   `);
 }
 
@@ -12850,6 +12885,57 @@ function openWhyTrustModal() {
 // this is presentation only -- no payment flow gains or loses logic.
 // ---------------------------------------------------------------------------
 
+// App search: one place to find any active service or key feature. Rows are
+// plain data-service / data-action buttons, so opening a result runs the
+// exact same code path as tapping its tile.
+function appSearchEntries() {
+  const services = visibleServices().filter((service) => service.status === "active").map((service) => ({
+    label: service.label, hint: "Service", icon: service.icon || "grid", attr: `data-service="${esc(service.id)}"`
+  }));
+  const features = [
+    { label: "Security Centre", hint: "Profile · Security", icon: "shield", attr: 'data-action="security-centre"' },
+    { label: "Saved Beneficiaries", hint: "Profile · Account", icon: "user", attr: 'data-action="saved-beneficiaries"' },
+    { label: "Proof of Account", hint: "Profile · Account", icon: "document-invoice", attr: 'data-action="proof-of-account"' },
+    { label: "How TitoPay Works", hint: "Guided tour", icon: "learn", attr: 'data-action="how-titopay-works"' },
+    { label: "Support", hint: "Customer Care", icon: "send", attr: 'data-action="support"' },
+    { label: "Notifications", hint: "Alerts", icon: "bell", attr: 'data-action="notifications"' }
+  ];
+  return [...services, ...features];
+}
+
+function renderAppSearchResults() {
+  const list = document.querySelector("[data-app-search-results]");
+  if (!list) return;
+  const query = String(state.appSearchQuery || "").trim().toLowerCase();
+  const entries = appSearchEntries().filter((entry) => !query || entry.label.toLowerCase().includes(query) || entry.hint.toLowerCase().includes(query));
+  list.innerHTML = entries.length
+    ? entries.map((entry) => `
+      <button class="profile-feature" type="button" ${entry.attr}>
+        <span class="icon-bubble">${icon(entry.icon)}</span>
+        <span><strong>${esc(entry.label)}</strong><small>${esc(entry.hint)}</small></span>
+      </button>`).join("")
+    : `<section class="empty-state compact-state">${icon("search")}<strong>No matches</strong><p>Try a shorter word, like "air" or "bill".</p></section>`;
+  const count = document.querySelector("[data-app-search-count]");
+  if (count) count.textContent = `${entries.length} result${entries.length === 1 ? "" : "s"}`;
+}
+
+function openAppSearchModal() {
+  state.appSearchQuery = "";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Search</p><h2>Find anything in TitoPay</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="field search-field">
+      <label class="visually-hidden">Search TitoPay</label>
+      <div class="search-input">${icon("search")}<input data-app-search type="search" autocomplete="off" placeholder="Search services and features"></div>
+    </div>
+    <p class="muted app-search-count" data-app-search-count aria-live="polite"></p>
+    <div class="profile-feature-grid app-search-results" data-app-search-results></div>
+  `);
+  renderAppSearchResults();
+}
+
 function payHubEscListener(event) {
   if (event.key === "Escape") closePayHub();
 }
@@ -12864,6 +12950,20 @@ function closePayHub() {
   else setTimeout(remove, 220);
 }
 
+// Resolves a catalog service by id/action for a hub slot; a missing service
+// simply drops its bubble instead of rendering a dead button.
+function payHubService(id) {
+  return (state.services || []).find((service) =>
+    service.id === id || service.action === id || service.serviceCode === id) || null;
+}
+
+function payHubBubble(position, iconName, label, attrs) {
+  return `<div class="pay-orbit-slot pos-${position}">
+    <button class="pay-orbit-btn" type="button" ${attrs} aria-label="${esc(label)}">${icon(iconName)}</button>
+    <small>${esc(label)}</small>
+  </div>`;
+}
+
 function openPayHub() {
   if (document.querySelector(".pay-hub-backdrop")) {
     closePayHub();
@@ -12873,34 +12973,33 @@ function openPayHub() {
     try { navigator.vibrate(10); } catch (error) {}
   }
   const isBusiness = state.accountType === "business";
-  const receiveService = (state.services || []).find((service) => service.type === "receive");
+  const receive = payHubService("receive-money");
+  const request = payHubService("payment-request");
+  const airtime = payHubService("airtime-data");
+  const bills = payHubService("pay-bills");
+  const sendOrPayout = isBusiness ? payHubService("payouts") : payHubService("send-money");
+  const bubbles = [
+    payHubBubble("top", "scan", isBusiness ? "Merchant POS" : "Scan QR", 'data-route="qr"'),
+    request ? payHubBubble("mid-left", "payment-request", "Request Money", `data-service="${esc(request.id)}"`) : "",
+    receive ? payHubBubble("mid-right", isBusiness ? "sale" : "qr-receive", isBusiness ? "Make a Sale" : "Receive Money", `data-service="${esc(receive.id)}"`) : "",
+    sendOrPayout ? payHubBubble("low-left", isBusiness ? "bank-payout" : "send", isBusiness ? "Payouts" : "Send Money", `data-service="${esc(sendOrPayout.id)}"`) : "",
+    airtime ? payHubBubble("low-mid", "sim-card", "Airtime & Data", `data-service="${esc(airtime.id)}"`) : "",
+    bills ? payHubBubble("low-right", "bill-pay", "Pay Bills", `data-service="${esc(bills.id)}"`) : ""
+  ].join("");
   const backdrop = document.createElement("div");
   backdrop.className = "pay-hub-backdrop";
   backdrop.innerHTML = `
-    <section class="pay-hub" role="dialog" aria-modal="true" aria-label="Pay" tabindex="-1">
-      <p class="pay-hub-title">Pay</p>
-      <div class="pay-hub-actions">
-        <button class="pay-hub-btn" type="button" data-route="qr">
-          <span class="icon-bubble">${icon("scan")}</span>
-          <span><strong>${isBusiness ? "Merchant POS" : "Scan to Pay"}</strong><small>${isBusiness ? "Start a sale and take payment by QR." : "Pay any TitoPay QR with your camera."}</small></span>
-        </button>
-        ${receiveService ? `
-        <button class="pay-hub-btn" type="button" data-service="${esc(receiveService.id)}">
-          <span class="icon-bubble">${icon(isBusiness ? "sale" : "qr-receive")}</span>
-          <span><strong>${isBusiness ? "Make a Sale" : "Receive Money"}</strong><small>${isBusiness ? "Generate a payment QR for a customer." : "Show your QR and get paid in seconds."}</small></span>
-        </button>` : ""}
-        <button class="pay-hub-btn" type="button" data-action="pay-hub-send">
-          <span class="icon-bubble">${icon("send")}</span>
-          <span><strong>Send Money</strong><small>To a @username, cellphone or email.</small></span>
-        </button>
-      </div>
+    <section class="pay-orbit" role="dialog" aria-modal="true" aria-label="Pay" tabindex="-1">
+      <div class="pay-orbit-centre" aria-hidden="true">${icon("qr")}<span>Pay</span></div>
+      ${bubbles}
+      <button class="pay-orbit-close" type="button" data-pay-hub-close aria-label="Close Pay">${icon("x")}</button>
     </section>`;
   backdrop.addEventListener("click", (event) => {
-    if (event.target === backdrop || event.target.closest(".pay-hub-btn")) closePayHub();
+    if (event.target === backdrop || event.target.closest(".pay-orbit-btn") || event.target.closest("[data-pay-hub-close]")) closePayHub();
   });
   document.body.appendChild(backdrop);
   document.addEventListener("keydown", payHubEscListener);
-  const sheet = backdrop.querySelector(".pay-hub");
+  const sheet = backdrop.querySelector(".pay-orbit");
   if (prefersReducedMotion()) backdrop.classList.add("open");
   else requestAnimationFrame(() => backdrop.classList.add("open"));
   if (sheet) sheet.focus({ preventScroll: true });

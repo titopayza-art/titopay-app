@@ -1503,6 +1503,278 @@ h3 {
   font-weight: 600;
 }
 
+/* Subtle labels under the header icons */
+.topbar-labeled {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-height: 48px;
+  height: auto;
+}
+
+.topbar-labeled small {
+  color: var(--muted);
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* Radial Pay orbit */
+.pay-orbit {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 96px);
+  grid-template-rows: repeat(3, auto) 56px;
+  justify-content: center;
+  justify-items: center;
+  align-items: start;
+  gap: 18px 14px;
+  outline: none;
+  transform: translateY(16px) scale(0.96);
+  transition: transform 240ms var(--ease-premium);
+}
+
+.pay-hub-backdrop.open .pay-orbit {
+  transform: none;
+}
+
+.pay-orbit-slot {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.pay-orbit-slot small {
+  max-width: 96px;
+  color: #fff;
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  text-shadow: 0 1px 6px rgba(6, 26, 61, 0.6);
+}
+
+.pay-orbit-slot.pos-top { grid-area: 1 / 2; }
+.pay-orbit-slot.pos-mid-left { grid-area: 2 / 1; }
+.pay-orbit-slot.pos-mid-right { grid-area: 2 / 3; }
+.pay-orbit-slot.pos-low-left { grid-area: 3 / 1; }
+.pay-orbit-slot.pos-low-mid { grid-area: 3 / 2; }
+.pay-orbit-slot.pos-low-right { grid-area: 3 / 3; }
+
+.pay-orbit-centre {
+  grid-area: 2 / 2;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: linear-gradient(160deg, var(--blue-2) -20%, var(--blue) 55%, var(--deep-blue) 120%);
+  color: #fff;
+  box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.14), 0 16px 40px rgba(6, 26, 61, 0.5);
+}
+
+.pay-orbit-centre span {
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.pay-orbit-btn {
+  display: grid;
+  place-items: center;
+  width: 74px;
+  height: 74px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 10px 28px rgba(6, 26, 61, 0.35);
+  cursor: pointer;
+  transition: transform 160ms var(--ease-premium);
+}
+
+.pay-orbit-btn:active {
+  transform: scale(0.94);
+}
+
+.pay-orbit-btn svg {
+  width: 28px;
+  height: 28px;
+}
+
+.pay-orbit-close {
+  grid-area: 4 / 2;
+  align-self: end;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text);
+  box-shadow: 0 8px 22px rgba(6, 26, 61, 0.3);
+  cursor: pointer;
+}
+
+/* Send money: frequent recipients rail + search-style input */
+.frequent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.frequent-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+
+.frequent-card {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  width: 96px;
+  padding: 12px 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  scroll-snap-align: start;
+}
+
+.frequent-card .chat-contact-avatar {
+  width: 46px;
+  height: 46px;
+}
+
+.frequent-card strong {
+  max-width: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.frequent-card small {
+  max-width: 84px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.frequent-verified {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--success);
+}
+
+.frequent-verified svg {
+  width: 15px;
+  height: 15px;
+}
+
+.search-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.search-input > svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
+.search-input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding-inline: 0;
+}
+
+.search-input input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.search-input:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(10, 77, 255, 0.14);
+}
+
+.reassure-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--soft-blue);
+}
+
+.reassure-card .icon-bubble {
+  flex: 0 0 auto;
+  color: var(--blue);
+}
+
+.reassure-card > div {
+  display: grid;
+  gap: 3px;
+}
+
+.reassure-card strong {
+  font-size: 0.92rem;
+}
+
+.reassure-card small {
+  color: var(--muted);
+  font-size: 0.79rem;
+  line-height: 1.45;
+}
+
+.app-search-count {
+  margin: 8px 0 10px;
+  font-size: 0.78rem;
+}
+
+.app-search-results {
+  min-height: 200px;
+  align-content: start;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pay-orbit,
+  .pay-orbit-btn {
+    transition: none;
+  }
+
+  .pay-orbit-btn:active {
+    transform: none;
+  }
+}
+
 /* Pay Hub: floating sheet opened by the bottom-nav centre button */
 .pay-hub-backdrop {
   position: fixed;
@@ -11021,7 +11293,9 @@ button,
   }
 
   body:not(.modal-open):has(.dashboard-grid) .screen {
-    padding-bottom: calc(96px + var(--safe-bottom));
+    /* The nav runs ~85px tall when its labels wrap on narrow phones, so the
+       reserved band must clear that plus the 10px offset with real air. */
+    padding-bottom: calc(104px + var(--safe-bottom));
   }
 
   body:not(.modal-open):has(.dashboard-grid) .dashboard-grid {
@@ -11042,23 +11316,35 @@ button,
 
   /* The greeting line joined this fixed composition in v244; reclaim its
      height from the composition's air so the summary still clears the nav
-     on the tightest band viewports (390x890, 360x912). */
+     on the tightest band viewports (390x890, 360x912) -- and let any
+     leftover height sit between the sections instead of pooling as a dead
+     gap above the nav. */
   body:not(.modal-open):has(.dashboard-grid) .dashboard-greeting {
-    margin: 0 0 6px;
-    font-size: 1.08rem;
+    margin: 0 0 8px;
+    font-size: 1.1rem;
   }
 
   body:not(.modal-open):has(.dashboard-grid) .dashboard-grid {
-    gap: 8px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 0;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .screen {
+    display: flex;
+    flex-direction: column;
   }
 
   body:not(.modal-open):has(.dashboard-grid) .wallet-card {
-    padding: 18px 20px 16px;
+    padding: 20px 22px 18px;
   }
 
   body:not(.modal-open):has(.dashboard-grid) .wallet-balance {
-    margin: 6px 0 8px;
-    font-size: clamp(2rem, 8vw, 2.6rem);
+    margin: 6px 0 10px;
+    font-size: clamp(2rem, 8.4vw, 2.8rem);
   }
 
   body:not(.modal-open):has(.dashboard-grid) .wallet-card .muted {
@@ -11066,25 +11352,50 @@ button,
   }
 
   body:not(.modal-open):has(.dashboard-grid) .wallet-actions button {
-    min-height: 54px;
+    min-height: 56px;
   }
 
   body:not(.modal-open):has(.dashboard-grid) .quick-services-head {
-    margin-block: 4px 2px;
+    margin-block: 6px 4px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .quick-service-grid .service-tile {
+    min-height: 86px;
+    padding-block: 9px;
+    gap: 6px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .quick-service-grid .icon-bubble {
+    width: 46px;
+    height: 46px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .home-summary-card .stat {
+    min-height: 60px;
+  }
+}
+
+/* Narrow phones in the fixed band wrap more text, so the composition needs a
+   slightly tighter step to keep real air above the nav. */
+@media (min-width: 360px) and (max-width: 399px) and (min-height: 890px) {
+  body:not(.modal-open):has(.dashboard-grid) .wallet-card {
+    padding: 18px 20px 16px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .wallet-balance {
+    margin: 6px 0 8px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .wallet-actions button {
+    min-height: 52px;
   }
 
   body:not(.modal-open):has(.dashboard-grid) .quick-service-grid .service-tile {
     min-height: 82px;
     padding-block: 8px;
-    gap: 6px;
-  }
-
-  body:not(.modal-open):has(.dashboard-grid) .quick-service-grid .icon-bubble {
-    width: 44px;
-    height: 44px;
   }
 
   body:not(.modal-open):has(.dashboard-grid) .home-summary-card .stat {
-    min-height: 56px;
+    min-height: 54px;
   }
 }
