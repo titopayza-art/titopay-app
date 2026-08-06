@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v270-quick-copy";
+const CACHE_NAME = "titopay-pwa-v271-wallet-passes";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=270",
-  "./app.min.js?v=270",
+  "./styles.min.css?v=271",
+  "./app.min.js?v=271",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
