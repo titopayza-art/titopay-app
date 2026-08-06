@@ -18641,6 +18641,29 @@ async function registerServiceWorker() {
   try {
     const registration = await navigator.serviceWorker.register("./service-worker.js");
     registration.update();
+    // A new build activates immediately (the worker skips waiting), but the
+    // page that is already open keeps its old assets until it navigates --
+    // which an installed PWA may not do for days. Reload once onto the new
+    // build, unless the user is mid-dialog or mid-payment; then it simply
+    // applies on the next launch. Also re-check for updates whenever the
+    // app returns to the foreground.
+    if (!window.titoPaySwUpdateBound) {
+      window.titoPaySwUpdateBound = true;
+      let hadController = Boolean(navigator.serviceWorker.controller);
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (!hadController) {
+          hadController = true;
+          return;
+        }
+        if (window.titoPaySwReloaded) return;
+        if (document.querySelector(".modal-backdrop") || state.pendingTransactionReview || state.pendingQrPaymentReview) return;
+        window.titoPaySwReloaded = true;
+        location.reload();
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") registration.update().catch(() => null);
+      });
+    }
   } catch (error) {
     // PWA registration is non-blocking.
   }
