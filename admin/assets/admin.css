@@ -663,6 +663,19 @@ body[data-page="login"] {
   color: #fff;
 }
 
+.auth-brand::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at 30% 35%, rgba(0, 0, 0, 0.9), transparent 75%);
+  -webkit-mask-image: radial-gradient(circle at 30% 35%, rgba(0, 0, 0, 0.9), transparent 75%);
+  pointer-events: none;
+}
+
 .auth-brand::after {
   content: "";
   position: absolute;
@@ -770,11 +783,20 @@ body[data-page="login"] {
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.auth-point-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--tp-radius);
+  background: rgba(255, 255, 255, 0.07);
+}
+
 .auth-brand-points svg {
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
-  color: #78bcff;
+  width: 17px;
+  height: 17px;
+  color: #8cc4ff;
 }
 
 .auth-brand-points strong,
@@ -798,6 +820,8 @@ body[data-page="login"] {
 .auth-brand-foot {
   display: grid;
   gap: 3px;
+  position: relative;
+  z-index: 1;
   margin: 0;
   color: rgba(190, 212, 242, 0.68);
   font-size: 0.8125rem;
@@ -817,6 +841,17 @@ body[data-page="login"] {
   gap: 24px;
   min-width: 0;
   padding: clamp(26px, 3vw, 40px) clamp(24px, 3.4vw, 56px);
+  background:
+    radial-gradient(circle at 82% -8%, var(--tp-blue-soft) 0, transparent 46%),
+    var(--tp-surface-sunken);
+}
+
+.auth-card-zone {
+  display: grid;
+  align-content: center;
+  gap: 16px;
+  width: min(430px, 100%);
+  justify-self: center;
 }
 
 .auth-panel-top,
@@ -825,24 +860,36 @@ body[data-page="login"] {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  width: min(400px, 100%);
+  width: min(430px, 100%);
   justify-self: center;
 }
 
+/* The logo artwork carries a baked-in white background. On the tinted panel
+   that box would read as a sticker, so it is framed as a deliberate plate in
+   both themes; the dark theme keeps its own stronger plate rule. */
 .auth-panel-logo {
   display: block;
   width: 132px;
-  max-height: 42px;
+  max-height: 46px;
+  padding: 5px 10px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: #fff;
+  box-shadow: var(--tp-shadow-card);
   object-fit: contain;
-  object-position: left center;
+  object-position: center;
 }
 
 .auth-card {
   display: grid;
-  align-content: center;
-  width: min(400px, 100%);
-  justify-self: center;
-  padding: 0;
+  align-content: start;
+  width: 100%;
+  padding: clamp(22px, 2.6vw, 32px);
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius-lg);
+  background: var(--tp-surface);
+  box-shadow: var(--tp-shadow-raised);
+  animation: tp-rise 0.24s ease both;
 }
 
 .portal-badge {
@@ -988,6 +1035,32 @@ body[data-page="login"] {
 
 .status-text[data-tone="pending"] {
   color: var(--tp-text);
+}
+
+.auth-trust {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--tp-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.auth-trust li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auth-trust svg {
+  width: 14px;
+  height: 14px;
+  color: var(--tp-success);
 }
 
 .auth-panel-foot {

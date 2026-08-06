@@ -7,12 +7,12 @@
     <meta name="robots" content="noindex,nofollow">
     <meta name="referrer" content="no-referrer">
     <meta name="description" content="Secure operations console for TitoPay platform teams.">
-    <meta name="titopay-admin-build" content="admin-console-v52">
+    <meta name="titopay-admin-build" content="admin-console-v53">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.titopay.co.za wss://api.titopay.co.za; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'">
     <title>TitoPay Admin — Sign in</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico?v=6" sizes="any">
-    <link rel="stylesheet" href="assets/admin.css?v=admin-console-v52">
-    <script src="assets/admin.js?v=admin-console-v52" defer></script>
+    <link rel="stylesheet" href="assets/admin.css?v=admin-console-v53">
+    <script src="assets/admin.js?v=admin-console-v53" defer></script>
   </head>
   <body data-page="login">
     <main class="auth-shell">
@@ -29,21 +29,21 @@
 
           <ul class="auth-brand-points">
             <li>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm0 6.5a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6Zm0 3.6V16"/></svg>
+              <span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm0 6.5a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6Zm0 3.6V16"/></svg></span>
               <div>
                 <strong>Role-based access</strong>
                 <span>Every staff session is scoped to a role and an explicit permission set.</span>
               </div>
             </li>
             <li>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6V11h-6v9Zm0-16v5h6V4h-6Z"/></svg>
+              <span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6V11h-6v9Zm0-16v5h6V4h-6Z"/></svg></span>
               <div>
                 <strong>Platform control</strong>
                 <span>Thirty operational modules across payments, compliance and infrastructure.</span>
               </div>
             </li>
             <li>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14v16H5V4Zm3 4h8M8 12h8M8 16h5m4.5-1.5 1.5 1.5-1.5 1.5"/></svg>
+              <span class="auth-point-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5V4Zm3 4h8M8 12h8M8 16h5m4.5-1.5 1.5 1.5-1.5 1.5"/></svg></span>
               <div>
                 <strong>Audit-ready</strong>
                 <span>Sensitive actions are written to an immutable log with the acting operator.</span>
@@ -64,48 +64,66 @@
           <span class="env-badge" id="login-environment" title="Environment"></span>
         </header>
 
-        <div class="auth-card">
-          <p class="portal-badge">Staff access</p>
-          <h1 class="auth-title">Sign in</h1>
-          <p class="auth-copy">Use your authorised TitoPay staff credentials to continue.</p>
+        <div class="auth-card-zone">
+          <div class="auth-card">
+            <p class="portal-badge">Staff access</p>
+            <h1 class="auth-title">Sign in</h1>
+            <p class="auth-copy">Use your authorised TitoPay staff credentials to continue.</p>
 
-          <form id="admin-login-form" class="form-grid" novalidate>
-            <div class="field">
-              <label for="identifier">Username or email</label>
-              <input id="identifier" name="identifier" placeholder="name@titopay.co.za" autocomplete="username" autocapitalize="none" spellcheck="false" required>
-            </div>
-
-            <div class="field">
-              <div class="field-label-row">
-                <label for="password">Password</label>
-                <button class="link-btn" type="button" data-password-toggle aria-controls="password" aria-pressed="false">Show</button>
+            <form id="admin-login-form" class="form-grid" novalidate>
+              <div class="field">
+                <label for="identifier">Username or email</label>
+                <input id="identifier" name="identifier" placeholder="name@titopay.co.za" autocomplete="username" autocapitalize="none" spellcheck="false" required>
               </div>
-              <input id="password" name="password" type="password" placeholder="Enter password" autocomplete="current-password" aria-describedby="caps-hint" required>
-              <p class="field-hint" id="caps-hint" hidden>Caps Lock is on.</p>
+
+              <div class="field">
+                <div class="field-label-row">
+                  <label for="password">Password</label>
+                  <button class="link-btn" type="button" data-password-toggle aria-controls="password" aria-pressed="false">Show</button>
+                </div>
+                <input id="password" name="password" type="password" placeholder="Enter password" autocomplete="current-password" aria-describedby="caps-hint" required>
+                <p class="field-hint" id="caps-hint" hidden>Caps Lock is on.</p>
+              </div>
+
+              <button class="primary-btn" id="admin-login-submit" type="submit">Sign in securely</button>
+            </form>
+
+            <div class="auth-actions">
+              <button class="ghost-btn" id="show-reset" type="button" aria-expanded="false" aria-controls="reset-card">Forgot password?</button>
             </div>
 
-            <button class="primary-btn" id="admin-login-submit" type="submit">Sign in securely</button>
-          </form>
+            <section class="otp-card" id="reset-card" hidden>
+              <form id="admin-reset-request-form" class="form-grid">
+                <div class="field">
+                  <label for="reset-identifier">Reset password</label>
+                  <input id="reset-identifier" name="identifier" placeholder="Staff email or username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+                </div>
+                <button class="secondary-btn" type="submit">Send reset instructions</button>
+              </form>
+            </section>
 
-          <div class="auth-actions">
-            <button class="ghost-btn" id="show-reset" type="button" aria-expanded="false" aria-controls="reset-card">Forgot password?</button>
+            <p class="status-text" id="login-status" role="status" aria-live="polite">Need access? Contact the platform owner.</p>
           </div>
 
-          <section class="otp-card" id="reset-card" hidden>
-            <form id="admin-reset-request-form" class="form-grid">
-              <div class="field">
-                <label for="reset-identifier">Reset password</label>
-                <input id="reset-identifier" name="identifier" placeholder="Staff email or username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
-              </div>
-              <button class="secondary-btn" type="submit">Send reset instructions</button>
-            </form>
-          </section>
-
-          <p class="status-text" id="login-status" role="status" aria-live="polite">Need access? Contact the platform owner.</p>
+          <ul class="auth-trust" aria-label="Session protections">
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10V7.5a5 5 0 0 1 10 0V10m-12 0h14v10H5V10Zm7 4v2.5"/></svg>
+              <span>Encrypted connection</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm-2.6 8.8 2 2 4-4"/></svg>
+              <span>Role-based access</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h7l5 5v13H6V3Zm7 0v5h5M9 13h6M9 17h6"/></svg>
+              <span>Actions audited</span>
+            </li>
+          </ul>
         </div>
 
         <footer class="auth-panel-foot">
           <p>Restricted system. Sign-in attempts and administrative actions are recorded.</p>
+          <span class="auth-build">Console build admin-console-v53</span>
         </footer>
       </section>
     </main>

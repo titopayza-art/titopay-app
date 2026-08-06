@@ -1,6 +1,28 @@
 TitoPay Admin
-Build: admin-console-v52
+Build: admin-console-v53
 Date: 2026-08-06
+
+v53 - The sign-in page is finished to the same enterprise standard as the
+console behind it. Presentation only: every element admin.js binds to - the
+sign-in form, password reveal, Caps Lock hint, forgot-password card, Email OTP
+challenge, status line and environment badge - keeps its exact id, class and
+attribute, and the full flow was exercised end to end after the change.
+
+  - The form now sits in an elevated card on a softly tinted panel, with the
+    page's entrance rise, so the credentials surface reads as the protected
+    object on the page rather than fields floating on white.
+  - A trust strip under the card states the session protections that are
+    actually in force: encrypted connection, role-based access, audited
+    actions. Nothing is claimed that the platform does not do.
+  - The brand panel gains a fine engineering grid over the gradient and the
+    security points become icon chips. The logo artwork is framed as a
+    deliberate plate in both themes instead of a white box on the tint.
+  - The footer now carries the console build identity, so the version that is
+    live is readable from the sign-in screen.
+  - Verified: sign-in reaches the dashboard, the OTP challenge injects and
+    focuses, the reset card toggles, the password reveal works, identifier is
+    autofocused, both themes render, and there is no horizontal overflow at
+    1280, 1024, 820 or 390 wide.
 
 v52 - Enterprise UI/UX pass. Presentation only: no endpoint, permission,
 route, payload or business rule was changed, and a control-by-control
@@ -109,5 +131,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v52; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v53; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
