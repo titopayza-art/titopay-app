@@ -8029,12 +8029,14 @@ function beneficiaryIsVerified(item = {}) {
 
 function beneficiaryCard(item) {
   const verified = beneficiaryIsVerified(item);
+  const phone = item.phone || item.msisdn || item.cellphone || item.mobile || item.contactNumber || item.contact_number
+    || (/^\+?\d[\d\s-]{6,}$/.test(String(item.identifier || "")) ? item.identifier : "");
   return `
     <article class="beneficiary-card">
       <span class="chat-contact-avatar">${item.profilePhotoUrl ? `<img src="${esc(item.profilePhotoUrl)}" alt="">` : esc(beneficiaryDisplayName(item).slice(0, 1).toUpperCase())}</span>
       <div class="beneficiary-card-copy">
         <strong>${esc(beneficiaryDisplayName(item))}</strong>
-        <small>${esc([displayUsername(item.username), item.walletId ? `Wallet ${item.walletId}` : "", item.qrReference ? `QR ${item.qrReference}` : "", enumLabel(item.accountType), enumLabel(item.relationshipType)].filter(Boolean).join(" · "))}</small>
+        <small>${esc([displayUsername(item.username), phone || "", item.walletId ? `Wallet ${item.walletId}` : "", item.qrReference ? `QR ${item.qrReference}` : "", enumLabel(item.accountType), enumLabel(item.relationshipType)].filter(Boolean).join(" · "))}</small>
         <small>${item.lastPaidAt ? `Last paid ${esc(formatDate(item.lastPaidAt))}${item.lastPaymentAmount != null ? ` · ${esc(money(item.lastPaymentAmount))}` : ""}` : "Not paid yet"}</small>
         <small><em class="sv-chip ${verified ? "settled" : "warn"}">${verified ? "Verified recipient" : "Verification pending"}</em></small>
       </div>
