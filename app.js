@@ -368,8 +368,11 @@ window.addEventListener("online", () => {
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden || !state.auth || !state.auth.accessToken) return;
+  // A mobile PWA suspends its socket and timers while backgrounded, and the
+  // dead socket can still report "open" -- so force a fresh reconnect on
+  // resume rather than trusting readyState, then resync everything at once.
   syncTitoPayAccountStatus({ silent: true }).catch(() => null);
-  connectTitoPayChatSocket();
+  connectTitoPayChatSocket({ force: true });
   startTitoPayChatPolling();
   syncTitoPayChatThreads().catch(() => null);
   syncTitoPayChatNotifications().catch(() => null);
@@ -1393,6 +1396,25 @@ function startTitoPayAccountSync() {
   }, 15000);
 }
 
+// Repaint the money surfaces (balance, activity) after a live sync -- but
+// never while a dialog is open or the user is typing, because render()
+// rebuilds the screen and would take the keyboard or the modal away. When it
+// is not safe, the fresh data still sits in state and paints on the next safe
+// tick or navigation; the bell badge has already updated regardless.
+function liveRepaintMoneySurfaces() {
+  const active = document.activeElement;
+  const typing = active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || "");
+  // If a payment lands while a dialog is open or the user is typing, hold the
+  // repaint and flush it the moment it is safe (modal close, or the next
+  // heartbeat once typing stops), so the balance is never left stale.
+  if (document.querySelector(".modal-backdrop") || typing) {
+    state.deferredMoneyRender = true;
+    return;
+  }
+  state.deferredMoneyRender = false;
+  render();
+}
+
 // Rewrites only the bell badge. A full render() here would replace the whole
 // screen and wipe whatever form the user is typing into, fifteen seconds in.
 function refreshNotificationBadge() {
@@ -1421,6 +1443,8 @@ async function syncTitoPayAccountStatus(options = {}) {
   if (!state.auth || !state.auth.accessToken) return false;
   const wasLocked = isWalletLocked();
   const previousStatus = String(state.user?.status || state.user?.accountStatus || "").toLowerCase();
+  const previousBalance = primaryWallet() ? Number(primaryWallet().available_balance) : null;
+  const previousTxTop = state.transactions[0] ? transactionKey(state.transactions[0]) : "";
   // Money movements should reach the bell without waiting for a manual
   // refresh. Same endpoint the Activity tab uses; any failure is ignored so a
   // flaky poll can never break the session heartbeat below.
@@ -1434,6 +1458,18 @@ async function syncTitoPayAccountStatus(options = {}) {
     // Auth failures fall through to the profile call below, which owns
     // session-expiry handling; anything else is just a missed poll.
   }
+  // The visible balance lives in state.wallets, which only refreshData() used
+  // to update -- so an incoming payment never showed until a manual refresh.
+  // Pull it on the heartbeat too so the dashboard stays live.
+  try {
+    const wallets = await api("/v1/wallets");
+    if (Array.isArray(wallets.items)) state.wallets = wallets.items;
+  } catch (error) {
+    // A missed wallet poll just leaves the last known balance in place.
+  }
+  const newBalance = primaryWallet() ? Number(primaryWallet().available_balance) : null;
+  const newTxTop = state.transactions[0] ? transactionKey(state.transactions[0]) : "";
+  const moneyChanged = previousBalance !== newBalance || previousTxTop !== newTxTop;
   try {
     const profile = await api("/v1/auth/me");
     const nextUser = hydrateAccountMedia(Object.assign({}, state.user || {}, profile.user || {}));
@@ -1452,8 +1488,11 @@ async function syncTitoPayAccountStatus(options = {}) {
       } else if (!isLocked && wasLocked) {
         showToast("Profile unlocked.");
       }
+      state.deferredMoneyRender = false;
+    } else if (moneyChanged || state.deferredMoneyRender) {
+      liveRepaintMoneySurfaces();
     }
-    return changed;
+    return changed || moneyChanged;
   } catch (error) {
     if (error.status === 401 || error.status === 403) {
       clearAuth();
@@ -18448,6 +18487,12 @@ function closeModal(options = {}) {
   if (!backdrop) return;
   const target = resolveModalOpener(opener, openerSelector);
   if (target) target.focus({ preventScroll: true });
+  // A payment that arrived while this modal was open updated state but held
+  // its repaint; now that the modal is gone, flush it so the balance is fresh.
+  if (state.deferredMoneyRender && !document.querySelector(".modal-backdrop")) {
+    state.deferredMoneyRender = false;
+    render();
+  }
 }
 
 function attachAuthKeyboardBehavior(backdrop, card) {
