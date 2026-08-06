@@ -1837,7 +1837,6 @@ function dashboardView() {
         </section>
       </aside>
     </section>
-    ${securityStatusStrip()}
   `;
 }
 
@@ -1857,6 +1856,7 @@ function servicesView() {
   }
   const soon = hideDuplicateAirtimeDataTiles(comingSoonServices().filter(shouldShowServiceTile));
   return `
+    ${state.auth?.accessToken ? securityStatusStrip() : ""}
     ${state.serviceError ? promoCarousel() : ""}
     <section class="service-grid">
       ${active.length ? active.map((service) => serviceTile(service, true)).join("") : serviceEmptyState()}
@@ -2003,8 +2003,7 @@ function profileView() {
     </section>
     <section class="section-head compact"><h2>Security</h2></section>
     <section class="profile-feature-grid">
-      ${profileFeature("Security Centre", "Score, devices, sessions, alerts, PIN changes and privacy — all in one place.", "shield", "security-centre", true)}
-      ${profileFeature(locked ? "Unlock Wallet" : "Lock Wallet", locked ? "Verify OTP to unlock outgoing payments." : "Block outgoing payments instantly.", locked ? "shield" : "lock", locked ? "unlock-wallet" : "lock-wallet", locked)}
+      ${profileFeature("Security Centre", locked ? "Your wallet is locked. Unlock it and manage all protections here." : "Score, devices, wallet freeze, PIN changes and privacy — all in one place.", "shield", "security-centre", true)}
     </section>
     <section class="section-head compact"><h2>${isBusiness ? "Grow your business" : "Share & tools"}</h2></section>
     <section class="profile-feature-grid">
@@ -12504,7 +12503,7 @@ function securityStatusStrip() {
   const detail = [
     connectionIsEncrypted() ? "Encrypted connection" : "",
     "OTP-protected recovery",
-    `Auto sign-out after ${sessionTimeoutMinutes()} min`
+    "Wallet freeze on demand"
   ].filter(Boolean).join(" · ");
   return `<button class="security-status-strip" type="button" data-action="security-centre" aria-label="Open the TitoPay Security Centre">
     ${icon("shield")}

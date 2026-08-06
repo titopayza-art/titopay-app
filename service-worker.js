@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v240-qr-owner-profile-groups";
+const CACHE_NAME = "titopay-pwa-v241-clean-home";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=240",
-  "./app.min.js?v=240",
+  "./styles.min.css?v=241",
+  "./app.min.js?v=241",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=213",
   "./manifest.webmanifest?v=193",
