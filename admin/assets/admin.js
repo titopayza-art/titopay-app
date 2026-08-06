@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v58";
+const ADMIN_ASSET_VERSION = "admin-console-v59";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -2366,8 +2366,17 @@ const SUPPORT_SENDER_LABELS = { CUSTOMER: "Customer", AGENT: "Support agent", BO
 
 /* Customer Care quick replies. [Agent Name] is substituted with the signed-in
    operator's first name when the reply is inserted; the agent can still edit
-   everything before sending - inserting never sends. */
-const SUPPORT_QUICK_REPLIES = [
+   everything before sending - inserting never sends.
+
+   The wording is editable in the portal: platform owners see a Manage button
+   on the panel, and edits are stored per browser under
+   titopay_admin_quick_replies_v1. A shared, team-wide store needs the
+   GET/PUT /admin/support/quick-replies endpoints specified in
+   ADMIN-API-REQUIREMENTS.md; until the API carries them, the manager says the
+   edits are local. Restore defaults always returns to this built-in set. */
+const SUPPORT_QUICK_REPLY_KEY = "titopay_admin_quick_replies_v1";
+const SUPPORT_QUICK_REPLY_GROUPS = ["Greeting & check-ins", "Investigation & escalation", "Resolution & closing"];
+const SUPPORT_QUICK_REPLY_DEFAULTS = [
   { group: "Greeting & check-ins", title: "Greeting", text: "Welcome to TitoPay Customer Care. My name is [Agent Name], and I'll be assisting you today. How may I help you?" },
   { group: "Greeting & check-ins", title: "Inactive - 2 minutes", text: "Hi! Just checking in to see if you're still with us. I'm here and ready to assist whenever you're ready." },
   { group: "Greeting & check-ins", title: "Inactive - 4 minutes", text: "We haven't received a response yet. If you're still available, simply reply to this chat and we'll continue assisting you." },
@@ -2382,35 +2391,96 @@ const SUPPORT_QUICK_REPLIES = [
   { group: "Resolution & closing", title: "Closing after resolution", text: "Thank you for contacting TitoPay Customer Care. We're glad we could assist you today. Have a wonderful day, and thank you for choosing TitoPay." },
 ];
 
+function getSupportQuickReplies() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SUPPORT_QUICK_REPLY_KEY) || "null");
+    const templates = parsed?.templates;
+    if (Array.isArray(templates) && templates.length && templates.every((row) => row.title && row.text && row.group)) {
+      return templates.slice(0, 40);
+    }
+  } catch {}
+  return SUPPORT_QUICK_REPLY_DEFAULTS;
+}
+
+function saveSupportQuickReplies(templates) {
+  try {
+    localStorage.setItem(SUPPORT_QUICK_REPLY_KEY, JSON.stringify({ version: 1, templates }));
+    return true;
+  } catch {
+    showToast("Unable to store quick replies in this browser");
+    return false;
+  }
+}
+
+function canManageQuickReplies() {
+  const me = PAGE_EXPORTS.currentMe || {};
+  return hasFullAdminAccess(me) || isPlatformOwnerRole(me.role);
+}
+
 function supportAgentFirstName() {
   const me = PAGE_EXPORTS.currentMe || {};
   const name = me.fullName || me.full_name || me.admin?.fullName || me.username || "";
   return String(name).trim().split(/\s+/)[0] || "";
 }
 
-function supportQuickReplyPanel() {
-  const groups = [...new Set(SUPPORT_QUICK_REPLIES.map((reply) => reply.group))];
-  return `
-    <details class="support-quick-replies">
-      <summary>Quick replies <span class="segmented-count">${SUPPORT_QUICK_REPLIES.length}</span></summary>
-      <div class="sqr-body">
-        ${groups.map((group) => `
-          <div class="sqr-group">
-            <span class="sqr-group-title">${escapeHtml(group)}</span>
-            <div class="sqr-grid">
-              ${SUPPORT_QUICK_REPLIES.map((reply, index) => reply.group === group ? `
-                <button type="button" class="sqr-item" data-support-quick-reply="${index}" title="Insert into the reply box">
-                  <strong>${escapeHtml(reply.title)}</strong>
-                  <small>${escapeHtml(reply.text.replace(/\n/g, " ").slice(0, 84))}${reply.text.length > 84 ? "…" : ""}</small>
-                </button>
-              ` : "").join("")}
-            </div>
+function supportQuickReplyBody() {
+  const replies = getSupportQuickReplies();
+  if (PAGE_EXPORTS.sqrManaging && canManageQuickReplies()) {
+    return `
+      <div class="sqr-editor" id="sqr-editor">
+        ${replies.map((reply) => `
+          <div class="sqr-edit-row">
+            <input class="sqr-edit-title" value="${escapeHtml(reply.title)}" maxlength="60" aria-label="Reply title">
+            <select class="sqr-edit-group" aria-label="Group">
+              ${SUPPORT_QUICK_REPLY_GROUPS.map((group) => `<option value="${escapeHtml(group)}"${group === reply.group ? " selected" : ""}>${escapeHtml(group)}</option>`).join("")}
+            </select>
+            <button class="ghost-btn" type="button" data-sqr-remove aria-label="Remove this reply">Remove</button>
+            <textarea class="sqr-edit-text" rows="3" maxlength="1200" aria-label="Reply text">${escapeHtml(reply.text)}</textarea>
           </div>
         `).join("")}
-        <p class="sqr-note">Inserting fills the reply box - nothing is sent until you press Send reply, so you can adjust the wording first.</p>
       </div>
+      <div class="action-row sqr-manage-actions">
+        <button class="secondary-btn" type="button" data-sqr-add>Add reply</button>
+        <button class="primary-btn" type="button" data-sqr-save>Save quick replies</button>
+        <button class="ghost-btn" type="button" data-sqr-restore>Restore defaults</button>
+        <button class="ghost-btn" type="button" data-sqr-cancel>Cancel</button>
+      </div>
+      <p class="sqr-note">Use [Agent Name] where the agent's first name should appear. Edits are stored in this browser until the API carries the shared quick-replies endpoints - see ADMIN-API-REQUIREMENTS.md.</p>
+    `;
+  }
+  const groups = [...new Set(replies.map((reply) => reply.group))];
+  return `
+    ${groups.map((group) => `
+      <div class="sqr-group">
+        <span class="sqr-group-title">${escapeHtml(group)}</span>
+        <div class="sqr-grid">
+          ${replies.map((reply, index) => reply.group === group ? `
+            <button type="button" class="sqr-item" data-support-quick-reply="${index}" title="Insert into the reply box">
+              <strong>${escapeHtml(reply.title)}</strong>
+              <small>${escapeHtml(reply.text.replace(/\n/g, " ").slice(0, 84))}${reply.text.length > 84 ? "…" : ""}</small>
+            </button>
+          ` : "").join("")}
+        </div>
+      </div>
+    `).join("")}
+    <p class="sqr-note">Inserting fills the reply box - nothing is sent until you press Send reply, so you can adjust the wording first.${canManageQuickReplies() ? ` <button class="link-btn" type="button" data-sqr-manage>Manage quick replies</button>` : ""}</p>
+  `;
+}
+
+function supportQuickReplyPanel() {
+  return `
+    <details class="support-quick-replies" ${PAGE_EXPORTS.sqrManaging ? "open" : ""}>
+      <summary>Quick replies <span class="segmented-count">${getSupportQuickReplies().length}</span></summary>
+      <div class="sqr-body" id="sqr-body">${supportQuickReplyBody()}</div>
     </details>
   `;
+}
+
+function repaintQuickReplyBody() {
+  const body = document.getElementById("sqr-body");
+  if (body) body.innerHTML = supportQuickReplyBody();
+  const count = document.querySelector(".support-quick-replies summary .segmented-count");
+  if (count) count.textContent = String(getSupportQuickReplies().length);
 }
 
 function supportMessageTime(value) {
@@ -6089,7 +6159,7 @@ document.addEventListener("click", async (event) => {
   }
   const supportQuickReply = event.target.closest("[data-support-quick-reply]");
   if (supportQuickReply) {
-    const reply = SUPPORT_QUICK_REPLIES[Number(supportQuickReply.dataset.supportQuickReply)];
+    const reply = getSupportQuickReplies()[Number(supportQuickReply.dataset.supportQuickReply)];
     const composer = document.getElementById("support-agent-message");
     if (reply && composer) {
       const firstName = supportAgentFirstName();
@@ -6100,6 +6170,70 @@ document.addEventListener("click", async (event) => {
       composer.setSelectionRange(composer.value.length, composer.value.length);
       PAGE_EXPORTS.supportDraftCaret = composer.value.length;
     }
+    return;
+  }
+  if (event.target.closest("[data-sqr-manage]")) {
+    PAGE_EXPORTS.sqrManaging = true;
+    repaintQuickReplyBody();
+    return;
+  }
+  if (event.target.closest("[data-sqr-cancel]")) {
+    PAGE_EXPORTS.sqrManaging = false;
+    repaintQuickReplyBody();
+    return;
+  }
+  const sqrRemove = event.target.closest("[data-sqr-remove]");
+  if (sqrRemove) {
+    sqrRemove.closest(".sqr-edit-row")?.remove();
+    return;
+  }
+  if (event.target.closest("[data-sqr-add]")) {
+    const editor = document.getElementById("sqr-editor");
+    if (editor) {
+      const row = document.createElement("div");
+      row.className = "sqr-edit-row";
+      row.innerHTML = `
+        <input class="sqr-edit-title" value="" maxlength="60" placeholder="Reply title" aria-label="Reply title">
+        <select class="sqr-edit-group" aria-label="Group">${SUPPORT_QUICK_REPLY_GROUPS.map((group) => `<option value="${escapeHtml(group)}">${escapeHtml(group)}</option>`).join("")}</select>
+        <button class="ghost-btn" type="button" data-sqr-remove aria-label="Remove this reply">Remove</button>
+        <textarea class="sqr-edit-text" rows="3" maxlength="1200" placeholder="Reply text. Use [Agent Name] for the agent's first name." aria-label="Reply text"></textarea>
+      `;
+      editor.appendChild(row);
+      row.querySelector(".sqr-edit-title")?.focus();
+    }
+    return;
+  }
+  if (event.target.closest("[data-sqr-save]")) {
+    const rows = Array.from(document.querySelectorAll("#sqr-editor .sqr-edit-row"));
+    const templates = rows.map((row) => ({
+      title: String(row.querySelector(".sqr-edit-title")?.value || "").trim(),
+      group: String(row.querySelector(".sqr-edit-group")?.value || SUPPORT_QUICK_REPLY_GROUPS[0]),
+      text: String(row.querySelector(".sqr-edit-text")?.value || "").trim(),
+    })).filter((row) => row.title || row.text);
+    const invalid = templates.find((row) => !row.title || !row.text);
+    if (invalid) {
+      showToast("Every quick reply needs both a title and its text.");
+      return;
+    }
+    if (!templates.length) {
+      showToast("Keep at least one quick reply, or use Restore defaults.");
+      return;
+    }
+    if (saveSupportQuickReplies(templates.slice(0, 40))) {
+      PAGE_EXPORTS.sqrManaging = false;
+      repaintQuickReplyBody();
+      showToast("Quick replies saved");
+    }
+    return;
+  }
+  if (event.target.closest("[data-sqr-restore]")) {
+    if (!window.confirm("Restore the built-in Customer Care quick replies? Your edited set in this browser is discarded.")) return;
+    try {
+      localStorage.removeItem(SUPPORT_QUICK_REPLY_KEY);
+    } catch {}
+    PAGE_EXPORTS.sqrManaging = false;
+    repaintQuickReplyBody();
+    showToast("Quick replies restored to defaults");
     return;
   }
   const supportChatHistory = event.target.closest("[data-support-chat-history]");

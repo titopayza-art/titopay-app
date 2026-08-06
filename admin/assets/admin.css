@@ -4779,6 +4779,59 @@ a.table-card-meta:hover {
   box-shadow: var(--tp-focus);
 }
 
+.sqr-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.sqr-edit-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(150px, auto) auto;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+}
+
+.sqr-edit-row textarea {
+  grid-column: 1 / -1;
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.sqr-edit-row input,
+.sqr-edit-row select {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  font-family: inherit;
+  font-size: 0.8125rem;
+}
+
+.sqr-edit-row input:focus,
+.sqr-edit-row select:focus,
+.sqr-edit-row textarea:focus {
+  outline: none;
+  border-color: var(--tp-blue);
+  box-shadow: var(--tp-focus);
+}
+
+.sqr-manage-actions {
+  margin-top: 4px;
+}
+
 /* == 11  States =========================================================== */
 
 .empty,

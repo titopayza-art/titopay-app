@@ -161,6 +161,23 @@ function checkVersionConsistency() {
     await page.waitForTimeout(250);
     const inserted = await page.evaluate(() => document.getElementById("support-agent-message").value);
     check(inserted.startsWith("Welcome to TitoPay Customer Care.") && inserted.includes("My name is Platform,"), "quick reply inserts with the agent's first name substituted");
+
+    // Manage mode: edit the first title, save, confirm it took; then restore.
+    await page.click("[data-sqr-manage]");
+    await page.waitForTimeout(250);
+    check(await page.$("#sqr-editor") !== null, "quick replies manager opens for the owner");
+    await page.fill("#sqr-editor .sqr-edit-row:first-child .sqr-edit-title", "Custom Greeting");
+    await page.click("[data-sqr-save]");
+    await page.waitForTimeout(300);
+    const customised = await page.evaluate(() => document.getElementById("sqr-body").textContent.includes("Custom Greeting"));
+    check(customised, "an edited quick reply is saved and shown");
+    await page.click("[data-sqr-manage]");
+    await page.waitForTimeout(200);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.click("[data-sqr-restore]");
+    await page.waitForTimeout(300);
+    const restored = await page.evaluate(() => document.getElementById("sqr-body").textContent.includes("Greeting") && !document.getElementById("sqr-body").textContent.includes("Custom Greeting"));
+    check(restored, "restore defaults returns the built-in set");
   } else {
     failures.push("support queue offered no conversation to open");
   }

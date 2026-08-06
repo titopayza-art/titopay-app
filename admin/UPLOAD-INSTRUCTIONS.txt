@@ -1,5 +1,5 @@
 TITOPAY ADMIN — AFRIHOST cPANEL UPLOAD
-Build: admin-console-v58
+Build: admin-console-v59
 
 This zip is packed from the document root: index.html, .htaccess and assets/
 sit at the top of the archive. Extracting it IN the document root overwrites
@@ -25,7 +25,7 @@ STEPS
 VERIFY (open in a browser)
 
 - https://admin.titopay.co.za/admin-version.txt
-      must read: Build: admin-console-v58
+      must read: Build: admin-console-v59
 - https://admin.titopay.co.za/
       sign-in page loads; sign in works as before
 - https://admin.titopay.co.za/nonsense/

@@ -1,6 +1,25 @@
 TitoPay Admin
-Build: admin-console-v58
+Build: admin-console-v59
 Date: 2026-08-06
+
+v59 - Quick replies become editable in the portal, and the console's API
+wishlist ships as a formal specification.
+
+  - Support Desk quick replies gain a Manage mode (platform owners): edit any
+    reply's title, group and wording, add and remove replies, and restore the
+    built-in Customer Care set at any time. [Agent Name] keeps working as the
+    substitution token. Edits are stored per browser; the shared, team-wide
+    store is specified as GET/PUT /admin/support/quick-replies in
+    ADMIN-API-REQUIREMENTS.md and the manager says so.
+  - ADMIN-API-REQUIREMENTS.md (repository root, not web-served) specifies
+    every backend item the console is already built against, in the same
+    format as the PWA's API-REQUIREMENTS.md: stopping routine sign-in emails,
+    server-side pagination, the user and transaction fields that light up the
+    analytics dashes, alert read state, the Service Builder store, quick-reply
+    templates, system metrics, per-session revoke, TOTP, and maker-checker
+    approvals. Implementing any item requires no console change.
+  - The CI gate grew to 28 checks: the manager opens for the owner, an edited
+    reply saves and shows, and restore-defaults returns the built-in set.
 
 v58 - RBAC editor completed: permissions for the newer modules can now be
 granted, custom permissions can be added by name, and the create-role form the
@@ -247,5 +266,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v58; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v59; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
