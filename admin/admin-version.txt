@@ -1,0 +1,68 @@
+TitoPay Admin
+Build: admin-console-v51
+Date: 2026-08-06
+
+v51 - Enterprise Analytics. A new Analytics module joins the Operations
+group in the sidebar with eight reporting sections: Executive, Financial,
+Users, Transactions, Merchants, Fraud & Security, Support and System. It
+carries KPI cards with period-on-period growth, line, area, bar, ranked bar,
+donut and heat-map charts, paginated tables, date-range and dimension filters,
+and PDF, Excel and CSV export.
+
+  - The module is a separate file, assets/admin-analytics.js, imported the
+    first time an operator opens Analytics. Every other console page loads
+    exactly the JavaScript it loaded in v50.
+  - Analytics reads existing admin endpoints only. No endpoint, permission,
+    payload or database structure was changed. If the optional
+    GET /admin/analytics/overview endpoint is added later, the module picks it
+    up automatically; without it the page works from the modules already live.
+  - A metric the API does not carry shows a dash and is listed in that
+    section's Data coverage card. Nothing is estimated or simulated.
+  - Access needs an analytics or reporting permission. Full-access and
+    platform-owner roles keep the access they already had, and no other
+    module's access rules were touched.
+  - Aggregates are cached for sixty seconds per range and filter set, the
+    transaction pull is bounded by the range and a row limit, and long tables
+    paginate at ten rows.
+
+v50 - Customer sign-in OTP is disabled. Wallet-unlock Email OTP is enabled by
+the API migration and remains configurable. Admin sign-in OTP is controlled
+only by Security Authentication Mode.
+
+v48 - Every Admin entry page now loads the same cache-busted JavaScript and
+CSS, including SPA navigation from Dashboard to Security. Authentication Mode
+uses two full-width radio choices with visible selection and save state.
+
+v46 - Wallet Unlock Authentication is now a prominent Email OTP panel, the
+wallet unlock event appears first, and the asset version is bumped to prevent
+production browsers from reusing the v45 JavaScript cache.
+
+v45 - Customer Email OTP wallet unlock control is visible on the Email OTP page and Security Dashboard. Admin authentication mode now persists through the API and reloads.
+
+v44 - Customer Email OTP controls are visible on Security Dashboard, including the global switch and wallet unlock event.
+
+v42 - Email Analytics with delivery, engagement and trend reporting
+
+v41 - Email Centre, Email OTP operations, and approved Marketing Email Production
+
+v35 - Global Search decluttered; RBAC becomes editable
+  - Global Search showed four result tables and a record card at once. It now
+    has one result list at a time behind tabs (People, Businesses, Wallets,
+    Transactions) with match counts, and opening a record replaces the results
+    with that record and a "Back to results" control.
+  - RBAC / Permissions is now an editor, not a read-only matrix. The platform
+    owner and the developer role can change any role's permissions, create new
+    roles and delete custom ones. Requires the matching API package.
+
+v34 - Support Desk rebuilt as a workspace; taking over a chat opens it.
+v33 - Rate-limit and lockout messages reach the operator verbatim.
+v32 - Support workspace preserved across refreshes; CSP allows the chat socket.
+v31 - Sign-in page rebuilt for a regulated system.
+v30 - Operations console front-end rebuild on a single-layer stylesheet.
+
+RBAC editing needs the API package of the same date: it adds the
+admin_role_permissions table and the role endpoints. Without it the page still
+renders read-only and the console behaves exactly as before.
+
+Assets are versioned ?v=admin-console-v51; hard refresh (Ctrl+F5 /
+Cmd+Shift+R) if an old layout persists.
