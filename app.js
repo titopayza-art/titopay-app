@@ -4441,6 +4441,10 @@ async function handleAction(action, actionElement = null) {
     openTitoPayChatThread(action.split(":").slice(1).join(":"));
     return;
   }
+  if (String(action || "").startsWith("chat-remove-thread:")) {
+    removeTitoPayChatThread(action.split(":").slice(1).join(":"));
+    return;
+  }
   if (String(action || "").startsWith("chat-invite:")) {
     await sendTitoPayChatInvite(action.split(":")[1]);
     return;
@@ -15673,11 +15677,14 @@ function renderTitoPayChatThreadList() {
   return `
     <div class="titopay-chat-list">
       ${threads.map((thread) => `
-        <button class="titopay-chat-thread-card" type="button" data-action="open-chat-thread:${esc(thread.id)}">
-          ${chatParticipantAvatar(thread.participant, thread.title)}
-          <span><strong>${esc(thread.title)}</strong><small>${esc(thread.subtitle || "TitoPay Chat")}</small></span>
-          <em>${esc(formatChatTime(thread.updatedAt))}</em>
-        </button>
+        <div class="titopay-chat-thread-row">
+          <button class="titopay-chat-thread-card" type="button" data-action="open-chat-thread:${esc(thread.id)}">
+            ${chatParticipantAvatar(thread.participant, thread.title)}
+            <span><strong>${esc(thread.title)}</strong><small>${esc(thread.subtitle || "TitoPay Chat")}</small></span>
+            <em>${esc(formatChatTime(thread.updatedAt))}</em>
+          </button>
+          <button class="titopay-chat-thread-remove" type="button" data-action="chat-remove-thread:${esc(thread.id)}" aria-label="Remove chat with ${esc(thread.title)}">${icon("x")}</button>
+        </div>
       `).join("")}
     </div>
   `;
@@ -16065,6 +16072,24 @@ function openChatClearConfirm(scope) {
       <button class="btn primary" type="button" data-action="${scope === "thread" ? "chat-clear-thread-confirm" : "chat-clear-all-confirm"}">${icon("refresh")} Clear ${scope === "thread" ? "this chat" : "everything"}</button>
     </section>
   `);
+}
+
+// Remove a single conversation from the recent-chats list on this device.
+// Local only -- it clears the on-device thread and its draft; it never asks
+// the API to delete anything, matching the existing on-device clear model.
+function removeTitoPayChatThread(threadId) {
+  const threads = titoPayChatThreads();
+  const thread = threads.find((item) => item.id === threadId);
+  if (!thread) return;
+  if (!confirm(`Remove your chat with ${thread.title} from this device? The other person keeps their copy.`)) return;
+  saveTitoPayChatThreads(threads.filter((item) => item.id !== threadId));
+  clearChatDraft(threadId);
+  if (sessionStorage.getItem("titopay_active_chat_thread") === threadId) {
+    sessionStorage.removeItem("titopay_active_chat_thread");
+  }
+  showToast("Chat removed from this device.");
+  if (document.querySelector(".titopay-chat-shell")) repaintChatThreadList();
+  else openTitoPayChatModal();
 }
 
 function clearTitoPayChatHistory(scope) {

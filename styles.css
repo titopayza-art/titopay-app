@@ -4477,6 +4477,48 @@ body.landing-static .landing-flow.auth-screen {
   padding: 2px;
 }
 
+.titopay-chat-thread-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.titopay-chat-thread-row .titopay-chat-thread-card {
+  flex: 1;
+  min-width: 0;
+}
+
+.titopay-chat-thread-remove {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  border: 1px solid rgba(183, 203, 236, 0.72);
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.titopay-chat-thread-remove svg {
+  width: 18px;
+  height: 18px;
+}
+
+.titopay-chat-thread-remove:hover,
+.titopay-chat-thread-remove:active {
+  color: var(--danger);
+  background: #fff0f3;
+  border-color: rgba(217, 66, 66, 0.28);
+}
+
+.titopay-chat-thread-remove:focus-visible {
+  outline: 3px solid rgba(10, 77, 255, 0.42);
+  outline-offset: 2px;
+}
+
 .titopay-chat-thread-card {
   width: 100%;
   min-height: 82px;
@@ -11034,21 +11076,52 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
     border-radius: 0;
   }
 
-  /* Five labelled pills do not fit a phone header; they wrapped into two
-     bulky rows that crushed the contact's name. The labels go, the
-     aria-labels stay, and the actions hold one compact row. */
-  .titopay-chat-thread-modal .chat-action-btn span {
-    display: none;
+  /* Five labelled pills would not fit beside the contact's name in one row,
+     so on phones the action bar drops to its own full-width row under the
+     title and each control stacks its label beneath the icon -- every icon
+     stays labelled, and the name is never crushed. */
+  .titopay-chat-thread-modal .titopay-chat-head {
+    flex-wrap: wrap;
+    row-gap: 12px;
   }
 
-  .titopay-chat-thread-modal .chat-action-btn {
-    min-width: 40px;
-    padding: 8px;
+  .titopay-chat-thread-modal .chat-thread-title {
+    flex: 1 1 100%;
+    min-width: 0;
   }
 
   .titopay-chat-thread-modal .chat-header-actions {
+    flex: 1 1 100%;
+    justify-content: space-between;
     gap: 6px;
     flex-wrap: nowrap;
+  }
+
+  .titopay-chat-thread-modal .chat-action-btn,
+  .titopay-chat-thread-modal .chat-header-actions .icon-btn {
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    min-height: 52px;
+    padding: 7px 4px;
+    border-radius: 16px;
+  }
+
+  .titopay-chat-thread-modal .chat-action-btn span {
+    display: block;
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  /* Give the plain Close button a matching caption so the row reads evenly. */
+  .titopay-chat-thread-modal .chat-header-actions .icon-btn::after {
+    content: "Close";
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 1;
+    color: inherit;
   }
 }
 
