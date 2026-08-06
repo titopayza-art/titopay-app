@@ -1790,10 +1790,50 @@ function topbar() {
   `;
 }
 
+// Rotates through the 11 official languages, one per day. Languages with
+// well-established time-of-day greetings use them; the rest use their correct
+// universal greeting, which is right at any hour -- nothing is invented.
+const GREETING_LANGUAGES = [
+  { name: "English", morning: "Good morning", day: "Good day", afternoon: "Good afternoon", evening: "Good evening" },
+  { name: "isiZulu", all: "Sawubona" },
+  { name: "isiXhosa", all: "Molo" },
+  { name: "Afrikaans", morning: "Goeiemôre", day: "Goeiedag", afternoon: "Goeiemiddag", evening: "Goeienaand" },
+  { name: "Sepedi", all: "Thobela" },
+  { name: "Setswana", all: "Dumela" },
+  { name: "Sesotho", all: "Lumela" },
+  { name: "Xitsonga", morning: "Avuxeni", day: "Inhlekanhi", afternoon: "Inhlekanhi", evening: "Riperile" },
+  { name: "siSwati", all: "Sawubona" },
+  { name: "Tshivenda", morning: "Ndi matsheloni", day: "Ndi masiari", afternoon: "Ndi masiari", evening: "Ndi madekwana" },
+  { name: "isiNdebele", all: "Lotjhani" }
+];
+
+function greetingTimeBucket(date = new Date()) {
+  const hour = date.getHours();
+  if (hour >= 5 && hour < 12) return "morning";
+  if (hour >= 12 && hour < 14) return "day";
+  if (hour >= 14 && hour < 18) return "afternoon";
+  return "evening";
+}
+
+function dashboardGreeting(now = new Date()) {
+  const dayNumber = Math.floor(now.getTime() / 86400000);
+  const language = GREETING_LANGUAGES[((dayNumber % GREETING_LANGUAGES.length) + GREETING_LANGUAGES.length) % GREETING_LANGUAGES.length];
+  const phrase = language[greetingTimeBucket(now)] || language.all;
+  const user = state.user || {};
+  const name = String(user.fullName || user.full_name || user.username || "").trim().split(/\s+/)[0] || "";
+  return { phrase, name, language: language.name };
+}
+
+function dashboardGreetingLine() {
+  const greeting = dashboardGreeting();
+  return `<p class="dashboard-greeting"><strong>${esc(greeting.phrase)}${greeting.name ? `, ${esc(greeting.name)}` : ""}</strong>${greeting.language === "English" ? "" : `<small>${esc(greeting.language)}</small>`}</p>`;
+}
+
 function dashboardView() {
   const wallet = primaryWallet();
   const quickServices = homeQuickServices();
   return `
+    ${dashboardGreetingLine()}
     <section class="dashboard-grid">
       <div>
         <section class="wallet-card${state.accountType === "business" ? " wallet-card-business" : ""}">
