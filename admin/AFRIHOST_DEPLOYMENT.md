@@ -31,13 +31,13 @@ overwrites the live build in place.
 If you deploy over FTP instead, upload `assets/` first, then the page folders,
 then the root files. Page HTML is served `no-store`, so a browser will ask for
 the new pages immediately; the stylesheet and script are requested at
-`?v=admin-console-v55`, so no cache clearing is needed.
+`?v=admin-console-v56`, so no cache clearing is needed.
 
 ## After Uploading
 
 Open `https://admin.titopay.co.za/` and check:
 
-- `admin-version.txt` reads `Build: admin-console-v55`.
+- `admin-version.txt` reads `Build: admin-console-v56`.
 - The sidebar shows **Analytics** under Operations, and the collapse control
   sits next to the breadcrumb in the top bar.
 - A table page such as Users shows the filter, **Select rows** and
@@ -60,10 +60,13 @@ admin.titopay.co.za/
 ├── assets/
 │   ├── admin.css
 │   ├── admin.js
-│   └── admin-analytics.js
+│   ├── admin-analytics.js
+│   └── admin-service-builder.js
 ├── dashboard/
 │   └── index.html
 ├── alerts/
+│   └── index.html
+├── service-builder/
 │   └── index.html
 ├── analytics/
 │   └── index.html

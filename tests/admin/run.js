@@ -16,7 +16,7 @@ const PORT = 8110;
 const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN = path.resolve(__dirname, "..", "..", "admin");
 
-const ROUTES = ["dashboard", "alerts", "analytics", "search", "users", "merchants", "transactions", "wallets", "beneficiaries", "chat-monitor", "ticketing", "enterprise-distribution", "qr-management", "marketing", "pricing", "integrations", "feature-management", "api-provider-settings", "settings", "email-centre", "email-centre/analytics", "email-centre/templates", "email-centre/queue", "email-centre/logs", "email-centre/settings", "email-centre/otp", "support", "chatbot-escalations", "company-documents", "compliance", "revenue", "security", "system-logs", "audit", "development-tools", "engineering-tools", "database-health", "staff-management", "rbac-permissions"];
+const ROUTES = ["dashboard", "alerts", "analytics", "service-builder", "search", "users", "merchants", "transactions", "wallets", "beneficiaries", "chat-monitor", "ticketing", "enterprise-distribution", "qr-management", "marketing", "pricing", "integrations", "feature-management", "api-provider-settings", "settings", "email-centre", "email-centre/analytics", "email-centre/templates", "email-centre/queue", "email-centre/logs", "email-centre/settings", "email-centre/otp", "support", "chatbot-escalations", "company-documents", "compliance", "revenue", "security", "system-logs", "audit", "development-tools", "engineering-tools", "database-health", "staff-management", "rbac-permissions"];
 
 const failures = [];
 const check = (ok, label) => {
@@ -145,6 +145,24 @@ function checkVersionConsistency() {
   });
   check(badgeAfter === 0, "mark all read clears the badge");
 
+  // --- Service Builder ----------------------------------------------------
+  await page.goto(`${BASE}/service-builder/`);
+  await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });
+  await page.waitForTimeout(600);
+  check(await page.$("[data-sb-new]") !== null, "service builder renders its dashboard");
+  await page.click("[data-sb-new]");
+  await page.waitForTimeout(400);
+  check(await page.$(".sb-wizard") !== null, "wizard opens");
+  await page.fill('[data-sb-field="name"]', "Gate Test Service");
+  await page.fill('[data-sb-field="description"]', "Created by the CI gate.");
+  await page.click("[data-sb-save-draft]");
+  await page.waitForTimeout(400);
+  await page.click("[data-sb-cancel]");
+  await page.waitForTimeout(400);
+  const draftListed = await page.evaluate(() => document.body.textContent.includes("Gate Test Service"));
+  check(draftListed, "saved draft appears in the service list");
+  await page.evaluate(() => localStorage.removeItem("titopay_admin_service_builder_v1"));
+
   // --- Analytics permission gate -----------------------------------------
   const gatedPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await gatedPage.route("**/v1/admin/me", (route) => route.fulfill({
@@ -159,6 +177,11 @@ function checkVersionConsistency() {
   await gatedPage.waitForTimeout(800);
   const gated = await gatedPage.evaluate(() => document.body.textContent.includes("Access restricted") && !document.getElementById("analytics-root"));
   check(gated, "analytics stays gated for a role without the permission");
+  await gatedPage.goto(`${BASE}/service-builder/`);
+  await gatedPage.waitForSelector("#page-content", { timeout: 15000 });
+  await gatedPage.waitForTimeout(800);
+  const builderGated = await gatedPage.evaluate(() => document.body.textContent.includes("Access restricted") && !document.getElementById("service-builder-root"));
+  check(builderGated, "service builder stays gated for a role without the permission");
   await gatedPage.close();
 
   // --- No unexpected console errors --------------------------------------

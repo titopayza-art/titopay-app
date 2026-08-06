@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v55";
+const ADMIN_ASSET_VERSION = "admin-console-v56";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -50,6 +50,7 @@ const NAV_GROUPS = [
     ["/marketing/", "marketing", "Marketing"],
   ]},
   { title: "Platform", items: [
+    ["/service-builder/", "service-builder", "Service Builder"],
     ["/pricing/", "pricing", "Pricing Engine"],
     ["/integrations/", "integrations", "Integration Centre"],
     ["/feature-management/", "feature-management", "Feature Management"],
@@ -159,6 +160,18 @@ function hasFullAdminAccess(me = {}) {
    additive: it grants nothing new on any other module, and full-access roles
    keep the access they already had. */
 const ADMIN_ANALYTICS_PERMISSIONS = ["analytics", "reporting", "reports", "analytics_view", "ANALYTICS_VIEW", "REPORTING_VIEW", "REPORTS_VIEW"];
+
+/* Service Builder is gated the same additive way as Analytics: full-access
+   and owner roles keep what they had, and a dedicated permission opens it for
+   anyone else. No other module's rules change. */
+const ADMIN_SERVICE_BUILDER_PERMISSIONS = ["service_builder", "services", "platform", "SERVICE_BUILDER", "SERVICES_MANAGE"];
+
+function hasServiceBuilderAccess(me = {}) {
+  if (hasFullAdminAccess(me)) return true;
+  if (isPlatformOwnerRole(me.role || me.user?.role || me.admin?.role)) return true;
+  const permissions = new Set(me.permissions || me.admin?.permissions || []);
+  return ADMIN_SERVICE_BUILDER_PERMISSIONS.some((permission) => permissions.has(permission));
+}
 
 function hasAnalyticsAccess(me = {}) {
   if (hasFullAdminAccess(me)) return true;
@@ -546,6 +559,7 @@ const NAV_ICON_PATHS = {
   "enterprise-distribution": "M12 3v6m0 0-3.5 3.5M12 9l3.5 3.5M4 21v-4m0 0-1-1.5m1 1.5 1-1.5M20 21v-4m0 0-1-1.5m1 1.5 1-1.5M12 21v-4",
   "qr-management": "M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 3h3m0 0v3m0-3h3m-6-3h6",
   marketing: "M4 10v4h3l5 4V6L7 10H4Zm13-1.5a5 5 0 0 1 0 7",
+  "service-builder": "M4 6.5 12 3l8 3.5-8 3.5-8-3.5Zm0 5.5 8 3.5 4-1.75M4 17.5 9 15.7M18 14v3m0 0v3m0-3h3m-3 0h-3",
   pricing: "M12 3v18M8.5 7.5h6.2a2.5 2.5 0 0 1 0 5H9.3a2.5 2.5 0 0 0 0 5h6.2",
   integrations: "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
   "integration-provider": "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
@@ -662,6 +676,7 @@ function renderSidebar(page, me) {
       dashboard: "dashboard",
       alerts: "__everyone__",
       analytics: "__analytics__",
+      "service-builder": "__service_builder__",
       users: "users",
       merchants: "merchants",
       transactions: "transactions",
@@ -703,6 +718,7 @@ function renderSidebar(page, me) {
     const required = map[slug] || slug;
     if (required === "__everyone__") return true;
     if (required === "__analytics__") return hasAnalyticsAccess(me);
+    if (required === "__service_builder__") return hasServiceBuilderAccess(me);
     if (required === "__super_admin__") return isSuperAdminRole(role);
     if (required === "__owner__") return isPlatformOwnerRole(role);
     if (required === "__company_docs__") return isPlatformOwnerRole(role) || ["hr_admin", "hr_administrator", "hr_director"].includes(normalizeAdminRole(role));
@@ -4727,6 +4743,27 @@ async function renderAnalytics(me = {}) {
   await module.renderAnalytics(me, ANALYTICS_HOST);
 }
 
+let serviceBuilderModulePromise = null;
+
+function loadServiceBuilderModule() {
+  if (!serviceBuilderModulePromise) {
+    const moduleUrl = new URL(`admin-service-builder.js?v=${ADMIN_ASSET_VERSION}`, ADMIN_ASSET_URL).href;
+    serviceBuilderModulePromise = import(moduleUrl).catch((error) => {
+      serviceBuilderModulePromise = null;
+      const failure = new Error("The Service Builder module did not load. Confirm assets/admin-service-builder.js was uploaded with this build.");
+      failure.status = 0;
+      failure.cause = error;
+      throw failure;
+    });
+  }
+  return serviceBuilderModulePromise;
+}
+
+async function renderServiceBuilder(me = {}) {
+  const module = await loadServiceBuilderModule();
+  await module.renderServiceBuilder(me, ANALYTICS_HOST);
+}
+
 /* == Table enhancement layer ==============================================
    Every table the console renders gains sorting, a row filter, bulk selection,
    export and column resizing. The layer works on the table that is already on
@@ -5131,6 +5168,7 @@ function adminPageDescriptors() {
     dashboard: ["Infrastructure Dashboard", "Operational overview for the TitoPay API and admin platform."],
     alerts: ["Alert Centre", "Platform alerts kept inside the console: security, compliance, support, transactions and system events."],
     analytics: ["Enterprise Analytics", "Executive, financial, user, transaction, merchant, risk, support and system reporting."],
+    "service-builder": ["Service Builder", "Create, configure and publish TitoPay service definitions. Configuration only - never code."],
     users: ["User Management", "View, suspend, lock and unlock customer accounts."],
     merchants: ["Merchant Management", "Verify and monitor business merchants and payment channels."],
     transactions: ["Transaction Monitoring", "Search, review and reverse transaction activity when required."],
@@ -5176,6 +5214,7 @@ function adminPageLoaders() {
     dashboard: renderDashboard,
     alerts: renderAlertCentre,
     analytics: renderAnalytics,
+    "service-builder": renderServiceBuilder,
     users: renderUsers,
     merchants: renderMerchants,
     transactions: renderTransactions,

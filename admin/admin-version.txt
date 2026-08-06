@@ -1,6 +1,43 @@
 TitoPay Admin
-Build: admin-console-v55
+Build: admin-console-v56
 Date: 2026-08-06
+
+v56 - Low-Code Service Builder. A new Platform module for creating and
+managing TitoPay service definitions entirely through configuration - never
+code. Nothing an operator types is ever executed: every value is data rendered
+through the console's escaping, uploads are validated, and hostile SVGs are
+rejected outright.
+
+  - Ten-step wizard: basics, branding (drag-and-drop icon, banner, thumbnail
+    and feature image with type, size and content validation), navigation,
+    permissions, availability with country and future-ready province lists,
+    API configuration restricted to TitoPay API endpoints with a safe GET-only
+    Test Connection, UI configuration with a live tile preview, fees mapped to
+    the catalogue's fee and commission fields, notifications, and a review
+    step that blocks publishing until every check passes.
+  - Draft and publish lifecycle: nothing is offered until published. Publish,
+    disable, archive, restore, duplicate and permanent delete, with typed
+    confirmation on every destructive or publishing action.
+  - Version history snapshots the full configuration on every publish, with
+    one-click rollback that republishes the restored version - history is
+    never rewritten. An append-only audit trail records operator, role,
+    session, device and detail for every action.
+  - Per-service analytics derive live from transactions carrying the service
+    code: uses, success and failure counts, daily, weekly, monthly usage and
+    recorded revenue. Zeros are stated as zeros - nothing is simulated.
+  - Storage is honest about where it lives. If the API exposes
+    /admin/service-builder/services the builder uses it as the source of
+    truth; until then definitions are stored in this console's registry, the
+    page says so, and Export JSON produces both the full definition and a
+    catalogue entry in the exact schema the platform's service catalogue
+    already consumes (service_code, fee, commission, personal_visible,
+    business_visible, sort_order, ...), ready for the API team to load.
+  - The module is its own lazily-imported file, so every other console page
+    loads exactly the payload it loaded in v55. Access requires platform-owner
+    rights or a service-builder permission; no other module's access changed.
+  - The CI gate grew again: the builder renders among the now 40 routes, the
+    wizard opens, a saved draft appears in the list, and the module stays
+    gated for a role without the permission.
 
 v55 - Alert Centre. The platform events that were flooding the owner's inbox
 as emails - sign-ins recorded, failed attempts, fraud flags, pending KYC,
@@ -174,5 +211,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v55; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v56; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
