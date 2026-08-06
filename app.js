@@ -821,7 +821,7 @@ function normalizeIconName(name = "") {
     stockvel: "stockvel",
     tip: "tip"
   };
-  return map[name] || name || "sparkles";
+  return map[name] || name || "grid";
 }
 
 function serviceTypeFromAction(action, status) {
@@ -2078,7 +2078,7 @@ function promoCarousel() {
   ];
   return `<section class="promo-carousel" aria-label="TitoPay campaign placements" data-ad-zone="services-home">
     <article class="empty-state campaign-slot launch-announcement" data-campaign-slot="launch-announcement">${icon("globe")}<strong>Launching Soon — Nationwide</strong><p>Smart Payments, Simplified.</p></article>
-    ${promos.map(([title, body], index) => `<article class="empty-state campaign-slot" data-campaign-slot="services-${index + 1}">${icon(index === 0 ? "shield" : "sparkles")}<strong>${esc(title)}</strong><p>${esc(body)}</p></article>`).join("")}
+    ${promos.map(([title, body], index) => `<article class="empty-state campaign-slot" data-campaign-slot="services-${index + 1}">${icon(index === 0 ? "shield" : "bell")}<strong>${esc(title)}</strong><p>${esc(body)}</p></article>`).join("")}
   </section>`;
 }
 
@@ -6400,7 +6400,7 @@ function coreWalletAction(id) {
     withdraw: { id: "withdraw", label: "Withdraw", icon: "withdraw", type: "transaction", action: "withdraw", serviceCode: "withdraw" },
     payouts: { id: "payouts", label: "Payout", icon: "withdraw", type: "transaction", action: "payouts", serviceCode: "merchant_payout" }
   };
-  return actions[id] || { id, label: "TitoPay Service", icon: "sparkles", type: "transaction", serviceCode: id };
+  return actions[id] || { id, label: "TitoPay Service", icon: "grid", type: "transaction", serviceCode: id };
 }
 
 function openTransactionModal(service) {
@@ -11109,7 +11109,7 @@ function renderStockvelSettings(group, store) {
       <div class="activity-list">
         ${settingsRow("Contribution due", "A reminder before each contribution date", "bell")}
         ${settingsRow("Contribution missed", "Told when a contribution is not received", "bell")}
-        ${settingsRow("Goal reached", "Told when the group reaches its savings goal", "sparkles")}
+        ${settingsRow("Goal reached", "Told when the group reaches its savings goal", "check-circle")}
         ${settingsRow("Member joined", "Told when someone joins the group", "contacts")}
         ${settingsRow("Vote required", "Told when the group needs your approval", "check-circle")}
         ${settingsRow("Withdrawal approved", "Told when a withdrawal is approved", "withdraw")}
@@ -13423,8 +13423,8 @@ function openSuccessModal(transaction, preview, serviceCode, recipient) {
       ${vasInfoCredentials(credentials).map((item) => settingsRow(item.label, item.value, item.label === "Provider" ? "bank" : "tag")).join("")}
       ${settingsRow("Amount", money(preview && preview.amount || record.amount), "wallet", "strong")}
       ${settingsRow("Total debited", money(preview && preview.total || record.total), "withdraw", "total")}
-      ${settingsRow("Status", transactionStatusLabel(record.status), "sparkles")}
-      ${settingsRow("Recorded at", formatDate(record.created_at || record.createdAt || new Date().toISOString()), "check-circle")}
+      ${settingsRow("Status", transactionStatusLabel(record.status), "check-circle")}
+      ${settingsRow("Recorded at", formatDate(record.created_at || record.createdAt || new Date().toISOString()), "receipt-list")}
     </section>
     ${trustChips([
       ...(connectionIsEncrypted() ? [["lock", "Sent over an encrypted connection"]] : []),
@@ -14015,7 +14015,7 @@ function openPwaReviewModal() {
         <span><strong>Allow TitoPay to contact me about this feedback</strong><small>Your contact details are only shown to authorised Admin and Marketing users if enabled.</small></span>
         <input type="checkbox" name="contactPermission" value="true">
       </label>
-      <button class="btn primary" type="submit">${icon("sparkles")} Send feedback</button>
+      <button class="btn primary" type="submit">${icon("send")} Send feedback</button>
     </form>
   `);
 }
@@ -18103,7 +18103,6 @@ function icon(name) {
     ticket: `<path d="M2 9a3 3 0 0 0 0 6v3a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3a3 3 0 0 0 0-6V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M13 5v14"/>`,
     ticketing: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M9 9h6"/><path d="M9 13h4"/><path d="M17 8v8"/>`,
     health: `<rect x="4" y="4" width="16" height="16" rx="4.5"/><path d="M12 8.8v6.4"/><path d="M8.8 12h6.4"/>`,
-    sparkles: `<path d="m12 3.5 1.8 4.7 4.7 1.8-4.7 1.8-1.8 4.7-1.8-4.7L5.5 10l4.7-1.8z"/><path d="m18.3 15.7.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>`,
     star: `<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>`,
     "check-circle": `<circle cx="12" cy="12" r="9"/><path d="m8.5 12.4 2.3 2.3 4.9-5.2"/>`,
     stockvel: `<circle cx="8.5" cy="6.8" r="2.6"/><circle cx="15.5" cy="6.8" r="2.6"/><path d="M4.5 20.5v-.5a5 5 0 0 1 5-5h5a5 5 0 0 1 5 5v.5"/><circle cx="12" cy="17.6" r="1.7"/>`,

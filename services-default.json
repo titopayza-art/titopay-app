@@ -437,7 +437,7 @@
     {
       "service_code": "rewards",
       "service_name": "Rewards",
-      "service_icon": "sparkles",
+      "service_icon": "gift",
       "action": "rewards",
       "description": "Personal rewards programme.",
       "fee": 0,
@@ -451,7 +451,7 @@
     {
       "service_code": "business-rewards",
       "service_name": "Business Rewards",
-      "service_icon": "sparkles",
+      "service_icon": "gift",
       "action": "business-rewards",
       "description": "Business rewards programme.",
       "fee": 0,
