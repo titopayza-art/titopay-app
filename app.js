@@ -4755,11 +4755,6 @@ async function handleAction(action, actionElement = null) {
     const [, kind, ...rest] = String(action).split(":");
     await addTicketToWallet(kind, rest.join(":"), actionElement);
   }
-  if (String(action || "").startsWith("qr-wallet:")) {
-    const [, kind, ...rest] = String(action).split(":");
-    await addQrPassToWallet(kind, rest.join(":"), actionElement);
-    return;
-  }
   if (String(action || "").startsWith("ticket-download:")) {
     await downloadTicket(action.split(":").slice(1).join(":"), actionElement);
   }
@@ -5543,16 +5538,6 @@ const TICKET_PASS_KINDS = {
       "googlePayUrl", "google_pay_url", "saveToGoogleUrl", "save_to_google_url"
     ],
     missing: "This ticket does not have a Google Wallet pass yet. The QR code above is still valid for entry."
-  },
-  samsung: {
-    label: "Add to Samsung Wallet",
-    endpoint: "samsung-wallet",
-    cacheField: "samsungWalletUrl",
-    fields: [
-      "samsungWalletUrl", "samsung_wallet_url", "samsungPassUrl", "samsung_pass_url",
-      "samsungPayUrl", "samsung_pay_url"
-    ],
-    missing: "This ticket does not have a Samsung Wallet pass yet. The QR code above is still valid for entry."
   }
 };
 
@@ -5618,52 +5603,6 @@ async function addTicketToWallet(kind, code, button) {
     window.location.assign(passUrl);
   } catch (error) {
     showToast(Number(error?.status || 0) === 404 ? config.missing : friendlyFormError(error, "ticketing"), "error");
-  } finally {
-    setButtonBusy(button, false);
-  }
-}
-
-// The same signed-pass rule covers the customer's own payment and tip QR: the
-// server issues the pass, the client only links to it. Apple shows on iOS and
-// macOS, Google on Android, nothing elsewhere — and Samsung Wallet appears on
-// Android only when the server has actually issued a Samsung pass for this QR,
-// so a control never renders for a wallet the device or backend cannot serve.
-function qrPassMissingCopy(kind) {
-  const walletName = kind === "apple" ? "an Apple Wallet" : kind === "google" ? "a Google Wallet" : "a Samsung Wallet";
-  return `Your TitoPay QR does not have ${walletName} pass yet. The QR itself keeps working everywhere it is shown.`;
-}
-
-function qrWalletControls(qr = {}) {
-  const platformKind = ticketWalletKind();
-  if (!platformKind || !qr) return "";
-  const controls = [];
-  const primary = TICKET_PASS_KINDS[platformKind];
-  const direct = ticketPassUrl(qr, platformKind);
-  if (direct) {
-    controls.push(`<a class="btn secondary ticket-wallet-btn" href="${esc(direct)}" rel="noopener">${icon("wallet")} ${esc(primary.label)}</a>`);
-  } else if (qr.id) {
-    controls.push(`<button class="btn secondary ticket-wallet-btn" type="button" data-action="qr-wallet:${esc(platformKind)}:${esc(qr.id)}">${icon("wallet")} ${esc(primary.label)}</button>`);
-  }
-  if (platformKind === "google") {
-    const samsungUrl = ticketPassUrl(qr, "samsung");
-    if (samsungUrl) controls.push(`<a class="btn secondary ticket-wallet-btn" href="${esc(samsungUrl)}" rel="noopener">${icon("wallet")} ${esc(TICKET_PASS_KINDS.samsung.label)}</a>`);
-  }
-  return controls.join("");
-}
-
-async function addQrPassToWallet(kind, qrId, button) {
-  const config = TICKET_PASS_KINDS[kind];
-  if (!config || !qrId) return;
-  setButtonBusy(button, true);
-  try {
-    const result = await api(`/v1/qr/${encodeURIComponent(qrId)}/${config.endpoint}`);
-    const passUrl = ticketPassUrl(result || {}, kind) || ticketPassUrl(result?.qr || {}, kind) || ticketPassUrl(result?.pass || {}, kind);
-    if (!passUrl) throw Object.assign(new Error(qrPassMissingCopy(kind)), { status: 404 });
-    // Cache on the profile QR so the next open renders a direct link.
-    if (state.profileQr && String(state.profileQr.id || "") === String(qrId)) state.profileQr[config.cacheField] = passUrl;
-    window.location.assign(passUrl);
-  } catch (error) {
-    showToast(Number(error?.status || 0) === 404 ? qrPassMissingCopy(kind) : friendlyFormError(error, "transaction"), "error");
   } finally {
     setButtonBusy(button, false);
   }
@@ -9565,15 +9504,7 @@ function posterQrFrom(qr) {
   const id = qr.id || qr.reference || qr.qrId || "";
   const link = qr.deepLink || qr.url || qr.paymentUrl || "";
   if (!image && !id && !link) return null;
-  // Wallet-pass URLs ride along verbatim when the QR record carries them, so
-  // the poster can render a direct Add-to-Wallet link without a second lookup.
-  const passes = {};
-  Object.values(TICKET_PASS_KINDS).forEach((config) => {
-    config.fields.forEach((field) => {
-      if (qr[field]) passes[field] = qr[field];
-    });
-  });
-  return { image, id, link, ...passes };
+  return { image, id, link };
 }
 
 // The payment poster prefers the permanent profile QR when the account has
@@ -9641,7 +9572,6 @@ async function openQrPosterModal(kind = "payment") {
       </article>
       <section class="auth-actions qr-poster-actions">
         <button class="btn primary" type="button" data-action="download-qr-poster-pdf">${icon("download")} Download A4 PDF</button>
-        ${qrWalletControls(qr)}
       </section>
       <p class="field-hint">The PDF is a finished A4 sheet: download it, then print it from any device or send it to a print shop.</p>
     `}

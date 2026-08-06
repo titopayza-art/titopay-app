@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v271-wallet-passes";
+const CACHE_NAME = "titopay-pwa-v272-remove-wallet-buttons";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=271",
-  "./app.min.js?v=271",
+  "./styles.min.css?v=272",
+  "./app.min.js?v=272",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

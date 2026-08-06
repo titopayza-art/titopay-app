@@ -1,1 +1,1 @@
-TitoPay PWA build: wallet-passes-v271-20260806
+TitoPay PWA build: remove-wallet-buttons-v272-20260806
