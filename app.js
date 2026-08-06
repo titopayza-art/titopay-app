@@ -1998,6 +1998,7 @@ function profileView() {
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
       ${profileFeature("Unread Messages", `${unreadNotificationCount()} unread notification${unreadNotificationCount() === 1 ? "" : "s"} · chat, support and account alerts.`, "message-check", "account-activity")}
       ${profileFeature("Share TitoPay", "Invite friends, family or customers by WhatsApp, SMS or any sharing app.", "share", "share-titopay")}
+      ${profileFeature("How TitoPay Works", "Take a quick guided tour of the app's key features.", "sparkles", "how-titopay-works")}
       ${profileFeature("Help us improve", "Rate your TitoPay experience and send product feedback.", "feedback", "pwa-review")}
       ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
       ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
@@ -4396,6 +4397,15 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "support") {
     openSupportModal();
+  }
+  if (action === "how-titopay-works") {
+    openHowItWorksModal();
+  }
+  if (action === "guide-back") {
+    stepHowItWorksGuide(-1);
+  }
+  if (action === "guide-next") {
+    stepHowItWorksGuide(1);
   }
   if (action === "notifications") {
     openNotificationsModal();
@@ -12280,6 +12290,125 @@ function showSecurityTipModal() {
     ${securityTipCard("Protect your account")}
     <button class="btn primary" type="button" data-close>I understand</button>
   `);
+}
+
+// ---------------------------------------------------------------------------
+// How TitoPay works: a guided tour of the app itself
+//
+// Opened from Profile. Distinct from the Learn service, which teaches money
+// topics -- this stepper teaches where things live in the app and what they
+// do. Static content only: nothing here calls the API, and the current step
+// lives on the modal so it resets every time the tour opens.
+// ---------------------------------------------------------------------------
+
+function howItWorksSteps() {
+  const isBusiness = state.accountType === "business";
+  return [
+    {
+      icon: "wallet",
+      title: "Your wallet at a glance",
+      body: "Home shows your balance, wallet ID and your quick services. Tap the eye icon any time to hide your balance from people nearby.",
+      hint: "Home tab"
+    },
+    isBusiness ? {
+      icon: "sale",
+      title: "Get paid by customers",
+      body: "Make a sale from your dashboard, or print your Payment QR poster — customers scan and pay straight into your wallet.",
+      hint: "Services › Make a Sale"
+    } : {
+      icon: "send",
+      title: "Send money in seconds",
+      body: "Send to any TitoPay user with their @username, cellphone number or email. Beneficiaries are verified before they can be saved, and fees always show before you confirm.",
+      hint: "Services › Send Money"
+    },
+    {
+      icon: "qr",
+      title: "Pay with QR",
+      body: "Scan any TitoPay QR to pay, or show your own code to get paid. The amount always shows before money moves.",
+      hint: "QR tab"
+    },
+    {
+      icon: "grid",
+      title: "Everyday services",
+      body: "Buy airtime and electricity, pay bills, split costs, buy vouchers and save with a stokvel — straight from your wallet.",
+      hint: "Services tab"
+    },
+    {
+      icon: "ticket",
+      title: "Event tickets",
+      body: "Buy tickets in the app, download them as a PDF, or add them to Apple Wallet or Google Wallet on your phone.",
+      hint: "Services › Event Tickets"
+    },
+    {
+      icon: "list",
+      title: "Track every rand",
+      body: "Every transaction lands in Activity. Search and filter your history, export CSV or PDF, or email yourself a statement.",
+      hint: "Activity tab"
+    },
+    {
+      icon: "shield",
+      title: "Stay secure",
+      body: "Lock your wallet instantly from Profile if something feels wrong, and never share your PIN, password or verification codes — TitoPay will never ask for them.",
+      hint: "Profile › Security & Verification"
+    }
+  ];
+}
+
+function openHowItWorksModal() {
+  const steps = howItWorksSteps();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Guided Tour</p><h2>How TitoPay works</h2><p class="lead">${steps.length} quick steps through the app's key features.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="guide" data-guide data-guide-step="0">
+      <div class="guide-progress" aria-hidden="true">${steps.map(() => "<span></span>").join("")}</div>
+      <article class="guide-step" data-guide-body></article>
+      <p class="guide-count muted" data-guide-count aria-live="polite"></p>
+      <div class="guide-nav">
+        <button class="btn secondary" type="button" data-action="guide-back" data-guide-back>${icon("arrow-left")} Back</button>
+        <button class="btn primary" type="button" data-action="guide-next" data-guide-next>Next</button>
+      </div>
+    </div>
+  `);
+  paintHowItWorksStep();
+}
+
+function paintHowItWorksStep() {
+  const container = document.querySelector("[data-guide]");
+  if (!container) return;
+  const steps = howItWorksSteps();
+  const index = Math.min(Math.max(Number(container.dataset.guideStep) || 0, 0), steps.length - 1);
+  const step = steps[index];
+  const body = container.querySelector("[data-guide-body]");
+  body.innerHTML = `
+    <span class="icon-bubble">${icon(step.icon)}</span>
+    <h3>${esc(step.title)}</h3>
+    <p>${esc(step.body)}</p>
+    <span class="guide-hint">${icon("check-circle")} Find it: ${esc(step.hint)}</span>
+  `;
+  if (!prefersReducedMotion()) {
+    body.classList.remove("guide-anim");
+    void body.offsetWidth;
+    body.classList.add("guide-anim");
+  }
+  container.querySelectorAll(".guide-progress span").forEach((dot, dotIndex) => dot.classList.toggle("active", dotIndex <= index));
+  container.querySelector("[data-guide-count]").textContent = `Step ${index + 1} of ${steps.length}`;
+  container.querySelector("[data-guide-back]").disabled = index === 0;
+  container.querySelector("[data-guide-next]").innerHTML = index === steps.length - 1 ? `${icon("check-circle")} Done` : "Next";
+}
+
+function stepHowItWorksGuide(delta) {
+  const container = document.querySelector("[data-guide]");
+  if (!container) return;
+  const index = Number(container.dataset.guideStep) || 0;
+  const nextIndex = index + delta;
+  if (nextIndex >= howItWorksSteps().length) {
+    closeModal();
+    return;
+  }
+  container.dataset.guideStep = String(Math.max(nextIndex, 0));
+  paintHowItWorksStep();
 }
 
 async function processTransaction(data) {

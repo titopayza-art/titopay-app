@@ -1081,6 +1081,113 @@ h3 {
   line-height: 1.5;
 }
 
+.guide-progress {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 2px 0 14px;
+}
+
+.guide-progress span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background-color 220ms var(--ease-premium);
+}
+
+.guide-progress span.active {
+  background: var(--blue);
+}
+
+.guide-step {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  min-height: 252px;
+  padding: 20px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--soft);
+  text-align: center;
+}
+
+.guide-step .icon-bubble {
+  width: 54px;
+  height: 54px;
+}
+
+.guide-step h3 {
+  font-size: clamp(1.08rem, 3.2vw, 1.25rem);
+  line-height: 1.2;
+}
+
+.guide-step p {
+  max-width: 42ch;
+  color: var(--muted);
+  font-size: clamp(0.92rem, 2.7vw, 1rem);
+  line-height: 1.5;
+}
+
+.guide-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--soft-blue);
+  color: var(--deep-blue);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.guide-hint svg {
+  width: 15px;
+  height: 15px;
+}
+
+.guide-count {
+  margin: 10px 0 2px;
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+.guide-nav {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.guide-nav .btn {
+  flex: 1;
+  min-height: 44px;
+}
+
+.guide-anim {
+  animation: guide-step-in 260ms var(--ease-premium);
+}
+
+@keyframes guide-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guide-anim {
+    animation: none;
+  }
+}
+
 .landing-footer {
   display: flex;
   flex-direction: column;
