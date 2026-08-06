@@ -1509,18 +1509,25 @@ h3 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
-  min-height: 48px;
-  height: auto;
+  gap: 2px;
+  width: auto;
+  min-width: 54px;
+  height: 48px;
+  padding-inline: 9px;
+}
+
+.topbar-labeled svg {
+  width: 21px;
+  height: 21px;
 }
 
 .topbar-labeled small {
   color: var(--muted);
-  font-size: 0.56rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0;
   line-height: 1;
+  white-space: nowrap;
 }
 
 /* Radial Pay orbit */
@@ -1567,9 +1574,11 @@ h3 {
 
 .pay-orbit-centre {
   grid-area: 2 / 2;
-  display: grid;
-  place-items: center;
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   width: 96px;
   height: 96px;
   border-radius: 50%;
@@ -1578,9 +1587,17 @@ h3 {
   box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.14), 0 16px 40px rgba(6, 26, 61, 0.5);
 }
 
+.pay-orbit-centre svg {
+  width: 26px;
+  height: 26px;
+}
+
 .pay-orbit-centre span {
-  font-size: 0.72rem;
+  max-width: 80px;
+  font-size: 0.7rem;
   font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
 }
 
 .pay-orbit-btn {
@@ -3919,7 +3936,25 @@ body.landing-static .landing-flow.auth-screen {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  width: 100%;
   margin-top: 8px;
+}
+
+/* The recipient input and its injected tools must never be packed onto one
+   line: each piece claims the full row, and the pill labels never letter-wrap
+   into vertical slivers, whatever the device's text scaling does. */
+.field input[name="recipient"] {
+  width: 100%;
+}
+
+.recipient-tools .contact-picker-btn,
+.recipient-tools .recipient-verify-btn {
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+.recipient-detect-hint {
+  width: 100%;
 }
 
 .recipient-verify-btn {
@@ -4880,8 +4915,27 @@ body.landing-static .landing-flow.auth-screen {
   background: linear-gradient(145deg, var(--blue), var(--blue-2));
 }
 
+.bottom-nav button:nth-child(3) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
 .bottom-nav button:nth-child(3) span {
-  display: none;
+  display: block;
+  max-width: 58px;
+  color: #fff;
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.bottom-nav button:nth-child(3) svg {
+  width: 22px;
+  height: 22px;
 }
 
 .install-float-wrap {

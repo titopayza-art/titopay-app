@@ -2095,11 +2095,14 @@ function profileFeature(title, subtitle, iconName, action, primary = false) {
 }
 
 function bottomNav() {
-  return `<nav class="bottom-nav" aria-label="Primary">${navItems.map(([id, label, name]) => `
-    <button class="${state.route === id ? "active" : ""}" data-route="${id}" aria-label="${esc(label)}">
-      ${icon(name)}<span>${esc(label)}</span>
+  return `<nav class="bottom-nav" aria-label="Primary">${navItems.map(([id, label, name]) => {
+    const shown = id === "qr" ? (state.accountType === "business" ? "Accept Pay" : "Pay") : label;
+    return `
+    <button class="${state.route === id ? "active" : ""}" data-route="${id}" aria-label="${esc(shown)}">
+      ${icon(name)}<span>${esc(shown)}</span>
     </button>
-  `).join("")}</nav>`;
+  `;
+  }).join("")}</nav>`;
 }
 
 function serviceTile(service, clickable = false) {
@@ -7836,13 +7839,18 @@ function sendMoneyBeneficiaryPicker() {
         <button class="link-btn" type="button" data-action="saved-beneficiaries">View all</button>
       </div>
       <div class="frequent-row" role="list">
-        ${frequent.map((item) => `
+        ${frequent.map((item) => {
+          const phone = item.phone || item.msisdn || item.cellphone || item.mobile
+            || (/^\+?\d[\d\s-]{6,}$/.test(String(item.identifier || "")) ? item.identifier : "");
+          return `
           <button class="frequent-card" type="button" role="listitem" data-action="beneficiary-select:${esc(item.id)}">
             <span class="chat-contact-avatar">${item.profilePhotoUrl ? `<img src="${esc(item.profilePhotoUrl)}" alt="">` : esc(beneficiaryDisplayName(item).slice(0, 1).toUpperCase())}</span>
             <strong>${esc(beneficiaryDisplayName(item))}</strong>
             <small>${esc(displayUsername(item.username) || item.walletId || "")}</small>
+            ${phone ? `<small>${esc(phone)}</small>` : ""}
             ${beneficiaryIsVerified(item) ? `<span class="frequent-verified">${icon("check-circle")}</span>` : ""}
-          </button>`).join("")}
+          </button>`;
+        }).join("")}
       </div>
     </section>`;
 }
@@ -12990,7 +12998,7 @@ function openPayHub() {
   backdrop.className = "pay-hub-backdrop";
   backdrop.innerHTML = `
     <section class="pay-orbit" role="dialog" aria-modal="true" aria-label="Pay" tabindex="-1">
-      <div class="pay-orbit-centre" aria-hidden="true">${icon("qr")}<span>Pay</span></div>
+      <div class="pay-orbit-centre" aria-hidden="true">${icon("qr")}<span>${isBusiness ? "Accept Pay" : "Pay"}</span></div>
       ${bubbles}
       <button class="pay-orbit-close" type="button" data-pay-hub-close aria-label="Close Pay">${icon("x")}</button>
     </section>`;
@@ -13869,7 +13877,8 @@ function canUseFinancialService(service = {}) {
 // The build the browser actually loaded, read off the script tag. The menu
 // used to state "Version 1.0.0", which had not been true for a long time.
 function appBuildVersion() {
-  const script = document.querySelector('script[src*="app.js"]');
+  // The deployed page loads app.min.js; only dev setups load app.js.
+  const script = document.querySelector('script[src*="app.min.js"], script[src*="app.js"]');
   const match = script && /[?&]v=(\d+)/.exec(script.getAttribute("src") || "");
   return match ? `v${match[1]}` : "not available";
 }
@@ -14002,7 +14011,7 @@ function openLandingMenu() {
       <p><a class="text-link" href="https://www.titopay.co.za" target="_blank" rel="noopener">www.titopay.co.za</a></p>
       <p><strong>TitoPay (Pty) Ltd.</strong></p>
       <p>Reg No: 2026/399418/07</p>
-      <p>App version 1</p>
+      <p>App version 1.0 · build ${esc(appBuildVersion())}</p>
       <p>© 2026 TitoPay (Pty) Ltd. All rights reserved.</p>
     </footer>
   `);
