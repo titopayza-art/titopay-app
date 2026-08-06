@@ -6796,11 +6796,11 @@ const VAS_JOURNEYS = {
     recipientLabel: "Meter number",
     recipientPlaceholder: "Enter prepaid meter number",
     recipientInputMode: "numeric",
-    fallbackProviders: ["Prepaid electricity"],
+    fallbackProviders: ["Prepaid electricity", "Prepaid water"],
     openValue: true,
     amountLabel: "Purchase amount",
     openValueLabel: "Purchase amount",
-    openValueNote: "Prepaid electricity is bought by value.",
+    openValueNote: "Prepaid electricity and water are bought by value.",
     validate: true,
     validateLabel: "Verify meter",
     validateHeading: "Meter",
@@ -13520,9 +13520,9 @@ async function confirmReviewedTransaction() {
     } : null;
     openSuccessModal(transaction, context.preview, data.serviceCode, context.recipient);
   } catch (error) {
-    const message = friendlyFormError(error, "transaction");
-    showToast(message, "error");
-    openTransactionFailureModal(message);
+    // The failure modal already states the reason prominently; a duplicate
+    // error toast just stacks on top of it and reads as a glitch.
+    openTransactionFailureModal(friendlyFormError(error, "transaction"));
   } finally {
     setButtonBusy(button, false);
   }
@@ -17819,6 +17819,7 @@ function openProofOfAccountModal() {
     <section class="activity-list">
       ${settingsRow("Account holder", statementAccountName(user), "user")}
       ${settingsRow("Username", displayUsername(user.username) || "Not set", "user")}
+      ${settingsRow("Cellphone", user.phone || user.mobile || user.contactNumber || user.contact_number || "Not on record", "phone")}
       ${settingsRow("Wallet ID", compactStatementReference(displayWalletId(wallet), 24), "wallet")}
       ${settingsRow("Account type", isBusiness ? "Business" : "Personal", "shield")}
       ${settingsRow("Account opened", accountOpenedLabel(user), "list")}
@@ -17932,8 +17933,10 @@ function proofOfAccountPdf({ now, letterNo, logo = null }) {
   label(rightX, cardTop - 116, "FICA STATUS");
   value(rightX, cardTop - 129, ficaStatus, 8.8);
 
+  const proofPhone = user.phone || user.mobile || user.contactNumber || user.contact_number || "Not on record";
+  const proofEmail = user.email || user.businessEmail || user.business_email || "Not on record";
   paragraph(
-    `Contact on record: ${statementContactLine(user)}.`,
+    `Cellphone on record: ${proofPhone}. Email on record: ${proofEmail}.`,
     cardBottom - 20, { size: 8.8, leading: 13 }
   );
   paragraph(
