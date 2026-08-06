@@ -4315,6 +4315,12 @@ body.landing-static .landing-flow.auth-screen {
   margin-bottom: 10px;
 }
 
+.chatbot-head-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 8px;
+}
+
 .chatbot-head .lead {
   max-width: 32rem;
 }

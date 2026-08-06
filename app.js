@@ -124,6 +124,7 @@ const state = {
 let titoPayChatSocket = null;
 let titoPayChatReconnectTimer = null;
 let titoPayChatReconnectAttempts = 0;
+let supportConversationPollTimer = null;
 let titoPayPeerConnection = null;
 let titoPayPendingCallOffer = null;
 const titoPayChatPendingAcks = new Map();
@@ -4666,6 +4667,9 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "chatbot") {
     openChatbotModal();
+  }
+  if (action === "support-refresh") {
+    await refreshSupportConversation(actionElement);
   }
   if (action === "titopay-chat") {
     openTitoPayChatModal();
@@ -16947,7 +16951,10 @@ function openChatbotModal() {
   openModal(`
     <div class="modal-head chatbot-head">
       <div><p class="eyebrow">TitoPay Assistant</p><h2>${business ? "Business support" : "Personal support"}</h2><p class="lead">Ask a question, choose a quick topic, or request Customer Care.</p></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      <div class="chatbot-head-actions">
+        <button class="icon-btn" type="button" data-action="support-refresh" aria-label="Refresh conversation">${icon("refresh")}</button>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
     </div>
     <section class="chat-panel chatbot-panel" data-clickatell-ready="true" aria-label="TitoPay chatbot conversation">
       <div class="chat-thread" aria-live="polite">
@@ -16974,8 +16981,12 @@ function openChatbotModal() {
     backdrop.classList.add("chatbot-modal-backdrop");
     card.classList.add("chatbot-fullscreen-modal");
   }
+  // A fresh socket for the live path, plus polling as the guaranteed fallback
+  // and an immediate hydrate so an already-open conversation is current.
+  connectTitoPayChatSocket({ force: true });
   const existingConversationId = sessionStorage.getItem("titopay_support_conversation_id");
   if (existingConversationId) hydrateSupportConversation(existingConversationId).catch(() => null);
+  startSupportConversationPolling();
 }
 
 async function hydrateSupportConversation(conversationId) {
@@ -17007,6 +17018,49 @@ async function hydrateSupportConversation(conversationId) {
   const conversationResult = await api(`/v1/support/conversations/${encodeURIComponent(conversationId)}`);
   const status = conversationResult.conversation?.status;
   if (status) sessionStorage.setItem("titopay_support_conversation_status", status);
+}
+
+// A Customer Care reply reaches the phone over the chat socket, but mobile
+// networks and shared-host proxies drop that socket often. So while the
+// support chat is open we also poll the conversation every few seconds -- an
+// idempotent hydrate that only repaints when the message list actually
+// changes -- so an agent's reply always lands within seconds even when the
+// live push does not arrive. The timer self-stops once the panel closes.
+function startSupportConversationPolling() {
+  stopSupportConversationPolling();
+  supportConversationPollTimer = setInterval(() => {
+    if (!document.querySelector(".chatbot-fullscreen-modal")) {
+      stopSupportConversationPolling();
+      return;
+    }
+    if (document.hidden) return;
+    const conversationId = sessionStorage.getItem("titopay_support_conversation_id");
+    if (conversationId) hydrateSupportConversation(conversationId).catch(() => null);
+  }, 4000);
+}
+
+function stopSupportConversationPolling() {
+  if (supportConversationPollTimer) {
+    clearInterval(supportConversationPollTimer);
+    supportConversationPollTimer = null;
+  }
+}
+
+async function refreshSupportConversation(button) {
+  const conversationId = sessionStorage.getItem("titopay_support_conversation_id");
+  if (!conversationId) {
+    showToast("No Customer Care conversation is open yet.");
+    return;
+  }
+  if (button) setButtonBusy(button, true);
+  try {
+    await hydrateSupportConversation(conversationId);
+    showToast("Conversation up to date.");
+  } catch (error) {
+    showToast("Could not refresh right now. Check your connection.", "error");
+  } finally {
+    if (button) setButtonBusy(button, false);
+  }
 }
 
 async function submitChatbotMessage(data) {
