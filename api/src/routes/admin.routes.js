@@ -1,0 +1,3732 @@
+const express = require("express");
+const crypto = require("crypto");
+const net = require("net");
+const nodemailer = require("nodemailer");
+const QRCode = require("qrcode");
+const { pool } = require("../db/pool");
+const { config } = require("../config/env");
+const { requireAuth } = require("../middleware/auth");
+const { requireAdminPermission } = require("../middleware/rbac");
+const { requireSuperAdmin } = require("../middleware/super-admin");
+const { authLimiter } = require("../middleware/rate-limits");
+const { AppError } = require("../lib/errors");
+const { boundedText, requireEnum, requireUuid } = require("../lib/validation");
+const { hashPassword } = require("../lib/passwords");
+const { isMissingDbObjectError, logDbCompatibilityWarning, safeQuery } = require("../lib/db-safe");
+const {
+  ADMIN_ROLE_PERMISSIONS,
+  getAdminRolePermissions,
+  getEffectiveAdminRolePermissions,
+  normalizeAdminRole,
+  login,
+  logout,
+  logoutAll
+} = require("../services/auth-service");
+const { ensureWalletNumbersForAllWallets, listAllWallets } = require("../services/wallet-service");
+const { listAllTransactions, revenueSummary } = require("../services/transaction-service");
+const { listMerchants } = require("../services/merchant-service");
+const { listAuditLogs, writeAuditLog } = require("../services/audit-service");
+const { adminDisableBeneficiary, adminListBeneficiaries } = require("../services/beneficiary-service");
+const { getEmailProviderStatus, sendSmtpTestEmail, deliverSms } = require("../services/notification-service");
+const { queueEmail, queueRawEmail } = require("../services/email-centre-service");
+const { testCheckoutAuthentication } = require("../services/peach-checkout-auth-service");
+const { shouldSendCustomerEmail } = require("../services/customer-notification-preference-service");
+const { ensureAuthenticationPreferenceSchema } = require("../services/authentication-preference-service");
+const { getChatPresenceSnapshot } = require("../realtime/chat-hub");
+const {
+  getAdminAuthenticationPolicy,
+  setAdminAuthenticationPolicy,
+  getPlatformSetting,
+  setPlatformSetting
+} = require("../services/platform-settings-service");
+const {
+  listProfileChangeRequests,
+  approveProfileChangeRequest,
+  rejectProfileChangeRequest
+} = require("../services/profile-change-service");
+const {
+  listAdminEvents,
+  getAdminEvent,
+  adminTransitionEvent,
+  listTicketRefunds,
+  processTicketRefund,
+  eventSalesReport,
+  createTicketSettlement
+} = require("../services/ticketing-service");
+const {
+  adminOverview: enterpriseDistributionOverview,
+  listApplications: listEnterpriseDistributionApplications,
+  listOrganisations: listEnterpriseDistributionOrganisations,
+  transitionApplication: transitionEnterpriseDistributionApplication,
+  listAllBatches: listEnterpriseDistributionBatches,
+  releaseBatch: releaseEnterpriseDistributionBatch,
+  listPayouts: listEnterpriseDistributionPayouts,
+  listAuditLogs: listEnterpriseDistributionAuditLogs,
+  adminReport: enterpriseDistributionReport
+} = require("../services/enterprise-distribution-service");
+
+const router = express.Router();
+
+async function createUserInAppNotification({ userId, type, title, body, metadata = {}, db = pool }) {
+  if (!userId) return null;
+  const notificationId = crypto.randomUUID();
+  await db.query(
+    `INSERT INTO notifications (
+       id, user_id, channel, notification_type, title, body, status, provider, metadata, sent_at
+     )
+     VALUES ($1, $2, 'in_app', $3, $4, $5, 'sent', 'titopay', $6::JSONB, NOW())
+     RETURNING id`,
+    [
+      notificationId,
+      userId,
+      type,
+      title,
+      body,
+      JSON.stringify({ ...metadata, clientNotificationId: metadata.clientNotificationId || notificationId })
+    ]
+  );
+  return notificationId;
+}
+
+function adminRequestLogger(req, res, next) {
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    console.info("[admin-api]", {
+      method: req.method,
+      path: req.originalUrl || req.url,
+      status: res.statusCode,
+      durationMs: Date.now() - startedAt,
+      requestId: req.requestId,
+      adminId: req.auth?.userId || null,
+      role: req.auth?.role || null
+    });
+  });
+  next();
+}
+
+function meta(req) {
+  return { ipAddress: req.ip, userAgent: req.get("user-agent") };
+}
+
+const INTEGRATION_PROVIDERS = {
+  peach_payments: {
+    label: "Peach Payments",
+    description: "Card, wallet top-up and payment processing.",
+    category: "payments",
+    env: config.integrations.peachPayments,
+    fields: ["enabled", "environment", "baseUrl", "sandboxBaseUrl", "productionBaseUrl", "apiKey", "apiSecret", "clientId", "clientSecret", "username", "password", "merchantId", "entityId", "webhookSecret", "callbackUrl"],
+    secretKeys: ["apiKey", "apiSecret", "clientSecret", "password", "webhookSecret"],
+    // Peach Checkout (Embedded / Hosted Checkout V2) authenticates with the
+    // Client ID, Client Secret and Merchant ID. The authentication and checkout
+    // service URLs are fixed per environment, so no base URL is required.
+    requiredFields: ["clientId", "clientSecret", "merchantId"]
+  },
+  pos_provider: {
+    label: "Speedpoint / POS Provider",
+    description: "Signed POS provider callbacks, terminal payment status and reconciliation.",
+    category: "payments",
+    routingEligible: false,
+    env: {
+      mode: process.env.POS_PROVIDER_MODE || "production",
+      baseUrl: process.env.POS_PROVIDER_BASE_URL || "",
+      providerName: process.env.POS_PROVIDER_NAME || "",
+      merchantId: process.env.POS_PROVIDER_MERCHANT_ID || "",
+      entityId: process.env.POS_PROVIDER_ENTITY_ID || "",
+      webhookSecret: config.pos.providerWebhookSecret,
+      callbackUrl: `${String(config.apiBaseUrl || "").replace(/\/+$/, "")}/v1/webhooks/pos-provider`
+    },
+    fields: ["enabled", "environment", "providerName", "baseUrl", "merchantId", "entityId", "webhookSecret", "callbackUrl"],
+    readOnlyFields: ["callbackUrl"],
+    secretKeys: ["webhookSecret"],
+    requiredFields: ["webhookSecret"]
+  },
+  docfox: {
+    label: "DocFox / FICA",
+    description: "KYC, FICA and verification provider.",
+    category: "compliance",
+    env: config.integrations.docfox,
+    fields: ["enabled", "environment", "baseUrl", "apiKey", "apiSecret", "clientId", "clientSecret", "webhookSecret", "callbackUrl"],
+    secretKeys: ["apiKey", "apiSecret", "clientSecret", "webhookSecret"],
+    requiredFields: ["baseUrl", "apiKey"]
+  },
+  ott: {
+    label: "OTT",
+    description: "Voucher and VAS provider connectivity.",
+    category: "vas",
+    env: config.integrations.ott,
+    fields: ["enabled", "environment", "baseUrl", "apiKey", "apiSecret", "username", "password", "merchantId", "webhookSecret", "callbackUrl"],
+    secretKeys: ["apiKey", "apiSecret", "password", "webhookSecret"],
+    requiredFields: ["baseUrl", "apiKey"]
+  },
+  flash: {
+    label: "Flash",
+    description: "Airtime, electricity, data and bill payment VAS provider.",
+    category: "vas",
+    env: {
+      mode: process.env.FLASH_MODE || "production",
+      baseUrl: process.env.FLASH_BASE_URL || "",
+      apiKey: process.env.FLASH_API_KEY || "",
+      apiSecret: process.env.FLASH_API_SECRET || "",
+      username: process.env.FLASH_USERNAME || "",
+      password: process.env.FLASH_PASSWORD || ""
+    },
+    fields: ["enabled", "environment", "baseUrl", "apiKey", "apiSecret", "username", "password", "merchantId", "webhookSecret", "callbackUrl"],
+    secretKeys: ["apiKey", "apiSecret", "password", "webhookSecret"],
+    requiredFields: ["baseUrl", "apiKey"]
+  },
+  smtp: {
+    label: "Email / SMTP",
+    description: "Email delivery for OTP, reset and security notices.",
+    category: "notifications",
+    env: {
+      mode: config.integrations.email.provider,
+      baseUrl: config.integrations.email.smtpHost,
+      smtpPort: config.integrations.email.smtpPort,
+      port: config.integrations.email.smtpPort,
+      senderEmail: config.integrations.email.fromAddress,
+      username: config.integrations.email.smtpUser,
+      password: config.integrations.email.smtpPassword
+    },
+    fields: ["enabled", "environment", "baseUrl", "smtpPort", "username", "password", "senderEmail", "callbackUrl"],
+    secretKeys: ["password"],
+    requiredFields: ["baseUrl", "smtpPort", "senderEmail", "username", "password"]
+  },
+  sms: {
+    label: "SMS Provider",
+    description: "Optional SMS alerts and critical security messages.",
+    category: "notifications",
+    env: config.integrations.sms,
+    fields: ["enabled", "environment", "baseUrl", "apiKey", "apiSecret", "clientId", "clientSecret", "username", "password", "senderId", "testNumber", "webhookSecret", "callbackUrl"],
+    secretKeys: ["apiKey", "apiSecret", "clientSecret", "password", "webhookSecret"],
+    requiredFields: ["baseUrl", "apiKey", "senderId", "testNumber"]
+  }
+};
+
+const PROVIDER_ROUTING_SERVICES = [
+  { key: "airtime", label: "Airtime", defaultProvider: "flash" },
+  { key: "data", label: "Data", defaultProvider: "flash" },
+  { key: "electricity", label: "Electricity", defaultProvider: "flash" },
+  { key: "bill_payments", label: "Bill Payments", defaultProvider: "flash" },
+  { key: "gift_cards", label: "Gift Cards", defaultProvider: "flash" },
+  { key: "cash_services", label: "Cash Services", defaultProvider: "flash" },
+  { key: "vouchers", label: "Vouchers", defaultProvider: "ott" },
+  { key: "card_payments", label: "Card Payments", defaultProvider: "peach_payments" },
+  { key: "card_topups", label: "Card Top-ups", defaultProvider: "peach_payments" },
+  { key: "kyc", label: "KYC / FICA", defaultProvider: "docfox" },
+  { key: "email", label: "Email", defaultProvider: "smtp" },
+  { key: "sms", label: "SMS", defaultProvider: "sms" }
+];
+
+const FEATURE_FLAGS = [
+  ["chat", "Chat"],
+  ["voice_calls", "Voice Calls"],
+  ["qr_payments", "QR Payments"],
+  ["qr_generator", "QR Generator"],
+  ["flash", "Flash"],
+  ["ott", "OTT"],
+  ["peach", "Peach"],
+  ["docfox", "DocFox"],
+  ["sms", "SMS"],
+  ["email", "Email"],
+  ["notifications", "Notifications"],
+  ["wallets", "Wallets"],
+  ["marketplace", "Marketplace"],
+  ["marketing", "Marketing"],
+  ["support", "Support"],
+  ["analytics", "Analytics"],
+  ["security_centre", "Security Centre"],
+  ["developer_tools", "Developer Tools"],
+  ["engineering_tools", "Engineering Tools"],
+  ["pricing_engine", "Pricing Engine"],
+  ["integration_centre", "Integration Centre"]
+].map(([key, label]) => ({ key, label, enabled: true }));
+
+function platformSettingKey(key) {
+  return `integration_${key}`;
+}
+
+function webhookSettingKey() {
+  return "integration_webhook_events";
+}
+
+function providerRoutingSettingKey() {
+  return "provider_routing";
+}
+
+function featureFlagsSettingKey() {
+  return "feature_flags";
+}
+
+function companyDocumentsSettingKey() {
+  return "company_documents";
+}
+
+function marketingSmsCampaignsSettingKey() {
+  return "marketing_sms_campaigns";
+}
+
+function marketingEmailCampaignsSettingKey() { return "marketing_email_campaigns"; }
+
+function pwaCustomerReviewsSettingKey() {
+  return "pwa_customer_reviews";
+}
+
+const INTEGRATION_FIELD_LABELS = {
+  enabled: "Enable provider",
+  environment: "Environment",
+  baseUrl: "Base URL / Host",
+  apiKey: "API Key",
+  apiSecret: "API Secret",
+  clientId: "Client ID",
+  clientSecret: "Client Secret",
+  username: "Username",
+  password: "Password",
+  merchantId: "Merchant ID",
+  entityId: "Entity ID",
+  providerName: "Provider Name",
+  webhookSecret: "Webhook Secret",
+  callbackUrl: "Callback URL",
+  senderEmail: "Sender Email",
+  senderId: "Sender ID",
+  testNumber: "Test Mobile Number",
+  smtpPort: "SMTP Port"
+};
+
+const SECRET_FIELD_NAMES = new Set(["apiKey", "apiSecret", "clientSecret", "password", "webhookSecret"]);
+const URL_FIELD_NAMES = new Set(["callbackUrl"]);
+const ENDPOINT_FIELD_NAMES = new Set(["baseUrl"]);
+
+function integrationEncryptionKey() {
+  return crypto
+    .createHash("sha256")
+    .update(config.refreshSecret || config.accessSecret)
+    .digest();
+}
+
+function encryptSecret(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", integrationEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `enc:${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
+}
+
+function decryptSecret(value) {
+  const text = String(value || "");
+  if (!text.startsWith("enc:")) return "";
+  const [, ivText, tagText, encryptedText] = text.split(":");
+  if (!ivText || !tagText || !encryptedText) return "";
+  const decipher = crypto.createDecipheriv(
+    "aes-256-gcm",
+    integrationEncryptionKey(),
+    Buffer.from(ivText, "base64")
+  );
+  decipher.setAuthTag(Buffer.from(tagText, "base64"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(encryptedText, "base64")),
+    decipher.final()
+  ]).toString("utf8");
+}
+
+function maskSecret(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= 4) return "configured";
+  return `••••${text.slice(-4)}`;
+}
+
+function optionalText(value, label, max = 500) {
+  if (value === undefined || value === null || String(value).trim() === "") return "";
+  return boundedText(value, label, { min: 0, max });
+}
+
+function validateOptionalUrl(value, label) {
+  const text = optionalText(value, label, 500);
+  if (!text) return "";
+  try {
+    const parsed = new URL(text);
+    if (!["https:", "http:"].includes(parsed.protocol)) {
+      throw new Error("Unsupported protocol");
+    }
+    return parsed.toString();
+  } catch (_error) {
+    throw new AppError(400, `${label} must be a valid URL`);
+  }
+}
+
+function validateOptionalEndpoint(value, label) {
+  const text = optionalText(value, label, 500);
+  if (!text) return "";
+  if (/\s/.test(text)) throw new AppError(400, `${label} must not contain spaces`);
+  return text;
+}
+
+function booleanFromBody(value, fallback = true) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  return !["false", "0", "no", "off", "disabled"].includes(String(value).trim().toLowerCase());
+}
+
+function integrationFieldDefinitions(provider) {
+  return provider.fields.map((name) => ({
+    name,
+    label: INTEGRATION_FIELD_LABELS[name] || name,
+    type: name === "enabled" ? "boolean" : name === "environment" ? "select" : SECRET_FIELD_NAMES.has(name) ? "secret" : name === "smtpPort" ? "number" : "text",
+    secret: SECRET_FIELD_NAMES.has(name),
+    readOnly: Array.isArray(provider.readOnlyFields) && provider.readOnlyFields.includes(name)
+  }));
+}
+
+function envConfigured(provider) {
+  const env = provider.env || {};
+  return Object.entries(env).some(([key, value]) => {
+    if (["mode", "provider", "senderId", "senderEmail", "port"].includes(key)) return false;
+    return Boolean(String(value || "").trim());
+  });
+}
+
+function publicIntegrationState(key, stored = {}) {
+  stored = stored && typeof stored === "object" ? stored : {};
+  const provider = INTEGRATION_PROVIDERS[key];
+  const env = provider.env || {};
+  const storedSecrets = stored.secrets || {};
+  const configured = providerConfigured(provider, stored);
+  const secrets = {};
+  for (const secretKey of provider.secretKeys) {
+    secrets[secretKey] = storedSecrets[`${secretKey}Masked`] || maskSecret(env[secretKey]);
+  }
+  const health = stored.health || {};
+  const environment = stored.environment || stored.mode || env.mode || env.provider || "production";
+  return {
+    key,
+    label: provider.label,
+    description: provider.description,
+    category: provider.category,
+    mode: stored.enabled === false ? "disabled" : environment,
+    environment,
+    baseUrl: stored.baseUrl || env.baseUrl || env.apiUrl || "",
+    clientId: stored.clientId || env.clientId || "",
+    username: stored.username || env.username || "",
+    merchantId: stored.merchantId || env.merchantId || "",
+    entityId: stored.entityId || env.entityId || "",
+    callbackUrl: stored.callbackUrl || env.callbackUrl || "",
+    providerName: stored.providerName || env.providerName || "",
+    senderEmail: stored.senderEmail || env.senderEmail || "",
+    senderId: stored.senderId || env.senderId || "",
+    smtpPort: stored.smtpPort || env.smtpPort || env.port || "",
+    configured,
+    enabled: stored.enabled !== false,
+    secrets,
+    fields: integrationFieldDefinitions(provider),
+    health: {
+      status: health.status || "not_tested",
+      responseTimeMs: health.responseTimeMs ?? null,
+      lastSuccessfulConnectionAt: health.lastSuccessfulConnectionAt || null,
+      lastTestedAt: health.lastTestedAt || null,
+      errorMessage: health.errorMessage || ""
+    },
+    updatedAt: stored.updatedAt || null
+  };
+}
+
+async function getStoredIntegration(key) {
+  const { rows } = await pool.query(
+    "SELECT value, updated_at FROM platform_settings WHERE key = $1 LIMIT 1",
+    [platformSettingKey(key)]
+  );
+  if (!rows[0]) return null;
+  return { ...(rows[0].value || {}), updatedAt: rows[0].updated_at };
+}
+
+async function getPlatformSettingValue(key, fallback = {}) {
+  const { rows } = await pool.query("SELECT value FROM platform_settings WHERE key = $1 LIMIT 1", [key]);
+  return rows[0]?.value || fallback;
+}
+
+async function savePlatformSettingValue(key, value, adminId) {
+  const { rows } = await pool.query(
+    `INSERT INTO platform_settings (key, value, updated_by, updated_at)
+     VALUES ($1, $2::JSONB, $3, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+     RETURNING value, updated_at`,
+    [key, JSON.stringify(value), adminId]
+  );
+  return { value: rows[0].value, updatedAt: rows[0].updated_at };
+}
+
+function canApproveMarketingSms(role) {
+  const normalized = normalizeAdminRole(role);
+  return ["owner", "root", "ceo", "coo", "super_admin"].includes(normalized);
+}
+
+function maskPhone(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= 6) return "••••";
+  return `${text.slice(0, 4)}••••${text.slice(-3)}`;
+}
+
+function normalizePhoneForSms(value) {
+  const text = String(value || "").replace(/[^\d+]/g, "");
+  if (!text) return "";
+  if (text.startsWith("+")) return text;
+  if (text.startsWith("0")) return `+27${text.slice(1)}`;
+  if (text.startsWith("27")) return `+${text}`;
+  return text;
+}
+
+async function getMarketingSmsCampaigns() {
+  const stored = await getPlatformSettingValue(marketingSmsCampaignsSettingKey(), { campaigns: [] });
+  return Array.isArray(stored.campaigns) ? stored.campaigns : [];
+}
+
+async function saveMarketingSmsCampaigns(campaigns, adminId) {
+  const trimmed = [...campaigns]
+    .sort((a, b) => new Date(b.createdAt || b.updatedAt || 0) - new Date(a.createdAt || a.updatedAt || 0))
+    .slice(0, 100);
+  await savePlatformSettingValue(marketingSmsCampaignsSettingKey(), { campaigns: trimmed }, adminId);
+  return trimmed;
+}
+
+async function getMarketingEmailCampaigns(){const stored=await getPlatformSettingValue(marketingEmailCampaignsSettingKey(),{campaigns:[]});return Array.isArray(stored.campaigns)?stored.campaigns:[];}
+async function saveMarketingEmailCampaigns(campaigns,adminId){const trimmed=[...campaigns].sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0)).slice(0,100);await savePlatformSettingValue(marketingEmailCampaignsSettingKey(),{campaigns:trimmed},adminId);return trimmed;}
+async function resolveSpecificEmailRecipient(identifier){const value=boundedText(identifier,"Specific user",{min:3,max:160}),username=value.replace(/^@/,"");const {rows}=await pool.query(`SELECT id,full_name,username,email,account_type FROM users WHERE status='active' AND email IS NOT NULL AND TRIM(email)<>'' AND (LOWER(username)=LOWER($2) OR LOWER(email)=LOWER($1)) LIMIT 2`,[value,username]);if(!rows.length)throw new AppError(404,"No active TitoPay user with an email address matches that identifier");if(rows.length>1)throw new AppError(409,"That identifier matches more than one user");return rows[0];}
+async function countMarketingEmailRecipients(audience,targetUserId=null){const params=[];let where="";if(audience==="specific"){params.push(targetUserId);where=`AND id=$1`;}else if(audience!=="both"){params.push(audience);where=`AND LOWER(account_type)=$1`;}const {rows}=await pool.query(`SELECT COUNT(*)::int count FROM users WHERE status='active' AND email IS NOT NULL AND TRIM(email)<>'' ${where}`,params);return rows[0]?.count||0;}
+async function listMarketingEmailRecipients(audience,targetUserId=null){const params=[];let where="";if(audience==="specific"){params.push(targetUserId);where=`AND id=$1`;}else if(audience!=="both"){params.push(audience);where=`AND LOWER(account_type)=$1`;}const {rows}=await pool.query(`SELECT id,full_name,username,email,account_type FROM users WHERE status='active' AND email IS NOT NULL AND TRIM(email)<>'' ${where} ORDER BY created_at`,params);return rows;}
+
+async function resolveSpecificSmsRecipient(identifier) {
+  const recipient = boundedText(identifier, "Specific user", { min: 3, max: 160 });
+  const recipientUsername = recipient.replace(/^@/, "");
+  const recipientDigits = recipient.replace(/\D/g, "");
+  const recipientPhone = recipientDigits.length >= 7 ? recipientDigits : null;
+  const { rows } = await pool.query(
+    `SELECT id, full_name, username, email, phone, account_type
+       FROM users
+      WHERE status = 'active'
+        AND phone IS NOT NULL
+        AND TRIM(phone) <> ''
+        AND (
+          LOWER(username) = LOWER($3)
+          OR LOWER(COALESCE(email, '')) = LOWER($1)
+          OR (
+            $2::TEXT IS NOT NULL
+            AND REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g') = $2
+          )
+        )
+      LIMIT 2`,
+    [recipient, recipientPhone, recipientUsername]
+  );
+  if (!rows.length) {
+    throw new AppError(404, "No active TitoPay user with a cellphone number matches that username, email or cellphone number");
+  }
+  if (rows.length > 1) throw new AppError(409, "That identifier matches more than one user");
+  return rows[0];
+}
+
+async function countMarketingSmsRecipients(audience, targetUserId = null) {
+  if (audience === "specific") {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::INT AS count
+         FROM users
+        WHERE id = $1
+          AND status = 'active'
+          AND phone IS NOT NULL
+          AND TRIM(phone) <> ''`,
+      [targetUserId]
+    );
+    return rows[0]?.count || 0;
+  }
+  const params = [];
+  let audienceSql = "";
+  if (audience !== "both") {
+    params.push(audience);
+    audienceSql = `AND LOWER(account_type) = $${params.length}`;
+  }
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::INT AS count
+     FROM users
+     WHERE phone IS NOT NULL
+       AND TRIM(phone) <> ''
+       AND status = 'active'
+       ${audienceSql}`,
+    params
+  );
+  return rows[0]?.count || 0;
+}
+
+async function listMarketingSmsRecipients(audience, targetUserId = null) {
+  if (audience === "specific") {
+    const { rows } = await pool.query(
+      `SELECT id, full_name, username, phone, account_type
+         FROM users
+        WHERE id = $1
+          AND status = 'active'
+          AND phone IS NOT NULL
+          AND TRIM(phone) <> ''
+        LIMIT 1`,
+      [targetUserId]
+    );
+    return rows
+      .map((row) => ({ ...row, smsPhone: normalizePhoneForSms(row.phone) }))
+      .filter((row) => row.smsPhone);
+  }
+  const params = [];
+  let audienceSql = "";
+  if (audience !== "both") {
+    params.push(audience);
+    audienceSql = `AND LOWER(account_type) = $${params.length}`;
+  }
+  const { rows } = await pool.query(
+    `SELECT id, full_name, username, phone, account_type
+     FROM users
+     WHERE phone IS NOT NULL
+       AND TRIM(phone) <> ''
+       AND status = 'active'
+       ${audienceSql}
+     ORDER BY created_at ASC`,
+    params
+  );
+  return rows
+    .map((row) => ({ ...row, smsPhone: normalizePhoneForSms(row.phone) }))
+    .filter((row) => row.smsPhone);
+}
+
+function publicMarketingSmsCampaign(campaign) {
+  return {
+    ...campaign,
+    recipientsPreview: undefined,
+    deliveryResults: Array.isArray(campaign.deliveryResults)
+      ? campaign.deliveryResults.slice(0, 20).map((item) => ({
+        ...item,
+        phone: item.phone ? maskPhone(item.phone) : ""
+      }))
+      : []
+  };
+}
+
+async function getPwaCustomerReviews() {
+  const stored = await getPlatformSettingValue(pwaCustomerReviewsSettingKey(), { reviews: [] });
+  return Array.isArray(stored.reviews) ? stored.reviews : [];
+}
+
+function maskEmail(value) {
+  const text = String(value || "").trim();
+  if (!text || !text.includes("@")) return "";
+  const [local, domain] = text.split("@");
+  return `${local.slice(0, 2)}•••@${domain}`;
+}
+
+function publicPwaCustomerReview(review = {}) {
+  return {
+    id: review.id,
+    source: review.source || "pwa_profile",
+    rating: Number(review.rating || 0),
+    category: review.category || "general",
+    message: review.message || "",
+    status: review.status || "new",
+    contactPermission: Boolean(review.contactPermission),
+    appVersion: review.appVersion || "",
+    userId: review.userId || "",
+    userName: review.userName || "TitoPay user",
+    username: review.username || "",
+    accountType: review.accountType || "personal",
+    email: review.contactPermission ? maskEmail(review.email) : "",
+    phone: review.contactPermission ? maskPhone(review.phone) : "",
+    createdAt: review.createdAt || null
+  };
+}
+
+async function getProviderRouting() {
+  const stored = await getPlatformSettingValue(providerRoutingSettingKey(), {});
+  const mapping = stored.mapping || {};
+  return {
+    services: PROVIDER_ROUTING_SERVICES.map((service) => ({
+      ...service,
+      provider: Object.prototype.hasOwnProperty.call(mapping, service.key) ? mapping[service.key] : service.defaultProvider
+    })),
+    providers: Object.entries(INTEGRATION_PROVIDERS)
+      .filter(([, provider]) => provider.routingEligible !== false)
+      .map(([key, provider]) => ({ key, label: provider.label })),
+    updatedAt: stored.updatedAt || null
+  };
+}
+
+async function saveProviderRouting(body = {}, adminId) {
+  const supportedProviders = new Set(
+    Object.entries(INTEGRATION_PROVIDERS)
+      .filter(([, provider]) => provider.routingEligible !== false)
+      .map(([key]) => key)
+  );
+  const submitted = body.mapping || body;
+  const mapping = {};
+  for (const service of PROVIDER_ROUTING_SERVICES) {
+    const selected = String(submitted[service.key] || service.defaultProvider).trim();
+    if (!supportedProviders.has(selected)) throw new AppError(400, `Unsupported provider for ${service.label}`);
+    mapping[service.key] = selected;
+  }
+  const updatedAt = new Date().toISOString();
+  await savePlatformSettingValue(providerRoutingSettingKey(), { mapping, updatedAt }, adminId);
+  return getProviderRouting();
+}
+
+async function getFeatureFlags() {
+  const stored = await getPlatformSettingValue(featureFlagsSettingKey(), {});
+  const flags = stored.flags || {};
+  return {
+    flags: FEATURE_FLAGS.map((flag) => ({
+      ...flag,
+      enabled: Object.prototype.hasOwnProperty.call(flags, flag.key) ? Boolean(flags[flag.key]) : flag.enabled
+    })),
+    updatedAt: stored.updatedAt || null
+  };
+}
+
+async function saveFeatureFlags(body = {}, adminId) {
+  const submitted = body.flags || body;
+  const allowed = new Set(FEATURE_FLAGS.map((flag) => flag.key));
+  const flags = {};
+  for (const flag of FEATURE_FLAGS) flags[flag.key] = Boolean(submitted[flag.key]);
+  for (const key of Object.keys(submitted)) {
+    if (!allowed.has(key)) throw new AppError(400, `Unsupported feature flag: ${key}`);
+  }
+  const updatedAt = new Date().toISOString();
+  await savePlatformSettingValue(featureFlagsSettingKey(), { flags, updatedAt }, adminId);
+  return getFeatureFlags();
+}
+
+const COMPANY_DOCUMENT_CATEGORIES = [
+  "HR Policies",
+  "Employment Contracts",
+  "Employee Handbook",
+  "POPIA",
+  "PAIA",
+  "AML",
+  "FICA",
+  "Board Documents",
+  "Training Material",
+  "SOPs",
+  "Forms",
+  "Staff Notices"
+];
+
+async function getCompanyDocuments() {
+  const stored = await getPlatformSettingValue(companyDocumentsSettingKey(), { documents: [] });
+  return {
+    documents: Array.isArray(stored.documents) ? stored.documents : [],
+    updatedAt: stored.updatedAt || null
+  };
+}
+
+function companyDocumentPayload(body = {}, existing = {}) {
+  const title = boundedText(body.title ?? existing.title, "Document title", { min: 1, max: 160 });
+  const category = boundedText(body.category ?? existing.category, "Document category", { min: 1, max: 80 });
+  const fileUrl = boundedText(body.fileUrl ?? body.file_url ?? existing.fileUrl, "Document URL", { min: 1, max: 600 });
+  if (!COMPANY_DOCUMENT_CATEGORIES.includes(category)) throw new AppError(400, "Unsupported document category");
+  if (!/^https?:\/\//i.test(fileUrl) && !fileUrl.startsWith("/")) throw new AppError(400, "Document URL must be an HTTPS URL or approved storage path");
+  return {
+    title,
+    category,
+    fileUrl,
+    description: boundedText(body.description ?? existing.description ?? "", "Document description", { max: 500 }),
+    requiresAcknowledgement: Boolean(body.requiresAcknowledgement ?? body.requires_acknowledgement ?? existing.requiresAcknowledgement),
+    status: body.status || existing.status || "active"
+  };
+}
+
+async function createCompanyDocument(body = {}, actor) {
+  const current = await getCompanyDocuments();
+  const now = new Date().toISOString();
+  const payload = companyDocumentPayload(body);
+  const document = {
+    id: crypto.randomUUID(),
+    ...payload,
+    version: 1,
+    archivedAt: null,
+    replacedBy: null,
+    acknowledgements: [],
+    createdBy: actor.userId,
+    createdAt: now,
+    updatedAt: now
+  };
+  const next = { documents: [document, ...current.documents], updatedAt: now };
+  await savePlatformSettingValue(companyDocumentsSettingKey(), next, actor.userId);
+  await writeAuditLog({
+    actorType: actor.userType,
+    actorId: actor.userId,
+    action: "company_document_created",
+    entityType: "company_document",
+    entityId: document.id,
+    ipAddress: actor.ipAddress,
+    userAgent: actor.userAgent,
+    metadata: { title: document.title, category: document.category, version: document.version }
+  });
+  return document;
+}
+
+async function updateCompanyDocument(documentId, body = {}, actor) {
+  const current = await getCompanyDocuments();
+  const now = new Date().toISOString();
+  const index = current.documents.findIndex((item) => item.id === documentId);
+  if (index < 0) throw new AppError(404, "Document record not found");
+  const existing = current.documents[index];
+  const payload = companyDocumentPayload(body, existing);
+  const fileChanged = payload.fileUrl !== existing.fileUrl;
+  const updated = {
+    ...existing,
+    ...payload,
+    version: fileChanged ? Number(existing.version || 1) + 1 : Number(existing.version || 1),
+    updatedBy: actor.userId,
+    updatedAt: now,
+    archivedAt: payload.status === "archived" ? (existing.archivedAt || now) : null
+  };
+  const documents = current.documents.slice();
+  documents[index] = updated;
+  await savePlatformSettingValue(companyDocumentsSettingKey(), { documents, updatedAt: now }, actor.userId);
+  await writeAuditLog({
+    actorType: actor.userType,
+    actorId: actor.userId,
+    action: fileChanged ? "company_document_replaced" : "company_document_updated",
+    entityType: "company_document",
+    entityId: updated.id,
+    ipAddress: actor.ipAddress,
+    userAgent: actor.userAgent,
+    metadata: { title: updated.title, category: updated.category, version: updated.version, status: updated.status }
+  });
+  return updated;
+}
+
+async function acknowledgeCompanyDocument(documentId, actor) {
+  const current = await getCompanyDocuments();
+  const now = new Date().toISOString();
+  const index = current.documents.findIndex((item) => item.id === documentId);
+  if (index < 0) throw new AppError(404, "Document record not found");
+  const existing = current.documents[index];
+  const acknowledgements = (existing.acknowledgements || []).filter((item) => item.userId !== actor.userId || item.version !== existing.version);
+  acknowledgements.push({
+    userId: actor.userId,
+    email: actor.email,
+    role: actor.role,
+    date: now.slice(0, 10),
+    time: now,
+    version: existing.version,
+    ipAddress: actor.ipAddress
+  });
+  const documents = current.documents.slice();
+  documents[index] = { ...existing, acknowledgements, updatedAt: now };
+  await savePlatformSettingValue(companyDocumentsSettingKey(), { documents, updatedAt: now }, actor.userId);
+  await writeAuditLog({
+    actorType: actor.userType,
+    actorId: actor.userId,
+    action: "company_document_acknowledged",
+    entityType: "company_document",
+    entityId: existing.id,
+    ipAddress: actor.ipAddress,
+    userAgent: actor.userAgent,
+    metadata: { title: existing.title, version: existing.version }
+  });
+  return documents[index];
+}
+
+async function listIntegrationConfigs() {
+  const items = await Promise.all(
+    Object.keys(INTEGRATION_PROVIDERS).map(async (key) => publicIntegrationState(key, await getStoredIntegration(key)))
+  );
+  return items;
+}
+
+async function saveIntegrationConfig({ providerKey, body, adminId }) {
+  const current = await getStoredIntegration(providerKey);
+  const provider = INTEGRATION_PROVIDERS[providerKey];
+  const submittedMode = String(body.environment || body.mode || current?.environment || "production").trim().toLowerCase();
+  const enabled = submittedMode === "disabled" ? false : booleanFromBody(body.enabled, current?.enabled !== false);
+  const environment = submittedMode === "disabled"
+    ? (current?.environment || "production")
+    : requireEnum(submittedMode || "production", ["sandbox", "production"], "Integration environment");
+  const value = {
+    label: provider.label,
+    enabled,
+    environment,
+    mode: enabled ? environment : "disabled",
+    configured: false,
+    health: current?.health || { status: "not_tested" },
+    logs: Array.isArray(current?.logs) ? current.logs.slice(0, 100) : [],
+    secrets: { ...(current?.secrets || {}) }
+  };
+
+  for (const field of provider.fields) {
+    if (field === "enabled" || field === "environment") continue;
+    if (Array.isArray(provider.readOnlyFields) && provider.readOnlyFields.includes(field)) {
+      value[field] = current?.[field] || provider.env?.[field] || "";
+      continue;
+    }
+    if (SECRET_FIELD_NAMES.has(field)) {
+      const submittedValue = body[field] || (field === "clientSecret" ? body.secret : "");
+      if (submittedValue) {
+        value.secrets[`${field}Encrypted`] = encryptSecret(submittedValue);
+        value.secrets[`${field}Masked`] = maskSecret(submittedValue);
+      }
+      continue;
+    }
+    const submittedValue = body[field] ?? (field === "senderEmail" || field === "senderId" ? body.sender : undefined);
+    const existingValue = current?.[field] || "";
+    if (URL_FIELD_NAMES.has(field)) value[field] = validateOptionalUrl(submittedValue ?? existingValue, INTEGRATION_FIELD_LABELS[field] || field);
+    else if (field === "smtpPort") {
+      const raw = optionalText(submittedValue ?? existingValue, INTEGRATION_FIELD_LABELS[field] || field, 10);
+      if (raw && Number.isNaN(Number(raw))) throw new AppError(400, "SMTP Port must be a number");
+      value[field] = raw;
+    }
+    else if (ENDPOINT_FIELD_NAMES.has(field)) value[field] = validateOptionalEndpoint(submittedValue ?? existingValue, INTEGRATION_FIELD_LABELS[field] || field);
+    else value[field] = optionalText(submittedValue ?? existingValue, INTEGRATION_FIELD_LABELS[field] || field, 500);
+  }
+
+  value.configured = providerConfigured(provider, value);
+
+  const { rows } = await pool.query(
+    `INSERT INTO platform_settings (key, value, updated_by, updated_at)
+     VALUES ($1, $2::JSONB, $3, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+     RETURNING value, updated_at`,
+    [platformSettingKey(providerKey), JSON.stringify(value), adminId]
+  );
+  return publicIntegrationState(providerKey, { ...rows[0].value, updatedAt: rows[0].updated_at });
+}
+
+async function disableIntegrationConfig(providerKey, adminId) {
+  const provider = INTEGRATION_PROVIDERS[providerKey];
+  const current = await getStoredIntegration(providerKey) || { label: provider.label, secrets: {}, logs: [] };
+  const nextValue = {
+    ...current,
+    label: provider.label,
+    enabled: false,
+    mode: "disabled",
+    configured: providerConfigured(provider, current),
+    health: {
+      ...(current.health || {}),
+      status: "disabled",
+      errorMessage: "",
+      lastTestedAt: current.health?.lastTestedAt || null
+    }
+  };
+  const stored = await writeIntegrationStoredValue(providerKey, nextValue, adminId);
+  return publicIntegrationState(providerKey, stored);
+}
+
+async function rotateIntegrationCredentials(providerKey, body = {}, adminId) {
+  const provider = INTEGRATION_PROVIDERS[providerKey];
+  const current = await getStoredIntegration(providerKey) || { label: provider.label, enabled: true, secrets: {}, logs: [] };
+  const nextValue = {
+    ...current,
+    label: provider.label,
+    secrets: { ...(current.secrets || {}) },
+    health: { ...(current.health || {}), status: "not_tested", lastTestedAt: null, errorMessage: "" },
+    credentialRotation: {
+      requestedAt: new Date().toISOString(),
+      requestedBy: adminId
+    }
+  };
+  let rotatedCount = 0;
+  for (const field of provider.secretKeys) {
+    const submitted = body[field];
+    if (submitted) {
+      nextValue.secrets[`${field}Encrypted`] = encryptSecret(submitted);
+      nextValue.secrets[`${field}Masked`] = maskSecret(submitted);
+      rotatedCount += 1;
+    }
+  }
+  if (!rotatedCount && provider.secretKeys.includes("webhookSecret")) {
+    const generatedSecret = crypto.randomBytes(32).toString("hex");
+    nextValue.secrets.webhookSecretEncrypted = encryptSecret(generatedSecret);
+    nextValue.secrets.webhookSecretMasked = maskSecret(generatedSecret);
+    nextValue.credentialRotation.generatedWebhookSecret = true;
+    rotatedCount += 1;
+  }
+  nextValue.configured = providerConfigured(provider, nextValue);
+  const stored = await writeIntegrationStoredValue(providerKey, nextValue, adminId);
+  return {
+    provider: publicIntegrationState(providerKey, stored),
+    rotatedSecrets: rotatedCount
+  };
+}
+
+async function writeIntegrationStoredValue(providerKey, value, adminId = null) {
+  const { rows } = await pool.query(
+    `INSERT INTO platform_settings (key, value, updated_by, updated_at)
+     VALUES ($1, $2::JSONB, $3, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+     RETURNING value, updated_at`,
+    [platformSettingKey(providerKey), JSON.stringify(value), adminId]
+  );
+  return { ...rows[0].value, updatedAt: rows[0].updated_at };
+}
+
+function providerSecretValue(stored, provider, field) {
+  const candidates = [
+    stored?.secrets?.[`${field}Encrypted`],
+    stored?.[`${field}Encrypted`],
+    stored?.secrets?.[field],
+    stored?.[field]
+  ].filter((value) => value !== undefined && value !== null && String(value).trim() !== "");
+
+  for (const candidate of candidates) {
+    const text = String(candidate || "").trim();
+    if (!text || text.startsWith("••••")) continue;
+    if (!text.startsWith("enc:")) return text;
+    try {
+      return decryptSecret(text);
+    } catch (_error) {
+      continue;
+    }
+  }
+
+  return provider.env?.[field] || "";
+}
+
+function isPlatformOwnerRole(role) {
+  return ["owner", "root", "ceo", "super_admin", "developer"].includes(normalizeAdminRole(role));
+}
+
+function adminPositionLabel(role) {
+  const normalized = normalizeAdminRole(role);
+  return {
+    ceo: "CEO",
+    coo: "COO",
+    cfo: "CFO",
+    cto: "CTO",
+    owner: "Owner",
+    root: "Platform Owner",
+    developer: "Developer",
+    super_admin: "Super Admin",
+    customer_support: "Customer Support",
+    finance: "Finance",
+    compliance: "Compliance",
+    hr_admin: "HR Admin",
+    hr_administrator: "HR Administrator",
+    hr_director: "HR Director"
+  }[normalized] || normalized.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function requirePlatformOwnerAccess(req, message = "Only Super Admin can manage this area") {
+  if (!isPlatformOwnerRole(req.auth?.role)) throw new AppError(403, message);
+}
+
+function requireSuperAdminIntegrationAccess(req) {
+  requirePlatformOwnerAccess(req, "Only platform owner roles can view provider integrations");
+}
+
+function requireCompanyDocumentsAccess(req) {
+  const role = normalizeAdminRole(req.auth?.role);
+  if (!["owner", "root", "ceo", "super_admin", "hr_admin", "hr_administrator", "hr_director"].includes(role)) {
+    throw new AppError(403, "Company Documents access required");
+  }
+}
+
+function effectiveProviderConfig(providerKey, stored = {}) {
+  const provider = INTEGRATION_PROVIDERS[providerKey];
+  const env = provider.env || {};
+  const effective = {
+    enabled: stored.enabled !== false,
+    environment: stored.environment || stored.mode || env.mode || env.provider || "production"
+  };
+  for (const field of provider.fields) {
+    if (field === "enabled" || field === "environment") continue;
+    if (SECRET_FIELD_NAMES.has(field)) effective[field] = providerSecretValue(stored, provider, field);
+    else effective[field] = stored[field] || env[field] || (field === "baseUrl" ? env.apiUrl : "") || "";
+  }
+  return effective;
+}
+
+function configuredValueForField(stored, provider, field) {
+  if (SECRET_FIELD_NAMES.has(field)) return providerSecretValue(stored, provider, field);
+  return stored?.[field] || provider.env?.[field] || (field === "baseUrl" ? provider.env?.apiUrl : "") || "";
+}
+
+function providerConfigured(provider, stored = {}) {
+  return provider.requiredFields.every((field) => {
+    if (Array.isArray(field)) return field.some((option) => Boolean(configuredValueForField(stored, provider, option)));
+    return Boolean(configuredValueForField(stored, provider, field));
+  });
+}
+
+function missingProviderFieldsFromEffective(provider, effective = {}) {
+  return provider.requiredFields
+    .filter((field) => {
+      if (Array.isArray(field)) return !field.some((option) => Boolean(effective[option]));
+      return !effective[field];
+    })
+    .map((field) => Array.isArray(field) ? field.join(" or ") : field);
+}
+
+function providerAuthenticationType(providerKey, effective = {}) {
+  if (providerKey === "sms") return "bearer";
+  if (providerKey === "peach_payments") return "oauth_client_credentials";
+  if ((providerKey === "ott" || providerKey === "flash") && effective.username && effective.password) return "basic_username_password";
+  if (providerKey === "docfox" && effective.apiKey) return "bearer_api_key";
+  if (effective.apiKey) return "x-api-key";
+  if (effective.clientId || effective.clientSecret) return "client_headers";
+  return "none";
+}
+
+function providerHeaders(providerKey, effective = {}) {
+  if (providerKey === "sms") {
+    const apiToken = String(effective.apiKey || "").trim();
+    return {
+      Authorization: `Bearer ${apiToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    };
+  }
+  const headers = {
+    "user-agent": "TitoPay-Integration-Health/1.0",
+    accept: "application/json,text/plain,*/*"
+  };
+  const apiKey = effective.apiKey || "";
+  const apiSecret = effective.apiSecret || "";
+  const clientId = effective.clientId || "";
+  const clientSecret = effective.clientSecret || "";
+  if (apiKey) headers["x-api-key"] = apiKey;
+  if (apiSecret) headers["x-api-secret"] = apiSecret;
+  if (clientId) headers["x-client-id"] = clientId;
+  if (clientSecret) headers["x-client-secret"] = clientSecret;
+  if (providerKey === "docfox" && apiKey) headers.authorization = `Bearer ${apiKey}`;
+  if ((providerKey === "ott" || providerKey === "flash") && effective.username && effective.password) {
+    headers.authorization = `Basic ${Buffer.from(`${effective.username}:${effective.password}`).toString("base64")}`;
+  }
+  return headers;
+}
+
+function simcloudTokenDetails(apiToken = "") {
+  const token = String(apiToken || "").trim();
+  return {
+    authorizationScheme: "Bearer",
+    tokenLength: token.length,
+    tokenLast4: token ? token.slice(-4) : ""
+  };
+}
+
+function hostFromEndpoint(endpoint) {
+  const text = String(endpoint || "").trim();
+  if (!text) return "";
+  try {
+    return new URL(text.includes("://") ? text : `tcp://${text}`).hostname;
+  } catch (_error) {
+    return text.split(":")[0];
+  }
+}
+
+function portFromEndpoint(endpoint, fallback) {
+  const text = String(endpoint || "").trim();
+  try {
+    const parsed = new URL(text.includes("://") ? text : `tcp://${text}`);
+    return Number(parsed.port || fallback);
+  } catch (_error) {
+    const [, port] = text.split(":");
+    return Number(port || fallback);
+  }
+}
+
+function testTcpEndpoint(host, port, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port, timeout: timeoutMs });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve({ ok: true });
+    });
+    socket.once("timeout", () => {
+      socket.destroy();
+      resolve({ ok: false, error: "Connection timed out" });
+    });
+    socket.once("error", (error) => {
+      socket.destroy();
+      resolve({ ok: false, error: error.message });
+    });
+  });
+}
+
+async function testHttpEndpoint(endpoint, headers = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  const url = String(endpoint || "").includes("://") ? endpoint : `https://${endpoint}`;
+  try {
+    let response = await fetch(url, { method: "HEAD", redirect: "manual", signal: controller.signal, headers });
+    let responseText = "";
+    let method = "HEAD";
+    if (response.status === 405) {
+      response = await fetch(url, { method: "GET", redirect: "manual", signal: controller.signal, headers });
+      method = "GET";
+      responseText = await response.text().catch(() => "");
+    }
+    return {
+      ok: response.status < 400,
+      statusCode: response.status,
+      error: response.status >= 400 ? `Provider responded with HTTP ${response.status}` : "",
+      providerResponse: {
+        method,
+        statusCode: response.status,
+        statusText: response.statusText || "",
+        contentType: response.headers.get("content-type") || "",
+        body: responseText ? responseText.slice(0, 1000) : ""
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.name === "AbortError" ? "Connection timed out" : error.message,
+      providerResponse: {
+        method: "HEAD",
+        statusCode: null,
+        statusText: "",
+        contentType: "",
+        body: error.name === "AbortError" ? "Connection timed out" : error.message
+      }
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postSimcloudSms({ baseUrl, apiToken, recipient, message }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  const url = String(baseUrl || "").includes("://") ? baseUrl : `https://${baseUrl}`;
+  const body = {
+    recipient,
+    message
+  };
+  const headers = {
+    Authorization: `Bearer ${String(apiToken || "").trim()}`,
+    "Content-Type": "application/json",
+    Accept: "application/json"
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const responseBody = await response.text().catch(() => "");
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      statusCode: response.status,
+      error: response.status >= 400 ? `SIMcloud responded with HTTP ${response.status}` : "",
+      providerResponse: {
+        method: "POST",
+        statusCode: response.status,
+        statusText: response.statusText || "",
+        contentType: response.headers.get("content-type") || "",
+        body: responseBody.slice(0, 2000)
+      }
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      statusCode: null,
+      error: error.name === "AbortError" ? "SIMcloud connection timed out" : error.message,
+      providerResponse: {
+        method: "POST",
+        statusCode: null,
+        statusText: "",
+        contentType: "",
+        body: error.name === "AbortError" ? "SIMcloud connection timed out" : error.message
+      }
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function testSimcloudSmsProvider(effective) {
+  const apiToken = String(effective.apiKey || "").trim();
+  const recipient = String(effective.testNumber || "").trim();
+  const message = "TitoPay SIMcloud SMS test.";
+  const tokenDetails = simcloudTokenDetails(apiToken);
+  const connection = await postSimcloudSms({
+    baseUrl: effective.baseUrl,
+    apiToken,
+    recipient,
+    message
+  });
+
+  console.info("[integration-test] SIMcloud SMS request", {
+    authorizationScheme: tokenDetails.authorizationScheme,
+    tokenLength: tokenDetails.tokenLength,
+    tokenLast4: tokenDetails.tokenLast4,
+    contentType: "application/json",
+    recipient,
+    responseStatus: connection.statusCode,
+    responseBody: connection.providerResponse?.body || ""
+  });
+
+  return {
+    ...connection,
+    authenticationType: "bearer",
+    simcloud: {
+      authorizationScheme: tokenDetails.authorizationScheme,
+      tokenLength: tokenDetails.tokenLength,
+      tokenLast4: tokenDetails.tokenLast4,
+      contentType: "application/json",
+      responseStatus: connection.statusCode,
+      responseBody: connection.providerResponse?.body || ""
+    }
+  };
+}
+
+async function testSmtpProvider(effective) {
+  const port = Number(effective.smtpPort || effective.port || config.integrations.email.smtpPort || 587);
+  const transport = nodemailer.createTransport({
+    host: effective.baseUrl,
+    port,
+    secure: port === 465,
+    auth: effective.username || effective.password
+      ? { user: effective.username, pass: effective.password }
+      : undefined,
+    tls: { rejectUnauthorized: config.integrations.email.smtpRejectUnauthorized }
+  });
+  try {
+    await transport.verify();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  } finally {
+    transport.close();
+  }
+}
+
+async function testProviderConnection(providerKey, adminId) {
+  const provider = INTEGRATION_PROVIDERS[providerKey];
+  const current = await getStoredIntegration(providerKey);
+  const stored = current || {
+    label: provider.label,
+    enabled: true,
+    environment: provider.env?.mode || provider.env?.provider || "production",
+    secrets: {},
+    logs: []
+  };
+  const effective = effectiveProviderConfig(providerKey, stored);
+  const started = Date.now();
+  const testedAt = new Date().toISOString();
+  let connection = { ok: false, error: "Provider is disabled" };
+  const missing = missingProviderFieldsFromEffective(provider, effective);
+  const authenticationType = providerAuthenticationType(providerKey, effective);
+
+  console.info("[integration-test] configuration loaded", {
+    provider: providerKey,
+    loadedFromDatabase: Boolean(current),
+    configured: providerConfigured(provider, stored),
+    enabled: effective.enabled,
+    environment: effective.environment
+  });
+  console.info("[integration-test] effective provider configuration", {
+    provider: providerKey,
+    apiKeyExists: Boolean(effective.apiKey),
+    baseUrl: effective.baseUrl || "",
+    senderId: providerKey === "sms" ? effective.senderId || "" : undefined,
+    authenticationType
+  });
+
+  if (effective.enabled) {
+    if (missing.length) {
+      connection = { ok: false, error: `Missing required configuration: ${missing.join(", ")}` };
+    } else if (providerKey === "smtp") {
+      const host = hostFromEndpoint(effective.baseUrl);
+      connection = host ? await testSmtpProvider({ ...effective, baseUrl: host }) : { ok: false, error: "SMTP host is not configured" };
+    } else if (providerKey === "sms") {
+      connection = await testSimcloudSmsProvider(effective);
+    } else if (providerKey === "peach_payments") {
+      // Real Peach Checkout V2 authentication: only an issued access token
+      // counts as connected. Never a URL reachability probe.
+      connection = await testCheckoutAuthentication(effective);
+    } else if (providerKey === "pos_provider") {
+      connection = {
+        ok: true,
+        providerResponse: {
+          receiver: effective.callbackUrl || `${String(config.apiBaseUrl || "").replace(/\/+$/, "")}/v1/webhooks/pos-provider`,
+          signature: "HMAC-SHA256",
+          replayProtection: true,
+          webhookSecretConfigured: true
+        }
+      };
+    } else if (effective.baseUrl) {
+      connection = await testHttpEndpoint(effective.baseUrl, providerHeaders(providerKey, effective));
+    } else {
+      connection = { ok: false, error: "Base URL is not configured" };
+    }
+  }
+
+  const health = {
+    status: connection.ok ? (providerKey === "pos_provider" ? "ready" : "connected") : "failed",
+    environment: effective.environment,
+    responseTimeMs: Date.now() - started,
+    lastTestedAt: testedAt,
+    lastSuccessfulConnectionAt: connection.ok ? testedAt : (stored.health?.lastSuccessfulConnectionAt || null),
+    errorMessage: connection.ok ? "" : connection.error,
+    providerResponse: connection.providerResponse || null,
+    authenticationType
+  };
+  const logEntry = {
+    id: crypto.randomUUID(),
+    provider: providerKey,
+    status: health.status,
+    environment: health.environment,
+    responseTimeMs: health.responseTimeMs,
+    errorMessage: health.errorMessage,
+    providerResponse: health.providerResponse,
+    authenticationType,
+    simcloud: providerKey === "sms" ? connection.simcloud || null : null,
+    createdAt: testedAt
+  };
+  const nextValue = {
+    ...stored,
+    label: provider.label,
+    configured: providerConfigured(provider, stored),
+    health,
+    logs: [logEntry, ...(Array.isArray(stored.logs) ? stored.logs : [])].slice(0, 100)
+  };
+  await writeIntegrationStoredValue(providerKey, nextValue, adminId);
+  return {
+    ...health,
+    provider: providerKey,
+    effectiveConfiguration: {
+      apiKey: Boolean(effective.apiKey),
+      baseUrl: effective.baseUrl || "",
+      environment: effective.environment || "production",
+      senderId: providerKey === "sms" ? effective.senderId || "" : undefined,
+      testNumber: providerKey === "sms" ? Boolean(effective.testNumber) : undefined,
+      // Presence only — credential values never leave the server.
+      clientId: providerKey === "peach_payments" ? Boolean(effective.clientId) : undefined,
+      clientSecret: providerKey === "peach_payments" ? Boolean(effective.clientSecret) : undefined,
+      merchantId: providerKey === "peach_payments" ? Boolean(effective.merchantId) : undefined,
+      integration: providerKey === "peach_payments" ? "checkout_v2" : undefined
+    }
+  };
+}
+
+async function listIntegrationLogs() {
+  const configs = await Promise.all(
+    Object.keys(INTEGRATION_PROVIDERS).map(async (key) => ({ key, stored: await getStoredIntegration(key) }))
+  );
+  return configs
+    .flatMap(({ key, stored }) => (stored?.logs || []).map((item) => ({
+      ...item,
+      provider: key,
+      label: INTEGRATION_PROVIDERS[key].label
+    })))
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .slice(0, 250);
+}
+
+async function listStoredWebhookEvents() {
+  const { rows } = await pool.query("SELECT value FROM platform_settings WHERE key = $1 LIMIT 1", [webhookSettingKey()]);
+  return Array.isArray(rows[0]?.value?.events) ? rows[0].value.events : [];
+}
+
+async function listWebhookEvents() {
+  const [storedEvents, peachResult, posResult] = await Promise.all([
+    listStoredWebhookEvents(),
+    pool.query(
+      `SELECT key, value, updated_at
+         FROM platform_settings
+        WHERE key LIKE 'peach_webhook_%'
+        ORDER BY updated_at DESC
+        LIMIT 100`
+    ),
+    pool.query(
+      `SELECT event_id, provider, event_type, request_id, created_at
+         FROM pos_provider_events
+        ORDER BY created_at DESC
+        LIMIT 100`
+    )
+  ]);
+  const peachEvents = peachResult.rows.map((row) => ({
+    id: `peach:${row.value?.id || row.key}`,
+    provider: "peach_payments",
+    eventType: row.value?.eventType || "payment_event",
+    status: row.value?.status || "received",
+    retryCount: 0,
+    errorMessage: "",
+    requestId: "",
+    createdAt: row.value?.receivedAt || row.updated_at,
+    processedAt: row.value?.processedAt || null,
+    retryable: false
+  }));
+  const posEvents = posResult.rows.map((row) => ({
+    id: `pos:${row.event_id}`,
+    provider: "pos_provider",
+    eventType: row.event_type || "provider_event",
+    status: "processed",
+    retryCount: 0,
+    errorMessage: "",
+    requestId: row.request_id || "",
+    createdAt: row.created_at,
+    retryable: false
+  }));
+  return [
+    ...storedEvents.map((event) => ({ ...event, retryable: true })),
+    ...peachEvents,
+    ...posEvents
+  ]
+    .sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0))
+    .slice(0, 250);
+}
+
+async function saveWebhookEvents(events, adminId) {
+  await pool.query(
+    `INSERT INTO platform_settings (key, value, updated_by, updated_at)
+     VALUES ($1, $2::JSONB, $3, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+    [webhookSettingKey(), JSON.stringify({ events: events.slice(0, 250) }), adminId]
+  );
+}
+
+async function generateQrAsset({ type, label, destinationUrl, createdBy }) {
+  const reference = `TPQR-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+  const payload = {
+    type,
+    label,
+    destinationUrl,
+    reference,
+    brand: "TitoPay",
+    createdAt: new Date().toISOString()
+  };
+  const qrText = destinationUrl;
+  const [pngDataUrl, svg] = await Promise.all([
+    QRCode.toDataURL(qrText, {
+      errorCorrectionLevel: "H",
+      margin: 2,
+      width: 1024,
+      color: { dark: "#061A3D", light: "#FFFFFF" }
+    }),
+    QRCode.toString(qrText, {
+      type: "svg",
+      errorCorrectionLevel: "H",
+      margin: 2,
+      color: { dark: "#061A3D", light: "#FFFFFF" }
+    })
+  ]);
+  await writeAuditLog({
+    actorType: "admin",
+    actorId: createdBy,
+    action: "admin_qr_asset_generated",
+    entityType: "qr_asset",
+    metadata: { type, label, destinationUrl, reference }
+  });
+  return { ...payload, pngDataUrl, svg };
+}
+
+function requireAdminScope(req, _res, next) {
+  if (req.auth?.userType !== "admin") {
+    next(new AppError(403, "Admin access required"));
+    return;
+  }
+  next();
+}
+
+async function listAdminUsersForSearch() {
+  try {
+    await ensureAuthenticationPreferenceSchema();
+    await ensureWalletNumbersForAllWallets(pool);
+    const { rows } = await pool.query(
+      `SELECT
+         u.id,
+         u.account_type,
+         u.full_name,
+         u.username,
+         u.email,
+         u.phone,
+         u.status,
+         u.profile_locked,
+         u.preferred_authentication_method,
+         u.authentication_method_updated_at,
+         COALESCE(u.last_successful_authentication_at, u.last_login_at) AS last_successful_authentication_at,
+         COALESCE(u.last_failed_authentication_at, u.last_failed_login_at) AS last_failed_authentication_at,
+         CASE
+           WHEN u.preferred_authentication_method = 'EMAIL' AND NULLIF(TRIM(u.email), '') IS NOT NULL THEN 'AVAILABLE'
+           WHEN u.preferred_authentication_method = 'SMS' AND NULLIF(TRIM(u.phone), '') IS NOT NULL THEN 'AVAILABLE'
+           WHEN u.preferred_authentication_method = 'PUSH' THEN 'FALLBACK_REQUIRED'
+           ELSE 'UNAVAILABLE'
+         END AS authentication_verification_status,
+         u.fica_status,
+         u.profile_photo_url,
+         u.business_logo_url,
+         u.created_at,
+         w.wallet_number AS wallet_id,
+         w.id AS wallet_uuid,
+         w.kind AS wallet_type,
+         COALESCE(m.business_name, '') AS business_name,
+         COALESCE(tx.recent_transactions, 0)::INT AS recent_transactions,
+         COALESCE(risk.risk_flags, ARRAY[]::TEXT[]) AS risk_flags,
+         COALESCE(dev.linked_devices, 0)::INT AS linked_devices
+       FROM users u
+       LEFT JOIN LATERAL (
+         SELECT id, wallet_number, kind
+         FROM wallets
+         WHERE user_id = u.id
+         ORDER BY created_at ASC
+         LIMIT 1
+       ) w ON TRUE
+       LEFT JOIN merchants m ON m.user_id = u.id
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS recent_transactions
+         FROM transactions
+         WHERE user_id = u.id
+           AND created_at >= NOW() - INTERVAL '30 days'
+       ) tx ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT ARRAY_REMOVE(ARRAY[
+           CASE WHEN u.profile_locked THEN 'profile_locked' END,
+           CASE WHEN u.status <> 'active' THEN 'account_' || u.status END,
+           CASE WHEN EXISTS (SELECT 1 FROM duplicate_account_flags daf WHERE daf.user_id = u.id AND daf.status = 'open') THEN 'duplicate_account' END,
+           CASE WHEN EXISTS (SELECT 1 FROM security_events se WHERE se.user_id = u.id AND se.success = FALSE AND se.created_at >= NOW() - INTERVAL '7 days') THEN 'recent_security_failures' END
+         ], NULL) AS risk_flags
+       ) risk ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS linked_devices
+         FROM trusted_devices
+         WHERE user_id = u.id AND revoked_at IS NULL
+       ) dev ON TRUE
+       ORDER BY u.created_at DESC
+       LIMIT 250`
+    );
+    return rows;
+  } catch (error) {
+    if (!isMissingDbObjectError(error)) throw error;
+    logDbCompatibilityWarning("admin.users.fullSearch", error);
+    const { rows } = await safeQuery(
+      pool,
+      "admin.users.basicSearch",
+      `SELECT
+         u.id,
+         u.account_type,
+         u.full_name,
+         u.username,
+         u.email,
+         u.phone,
+         u.status,
+         u.profile_locked,
+         u.fica_status,
+         NULL::TEXT AS profile_photo_url,
+         NULL::TEXT AS business_logo_url,
+         u.created_at,
+         NULL::TEXT AS wallet_id,
+         NULL::UUID AS wallet_uuid,
+         NULL::TEXT AS wallet_type,
+         ''::TEXT AS business_name,
+         0::INT AS recent_transactions,
+         ARRAY[]::TEXT[] AS risk_flags,
+         0::INT AS linked_devices
+       FROM users u
+       ORDER BY u.created_at DESC
+       LIMIT 250`,
+      [],
+      []
+    );
+    return rows;
+  }
+}
+
+router.use(adminRequestLogger);
+
+router.post("/login", authLimiter, async (req, res, next) => {
+  try {
+    const result = await login({ ...req.body, scope: "admin" }, meta(req));
+    const adminId = result.userId || result.user?.id;
+    res.json({
+      ok: true,
+      sessionIdleTimeoutSeconds: config.sessionIdleTimeoutSeconds,
+      ...result,
+      adminId,
+      accountId: adminId
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.use(requireAuth);
+router.use(requireAdminScope);
+
+router.post("/logout", async (req, res, next) => {
+  try {
+    await logout(req.body.refreshToken, req.auth);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/logout-all", async (req, res, next) => {
+  try {
+    await logoutAll(req.auth);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/me", async (req, res, next) => {
+  try {
+  const role = normalizeAdminRole(req.auth.role);
+  const permissions = await getEffectiveAdminRolePermissions(role);
+  const fullName = req.auth.fullName || req.auth.full_name || req.auth.username || "TitoPay Admin";
+  const position = adminPositionLabel(role);
+  res.json({
+    ok: true,
+    id: req.auth.userId,
+    fullName,
+    full_name: fullName,
+    position,
+    email: req.auth.email,
+    username: req.auth.username,
+    role,
+    permissions,
+    session: {
+      id: req.auth.sessionId,
+      idleTimeoutSeconds: config.sessionIdleTimeoutSeconds
+    },
+    admin: {
+      id: req.auth.userId,
+      fullName,
+      full_name: fullName,
+      position,
+      email: req.auth.email,
+      username: req.auth.username,
+      role,
+      permissions
+    }
+  });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/staff", requireAdminPermission("engineering"), async (_req, res, next) => {
+  try {
+    const { rows } = await safeQuery(
+      pool,
+      "admin.staff.list",
+      `SELECT
+         id,
+         full_name,
+         username,
+         email,
+         role,
+         status,
+         last_login_at,
+         last_login_ip,
+         failed_login_attempts,
+         locked_until,
+         created_at,
+         updated_at
+       FROM admin_users
+       ORDER BY
+         CASE WHEN status = 'active' THEN 0 ELSE 1 END,
+         role ASC,
+         full_name ASC
+       LIMIT 250`,
+      [],
+      []
+    );
+    res.json({ ok: true, items: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/staff", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const fullName = boundedText(req.body.fullName || req.body.full_name, "Full name", { min: 2, max: 160 }).trim();
+    const username = boundedText(req.body.username, "Username", { min: 3, max: 80 }).trim().replace(/^@/, "").toLowerCase();
+    const email = boundedText(req.body.email, "Email", { min: 5, max: 180 }).trim().toLowerCase();
+    const role = normalizeAdminRole(req.body.role || "customer_support");
+    const status = requireEnum(req.body.status || "active", ["active", "inactive", "suspended"], "Staff status");
+    const temporaryPassword = boundedText(req.body.password || req.body.temporaryPassword, "Temporary password", { min: 8, max: 200 });
+
+    if (!/^[a-z0-9._-]+$/.test(username)) {
+      throw new AppError(400, "Username may only contain letters, numbers, dots, underscores and hyphens");
+    }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new AppError(400, "Enter a valid staff email address");
+    }
+    if (!ADMIN_ROLE_PERMISSIONS[role]) {
+      throw new AppError(400, "Invalid staff role");
+    }
+
+    const passwordHash = await hashPassword(temporaryPassword);
+    const staffId = crypto.randomUUID();
+    const { rows } = await pool.query(
+      `INSERT INTO admin_users (id, full_name, username, email, role, password_hash, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, full_name, username, email, role, status, created_at`,
+      [staffId, fullName, username, email, role, passwordHash, status]
+    );
+
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "admin_staff_created",
+      entityType: "admin_user",
+      entityId: staffId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { email, username, role, status }
+    });
+
+    res.status(201).json({ ok: true, item: rows[0] });
+  } catch (error) {
+    if (error?.code === "23505") {
+      next(new AppError(409, "A staff account already exists with that username or email"));
+      return;
+    }
+    next(error);
+  }
+});
+
+router.get("/chat-monitor/overview", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    const presence = getChatPresenceSnapshot();
+    const onlineIds = presence.users.map((item) => item.userId);
+    const [
+      conversationStats,
+      conversations,
+      onlineUsers,
+      deliveryFailures,
+      socketFailures,
+      queueStatus
+    ] = await Promise.all([
+      safeQuery(
+        pool,
+        "admin.chatMonitor.conversationStats",
+        `SELECT
+           COUNT(*) FILTER (WHERE status = 'active')::INT AS active,
+           COUNT(*) FILTER (WHERE status = 'active' AND updated_at >= NOW() - INTERVAL '15 minutes')::INT AS active_recently,
+           COUNT(*) FILTER (WHERE status = 'blocked')::INT AS blocked,
+           COUNT(*)::INT AS total
+         FROM chat_threads`,
+        [],
+        [{ active: 0, active_recently: 0, blocked: 0, total: 0 }]
+      ),
+      safeQuery(
+        pool,
+        "admin.chatMonitor.conversations",
+        `SELECT
+           t.id,
+           t.thread_type,
+           t.status,
+           t.created_at,
+           t.updated_at,
+           jsonb_build_object(
+             'id', ua.id,
+             'name', ua.full_name,
+             'username', ua.username,
+             'accountType', ua.account_type,
+             'verified', ua.status = 'active' AND LOWER(ua.fica_status) IN ('approved', 'verified')
+           ) AS participant_a,
+           jsonb_build_object(
+             'id', ub.id,
+             'name', ub.full_name,
+             'username', ub.username,
+             'accountType', ub.account_type,
+             'verified', ub.status = 'active' AND LOWER(ub.fica_status) IN ('approved', 'verified')
+           ) AS participant_b,
+           COALESCE(ms.message_count, 0)::INT AS message_count,
+           COALESCE(ms.pending_delivery_count, 0)::INT AS pending_delivery_count,
+           COALESCE(ms.failed_count, 0)::INT AS failed_count,
+           lm.status AS last_message_status,
+           lm.created_at AS last_message_at
+         FROM chat_threads t
+         JOIN users ua ON ua.id = t.participant_a
+         JOIN users ub ON ub.id = t.participant_b
+         LEFT JOIN LATERAL (
+           SELECT
+             COUNT(*) AS message_count,
+             COUNT(*) FILTER (WHERE status = 'sent') AS pending_delivery_count,
+             COUNT(*) FILTER (WHERE status = 'failed') AS failed_count
+           FROM chat_messages
+           WHERE thread_id = t.id
+         ) ms ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT status, created_at
+           FROM chat_messages
+           WHERE thread_id = t.id
+           ORDER BY created_at DESC
+           LIMIT 1
+         ) lm ON TRUE
+         WHERE t.status = 'active'
+         ORDER BY COALESCE(lm.created_at, t.updated_at) DESC
+         LIMIT 100`,
+        [],
+        []
+      ),
+      safeQuery(
+        pool,
+        "admin.chatMonitor.onlineUsers",
+        `SELECT id, full_name, username, account_type, fica_status, status
+         FROM users
+         WHERE id = ANY($1::UUID[])`,
+        [onlineIds],
+        []
+      ),
+      safeQuery(
+        pool,
+        "admin.chatMonitor.deliveryFailures",
+        `SELECT
+           m.id,
+           m.thread_id,
+           m.status,
+           m.created_at,
+           EXTRACT(EPOCH FROM (NOW() - m.created_at))::INT AS age_seconds,
+           su.full_name AS sender_name,
+           su.username AS sender_username,
+           ru.full_name AS recipient_name,
+           ru.username AS recipient_username,
+           CASE
+             WHEN m.status = 'failed' THEN 'failed'
+             ELSE 'delivery_timeout'
+           END AS failure_type
+         FROM chat_messages m
+         JOIN users su ON su.id = m.sender_user_id
+         JOIN users ru ON ru.id = m.recipient_user_id
+         WHERE m.status = 'failed'
+            OR (m.status = 'sent' AND m.created_at < NOW() - INTERVAL '60 seconds')
+         ORDER BY m.created_at DESC
+         LIMIT 100`,
+        [],
+        []
+      ),
+      safeQuery(
+        pool,
+        "admin.chatMonitor.socketFailures",
+        `SELECT
+           id,
+           event_type,
+           COALESCE(metadata->>'reason', 'request_processing_failed') AS reason,
+           ip_address,
+           LEFT(COALESCE(user_agent, ''), 180) AS user_agent,
+           created_at,
+           COUNT(*) OVER ()::INT AS total_in_window
+         FROM security_logs
+         WHERE event_type IN (
+           'titopay_chat_socket_connection_failed',
+           'titopay_chat_socket_error'
+         )
+           AND created_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY created_at DESC
+         LIMIT 100`,
+        [],
+        []
+      ),
+      safeQuery(
+        pool,
+        "admin.chatMonitor.queueStatus",
+        `SELECT
+           status,
+           COUNT(*)::INT AS count,
+           MIN(created_at) AS oldest_created_at,
+           MAX(updated_at) AS latest_updated_at
+         FROM notifications
+         WHERE notification_type = 'titopay_chat'
+         GROUP BY status
+         ORDER BY status`,
+        [],
+        []
+      )
+    ]);
+
+    const userById = new Map(onlineUsers.rows.map((user) => [String(user.id), user]));
+    const presenceUsers = presence.users.map((item) => {
+      const user = userById.get(String(item.userId)) || {};
+      return {
+        userId: item.userId,
+        name: user.full_name || user.username || "TitoPay user",
+        username: user.username || "",
+        accountType: user.account_type || "",
+        verificationStatus: user.fica_status || "",
+        connections: item.connections,
+        connectedAt: item.connectedAt
+      };
+    });
+    const staleDeliveries = deliveryFailures.rows.filter((item) => item.failure_type === "delivery_timeout").length;
+    const failedDeliveries = deliveryFailures.rows.filter((item) => item.failure_type === "failed").length;
+    const socketFailureCount = socketFailures.rows[0]?.total_in_window || 0;
+    const queuedNotifications = queueStatus.rows
+      .filter((item) => ["queued", "sent"].includes(item.status))
+      .reduce((total, item) => total + item.count, 0);
+
+    res.json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      metrics: {
+        activeConversations: conversationStats.rows[0]?.active || 0,
+        activeRecently: conversationStats.rows[0]?.active_recently || 0,
+        onlineUsers: presence.userCount,
+        activeConnections: presence.connectionCount,
+        deliveryFailures: failedDeliveries,
+        staleDeliveries,
+        socketFailures24h: socketFailureCount,
+        queuedNotifications
+      },
+      conversations: conversations.rows,
+      onlineUsers: presenceUsers,
+      deliveryFailures: deliveryFailures.rows,
+      socketFailures: socketFailures.rows.map(({ total_in_window, ...item }) => item),
+      queueStatus: queueStatus.rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/module-health", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    const requiredTables = [
+      "users",
+      "wallets",
+      "merchants",
+      "transactions",
+      "pricing_rules",
+      "chat_threads",
+      "chat_messages",
+      "notifications",
+      "announcement_campaigns",
+      "announcement_approvals",
+      "announcement_reads",
+      "security_logs",
+      "security_events",
+      "duplicate_account_flags",
+      "trusted_devices"
+    ];
+    const { rows } = await pool.query(
+      `SELECT table_name, to_regclass('public.' || table_name) IS NOT NULL AS "exists"
+       FROM unnest($1::TEXT[]) AS required(table_name)
+       ORDER BY table_name`,
+      [requiredTables]
+    );
+    res.json({
+      ok: true,
+      apiBase: "/v1",
+      modules: {
+        chatMonitor: {
+          route: "/v1/admin/chat-monitor/overview",
+          requiredTables: ["chat_threads", "chat_messages", "notifications", "security_logs", "users"]
+        },
+        pricingEngine: {
+          route: "/v1/pricing",
+          updateRoute: "/v1/pricing/:id",
+          requiredTables: ["pricing_rules"]
+        },
+        globalSearch: {
+          route: "/v1/admin/global-search",
+          requiredTables: ["users", "wallets", "merchants", "transactions", "duplicate_account_flags", "security_events", "trusted_devices"]
+        }
+      },
+      tables: rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/maintenance", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    const setting = await getPlatformSetting("maintenance_mode", {
+      pwa: { enabled: false, note: "", expectedBackAt: "" },
+      admin: { enabled: false, note: "", expectedBackAt: "" },
+      hr: { enabled: false, note: "", expectedBackAt: "" }
+    });
+    res.json({ ok: true, maintenance: setting.value, updatedAt: setting.updatedAt });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/maintenance", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const normalizeTarget = (key) => ({
+      enabled: Boolean(req.body?.[key]?.enabled),
+      note: boundedText(req.body?.[key]?.note || "", `${key} maintenance note`, { min: 0, max: 280 }),
+      expectedBackAt: String(req.body?.[key]?.expectedBackAt || "").trim().slice(0, 80)
+    });
+    const value = {
+      pwa: normalizeTarget("pwa"),
+      admin: normalizeTarget("admin"),
+      hr: normalizeTarget("hr")
+    };
+    const saved = await setPlatformSetting("maintenance_mode", value, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "maintenance_mode_updated",
+      entityType: "platform_settings",
+      entityId: null,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { pwa: value.pwa.enabled, admin: value.admin.enabled, hr: value.hr.enabled }
+    });
+    res.json({ ok: true, maintenance: saved.value, updatedAt: saved.updatedAt });
+  } catch (error) {
+    next(error);
+  }
+});
+
+async function readDashboardMetric(scope, sql, fallbackRow) {
+  try {
+    const result = await pool.query(sql);
+    return {
+      row: result.rows[0] || fallbackRow,
+      available: true
+    };
+  } catch (error) {
+    console.error("[admin-dashboard-metric]", {
+      scope,
+      code: error?.code,
+      message: error?.message
+    });
+    return {
+      row: fallbackRow,
+      available: false
+    };
+  }
+}
+
+router.get("/dashboard/overview", requireAdminPermission("dashboard"), async (_req, res, next) => {
+  try {
+    const [users, merchants, transactions, revenue, locked, compliance] = await Promise.all([
+      readDashboardMetric("users", "SELECT COUNT(*)::INT AS count FROM users", { count: 0 }),
+      readDashboardMetric("merchants", "SELECT COUNT(*)::INT AS count FROM merchants", { count: 0 }),
+      readDashboardMetric("transactions", "SELECT COUNT(*)::INT AS count FROM transactions", { count: 0 }),
+      readDashboardMetric("revenue", "SELECT COALESCE(SUM(fee_collected), 0)::NUMERIC AS total FROM revenue_ledger", { total: 0 }),
+      readDashboardMetric("lockedProfiles", "SELECT COUNT(*)::INT AS count FROM users WHERE profile_locked = TRUE", { count: 0 }),
+      readDashboardMetric("compliance", "SELECT COUNT(*)::INT AS count FROM kyc_reviews WHERE status = 'pending'", { count: 0 })
+    ]);
+    const metrics = { users, merchants, transactions, revenue, lockedProfiles: locked, compliance };
+    const unavailableMetrics = Object.entries(metrics)
+      .filter(([, metric]) => !metric.available)
+      .map(([name]) => name);
+
+    res.json({
+      ok: true,
+      degraded: unavailableMetrics.length > 0,
+      unavailableMetrics,
+      users: Number(users.row?.count || 0),
+      merchants: Number(merchants.row?.count || 0),
+      transactions: Number(transactions.row?.count || 0),
+      revenue: Number(revenue.row?.total || 0),
+      lockedProfiles: Number(locked.row?.count || 0),
+      pendingCompliance: Number(compliance.row?.count || 0)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/users", requireAdminPermission("users"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listAdminUsersForSearch() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/global-search", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    const [users, merchants, wallets, transactions] = await Promise.all([
+      listAdminUsersForSearch(),
+      listMerchants(),
+      listAllWallets(),
+      listAllTransactions()
+    ]);
+    res.json({
+      ok: true,
+      users,
+      merchants,
+      wallets,
+      transactions,
+      routes: {
+        users: "/v1/admin/users",
+        merchants: "/v1/admin/merchants",
+        wallets: "/v1/admin/wallets",
+        transactions: "/v1/admin/transactions"
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/users/:id/:action", requireAdminPermission("profile_lock"), async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.id, "User ID");
+    const actions = {
+      suspend: { sql: "status = 'suspended'", audit: "user_suspended" },
+      activate: { sql: "status = 'active'", audit: "user_activated" },
+      lock: { sql: "profile_locked = TRUE", audit: "profile_locked" },
+      unlock: { sql: "profile_locked = FALSE", audit: "profile_unlocked" }
+    };
+    const selected = actions[req.params.action];
+    if (!selected) return res.status(400).json({ ok: false, error: "Unsupported user action" });
+    const { rows } = await pool.query(
+      `UPDATE users
+          SET ${selected.sql}, updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, status, profile_locked`,
+      [userId]
+    );
+    if (!rows[0]) return res.status(404).json({ ok: false, error: "User not found" });
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: selected.audit,
+      entityType: "user",
+      entityId: userId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { status: rows[0].status, profileLocked: rows[0].profile_locked }
+    });
+    res.json({
+      ok: true,
+      user: {
+        id: rows[0].id,
+        status: rows[0].status,
+        profileLocked: rows[0].profile_locked,
+        profile_locked: rows[0].profile_locked
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/merchants", requireAdminPermission("merchants"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listMerchants() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/transactions", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listAllTransactions(req.query || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/wallets", requireAdminPermission("wallets"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listAllWallets() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/wallets/:id/:action", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const walletId = requireUuid(req.params.id, "Wallet ID");
+    const action = requireEnum(req.params.action, ["freeze", "suspend", "close", "activate"], "Wallet action");
+    const nextStatus = {
+      freeze: "frozen",
+      suspend: "suspended",
+      close: "closed",
+      activate: "active"
+    }[action];
+    const { rows } = await pool.query(
+      `UPDATE wallets
+       SET status = $2, updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [walletId, nextStatus]
+    );
+    if (!rows[0]) throw new AppError(404, "Wallet not found");
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: `wallet_${action}`,
+      entityType: "wallet",
+      entityId: walletId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { status: nextStatus }
+    });
+    res.json({ ok: true, wallet: rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/support/tickets", requireAdminPermission("support"), async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT st.*, u.full_name, u.username
+       FROM support_tickets st
+       LEFT JOIN users u ON u.id = st.user_id
+       ORDER BY st.created_at DESC
+       LIMIT 250`
+    );
+    res.json({ ok: true, items: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/support/tickets/:id/status", requireAdminPermission("support"), async (req, res, next) => {
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const ticketId = requireUuid(req.params.id, "Ticket ID");
+    const status = requireEnum(req.body.status, ["open", "in_progress", "pending", "resolved", "escalated", "closed"], "Ticket status");
+    const assignedTo = status === "in_progress"
+      ? (req.auth.email || req.auth.username || "Customer Care")
+      : null;
+    const { rows } = await client.query(
+      `UPDATE support_tickets
+       SET status = $2,
+           assigned_to = CASE WHEN $3::TEXT IS NULL THEN assigned_to ELSE $3 END,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [ticketId, status, assignedTo]
+    );
+    if (!rows[0]) throw new AppError(404, "Ticket not found");
+    if (["resolved", "closed"].includes(status) && rows[0].user_id) {
+      await createUserInAppNotification({
+        userId: rows[0].user_id,
+        type: "support_resolved",
+        title: status === "resolved" ? "Customer Care request resolved" : "Customer Care request closed",
+        body: `Reference ${rows[0].ticket_ref || ticketId} has been ${status}. You can rate the service in TitoPay Assistant.`,
+        metadata: {
+          ticketId,
+          ticketRef: rows[0].ticket_ref,
+          supportStatus: status,
+          clientNotificationId: `support-${status}-${rows[0].ticket_ref || ticketId}`
+        },
+        db: client
+      });
+    }
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "support_ticket_status_updated",
+      entityType: "support_ticket",
+      entityId: ticketId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { status, assignedTo },
+      db: client
+    });
+    await client.query("COMMIT");
+    if(rows[0].user_id){try{const {rows:accounts}=await pool.query("SELECT email,full_name FROM users WHERE id=$1",[rows[0].user_id]);if(accounts[0]?.email&&await shouldSendCustomerEmail(rows[0].user_id,"support"))await queueEmail({recipient:accounts[0].email,templateKey:["resolved","closed"].includes(status)?"support_ticket_resolved":"support_ticket_updated",userId:rows[0].user_id,variables:{fullName:accounts[0].full_name,email:accounts[0].email,ticketReference:rows[0].ticket_ref||ticketId},idempotencyKey:`support-ticket-${status}:${ticketId}`,metadata:{ticketId,status}});}catch(error){console.error("[support] status email queue failed",{ticketId,status,message:error.message});}}
+    res.json({ ok: true, item: rows[0] });
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => null);
+    next(error);
+  } finally {
+    client?.release();
+  }
+});
+
+router.get("/support/conversations", requireAdminPermission("support"), async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+         t.id,
+         t.client_thread_id,
+         t.thread_type,
+         t.status,
+         t.created_by,
+         t.metadata,
+         t.created_at,
+         t.updated_at,
+         jsonb_build_object(
+           'id', ua.id,
+           'full_name', ua.full_name,
+           'username', ua.username,
+           'email', ua.email,
+           'phone', ua.phone,
+           'account_type', ua.account_type
+         ) AS participant_a,
+         jsonb_build_object(
+           'id', ub.id,
+           'full_name', ub.full_name,
+           'username', ub.username,
+           'email', ub.email,
+           'phone', ub.phone,
+           'account_type', ub.account_type
+         ) AS participant_b,
+         lm.body AS last_message,
+         lm.status AS last_message_status,
+         lm.sender_user_id AS last_message_sender_id,
+         lm.created_at AS last_message_at
+       FROM chat_threads t
+       JOIN users ua ON ua.id = t.participant_a
+       JOIN users ub ON ub.id = t.participant_b
+       LEFT JOIN LATERAL (
+         SELECT sender_user_id, body, status, created_at
+         FROM chat_messages
+         WHERE thread_id = t.id
+         ORDER BY created_at DESC
+         LIMIT 1
+       ) lm ON TRUE
+       ORDER BY t.updated_at DESC
+       LIMIT 250`
+    );
+    res.json({ ok: true, items: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/support/conversations/:id/messages", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const conversationId = requireUuid(req.params.id, "Conversation ID");
+    const { rows } = await pool.query(
+      `SELECT
+         m.id,
+         m.thread_id,
+         m.sender_user_id,
+         m.recipient_user_id,
+         m.body,
+         m.message_type,
+         m.status,
+         m.created_at,
+         su.full_name AS sender_name,
+         su.username AS sender_username,
+         ru.full_name AS recipient_name,
+         ru.username AS recipient_username
+       FROM chat_messages m
+       JOIN users su ON su.id = m.sender_user_id
+       JOIN users ru ON ru.id = m.recipient_user_id
+       WHERE m.thread_id = $1
+       ORDER BY m.created_at ASC
+       LIMIT 300`,
+      [conversationId]
+    );
+    res.json({ ok: true, items: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/support/conversations/:id/context", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const conversationId = requireUuid(req.params.id, "Conversation ID");
+    const [messages, calls, thread] = await Promise.all([
+      pool.query(
+        `SELECT
+           m.id,
+           m.thread_id,
+           m.sender_user_id,
+           m.recipient_user_id,
+           m.body,
+           m.message_type,
+           m.status,
+           m.created_at,
+           su.full_name AS sender_name,
+           su.username AS sender_username,
+           ru.full_name AS recipient_name,
+           ru.username AS recipient_username
+         FROM chat_messages m
+         JOIN users su ON su.id = m.sender_user_id
+         JOIN users ru ON ru.id = m.recipient_user_id
+         WHERE m.thread_id = $1
+         ORDER BY m.created_at ASC
+         LIMIT 300`,
+        [conversationId]
+      ),
+      pool.query(
+        `SELECT id, call_type, status, started_at, ended_at, duration_seconds, metadata
+         FROM chat_call_logs
+         WHERE thread_id = $1
+         ORDER BY started_at DESC
+         LIMIT 100`,
+        [conversationId]
+      ),
+      pool.query("SELECT id, metadata FROM chat_threads WHERE id = $1 LIMIT 1", [conversationId])
+    ]);
+    if (!thread.rows[0]) throw new AppError(404, "Conversation not found");
+    res.json({
+      ok: true,
+      messages: messages.rows,
+      calls: calls.rows,
+      internalNotes: Array.isArray(thread.rows[0].metadata?.internal_notes) ? thread.rows[0].metadata.internal_notes : []
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/support/conversations/:id/notes", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const conversationId = requireUuid(req.params.id, "Conversation ID");
+    const note = boundedText(req.body?.note, "Internal note", { min: 2, max: 1000 });
+    const entry = {
+      id: crypto.randomUUID(),
+      note,
+      createdAt: new Date().toISOString(),
+      createdBy: req.auth.userId,
+      createdByLabel: req.auth.email || req.auth.username || "Admin"
+    };
+    const { rows } = await pool.query(
+      `UPDATE chat_threads
+       SET metadata = jsonb_set(
+             COALESCE(metadata, '{}'::JSONB),
+             '{internal_notes}',
+             COALESCE(metadata->'internal_notes', '[]'::JSONB) || $2::JSONB,
+             TRUE
+           ),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING metadata`,
+      [conversationId, JSON.stringify([entry])]
+    );
+    if (!rows[0]) throw new AppError(404, "Conversation not found");
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "support_internal_note_added",
+      entityType: "chat_thread",
+      entityId: conversationId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { noteId: entry.id }
+    });
+    res.json({ ok: true, note: entry });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/support/conversations/:id/assign", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const conversationId = requireUuid(req.params.id, "Conversation ID");
+    const assignedTo = req.auth.email || req.auth.username || "Customer Care";
+    const { rows } = await pool.query(
+      `UPDATE chat_threads
+       SET metadata = COALESCE(metadata, '{}'::JSONB)
+           || jsonb_build_object(
+                'assigned_to', $2::TEXT,
+                'assigned_admin_id', $3::TEXT,
+                'assigned_at', NOW()
+              ),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [conversationId, assignedTo, req.auth.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ ok: false, error: "Conversation not found" });
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "support_chat_assigned",
+      entityType: "chat_thread",
+      entityId: conversationId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { assignedTo }
+    });
+    res.json({ ok: true, item: rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/support/conversations/:id/close", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const conversationId = requireUuid(req.params.id, "Conversation ID");
+    const { rows } = await pool.query(
+      `UPDATE chat_threads
+       SET status = 'archived',
+           metadata = COALESCE(metadata, '{}'::JSONB)
+             || jsonb_build_object(
+                  'closed_by', $2::TEXT,
+                  'closed_at', NOW()
+                ),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [conversationId, req.auth.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ ok: false, error: "Conversation not found" });
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "support_chat_closed",
+      entityType: "chat_thread",
+      entityId: conversationId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent
+    });
+    res.json({ ok: true, item: rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/profile-change-requests", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const items = await listProfileChangeRequests(req.query.status);
+    const pending = items.filter((item) => ["pending", "in_review"].includes(item.status));
+    const overdue = pending.filter((item) => item.dueAt && new Date(item.dueAt).getTime() < Date.now()).length;
+    res.json({
+      ok: true,
+      items,
+      metrics: {
+        total: items.length,
+        pending: pending.length,
+        overdue,
+        slaHours: 72
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/profile-change-requests/:id/approve", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const requestId = requireUuid(req.params.id, "Profile change request ID");
+    const request = await approveProfileChangeRequest(requestId, req.auth.userId, {
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      notes: req.body?.notes
+    });
+    res.json({ ok: true, request });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/profile-change-requests/:id/reject", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const requestId = requireUuid(req.params.id, "Profile change request ID");
+    const request = await rejectProfileChangeRequest(
+      requestId,
+      req.auth.userId,
+      boundedText(req.body?.notes || "Rejected by Support", "Support note", { min: 2, max: 500 }),
+      {
+        ipAddress: req.auth.ipAddress,
+        userAgent: req.auth.userAgent
+      }
+    );
+    res.json({ ok: true, request });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/compliance/queue", requireAdminPermission("compliance"), async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cr.*, u.full_name, u.username, u.account_type
+       FROM kyc_reviews cr
+       JOIN users u ON u.id = cr.user_id
+       ORDER BY cr.created_at DESC
+       LIMIT 250`
+    );
+    res.json({ ok: true, items: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/compliance/reviews/:id/status", requireAdminPermission("compliance"), async (req, res, next) => {
+  try {
+    const reviewId = requireUuid(req.params.id, "Review ID");
+    const status = requireEnum(req.body.status, ["pending", "submitted", "pending_review", "approved", "rejected"], "Review status");
+    const { rows } = await pool.query(
+      `UPDATE kyc_reviews
+       SET status = $2, reviewed_by = $3, reviewed_at = NOW(), updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [reviewId, status, req.auth.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ ok: false, error: "Review not found" });
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "compliance_review_status_updated",
+      entityType: "compliance_review",
+      entityId: reviewId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { status }
+    });
+    res.json({ ok: true, item: rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/revenue", requireAdminPermission("revenue"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await revenueSummary()) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/security", requireAdminPermission("security"), async (_req, res, next) => {
+  try {
+    const adminAuthPolicy = await getAdminAuthenticationPolicy();
+    const [loginAttempts, otpLogs, adminSessions, profileLockEvents, securityLogs] = await Promise.all([
+      pool.query("SELECT actor_type, action, created_at FROM audit_logs WHERE action IN ('login_failed','account_lockout','login_success') ORDER BY created_at DESC LIMIT 50"),
+      pool.query("SELECT user_type, purpose, expires_at, attempts AS attempt_count, created_at FROM otp_codes ORDER BY created_at DESC LIMIT 50"),
+      pool.query(
+        `SELECT s.*, au.full_name, au.email
+         FROM sessions s
+         LEFT JOIN admin_users au ON au.id = s.user_id
+         WHERE s.user_type = 'admin'
+         ORDER BY s.created_at DESC
+         LIMIT 50`
+      ),
+      pool.query("SELECT actor_type, action, created_at FROM audit_logs WHERE action IN ('profile_locked','profile_unlocked') ORDER BY created_at DESC LIMIT 50"),
+      pool.query("SELECT actor_type, actor_id, event_type, severity, ip_address, success, created_at FROM security_logs ORDER BY created_at DESC LIMIT 50")
+    ]);
+    res.json({
+      ok: true,
+      loginAttempts: loginAttempts.rows,
+      otpLogs: otpLogs.rows,
+      adminSessions: adminSessions.rows,
+      profileLockEvents: profileLockEvents.rows,
+      securityLogs: securityLogs.rows,
+      otpPolicy: {
+        authenticationMode: adminAuthPolicy.mode,
+        otpRequired: adminAuthPolicy.otpRequired,
+        superAdminRequired: adminAuthPolicy.otpRequired,
+        staffRequired: adminAuthPolicy.otpRequired,
+        financeRequired: adminAuthPolicy.otpRequired,
+        complianceRequired: adminAuthPolicy.otpRequired,
+        customerSupportRequired: adminAuthPolicy.otpRequired,
+        source: adminAuthPolicy.source,
+        note: adminAuthPolicy.otpRequired
+          ? "Password + Email OTP is enabled. Admin sign-ins require email verification before dashboard access."
+          : "Password Only is enabled. Admin sign-ins do not depend on SMTP or OTP delivery."
+      },
+      smtp: getEmailProviderStatus(),
+      emailTemplates: [
+        { key: "otp", name: "OTP Email Template", subject: "Your TitoPay verification code", status: "ready" },
+        { key: "password_reset", name: "Password Reset Template", subject: "Your TitoPay password reset code", status: "ready" },
+        { key: "security_alert", name: "Security Alert Template", subject: "TitoPay security alert", status: "ready" }
+      ]
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/security/authentication-mode", requireAdminPermission("security"), async (req, res, next) => {
+  try {
+    requirePlatformOwnerAccess(req, "Only platform owner roles can change admin authentication mode");
+    const mode = requireEnum(req.body?.mode, ["password_only", "password_email_otp"], "Authentication mode");
+    const policy = await setAdminAuthenticationPolicy({
+      mode,
+      updatedBy: req.auth.userId
+    });
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "admin_authentication_mode_updated",
+      entityType: "platform_settings",
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { mode: policy.mode, otpRequired: policy.otpRequired }
+    });
+    res.json({ ok: true, otpPolicy: policy });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/security/smtp/test", requireAdminPermission("security"), async (req, res, next) => {
+  try {
+    const to = req.body?.to || req.auth.email;
+    if (!to) throw new AppError(400, "No test email recipient available");
+    const result = await sendSmtpTestEmail({ to });
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "smtp_test_email_sent",
+      entityType: "admin_security",
+      entityId: req.auth.userId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { to, providerResponse: result }
+    });
+    res.json({ ok: true, to, result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/integrations/config", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    res.json({ ok: true, providers: await listIntegrationConfigs() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/integrations/config/:provider", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const providerKey = requireEnum(req.params.provider, Object.keys(INTEGRATION_PROVIDERS), "Integration provider");
+    res.json({ ok: true, provider: publicIntegrationState(providerKey, await getStoredIntegration(providerKey)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/integrations/health", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    const providers = await listIntegrationConfigs();
+    res.json({
+      ok: true,
+      health: providers.map((provider) => ({
+        key: provider.key,
+        label: provider.label,
+        enabled: provider.enabled,
+        environment: provider.environment,
+        configured: provider.configured,
+        ...provider.health
+      }))
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/integrations/logs", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    res.json({ ok: true, logs: await listIntegrationLogs() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/integrations/webhooks", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    res.json({ ok: true, webhooks: await listWebhookEvents() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/integrations/webhooks/:id/retry", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const webhookId = boundedText(req.params.id, "Webhook ID", { min: 2, max: 120 });
+    const events = await listStoredWebhookEvents();
+    const index = events.findIndex((event) => String(event.id) === webhookId);
+    if (index === -1) throw new AppError(404, "Webhook event not found");
+    events[index] = {
+      ...events[index],
+      status: "retry_queued",
+      retryCount: Number(events[index].retryCount || 0) + 1,
+      lastRetryQueuedAt: new Date().toISOString()
+    };
+    await saveWebhookEvents(events, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "integration_webhook_retry_queued",
+      entityType: "platform_settings",
+      entityId: req.auth.userId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { webhookId, provider: events[index].provider, retryCount: events[index].retryCount }
+    });
+    res.json({ ok: true, webhook: events[index] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/provider-routing", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await getProviderRouting()) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/provider-routing", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const routing = await saveProviderRouting(req.body || {}, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "provider_routing_updated",
+      entityType: "platform_settings",
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { mapping: Object.fromEntries(routing.services.map((service) => [service.key, service.provider])) }
+    });
+    res.json({ ok: true, ...routing });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/features", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await getFeatureFlags()) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/features", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const flags = await saveFeatureFlags(req.body || {}, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "feature_flags_updated",
+      entityType: "platform_settings",
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { flags: Object.fromEntries(flags.flags.map((flag) => [flag.key, flag.enabled])) }
+    });
+    res.json({ ok: true, ...flags });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/company-documents", requireAuth, async (req, res, next) => {
+  try {
+    requireCompanyDocumentsAccess(req);
+    const result = await getCompanyDocuments();
+    res.json({ ok: true, categories: COMPANY_DOCUMENT_CATEGORIES, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/company-documents", requireAuth, async (req, res, next) => {
+  try {
+    requireCompanyDocumentsAccess(req);
+    const document = await createCompanyDocument(req.body, req.auth);
+    res.status(201).json({ ok: true, document });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/company-documents/:id", requireAuth, async (req, res, next) => {
+  try {
+    requireCompanyDocumentsAccess(req);
+    const document = await updateCompanyDocument(requireUuid(req.params.id, "Document ID"), req.body, req.auth);
+    res.json({ ok: true, document });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/company-documents/:id/archive", requireAuth, async (req, res, next) => {
+  try {
+    requireCompanyDocumentsAccess(req);
+    const document = await updateCompanyDocument(requireUuid(req.params.id, "Document ID"), { ...req.body, status: "archived" }, req.auth);
+    res.json({ ok: true, document });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/company-documents/:id/acknowledge", requireAuth, async (req, res, next) => {
+  try {
+    requireCompanyDocumentsAccess(req);
+    const document = await acknowledgeCompanyDocument(requireUuid(req.params.id, "Document ID"), req.auth);
+    res.json({ ok: true, document });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/integrations/:provider", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const providerKey = requireEnum(req.params.provider, Object.keys(INTEGRATION_PROVIDERS), "Integration provider");
+    const provider = await saveIntegrationConfig({
+      providerKey,
+      body: req.body || {},
+      adminId: req.auth.userId
+    });
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "integration_settings_updated",
+      entityType: "platform_settings",
+      entityId: req.auth.userId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: {
+        provider: providerKey,
+        enabled: provider.enabled,
+        environment: provider.environment,
+        configured: provider.configured
+      }
+    });
+    res.json({ ok: true, provider });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/integrations/:provider/disable", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const providerKey = requireEnum(req.params.provider, Object.keys(INTEGRATION_PROVIDERS), "Integration provider");
+    const provider = await disableIntegrationConfig(providerKey, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "integration_disabled",
+      entityType: "platform_settings",
+      entityId: req.auth.userId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { provider: providerKey }
+    });
+    res.json({ ok: true, provider });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/integrations/:provider/rotate", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const providerKey = requireEnum(req.params.provider, Object.keys(INTEGRATION_PROVIDERS), "Integration provider");
+    const result = await rotateIntegrationCredentials(providerKey, req.body || {}, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "integration_credentials_rotated",
+      entityType: "platform_settings",
+      entityId: req.auth.userId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { provider: providerKey, rotatedSecrets: result.rotatedSecrets }
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/integrations/:provider/test", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const providerKey = requireEnum(req.params.provider, Object.keys(INTEGRATION_PROVIDERS), "Integration provider");
+    const result = await testProviderConnection(providerKey, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "integration_status_tested",
+      entityType: "platform_settings",
+      entityId: req.auth.userId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: {
+        provider: providerKey,
+        status: result.status,
+        environment: result.environment,
+        responseTimeMs: result.responseTimeMs,
+        errorMessage: result.errorMessage
+      }
+    });
+    res.json({ ok: true, result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/marketing/sms-campaigns", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    const campaigns = await getMarketingSmsCampaigns();
+    const [personalRecipients, businessRecipients] = await Promise.all([
+      countMarketingSmsRecipients("personal"),
+      countMarketingSmsRecipients("business")
+    ]);
+    res.json({
+      ok: true,
+      canApprove: canApproveMarketingSms(req.auth.role),
+      audiences: {
+        personal: personalRecipients,
+        business: businessRecipients,
+        both: personalRecipients + businessRecipients
+      },
+      campaigns: campaigns.map(publicMarketingSmsCampaign)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/marketing/sms-campaigns", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    const audience = requireEnum(req.body?.audience, ["personal", "business", "specific", "both"], "Audience");
+    const title = boundedText(req.body?.title, "Campaign title", { min: 3, max: 120 });
+    const message = boundedText(req.body?.message, "SMS message", { min: 5, max: 612 });
+    const specificRecipient = audience === "specific"
+      ? await resolveSpecificSmsRecipient(req.body?.recipient)
+      : null;
+    const estimatedRecipients = await countMarketingSmsRecipients(audience, specificRecipient?.id || null);
+    if (!estimatedRecipients) throw new AppError(400, "No active TitoPay users with cellphone numbers match this audience");
+    const campaigns = await getMarketingSmsCampaigns();
+    const campaign = {
+      id: crypto.randomUUID(),
+      title,
+      channel: "sms",
+      audience,
+      targetUserId: specificRecipient?.id || null,
+      targetLabel: specificRecipient
+        ? specificRecipient.username || specificRecipient.full_name || "Specific TitoPay user"
+        : null,
+      message,
+      status: "pending_approval",
+      estimatedRecipients,
+      sentCount: 0,
+      failedCount: 0,
+      createdBy: req.auth.userId,
+      createdByRole: normalizeAdminRole(req.auth.role),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      approvedBy: null,
+      approvedAt: null,
+      sentAt: null,
+      deliveryResults: []
+    };
+    campaigns.unshift(campaign);
+    await saveMarketingSmsCampaigns(campaigns, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "marketing_sms_campaign_submitted",
+      entityType: "marketing_sms_campaign",
+      entityId: campaign.id,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: {
+        audience,
+        estimatedRecipients,
+        messageLength: message.length
+      }
+    });
+    res.status(201).json({ ok: true, campaign: publicMarketingSmsCampaign(campaign) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/marketing/sms-campaigns/:id/approve", requireAdminPermission("marketing_sms_approve"), async (req, res, next) => {
+  try {
+    if (!canApproveMarketingSms(req.auth.role)) throw new AppError(403, "CEO or COO approval is required");
+    const campaignId = boundedText(req.params.id, "Campaign ID", { min: 6, max: 80 });
+    const campaigns = await getMarketingSmsCampaigns();
+    const campaign = campaigns.find((item) => item.id === campaignId);
+    if (!campaign) throw new AppError(404, "SMS campaign not found");
+    if (campaign.status !== "pending_approval") {
+      throw new AppError(409, `SMS campaign is already ${String(campaign.status || "processed").replaceAll("_", " ")}`);
+    }
+
+    const recipients = await listMarketingSmsRecipients(campaign.audience, campaign.targetUserId || null);
+    if (!recipients.length) throw new AppError(400, "No active TitoPay users with cellphone numbers match this audience");
+
+    const deliveryResults = [];
+    let sentCount = 0;
+    let failedCount = 0;
+    for (const recipient of recipients) {
+      try {
+        const result = await deliverSms({
+          to: recipient.smsPhone,
+          body: campaign.message,
+          metadata: {
+            purpose: "marketing_bulk_sms",
+            campaignId: campaign.id,
+            audience: campaign.audience,
+            userId: recipient.id
+          }
+        });
+        sentCount += 1;
+        deliveryResults.push({
+          userId: recipient.id,
+          phone: recipient.smsPhone,
+          ok: true,
+          providerMessageId: result.id || result.messageId || null
+        });
+      } catch (error) {
+        failedCount += 1;
+        deliveryResults.push({
+          userId: recipient.id,
+          phone: recipient.smsPhone,
+          ok: false,
+          error: error.message
+        });
+      }
+    }
+
+    campaign.status = failedCount && !sentCount ? "failed" : failedCount ? "sent_with_failures" : "sent";
+    campaign.estimatedRecipients = recipients.length;
+    campaign.sentCount = sentCount;
+    campaign.failedCount = failedCount;
+    campaign.approvedBy = req.auth.userId;
+    campaign.approvedByRole = normalizeAdminRole(req.auth.role);
+    campaign.approvedAt = new Date().toISOString();
+    campaign.sentAt = campaign.approvedAt;
+    campaign.updatedAt = campaign.approvedAt;
+    campaign.deliveryResults = deliveryResults;
+    await saveMarketingSmsCampaigns(campaigns, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "marketing_sms_campaign_approved_and_sent",
+      entityType: "marketing_sms_campaign",
+      entityId: campaign.id,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: {
+        audience: campaign.audience,
+        recipients: recipients.length,
+        sentCount,
+        failedCount,
+        approvedByRole: campaign.approvedByRole
+      }
+    });
+    res.json({ ok: true, campaign: publicMarketingSmsCampaign(campaign) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/marketing/email-campaigns",requireAdminPermission("marketing"),async(req,res,next)=>{try{const campaigns=await getMarketingEmailCampaigns();const [personal,business]=await Promise.all([countMarketingEmailRecipients("personal"),countMarketingEmailRecipients("business")]);res.json({ok:true,canApprove:canApproveMarketingSms(req.auth.role),audiences:{personal,business,both:personal+business},campaigns});}catch(error){next(error);}});
+
+router.post("/marketing/email-campaigns",requireAdminPermission("marketing"),async(req,res,next)=>{try{const audience=requireEnum(req.body?.audience,["personal","business","specific","both"],"Audience"),title=boundedText(req.body?.title,"Campaign title",{min:3,max:120}),subject=boundedText(req.body?.subject,"Email subject",{min:3,max:200}),htmlBody=boundedText(req.body?.htmlBody,"HTML body",{min:5,max:50000}),textBody=boundedText(req.body?.textBody,"Plain-text body",{min:5,max:20000});const specific=audience==="specific"?await resolveSpecificEmailRecipient(req.body?.recipient):null,estimatedRecipients=await countMarketingEmailRecipients(audience,specific?.id||null);if(!estimatedRecipients)throw new AppError(400,"No active TitoPay users with email addresses match this audience");const campaigns=await getMarketingEmailCampaigns();const campaign={id:crypto.randomUUID(),channel:"email",title,subject,htmlBody,textBody,audience,targetUserId:specific?.id||null,targetLabel:specific?.username||specific?.full_name||null,status:"pending_approval",estimatedRecipients,queuedCount:0,failedCount:0,createdBy:req.auth.userId,createdByRole:normalizeAdminRole(req.auth.role),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};campaigns.unshift(campaign);await saveMarketingEmailCampaigns(campaigns,req.auth.userId);await writeAuditLog({actorType:"admin",actorId:req.auth.userId,action:"marketing_email_campaign_submitted",entityType:"marketing_email_campaign",entityId:campaign.id,ipAddress:req.auth.ipAddress,userAgent:req.auth.userAgent,metadata:{audience,estimatedRecipients,subject}});res.status(201).json({ok:true,campaign});}catch(error){next(error);}});
+
+router.post("/marketing/email-campaigns/:id/approve",requireAdminPermission("marketing_email_approve"),async(req,res,next)=>{try{if(!canApproveMarketingSms(req.auth.role))throw new AppError(403,"CEO or COO approval is required");const campaigns=await getMarketingEmailCampaigns(),campaign=campaigns.find((item)=>item.id===req.params.id);if(!campaign)throw new AppError(404,"Email campaign not found");if(campaign.status!=="pending_approval")throw new AppError(409,"Email campaign has already been published");const recipients=await listMarketingEmailRecipients(campaign.audience,campaign.targetUserId||null);let queuedCount=0,failedCount=0;for(const recipient of recipients){try{const names=String(recipient.full_name||"").split(/\s+/);await queueRawEmail({recipient:recipient.email,subject:campaign.subject,htmlBody:campaign.htmlBody,textBody:campaign.textBody,userId:recipient.id,variables:{firstName:names[0]||"there",lastName:names.slice(1).join(" "),fullName:recipient.full_name,email:recipient.email,accountType:recipient.account_type},idempotencyKey:`marketing-email:${campaign.id}:${recipient.id}`,metadata:{campaignId:campaign.id,audience:campaign.audience,approvedBy:req.auth.userId}});queuedCount++;}catch(error){failedCount++;console.error("[marketing-email] queue failed",{campaignId:campaign.id,userId:recipient.id,message:error.message});}}campaign.status=failedCount&&!queuedCount?"failed":failedCount?"published_with_failures":"published";campaign.estimatedRecipients=recipients.length;campaign.queuedCount=queuedCount;campaign.failedCount=failedCount;campaign.approvedBy=req.auth.userId;campaign.approvedByRole=normalizeAdminRole(req.auth.role);campaign.approvedAt=new Date().toISOString();campaign.publishedAt=campaign.approvedAt;campaign.updatedAt=campaign.approvedAt;await saveMarketingEmailCampaigns(campaigns,req.auth.userId);await writeAuditLog({actorType:"admin",actorId:req.auth.userId,action:"marketing_email_campaign_approved_and_published",entityType:"marketing_email_campaign",entityId:campaign.id,ipAddress:req.auth.ipAddress,userAgent:req.auth.userAgent,metadata:{audience:campaign.audience,recipients:recipients.length,queuedCount,failedCount,approvedByRole:campaign.approvedByRole}});res.json({ok:true,campaign});}catch(error){next(error);}});
+
+router.get("/marketing/announcements", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    const [{ rows }, audienceCounts] = await Promise.all([
+      pool.query(
+        `SELECT c.*,
+                COALESCE(
+                  JSON_AGG(
+                    JSON_BUILD_OBJECT(
+                      'role', a.approval_role,
+                      'approvedBy', a.approved_by,
+                      'approvedAt', a.approved_at
+                    ) ORDER BY a.approved_at
+                  ) FILTER (WHERE a.approval_role IS NOT NULL),
+                  '[]'::JSON
+                ) AS approvals
+           FROM announcement_campaigns c
+           LEFT JOIN announcement_approvals a ON a.campaign_id = c.id
+          GROUP BY c.id
+          ORDER BY c.created_at DESC
+          LIMIT 100`
+      ),
+      pool.query(
+        `SELECT account_type, COUNT(*)::INT AS count
+           FROM users
+          WHERE status = 'active'
+          GROUP BY account_type`
+      )
+    ]);
+    const counts = Object.fromEntries(audienceCounts.rows.map((row) => [row.account_type, row.count]));
+    const authenticatedRole = normalizeAdminRole(req.auth.role);
+    const approvalRole = authenticatedRole === "super_admin"
+      ? "ceo"
+      : ["ceo", "coo"].includes(authenticatedRole)
+        ? authenticatedRole
+        : null;
+    res.json({
+      ok: true,
+      approvalRole,
+      audiences: {
+        personal: counts.personal || 0,
+        business: counts.business || 0,
+        both: (counts.personal || 0) + (counts.business || 0)
+      },
+      campaigns: rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/marketing/announcements", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    const audience = requireEnum(req.body?.audience, ["personal", "business", "specific", "both"], "Audience");
+    const category = requireEnum(req.body?.category, ["general", "marketing", "service", "security"], "Category");
+    const title = boundedText(req.body?.title, "Announcement title", { min: 3, max: 120 });
+    const body = boundedText(req.body?.body, "Announcement message", { min: 5, max: 1200 });
+    let targetUserId = null;
+    let countResult;
+    if (audience === "specific") {
+      const recipient = boundedText(req.body?.recipient, "Specific user", { min: 3, max: 160 });
+      const recipientUsername = recipient.replace(/^@/, "");
+      const recipientDigits = recipient.replace(/\D/g, "");
+      const recipientPhone = recipientDigits.length >= 7 ? recipientDigits : null;
+      const specificUser = await pool.query(
+        `SELECT id
+           FROM users
+          WHERE status = 'active'
+            AND (
+              LOWER(username) = LOWER($3)
+              OR LOWER(COALESCE(email, '')) = LOWER($1)
+              OR (
+                $2::TEXT IS NOT NULL
+                AND REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g') = $2
+              )
+            )
+          LIMIT 2`,
+        [recipient, recipientPhone, recipientUsername]
+      );
+      if (!specificUser.rows.length) throw new AppError(404, "No active TitoPay user matches that username, email or cellphone number");
+      if (specificUser.rows.length > 1) throw new AppError(409, "That identifier matches more than one user");
+      targetUserId = specificUser.rows[0].id;
+      countResult = { rows: [{ count: 1 }] };
+    } else {
+      const values = audience === "both" ? [] : [audience];
+      const audienceFilter = audience === "both" ? "" : "AND account_type = $1";
+      countResult = await pool.query(
+        `SELECT COUNT(*)::INT AS count FROM users WHERE status = 'active' ${audienceFilter}`,
+        values
+      );
+    }
+    const estimatedRecipients = countResult.rows[0]?.count || 0;
+    if (!estimatedRecipients) throw new AppError(400, "No active TitoPay users match this audience");
+    const { rows } = await pool.query(
+      `INSERT INTO announcement_campaigns
+         (title, body, category, audience, target_user_id, estimated_recipients, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [title, body, category, audience, targetUserId, estimatedRecipients, req.auth.userId]
+    );
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "in_app_announcement_submitted",
+      entityType: "announcement_campaign",
+      entityId: rows[0].id,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { audience, category, targetUserId, estimatedRecipients }
+    });
+    res.status(201).json({ ok: true, campaign: { ...rows[0], approvals: [] } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/marketing/announcements/:id/approve", requireAdminPermission("marketing"), async (req, res, next) => {
+  const authenticatedRole = normalizeAdminRole(req.auth?.role);
+  const approvalRole = authenticatedRole === "super_admin" ? "ceo" : authenticatedRole;
+  if (!["ceo", "coo"].includes(approvalRole)) {
+    next(new AppError(403, "CEO or COO approval is required"));
+    return;
+  }
+  const campaignId = requireUuid(req.params.id, "Announcement ID");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const campaignResult = await client.query(
+      "SELECT * FROM announcement_campaigns WHERE id = $1 FOR UPDATE",
+      [campaignId]
+    );
+    const campaign = campaignResult.rows[0];
+    if (!campaign) throw new AppError(404, "Announcement not found");
+    if (campaign.status !== "pending_approval") throw new AppError(409, "Announcement has already been sent");
+    const approvalResult = await client.query(
+      `INSERT INTO announcement_approvals (campaign_id, approval_role, approved_by)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (campaign_id, approval_role) DO NOTHING
+       RETURNING approval_role`,
+      [campaignId, approvalRole, req.auth.userId]
+    );
+    if (!approvalResult.rowCount) throw new AppError(409, `${approvalRole.toUpperCase()} approval is already recorded`);
+
+    const approvalsResult = await client.query(
+      "SELECT approval_role, approved_by, approved_at FROM announcement_approvals WHERE campaign_id = $1 ORDER BY approved_at",
+      [campaignId]
+    );
+    let sentCount = 0;
+    const audienceValues = campaign.audience === "both"
+      ? []
+      : campaign.audience === "specific"
+        ? [campaign.target_user_id]
+        : [campaign.audience];
+    const audienceSql = campaign.audience === "both"
+      ? ""
+      : campaign.audience === "specific"
+        ? "AND id = $1"
+        : "AND account_type = $1";
+    const recipientCount = await client.query(
+      `SELECT COUNT(*)::INT AS count
+         FROM users
+        WHERE status = 'active' ${audienceSql}`,
+      audienceValues
+    );
+    sentCount = recipientCount.rows[0]?.count || 0;
+    await client.query(
+      `UPDATE announcement_campaigns
+          SET status = 'sent', sent_count = $2, sent_at = NOW(), updated_at = NOW()
+        WHERE id = $1`,
+      [campaignId, sentCount]
+    );
+    await client.query("COMMIT");
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: sentCount ? "in_app_announcement_approved_and_sent" : "in_app_announcement_approved",
+      entityType: "announcement_campaign",
+      entityId: campaignId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { approvalRole, sentCount }
+    });
+    res.json({
+      ok: true,
+      status: "sent",
+      sentCount,
+      approvals: approvalsResult.rows
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+router.get("/marketing/reviews", requireAdminPermission("marketing"), async (_req, res, next) => {
+  try {
+    const reviews = await getPwaCustomerReviews();
+    const total = reviews.length;
+    const averageRating = total
+      ? Math.round((reviews.reduce((sum, item) => sum + Number(item.rating || 0), 0) / total) * 10) / 10
+      : 0;
+    const byCategory = reviews.reduce((acc, item) => {
+      const key = item.category || "general";
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    res.json({
+      ok: true,
+      summary: {
+        total,
+        averageRating,
+        newCount: reviews.filter((item) => String(item.status || "new") === "new").length,
+        byCategory
+      },
+      reviews: reviews.map(publicPwaCustomerReview)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/ticketing/events", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listAdminEvents({ status: req.query.status, limit: req.query.limit }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/ticketing/events/:id", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, event: await getAdminEvent(eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/ticketing/events/:id/action", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, event: await adminTransitionEvent(eventId, req.body, req.auth, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/ticketing/events/:id/report", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, report: await eventSalesReport(eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/ticketing/events/:id/settlement", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.status(201).json({ ok: true, settlement: await createTicketSettlement(eventId, req.auth, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/ticketing/refunds", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listTicketRefunds({ status: req.query.status, limit: req.query.limit }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/ticketing/refunds/:id/action", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    const refundId = requireUuid(req.params.id, "Refund ID");
+    res.json({ ok: true, refund: await processTicketRefund(refundId, req.body, req.auth, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/enterprise-distribution/overview", requireAdminPermission("enterprise_distribution"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, overview: await enterpriseDistributionOverview() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/enterprise-distribution/applications", requireAdminPermission("enterprise_distribution"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listEnterpriseDistributionApplications(req.query.status || "") });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/enterprise-distribution/applications/:id/action", requireAdminPermission("enterprise_distribution"), async (req, res, next) => {
+  try {
+    const applicationId = requireUuid(req.params.id, "Application ID");
+    res.json({ ok: true, ...(await transitionEnterpriseDistributionApplication(applicationId, req.body, req.auth, meta(req))) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/enterprise-distribution/organisations", requireAdminPermission("enterprise_distribution"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listEnterpriseDistributionOrganisations() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/enterprise-distribution/batches", requireAdminPermission("enterprise_distribution"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listEnterpriseDistributionBatches() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/enterprise-distribution/batches/:id/release", requireAdminPermission("enterprise_distribution"), async (req, res, next) => {
+  try {
+    const batchId = requireUuid(req.params.id, "Batch ID");
+    res.json({ ok: true, batch: await releaseEnterpriseDistributionBatch(batchId, req.auth, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/enterprise-distribution/payouts", requireAdminPermission("enterprise_distribution"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listEnterpriseDistributionPayouts(req.query.status || "") });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/enterprise-distribution/audit-logs", requireAdminPermission("enterprise_distribution"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listEnterpriseDistributionAuditLogs(req.query.limit || 250) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/enterprise-distribution/report", requireAdminPermission("enterprise_distribution"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, report: await enterpriseDistributionReport() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/qr-assets", requireAdminPermission("analytics"), async (req, res, next) => {
+  try {
+    const type = requireEnum(req.body?.type, [
+      "website",
+      "app_download",
+      "merchant_onboarding",
+      "merchant_qr",
+      "business_registration",
+      "business_qr",
+      "personal_registration",
+      "marketing",
+      "campaign",
+      "invoice",
+      "invoice_qr",
+      "product",
+      "product_qr",
+      "support",
+      "support_qr",
+      "event",
+      "referral",
+      "referral_qr",
+      "dynamic_url"
+    ], "QR type");
+    const label = boundedText(req.body?.label, "QR label", { min: 2, max: 120 });
+    const destinationUrl = validateOptionalUrl(req.body?.destinationUrl, "Destination URL");
+    if (!destinationUrl) throw new AppError(400, "Destination URL is required");
+    const asset = await generateQrAsset({ type, label, destinationUrl, createdBy: req.auth.userId });
+    res.json({ ok: true, asset });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/audit", requireAdminPermission("audit"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listAuditLogs() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/beneficiaries", requireSuperAdmin, async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await adminListBeneficiaries(req.query) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/beneficiaries/:id/disable", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const relationship = await adminDisableBeneficiary(
+      req.auth,
+      requireUuid(req.params.id, "Beneficiary relationship ID"),
+      req.body?.reason
+    );
+    res.json({ ok: true, relationship });
+  } catch (error) {
+    next(error);
+  }
+});
+
+function canManageAdminRoles(role) {
+  return ["developer", "super_admin"].includes(normalizeAdminRole(role));
+}
+
+const AVAILABLE_ADMIN_PERMISSIONS = [...new Set(
+  [
+    ...Object.values(ADMIN_ROLE_PERMISSIONS).flat().filter((permission) => permission !== "*"),
+    "EMAIL_VIEW","EMAIL_SEND","EMAIL_TEMPLATE_EDIT","EMAIL_TEMPLATE_DELETE","EMAIL_QUEUE_MANAGE","EMAIL_LOG_VIEW","EMAIL_SETTINGS_EDIT","EMAIL_PROVIDER_EDIT","EMAIL_TEST_SEND",
+    "EMAIL_OTP_VIEW","EMAIL_OTP_SETTINGS","EMAIL_OTP_LOGS","EMAIL_OTP_RESEND"
+  ]
+)].sort();
+
+router.get("/roles", requireAdminPermission("engineering"), async (req, res, next) => {
+  try {
+    const { value: overrides } = await getPlatformSetting("admin_role_permission_overrides", {});
+    const items = await Promise.all(Object.entries(ADMIN_ROLE_PERMISSIONS).map(async ([role, defaults]) => ({
+      role,
+      permissions: Array.isArray(overrides?.[role]) ? overrides[role] : defaults,
+      builtin: true,
+      protected: ["owner", "root", "super_admin", "developer", "ceo"].includes(role),
+      customised: Array.isArray(overrides?.[role])
+    })));
+    res.json({
+      ok: true,
+      roles: Object.fromEntries(items.map((item) => [item.role, item.permissions])),
+      items,
+      availablePermissions: AVAILABLE_ADMIN_PERMISSIONS,
+      canManage: canManageAdminRoles(req.auth.role)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/roles/:role", requireAdminPermission("engineering"), async (req, res, next) => {
+  try {
+    if (!canManageAdminRoles(req.auth.role)) throw new AppError(403, "Developer or Super Admin access is required");
+    const role = normalizeAdminRole(req.params.role);
+    if (!Object.hasOwn(ADMIN_ROLE_PERMISSIONS, role)) throw new AppError(404, "Role not found");
+    if (["owner", "root", "super_admin", "developer", "ceo"].includes(role)) {
+      throw new AppError(409, "This full-access role is protected");
+    }
+    const requested = Array.isArray(req.body?.permissions) ? [...new Set(req.body.permissions.map(String))] : null;
+    if (!requested) throw new AppError(400, "Permissions are required");
+    if (requested.some((permission) => permission !== "*" && !AVAILABLE_ADMIN_PERMISSIONS.includes(permission))) {
+      throw new AppError(400, "One or more permissions are invalid");
+    }
+    const { value: overrides } = await getPlatformSetting("admin_role_permission_overrides", {});
+    const updated = { ...(overrides || {}), [role]: requested.includes("*") ? ["*"] : requested };
+    await setPlatformSetting("admin_role_permission_overrides", updated, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "admin_role_permissions_updated",
+      entityType: "admin_role",
+      entityId: role,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { permissions: updated[role] }
+    });
+    res.json({ ok: true, role, permissions: updated[role] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/security-summary", requireAdminPermission("security"), async (_req, res, next) => {
+  try {
+    const [sessions, otpCodes, auditLogs] = await Promise.all([
+      pool.query("SELECT COUNT(*)::INT AS count FROM sessions WHERE revoked_at IS NULL"),
+      pool.query("SELECT COUNT(*)::INT AS count FROM otp_codes WHERE used_at IS NULL AND expires_at > NOW()"),
+      pool.query("SELECT COUNT(*)::INT AS count FROM audit_logs")
+    ]);
+    res.json({
+      ok: true,
+      security: {
+        activeSessions: sessions.rows[0].count,
+        activeOtpCodes: otpCodes.rows[0].count,
+        auditLogs: auditLogs.rows[0].count
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.use((error, req, _res, next) => {
+  console.error("[admin-api-error]", {
+    method: req.method,
+    path: req.originalUrl || req.url,
+    requestId: req.requestId,
+    adminId: req.auth?.userId || null,
+    role: req.auth?.role || null,
+    status: error?.statusCode || error?.status || 500,
+    code: error?.code,
+    name: error?.name || "Error",
+    message: error?.message || "Unexpected Admin API error",
+    stack: error?.stack
+  });
+  next(error);
+});
+
+module.exports = router;
