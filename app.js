@@ -1836,9 +1836,6 @@ function topbar() {
   `;
 }
 
-// Rotates through the 11 official languages, one per day. Languages with
-// well-established time-of-day greetings use them; the rest use their correct
-// universal greeting, which is right at any hour -- nothing is invented.
 // One "hello" per official language, rotating daily. Hellos instead of
 // time-of-day forms on purpose: a greeting like "Goeiemôre" is only right for
 // a few hours and an open PWA does not re-render just because the clock moved,
