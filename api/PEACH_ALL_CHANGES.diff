@@ -362,7 +362,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
 Only in api/src/routes: payment-return.routes.js
 diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/routes/payments.routes.js api/src/routes/payments.routes.js
 --- api_pristine/src/routes/payments.routes.js	2026-08-04 15:34:13.000000000 +0000
-+++ api/src/routes/payments.routes.js	2026-08-07 10:16:00.116127930 +0000
++++ api/src/routes/payments.routes.js	2026-08-07 11:03:45.293916951 +0000
 @@ -4,13 +4,17 @@
  const { payQr } = require("../services/qr-service");
  const { config } = require("../config/env");
@@ -400,13 +400,16 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
        ...req.body,
        idempotencyKey: req.get("idempotency-key") || req.body?.idempotencyKey
      });
-@@ -48,28 +52,44 @@
+@@ -48,30 +52,47 @@
    }
  });
  
 -router.get("/topup/:paymentId", async (req, res, next) => {
 +router.get("/topup", async (req, res, next) => {
-+  try {
+   try {
+-    assertTransactionsAllowed(req);
+-    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "Card top-up provider is not configured for production processing yet.");
+-    res.json({ ok: true, ...(await getCardTopupStatus(req.auth, req.params.paymentId)) });
 +    res.json({ ok: true, items: await listRecentTopups(req.auth, req.query.limit) });
 +  } catch (error) { next(error); }
 +});
@@ -416,41 +419,46 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
 +router.get("/topup/:reference", async (req, res, next) => {
 +  try {
 +    res.json({ ok: true, ...(await getTopupStatus(req.auth, req.params.reference)) });
-+  } catch (error) { next(error); }
-+});
-+
-+// Legacy Peach Payments API lifecycle actions. Unchanged, still behind
-+// PEACH_PAYMENTS_V2_ENABLED, and not part of the Checkout top-up flow.
-+router.get("/legacy-topup/:paymentId", async (req, res, next) => {
-   try {
-     assertTransactionsAllowed(req);
--    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "Card top-up provider is not configured for production processing yet.");
-+    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
-     res.json({ ok: true, ...(await getCardTopupStatus(req.auth, req.params.paymentId)) });
    } catch (error) { next(error); }
  });
  
- for (const [path, action] of [["confirm", confirmCardTopup], ["capture", captureCardTopup], ["cancel", cancelCardTopup]]) {
+-for (const [path, action] of [["confirm", confirmCardTopup], ["capture", captureCardTopup], ["cancel", cancelCardTopup]]) {
 -  router.post(`/topup/:paymentId/${path}`, async (req, res, next) => {
-+  router.post(`/legacy-topup/:paymentId/${path}`, async (req, res, next) => {
++// Legacy Peach Payments API lifecycle actions. Unchanged, still behind
++// PEACH_PAYMENTS_V2_ENABLED, and not part of the Checkout top-up flow.
++//
++// Each is mounted at both its original /topup/:paymentId/... path and a clearer
++// /legacy-topup/... alias, so no path that existed before this change stops
++// answering. The original paths keep their exact previous behaviour.
++function legacyAction(action) {
++  return async (req, res, next) => {
      try {
        assertTransactionsAllowed(req);
 -      if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "Card top-up provider is not configured for production processing yet.");
 +      if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
        res.json({ ok: true, ...(await action(req.auth, req.params.paymentId, req.body || {})) });
      } catch (error) { next(error); }
-   });
+-  });
++  };
  }
  
 -router.post("/topup/:paymentId/refund", async (req, res, next) => {
-+router.post("/legacy-topup/:paymentId/refund", async (req, res, next) => {
++router.get("/legacy-topup/:paymentId", async (req, res, next) => {
    try {
      assertTransactionsAllowed(req);
 -    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "Card top-up provider is not configured for production processing yet.");
+-    res.json({ ok: true, ...(await refundCardTopup(req.auth, req.params.paymentId, req.body || {})) });
 +    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
-     res.json({ ok: true, ...(await refundCardTopup(req.auth, req.params.paymentId, req.body || {})) });
++    res.json({ ok: true, ...(await getCardTopupStatus(req.auth, req.params.paymentId)) });
    } catch (error) { next(error); }
  });
+ 
++for (const [path, action] of [["confirm", confirmCardTopup], ["capture", captureCardTopup], ["cancel", cancelCardTopup], ["refund", refundCardTopup]]) {
++  router.post(`/legacy-topup/:paymentId/${path}`, legacyAction(action));
++  router.post(`/topup/:paymentId/${path}`, legacyAction(action));
++}
++
+ module.exports = router;
 Only in api/src/services: peach-checkout-auth-service.js
 Only in api/src/services: peach-checkout-service.js
 Only in api/src/services: peach-config-service.js

@@ -68,6 +68,20 @@ router.get("/topup/:reference", async (req, res, next) => {
 
 // Legacy Peach Payments API lifecycle actions. Unchanged, still behind
 // PEACH_PAYMENTS_V2_ENABLED, and not part of the Checkout top-up flow.
+//
+// Each is mounted at both its original /topup/:paymentId/... path and a clearer
+// /legacy-topup/... alias, so no path that existed before this change stops
+// answering. The original paths keep their exact previous behaviour.
+function legacyAction(action) {
+  return async (req, res, next) => {
+    try {
+      assertTransactionsAllowed(req);
+      if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
+      res.json({ ok: true, ...(await action(req.auth, req.params.paymentId, req.body || {})) });
+    } catch (error) { next(error); }
+  };
+}
+
 router.get("/legacy-topup/:paymentId", async (req, res, next) => {
   try {
     assertTransactionsAllowed(req);
@@ -76,22 +90,9 @@ router.get("/legacy-topup/:paymentId", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-for (const [path, action] of [["confirm", confirmCardTopup], ["capture", captureCardTopup], ["cancel", cancelCardTopup]]) {
-  router.post(`/legacy-topup/:paymentId/${path}`, async (req, res, next) => {
-    try {
-      assertTransactionsAllowed(req);
-      if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
-      res.json({ ok: true, ...(await action(req.auth, req.params.paymentId, req.body || {})) });
-    } catch (error) { next(error); }
-  });
+for (const [path, action] of [["confirm", confirmCardTopup], ["capture", captureCardTopup], ["cancel", cancelCardTopup], ["refund", refundCardTopup]]) {
+  router.post(`/legacy-topup/:paymentId/${path}`, legacyAction(action));
+  router.post(`/topup/:paymentId/${path}`, legacyAction(action));
 }
-
-router.post("/legacy-topup/:paymentId/refund", async (req, res, next) => {
-  try {
-    assertTransactionsAllowed(req);
-    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
-    res.json({ ok: true, ...(await refundCardTopup(req.auth, req.params.paymentId, req.body || {})) });
-  } catch (error) { next(error); }
-});
 
 module.exports = router;
