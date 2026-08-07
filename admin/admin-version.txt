@@ -1,6 +1,16 @@
 TitoPay Admin
-Build: admin-console-v64
+Build: admin-console-v65
 Date: 2026-08-07
+
+v65 - The Payout capability is configurable and testable from the provider
+cards too, not only the Peach Payments page.
+
+  - API Provider Settings and the Integration Centre render one Configure panel
+    per capability on the Peach card, each with its own fields, Save
+    Configuration and Test Connection. Previously the payout status appeared on
+    the card but there was no way to configure or test it from that page.
+  - The parent Peach chip reads Partially configured while one capability is
+    connected and the other is not.
 
 v64 - Peach Payments splits into two independent capabilities.
 
@@ -372,5 +382,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v64; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v65; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

@@ -3378,20 +3378,31 @@ async function renderIntegrations(me = {}) {
             <span>${provider.health?.responseTimeMs === null || provider.health?.responseTimeMs === undefined ? "No response time yet" : `${escapeHtml(provider.health.responseTimeMs)}ms response`}</span>
             <span>${escapeHtml(provider.health?.lastSuccessfulConnectionAt ? `Last success ${new Date(provider.health.lastSuccessfulConnectionAt).toLocaleString("en-ZA")}` : "No successful test yet")}</span>
           </div>
-          <details class="integration-config-panel">
-            <summary>Configure</summary>
-            <form class="form-grid integration-form" data-provider="${escapeHtml(provider.key)}">
-              ${(provider.fields || []).map((field) => renderIntegrationField(provider, field, isSuperAdmin)).join("")}
-              <p class="secret-note">Saved secrets remain encrypted on the API and are displayed here only as masked values.</p>
-              <div class="action-row">
-                ${isSuperAdmin ? `<button class="primary-btn" type="submit">Save Configuration</button>` : ""}
-                <a class="secondary-btn" href="/integrations/${providerSlug(provider.key)}/">Open Page</a>
-                <button class="secondary-btn" type="button" data-integration-test="${escapeHtml(provider.key)}">Test Connection</button>
-                ${isSuperAdmin ? `<button class="secondary-btn" type="button" data-integration-disable="${escapeHtml(provider.key)}">Disable</button>` : ""}
-                ${isSuperAdmin ? `<button class="secondary-btn" type="button" data-integration-rotate="${escapeHtml(provider.key)}">Rotate Credentials</button>` : ""}
-              </div>
-            </form>
-          </details>
+          ${(() => {
+            // A provider with grouped capabilities (Peach: Collection + Payout)
+            // gets one Configure panel per capability, each saving and testing
+            // its own credentials. Without this the second capability would be
+            // visible on this page but impossible to configure or test from it.
+            const capabilities = capabilitiesFor(provider.key);
+            const panels = capabilities.length > 1 ? capabilities : [provider];
+            return panels.map((capability) => `
+              <details class="integration-config-panel">
+                <summary>${escapeHtml(capabilities.length > 1 ? `Configure ${capability.capabilityLabel || capability.label}` : "Configure")}</summary>
+                <form class="form-grid integration-form" data-provider="${escapeHtml(capability.key)}">
+                  ${(capability.fields || []).map((field) => renderIntegrationField(capability, field, isSuperAdmin)).join("")}
+                  <p class="secret-note">Saved secrets remain encrypted on the API and are displayed here only as masked values.</p>
+                  <div class="action-row">
+                    ${isSuperAdmin ? `<button class="primary-btn" type="submit">Save Configuration</button>` : ""}
+                    <a class="secondary-btn" href="/integrations/${providerSlug(capability.peachGroup || capability.key)}/">Open Page</a>
+                    <button class="secondary-btn" type="button" data-integration-test="${escapeHtml(capability.key)}">Test Connection</button>
+                    ${isSuperAdmin ? `<button class="secondary-btn" type="button" data-integration-disable="${escapeHtml(capability.key)}">Disable</button>` : ""}
+                    ${isSuperAdmin ? `<button class="secondary-btn" type="button" data-integration-rotate="${escapeHtml(capability.key)}">Rotate Credentials</button>` : ""}
+                  </div>
+                </form>
+              </details>
+              ${capability.health?.errorMessage && capabilities.length > 1 ? `<p class="integration-error">${escapeHtml(capability.capabilityLabel || capability.label)}: ${escapeHtml(capability.health.errorMessage)}</p>` : ""}
+            `).join("");
+          })()}
           ${provider.health?.errorMessage ? `<p class="integration-error">${escapeHtml(provider.health.errorMessage)}</p>` : ""}
         </article>
       `).join("")}
