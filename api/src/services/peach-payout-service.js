@@ -125,20 +125,26 @@ function clearPayoutTokenCache() {
   payoutTokenCache.clear();
 }
 
-function payoutErrorFor(status, message) {
+// Peach's own wording distinguishes a bad Client ID/Secret from a bad Merchant
+// ID, which the previous single message hid. It contains no credential, and it
+// is passed through the scrubber before it is used, so quoting it is safe and
+// is the difference between a debuggable failure and a dead end.
+function payoutErrorFor(status, message, credentials = {}) {
+  const raw = scrub(message, credentials);
   const lower = String(message || "").toLowerCase();
+  const because = raw && raw.length <= 160 ? ` Peach said: "${raw.replace(/"/g, "'")}"` : "";
   if (status === 401 || status === 403) {
-    return new AppError(502, "Authentication rejected by Peach Payouts (invalid Client ID, Client Secret or Merchant ID)", {
+    return new AppError(502, `Authentication rejected by Peach Payouts (invalid Client ID, Client Secret or Merchant ID).${because}`, {
       code: "PAYOUT_AUTHENTICATION_REJECTED", providerStatus: status
     });
   }
   if (status === 400) {
     if (/client|secret|merchant|credential|unauthor/.test(lower)) {
-      return new AppError(502, "Authentication rejected by Peach Payouts (invalid Client ID, Client Secret or Merchant ID)", {
+      return new AppError(502, `Authentication rejected by Peach Payouts (invalid Client ID, Client Secret or Merchant ID).${because}`, {
         code: "PAYOUT_AUTHENTICATION_REJECTED", providerStatus: status
       });
     }
-    return new AppError(502, "Peach Payouts rejected the request as invalid", { code: "PAYOUT_CONFIGURATION_INVALID", providerStatus: status });
+    return new AppError(502, `Peach Payouts rejected the request as invalid.${because}`, { code: "PAYOUT_CONFIGURATION_INVALID", providerStatus: status });
   }
   if (status === 404) {
     return new AppError(502, "The Peach payout endpoint was not found. Check the payout base URL and merchant ID.", {
@@ -203,7 +209,7 @@ async function requestPayoutAccessToken(effective, { timeoutMs = DEFAULT_TIMEOUT
     providerMessage: response.ok ? "" : scrub(payload?.message || payload?.error || raw, effective)
   });
 
-  if (!response.ok) throw payoutErrorFor(response.status, payload?.message || payload?.error || raw);
+  if (!response.ok) throw payoutErrorFor(response.status, payload?.message || payload?.error || raw, effective);
 
   const accessToken = trimmed(payload.access_token || payload.accessToken);
   if (!accessToken) throw new AppError(502, "Peach Payouts did not return an access token", { code: "PAYOUT_AUTHENTICATION_FAILED", providerStatus: response.status });
@@ -216,8 +222,8 @@ async function requestPayoutAccessToken(effective, { timeoutMs = DEFAULT_TIMEOUT
   };
 }
 
-async function payoutRequest(effective, method, path, body, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  const { accessToken } = await requestPayoutAccessToken(effective);
+async function payoutRequest(effective, method, path, body, { timeoutMs = DEFAULT_TIMEOUT_MS, skipCache = false } = {}) {
+  const { accessToken } = await requestPayoutAccessToken(effective, { skipCache });
   const url = `${payoutBaseUrl(effective)}${path}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -283,7 +289,9 @@ async function testPayoutConnection(effectiveOverride) {
   let endpoint = null;
   try {
     endpoint = `${payoutBaseUrl(effective)}/merchants/${encodeURIComponent(effective.merchantId)}/balance`;
-    const result = await payoutRequest(effective, "GET", `/merchants/${encodeURIComponent(effective.merchantId)}/balance`);
+    // Always a live authentication: a test that could be answered from the
+    // token cache would keep reporting the last outcome after a credential fix.
+    const result = await payoutRequest(effective, "GET", `/merchants/${encodeURIComponent(effective.merchantId)}/balance`, undefined, { skipCache: true });
     return {
       ok: true,
       status: "connected",
@@ -310,8 +318,18 @@ async function testPayoutConnection(effectiveOverride) {
       providerResponse: {
         method: "GET",
         endpoint,
+        authEndpoint: `${authServiceBaseUrl(environment, effective)}${OAUTH_TOKEN_PATH}`,
         statusCode: error?.details?.providerStatus ?? null,
-        accessTokenIssued: false
+        accessTokenIssued: false,
+        // Presence and shape only — never a value. Lets an operator check what
+        // was actually stored against the Peach Dashboard without exposing it.
+        credentials: {
+          clientIdLength: trimmed(effective.clientId).length,
+          clientIdLast4: lastFour(effective.clientId),
+          clientSecretLength: trimmed(effective.clientSecret).length,
+          merchantIdLength: trimmed(effective.merchantId).length,
+          merchantIdLast4: lastFour(effective.merchantId)
+        }
       }
     };
   }

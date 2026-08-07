@@ -216,3 +216,70 @@ test("Collection top-up still runs on Checkout, never on the payout host", () =>
   const payoutSource = readSource("services", "peach-payout-service.js");
   assert.doesNotMatch(payoutSource, /v2\/checkout/);
 });
+
+/* ------------------------------------- masked placeholder must never store */
+
+test("A masked display value is never stored as a secret", () => {
+  const source = readSource("routes", "admin.routes.js");
+  assert.match(source, /function isMaskedSecretPlaceholder/);
+  // Both write paths guard: the config save and the credential rotation.
+  assert.match(source, /submittedValue && !isMaskedSecretPlaceholder\(submittedValue\)/);
+  assert.match(source, /submitted && !isMaskedSecretPlaceholder\(submitted\)/);
+});
+
+test("A secret poisoned by an earlier save reads as unconfigured, not as a credential", () => {
+  for (const file of [["routes", "admin.routes.js"], ["services", "peach-config-service.js"]]) {
+    const source = readSource(...file);
+    assert.match(source, /isMaskedSecretPlaceholder\(decrypted\)/, `${file.join("/")} must discard a decrypted mask`);
+  }
+});
+
+test("The placeholder test catches the shapes the portal can render", () => {
+  // Mirrors admin.routes.js / peach-config-service.js.
+  const isMasked = (value) => {
+    const text = String(value ?? "").trim();
+    return text.startsWith("••••") || /^[•*]{3,}/.test(text);
+  };
+  for (const masked of ["••••1234", "••••CRET", "••••", "****1234", "•••••••"]) {
+    assert.equal(isMasked(masked), true, `${masked} must be treated as a placeholder`);
+  }
+  for (const real of ["PayoutSecret123", "abc", "sk_live_1234", "a•b"]) {
+    assert.equal(isMasked(real), false, `${real} is a real credential and must be stored`);
+  }
+});
+
+/* --------------------------------------------- the test is always a live call */
+
+test("Payout Test Connection never answers from the token cache", () => {
+  const source = readSource("services", "peach-payout-service.js");
+  const fn = source.slice(source.indexOf("async function testPayoutConnection"));
+  assert.match(fn.slice(0, fn.indexOf("} catch")), /skipCache: true/);
+});
+
+test("A payout failure reports Peach's own reason and a credential fingerprint", async () => {
+  const restore = mockFetch(async () => new Response(JSON.stringify({ message: "Invalid client ID or secret." }), { status: 400 }));
+  try {
+    payout.clearPayoutTokenCache();
+    const result = await payout.testPayoutConnection(CREDENTIALS);
+    assert.match(result.error, /Peach said/i);
+    assert.match(result.error, /Invalid client ID or secret/i);
+    const fingerprint = result.providerResponse.credentials;
+    assert.equal(fingerprint.clientIdLength, CREDENTIALS.clientId.length);
+    assert.equal(fingerprint.clientSecretLength, CREDENTIALS.clientSecret.length);
+    assert.equal(fingerprint.merchantIdLength, CREDENTIALS.merchantId.length);
+    // A fingerprint, never a value.
+    const serialized = JSON.stringify(result);
+    assert.doesNotMatch(serialized, /payout-secret/);
+    assert.doesNotMatch(serialized, /payout-client\b/);
+    assert.equal(fingerprint.clientSecret, undefined);
+  } finally { restore(); payout.clearPayoutTokenCache(); }
+});
+
+test("The failure names the auth endpoint that was actually called", async () => {
+  const restore = mockFetch(async () => new Response(JSON.stringify({ message: "nope" }), { status: 401 }));
+  try {
+    payout.clearPayoutTokenCache();
+    const result = await payout.testPayoutConnection(CREDENTIALS);
+    assert.equal(result.providerResponse.authEndpoint, "https://sandbox-dashboard.peachpayments.com/api/oauth/token");
+  } finally { restore(); payout.clearPayoutTokenCache(); }
+});

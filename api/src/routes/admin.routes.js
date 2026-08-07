@@ -361,6 +361,17 @@ function decryptSecret(value) {
   ]).toString("utf8");
 }
 
+// A masked display value (••••1234) is what the portal SHOWS for a stored
+// secret; it is never a credential. If one is ever submitted back — a browser
+// autofilling the field, a client echoing the displayed value, a retried
+// request — storing it silently replaces the real credential with the mask.
+// The provider then rejects every authentication attempt, and the Admin form
+// still looks correctly filled in, so the corruption is invisible.
+function isMaskedSecretPlaceholder(value) {
+  const text = String(value ?? "").trim();
+  return text.startsWith("••••") || /^[•*]{3,}/.test(text);
+}
+
 function maskSecret(value) {
   const text = String(value || "").trim();
   if (!text) return "";
@@ -903,7 +914,9 @@ async function saveIntegrationConfig({ providerKey, body, adminId }) {
     }
     if (SECRET_FIELD_NAMES.has(field)) {
       const submittedValue = body[field] || (field === "clientSecret" ? body.secret : "");
-      if (submittedValue) {
+      // A blank field means "keep the stored secret"; so does the masked value
+      // the form displays for it. Neither may overwrite a real credential.
+      if (submittedValue && !isMaskedSecretPlaceholder(submittedValue)) {
         value.secrets[`${field}Encrypted`] = encryptSecret(submittedValue);
         value.secrets[`${field}Masked`] = maskSecret(submittedValue);
       }
@@ -970,7 +983,7 @@ async function rotateIntegrationCredentials(providerKey, body = {}, adminId) {
   let rotatedCount = 0;
   for (const field of provider.secretKeys) {
     const submitted = body[field];
-    if (submitted) {
+    if (submitted && !isMaskedSecretPlaceholder(submitted)) {
       nextValue.secrets[`${field}Encrypted`] = encryptSecret(submitted);
       nextValue.secrets[`${field}Masked`] = maskSecret(submitted);
       rotatedCount += 1;
@@ -1013,10 +1026,14 @@ function providerSecretValue(stored, provider, field) {
 
   for (const candidate of candidates) {
     const text = String(candidate || "").trim();
-    if (!text || text.startsWith("••••")) continue;
+    if (!text || isMaskedSecretPlaceholder(text)) continue;
     if (!text.startsWith("enc:")) return text;
     try {
-      return decryptSecret(text);
+      // A row poisoned before the save guard existed decrypts to the mask
+      // itself. Treat that as unconfigured rather than authenticating with it.
+      const decrypted = decryptSecret(text);
+      if (isMaskedSecretPlaceholder(decrypted)) continue;
+      return decrypted;
     } catch (_error) {
       continue;
     }

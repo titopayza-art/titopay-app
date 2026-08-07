@@ -51,6 +51,14 @@ function decryptSecret(value) {
   }
 }
 
+// A masked display value is never a credential. A configuration poisoned by an
+// earlier save reads as unconfigured, so the operator is told to re-enter the
+// secret instead of the provider rejecting the mask forever.
+function isMaskedSecretPlaceholder(value) {
+  const text = String(value ?? "").trim();
+  return text.startsWith("••••") || /^[•*]{3,}/.test(text);
+}
+
 function storedSecret(stored, field) {
   const candidates = [
     stored?.secrets?.[`${field}Encrypted`],
@@ -60,10 +68,10 @@ function storedSecret(stored, field) {
   ];
   for (const candidate of candidates) {
     const text = String(candidate ?? "").trim();
-    if (!text || text.startsWith("••••")) continue;
+    if (!text || isMaskedSecretPlaceholder(text)) continue;
     if (!text.startsWith("enc:")) return text;
     const decrypted = decryptSecret(text);
-    if (decrypted) return decrypted;
+    if (decrypted && !isMaskedSecretPlaceholder(decrypted)) return decrypted;
   }
   return "";
 }
