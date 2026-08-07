@@ -229,6 +229,15 @@ function checkVersionConsistency() {
   check(await page.textContent(".mkt-cal-nav strong") !== calMonthBefore, "calendar navigates between months");
   check((await page.textContent("#mkt-month-summary")).includes("SMS broadcasts"), "cross-channel month summary renders");
 
+  // --- Approval queue rejection -------------------------------------------
+  const rejectOffered = (await page.$$("[data-marketing-sms-reject], [data-marketing-email-reject], [data-announcement-reject]")).length;
+  check(rejectOffered >= 4, `all approval queues offer reject alongside approve (${rejectOffered} shown)`);
+  page.once("dialog", (dialog) => dialog.accept("Gate test rejection"));
+  await page.click("[data-marketing-email-reject]");
+  await page.waitForTimeout(1200);
+  const reasonShown = await page.evaluate(() => document.body.textContent.includes("Rejected by ceo: Gate test rejection"));
+  check(reasonShown, "a rejection records its reason and shows it on the queue");
+
   // --- Personal <-> business delink ---------------------------------------
   await page.goto(`${BASE}/users/`);
   await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });

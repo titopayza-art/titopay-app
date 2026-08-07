@@ -98,6 +98,56 @@ const securityEvents = Array.from({ length: 80 }, (_, index) => ({
   created_at: new Date(NOW - Math.floor(rnd() * 30) * DAY).toISOString(),
 }));
 
+/* Marketing datasets live at module level so approval-queue mutations
+   (reject, delink-style state changes) persist across requests in a run. */
+const marketingAnnouncements = Array.from({ length: 5 }, (_, index) => ({
+  id: `ann_${index}`,
+  title: `Announcement ${index}`,
+  body: `In-app notice number ${index} for TitoPay customers.`,
+  category: index % 2 ? "marketing" : "general",
+  audience: index % 2 ? "business" : "personal",
+  status: index < 3 ? "sent" : "pending_approval",
+  sent_count: index < 3 ? 90 + index * 10 : 0,
+  estimated_recipients: 120,
+  approvals: index < 3 ? [{ role: "ceo" }] : [],
+  createdAt: new Date(NOW - index * 3 * DAY).toISOString(),
+}));
+
+const marketingEmailCampaigns = Array.from({ length: 4 }, (_, index) => ({
+  id: `emc_${index}`,
+  title: `Email production ${index}`,
+  subject: `TitoPay update ${index}`,
+  textBody: "Monthly product update for TitoPay customers.",
+  audience: index % 2 ? "business" : "personal",
+  status: index < 2 ? "sent" : "pending_approval",
+  estimatedRecipients: 120,
+  queuedCount: index < 2 ? 110 : 0,
+  failedCount: 0,
+  approvedByRole: index < 2 ? "ceo" : "",
+  createdAt: new Date(NOW - index * 5 * DAY).toISOString(),
+}));
+
+const marketingSmsCampaigns = Array.from({ length: 8 }, (_, index) => {
+  const statuses = ["sent", "sent", "sent", "sent", "sent", "pending_approval", "approved", "rejected"];
+  const status = statuses[index];
+  const sentCount = status === "sent" ? 180 + index * 35 : 0;
+  return {
+    id: `smc_${index}`,
+    title: `Campaign ${index}`,
+    message: `TitoPay update number ${index} for our customers.`,
+    audience: index % 3 === 0 ? "specific" : "all",
+    targetLabel: index % 3 === 0 ? "KZN merchants" : "",
+    estimatedRecipients: 200 + index * 40,
+    status,
+    sentCount,
+    failedCount: status === "sent" ? (index % 2 ? 4 + index : 0) : 0,
+    createdAt: new Date(NOW - index * 2 * DAY).toISOString(),
+    approvedByRole: status === "sent" || status === "approved" ? "ceo" : "",
+    rejectionReason: status === "rejected" ? "Duplicate of an earlier broadcast" : "",
+    rejectedByRole: status === "rejected" ? "ceo" : "",
+  };
+});
+
 const session = {
   accessToken: "stub-access",
   refreshToken: "stub-refresh",
@@ -136,18 +186,7 @@ const ROUTES = {
   "/v1/admin/marketing/announcements": () => ({
     approvalRole: "ceo",
     audiences: { personal: 120, business: 24, both: 144 },
-    campaigns: Array.from({ length: 5 }, (_, index) => ({
-      id: `ann_${index}`,
-      title: `Announcement ${index}`,
-      body: `In-app notice number ${index} for TitoPay customers.`,
-      category: index % 2 ? "marketing" : "general",
-      audience: index % 2 ? "business" : "personal",
-      status: index < 3 ? "sent" : "pending_approval",
-      sent_count: index < 3 ? 90 + index * 10 : 0,
-      estimated_recipients: 120,
-      approvals: index < 3 ? [{ role: "ceo" }] : [],
-      createdAt: new Date(NOW - index * 3 * DAY).toISOString(),
-    })),
+    campaigns: marketingAnnouncements,
   }),
   "/v1/admin/marketing/reviews": () => ({
     summary: { total: 6, averageRating: 4.2 },
@@ -165,42 +204,11 @@ const ROUTES = {
   }),
   "/v1/admin/marketing/email-campaigns": () => ({
     canApprove: true,
-    campaigns: Array.from({ length: 4 }, (_, index) => ({
-      id: `emc_${index}`,
-      title: `Email production ${index}`,
-      subject: `TitoPay update ${index}`,
-      textBody: "Monthly product update for TitoPay customers.",
-      audience: index % 2 ? "business" : "personal",
-      status: index < 2 ? "sent" : "pending_approval",
-      estimatedRecipients: 120,
-      queuedCount: index < 2 ? 110 : 0,
-      failedCount: 0,
-      approvedByRole: index < 2 ? "ceo" : "",
-      createdAt: new Date(NOW - index * 5 * DAY).toISOString(),
-    })),
+    campaigns: marketingEmailCampaigns,
   }),
   // No "/v1/admin/sms/analytics" handler on purpose: the 404 exercises the
   // SMS Analytics page's fallback derivation from campaign records.
-  "/v1/admin/marketing/sms-campaigns": () => ({
-    campaigns: Array.from({ length: 8 }, (_, index) => {
-      const statuses = ["sent", "sent", "sent", "sent", "sent", "pending_approval", "approved", "rejected"];
-      const status = statuses[index];
-      const sentCount = status === "sent" ? 180 + index * 35 : 0;
-      return {
-        id: `smc_${index}`,
-        title: `Campaign ${index}`,
-        message: `TitoPay update number ${index} for our customers.`,
-        audience: index % 3 === 0 ? "specific" : "all",
-        targetLabel: index % 3 === 0 ? "KZN merchants" : "",
-        estimatedRecipients: 200 + index * 40,
-        status,
-        sentCount,
-        failedCount: status === "sent" ? (index % 2 ? 4 + index : 0) : 0,
-        createdAt: new Date(NOW - index * 2 * DAY).toISOString(),
-        approvedByRole: status === "sent" || status === "approved" ? "ceo" : "",
-      };
-    }),
-  }),
+  "/v1/admin/marketing/sms-campaigns": () => ({ campaigns: marketingSmsCampaigns }),
   "/v1/admin/roles": () => ({
     canManage: true,
     availablePermissions: ["dashboard", "users", "merchants", "transactions", "wallets", "support", "compliance", "revenue", "security", "audit", "ticketing"],
@@ -239,6 +247,27 @@ function startAdminStub(port) {
           ],
           notes: [],
         }));
+        return;
+      }
+      const rejectMatch = url.pathname.match(/^\/v1\/admin\/marketing\/(sms-campaigns|email-campaigns|announcements)\/([^/]+)\/reject$/);
+      if (rejectMatch && request.method === "POST") {
+        const pool = {
+          "sms-campaigns": marketingSmsCampaigns,
+          "email-campaigns": marketingEmailCampaigns,
+          announcements: marketingAnnouncements,
+        }[rejectMatch[1]];
+        let body = "";
+        request.on("data", (chunk) => { body += chunk; });
+        request.on("end", () => {
+          const row = pool.find((item) => item.id === rejectMatch[2]);
+          if (row) {
+            row.status = "rejected";
+            row.rejectedByRole = "ceo";
+            try { row.rejectionReason = JSON.parse(body || "{}").reason || ""; } catch { row.rejectionReason = ""; }
+          }
+          response.writeHead(200, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ ok: true, status: "rejected" }));
+        });
         return;
       }
       const delinkMatch = url.pathname.match(/^\/v1\/admin\/users\/([^/]+)\/delink-business$/);

@@ -1,6 +1,24 @@
 TitoPay Admin
-Build: admin-console-v62
+Build: admin-console-v63
 Date: 2026-08-07
+
+v63 - Reject, with a written reason, on every marketing approval queue.
+
+  - The PWA Announcement, SMS and Email Production approval queues now show
+    Reject beside the approve action on every pending item - approving is no
+    longer the only way to clear the queue. Rejecting always asks for a
+    reason (required, up to 500 characters); the queue then shows
+    "Rejected by <role>: <reason>" on the row and the status chip reads
+    rejected. An approver who already recorded their approval on a pending
+    announcement can still reject it while it waits for the second role.
+  - The reject calls POST the reason to
+    /admin/marketing/{sms-campaigns|email-campaigns|announcements}/:id/reject.
+    The contract - pending-only, same CEO/COO/owner roles as approving,
+    reason stored on the row, audit entry - is specified as A-P1-8 in
+    ADMIN-API-REQUIREMENTS.md. If the API does not implement an endpoint yet
+    the console says so and confirms the item is unchanged.
+  - The CI gate grew to 43 checks: every queue offers reject, and a
+    rejection's reason is shown on the queue after the action.
 
 v62 - Personal and business accounts can be delinked from the portal when a
 customer asks for it.
@@ -338,5 +356,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v62; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v63; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

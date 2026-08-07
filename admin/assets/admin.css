@@ -4841,7 +4841,19 @@ a.table-card-meta:hover {
   margin-top: 4px;
 }
 
-/* Marketing toolkit: templates, SMS meter, UTM preview, calendar. */
+/* Marketing toolkit: templates, SMS meter, UTM preview, calendar,
+   approval-queue rejection. */
+
+.reject-btn {
+  color: var(--tp-danger);
+  border-color: var(--tp-danger-line);
+}
+
+.reject-btn:hover {
+  background: var(--tp-danger-soft);
+  border-color: var(--tp-danger);
+  color: var(--tp-danger);
+}
 
 .mkt-template-row {
   display: flex;

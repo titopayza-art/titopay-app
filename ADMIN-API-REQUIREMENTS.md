@@ -1,6 +1,6 @@
 # TitoPay Admin API requirements
 
-What the admin console (admin.titopay.co.za, build v62) needs from the
+What the admin console (admin.titopay.co.za, build v63) needs from the
 backend, written from the client side in the same format as
 `API-REQUIREMENTS.md`. Each item says which console screen depends on it, what
 happens today without it, and the exact contract the console is already built
@@ -23,6 +23,7 @@ from the client side at all).
 | A-P1-5 quick-reply templates | Support Desk | Edited wording is per browser |
 | A-P1-6 SMS analytics endpoint | SMS Analytics | Metrics derived from campaign counters only; no per-message receipts, no OTP SMS reporting |
 | A-P1-7 account linkage + delink | Users | No link shown, and the Delink action reports the endpoint is missing without changing anything |
+| A-P1-8 approval-queue reject | Marketing | Pending broadcasts can only be approved or left waiting; Reject reports the endpoint is missing without changing anything |
 | A-P2-1 system metrics | Analytics → System, Dashboard | CPU/RAM/disk/network/cache show "Not reported" |
 | A-P2-2 per-session revoke | Security | Only "sign out all devices" exists |
 | A-P2-3 TOTP / WebAuthn for admin sign-in | Sign in | Email OTP is the only second factor |
@@ -252,6 +253,34 @@ current profiles. Reject the call if the id in the body no longer matches the
 current link (the operator acted on a stale row). Write the acting operator,
 the user and the business to the audit log; the console already surfaces
 audit entries in the Alert Centre and Audit pages.
+
+## A-P1-8 — Reject with reason on the marketing approval queues
+
+**Screens:** Marketing Centre — PWA Announcement, SMS and Email Production
+approval queues.
+
+**Today (v63):** every pending item shows Reject beside the approve action.
+The console requires a written reason, sends it in the call below, and shows
+"Rejected by <role>: <reason>" on the queue (reading
+rejectionReason/rejection_reason/rejectReason and
+rejectedByRole/rejected_by_role). Until the API implements the endpoints the
+console reports they are missing and confirms the item is unchanged.
+
+**Required:**
+
+```
+POST /v1/admin/marketing/sms-campaigns/:id/reject      { "reason": "..." }
+POST /v1/admin/marketing/email-campaigns/:id/reject    { "reason": "..." }
+POST /v1/admin/marketing/announcements/:id/reject      { "reason": "..." }
+→ { "ok": true, "status": "rejected" }
+```
+
+Rules: only `pending_approval` items are rejectable (reject after send is
+meaningless — return an error); restrict to the same CEO/COO/owner roles that
+approve; store reason and rejecting role on the campaign row so every future
+list call carries them; write an audit entry. Reason is plain text,
+≤ 500 characters, and must be non-empty — the console enforces this
+client-side but the API must too.
 
 ## A-P2-1 — System metrics
 

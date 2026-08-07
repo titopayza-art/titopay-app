@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v62";
+const ADMIN_ASSET_VERSION = "admin-console-v63";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -4148,6 +4148,26 @@ function smsStatusChip(status = "") {
   return `<span class="chip">${escapeHtml(text)}</span>`;
 }
 
+/* Rejection support for the three marketing approval queues. A rejection
+   always carries a reason: it is shown on the row and travels to the API in
+   the reject call's body. */
+function marketingRejectionReason(label) {
+  const reason = window.prompt(`Reject "${label}"?\n\nEnter the reason for rejecting. The reason is shown on the queue and recorded with the decision.`);
+  if (reason === null) return null;
+  const trimmed = reason.trim();
+  if (!trimmed) {
+    showToast("A rejection needs a reason - nothing was rejected");
+    return null;
+  }
+  return trimmed.slice(0, 500);
+}
+
+function marketingRejectionNote(campaign = {}) {
+  const reason = campaign.rejectionReason || campaign.rejection_reason || campaign.rejectReason || "";
+  const by = campaign.rejectedByRole || campaign.rejected_by_role || "";
+  return `<small>${escapeHtml([by ? `Rejected by ${by}` : "Rejected", reason].filter(Boolean).join(": "))}</small>`;
+}
+
 function renderMarketingSmsCampaigns(campaigns = [], canApprove = false) {
   if (!campaigns.length) {
     return `<p class="table-card-note">No SMS campaigns have been submitted yet.</p>`;
@@ -4182,8 +4202,11 @@ function renderMarketingSmsCampaigns(campaigns = [], canApprove = false) {
               <td>${escapeHtml(campaign.createdAt ? new Date(campaign.createdAt).toLocaleString("en-ZA") : "-")}</td>
               <td>
                 ${campaign.status === "pending_approval" && canApprove
-                  ? `<button type="button" class="secondary-btn" data-marketing-sms-approve="${escapeHtml(campaign.id)}">Approve & Send</button>`
-                  : escapeHtml(campaign.approvedByRole ? `Approved by ${campaign.approvedByRole}` : "Awaiting CEO/COO")}
+                  ? `<button type="button" class="secondary-btn" data-marketing-sms-approve="${escapeHtml(campaign.id)}">Approve & Send</button>
+                     <button type="button" class="secondary-btn reject-btn" data-marketing-sms-reject="${escapeHtml(campaign.id)}">Reject</button>`
+                  : campaign.status === "rejected"
+                    ? marketingRejectionNote(campaign)
+                    : escapeHtml(campaign.approvedByRole ? `Approved by ${campaign.approvedByRole}` : "Awaiting CEO/COO")}
               </td>
             </tr>
           `).join("")}
@@ -4193,7 +4216,7 @@ function renderMarketingSmsCampaigns(campaigns = [], canApprove = false) {
   `;
 }
 
-function renderMarketingEmailCampaigns(campaigns=[],canApprove=false){if(!campaigns.length)return `<p class="table-card-note">No email productions have been submitted yet.</p>`;return `<div class="table-wrap"><table><thead><tr><th>Production</th><th>Subject</th><th>Audience</th><th>Recipients</th><th>Status</th><th>Queued</th><th>Failed</th><th>Approval</th></tr></thead><tbody>${campaigns.map((campaign)=>`<tr><td><strong>${escapeHtml(campaign.title)}</strong><small>${escapeHtml(String(campaign.textBody||"").slice(0,120))}${String(campaign.textBody||"").length>120?"…":""}</small></td><td>${escapeHtml(campaign.subject)}</td><td>${escapeHtml(campaign.audience==="specific"&&campaign.targetLabel?`Specific: ${campaign.targetLabel}`:campaign.audience)}</td><td>${escapeHtml(campaign.estimatedRecipients||0)}</td><td>${smsStatusChip(campaign.status)}</td><td>${escapeHtml(campaign.queuedCount||0)}</td><td>${escapeHtml(campaign.failedCount||0)}</td><td>${campaign.status==="pending_approval"&&canApprove?`<button type="button" class="secondary-btn" data-marketing-email-approve="${escapeHtml(campaign.id)}">Approve & Publish</button>`:escapeHtml(campaign.approvedByRole?`Approved by ${campaign.approvedByRole}`:"Awaiting CEO/COO")}</td></tr>`).join("")}</tbody></table></div>`;}
+function renderMarketingEmailCampaigns(campaigns=[],canApprove=false){if(!campaigns.length)return `<p class="table-card-note">No email productions have been submitted yet.</p>`;return `<div class="table-wrap"><table><thead><tr><th>Production</th><th>Subject</th><th>Audience</th><th>Recipients</th><th>Status</th><th>Queued</th><th>Failed</th><th>Approval</th></tr></thead><tbody>${campaigns.map((campaign)=>`<tr><td><strong>${escapeHtml(campaign.title)}</strong><small>${escapeHtml(String(campaign.textBody||"").slice(0,120))}${String(campaign.textBody||"").length>120?"…":""}</small></td><td>${escapeHtml(campaign.subject)}</td><td>${escapeHtml(campaign.audience==="specific"&&campaign.targetLabel?`Specific: ${campaign.targetLabel}`:campaign.audience)}</td><td>${escapeHtml(campaign.estimatedRecipients||0)}</td><td>${smsStatusChip(campaign.status)}</td><td>${escapeHtml(campaign.queuedCount||0)}</td><td>${escapeHtml(campaign.failedCount||0)}</td><td>${campaign.status==="pending_approval"&&canApprove?`<button type="button" class="secondary-btn" data-marketing-email-approve="${escapeHtml(campaign.id)}">Approve & Publish</button> <button type="button" class="secondary-btn reject-btn" data-marketing-email-reject="${escapeHtml(campaign.id)}">Reject</button>`:campaign.status==="rejected"?marketingRejectionNote(campaign):escapeHtml(campaign.approvedByRole?`Approved by ${campaign.approvedByRole}`:"Awaiting CEO/COO")}</td></tr>`).join("")}</tbody></table></div>`;}
 
 function renderInAppAnnouncements(campaigns = [], approvalRole = null) {
   if (!campaigns.length) {
@@ -4228,16 +4251,21 @@ function renderInAppAnnouncements(campaigns = [], approvalRole = null) {
                 <td>${escapeHtml(campaign.category)}</td>
                 <td>${escapeHtml(campaign.audience)}</td>
                 <td>${escapeHtml(campaign.sent_count ?? campaign.estimated_recipients ?? 0)}</td>
-                <td>${campaign.status === "sent" ? smsStatusChip("sent") : `<span class="chip">${escapeHtml(approvalStatus)}</span>`}</td>
+                <td>${campaign.status === "sent" ? smsStatusChip("sent") : campaign.status === "rejected" ? smsStatusChip("rejected") : `<span class="chip">${escapeHtml(approvalStatus)}</span>`}</td>
                 <td>${approvedRoles.size ? escapeHtml([...approvedRoles].map((role) => role.toUpperCase()).join(" + ")) : "Awaiting CEO or COO"}</td>
                 <td>
                   ${canApprove
-                    ? `<button type="button" class="secondary-btn" data-announcement-approve="${escapeHtml(campaign.id)}">Approve as ${escapeHtml(approvalRole.toUpperCase())}</button>`
+                    ? `<button type="button" class="secondary-btn" data-announcement-approve="${escapeHtml(campaign.id)}">Approve as ${escapeHtml(approvalRole.toUpperCase())}</button>
+                       <button type="button" class="secondary-btn reject-btn" data-announcement-reject="${escapeHtml(campaign.id)}">Reject</button>`
                     : campaign.status === "sent"
                       ? "Delivered in app"
-                      : approvalRole
-                        ? `${escapeHtml(approvalRole.toUpperCase())} approval recorded`
-                        : "CEO/COO approval only"}
+                      : campaign.status === "rejected"
+                        ? marketingRejectionNote(campaign)
+                        : campaign.status === "pending_approval" && approvalRole
+                          ? `${escapeHtml(approvalRole.toUpperCase())} approval recorded <button type="button" class="secondary-btn reject-btn" data-announcement-reject="${escapeHtml(campaign.id)}">Reject</button>`
+                          : approvalRole
+                            ? `${escapeHtml(approvalRole.toUpperCase())} approval recorded`
+                            : "CEO/COO approval only"}
                 </td>
               </tr>
             `;
@@ -6452,6 +6480,63 @@ document.addEventListener("click", async (event) => {
       showToast(adminErrorMessage(error.message));
     } finally {
       announcementApprove.disabled = false;
+    }
+    return;
+  }
+  const marketingSmsReject = event.target.closest("[data-marketing-sms-reject]");
+  if (marketingSmsReject) {
+    const campaignId = marketingSmsReject.dataset.marketingSmsReject;
+    const campaign = (PAGE_EXPORTS.marketingSmsCampaigns || []).find((item) => item.id === campaignId);
+    const reason = marketingRejectionReason(campaign?.title || "this SMS campaign");
+    if (reason === null) return;
+    marketingSmsReject.disabled = true;
+    try {
+      await apiFetch(`/admin/marketing/sms-campaigns/${campaignId}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+      showToast("SMS campaign rejected - no message was sent");
+      await renderMarketing(PAGE_EXPORTS.currentMe || {});
+    } catch (error) {
+      showToast(error.status === 404
+        ? "The TitoPay API does not offer the reject endpoint yet (A-P1-8 in ADMIN-API-REQUIREMENTS.md). The campaign is unchanged."
+        : adminErrorMessage(error.message));
+      marketingSmsReject.disabled = false;
+    }
+    return;
+  }
+  const marketingEmailReject = event.target.closest("[data-marketing-email-reject]");
+  if (marketingEmailReject) {
+    const campaignId = marketingEmailReject.dataset.marketingEmailReject;
+    const campaign = (PAGE_EXPORTS.marketingEmailCampaigns || []).find((item) => item.id === campaignId);
+    const reason = marketingRejectionReason(campaign?.title || "this email production");
+    if (reason === null) return;
+    marketingEmailReject.disabled = true;
+    try {
+      await apiFetch(`/admin/marketing/email-campaigns/${campaignId}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+      showToast("Email production rejected - nothing was queued");
+      await renderMarketing(PAGE_EXPORTS.currentMe || {});
+    } catch (error) {
+      showToast(error.status === 404
+        ? "The TitoPay API does not offer the reject endpoint yet (A-P1-8 in ADMIN-API-REQUIREMENTS.md). The production is unchanged."
+        : adminErrorMessage(error.message));
+      marketingEmailReject.disabled = false;
+    }
+    return;
+  }
+  const announcementReject = event.target.closest("[data-announcement-reject]");
+  if (announcementReject) {
+    const campaignId = announcementReject.dataset.announcementReject;
+    const campaign = (PAGE_EXPORTS.marketingAnnouncements || []).find((item) => item.id === campaignId);
+    const reason = marketingRejectionReason(campaign?.title || "this announcement");
+    if (reason === null) return;
+    announcementReject.disabled = true;
+    try {
+      await apiFetch(`/admin/marketing/announcements/${campaignId}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+      showToast("Announcement rejected - it will not be delivered");
+      await renderMarketing(PAGE_EXPORTS.currentMe || {});
+    } catch (error) {
+      showToast(error.status === 404
+        ? "The TitoPay API does not offer the reject endpoint yet (A-P1-8 in ADMIN-API-REQUIREMENTS.md). The announcement is unchanged."
+        : adminErrorMessage(error.message));
+      announcementReject.disabled = false;
     }
     return;
   }
