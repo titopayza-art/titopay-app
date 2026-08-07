@@ -15,7 +15,11 @@ const crypto = require("crypto");
 const { config } = require("../config/env");
 const { pool } = require("../db/pool");
 
+// Collection/Top-up and Payout/Withdrawal are stored in two separate
+// platform_settings rows, so saving one can never overwrite the other's
+// credentials.
 const SETTING_KEY = "integration_peach_payments";
+const PAYOUT_SETTING_KEY = "integration_peach_payouts";
 const SECRET_FIELDS = ["apiKey", "apiSecret", "clientSecret", "password", "webhookSecret"];
 const PLAIN_FIELDS = [
   "baseUrl", "sandboxBaseUrl", "productionBaseUrl", "clientId", "username",
@@ -25,7 +29,7 @@ const PLAIN_FIELDS = [
 // Short cache so a burst of status polls does not hammer the settings table.
 // Deliberately small: a credential change in the portal takes effect within it.
 const CACHE_TTL_MS = 15000;
-let cache = null;
+const caches = new Map();
 
 function integrationEncryptionKey() {
   return crypto.createHash("sha256").update(config.refreshSecret || config.accessSecret).digest();
@@ -87,24 +91,48 @@ function buildEffectiveConfig(stored) {
   return effective;
 }
 
-async function loadPeachConfig({ refresh = false } = {}) {
-  if (!refresh && cache && cache.expiresAt > Date.now()) return cache.value;
-  let stored = null;
+async function readStored(settingKey) {
   try {
-    const { rows } = await pool.query("SELECT value FROM platform_settings WHERE key = $1 LIMIT 1", [SETTING_KEY]);
-    stored = rows[0]?.value || null;
+    const { rows } = await pool.query("SELECT value FROM platform_settings WHERE key = $1 LIMIT 1", [settingKey]);
+    return rows[0]?.value || null;
   } catch (_error) {
     // A settings read failure must not take payments down harder than it has
     // to; fall back to the process environment.
-    stored = null;
+    return null;
   }
-  const value = buildEffectiveConfig(stored);
-  cache = { value, expiresAt: Date.now() + CACHE_TTL_MS };
+}
+
+async function loadPeachConfig({ refresh = false } = {}) {
+  const cached = caches.get(SETTING_KEY);
+  if (!refresh && cached && cached.expiresAt > Date.now()) return cached.value;
+  const value = buildEffectiveConfig(await readStored(SETTING_KEY));
+  caches.set(SETTING_KEY, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  return value;
+}
+
+// Payout credentials are deliberately NOT merged with the Collection ones and
+// have no environment-variable fallback that could silently borrow them.
+async function loadPeachPayoutConfig({ refresh = false } = {}) {
+  const cached = caches.get(PAYOUT_SETTING_KEY);
+  if (!refresh && cached && cached.expiresAt > Date.now()) return cached.value;
+  const stored = await readStored(PAYOUT_SETTING_KEY);
+  const value = {
+    enabled: stored ? stored.enabled !== false : false,
+    environment: normalizeEnvironment(stored?.environment || stored?.mode) || "sandbox",
+    source: stored ? "database" : "unconfigured",
+    baseUrl: String(stored?.baseUrl ?? process.env.PEACH_PAYOUTS_BASE_URL ?? "").trim(),
+    clientId: String(stored?.clientId ?? "").trim(),
+    merchantId: String(stored?.merchantId ?? "").trim(),
+    clientSecret: storedSecret(stored, "clientSecret"),
+    webhookSecret: storedSecret(stored, "webhookSecret"),
+    callbackUrl: String(stored?.callbackUrl ?? "").trim()
+  };
+  caches.set(PAYOUT_SETTING_KEY, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
 
 function clearPeachConfigCache() {
-  cache = null;
+  caches.clear();
 }
 
 // Presence-only view, safe to log or return to an admin caller.
@@ -121,9 +149,23 @@ function describePeachConfig(effective = {}) {
   };
 }
 
+function describePeachPayoutConfig(effective = {}) {
+  return {
+    enabled: Boolean(effective.enabled),
+    environment: effective.environment || "",
+    baseUrlConfigured: Boolean(effective.baseUrl),
+    clientId: Boolean(effective.clientId),
+    clientSecret: Boolean(effective.clientSecret),
+    merchantId: Boolean(effective.merchantId)
+  };
+}
+
 module.exports = {
   SETTING_KEY,
+  PAYOUT_SETTING_KEY,
   loadPeachConfig,
+  loadPeachPayoutConfig,
+  describePeachPayoutConfig,
   clearPeachConfigCache,
   describePeachConfig,
   normalizeEnvironment

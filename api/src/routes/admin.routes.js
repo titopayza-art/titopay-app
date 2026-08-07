@@ -30,6 +30,7 @@ const { adminDisableBeneficiary, adminListBeneficiaries } = require("../services
 const { getEmailProviderStatus, sendSmtpTestEmail, deliverSms } = require("../services/notification-service");
 const { queueEmail, queueRawEmail } = require("../services/email-centre-service");
 const { testCheckoutAuthentication } = require("../services/peach-checkout-auth-service");
+const { testPayoutConnection } = require("../services/peach-payout-service");
 const { shouldSendCustomerEmail } = require("../services/customer-notification-preference-service");
 const { ensureAuthenticationPreferenceSchema } = require("../services/authentication-preference-service");
 const { getChatPresenceSnapshot } = require("../realtime/chat-hub");
@@ -119,7 +120,37 @@ const INTEGRATION_PROVIDERS = {
     // Peach Checkout (Embedded / Hosted Checkout V2) authenticates with the
     // Client ID, Client Secret and Merchant ID. The authentication and checkout
     // service URLs are fixed per environment, so no base URL is required.
-    requiredFields: ["clientId", "clientSecret", "merchantId"]
+    requiredFields: ["clientId", "clientSecret", "merchantId"],
+    capability: "collection",
+    capabilityLabel: "Collection / Top-up",
+    peachGroup: "peach_payments",
+    defaultBaseUrl: "https://testsecure.peachpayments.com/v2/checkout"
+  },
+  // Peach Payments — Payout / Withdrawal. A separate Peach capability with its
+  // own base URL and its own credentials, stored in its own platform_settings
+  // row so saving it can never touch the working Collection configuration.
+  // Reference: https://developer.peachpayments.com/docs/payouts-api-1
+  peach_payouts: {
+    label: "Peach Payments — Payout / Withdrawal",
+    description: "Bank withdrawals and payouts (money out).",
+    category: "payments",
+    routingEligible: false,
+    env: {
+      mode: process.env.PEACH_PAYOUTS_MODE || "sandbox",
+      baseUrl: process.env.PEACH_PAYOUTS_BASE_URL || "",
+      clientId: process.env.PEACH_PAYOUTS_CLIENT_ID || "",
+      clientSecret: process.env.PEACH_PAYOUTS_CLIENT_SECRET || "",
+      merchantId: process.env.PEACH_PAYOUTS_MERCHANT_ID || "",
+      webhookSecret: process.env.PEACH_PAYOUTS_WEBHOOK_SECRET || "",
+      callbackUrl: process.env.PEACH_PAYOUTS_CALLBACK_URL || ""
+    },
+    fields: ["enabled", "environment", "baseUrl", "clientId", "clientSecret", "merchantId", "webhookSecret", "callbackUrl"],
+    secretKeys: ["clientSecret", "webhookSecret"],
+    requiredFields: ["baseUrl", "clientId", "clientSecret", "merchantId"],
+    capability: "payout",
+    capabilityLabel: "Payout / Withdrawal",
+    peachGroup: "peach_payments",
+    defaultBaseUrl: "https://sandbox-payouts.peachpayments.com/api"
   },
   pos_provider: {
     label: "Speedpoint / POS Provider",
@@ -419,6 +450,14 @@ function publicIntegrationState(key, stored = {}) {
     configured,
     enabled: stored.enabled !== false,
     secrets,
+    // Capability metadata lets the Admin Portal render Peach as one provider
+    // with two independent sections without hard-coding anything about Peach.
+    capability: provider.capability || null,
+    capabilityLabel: provider.capabilityLabel || null,
+    peachGroup: provider.peachGroup || null,
+    // Documented default endpoint, shown as a placeholder only. The saved value
+    // always wins, so the endpoint stays configurable and is never assumed.
+    defaultBaseUrl: provider.defaultBaseUrl || "",
     fields: integrationFieldDefinitions(provider),
     health: {
       status: health.status || "not_tested",
@@ -1063,7 +1102,7 @@ function missingProviderFieldsFromEffective(provider, effective = {}) {
 
 function providerAuthenticationType(providerKey, effective = {}) {
   if (providerKey === "sms") return "bearer";
-  if (providerKey === "peach_payments") return "oauth_client_credentials";
+  if (providerKey === "peach_payments" || providerKey === "peach_payouts") return "oauth_client_credentials";
   if ((providerKey === "ott" || providerKey === "flash") && effective.username && effective.password) return "basic_username_password";
   if (providerKey === "docfox" && effective.apiKey) return "bearer_api_key";
   if (effective.apiKey) return "x-api-key";
@@ -1312,7 +1351,9 @@ async function testProviderConnection(providerKey, adminId) {
   const started = Date.now();
   const testedAt = new Date().toISOString();
   let connection = { ok: false, error: "Provider is disabled" };
-  const missing = missingProviderFieldsFromEffective(provider, effective);
+  // Payout reports its own PAYOUT_NOT_CONFIGURED state, which distinguishes a
+  // missing endpoint from missing credentials.
+  const missing = providerKey === "peach_payouts" ? [] : missingProviderFieldsFromEffective(provider, effective);
   const authenticationType = providerAuthenticationType(providerKey, effective);
 
   console.info("[integration-test] configuration loaded", {
@@ -1342,6 +1383,11 @@ async function testProviderConnection(providerKey, adminId) {
       // Real Peach Checkout V2 authentication: only an issued access token
       // counts as connected. Never a URL reachability probe.
       connection = await testCheckoutAuthentication(effective);
+    } else if (providerKey === "peach_payouts") {
+      // Peach Payouts only: the payout endpoint with the payout credentials.
+      // It never falls back to Checkout authentication, so Collection being
+      // connected can never make Payout look connected.
+      connection = await testPayoutConnection(effective);
     } else if (providerKey === "pos_provider") {
       connection = {
         ok: true,
@@ -1360,7 +1406,9 @@ async function testProviderConnection(providerKey, adminId) {
   }
 
   const health = {
-    status: connection.ok ? (providerKey === "pos_provider" ? "ready" : "connected") : "failed",
+    status: connection.ok
+      ? (providerKey === "pos_provider" ? "ready" : "connected")
+      : (connection.status === "not_configured" ? "not_configured" : "failed"),
     environment: effective.environment,
     responseTimeMs: Date.now() - started,
     lastTestedAt: testedAt,

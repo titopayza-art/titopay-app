@@ -28,3 +28,14 @@ PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node pwa-topup.spec.js
 
 `PEACH_PAYMENTS_SANDBOX_CHECKOUT_URL` / `PEACH_PAYMENTS_PRODUCTION_CHECKOUT_URL` exist so the
 Checkout host can be pointed at a mock; unset, the real Peach hosts are used.
+
+## Peach capability split
+
+| File | What it does |
+| :-- | :-- |
+| `fake-peach-payouts.js` | Stand-in for the Peach Payouts API: OAuth token, `GET /merchants/{id}/balance`, `POST /merchants/{id}/payouts`. Documented shapes only. |
+| `split-e2e.js` | 34 checks that Collection and Payout are independent: separate credentials, separate stored rows, separate tests, separate statuses, and that saving one never overwrites the other. |
+| `admin-split.spec.js` | Drives the real Admin bundle in Chromium: two capability sections, two forms, two Test Connection buttons, and Collection Connected while Payout reads Not Configured. |
+
+Payout authentication uses the Peach *dashboard* host, not the payouts host, so a local run needs
+`PEACH_PAYOUTS_SANDBOX_AUTH_URL=http://127.0.0.1:4401` alongside the payouts base URL.

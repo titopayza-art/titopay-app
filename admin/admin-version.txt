@@ -1,0 +1,376 @@
+TitoPay Admin
+Build: admin-console-v64
+Date: 2026-08-07
+
+v64 - Peach Payments splits into two independent capabilities.
+
+  - The Peach Payments provider page now shows Collection / Top-up and
+    Payout / Withdrawal as separate sections, each with its own environment,
+    base URL, credentials, status, last successful test, response time,
+    Save Configuration and Test Connection. The two never share a status:
+    Collection can read Connected while Payout reads Not Configured, and the
+    parent card reads Partially configured rather than Connected.
+  - Each section posts to its own provider key, so saving one capability
+    cannot overwrite the other's stored credentials. Secrets stay encrypted
+    server-side and continue to appear only as masked values.
+  - A capability that has never been tested and has nothing configured now
+    reads Not Configured rather than Not Tested.
+  - Requires the API package of the same date, which registers the payout
+    capability. Without it the page renders Collection exactly as before.
+
+v63 - Reject, with a written reason, on every marketing approval queue.
+
+  - The PWA Announcement, SMS and Email Production approval queues now show
+    Reject beside the approve action on every pending item - approving is no
+    longer the only way to clear the queue. Rejecting always asks for a
+    reason (required, up to 500 characters); the queue then shows
+    "Rejected by <role>: <reason>" on the row and the status chip reads
+    rejected. An approver who already recorded their approval on a pending
+    announcement can still reject it while it waits for the second role.
+  - The reject calls POST the reason to
+    /admin/marketing/{sms-campaigns|email-campaigns|announcements}/:id/reject.
+    The contract - pending-only, same CEO/COO/owner roles as approving,
+    reason stored on the row, audit entry - is specified as A-P1-8 in
+    ADMIN-API-REQUIREMENTS.md. If the API does not implement an endpoint yet
+    the console says so and confirms the item is unchanged.
+  - The CI gate grew to 43 checks: every queue offers reject, and a
+    rejection's reason is shown on the queue after the action.
+
+v62 - Personal and business accounts can be delinked from the portal when a
+customer asks for it.
+
+  - The Users page shows "Linked: <business>" under the account type for any
+    user record that carries a linked business, and a Delink business action
+    beside Suspend and Lock. The action states plainly what happens - both
+    profiles stay active and keep their own wallets and balances, only the
+    connection is removed - and asks for confirmation before calling the API.
+  - The Global Search profile card gains a Linked Business fact. It reads
+    "None reported" rather than "Not linked" when the API sends no linkage
+    field, because the console cannot tell the difference.
+  - The console reads every linkage field name the API might use
+    (linked_business object, linked_business_id/_name/_wallet,
+    business_link_id, business_linked) and calls
+    POST /admin/users/:id/delink-business with the linked business id. The
+    full contract, including the rules the API must enforce (no profile
+    closed, no balances moved, stale-id rejection, audit entry), is
+    specified as A-P1-7 in ADMIN-API-REQUIREMENTS.md. If the endpoint is not
+    implemented yet the console says so and confirms nothing was changed.
+  - The CI gate grew to 41 checks: linked users offer the action, and
+    delinking separates the accounts and refreshes the list.
+
+v61 - Marketing toolkit. Five additions to the Marketing Centre, all running
+entirely inside the console - no API endpoint was added, changed or removed,
+and every existing form submits exactly the payloads it did in v60.
+
+  - Message templates: each composer (in-app announcement, bulk SMS, email
+    production) gains Save as template / Apply / Delete. Templates are named
+    after the campaign title, capped at forty, and stored in this browser -
+    the page says so. Nothing sends on Apply; the form is filled for review.
+  - SMS segment meter: under the SMS message box, a live count of characters,
+    GSM-7 or Unicode encoding, segments per recipient (160/153 GSM, 70/67
+    Unicode) and the estimated total SMS units for the selected audience,
+    computed from the recipient counts the page already shows.
+  - UTM campaign links: the Create Campaign QR form takes optional UTM
+    source, medium and campaign fields, previews the final link as you type,
+    and submits the same destinationUrl field as before - just with the
+    parameters appended, so Google Analytics attributes scans correctly.
+  - Marketing Calendar: a month view plotting every announcement, SMS
+    broadcast and email production by creation date, with previous/next
+    month navigation and per-channel counts on each day.
+  - This Month Across Channels: broadcasts, SMS delivered, announcements,
+    email productions, reviews and saved templates for the current month,
+    counted from the records already on the page.
+  - The CI gate grew to 39 checks: template save/apply round-trip, the
+    segment meter, the UTM preview, calendar rendering and month navigation,
+    and the month summary.
+
+v60 - SMS Analytics joins the Communications group, mirroring the Email
+Analytics view.
+
+  - New SMS Analytics page: total sent, failures, delivery outcome,
+    recipients targeted, campaign counts and awaiting-approval tiles, with
+    charts for SMS per day, sent versus failed, top campaigns and campaigns
+    by status, plus a campaign delivery detail table and CSV export.
+  - Honest data, as everywhere: today the page derives its figures from the
+    API's own per-campaign delivery counters and says so on the page.
+    Per-message receipts, OTP SMS reporting and true daily/weekly/monthly
+    series need the dedicated endpoint specified as A-P1-6 in
+    ADMIN-API-REQUIREMENTS.md - the page calls GET /admin/sms/analytics on
+    every load and upgrades automatically the moment the API answers.
+  - Visible to roles holding SMS_VIEW, EMAIL_VIEW, analytics or marketing
+    permissions (and owners/developers as always); nothing else changed.
+  - Fixed: chart bars on the Email Centre dashboard and Email/SMS Analytics
+    now size through the CSSOM instead of inline style attributes, which the
+    console's own Content-Security-Policy (style-src 'self', since v54) was
+    correctly blocking - bars rendered at their minimum width on servers
+    where the CSP header is active.
+  - The CI gate grew to 32 checks: the page renders its tiles, draws the
+    derived charts, states its data provenance, and chart bars receive
+    their widths without inline styles.
+
+v59 - Quick replies become editable in the portal, and the console's API
+wishlist ships as a formal specification.
+
+  - Support Desk quick replies gain a Manage mode (platform owners): edit any
+    reply's title, group and wording, add and remove replies, and restore the
+    built-in Customer Care set at any time. [Agent Name] keeps working as the
+    substitution token. Edits are stored per browser; the shared, team-wide
+    store is specified as GET/PUT /admin/support/quick-replies in
+    ADMIN-API-REQUIREMENTS.md and the manager says so.
+  - ADMIN-API-REQUIREMENTS.md (repository root, not web-served) specifies
+    every backend item the console is already built against, in the same
+    format as the PWA's API-REQUIREMENTS.md: stopping routine sign-in emails,
+    server-side pagination, the user and transaction fields that light up the
+    analytics dashes, alert read state, the Service Builder store, quick-reply
+    templates, system metrics, per-session revoke, TOTP, and maker-checker
+    approvals. Implementing any item requires no console change.
+  - The CI gate grew to 28 checks: the manager opens for the owner, an edited
+    reply saves and shows, and restore-defaults returns the built-in set.
+
+v58 - RBAC editor completed: permissions for the newer modules can now be
+granted, custom permissions can be added by name, and the create-role form the
+v35 handlers were built for is rendered again. Save, create and delete still
+use exactly the endpoints they always did.
+
+  - The permission checklist is now the union of what the API offers, every
+    permission already held by any role, and the console's own module gates -
+    so analytics, reporting and service_builder can finally be ticked, and a
+    permission a role already holds can never disappear from its own editor.
+  - An add-permission field lets the owner store any named permission on a
+    role (validated to letters, numbers, underscores, dots and dashes). The
+    page states plainly that the API enforces what a permission unlocks -
+    naming one here only stores it on the role.
+  - Create a new role: name, description and the same checklist, applied
+    through the existing POST /admin/roles handler.
+  - Informational field hints no longer render in the Caps Lock warning
+    style - that treatment now belongs to the Caps Lock hint alone.
+  - The CI gate covers the page: the create-role form renders, the checklist
+    offers the newer module permissions, and a typed permission lands in the
+    role ticked.
+
+v57 - Support Desk quick replies. The twelve Customer Care responses now
+live inside the conversation view, grouped by workflow stage: greeting and
+inactivity check-ins, investigation and escalation, resolution and closing.
+
+  - One click inserts the response into the reply box with [Agent Name]
+    substituted for the signed-in operator's first name. Nothing is sent until
+    the agent presses Send reply, so the wording can be adjusted first.
+  - Inserting into a reply that already has text appends on a new paragraph
+    rather than replacing what the agent typed, and the draft survives the
+    workspace's own refreshes exactly as typed text does.
+  - The panel appears only where the agent can reply, collapsed by default so
+    the transcript keeps its space.
+  - The CI gate covers it: the panel renders in a conversation and the
+    inserted greeting carries the operator's own name.
+
+v56 - Low-Code Service Builder. A new Platform module for creating and
+managing TitoPay service definitions entirely through configuration - never
+code. Nothing an operator types is ever executed: every value is data rendered
+through the console's escaping, uploads are validated, and hostile SVGs are
+rejected outright.
+
+  - Ten-step wizard: basics, branding (drag-and-drop icon, banner, thumbnail
+    and feature image with type, size and content validation), navigation,
+    permissions, availability with country and future-ready province lists,
+    API configuration restricted to TitoPay API endpoints with a safe GET-only
+    Test Connection, UI configuration with a live tile preview, fees mapped to
+    the catalogue's fee and commission fields, notifications, and a review
+    step that blocks publishing until every check passes.
+  - Draft and publish lifecycle: nothing is offered until published. Publish,
+    disable, archive, restore, duplicate and permanent delete, with typed
+    confirmation on every destructive or publishing action.
+  - Version history snapshots the full configuration on every publish, with
+    one-click rollback that republishes the restored version - history is
+    never rewritten. An append-only audit trail records operator, role,
+    session, device and detail for every action.
+  - Per-service analytics derive live from transactions carrying the service
+    code: uses, success and failure counts, daily, weekly, monthly usage and
+    recorded revenue. Zeros are stated as zeros - nothing is simulated.
+  - Storage is honest about where it lives. If the API exposes
+    /admin/service-builder/services the builder uses it as the source of
+    truth; until then definitions are stored in this console's registry, the
+    page says so, and Export JSON produces both the full definition and a
+    catalogue entry in the exact schema the platform's service catalogue
+    already consumes (service_code, fee, commission, personal_visible,
+    business_visible, sort_order, ...), ready for the API team to load.
+  - The module is its own lazily-imported file, so every other console page
+    loads exactly the payload it loaded in v55. Access requires platform-owner
+    rights or a service-builder permission; no other module's access changed.
+  - The CI gate grew again: the builder renders among the now 40 routes, the
+    wizard opens, a saved draft appears in the list, and the module stays
+    gated for a role without the permission.
+
+v55 - Alert Centre. The platform events that were flooding the owner's inbox
+as emails - sign-ins recorded, failed attempts, fraud flags, pending KYC,
+waiting customers, failed transactions - now live inside the console.
+
+  - A bell in the topbar of every page carries the unread count. Its panel
+    shows the most recent alerts and marks all read in one click.
+  - The new Alerts module (sidebar, under Dashboard) is the full centre:
+    severity tabs with counts, category filter, unread-only view, pagination,
+    mark all read, and every alert links to the module that owns the event.
+  - Alerts are derived live from the security, audit, compliance, support,
+    transaction, system-health and merchant modules - the same events the
+    emails describe. Nothing is invented; a source that does not answer
+    contributes no alerts. The feed refreshes every two minutes while the
+    console is open.
+  - Read state is stored per browser. The API has no alert-read endpoint yet,
+    and the page says so rather than pretending the state is shared.
+  - The alert emails themselves are sent by the TitoPay API, not this console.
+    Now that the events are visible here, the API's notification sender can be
+    switched off for routine sign-in mail without losing anything.
+  - The CI gate grew to cover it: the alerts route renders, the bell carries
+    an unread badge, the panel opens, and mark-all-read clears the badge.
+
+v54 - Bank-grade hardening beneath the interface, and the console gains a
+permanent regression gate. No console page behaviour changed.
+
+  - Transport and headers. The .htaccess now sends Strict-Transport-Security,
+    Cross-Origin-Opener-Policy and Cross-Origin-Resource-Policy alongside the
+    existing headers, denies dotfiles and repository documentation, and its
+    Content-Security-Policy drops unsafe-inline for styles and gains the
+    wss://api.titopay.co.za entry the pages already declared - without it, a
+    host with mod_headers active would have blocked the support chat socket.
+  - The sign-in page's own CSP also drops unsafe-inline: no page in the
+    console now permits inline styles.
+  - Failure surface. Branded 403 and 404 pages replace the server defaults,
+    wired through ErrorDocument, with routes back to the dashboard and sign-in.
+    robots.txt disallows everything, matching the noindex headers.
+  - Release integrity is now enforced, not assumed: a committed test gate
+    (tests/admin in the repository, run by CI on every push) verifies one
+    version string across all pages, the version file and the deployment
+    marker, then drives the real console in Chromium - credential sign-in to
+    the dashboard, all 38 routes rendering, the table layer, the analytics
+    permission gate and a zero-console-error run.
+
+v53 - The sign-in page is finished to the same enterprise standard as the
+console behind it. Presentation only: every element admin.js binds to - the
+sign-in form, password reveal, Caps Lock hint, forgot-password card, Email OTP
+challenge, status line and environment badge - keeps its exact id, class and
+attribute, and the full flow was exercised end to end after the change.
+
+  - The form now sits in an elevated card on a softly tinted panel, with the
+    page's entrance rise, so the credentials surface reads as the protected
+    object on the page rather than fields floating on white.
+  - A trust strip under the card states the session protections that are
+    actually in force: encrypted connection, role-based access, audited
+    actions. Nothing is claimed that the platform does not do.
+  - The brand panel gains a fine engineering grid over the gradient and the
+    security points become icon chips. The logo artwork is framed as a
+    deliberate plate in both themes instead of a white box on the tint.
+  - The footer now carries the console build identity, so the version that is
+    live is readable from the sign-in screen.
+  - Verified: sign-in reaches the dashboard, the OTP challenge injects and
+    focuses, the reset card toggles, the password reveal works, identifier is
+    autofocused, both themes render, and there is no horizontal overflow at
+    1280, 1024, 820 or 390 wide.
+
+v52 - Enterprise UI/UX pass. Presentation only: no endpoint, permission,
+route, payload or business rule was changed, and a control-by-control
+comparison of all 38 routes before and after shows zero removals.
+
+  - Design system. A two-stop elevation ramp replaces the single flat shadow,
+    radii and spacing move onto one scale, headings and figures tighten, and
+    the muted ink was darkened to clear WCAG AA on card surfaces. Buttons gain
+    press feedback and a consistent disabled state; a bare submit button in the
+    filter rows no longer renders as browser chrome.
+  - Navigation. The rail collapses to icons and remembers the choice per
+    browser. Nothing is removed when it does: every item keeps its route, icon
+    and accessible name, and the label moves to a tooltip. The state is ignored
+    below the tablet breakpoint, where the rail is already a drawer. Escape
+    closes the drawer.
+  - Tables. Every table in the console gains sortable headers with aria-sort
+    and a third click that restores the module's own order, a row filter with a
+    live count, bulk selection with select-all, per-table export of what is on
+    screen, column resizing, and a sticky header that reads as a layer. The
+    layer works on the rendered table through a MutationObserver, so no module
+    was modified to receive it and modules that re-render keep it.
+  - Prioritisation by colour. A row carrying a red or orange status now shows a
+    matching accent on its leading edge, so high-risk compliance reviews,
+    flagged transactions and queues waiting on an agent are visible without
+    reading. The accent is drawn from the status the module already rendered.
+  - Dashboard. Keeps the four figures and the endpoint that produced them, and
+    adds wallet float, active sessions, pending KYC, open tickets, merchant
+    onboarding, flagged security events, a platform health panel covering API,
+    database, providers and sessions, and a live activity feed from the audit
+    log. The first paint still comes from the overview endpoint alone;
+    everything else arrives after it and never blocks it. A source that does
+    not answer leaves a dash.
+  - States and feedback. Toasts carry a tone and an icon, inferred from the
+    message, so a confirmation and a failure no longer look identical. Empty
+    tables explain themselves. A progress line runs under the topbar while a
+    module loads. Content settles in rather than snapping, and every animation
+    is dropped under prefers-reduced-motion.
+  - Accessibility. A visible focus ring is guaranteed console-wide, including
+    the rail. Required fields are marked on the label. Pointer targets reach
+    44px below the tablet breakpoint. Sortable headers are keyboard operable
+    and announce their state.
+  - Verified: 38 routes render, no console errors, no horizontal overflow at
+    1440, 1280, 1024, 820 or 768, both themes, and page-load timings unchanged
+    within run-to-run noise apart from the dashboard, which paints about 30ms
+    later because the board is larger.
+
+v51 - Enterprise Analytics. A new Analytics module joins the Operations
+group in the sidebar with eight reporting sections: Executive, Financial,
+Users, Transactions, Merchants, Fraud & Security, Support and System. It
+carries KPI cards with period-on-period growth, line, area, bar, ranked bar,
+donut and heat-map charts, paginated tables, date-range and dimension filters,
+and PDF, Excel and CSV export.
+
+  - The module is a separate file, assets/admin-analytics.js, imported the
+    first time an operator opens Analytics. Every other console page loads
+    exactly the JavaScript it loaded in v50.
+  - Analytics reads existing admin endpoints only. No endpoint, permission,
+    payload or database structure was changed. If the optional
+    GET /admin/analytics/overview endpoint is added later, the module picks it
+    up automatically; without it the page works from the modules already live.
+  - A metric the API does not carry shows a dash and is listed in that
+    section's Data coverage card. Nothing is estimated or simulated.
+  - Access needs an analytics or reporting permission. Full-access and
+    platform-owner roles keep the access they already had, and no other
+    module's access rules were touched.
+  - Aggregates are cached for sixty seconds per range and filter set, the
+    transaction pull is bounded by the range and a row limit, and long tables
+    paginate at ten rows.
+
+v50 - Customer sign-in OTP is disabled. Wallet-unlock Email OTP is enabled by
+the API migration and remains configurable. Admin sign-in OTP is controlled
+only by Security Authentication Mode.
+
+v48 - Every Admin entry page now loads the same cache-busted JavaScript and
+CSS, including SPA navigation from Dashboard to Security. Authentication Mode
+uses two full-width radio choices with visible selection and save state.
+
+v46 - Wallet Unlock Authentication is now a prominent Email OTP panel, the
+wallet unlock event appears first, and the asset version is bumped to prevent
+production browsers from reusing the v45 JavaScript cache.
+
+v45 - Customer Email OTP wallet unlock control is visible on the Email OTP page and Security Dashboard. Admin authentication mode now persists through the API and reloads.
+
+v44 - Customer Email OTP controls are visible on Security Dashboard, including the global switch and wallet unlock event.
+
+v42 - Email Analytics with delivery, engagement and trend reporting
+
+v41 - Email Centre, Email OTP operations, and approved Marketing Email Production
+
+v35 - Global Search decluttered; RBAC becomes editable
+  - Global Search showed four result tables and a record card at once. It now
+    has one result list at a time behind tabs (People, Businesses, Wallets,
+    Transactions) with match counts, and opening a record replaces the results
+    with that record and a "Back to results" control.
+  - RBAC / Permissions is now an editor, not a read-only matrix. The platform
+    owner and the developer role can change any role's permissions, create new
+    roles and delete custom ones. Requires the matching API package.
+
+v34 - Support Desk rebuilt as a workspace; taking over a chat opens it.
+v33 - Rate-limit and lockout messages reach the operator verbatim.
+v32 - Support workspace preserved across refreshes; CSP allows the chat socket.
+v31 - Sign-in page rebuilt for a regulated system.
+v30 - Operations console front-end rebuild on a single-layer stylesheet.
+
+RBAC editing needs the API package of the same date: it adds the
+admin_role_permissions table and the role endpoints. Without it the page still
+renders read-only and the console behaves exactly as before.
+
+Assets are versioned ?v=admin-console-v64; hard refresh (Ctrl+F5 /
+Cmd+Shift+R) if an old layout persists.
