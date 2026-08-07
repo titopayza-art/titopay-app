@@ -84,7 +84,7 @@ async function requestPeach(effective, method, path, body, { timeoutMs = DEFAULT
     if (error?.name === "AbortError") {
       throw new AppError(504, "Peach Payments network timeout", { code: "NETWORK_TIMEOUT" });
     }
-    throw new AppError(502, `Peach Payments network error: ${error.message}`, { code: "NETWORK_ERROR" });
+    throw new AppError(502, "Peach Payments could not be reached", { code: "NETWORK_ERROR" });
   } finally {
     clearTimeout(timeout);
   }

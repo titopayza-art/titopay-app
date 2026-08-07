@@ -1,0 +1,97 @@
+const express = require("express");
+const { requireAuth } = require("../middleware/auth");
+const { AppError } = require("../lib/errors");
+const { payQr } = require("../services/qr-service");
+const { config } = require("../config/env");
+const {
+  getCardTopupStatus,
+  confirmCardTopup,
+  captureCardTopup,
+  cancelCardTopup,
+  refundCardTopup
+} = require("../services/peach-payments-service");
+const {
+  createTopupCheckout,
+  getTopupStatus,
+  listRecentTopups
+} = require("../services/peach-checkout-service");
+
+const router = express.Router();
+
+router.use(requireAuth);
+
+function assertTransactionsAllowed(req) {
+  if (req.auth.profileLocked) {
+    throw new AppError(423, "Profile is locked. Payment actions are disabled until OTP unlock.");
+  }
+}
+
+router.post("/qr", async (req, res, next) => {
+  try {
+    assertTransactionsAllowed(req);
+    const result = await payQr(req.auth, req.body);
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Card top-up runs on Peach Checkout V2. The response carries a redirectUrl the
+// PWA sends the customer to; the wallet is credited only after this server has
+// verified the checkout with Peach.
+router.post("/topup", async (req, res, next) => {
+  try {
+    assertTransactionsAllowed(req);
+    const result = await createTopupCheckout(req.auth, {
+      ...req.body,
+      idempotencyKey: req.get("idempotency-key") || req.body?.idempotencyKey
+    });
+    res.status(result.idempotentReplay ? 200 : 201).json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/topup", async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listRecentTopups(req.auth, req.query.limit) });
+  } catch (error) { next(error); }
+});
+
+// Status polling stays available while a profile is locked so a customer can
+// always see how a payment they already made resolved.
+router.get("/topup/:reference", async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await getTopupStatus(req.auth, req.params.reference)) });
+  } catch (error) { next(error); }
+});
+
+// Legacy Peach Payments API lifecycle actions. Unchanged, still behind
+// PEACH_PAYMENTS_V2_ENABLED, and not part of the Checkout top-up flow.
+router.get("/legacy-topup/:paymentId", async (req, res, next) => {
+  try {
+    assertTransactionsAllowed(req);
+    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
+    res.json({ ok: true, ...(await getCardTopupStatus(req.auth, req.params.paymentId)) });
+  } catch (error) { next(error); }
+});
+
+for (const [path, action] of [["confirm", confirmCardTopup], ["capture", captureCardTopup], ["cancel", cancelCardTopup]]) {
+  router.post(`/legacy-topup/:paymentId/${path}`, async (req, res, next) => {
+    try {
+      assertTransactionsAllowed(req);
+      if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
+      res.json({ ok: true, ...(await action(req.auth, req.params.paymentId, req.body || {})) });
+    } catch (error) { next(error); }
+  });
+}
+
+router.post("/legacy-topup/:paymentId/refund", async (req, res, next) => {
+  try {
+    assertTransactionsAllowed(req);
+    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
+    res.json({ ok: true, ...(await refundCardTopup(req.auth, req.params.paymentId, req.body || {})) });
+  } catch (error) { next(error); }
+});
+
+module.exports = router;

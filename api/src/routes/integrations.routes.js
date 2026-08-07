@@ -7,6 +7,8 @@ const { requireAdminPermission } = require("../middleware/rbac");
 const { AppError } = require("../lib/errors");
 const { boundedText, requireEnum } = require("../lib/validation");
 const { processPeachPaymentWebhook } = require("../services/peach-payments-service");
+const { settleTopupFromWebhook } = require("../services/peach-checkout-service");
+const { loadPeachConfig } = require("../services/peach-config-service");
 
 const router = express.Router();
 
@@ -60,17 +62,11 @@ function decryptSecret(value) {
 }
 
 async function loadPeachWebhookConfig() {
-  const result = await pool.query(
-    "SELECT value FROM platform_settings WHERE key = $1 LIMIT 1",
-    ["integration_peach_payments"],
-  );
-  const saved = result.rows[0]?.value || {};
+  const effective = await loadPeachConfig();
   return {
-    secret: decryptSecret(saved?.secrets?.webhookSecretEncrypted)
-      || config.integrations?.peachPayments?.webhookSecret
-      || "",
-    merchantId: String(saved.merchantId || config.integrations?.peachPayments?.merchantId || "").trim(),
-    entityId: String(saved.entityId || config.integrations?.peachPayments?.entityId || "").trim(),
+    secret: effective.webhookSecret || "",
+    merchantId: effective.merchantId || "",
+    entityId: effective.entityId || "",
   };
 }
 
@@ -187,19 +183,28 @@ function validatePeachPayload(body, expected) {
 // merchantTransactionId, result.code, paymentType) and does not include an
 // entity ID in every event. Keep this additive so the existing webhook contract
 // remains unchanged when PEACH_PAYMENTS_V2_ENABLED is false.
+// Peach Checkout webhook payloads carry amount, currency, checkoutId,
+// merchantTransactionId, result.code and merchant.name — and no entity ID.
+//
+// `merchant.name` is the merchant's display name, NOT the Checkout Merchant ID,
+// so it must never be compared against the configured Merchant ID: doing so
+// rejected every genuine Checkout notification with HTTP 400, which Peach then
+// retried for 30 days. Only an explicit merchantId field is worth comparing.
 function validatePeachV2Payload(body, expected) {
-  const merchantId = firstValue(body, ["merchantId", "merchant_id", "merchant.name", "merchant"]);
+  const merchantId = firstValue(body, ["merchantId", "merchant_id"]);
+  const merchantName = firstValue(body, ["merchant.name", "merchant"]);
   const amountText = firstValue(body, ["amount", "amount.value", "payment.amount"]);
   const currency = firstValue(body, ["currency", "amount.currency", "payment.currency"]).toUpperCase();
   const transactionId = firstValue(body, [
-    "paymentId", "payment_id", "id", "transactionId", "transaction_id", "merchantTransactionId", "merchant_transaction_id",
+    "merchantTransactionId", "merchant_transaction_id", "checkoutId", "checkout_id",
+    "paymentId", "payment_id", "id", "transactionId", "transaction_id",
     "result.id", "payment.id", "payload.id", "payload.payment.id"
   ]);
   if (!amountText || !/^\d+(?:\.\d{1,2})?$/.test(amountText) || Number(amountText) <= 0) throw new AppError(400, "Amount is invalid");
   if (!/^[A-Z]{3}$/.test(currency)) throw new AppError(400, "Currency is invalid");
   if (!transactionId || transactionId.length > 200 || !/^[A-Za-z0-9._:/-]+$/.test(transactionId)) throw new AppError(400, "Transaction ID is invalid");
   if (expected.merchantId && merchantId && !timingSafeEqualText(merchantId, expected.merchantId)) throw new AppError(400, "Merchant ID is invalid");
-  return { merchantId, entityId: "", amount: amountText, currency, transactionId };
+  return { merchantId: merchantId || merchantName, entityId: "", amount: amountText, currency, transactionId };
 }
 
 function webhookIdempotencyKey(transactionId) {
@@ -241,7 +246,13 @@ async function processPeachWebhookEvent(key, event) {
 }
 
 async function processPeachWebhookEventV2(key, event) {
-  const result = await processPeachPaymentWebhook(event);
+  // Checkout top-ups settle first. The webhook body is only a trigger — the
+  // Checkout service re-reads the status from Peach before any wallet moves.
+  let result = await settleTopupFromWebhook(event.payload || {});
+  if (!result.matched) {
+    // Not a Checkout top-up: fall through to the legacy Payments API handler.
+    result = await processPeachPaymentWebhook(event);
+  }
   await pool.query(
     `UPDATE platform_settings
         SET value = $2::JSONB, updated_at = NOW()
@@ -272,7 +283,11 @@ async function handlePeachProviderWebhook(req, res, next) {
     }
 
     const body = req.body && typeof req.body === "object" ? req.body : {};
-    const useV2 = Boolean(config.integrations.peachPayments.v2Enabled);
+    // Peach Checkout V2 notifications carry no entity ID. The stricter legacy
+    // shape is still accepted whenever a delivery actually provides one, so an
+    // existing integration keeps working unchanged.
+    const hasLegacyEntityId = Boolean(firstValue(body, ["entityId", "entity_id", "entity.id", "authentication.entityId", "payload.entityId"]));
+    const useV2 = !hasLegacyEntityId;
     const validated = useV2 ? validatePeachV2Payload(body, webhookConfig) : validatePeachPayload(body, webhookConfig);
     const event = {
       id: validated.transactionId,
