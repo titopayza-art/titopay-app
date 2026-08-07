@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v61";
+const ADMIN_ASSET_VERSION = "admin-console-v62";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -1428,6 +1428,7 @@ function renderSearchDetail(type, id) {
         <span><small>Wallet Type</small><strong>${escapeHtml(record.wallet_type || record.kind || record.account_type || "-")}</strong></span>
         <span><small>Recent Transactions</small><strong>${escapeHtml(record.recent_transactions ?? "-")}</strong></span>
         <span><small>Linked Devices</small><strong>${escapeHtml(record.linked_devices ?? "-")}</strong></span>
+        <span><small>Linked Business</small><strong>${escapeHtml(userBusinessLink(record).linked ? userBusinessLink(record).label : "None reported")}</strong></span>
         <span><small>Risk Flags</small><strong>${escapeHtml(Array.isArray(record.risk_flags) && record.risk_flags.length ? record.risk_flags.join(", ") : "None")}</strong></span>
         <span><small>Reference</small><strong>${escapeHtml(record.reference || compactId(record.id))}</strong></span>
       </div>
@@ -1957,6 +1958,20 @@ function bindSearchForm() {
   });
 }
 
+/* Personal <-> business account linking. The console reads every field name
+   the API might use for the linked counterpart - first match wins - and the
+   Delink action calls POST /admin/users/:id/delink-business (A-P1-7 in
+   ADMIN-API-REQUIREMENTS.md). Nothing is invented: no field, no link shown. */
+function userBusinessLink(row = {}) {
+  const nested = row.linked_business || row.linkedBusiness || null;
+  const id = nested?.id ?? row.linked_business_id ?? row.linkedBusinessId ?? row.business_link_id ?? null;
+  const name = nested?.business_name ?? nested?.name ?? row.linked_business_name ?? row.linkedBusinessName ?? null;
+  const wallet = nested?.wallet_number ?? row.linked_business_wallet ?? null;
+  const flagged = row.business_linked === true || row.businessLinked === true;
+  if (id === null && !name && !wallet && !flagged) return { linked: false, id: "", label: "" };
+  return { linked: true, id: id === null ? "" : String(id), label: String(name || wallet || id || "business account") };
+}
+
 async function renderUsers() {
   const result = await apiFetch("/admin/users");
   const items = result.items || [];
@@ -1965,7 +1980,7 @@ async function renderUsers() {
     "Customer Accounts",
     renderRows(rows, [
       { label: "User", render: (row) => `<strong>${escapeHtml(row.full_name)}</strong><br><small>${escapeHtml(row.username)}</small>` },
-      { label: "Type", render: (row) => `<span class="chip blue">${escapeHtml(row.account_type)}</span>` },
+      { label: "Type", render: (row) => { const link = userBusinessLink(row); return `<span class="chip blue">${escapeHtml(row.account_type)}</span>${link.linked ? `<br><small>Linked: ${escapeHtml(link.label)}</small>` : ""}`; } },
       { label: "Wallet ID", render: (row) => `<strong>${escapeHtml(row.wallet_id || row.wallet_number || "-")}</strong><br><small>${escapeHtml(row.wallet_type || row.account_type || "-")}</small>` },
       { label: "Contact", render: (row) => `${escapeHtml(row.email || "-")}<br><small>${escapeHtml(row.phone || "-")}</small>` },
       { label: "FICA", render: (row) => `<span class="chip ${chipClass(row.fica_status)}">${escapeHtml(row.fica_status || "Not submitted")}</span>` },
@@ -1976,6 +1991,7 @@ async function renderUsers() {
       <button data-user-refresh="${escapeHtml(row.id)}">Refresh</button>
       <button data-user-action="${row.status === "suspended" ? "activate" : "suspend"}" data-user-id="${row.id}">${row.status === "suspended" ? "Activate" : "Suspend"}</button>
       <button data-user-action="${row.profile_locked ? "unlock" : "lock"}" data-user-id="${row.id}">${row.profile_locked ? "Unlock" : "Lock"}</button>
+      ${userBusinessLink(row).linked ? `<button data-user-delink="${escapeHtml(row.id)}">Delink business</button>` : ""}
     `)
   );
   document.getElementById("page-content").innerHTML = `
@@ -6197,6 +6213,28 @@ document.addEventListener("click", async (event) => {
       else await renderUsers();
     } catch (error) {
       showToast(adminErrorMessage(error.message));
+    }
+    return;
+  }
+  const userDelink = event.target.closest("[data-user-delink]");
+  if (userDelink) {
+    const record = (PAGE_EXPORTS.users || []).find((row) => String(row.id) === String(userDelink.dataset.userDelink));
+    const link = userBusinessLink(record || {});
+    const who = record?.full_name || record?.username || "this user";
+    if (!window.confirm(`Delink ${who}'s personal profile from "${link.label || "the linked business account"}"?\n\nBoth profiles stay active and keep their own wallets and balances - they are simply no longer connected. Do this only when the customer has asked for it. The action is recorded in the audit log.`)) return;
+    try {
+      await apiFetch(`/admin/users/${userDelink.dataset.userDelink}/delink-business`, {
+        method: "POST",
+        body: JSON.stringify(link.id ? { businessId: link.id } : {}),
+      });
+      showToast("Accounts delinked - the personal and business profiles are now separate");
+      const page = document.querySelector(".admin-shell[data-page]")?.dataset.page;
+      if (page === "search") await renderSearch();
+      else await renderUsers();
+    } catch (error) {
+      showToast(error.status === 404
+        ? "The TitoPay API does not offer the delink endpoint yet (A-P1-7 in ADMIN-API-REQUIREMENTS.md). No change was made."
+        : adminErrorMessage(error.message));
     }
     return;
   }

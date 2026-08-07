@@ -1,6 +1,6 @@
 # TitoPay Admin API requirements
 
-What the admin console (admin.titopay.co.za, build v61) needs from the
+What the admin console (admin.titopay.co.za, build v62) needs from the
 backend, written from the client side in the same format as
 `API-REQUIREMENTS.md`. Each item says which console screen depends on it, what
 happens today without it, and the exact contract the console is already built
@@ -22,6 +22,7 @@ from the client side at all).
 | A-P1-4 service-builder store | Service Builder | Definitions live per browser; JSON export is the handoff |
 | A-P1-5 quick-reply templates | Support Desk | Edited wording is per browser |
 | A-P1-6 SMS analytics endpoint | SMS Analytics | Metrics derived from campaign counters only; no per-message receipts, no OTP SMS reporting |
+| A-P1-7 account linkage + delink | Users | No link shown, and the Delink action reports the endpoint is missing without changing anything |
 | A-P2-1 system metrics | Analytics → System, Dashboard | CPU/RAM/disk/network/cache show "Not reported" |
 | A-P2-2 per-session revoke | Security | Only "sign out all devices" exists |
 | A-P2-3 TOTP / WebAuthn for admin sign-in | Sign in | Email OTP is the only second factor |
@@ -211,6 +212,46 @@ All fields are read defensively; a missing series simply renders empty.
 Counting delivered/failed requires the SMS gateway's delivery receipts to be
 stored per message — that storage is the real work here, and it is also what
 would later enable a per-message delivery log screen.
+
+## A-P1-7 — Personal ↔ business account linkage and delink
+
+**Screens:** Users (linked badge in the Type column plus a Delink action);
+Global Search profile card (Linked Business fact).
+
+**Today (v62):** the console reads linkage from the user rows defensively and
+shows nothing when no field is present — the profile card says "None
+reported" rather than "Not linked", because the console cannot tell the
+difference. When a link is present, the Delink action asks for explicit
+confirmation (both profiles stay active with their own wallets and balances;
+customer must have requested it) and calls the endpoint below. Until the API
+implements it, the console reports that the endpoint is missing and that no
+change was made.
+
+**Required, part 1 — linkage on `GET /v1/admin/users` rows.** Any one of
+these (first match wins):
+
+```
+linked_business          ({ id, business_name, wallet_number })
+linked_business_id  (+ linked_business_name, linked_business_wallet)
+business_link_id
+business_linked          (boolean; label falls back to "business account")
+```
+
+**Required, part 2 — the delink action:**
+
+```
+POST /v1/admin/users/:id/delink-business
+{ "businessId": "<linked business id>" }     (empty {} when the console
+                                              has no id, only a flag)
+→ { "ok": true }
+```
+
+Rules the API must enforce: delinking severs the association only — neither
+profile is closed, no balances move, and both wallets remain owned by their
+current profiles. Reject the call if the id in the body no longer matches the
+current link (the operator acted on a stale row). Write the acting operator,
+the user and the business to the audit log; the console already surfaces
+audit entries in the Alert Centre and Audit pages.
 
 ## A-P2-1 — System metrics
 

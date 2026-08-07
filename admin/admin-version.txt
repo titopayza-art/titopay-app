@@ -1,6 +1,28 @@
 TitoPay Admin
-Build: admin-console-v61
+Build: admin-console-v62
 Date: 2026-08-07
+
+v62 - Personal and business accounts can be delinked from the portal when a
+customer asks for it.
+
+  - The Users page shows "Linked: <business>" under the account type for any
+    user record that carries a linked business, and a Delink business action
+    beside Suspend and Lock. The action states plainly what happens - both
+    profiles stay active and keep their own wallets and balances, only the
+    connection is removed - and asks for confirmation before calling the API.
+  - The Global Search profile card gains a Linked Business fact. It reads
+    "None reported" rather than "Not linked" when the API sends no linkage
+    field, because the console cannot tell the difference.
+  - The console reads every linkage field name the API might use
+    (linked_business object, linked_business_id/_name/_wallet,
+    business_link_id, business_linked) and calls
+    POST /admin/users/:id/delink-business with the linked business id. The
+    full contract, including the rules the API must enforce (no profile
+    closed, no balances moved, stale-id rejection, audit entry), is
+    specified as A-P1-7 in ADMIN-API-REQUIREMENTS.md. If the endpoint is not
+    implemented yet the console says so and confirms nothing was changed.
+  - The CI gate grew to 41 checks: linked users offer the action, and
+    delinking separates the accounts and refreshes the list.
 
 v61 - Marketing toolkit. Five additions to the Marketing Centre, all running
 entirely inside the console - no API endpoint was added, changed or removed,
@@ -316,5 +338,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v61; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v62; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

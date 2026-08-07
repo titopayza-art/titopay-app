@@ -229,6 +229,18 @@ function checkVersionConsistency() {
   check(await page.textContent(".mkt-cal-nav strong") !== calMonthBefore, "calendar navigates between months");
   check((await page.textContent("#mkt-month-summary")).includes("SMS broadcasts"), "cross-channel month summary renders");
 
+  // --- Personal <-> business delink ---------------------------------------
+  await page.goto(`${BASE}/users/`);
+  await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });
+  await page.waitForTimeout(500);
+  const delinkBefore = (await page.$$("[data-user-delink]")).length;
+  check(delinkBefore > 0, `linked users offer the delink action (${delinkBefore} shown)`);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.click("[data-user-delink]");
+  await page.waitForTimeout(900);
+  const delinkAfter = (await page.$$("[data-user-delink]")).length;
+  check(delinkAfter === delinkBefore - 1, "delinking separates the accounts and the list refreshes");
+
   // --- RBAC editor --------------------------------------------------------
   await page.goto(`${BASE}/rbac-permissions/`);
   await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });

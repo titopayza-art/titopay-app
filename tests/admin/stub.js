@@ -33,6 +33,10 @@ const users = Array.from({ length: 120 }, (_, index) => ({
   wallet_id: `TP${100000 + index}`,
   created_at: new Date(NOW - Math.floor(rnd() * 200) * DAY).toISOString(),
   last_seen_at: new Date(NOW - Math.floor(rnd() * 30) * DAY).toISOString(),
+  // Every eighth-plus-three user carries a linked business, exercising the
+  // console's delink action.
+  linked_business_id: index % 8 === 3 ? `mer_${index % 24}` : undefined,
+  linked_business_name: index % 8 === 3 ? `Merchant ${index % 24} Trading` : undefined,
 }));
 
 reseed(2002);
@@ -235,6 +239,14 @@ function startAdminStub(port) {
           ],
           notes: [],
         }));
+        return;
+      }
+      const delinkMatch = url.pathname.match(/^\/v1\/admin\/users\/([^/]+)\/delink-business$/);
+      if (delinkMatch && request.method === "POST") {
+        const user = users.find((row) => row.id === delinkMatch[1]);
+        if (user) { delete user.linked_business_id; delete user.linked_business_name; }
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
         return;
       }
       const handler = ROUTES[url.pathname];
