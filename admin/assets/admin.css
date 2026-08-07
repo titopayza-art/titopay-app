@@ -512,6 +512,15 @@ button[disabled] {
   grid-column: 1 / -1;
 }
 
+/* A submit button whose label outgrows its grid column wraps instead of
+   overflowing the panel. */
+#page-content .form-grid > .primary-btn,
+#page-content .form-grid > .secondary-btn {
+  min-width: 0;
+  height: auto;
+  white-space: normal;
+}
+
 .form-actions {
   display: flex;
   align-items: center;
@@ -4830,6 +4839,149 @@ a.table-card-meta:hover {
 
 .sqr-manage-actions {
   margin-top: 4px;
+}
+
+/* Marketing toolkit: templates, SMS meter, UTM preview, calendar. */
+
+.mkt-template-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid var(--tp-border-soft);
+  border-radius: var(--tp-radius);
+  background: var(--tp-neutral-soft);
+}
+
+.mkt-template-row select {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius-sm);
+  background: var(--tp-surface);
+  color: var(--tp-text);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.mkt-template-row .ghost-btn {
+  padding: 5px 9px;
+  font-size: 0.8rem;
+}
+
+.mkt-sms-meter,
+.mkt-url-preview {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--tp-muted);
+}
+
+.mkt-url-preview {
+  font-family: var(--tp-font-mono);
+  word-break: break-all;
+  padding: 6px 8px;
+  border: 1px dashed var(--tp-border);
+  border-radius: var(--tp-radius-sm);
+  background: var(--tp-neutral-soft);
+  color: var(--tp-text);
+}
+
+.mkt-cal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mkt-cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mkt-cal-nav strong {
+  min-width: 130px;
+  text-align: center;
+  color: var(--tp-text-strong);
+}
+
+.mkt-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.mkt-cal-weekday {
+  padding: 4px 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tp-muted);
+}
+
+.mkt-cal-cell {
+  min-height: 52px;
+  padding: 5px 6px;
+  border: 1px solid var(--tp-border-soft);
+  border-radius: var(--tp-radius-sm);
+  background: var(--tp-surface);
+  display: grid;
+  gap: 3px;
+  align-content: start;
+}
+
+.mkt-cal-cell strong {
+  font-size: 0.78rem;
+  color: var(--tp-text);
+}
+
+.mkt-cal-blank {
+  border-color: transparent;
+  background: transparent;
+}
+
+.mkt-cal-today {
+  border-color: var(--tp-blue-line);
+  background: var(--tp-blue-soft);
+}
+
+.mkt-cal-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.mkt-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--tp-radius-pill);
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 700;
+  color: #fff;
+}
+
+.mkt-dot-announcement {
+  background: var(--tp-chart-3);
+}
+
+.mkt-dot-sms {
+  background: var(--tp-chart-1);
+}
+
+.mkt-dot-email {
+  background: var(--tp-chart-5);
 }
 
 /* == 11  States =========================================================== */

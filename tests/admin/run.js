@@ -198,6 +198,37 @@ function checkVersionConsistency() {
   });
   check(barsSized, "chart bars receive their widths without inline style attributes");
 
+  // --- Marketing toolkit --------------------------------------------------
+  await page.goto(`${BASE}/marketing/`);
+  await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });
+  await page.waitForTimeout(600);
+  check((await page.$$(".mkt-template-row")).length === 3, "marketing composers carry template rows");
+  await page.fill('#marketing-sms-form [name="title"]', "Gate test broadcast");
+  await page.fill('#marketing-sms-form [name="message"]', "TitoPay gate check message.");
+  await page.click('.mkt-template-row[data-mkt-type="sms"] [data-mkt-save]');
+  await page.waitForTimeout(250);
+  await page.fill('#marketing-sms-form [name="message"]', "");
+  await page.evaluate(() => {
+    const select = document.querySelector('.mkt-template-row[data-mkt-type="sms"] [data-mkt-select]');
+    select.value = [...select.options].find((option) => option.textContent === "Gate test broadcast")?.value || "";
+  });
+  await page.click('.mkt-template-row[data-mkt-type="sms"] [data-mkt-apply]');
+  await page.waitForTimeout(250);
+  const restoredMessage = await page.inputValue('#marketing-sms-form [name="message"]');
+  check(restoredMessage === "TitoPay gate check message.", "a saved marketing template applies back into the composer");
+  const meterText = await page.textContent("#sms-meter");
+  check(/1 segment/.test(meterText || ""), "sms meter reports characters and segments");
+  await page.fill('#marketing-campaign-form [name="destinationUrl"]', "https://titopay.co.za/app");
+  await page.fill('#marketing-campaign-form [name="utmSource"]', "qr");
+  await page.waitForTimeout(200);
+  check((await page.textContent("#campaign-url-preview")).includes("utm_source=qr"), "campaign link preview carries UTM parameters");
+  check(await page.$("#mkt-calendar-host .mkt-cal-grid") !== null, "marketing calendar renders");
+  const calMonthBefore = await page.textContent(".mkt-cal-nav strong");
+  await page.click('[data-mkt-cal-shift="-1"]');
+  await page.waitForTimeout(200);
+  check(await page.textContent(".mkt-cal-nav strong") !== calMonthBefore, "calendar navigates between months");
+  check((await page.textContent("#mkt-month-summary")).includes("SMS broadcasts"), "cross-channel month summary renders");
+
   // --- RBAC editor --------------------------------------------------------
   await page.goto(`${BASE}/rbac-permissions/`);
   await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });

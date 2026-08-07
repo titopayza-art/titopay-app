@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v60";
+const ADMIN_ASSET_VERSION = "admin-console-v61";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -3960,6 +3960,166 @@ async function renderQrManagement() {
   });
 }
 
+/* --- Marketing toolkit (v61) --------------------------------------------
+   Console-side only: reusable templates, an SMS segment meter, UTM links,
+   a campaign calendar and a cross-channel month summary. Nothing here
+   changes any API call the page already makes. */
+
+const MARKETING_TEMPLATES_KEY = "titopay_admin_marketing_templates_v1";
+const MARKETING_TEMPLATE_LIMIT = 40;
+
+function marketingTemplates() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MARKETING_TEMPLATES_KEY) || "null");
+    return Array.isArray(parsed?.templates) ? parsed.templates : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMarketingTemplates(templates) {
+  localStorage.setItem(MARKETING_TEMPLATES_KEY, JSON.stringify({ version: 1, templates: templates.slice(0, MARKETING_TEMPLATE_LIMIT) }));
+}
+
+function marketingTemplateRow(type) {
+  return `
+    <div class="mkt-template-row" data-mkt-type="${type}">
+      <select data-mkt-select aria-label="Saved ${type} templates" title="Templates are saved in this browser"></select>
+      <button type="button" class="ghost-btn" data-mkt-apply>Apply</button>
+      <button type="button" class="ghost-btn" data-mkt-save>Save as template</button>
+      <button type="button" class="ghost-btn" data-mkt-delete>Delete</button>
+    </div>`;
+}
+
+function wireMarketingTemplateRow(type, formId) {
+  const row = document.querySelector(`.mkt-template-row[data-mkt-type="${type}"]`);
+  const form = document.getElementById(formId);
+  if (!row || !form) return;
+  const select = row.querySelector("[data-mkt-select]");
+  const refill = () => {
+    const templates = marketingTemplates().filter((template) => template.type === type);
+    select.innerHTML = `<option value="">Saved templates (${templates.length})</option>${templates.map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)}</option>`).join("")}`;
+  };
+  refill();
+  row.querySelector("[data-mkt-apply]").addEventListener("click", () => {
+    const template = marketingTemplates().find((entry) => entry.id === select.value);
+    if (!template) { showToast("Choose a saved template first"); return; }
+    Object.entries(template.fields || {}).forEach(([key, value]) => {
+      const field = form.elements[key];
+      if (field && typeof field.value === "string") field.value = String(value);
+    });
+    form.querySelector('select[name="audience"]')?.dispatchEvent(new Event("change"));
+    form.querySelector("textarea")?.dispatchEvent(new Event("input"));
+    showToast("Template applied - review before submitting");
+  });
+  row.querySelector("[data-mkt-save]").addEventListener("click", () => {
+    const fields = {};
+    [...new FormData(form).entries()].forEach(([key, value]) => { fields[key] = String(value); });
+    const name = String(fields.title || "").trim().slice(0, 60) || "Untitled";
+    const templates = marketingTemplates().filter((entry) => !(entry.type === type && entry.name === name));
+    if (templates.length >= MARKETING_TEMPLATE_LIMIT) { showToast(`Template limit of ${MARKETING_TEMPLATE_LIMIT} reached - delete one first`); return; }
+    templates.unshift({ id: `tpl_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`, type, name, savedAt: new Date().toISOString(), fields });
+    saveMarketingTemplates(templates);
+    refill();
+    select.value = "";
+    showToast(`Template "${name}" saved in this browser`);
+  });
+  row.querySelector("[data-mkt-delete]").addEventListener("click", () => {
+    if (!select.value) { showToast("Choose a saved template first"); return; }
+    saveMarketingTemplates(marketingTemplates().filter((entry) => entry.id !== select.value));
+    refill();
+    showToast("Template deleted");
+  });
+}
+
+/* GSM-7 basic set per 3GPP TS 23.038; the extension table characters cost a
+   second septet. Anything outside forces UCS-2 (70/67 chars per segment). */
+const GSM_EXTENDED_RE = /[\^{}\\\[\]~|€]/g;
+const GSM_BASIC_RE = /^[@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-.\/0-9:;<=>?¡A-ZÄÖÑܧ¿a-zäöñüà]*$/;
+
+function smsSegmentInfo(text) {
+  const value = String(text || "");
+  const extendedCount = (value.match(GSM_EXTENDED_RE) || []).length;
+  const gsm = GSM_BASIC_RE.test(value.replace(GSM_EXTENDED_RE, ""));
+  const units = gsm ? value.length + extendedCount : value.length;
+  const perSegment = gsm ? (units <= 160 ? 160 : 153) : (units <= 70 ? 70 : 67);
+  return { encoding: gsm ? "GSM-7" : "Unicode", units, segments: value ? Math.ceil(units / perSegment) : 0 };
+}
+
+function campaignUrlWithUtm(destination, source, medium, campaignName) {
+  try {
+    const url = new URL(String(destination || "").trim());
+    if (source) url.searchParams.set("utm_source", source);
+    if (medium) url.searchParams.set("utm_medium", medium);
+    if (campaignName) url.searchParams.set("utm_campaign", campaignName);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function localDayKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function marketingCalendarEvents(announcements, smsCampaigns, emailCampaigns) {
+  const events = [];
+  const push = (rows, channel) => (rows || []).forEach((row) => {
+    const raw = row.createdAt || row.created_at;
+    if (raw) events.push({ day: String(raw).slice(0, 10), channel });
+  });
+  push(announcements, "announcement");
+  push(smsCampaigns, "sms");
+  push(emailCampaigns, "email");
+  return events;
+}
+
+function marketingCalendarHtml(events, offset) {
+  const anchor = new Date();
+  anchor.setDate(1);
+  anchor.setMonth(anchor.getMonth() + offset);
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const monthLabel = anchor.toLocaleDateString("en-ZA", { month: "long", year: "numeric" });
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const leadingBlanks = (new Date(year, month, 1).getDay() + 6) % 7;
+  const todayKey = localDayKey(new Date());
+  const counts = new Map();
+  events.forEach((event) => {
+    if (!event.day.startsWith(monthKey)) return;
+    const entry = counts.get(event.day) || { announcement: 0, sms: 0, email: 0 };
+    entry[event.channel] += 1;
+    counts.set(event.day, entry);
+  });
+  const cells = [];
+  for (let blank = 0; blank < leadingBlanks; blank += 1) cells.push('<span class="mkt-cal-cell mkt-cal-blank"></span>');
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dayKey = `${monthKey}-${String(day).padStart(2, "0")}`;
+    const entry = counts.get(dayKey);
+    const dots = entry
+      ? ["announcement", "sms", "email"].filter((channel) => entry[channel]).map((channel) => `<i class="mkt-dot mkt-dot-${channel}" title="${entry[channel]} ${channel === "announcement" ? "announcement(s)" : channel === "sms" ? "SMS broadcast(s)" : "email production(s)"}">${entry[channel]}</i>`).join("")
+      : "";
+    cells.push(`<span class="mkt-cal-cell${dayKey === todayKey ? " mkt-cal-today" : ""}"><strong>${day}</strong><span class="mkt-cal-dots">${dots}</span></span>`);
+  }
+  return `
+    <section class="table-card">
+      <div class="mkt-cal-head">
+        <h3>Marketing Calendar</h3>
+        <div class="mkt-cal-nav">
+          <button class="secondary-btn" type="button" data-mkt-cal-shift="-1">Previous</button>
+          <strong>${escapeHtml(monthLabel)}</strong>
+          <button class="secondary-btn" type="button" data-mkt-cal-shift="1">Next</button>
+        </div>
+      </div>
+      <p class="table-card-note">Every in-app announcement, SMS broadcast and email production, plotted by the date it was created. <i class="mkt-dot mkt-dot-announcement"></i> announcements &nbsp; <i class="mkt-dot mkt-dot-sms"></i> SMS &nbsp; <i class="mkt-dot mkt-dot-email"></i> email.</p>
+      <div class="mkt-cal-grid">
+        ${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((weekday) => `<span class="mkt-cal-weekday">${weekday}</span>`).join("")}
+        ${cells.join("")}
+      </div>
+    </section>`;
+}
+
 function canApproveMarketingSms(role) {
   return ["owner", "root", "ceo", "coo", "super_admin"].includes(normalizeAdminRole(role));
 }
@@ -4135,7 +4295,7 @@ async function renderMarketing(me = {}) {
     <section class="panel-grid">
       <section class="panel">
         <h3>Marketing Centre</h3>
-        <p>Create PWA in-app announcements, marketing communications, campaign links, QR campaigns and controlled SMS broadcasts. In-app announcements require CEO or COO approval before delivery.</p>
+        <p>Create PWA in-app announcements, marketing communications, campaign links, QR campaigns and controlled SMS broadcasts. In-app announcements require CEO or COO approval before delivery. Reusable message templates are saved in this browser.</p>
         <div class="ops-list ops-list-two">
           <span><strong>${escapeHtml(audiences.personal || 0)}</strong>Personal SMS recipients</span>
           <span><strong>${escapeHtml(audiences.business || 0)}</strong>Business SMS recipients</span>
@@ -4148,6 +4308,7 @@ async function renderMarketing(me = {}) {
       </section>
       <section class="panel">
         <h3>PWA In-App Announcement</h3>
+        ${marketingTemplateRow("announcement")}
         <form id="marketing-announcement-form" class="form-grid">
           <div class="field"><label>Audience</label><select name="audience" id="announcement-audience" required><option value="personal">Personal users</option><option value="business">Business users</option><option value="specific">Specific user</option><option value="both">Personal and Business users</option></select></div>
           <div class="field"><label>Category</label><select name="category" required><option value="general">General announcement</option><option value="marketing">Marketing</option><option value="service">Service update</option><option value="security">Security notice</option></select></div>
@@ -4159,17 +4320,19 @@ async function renderMarketing(me = {}) {
       </section>
       <section class="panel">
         <h3>Bulk SMS Broadcast</h3>
+        ${marketingTemplateRow("sms")}
         <form id="marketing-sms-form" class="form-grid">
           <div class="field"><label>Audience</label><select name="audience" id="sms-audience" required><option value="personal">Personal users</option><option value="business">Business users</option><option value="specific">Specific user</option><option value="both">Personal and Business users</option></select></div>
           <div class="field"><label>Campaign Title</label><input name="title" placeholder="Holiday security notice" maxlength="120" required></div>
           <div class="field field-full" id="sms-recipient-field" hidden><label>Specific TitoPay user</label><input name="recipient" maxlength="160" placeholder="Exact username, email or cellphone number"><small>The selected user must have an active TitoPay account and cellphone number.</small></div>
-          <div class="field field-full"><label>SMS Message</label><textarea name="message" rows="5" maxlength="612" placeholder="Write the message exactly as customers should receive it." required></textarea></div>
+          <div class="field field-full"><label>SMS Message</label><textarea name="message" rows="5" maxlength="612" placeholder="Write the message exactly as customers should receive it." required></textarea><p class="mkt-sms-meter" id="sms-meter" aria-live="polite"></p></div>
           <button class="primary-btn" type="submit">Submit for CEO/COO Approval</button>
         </form>
       </section>
       <section class="panel">
         <h3>Email Production</h3>
         <p>Draft a branded email request for CEO/COO approval. Publishing places one idempotent job per recipient into the Email Centre queue.</p>
+        ${marketingTemplateRow("email")}
         <form id="marketing-email-form" class="form-grid">
           <div class="field"><label>Audience</label><select name="audience" id="marketing-email-audience" required><option value="personal">Personal users</option><option value="business">Business users</option><option value="specific">Specific user</option><option value="both">Personal and Business users</option></select></div>
           <div class="field"><label>Production title</label><input name="title" maxlength="120" placeholder="Monthly product update" required></div>
@@ -4185,11 +4348,21 @@ async function renderMarketing(me = {}) {
         <form id="marketing-campaign-form" class="form-grid">
           <div class="field"><label>Campaign Name</label><input name="label" placeholder="Public launch campaign" required></div>
           <div class="field"><label>Destination URL</label><input name="destinationUrl" placeholder="https://titopay.co.za/app" required></div>
+          <div class="field"><label>UTM source (optional)</label><input name="utmSource" maxlength="60" placeholder="qr"></div>
+          <div class="field"><label>UTM medium (optional)</label><input name="utmMedium" maxlength="60" placeholder="print"></div>
+          <div class="field"><label>UTM campaign (optional)</label><input name="utmCampaign" maxlength="80" placeholder="spring-launch"></div>
+          <p class="mkt-url-preview" id="campaign-url-preview" hidden></p>
           <button class="primary-btn" type="submit">Create Campaign Link</button>
         </form>
       </section>
+      <section class="panel">
+        <h3>This Month Across Channels</h3>
+        <p>Counted from the campaign records on this page, by creation date in the current month.</p>
+        <div class="ops-list ops-list-two" id="mkt-month-summary"></div>
+      </section>
     </section>
     <section id="campaign-preview-host"></section>
+    <section id="mkt-calendar-host"></section>
     ${tableCard("PWA Announcement Approval Queue", renderInAppAnnouncements(announcements, announcementState.approvalRole || null), "Announcements are delivered to the TitoPay PWA inbox after approval by either the CEO or COO. No SMS is sent by this workflow.")}
     ${tableCard("PWA Reviews - Help us improve", renderPwaReviews(reviews), "Reviews submitted from the TitoPay PWA Profile page. Contact details are only shown where the user gave permission.")}
     ${tableCard("SMS Approval Queue", renderMarketingSmsCampaigns(rows, canApprove), "Marketing and Communications can draft SMS messages. CEO or COO approval sends the message to existing TitoPay phone numbers for the selected audience.")}
@@ -4268,7 +4441,12 @@ async function renderMarketing(me = {}) {
         body: JSON.stringify({
           type: "campaign",
           label: formData.get("label"),
-          destinationUrl: formData.get("destinationUrl"),
+          destinationUrl: campaignUrlWithUtm(
+            formData.get("destinationUrl"),
+            String(formData.get("utmSource") || "").trim(),
+            String(formData.get("utmMedium") || "").trim(),
+            String(formData.get("utmCampaign") || "").trim()
+          ) || formData.get("destinationUrl"),
         }),
       });
       const asset = result.asset;
@@ -4279,6 +4457,73 @@ async function renderMarketing(me = {}) {
       showToast(adminErrorMessage(error.message));
     }
   });
+
+  wireMarketingTemplateRow("announcement", "marketing-announcement-form");
+  wireMarketingTemplateRow("sms", "marketing-sms-form");
+  wireMarketingTemplateRow("email", "marketing-email-form");
+
+  const smsForm = document.getElementById("marketing-sms-form");
+  const smsMeter = document.getElementById("sms-meter");
+  const updateSmsMeter = () => {
+    if (!smsForm || !smsMeter) return;
+    const info = smsSegmentInfo(smsForm.elements.message?.value);
+    if (!info.segments) {
+      smsMeter.textContent = "160 GSM characters fit in one SMS; longer messages split into 153-character segments.";
+      return;
+    }
+    const audienceChoice = smsForm.elements.audience?.value || "personal";
+    const recipients = audienceChoice === "specific" ? 1 : Number(audiences[audienceChoice] ?? 0);
+    smsMeter.textContent = `${info.units} characters (${info.encoding}) · ${info.segments} segment${info.segments === 1 ? "" : "s"} per recipient${recipients ? ` · ≈ ${(info.segments * recipients).toLocaleString("en-ZA")} SMS units across ${recipients.toLocaleString("en-ZA")} recipient${recipients === 1 ? "" : "s"}` : ""}`;
+  };
+  smsForm?.elements.message?.addEventListener("input", updateSmsMeter);
+  smsForm?.elements.audience?.addEventListener("change", updateSmsMeter);
+  updateSmsMeter();
+
+  const campaignForm = document.getElementById("marketing-campaign-form");
+  const campaignPreview = document.getElementById("campaign-url-preview");
+  const updateCampaignPreview = () => {
+    if (!campaignForm || !campaignPreview) return;
+    const built = campaignUrlWithUtm(
+      campaignForm.elements.destinationUrl?.value,
+      campaignForm.elements.utmSource?.value.trim(),
+      campaignForm.elements.utmMedium?.value.trim(),
+      campaignForm.elements.utmCampaign?.value.trim()
+    );
+    campaignPreview.hidden = !built;
+    if (built) campaignPreview.textContent = `Link: ${built}`;
+  };
+  ["destinationUrl", "utmSource", "utmMedium", "utmCampaign"].forEach((name) => campaignForm?.elements[name]?.addEventListener("input", updateCampaignPreview));
+  updateCampaignPreview();
+
+  const monthSummary = document.getElementById("mkt-month-summary");
+  if (monthSummary) {
+    const monthPrefix = localDayKey(new Date()).slice(0, 7);
+    const inMonth = (row) => String(row.createdAt || row.created_at || "").slice(0, 7) === monthPrefix;
+    const smsThisMonth = rows.filter(inMonth);
+    const smsUnits = smsThisMonth.reduce((total, row) => total + Number(row.sentCount || 0), 0);
+    monthSummary.innerHTML = `
+      <span><strong>${escapeHtml(smsThisMonth.length)}</strong>SMS broadcasts</span>
+      <span><strong>${escapeHtml(smsUnits.toLocaleString("en-ZA"))}</strong>SMS delivered</span>
+      <span><strong>${escapeHtml(announcements.filter(inMonth).length)}</strong>Announcements</span>
+      <span><strong>${escapeHtml(emailCampaigns.filter(inMonth).length)}</strong>Email productions</span>
+      <span><strong>${escapeHtml(reviews.filter(inMonth).length)}</strong>PWA reviews</span>
+      <span><strong>${escapeHtml(marketingTemplates().length)}</strong>Saved templates</span>
+    `;
+  }
+
+  const calendarHost = document.getElementById("mkt-calendar-host");
+  if (calendarHost) {
+    const calendarEvents = marketingCalendarEvents(announcements, rows, emailCampaigns);
+    PAGE_EXPORTS.marketingCalendarOffset = 0;
+    const renderCalendar = () => { calendarHost.innerHTML = marketingCalendarHtml(calendarEvents, PAGE_EXPORTS.marketingCalendarOffset); };
+    renderCalendar();
+    calendarHost.addEventListener("click", (event) => {
+      const shift = event.target.closest("[data-mkt-cal-shift]");
+      if (!shift) return;
+      PAGE_EXPORTS.marketingCalendarOffset += Number(shift.dataset.mktCalShift);
+      renderCalendar();
+    });
+  }
 }
 
 function renderQrPreview(asset) {

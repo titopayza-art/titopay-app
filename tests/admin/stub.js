@@ -129,6 +129,52 @@ const ROUTES = {
   "/v1/admin/support/tickets": () => ({ items: Array.from({ length: 12 }, (_, index) => ({ id: `tkt_${index}`, subject: `Request ${index}`, category: "Payments", message: "Reported issue.", full_name: `Customer ${index}`, username: `customer${index}`, assigned_to: index % 3 ? "agent1" : "", status: index % 3 === 0 ? "open" : "resolved", created_at: new Date(NOW - index * DAY).toISOString() })) }),
   "/v1/admin/support/conversations": () => ({ items: Array.from({ length: 8 }, (_, index) => ({ id: `cnv_${index}`, status: index % 2 ? "RESOLVED" : "ESCALATED", created_at: new Date(NOW - index * DAY).toISOString(), updated_at: new Date(NOW - index * DAY).toISOString(), last_message: "Thanks", waitingSeconds: 60 * index })), counts: { waiting: 4, active: 2 } }),
   "/v1/admin/profile-change-requests": () => ({ items: [], metrics: {} }),
+  "/v1/admin/marketing/announcements": () => ({
+    approvalRole: "ceo",
+    audiences: { personal: 120, business: 24, both: 144 },
+    campaigns: Array.from({ length: 5 }, (_, index) => ({
+      id: `ann_${index}`,
+      title: `Announcement ${index}`,
+      body: `In-app notice number ${index} for TitoPay customers.`,
+      category: index % 2 ? "marketing" : "general",
+      audience: index % 2 ? "business" : "personal",
+      status: index < 3 ? "sent" : "pending_approval",
+      sent_count: index < 3 ? 90 + index * 10 : 0,
+      estimated_recipients: 120,
+      approvals: index < 3 ? [{ role: "ceo" }] : [],
+      createdAt: new Date(NOW - index * 3 * DAY).toISOString(),
+    })),
+  }),
+  "/v1/admin/marketing/reviews": () => ({
+    summary: { total: 6, averageRating: 4.2 },
+    reviews: Array.from({ length: 6 }, (_, index) => ({
+      id: `rvw_${index}`,
+      rating: (index % 5) + 1,
+      userName: `Customer ${index}`,
+      username: `customer${index}`,
+      category: "general",
+      message: "Great app, quick payments.",
+      contactPermission: index % 2 === 0,
+      phone: index % 2 === 0 ? `+2782000${String(index).padStart(4, "0")}` : "",
+      createdAt: new Date(NOW - index * 4 * DAY).toISOString(),
+    })),
+  }),
+  "/v1/admin/marketing/email-campaigns": () => ({
+    canApprove: true,
+    campaigns: Array.from({ length: 4 }, (_, index) => ({
+      id: `emc_${index}`,
+      title: `Email production ${index}`,
+      subject: `TitoPay update ${index}`,
+      textBody: "Monthly product update for TitoPay customers.",
+      audience: index % 2 ? "business" : "personal",
+      status: index < 2 ? "sent" : "pending_approval",
+      estimatedRecipients: 120,
+      queuedCount: index < 2 ? 110 : 0,
+      failedCount: 0,
+      approvedByRole: index < 2 ? "ceo" : "",
+      createdAt: new Date(NOW - index * 5 * DAY).toISOString(),
+    })),
+  }),
   // No "/v1/admin/sms/analytics" handler on purpose: the 404 exercises the
   // SMS Analytics page's fallback derivation from campaign records.
   "/v1/admin/marketing/sms-campaigns": () => ({

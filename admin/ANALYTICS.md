@@ -1,6 +1,6 @@
 # TitoPay Admin — Enterprise Analytics
 
-Build `admin-console-v60`. This document covers what the Analytics module does,
+Build `admin-console-v61`. This document covers what the Analytics module does,
 where every number comes from, and what an API change would add to it.
 
 ## What was added
@@ -11,7 +11,7 @@ where every number comes from, and what an API change would add to it.
 | `assets/admin-analytics.js` | New module, imported on demand |
 | `assets/admin.js` | Additive only: nav entry, icon, permission branch, page descriptor, loader, host bridge. No line was removed or rewritten. |
 | `assets/admin.css` | Additive only: chart palette tokens, one module block, matching responsive/dark/print rules. No existing selector changed. |
-| every other `index.html` | Asset query string `?v=admin-console-v50` → `?v=admin-console-v60`. Nothing else. |
+| every other `index.html` | Asset query string `?v=admin-console-v50` → `?v=admin-console-v61`. Nothing else. |
 
 No authentication, permission model, API contract, database structure, payment,
 wallet, KYC, chat, HR, notification, QR, marketplace or existing admin module

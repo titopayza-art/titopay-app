@@ -1,6 +1,32 @@
 TitoPay Admin
-Build: admin-console-v60
+Build: admin-console-v61
 Date: 2026-08-07
+
+v61 - Marketing toolkit. Five additions to the Marketing Centre, all running
+entirely inside the console - no API endpoint was added, changed or removed,
+and every existing form submits exactly the payloads it did in v60.
+
+  - Message templates: each composer (in-app announcement, bulk SMS, email
+    production) gains Save as template / Apply / Delete. Templates are named
+    after the campaign title, capped at forty, and stored in this browser -
+    the page says so. Nothing sends on Apply; the form is filled for review.
+  - SMS segment meter: under the SMS message box, a live count of characters,
+    GSM-7 or Unicode encoding, segments per recipient (160/153 GSM, 70/67
+    Unicode) and the estimated total SMS units for the selected audience,
+    computed from the recipient counts the page already shows.
+  - UTM campaign links: the Create Campaign QR form takes optional UTM
+    source, medium and campaign fields, previews the final link as you type,
+    and submits the same destinationUrl field as before - just with the
+    parameters appended, so Google Analytics attributes scans correctly.
+  - Marketing Calendar: a month view plotting every announcement, SMS
+    broadcast and email production by creation date, with previous/next
+    month navigation and per-channel counts on each day.
+  - This Month Across Channels: broadcasts, SMS delivered, announcements,
+    email productions, reviews and saved templates for the current month,
+    counted from the records already on the page.
+  - The CI gate grew to 39 checks: template save/apply round-trip, the
+    segment meter, the UTM preview, calendar rendering and month navigation,
+    and the month summary.
 
 v60 - SMS Analytics joins the Communications group, mirroring the Email
 Analytics view.
@@ -290,5 +316,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v60; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v61; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
