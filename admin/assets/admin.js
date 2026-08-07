@@ -13,7 +13,7 @@ const ADMIN_API_BASE = (() => {
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v59";
+const ADMIN_ASSET_VERSION = "admin-console-v60";
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;
@@ -65,6 +65,7 @@ const NAV_GROUPS = [
     ["/email-centre/logs/", "email-logs", "Delivery Logs"],
     ["/email-centre/settings/", "email-settings", "Email Settings"],
     ["/email-centre/otp/", "email-otp", "Email OTP"],
+    ["/sms-analytics/", "sms-analytics", "SMS Analytics"],
   ]},
   { title: "Governance", items: [
     ["/support/", "support", "Support Desk"],
@@ -567,6 +568,7 @@ const NAV_ICON_PATHS = {
   "api-provider-settings": "M6 7h12M6 12h12M6 17h6M18 15v4m2-2h-4",
   settings: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm7.4 3a7.4 7.4 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 0 0-2-1.2L14.6 3H9.4L9 5.7a7.4 7.4 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5a7.4 7.4 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-1a7.4 7.4 0 0 0 2 1.2l.4 2.7h5.2l.4-2.7a7.4 7.4 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.07-.4.1-.8.1-1.2Z",
   support: "M4 12a8 8 0 0 1 16 0v5a2 2 0 0 1-2 2h-3M4 12v3a2 2 0 0 0 2 2h1v-5H4Zm16 0h-3v5h1a2 2 0 0 0 2-2v-3Z",
+  "sms-analytics": "M4 5h16v11H9.5L5 19.5V16H4V5Zm4 3.5h8m-8 3h5M17 3v2m3 0V3",
   "chatbot-escalations": "M5 5h14v10H9l-4 4V5Zm4 4h6m-6 3h4",
   "company-documents": "M6 3h7l5 5v13H6V3Zm7 0v5h5M9 13h6M9 17h6",
   compliance: "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm-2.6 8.8 2 2 4-4",
@@ -709,6 +711,7 @@ function renderSidebar(page, me) {
       "email-logs": "EMAIL_LOG_VIEW",
       "email-settings": "EMAIL_SETTINGS_EDIT",
       "email-otp": "EMAIL_OTP_VIEW",
+      "sms-analytics": "__sms__",
       "development-tools": "__owner__",
       "engineering-tools": "__owner__",
       "database-health": "__owner__",
@@ -719,6 +722,7 @@ function renderSidebar(page, me) {
     if (required === "__everyone__") return true;
     if (required === "__analytics__") return hasAnalyticsAccess(me);
     if (required === "__service_builder__") return hasServiceBuilderAccess(me);
+    if (required === "__sms__") return ["EMAIL_VIEW", "SMS_VIEW", "analytics", "marketing"].some((perm) => permissions.has(perm));
     if (required === "__super_admin__") return isSuperAdminRole(role);
     if (required === "__owner__") return isPlatformOwnerRole(role);
     if (required === "__company_docs__") return isPlatformOwnerRole(role) || ["hr_admin", "hr_administrator", "hr_director"].includes(normalizeAdminRole(role));
@@ -4314,8 +4318,17 @@ function hasEmailPermission(me, permission) {
 function emailChart(title, rows, labelKey, valueKey) {
   const maximum = Math.max(1, ...rows.map((row) => Number(row[valueKey] || 0)));
   return `<section class="table-card"><h3>${escapeHtml(title)}</h3><div class="email-chart">${rows.length ? rows.map((row) => `
-    <div class="email-chart-row"><span>${escapeHtml(row[labelKey] || "-")}</span><div><i style="width:${Math.max(2, Math.round(Number(row[valueKey] || 0) / maximum * 100))}%"></i></div><strong>${escapeHtml(row[valueKey] || 0)}</strong></div>
+    <div class="email-chart-row"><span>${escapeHtml(row[labelKey] || "-")}</span><div><i data-chart-width="${Math.max(2, Math.round(Number(row[valueKey] || 0) / maximum * 100))}"></i></div><strong>${escapeHtml(row[valueKey] || 0)}</strong></div>
   `).join("") : '<div class="empty">No email activity in this period.</div>'}</div></section>`;
+}
+
+/* Bar widths are applied through the CSSOM after render because the console's
+   CSP (style-src 'self') forbids inline style attributes. */
+function applyChartBarWidths() {
+  document.querySelectorAll("[data-chart-width]").forEach((bar) => {
+    const width = Math.min(100, Math.max(0, Number(bar.dataset.chartWidth) || 0));
+    bar.style.width = `${width}%`;
+  });
 }
 
 function emailAnalyticsChart(title, rows) {
@@ -4338,6 +4351,109 @@ async function renderEmailAnalytics() {
     <p class="table-card-note analytics-note">${escapeHtml(note)} Reporting window: last ${Number(result.rangeDays||30)} days.</p>
     <div class="email-chart-grid">${emailAnalyticsChart("Daily emails sent",result.series?.daily||[])}${emailAnalyticsChart("Weekly emails sent",result.series?.weekly||[])}${emailAnalyticsChart("Monthly emails sent",result.series?.monthly||[])}</div>
     ${tableCard("Delivery detail",renderRows((result.series?.daily||[]).slice(-14).reverse(),[{label:"Period",render:(row)=>formatDate(row.period)},{label:"Sent",key:"sent"},{label:"Delivered",key:"delivered"},{label:"Bounced",key:"bounced"},{label:"Opened",key:"opened"},{label:"Clicked",key:"clicked"},{label:"Spam complaints",key:"spam_complaints"},{label:"Avg delivery",render:(row)=>`${row.average_delivery_seconds||0}s`}]))}`;
+}
+
+/* SMS analytics mirrors the Email Analytics page. It prefers the dedicated
+   GET /admin/sms/analytics endpoint (specified as A-P1-6 in
+   ADMIN-API-REQUIREMENTS.md) and, until the API carries it, derives every
+   figure from the SMS campaign records that already exist: sentCount and
+   failedCount are the API's own delivery counters per campaign. Nothing on
+   this page is estimated, and the page states which source produced it. */
+async function renderSmsAnalytics() {
+  let dedicated = null;
+  try {
+    dedicated = await apiFetch("/admin/sms/analytics?days=30");
+  } catch {
+    dedicated = null;
+  }
+
+  if (dedicated && (dedicated.summary || dedicated.series)) {
+    const summary = dedicated.summary || {};
+    PAGE_EXPORTS["sms-analytics"] = dedicated.series?.daily || [];
+    document.getElementById("page-content").innerHTML = `
+      ${renderMetrics([
+        ["Total SMS sent", summary.total_sent || 0],
+        ["Delivered", summary.delivered || 0],
+        ["Failed", summary.failed || 0],
+        ["Delivery rate", `${Number(summary.delivery_rate || 0).toFixed(2)}%`],
+        ["Average delivery", `${summary.average_delivery_seconds || 0}s`],
+        ["Campaign messages", summary.campaign_sent || 0],
+        ["Transactional messages", summary.transactional_sent || 0],
+      ])}
+      <p class="table-card-note analytics-note">Reported by the TitoPay API's SMS analytics endpoint. Reporting window: last ${Number(dedicated.rangeDays || 30)} days.</p>
+      <div class="email-chart-grid">${emailAnalyticsChart("Daily SMS sent", dedicated.series?.daily || [])}${emailAnalyticsChart("Weekly SMS sent", dedicated.series?.weekly || [])}${emailAnalyticsChart("Monthly SMS sent", dedicated.series?.monthly || [])}</div>
+      ${tableCard("Delivery detail", renderRows((dedicated.series?.daily || []).slice(-14).reverse(), [
+        { label: "Period", render: (row) => formatDate(row.period) },
+        { label: "Sent", key: "sent" },
+        { label: "Delivered", key: "delivered" },
+        { label: "Failed", key: "failed" },
+      ], () => ""))}
+    `;
+    return;
+  }
+
+  const result = await apiFetch("/admin/marketing/sms-campaigns");
+  const campaigns = result.campaigns || [];
+  const sent = campaigns.reduce((total, row) => total + Number(row.sentCount || 0), 0);
+  const failed = campaigns.reduce((total, row) => total + Number(row.failedCount || 0), 0);
+  const recipients = campaigns.reduce((total, row) => total + Number(row.estimatedRecipients || 0), 0);
+  const delivered = sent + failed ? ((sent / (sent + failed)) * 100).toFixed(2) : null;
+  const pending = campaigns.filter((row) => row.status === "pending_approval").length;
+  const sentCampaigns = campaigns.filter((row) => Number(row.sentCount || 0) > 0).length;
+
+  const byDay = new Map();
+  const byStatus = new Map();
+  campaigns.forEach((row) => {
+    const day = row.createdAt ? String(row.createdAt).slice(0, 10) : "";
+    if (day) byDay.set(day, (byDay.get(day) || 0) + Number(row.sentCount || 0));
+    const status = String(row.status || "unknown").replace(/_/g, " ");
+    byStatus.set(status, (byStatus.get(status) || 0) + 1);
+  });
+  const dailyRows = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-30).map(([day, count]) => ({ day, sent: count }));
+  const statusRows = [...byStatus.entries()].map(([status, count]) => ({ status, count }));
+  const topCampaigns = [...campaigns]
+    .filter((row) => Number(row.sentCount || 0) > 0)
+    .sort((a, b) => Number(b.sentCount || 0) - Number(a.sentCount || 0))
+    .slice(0, 8)
+    .map((row) => ({ campaign: String(row.title || row.id || "Campaign").slice(0, 28), sent: Number(row.sentCount || 0) }));
+
+  PAGE_EXPORTS["sms-analytics"] = campaigns.map((row) => ({
+    campaign: row.title || row.id,
+    audience: row.audience || "",
+    recipients: row.estimatedRecipients ?? 0,
+    sent: row.sentCount ?? 0,
+    failed: row.failedCount ?? 0,
+    status: row.status || "",
+    created: row.createdAt || "",
+  }));
+
+  document.getElementById("page-content").innerHTML = `
+    ${renderMetrics([
+      ["Total SMS sent", sent],
+      ["Failed", failed],
+      ["Delivery outcome", delivered === null ? "—" : `${delivered}%`],
+      ["Recipients targeted", recipients],
+      ["Campaigns", campaigns.length],
+      ["Campaigns sent", sentCampaigns],
+      ["Awaiting approval", pending],
+    ])}
+    <p class="table-card-note analytics-note">Derived from SMS campaign records: sent and failed are the API's own per-campaign delivery counters, and every broadcast goes through CEO/COO approval before sending. Per-message delivery receipts, daily/weekly/monthly series and transactional SMS (OTP) reporting arrive with the dedicated SMS analytics endpoint - specified as A-P1-6 in ADMIN-API-REQUIREMENTS.md - and this page upgrades to it automatically.</p>
+    <div class="email-chart-grid">
+      ${emailChart("SMS sent per day (by campaign date)", dailyRows, "day", "sent")}
+      ${emailChart("Sent versus failed", [{ outcome: "sent", count: sent }, { outcome: "failed", count: failed }].filter((row) => row.count > 0), "outcome", "count")}
+      ${emailChart("Top campaigns by messages sent", topCampaigns, "campaign", "sent")}
+      ${emailChart("Campaigns by status", statusRows, "status", "count")}
+    </div>
+    ${tableCard("Campaign delivery detail", campaigns.length ? renderRows([...campaigns].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))).slice(0, 14), [
+      { label: "Campaign", render: (row) => `<strong>${escapeHtml(row.title || row.id || "-")}</strong><br><small>${escapeHtml(String(row.message || "").slice(0, 80))}</small>` },
+      { label: "Audience", render: (row) => escapeHtml(row.audience === "specific" && row.targetLabel ? `Specific: ${row.targetLabel}` : row.audience || "-") },
+      { label: "Recipients", render: (row) => escapeHtml(String(row.estimatedRecipients ?? 0)) },
+      { label: "Sent", render: (row) => escapeHtml(String(row.sentCount ?? 0)) },
+      { label: "Failed", render: (row) => `<span class="chip ${Number(row.failedCount || 0) ? "red" : "green"}">${escapeHtml(String(row.failedCount ?? 0))}</span>` },
+      { label: "Status", render: (row) => smsStatusChip(row.status) },
+      { label: "Created", render: (row) => escapeHtml(row.createdAt ? new Date(row.createdAt).toLocaleString("en-ZA") : "-") },
+    ], () => "") : `<div class="empty"><strong>No SMS campaigns yet</strong><small>Campaign delivery figures appear here as soon as the first broadcast is submitted in the Marketing Centre.</small></div>`, "The newest fourteen campaigns. Export CSV in the header carries every campaign.")}
+  `;
 }
 
 function emailPagination(total,page,limit,prefix) {
@@ -5359,6 +5475,7 @@ function adminPageDescriptors() {
     "email-logs": ["Email Delivery Logs", "Inspect immutable provider delivery attempts."],
     "email-settings": ["Email Settings", "Configure sender identity, limits, expiry periods and the active provider."],
     "email-otp": ["Email OTP", "Configure, monitor and audit queued Email OTP authentication."],
+    "sms-analytics": ["SMS Analytics", "Delivery and campaign reporting for TitoPay SMS, mirroring the Email Analytics view."],
   };
 }
 
@@ -5405,6 +5522,7 @@ function adminPageLoaders() {
     "email-logs": renderEmailLogs,
     "email-settings": renderEmailSettings,
     "email-otp": renderEmailOtp,
+    "sms-analytics": renderSmsAnalytics,
   };
 }
 
@@ -5433,6 +5551,7 @@ async function renderAdminPage(page, me, options = {}) {
   setRouteProgress(true);
   try {
     await loaders[page](me);
+    applyChartBarWidths();
   } finally {
     setRouteProgress(false);
   }

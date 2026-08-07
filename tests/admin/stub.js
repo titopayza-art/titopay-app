@@ -129,6 +129,28 @@ const ROUTES = {
   "/v1/admin/support/tickets": () => ({ items: Array.from({ length: 12 }, (_, index) => ({ id: `tkt_${index}`, subject: `Request ${index}`, category: "Payments", message: "Reported issue.", full_name: `Customer ${index}`, username: `customer${index}`, assigned_to: index % 3 ? "agent1" : "", status: index % 3 === 0 ? "open" : "resolved", created_at: new Date(NOW - index * DAY).toISOString() })) }),
   "/v1/admin/support/conversations": () => ({ items: Array.from({ length: 8 }, (_, index) => ({ id: `cnv_${index}`, status: index % 2 ? "RESOLVED" : "ESCALATED", created_at: new Date(NOW - index * DAY).toISOString(), updated_at: new Date(NOW - index * DAY).toISOString(), last_message: "Thanks", waitingSeconds: 60 * index })), counts: { waiting: 4, active: 2 } }),
   "/v1/admin/profile-change-requests": () => ({ items: [], metrics: {} }),
+  // No "/v1/admin/sms/analytics" handler on purpose: the 404 exercises the
+  // SMS Analytics page's fallback derivation from campaign records.
+  "/v1/admin/marketing/sms-campaigns": () => ({
+    campaigns: Array.from({ length: 8 }, (_, index) => {
+      const statuses = ["sent", "sent", "sent", "sent", "sent", "pending_approval", "approved", "rejected"];
+      const status = statuses[index];
+      const sentCount = status === "sent" ? 180 + index * 35 : 0;
+      return {
+        id: `smc_${index}`,
+        title: `Campaign ${index}`,
+        message: `TitoPay update number ${index} for our customers.`,
+        audience: index % 3 === 0 ? "specific" : "all",
+        targetLabel: index % 3 === 0 ? "KZN merchants" : "",
+        estimatedRecipients: 200 + index * 40,
+        status,
+        sentCount,
+        failedCount: status === "sent" ? (index % 2 ? 4 + index : 0) : 0,
+        createdAt: new Date(NOW - index * 2 * DAY).toISOString(),
+        approvedByRole: status === "sent" || status === "approved" ? "ceo" : "",
+      };
+    }),
+  }),
   "/v1/admin/roles": () => ({
     canManage: true,
     availablePermissions: ["dashboard", "users", "merchants", "transactions", "wallets", "support", "compliance", "revenue", "security", "audit", "ticketing"],

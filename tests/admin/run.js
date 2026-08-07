@@ -16,7 +16,7 @@ const PORT = 8110;
 const BASE = `http://127.0.0.1:${PORT}`;
 const ADMIN = path.resolve(__dirname, "..", "..", "admin");
 
-const ROUTES = ["dashboard", "alerts", "analytics", "service-builder", "search", "users", "merchants", "transactions", "wallets", "beneficiaries", "chat-monitor", "ticketing", "enterprise-distribution", "qr-management", "marketing", "pricing", "integrations", "feature-management", "api-provider-settings", "settings", "email-centre", "email-centre/analytics", "email-centre/templates", "email-centre/queue", "email-centre/logs", "email-centre/settings", "email-centre/otp", "support", "chatbot-escalations", "company-documents", "compliance", "revenue", "security", "system-logs", "audit", "development-tools", "engineering-tools", "database-health", "staff-management", "rbac-permissions"];
+const ROUTES = ["dashboard", "alerts", "analytics", "service-builder", "search", "users", "merchants", "transactions", "wallets", "beneficiaries", "chat-monitor", "ticketing", "enterprise-distribution", "qr-management", "marketing", "pricing", "integrations", "feature-management", "api-provider-settings", "settings", "email-centre", "email-centre/analytics", "email-centre/templates", "email-centre/queue", "email-centre/logs", "email-centre/settings", "email-centre/otp", "sms-analytics", "support", "chatbot-escalations", "company-documents", "compliance", "revenue", "security", "system-logs", "audit", "development-tools", "engineering-tools", "database-health", "staff-management", "rbac-permissions"];
 
 const failures = [];
 const check = (ok, label) => {
@@ -181,6 +181,22 @@ function checkVersionConsistency() {
   } else {
     failures.push("support queue offered no conversation to open");
   }
+
+  // --- SMS Analytics ------------------------------------------------------
+  // The stub serves campaign records but no dedicated /admin/sms/analytics
+  // endpoint, so this exercises the derived-metrics fallback path.
+  await page.goto(`${BASE}/sms-analytics/`);
+  await page.waitForFunction(() => !document.querySelector(".admin-skeleton"), { timeout: 15000 });
+  await page.waitForTimeout(500);
+  check((await page.$$(".metric-card")).length >= 7, "sms analytics renders its metric tiles");
+  check((await page.$$(".email-chart-grid .email-chart")).length >= 3, "sms analytics draws campaign charts from delivery counters");
+  const smsNote = await page.textContent(".analytics-note").catch(() => "");
+  check(smsNote.includes("A-P1-6"), "sms analytics states its data provenance honestly");
+  const barsSized = await page.evaluate(() => {
+    const bars = [...document.querySelectorAll(".email-chart-row i")];
+    return bars.length > 0 && bars.every((bar) => /^\d+(\.\d+)?%$/.test(bar.style.width));
+  });
+  check(barsSized, "chart bars receive their widths without inline style attributes");
 
   // --- RBAC editor --------------------------------------------------------
   await page.goto(`${BASE}/rbac-permissions/`);

@@ -1,5 +1,5 @@
 TITOPAY ADMIN — AFRIHOST cPANEL UPLOAD
-Build: admin-console-v59
+Build: admin-console-v60
 
 This zip is packed from the document root: index.html, .htaccess and assets/
 sit at the top of the archive. Extracting it IN the document root overwrites
@@ -25,13 +25,14 @@ STEPS
 VERIFY (open in a browser)
 
 - https://admin.titopay.co.za/admin-version.txt
-      must read: Build: admin-console-v59
+      must read: Build: admin-console-v60
 - https://admin.titopay.co.za/
       sign-in page loads; sign in works as before
 - https://admin.titopay.co.za/nonsense/
       shows the branded "Page not found" page
 - Sidebar shows: Alerts (with the bell in the top bar),
-  Analytics, and Platform > Service Builder.
+  Analytics, Platform > Service Builder, and
+  Communications > SMS Analytics.
 
 If a page still shows the previous layout, hard refresh once
 (Ctrl+F5 / Cmd+Shift+R). No other cache clearing is needed —

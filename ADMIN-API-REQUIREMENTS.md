@@ -1,6 +1,6 @@
 # TitoPay Admin API requirements
 
-What the admin console (admin.titopay.co.za, build v59) needs from the
+What the admin console (admin.titopay.co.za, build v60) needs from the
 backend, written from the client side in the same format as
 `API-REQUIREMENTS.md`. Each item says which console screen depends on it, what
 happens today without it, and the exact contract the console is already built
@@ -21,6 +21,7 @@ from the client side at all).
 | A-P1-3 alert read state | Alert Centre | Read/unread is per browser |
 | A-P1-4 service-builder store | Service Builder | Definitions live per browser; JSON export is the handoff |
 | A-P1-5 quick-reply templates | Support Desk | Edited wording is per browser |
+| A-P1-6 SMS analytics endpoint | SMS Analytics | Metrics derived from campaign counters only; no per-message receipts, no OTP SMS reporting |
 | A-P2-1 system metrics | Analytics → System, Dashboard | CPU/RAM/disk/network/cache show "Not reported" |
 | A-P2-2 per-session revoke | Security | Only "sign out all devices" exists |
 | A-P2-3 TOTP / WebAuthn for admin sign-in | Sign in | Email OTP is the only second factor |
@@ -174,6 +175,42 @@ PUT /v1/admin/support/quick-replies   (same shape; owner/developer roles only)
 
 Text is plain text; `[Agent Name]` is a client-side substitution token, never
 executed. 40 templates maximum, text ≤ 1200 characters.
+
+## A-P1-6 — SMS analytics endpoint
+
+**Screen:** Communications → SMS Analytics (v60).
+
+**Today:** the page derives everything it can from
+`GET /v1/admin/marketing/sms-campaigns` — total sent, failures, delivery
+outcome and per-campaign detail come from the API's own per-campaign
+counters, and the page says so. What campaign records cannot supply:
+per-message delivery receipts, transactional SMS (OTP) volumes, delivery
+timing, and true daily/weekly/monthly series (the fallback buckets by
+campaign creation date).
+
+**Required:** a dedicated reporting endpoint mirroring the email one the
+console already consumes. The page calls it on every load and upgrades
+automatically the moment it answers:
+
+```
+GET /v1/admin/sms/analytics?days=30
+{
+  "rangeDays": 30,
+  "summary": { "total_sent": 4210, "delivered": 4102, "failed": 108,
+               "delivery_rate": 97.43, "average_delivery_seconds": 6,
+               "campaign_sent": 3800, "transactional_sent": 410 },
+  "series": {
+    "daily":   [ { "period": "2026-08-01", "sent": 140, "delivered": 137, "failed": 3 }, ... ],
+    "weekly":  [ { "period": "2026-W31", "sent": 980, "delivered": 955, "failed": 25 }, ... ],
+    "monthly": [ { "period": "2026-08", "sent": 4210, "delivered": 4102, "failed": 108 }, ... ]
+  }
+}
+```
+
+All fields are read defensively; a missing series simply renders empty.
+Counting delivered/failed requires the SMS gateway's delivery receipts to be
+stored per message — that storage is the real work here, and it is also what
+would later enable a per-message delivery log screen.
 
 ## A-P2-1 — System metrics
 

@@ -1,6 +1,30 @@
 TitoPay Admin
-Build: admin-console-v59
-Date: 2026-08-06
+Build: admin-console-v60
+Date: 2026-08-07
+
+v60 - SMS Analytics joins the Communications group, mirroring the Email
+Analytics view.
+
+  - New SMS Analytics page: total sent, failures, delivery outcome,
+    recipients targeted, campaign counts and awaiting-approval tiles, with
+    charts for SMS per day, sent versus failed, top campaigns and campaigns
+    by status, plus a campaign delivery detail table and CSV export.
+  - Honest data, as everywhere: today the page derives its figures from the
+    API's own per-campaign delivery counters and says so on the page.
+    Per-message receipts, OTP SMS reporting and true daily/weekly/monthly
+    series need the dedicated endpoint specified as A-P1-6 in
+    ADMIN-API-REQUIREMENTS.md - the page calls GET /admin/sms/analytics on
+    every load and upgrades automatically the moment the API answers.
+  - Visible to roles holding SMS_VIEW, EMAIL_VIEW, analytics or marketing
+    permissions (and owners/developers as always); nothing else changed.
+  - Fixed: chart bars on the Email Centre dashboard and Email/SMS Analytics
+    now size through the CSSOM instead of inline style attributes, which the
+    console's own Content-Security-Policy (style-src 'self', since v54) was
+    correctly blocking - bars rendered at their minimum width on servers
+    where the CSP header is active.
+  - The CI gate grew to 32 checks: the page renders its tiles, draws the
+    derived charts, states its data provenance, and chart bars receive
+    their widths without inline styles.
 
 v59 - Quick replies become editable in the portal, and the console's API
 wishlist ships as a formal specification.
@@ -266,5 +290,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v59; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v60; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
