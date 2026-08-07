@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
+const { payoutAvailability, assertPayoutAvailable } = require("./peach-payout-service");
 const { writeAuditLog } = require("./audit-service");
 const { queueEmail } = require("./email-centre-service");
 const { shouldSendCustomerEmail } = require("./customer-notification-preference-service");
@@ -56,21 +57,34 @@ const CARD_TOPUP_SERVICES = new Set([
   "card_payments"
 ]);
 
-const PROVIDER_DEPENDENT_SERVICES = new Set([
-  "bank_transfer",
-  "bank_withdrawal",
+// Withdrawals and payouts are money OUT and belong to the Peach PAYOUT
+// capability, never to Collection/Checkout. They stay unavailable until that
+// capability is configured, enabled and its own connection test has succeeded.
+// The service catalogue publishes the code "payouts"; without it here the block
+// only happened via the catch-all, and a fee preview first wrote a zero-fee
+// "payouts" pricing rule to the database.
+// Withdrawal processing is a separate build step from the provider connection.
+// Flipping this on must go hand in hand with the debit + payout-submission +
+// provider-confirmation lifecycle; it is deliberately not implied by a
+// successful payout connection test.
+const PAYOUT_PROCESSING_ENABLED = String(process.env.PEACH_PAYOUT_PROCESSING_ENABLED || "").toLowerCase() === "true";
+
+const PEACH_PAYOUT_SERVICES = new Set([
   "withdraw",
   "withdraw_money_to_bank",
-  "cash_withdrawal",
   "withdraw_cash",
+  "bank_withdrawal",
+  "cash_withdrawal",
+  "bank_transfer",
+  "payouts",
   "business_payout",
   "merchant_payout",
   "merchant_payouts",
-  // The service catalogue publishes the code "payouts"; without it here the
-  // block only happened via the catch-all, and a fee preview first wrote a
-  // zero-fee "payouts" pricing rule to the database.
-  "payouts",
   "seller_payout",
+  "bulk_distribution_bank_payout"
+]);
+
+const PROVIDER_DEPENDENT_SERVICES = new Set([
   "airtime",
   "data",
   "electricity",
@@ -84,8 +98,7 @@ const PROVIDER_DEPENDENT_SERVICES = new Set([
   "marketplace_seller_commission",
   "marketplace_commission",
   "marketplace_buyer_service_fee",
-  "marketplace_refund_processing",
-  "bulk_distribution_bank_payout"
+  "marketplace_refund_processing"
 ]);
 
 function splitRecipientList(value) {
@@ -115,7 +128,30 @@ function providerPendingMessage(serviceCode) {
 // a customer is told a service is unavailable before they see a fee and press
 // Confirm — the previous behaviour previewed cleanly and only failed on Confirm,
 // which reads as a payment glitch rather than an unlaunched service.
-function assertServiceLaunched(normalizedServiceCode) {
+async function assertServiceLaunched(normalizedServiceCode) {
+  // Money out: ask the Peach payout capability directly, so the customer is
+  // told the real reason and a withdrawal can never be attempted through the
+  // Checkout (Collection) endpoint.
+  if (PEACH_PAYOUT_SERVICES.has(normalizedServiceCode)) {
+    // First the provider link, so the customer sees the real reason when the
+    // payout capability is unconfigured, disabled or unverified.
+    const availability = await payoutAvailability();
+    assertPayoutAvailable(availability);
+    // A connected payout provider proves the link works — it does not mean
+    // TitoPay has a withdrawal lifecycle yet. Until PAYOUT_PROCESSING_ENABLED
+    // is switched on, withdrawals stay blocked HERE, at the fee preview, so a
+    // customer is never walked through a fee to a Confirm that cannot settle,
+    // and createTransaction can never debit a wallet with nothing on the other
+    // side to move the money.
+    if (!PAYOUT_PROCESSING_ENABLED) {
+      throw new AppError(
+        503,
+        "Withdrawals are not open yet. The payout provider is connected, but TitoPay withdrawal processing is still being enabled. No wallet debit was made.",
+        { code: "PAYOUT_PROCESSING_NOT_ENABLED" }
+      );
+    }
+    return;
+  }
   if (CARD_TOPUP_SERVICES.has(normalizedServiceCode)) {
     throw new AppError(
       409,
@@ -134,8 +170,8 @@ function assertServiceLaunched(normalizedServiceCode) {
   }
 }
 
-function assertLiveTransactionSupported(normalizedServiceCode, payload = {}) {
-  assertServiceLaunched(normalizedServiceCode);
+async function assertLiveTransactionSupported(normalizedServiceCode, payload = {}) {
+  await assertServiceLaunched(normalizedServiceCode);
   if (LIVE_QR_WALLET_SERVICES.has(normalizedServiceCode)) {
     if (!payload.metadata?.qrId) {
       throw new AppError(400, "QR payments must be started from a valid TitoPay QR code.");
@@ -174,7 +210,7 @@ async function feePreview(payload) {
   const normalizedServiceCode = normalizeServiceCode(serviceCode);
   const amount = Number(payload.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "amount must be greater than zero");
-  assertServiceLaunched(normalizedServiceCode);
+  await assertServiceLaunched(normalizedServiceCode);
   const fee = await calculateFee(normalizedServiceCode, amount);
   let recipientStatus = null;
   const recipientChecks = recipientsForVerification(payload, normalizedServiceCode);
@@ -231,7 +267,7 @@ async function createTransaction(actor, payload) {
   const amount = roundMoney(payload.amount);
   if (!serviceCode) throw new AppError(400, "service is required");
   if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "amount must be greater than zero");
-  assertLiveTransactionSupported(normalizedServiceCode, payload);
+  await assertLiveTransactionSupported(normalizedServiceCode, payload);
   const idempotencyKey = String(payload.idempotencyKey || payload.metadata?.clientIdempotencyKey || "").trim().slice(0, 120);
 
   if (idempotencyKey) {

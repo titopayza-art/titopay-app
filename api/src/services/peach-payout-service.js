@@ -26,7 +26,8 @@
 
 const crypto = require("crypto");
 const { AppError } = require("../lib/errors");
-const { loadPeachPayoutConfig } = require("./peach-config-service");
+const { pool } = require("../db/pool");
+const { loadPeachPayoutConfig, PAYOUT_SETTING_KEY } = require("./peach-config-service");
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const OAUTH_TOKEN_PATH = "/api/oauth/token";
@@ -321,6 +322,16 @@ async function testPayoutConnection(effectiveOverride) {
 // Payouts stay switched off until the capability is configured, enabled, and a
 // connection test has actually succeeded. The presence of the Admin form is
 // never sufficient.
+// The last recorded outcome of the payout capability's own connection test.
+async function storedPayoutHealthStatus() {
+  try {
+    const { rows } = await pool.query("SELECT value FROM platform_settings WHERE key = $1 LIMIT 1", [PAYOUT_SETTING_KEY]);
+    return String(rows[0]?.value?.health?.status || "").toLowerCase();
+  } catch (_error) {
+    return "";
+  }
+}
+
 async function payoutAvailability(storedHealthStatus) {
   const effective = await loadPeachPayoutConfig();
   const missing = missingPayoutFields(effective);
@@ -330,7 +341,8 @@ async function payoutAvailability(storedHealthStatus) {
   if (effective.enabled === false) {
     return { available: false, reason: "PAYOUT_DISABLED", environment: effective.environment };
   }
-  if (storedHealthStatus !== undefined && storedHealthStatus !== "connected") {
+  const health = storedHealthStatus === undefined ? await storedPayoutHealthStatus() : storedHealthStatus;
+  if (health !== "connected") {
     return { available: false, reason: "PAYOUT_NOT_VERIFIED", environment: effective.environment };
   }
   return { available: true, environment: effective.environment };
@@ -402,6 +414,7 @@ module.exports = {
   missingPayoutFields,
   normalizeEnvironment,
   payoutAvailability,
+  storedPayoutHealthStatus,
   payoutBaseUrl,
   queryPayoutRequest,
   requestPayoutAccessToken,

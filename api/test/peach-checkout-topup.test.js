@@ -122,14 +122,33 @@ test("Card top-up service codes are refused by the wallet-debit transaction path
   }
 });
 
-test("Withdraw and payout stay blocked — there is no payout provider", () => {
+test("Withdraw and payout are gated by the Peach payout capability", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "services", "transaction-service.js"), "utf8");
-  for (const code of ["withdraw", "bank_withdrawal", "cash_withdrawal", "business_payout", "merchant_payout", "payouts"]) {
+  // They belong to the payout capability, never to Collection/Checkout.
+  for (const code of ["withdraw", "withdraw_money_to_bank", "withdraw_cash", "bank_withdrawal",
+    "cash_withdrawal", "payouts", "business_payout", "merchant_payout", "merchant_payouts", "seller_payout"]) {
     assert.ok(
-      new RegExp(`PROVIDER_DEPENDENT_SERVICES[\\s\\S]{0,900}"${code}"`).test(source),
-      `${code} must remain blocked until a payout provider exists`
+      new RegExp(`PEACH_PAYOUT_SERVICES = new Set\\(\\[[\\s\\S]{0,600}"${code}"`).test(source),
+      `${code} must be routed to the Peach payout capability`
     );
   }
+  // The gate consults the payout capability, then still refuses until
+  // withdrawal processing itself is switched on.
+  assert.match(source, /PEACH_PAYOUT_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,400}payoutAvailability\(\)/);
+  assert.match(source, /PAYOUT_PROCESSING_ENABLED/);
+  assert.match(source, /PAYOUT_PROCESSING_NOT_ENABLED/);
+});
+
+test("A connected payout provider does not open withdrawals on its own", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "services", "transaction-service.js"), "utf8");
+  const gate = source.slice(source.indexOf("if (PEACH_PAYOUT_SERVICES.has(normalizedServiceCode))"));
+  const block = gate.slice(0, gate.indexOf("\n  if (CARD_TOPUP_SERVICES"));
+  // The processing flag is checked AFTER availability, so a connected provider
+  // still cannot walk a customer to a Confirm that cannot settle.
+  assert.ok(block.indexOf("payoutAvailability") < block.indexOf("PAYOUT_PROCESSING_ENABLED"));
+  assert.match(block, /No wallet debit was made/);
+  // Default is off unless explicitly enabled by environment.
+  assert.match(source, /PEACH_PAYOUT_PROCESSING_ENABLED[\s\S]{0,80}=== "true"/);
 });
 
 test("The fee preview blocks unlaunched services before a customer sees a fee", () => {
