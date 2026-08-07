@@ -215,3 +215,18 @@ test("Peach status normalization covers the payment lifecycle", () => {
   assert.equal(peach.normalizedStatus("expired"), "expired");
   assert.equal(peach.normalizedStatus("refunded"), "refunded");
 });
+
+test("A failed test reports the endpoint that was actually called", async () => {
+  const restore = mockFetch(async () => new Response(JSON.stringify({ message: "Invalid client ID or secret." }), { status: 400 }));
+  try {
+    const result = await peach.testPeachConnection({
+      environment: "sandbox",
+      sandboxAuthUrl: "https://auth-override.example.test",
+      clientId: "a",
+      clientSecret: "b",
+      merchantId: "c"
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.providerResponse.endpoint, "https://auth-override.example.test/api/oauth/token");
+  } finally { restore(); }
+});

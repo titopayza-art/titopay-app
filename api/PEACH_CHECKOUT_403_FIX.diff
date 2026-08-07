@@ -176,7 +176,7 @@ diff -ru '--exclude=node_modules' api_pristine/src/services/peach-payments-servi
  function providerPaymentId() {
 diff -ru '--exclude=node_modules' api_pristine/test/peach-payments-v2.test.js api/test/peach-payments-v2.test.js
 --- api_pristine/test/peach-payments-v2.test.js	2026-08-04 15:40:22.000000000 +0000
-+++ api/test/peach-payments-v2.test.js	2026-08-07 09:38:14.601194794 +0000
++++ api/test/peach-payments-v2.test.js	2026-08-07 09:46:39.428607434 +0000
 @@ -18,33 +18,100 @@
    return () => { global.fetch = original; };
  }
@@ -384,3 +384,22 @@ diff -ru '--exclude=node_modules' api_pristine/test/peach-payments-v2.test.js ap
  test("Peach status normalization covers the payment lifecycle", () => {
    assert.equal(peach.normalizedStatus("pending"), "pending");
    assert.equal(peach.normalizedStatus("succeeded"), "completed");
+@@ -68,3 +215,18 @@
+   assert.equal(peach.normalizedStatus("expired"), "expired");
+   assert.equal(peach.normalizedStatus("refunded"), "refunded");
+ });
++
++test("A failed test reports the endpoint that was actually called", async () => {
++  const restore = mockFetch(async () => new Response(JSON.stringify({ message: "Invalid client ID or secret." }), { status: 400 }));
++  try {
++    const result = await peach.testPeachConnection({
++      environment: "sandbox",
++      sandboxAuthUrl: "https://auth-override.example.test",
++      clientId: "a",
++      clientSecret: "b",
++      merchantId: "c"
++    });
++    assert.equal(result.ok, false);
++    assert.equal(result.providerResponse.endpoint, "https://auth-override.example.test/api/oauth/token");
++  } finally { restore(); }
++});

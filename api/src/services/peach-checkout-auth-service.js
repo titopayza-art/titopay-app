@@ -276,6 +276,10 @@ async function getAccessToken(effective = {}, options = {}) {
 // checkout, payment or ledger entry is created.
 async function testCheckoutAuthentication(effective = {}) {
   const environment = normalizeEnvironment(effective.environment || effective.mode);
+  // Report the endpoint that was actually called, including any override, so a
+  // failed test never points an operator at the wrong host.
+  let authEndpoint = `${AUTH_SERVICE_URLS[environment]}${OAUTH_TOKEN_PATH}`;
+  try { authEndpoint = `${authServiceBaseUrl(environment, effective)}${OAUTH_TOKEN_PATH}`; } catch (_error) { /* fall back to the default */ }
   try {
     const result = await requestAccessToken(effective, { skipCache: true });
     return {
@@ -307,7 +311,7 @@ async function testCheckoutAuthentication(effective = {}) {
       authenticationType: "oauth_client_credentials",
       providerResponse: {
         method: "POST",
-        endpoint: `${AUTH_SERVICE_URLS[environment]}${OAUTH_TOKEN_PATH}`,
+        endpoint: authEndpoint,
         statusCode: error?.details?.providerStatus ?? null,
         accessTokenIssued: false,
         missingFields: error?.details?.missingFields || undefined
