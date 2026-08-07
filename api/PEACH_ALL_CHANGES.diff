@@ -95,7 +95,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/mi
      next();
 diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/routes/admin.routes.js api/src/routes/admin.routes.js
 --- api_pristine/src/routes/admin.routes.js	2026-08-05 08:54:16.000000000 +0000
-+++ api/src/routes/admin.routes.js	2026-08-07 12:21:15.296799064 +0000
++++ api/src/routes/admin.routes.js	2026-08-07 12:49:09.443100202 +0000
 @@ -29,7 +29,8 @@
  const { adminDisableBeneficiary, adminListBeneficiaries } = require("../services/beneficiary-service");
  const { getEmailProviderStatus, sendSmtpTestEmail, deliverSms } = require("../services/notification-service");
@@ -148,7 +148,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
    },
    pos_provider: {
      label: "Speedpoint / POS Provider",
-@@ -327,6 +361,17 @@
+@@ -327,6 +361,22 @@
    ]).toString("utf8");
  }
  
@@ -159,14 +159,19 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
 +// The provider then rejects every authentication attempt, and the Admin form
 +// still looks correctly filled in, so the corruption is invisible.
 +function isMaskedSecretPlaceholder(value) {
++  // maskSecret() renders a stored secret as "••••" + its last four characters.
++  // That U+2022 prefix is the only placeholder the portal ever emits, and no
++  // API credential contains it — so match it exactly rather than guessing at
++  // asterisk patterns, which would silently discard a real secret that happens
++  // to start with one.
 +  const text = String(value ?? "").trim();
-+  return text.startsWith("••••") || /^[•*]{3,}/.test(text);
++  return /^\u2022{4}/.test(text);
 +}
 +
  function maskSecret(value) {
    const text = String(value || "").trim();
    if (!text) return "";
-@@ -416,6 +461,14 @@
+@@ -416,6 +466,14 @@
      configured,
      enabled: stored.enabled !== false,
      secrets,
@@ -181,7 +186,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
      fields: integrationFieldDefinitions(provider),
      health: {
        status: health.status || "not_tested",
-@@ -861,7 +914,9 @@
+@@ -861,7 +919,9 @@
      }
      if (SECRET_FIELD_NAMES.has(field)) {
        const submittedValue = body[field] || (field === "clientSecret" ? body.secret : "");
@@ -192,7 +197,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
          value.secrets[`${field}Encrypted`] = encryptSecret(submittedValue);
          value.secrets[`${field}Masked`] = maskSecret(submittedValue);
        }
-@@ -928,7 +983,7 @@
+@@ -928,7 +988,7 @@
    let rotatedCount = 0;
    for (const field of provider.secretKeys) {
      const submitted = body[field];
@@ -201,7 +206,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
        nextValue.secrets[`${field}Encrypted`] = encryptSecret(submitted);
        nextValue.secrets[`${field}Masked`] = maskSecret(submitted);
        rotatedCount += 1;
-@@ -971,10 +1026,14 @@
+@@ -971,10 +1031,14 @@
  
    for (const candidate of candidates) {
      const text = String(candidate || "").trim();
@@ -218,7 +223,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
      } catch (_error) {
        continue;
      }
-@@ -1060,8 +1119,7 @@
+@@ -1060,8 +1124,7 @@
  
  function providerAuthenticationType(providerKey, effective = {}) {
    if (providerKey === "sms") return "bearer";
@@ -228,7 +233,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
    if ((providerKey === "ott" || providerKey === "flash") && effective.username && effective.password) return "basic_username_password";
    if (providerKey === "docfox" && effective.apiKey) return "bearer_api_key";
    if (effective.apiKey) return "x-api-key";
-@@ -1091,9 +1149,6 @@
+@@ -1091,9 +1154,6 @@
    if (clientId) headers["x-client-id"] = clientId;
    if (clientSecret) headers["x-client-secret"] = clientSecret;
    if (providerKey === "docfox" && apiKey) headers.authorization = `Bearer ${apiKey}`;
@@ -238,7 +243,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
    if ((providerKey === "ott" || providerKey === "flash") && effective.username && effective.password) {
      headers.authorization = `Basic ${Buffer.from(`${effective.username}:${effective.password}`).toString("base64")}`;
    }
-@@ -1313,9 +1368,9 @@
+@@ -1313,9 +1373,9 @@
    const started = Date.now();
    const testedAt = new Date().toISOString();
    let connection = { ok: false, error: "Provider is disabled" };
@@ -251,7 +256,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
    const authenticationType = providerAuthenticationType(providerKey, effective);
  
    console.info("[integration-test] configuration loaded", {
-@@ -1341,8 +1396,15 @@
+@@ -1341,8 +1401,15 @@
        connection = host ? await testSmtpProvider({ ...effective, baseUrl: host }) : { ok: false, error: "SMTP host is not configured" };
      } else if (providerKey === "sms") {
        connection = await testSimcloudSmsProvider(effective);
@@ -269,7 +274,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
      } else if (providerKey === "pos_provider") {
        connection = {
          ok: true,
-@@ -1361,7 +1423,9 @@
+@@ -1361,7 +1428,9 @@
    }
  
    const health = {
@@ -280,7 +285,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
      environment: effective.environment,
      responseTimeMs: Date.now() - started,
      lastTestedAt: testedAt,
-@@ -1385,9 +1449,7 @@
+@@ -1385,9 +1454,7 @@
    const nextValue = {
      ...stored,
      label: provider.label,
@@ -291,7 +296,7 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/ro
      health,
      logs: [logEntry, ...(Array.isArray(stored.logs) ? stored.logs : [])].slice(0, 100)
    };
-@@ -1400,7 +1462,12 @@
+@@ -1400,7 +1467,12 @@
        baseUrl: effective.baseUrl || "",
        environment: effective.environment || "production",
        senderId: providerKey === "sms" ? effective.senderId || "" : undefined,

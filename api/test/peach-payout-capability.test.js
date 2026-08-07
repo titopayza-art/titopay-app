@@ -234,16 +234,18 @@ test("A secret poisoned by an earlier save reads as unconfigured, not as a crede
   }
 });
 
-test("The placeholder test catches the shapes the portal can render", () => {
-  // Mirrors admin.routes.js / peach-config-service.js.
-  const isMasked = (value) => {
-    const text = String(value ?? "").trim();
-    return text.startsWith("••••") || /^[•*]{3,}/.test(text);
-  };
-  for (const masked of ["••••1234", "••••CRET", "••••", "****1234", "•••••••"]) {
+test("The placeholder test matches only what the portal emits", () => {
+  // Mirrors admin.routes.js / peach-config-service.js exactly.
+  const isMasked = (value) => /^\u2022{4}/.test(String(value ?? "").trim());
+
+  // maskSecret() renders "••••" + last four. Those must never be stored.
+  for (const masked of ["••••1234", "••••CRET", "••••", "••••••••", "  ••••1234  "]) {
     assert.equal(isMasked(masked), true, `${masked} must be treated as a placeholder`);
   }
-  for (const real of ["PayoutSecret123", "abc", "sk_live_1234", "a•b"]) {
+  // Everything else is a real credential and must be stored verbatim —
+  // silently discarding one would be the same class of bug this guard fixes.
+  for (const real of ["PayoutSecret123", "abc", "sk_live_1234", "a•b", "***REDACTED***",
+    "***", "•••", "configured", "•start", "P@ss••••word"]) {
     assert.equal(isMasked(real), false, `${real} is a real credential and must be stored`);
   }
 });

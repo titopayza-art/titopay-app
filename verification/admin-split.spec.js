@@ -114,8 +114,14 @@ async function api(path, body, token, method) {
   await page.goto(`${ADMIN}/integrations/peach-payments/`, { waitUntil: "networkidle" });
   await page.waitForTimeout(3000);
   await page.click('[data-integration-test="peach_payouts"]');
-  await page.waitForTimeout(5000);
-  const chipsAfter = await page.evaluate(() => Array.from(document.querySelectorAll(".integration-status-strip .chip")).map((c) => c.textContent.trim()));
+  // The click handler re-renders twice on this path (Integration Centre then the
+  // provider page), so poll for the settled state rather than guessing a delay.
+  let chipsAfter = [];
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await page.waitForTimeout(1500);
+    chipsAfter = await page.evaluate(() => Array.from(document.querySelectorAll(".integration-status-strip .chip")).map((c) => c.textContent.trim()));
+    if (chipsAfter[1] === "Connected") break;
+  }
   check("Payout now shows Connected", chipsAfter[1] === "Connected", JSON.stringify(chipsAfter));
   check("Collection still shows Connected", chipsAfter[0] === "Connected", JSON.stringify(chipsAfter));
 

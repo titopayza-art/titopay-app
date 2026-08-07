@@ -55,8 +55,13 @@ function decryptSecret(value) {
 // earlier save reads as unconfigured, so the operator is told to re-enter the
 // secret instead of the provider rejecting the mask forever.
 function isMaskedSecretPlaceholder(value) {
+  // maskSecret() renders a stored secret as "••••" + its last four characters.
+  // That U+2022 prefix is the only placeholder the portal ever emits, and no
+  // API credential contains it — so match it exactly rather than guessing at
+  // asterisk patterns, which would silently discard a real secret that happens
+  // to start with one.
   const text = String(value ?? "").trim();
-  return text.startsWith("••••") || /^[•*]{3,}/.test(text);
+  return /^\u2022{4}/.test(text);
 }
 
 function storedSecret(stored, field) {

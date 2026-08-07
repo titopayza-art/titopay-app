@@ -368,8 +368,13 @@ function decryptSecret(value) {
 // The provider then rejects every authentication attempt, and the Admin form
 // still looks correctly filled in, so the corruption is invisible.
 function isMaskedSecretPlaceholder(value) {
+  // maskSecret() renders a stored secret as "••••" + its last four characters.
+  // That U+2022 prefix is the only placeholder the portal ever emits, and no
+  // API credential contains it — so match it exactly rather than guessing at
+  // asterisk patterns, which would silently discard a real secret that happens
+  // to start with one.
   const text = String(value ?? "").trim();
-  return text.startsWith("••••") || /^[•*]{3,}/.test(text);
+  return /^\u2022{4}/.test(text);
 }
 
 function maskSecret(value) {
