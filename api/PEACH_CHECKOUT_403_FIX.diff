@@ -1,5 +1,6 @@
 Only in api: PEACH_CHECKOUT_403_FIX.md
-diff -ru '--exclude=node_modules' api_pristine/PEACH_PAYMENTS_V2_IMPLEMENTATION.md api/PEACH_PAYMENTS_V2_IMPLEMENTATION.md
+Only in api: PEACH_FIX_DEPLOYMENT.md
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/PEACH_PAYMENTS_V2_IMPLEMENTATION.md api/PEACH_PAYMENTS_V2_IMPLEMENTATION.md
 --- api_pristine/PEACH_PAYMENTS_V2_IMPLEMENTATION.md	2026-08-04 15:46:01.000000000 +0000
 +++ api/PEACH_PAYMENTS_V2_IMPLEMENTATION.md	2026-08-07 09:40:37.708585933 +0000
 @@ -1,5 +1,11 @@
@@ -14,7 +15,7 @@ diff -ru '--exclude=node_modules' api_pristine/PEACH_PAYMENTS_V2_IMPLEMENTATION.
  This change is on branch `peach-payments-v2` and is not deployed automatically. The backup branch is `backup-before-peach-v2-20260804`.
  
  ## Modified files
-diff -ru '--exclude=node_modules' api_pristine/src/routes/admin.routes.js api/src/routes/admin.routes.js
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/routes/admin.routes.js api/src/routes/admin.routes.js
 --- api_pristine/src/routes/admin.routes.js	2026-08-05 08:54:16.000000000 +0000
 +++ api/src/routes/admin.routes.js	2026-08-07 09:37:21.152574249 +0000
 @@ -29,7 +29,7 @@
@@ -107,7 +108,7 @@ diff -ru '--exclude=node_modules' api_pristine/src/routes/admin.routes.js api/sr
      }
    };
  }
-diff -ru '--exclude=node_modules' api_pristine/src/routes/integrations.routes.js api/src/routes/integrations.routes.js
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/routes/integrations.routes.js api/src/routes/integrations.routes.js
 --- api_pristine/src/routes/integrations.routes.js	2026-08-04 15:45:27.000000000 +0000
 +++ api/src/routes/integrations.routes.js	2026-08-07 09:37:33.840575003 +0000
 @@ -344,9 +344,11 @@
@@ -126,7 +127,7 @@ diff -ru '--exclude=node_modules' api_pristine/src/routes/integrations.routes.js
      },
      docfox: {
 Only in api/src/services: peach-checkout-auth-service.js
-diff -ru '--exclude=node_modules' api_pristine/src/services/peach-payments-service.js api/src/services/peach-payments-service.js
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/services/peach-payments-service.js api/src/services/peach-payments-service.js
 --- api_pristine/src/services/peach-payments-service.js	2026-08-04 16:00:33.000000000 +0000
 +++ api/src/services/peach-payments-service.js	2026-08-07 09:37:44.684575648 +0000
 @@ -5,6 +5,7 @@
@@ -174,7 +175,7 @@ diff -ru '--exclude=node_modules' api_pristine/src/services/peach-payments-servi
  }
  
  function providerPaymentId() {
-diff -ru '--exclude=node_modules' api_pristine/test/peach-payments-v2.test.js api/test/peach-payments-v2.test.js
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/test/peach-payments-v2.test.js api/test/peach-payments-v2.test.js
 --- api_pristine/test/peach-payments-v2.test.js	2026-08-04 15:40:22.000000000 +0000
 +++ api/test/peach-payments-v2.test.js	2026-08-07 09:46:39.428607434 +0000
 @@ -18,33 +18,100 @@
