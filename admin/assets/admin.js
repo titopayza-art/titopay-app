@@ -1787,8 +1787,14 @@ async function hydrateDashboard() {
   if (healthHost) {
     const present = tables ? tables.filter((row) => row.exists).length : 0;
     const missing = tables ? tables.length - present : 0;
+    // The provider records from /admin/integrations/config carry their state in
+    // health.status; there is no top-level `status` field, so reading one made
+    // this tile report "0 of N active" no matter how many were connected. Use
+    // the same definition the Integration Centre counts with, so the two pages
+    // can never disagree. The legacy field names stay as a fallback.
     const providersLive = providerRows
-      ? providerRows.filter((row) => ["active", "enabled", "live", "connected", "ok", "configured"].includes(String(row.status || row.state || "").toLowerCase())).length
+      ? providerRows.filter((row) => ["connected", "ready", "active", "enabled", "live", "ok"]
+          .includes(String(row.health?.status || row.status || row.state || "").toLowerCase())).length
       : null;
     healthHost.innerHTML = `
       ${dashboardStatusRow("API", "Responding", "ok", "Overview request answered")}

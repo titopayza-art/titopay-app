@@ -1,6 +1,14 @@
 TitoPay Admin
-Build: admin-console-v65
+Build: admin-console-v66
 Date: 2026-08-07
+
+v66 - The Dashboard provider tile counts connected providers again.
+
+  - Platform health read a top-level `status` field on each provider record.
+    That field does not exist - the state lives in `health.status` - so the tile
+    reported "0 of N active" no matter how many providers were connected. It now
+    counts with the same rule the Integration Centre uses, so the two pages can
+    never disagree.
 
 v65 - The Payout capability is configurable and testable from the provider
 cards too, not only the Peach Payments page.
@@ -382,5 +390,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v65; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v66; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
