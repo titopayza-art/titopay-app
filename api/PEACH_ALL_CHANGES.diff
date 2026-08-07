@@ -18,6 +18,20 @@ diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/PEACH_
  
  ## Modified files
 Only in api: PEACH_TOPUP_LIFECYCLE_FIX.md
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/package.json api/package.json
+--- api_pristine/package.json	2026-07-10 17:34:15.000000000 +0000
++++ api/package.json	2026-08-07 13:09:38.806535915 +0000
+@@ -21,7 +21,8 @@
+     "backend:audit": "node scripts/audit-production-backend.js",
+     "email:verify": "node scripts/verify-email-otp.js",
+     "verify:infra": "node scripts/verify-infrastructure.js",
+-    "test": "node --test"
++    "test": "node --test",
++    "peach:diagnose-payout": "node scripts/diagnose-peach-payout.js"
+   },
+   "dependencies": {
+     "bcryptjs": "^2.4.3",
+Only in api/scripts: diagnose-peach-payout.js
 diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/app.js api/src/app.js
 --- api_pristine/src/app.js	2026-08-04 07:17:30.000000000 +0000
 +++ api/src/app.js	2026-08-07 10:16:29.896129700 +0000

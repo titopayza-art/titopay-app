@@ -45,6 +45,46 @@ test("A configured payout base URL always wins over the default", () => {
   assert.equal(payout.payoutBaseUrl({ environment: "sandbox" }), "https://sandbox-payouts.peachpayments.com/api");
 });
 
+test("A bare Peach payouts host gets the documented /api path", () => {
+  // The Dashboard shows the host without a path, so that is what an operator
+  // pastes. Without /api every call 404s the moment authentication succeeds.
+  for (const entered of [
+    "https://sandbox-payouts.peachpayments.com",
+    "https://sandbox-payouts.peachpayments.com/",
+    "sandbox-payouts.peachpayments.com"
+  ]) {
+    assert.equal(
+      payout.payoutBaseUrl({ environment: "sandbox", baseUrl: entered }),
+      "https://sandbox-payouts.peachpayments.com/api",
+      `${entered} must resolve to the documented server`
+    );
+  }
+  assert.equal(payout.payoutBaseUrl({ environment: "production", baseUrl: "https://payouts.peachpayments.com" }),
+    "https://payouts.peachpayments.com/api");
+});
+
+test("An explicit path is never rewritten", () => {
+  // Already correct, and non-Peach hosts (a proxy) must be left alone entirely.
+  assert.equal(payout.payoutBaseUrl({ environment: "sandbox", baseUrl: "https://sandbox-payouts.peachpayments.com/api" }),
+    "https://sandbox-payouts.peachpayments.com/api");
+  assert.equal(payout.payoutBaseUrl({ environment: "sandbox", baseUrl: "https://my-proxy.example.com" }),
+    "https://my-proxy.example.com");
+  assert.equal(payout.payoutBaseUrl({ environment: "sandbox", baseUrl: "https://my-proxy.example.com/custom" }),
+    "https://my-proxy.example.com/custom");
+});
+
+test("A failed payout test names the HTTP status so 400 can be told from 404", async () => {
+  const restore = mockFetch(async () => new Response(JSON.stringify({ message: "Invalid client ID or secret." }), { status: 400 }));
+  try {
+    payout.clearPayoutTokenCache();
+    const result = await payout.testPayoutConnection(CREDENTIALS);
+    assert.match(result.error, /HTTP 400/);
+    assert.match(result.error, /Peach said/i);
+    // Still no credential in the operator-facing text.
+    assert.doesNotMatch(result.error, /payout-secret/);
+  } finally { restore(); payout.clearPayoutTokenCache(); }
+});
+
 /* ----------------------------------------------------- not configured */
 
 test("Payout reports PAYOUT_NOT_CONFIGURED without calling anything", async () => {

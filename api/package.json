@@ -1,0 +1,41 @@
+{
+  "name": "titopay-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Protected TitoPay API service",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:init": "node src/db/init.js",
+    "db:migrate": "node src/db/init.js",
+    "hr:seed": "node scripts/seed-hr.js",
+    "pricing:seed": "node scripts/seed-pricing-rules.js",
+    "admin:create": "node scripts/create-admin-user.js",
+    "admin:reset-super": "node scripts/reset-super-admin-password.js",
+    "admin:diagnose-login": "node scripts/diagnose-admin-login.js",
+    "admin:password-only": "node scripts/set-admin-password-only.js",
+    "admin:verify-rbac": "node scripts/verify-admin-rbac.js",
+    "admin:audit-routes": "node scripts/audit-admin-endpoints.js",
+    "backend:audit": "node scripts/audit-production-backend.js",
+    "email:verify": "node scripts/verify-email-otp.js",
+    "verify:infra": "node scripts/verify-infrastructure.js",
+    "test": "node --test",
+    "peach:diagnose-payout": "node scripts/diagnose-peach-payout.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^9.0.3",
+    "pg": "^8.12.0",
+    "qrcode": "^1.5.4",
+    "uuid": "^11.0.3",
+    "ws": "^8.18.0"
+  }
+}

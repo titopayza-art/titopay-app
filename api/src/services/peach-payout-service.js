@@ -74,11 +74,20 @@ function payoutBaseUrl(effective = {}) {
   const environment = normalizeEnvironment(effective.environment);
   const configured = trimmed(effective.baseUrl);
   const value = configured || PAYOUT_SERVICE_URLS[environment];
+  let url;
   try {
-    return new URL(value.includes("://") ? value : `https://${value}`).toString().replace(/\/+$/, "");
+    url = new URL(value.includes("://") ? value : `https://${value}`);
   } catch (_error) {
     throw new AppError(400, "Peach payout base URL is invalid", { code: "PAYOUT_CONFIGURATION_INVALID" });
   }
+  // The documented Payouts server is https://[sandbox-]payouts.peachpayments.com/api,
+  // but the Dashboard shows the bare host, so that is what an operator pastes.
+  // Add the path for a Peach host that has none; an explicit path is always
+  // left exactly as entered.
+  if (!url.pathname.replace(/\/+$/, "") && /(^|[.-])payouts\.peachpayments\.com$/i.test(url.hostname)) {
+    url.pathname = "/api";
+  }
+  return url.toString().replace(/\/+$/, "");
 }
 
 function missingPayoutFields(effective = {}) {
@@ -132,7 +141,10 @@ function clearPayoutTokenCache() {
 function payoutErrorFor(status, message, credentials = {}) {
   const raw = scrub(message, credentials);
   const lower = String(message || "").toLowerCase();
-  const because = raw && raw.length <= 160 ? ` Peach said: "${raw.replace(/"/g, "'")}"` : "";
+  const said = raw && raw.length <= 160 ? ` Peach said: "${raw.replace(/"/g, "'")}"` : "";
+  // The status alone separates a rejected credential (400/401/403) from a wrong
+  // endpoint (404), which is the first thing to check when a test fails.
+  const because = `${Number.isFinite(status) ? ` [HTTP ${status}]` : ""}${said}`;
   if (status === 401 || status === 403) {
     return new AppError(502, `Authentication rejected by Peach Payouts (invalid Client ID, Client Secret or Merchant ID).${because}`, {
       code: "PAYOUT_AUTHENTICATION_REJECTED", providerStatus: status
