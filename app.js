@@ -1839,32 +1839,30 @@ function topbar() {
 // Rotates through the 11 official languages, one per day. Languages with
 // well-established time-of-day greetings use them; the rest use their correct
 // universal greeting, which is right at any hour -- nothing is invented.
+// One "hello" per official language, rotating daily. Hellos instead of
+// time-of-day forms on purpose: a greeting like "Goeiemôre" is only right for
+// a few hours and an open PWA does not re-render just because the clock moved,
+// so a time-bound phrase could sit on screen stale. A hello is correct at any
+// hour by construction. Each phrase is the standard neutral greeting of its
+// language, addressed politely to one person.
 const GREETING_LANGUAGES = [
-  { name: "English", morning: "Good morning", day: "Good day", afternoon: "Good afternoon", evening: "Good evening" },
-  { name: "isiZulu", all: "Sawubona" },
-  { name: "isiXhosa", all: "Molo" },
-  { name: "Afrikaans", morning: "Goeiemôre", day: "Goeiedag", afternoon: "Goeiemiddag", evening: "Goeienaand" },
-  { name: "Sepedi", all: "Thobela" },
-  { name: "Setswana", all: "Dumela" },
-  { name: "Sesotho", all: "Lumela" },
-  { name: "Xitsonga", morning: "Avuxeni", day: "Inhlekanhi", afternoon: "Inhlekanhi", evening: "Riperile" },
-  { name: "siSwati", all: "Sawubona" },
-  { name: "Tshivenda", morning: "Ndi matsheloni", day: "Ndi masiari", afternoon: "Ndi masiari", evening: "Ndi madekwana" },
-  { name: "isiNdebele", all: "Lotjhani" }
+  { name: "English", hello: "Hello" },
+  { name: "isiZulu", hello: "Sawubona" },
+  { name: "isiXhosa", hello: "Molo" },
+  { name: "Afrikaans", hello: "Hallo" },
+  { name: "Sepedi", hello: "Thobela" },
+  { name: "Setswana", hello: "Dumela" },
+  { name: "Sesotho", hello: "Lumela" },
+  { name: "Xitsonga", hello: "Avuxeni" },
+  { name: "siSwati", hello: "Sawubona" },
+  { name: "Tshivenda", hello: "Ndaa" },
+  { name: "isiNdebele", hello: "Lotjhani" }
 ];
-
-function greetingTimeBucket(date = new Date()) {
-  const hour = date.getHours();
-  if (hour >= 5 && hour < 12) return "morning";
-  if (hour >= 12 && hour < 14) return "day";
-  if (hour >= 14 && hour < 18) return "afternoon";
-  return "evening";
-}
 
 function dashboardGreeting(now = new Date()) {
   const dayNumber = Math.floor(now.getTime() / 86400000);
   const language = GREETING_LANGUAGES[((dayNumber % GREETING_LANGUAGES.length) + GREETING_LANGUAGES.length) % GREETING_LANGUAGES.length];
-  const phrase = language[greetingTimeBucket(now)] || language.all;
+  const phrase = language.hello;
   const user = state.user || {};
   const name = String(user.fullName || user.full_name || user.username || "").trim().split(/\s+/)[0] || "";
   return { phrase, name, language: language.name };
