@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v274-peach-card-topup";
+const CACHE_NAME = "titopay-pwa-v283-ledger-backed-statements";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=274",
-  "./app.min.js?v=274",
+  "./styles.min.css?v=283",
+  "./app.min.js?v=283",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

@@ -525,6 +525,8 @@ async function refreshCustomerSession() {
       const error = new Error("TitoPay services are not reachable. Please check your connection and try again.");
       error.status = 0;
       error.cause = cause;
+      error.path = "/v1/auth/refresh";
+      error.fromSessionRefresh = true;
       throw error;
     }
     const text = await response.text();
@@ -559,15 +561,72 @@ async function refreshCustomerSession() {
   })();
   try {
     return await authRefreshPromise;
+  } catch (error) {
+    // Everything raised while renewing a session is a SESSION failure — the
+    // network call, a rejected refresh token, or a browser that refused to
+    // store the new one (private mode, full quota). Marking them means the
+    // caller can never mistake one for the API being unreachable, and the
+    // customer is told to sign in rather than to check their signal.
+    if (error && typeof error === "object") {
+      error.fromSessionRefresh = true;
+      if (error.path === undefined) error.path = "/v1/auth/refresh";
+      if (!error.status || error.status === 0) {
+        error.status = 401;
+        error.message = "Your TitoPay session could not be renewed. Please sign in again.";
+      }
+    }
+    throw error;
   } finally {
     authRefreshPromise = null;
+  }
+}
+
+// How long to wait before giving up on a request.
+//
+// 15s is right for ordinary calls and keeps the UI honest. It is WRONG for the
+// endpoints that call a payment provider server-side: the API's own budget for
+// one of those is up to 27 seconds (up to 12s for the provider OAuth token on a
+// cold cache, plus up to 15s for the provider call itself). A 15s client
+// timeout is therefore guaranteed to give up first whenever the provider is
+// slow — and the server goes on to succeed, so the customer is told a payment
+// failed while a real checkout or payout is in flight.
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const PROVIDER_REQUEST_TIMEOUT_MS = 45000;
+const PROVIDER_BACKED_PATHS = [
+  /^\/v1\/payments\/topup(\?|$)/,
+  /^\/v1\/payments\/topup\/[^/]+$/,
+  /^\/v1\/payouts\/withdrawals(\?|$)/,
+  /^\/v1\/payouts\/withdrawals\/[^/]+$/
+];
+
+function requestTimeoutFor(path) {
+  return PROVIDER_BACKED_PATHS.some((pattern) => pattern.test(String(path || "")))
+    ? PROVIDER_REQUEST_TIMEOUT_MS
+    : DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
+// A deliberately minimal request: a plain GET, no Authorization, no custom
+// headers, so it triggers no preflight and exercises nothing but "can this
+// device talk to the API right now". Never throws; the answer is the point.
+async function probeApiReachable() {
+  try {
+    const response = await fetch(`${API_BASE}/v1/health`, {
+      method: "GET",
+      cache: "no-store",
+      signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined
+    });
+    return response.ok ? "api reachable" : `api reachable (health ${response.status})`;
+  } catch (error) {
+    return "api unreachable";
   }
 }
 
 async function api(path, options = {}) {
   const canAbort = typeof AbortController !== "undefined";
   const controller = canAbort ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), 15000) : null;
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : requestTimeoutFor(path);
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  const startedAt = Date.now();
   const headers = Object.assign({ "Content-Type": "application/json" }, options.headers || {});
   if (options.auth !== false && state.auth && state.auth.accessToken) {
     headers.Authorization = `Bearer ${state.auth.accessToken}`;
@@ -578,8 +637,23 @@ async function api(path, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined
   };
   if (controller) fetchOptions.signal = controller.signal;
+
+  // ONLY the fetch belongs in the network try. Anything else that used to sit
+  // in here — notably the token refresh — had its errors rewritten by the catch
+  // below into "services are not reachable", attributed to THIS path, with an
+  // elapsed time that included the round trip that already succeeded. A session
+  // that needed re-authenticating was therefore reported as the network being
+  // down, and the customer was told to check their signal and try again.
+  let response;
   try {
-    const response = await fetch(`${API_BASE}${path}`, fetchOptions);
+    response = await fetch(`${API_BASE}${path}`, fetchOptions);
+  } catch (error) {
+    throw await describeRequestFailure(error, { path, controller, startedAt });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  try {
     const text = await response.text();
     let payload = {};
     try {
@@ -595,6 +669,8 @@ async function api(path, options = {}) {
       state.auth &&
       state.auth.refreshToken
     ) {
+      // A refresh failure is a SESSION problem and is reported as itself. It is
+      // deliberately outside the network try above so it can never be relabelled.
       await refreshCustomerSession();
       return api(path, { ...options, authRetried: true });
     }
@@ -604,27 +680,52 @@ async function api(path, options = {}) {
       error.details = payload.details || payload;
       error.requestId = payload.requestId || null;
       error.path = path;
+      error.elapsedMs = Date.now() - startedAt;
       throw error;
     }
     return payload;
   } catch (error) {
-    if (error.name === "AbortError") {
-      const timeoutError = new Error("TitoPay services are taking too long to respond. Please try again.");
-      timeoutError.status = 0;
-      timeoutError.path = path;
-      throw timeoutError;
-    }
-    if (!error.status) {
-      const networkError = new Error("TitoPay services are not reachable. Please check your connection and try again.");
-      networkError.status = 0;
-      networkError.path = path;
-      networkError.cause = error;
-      throw networkError;
-    }
+    // The response arrived; whatever failed after that is already described
+    // (an API rejection, or a session problem raised by the refresh). Errors
+    // are passed through untouched — the only thing this layer is allowed to
+    // classify is a failure of the fetch itself, handled above.
+    if (error && error.path === undefined) error.path = path;
+    if (error && error.elapsedMs === undefined) error.elapsedMs = Date.now() - startedAt;
     throw error;
-  } finally {
-    if (timer) clearTimeout(timer);
   }
+}
+
+// Classify a failure of the fetch itself — the only case where the app can
+// honestly say anything about connectivity.
+async function describeRequestFailure(error, { path, controller, startedAt }) {
+  // Ask the controller, not the error. Safari does not always surface an
+  // aborted fetch as a recognisable AbortError, so keying off error.name
+  // reported our own timeout as "services are not reachable" — which sends a
+  // customer to check their signal when the request actually went through.
+  const timedOut = controller ? controller.signal.aborted : error?.name === "AbortError";
+  if (timedOut) {
+    const timeoutError = new Error("TitoPay is taking longer than usual to answer. Your transaction may still be going through.");
+    // 408 is deliberately NOT 0: a timeout means the request very likely
+    // REACHED TitoPay, so it must never be presented as a connection problem.
+    timeoutError.status = 408;
+    timeoutError.timedOut = true;
+    timeoutError.path = path;
+    timeoutError.elapsedMs = Date.now() - startedAt;
+    return timeoutError;
+  }
+  const networkError = new Error("TitoPay services are not reachable. Please check your connection and try again.");
+  networkError.status = 0;
+  networkError.path = path;
+  networkError.cause = error;
+  networkError.elapsedMs = Date.now() - startedAt;
+  // The browser reports every failed fetch identically, whether the API is
+  // unreachable or this ONE request was refused. Those need completely
+  // different answers, so ask a question the browser can answer: is a plain
+  // GET to the health endpoint fine right now? If it is, the connection is
+  // good and the problem belongs to this request alone.
+  networkError.reachability = await probeApiReachable();
+  networkError.causeName = String(error?.name || "") || undefined;
+  return networkError;
 }
 
 function friendlyFormError(error, formName = "") {
@@ -646,6 +747,15 @@ function friendlyFormError(error, formName = "") {
   if (formName === "wallet-unlock" && Number.isFinite(remainingAttempts)) {
     if (remainingAttempts > 0) return `Incorrect OTP. ${remainingAttempts} ${remainingAttempts === 1 ? "attempt" : "attempts"} remaining.`;
     return "This OTP has been locked after too many incorrect attempts. Close this window and request a new OTP.";
+  }
+  // A timeout is not a connection failure and not a rejection. The request very
+  // likely reached TitoPay, so the customer must be told to CHECK rather than to
+  // retry — retrying is how a payment gets made twice.
+  if (error?.fromSessionRefresh) {
+    return `${rawMessage || "Your TitoPay session could not be renewed."} Sign out and sign in again — your wallet and money are unaffected.${suffix}`;
+  }
+  if (error?.timedOut || status === 408) {
+    return `${rawMessage || "TitoPay is taking longer than usual to answer."} Check Activity before trying again — if it appears there, it went through.${suffix}`;
   }
   if (status === 429) {
     if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
@@ -2250,14 +2360,22 @@ function activityList(items) {
       ? ` <em class="tx-status ${statusValue === "pending" || statusValue === "processing" ? "" : "failed"}">${esc(statusValue)}</em>`
       : "";
     const label = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
-    const amountText = `${direction === "credit" ? "+" : "-"}${money(item.total || item.amount)}`;
-    return `<button class="activity-item" type="button" data-transaction-open="${esc(transactionKey(item))}" aria-label="${esc(`${label}, ${direction === "credit" ? "money in" : "money out"} ${amountText}. View transaction details.`)}">
+    // An attempt the wallet never posted is shown, but never dressed as money
+    // in: no plus sign, no credit colour, and the accessible label says so.
+    const settled = transactionPostedToWallet(item);
+    const amountText = settled
+      ? `${direction === "credit" ? "+" : "-"}${money(statementPostedAmount(item))}`
+      : money(statementAttemptedAmount(item));
+    const movement = settled
+      ? (direction === "credit" ? "money in" : "money out")
+      : "attempted, no money moved";
+    return `<button class="activity-item" type="button" data-transaction-open="${esc(transactionKey(item))}" aria-label="${esc(`${label}, ${movement} ${amountText}. View transaction details.`)}">
       <span class="icon-bubble">${icon(direction === "credit" ? "download" : "upload")}</span>
       <div>
         <p><strong>${esc(label)}</strong></p>
         <small>${esc(item.reference || item.status || "Processed")} · ${formatDate(item.created_at || item.createdAt)}${statusBadge}</small>
       </div>
-      <strong class="amount ${direction === "credit" ? "credit" : ""}">${amountText}</strong>
+      <strong class="amount ${settled && direction === "credit" ? "credit" : ""}">${amountText}</strong>
     </button>`;
   }).join("")}</section>`;
 }
@@ -2348,9 +2466,15 @@ function openTransactionDetailModal(key) {
   const hasFee = feeRaw !== undefined && feeRaw !== null && feeRaw !== "" && Number.isFinite(Number(feeRaw));
   const receipt = receiptForTransaction(item);
 
+  // The one line that answers "did this actually affect my balance?", taken
+  // from the wallet ledger rather than from the transaction's own status.
+  const settled = transactionPostedToWallet(item);
   const rows = [
     ["Type", service, "grid"],
-    ["Direction", direction === "credit" ? "Money in" : "Money out", direction === "credit" ? "download" : "upload"]
+    ["Direction", direction === "credit" ? "Money in" : "Money out", direction === "credit" ? "download" : "upload"],
+    ["Wallet movement", settled
+      ? `${direction === "credit" ? "+" : "-"}${money(statementPostedAmount(item))}`
+      : "None — your balance was not affected", settled ? "wallet" : "shield"]
   ];
   if (hasFee) rows.push(["Fee", money(Number(feeRaw)), "shield"]);
   if (dateObj && !Number.isNaN(dateObj.getTime())) {
@@ -3440,8 +3564,11 @@ function onChange(event) {
   if (fundingMethod) {
     const hint = fundingMethod.closest("form")?.querySelector("[data-funding-hint]");
     if (hint) {
+      // EFT is not wired to anything that could credit a wallet, so the form
+      // says so here rather than letting someone reach the review screen and
+      // then be turned away — and it must never imply money can be transferred.
       hint.textContent = fundingMethod.value === "eft_bank_transfer"
-        ? "Transfer from your bank using the TitoPay reference shown after you confirm, so the money can be matched to your wallet."
+        ? "EFT top ups are not available yet — TitoPay cannot match bank transfers to your wallet automatically. Choose Card to top up now."
         : "Paid by card through Peach Payments. Your wallet is credited once the payment is confirmed.";
     }
   }
@@ -4547,6 +4674,19 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "confirm-transaction-review") {
     await confirmReviewedTransaction();
+  }
+  if (action === "topup-use-card") {
+    openTopUpModal({ id: "top-up", label: "Top Up", serviceCode: "wallet_top_up" });
+    return;
+  }
+  if (action === "withdraw-add-bank-account") {
+    await submitNewBankAccount();
+    return;
+  }
+  if (action === "withdraw-check-status") {
+    const reference = event.target.closest("[data-withdrawal-reference]")?.dataset.withdrawalReference || "";
+    await pollAndPresentWithdrawal(reference);
+    return;
   }
   if (action === "edit-transaction-review") {
     const context = state.pendingTransactionReview;
@@ -6839,7 +6979,7 @@ function openTopUpModal(service) {
         <label for="topup-method">How are you paying?</label>
         <select id="topup-method" name="fundingMethod" data-funding-method>
           <option value="peach_card">Card &middot; instant</option>
-          <option value="eft_bank_transfer">EFT or bank transfer</option>
+          <option value="eft_bank_transfer">EFT or bank transfer &middot; not available yet</option>
         </select>
         <p class="field-hint" data-funding-hint>Paid by card through Peach Payments. Your wallet is credited once the payment is confirmed.</p>
       </div>
@@ -6855,10 +6995,23 @@ function openTopUpModal(service) {
   `);
 }
 
-function openWithdrawModal(service) {
+// The withdrawal form needs the customer's saved bank accounts and the banks
+// Peach can pay, so it loads them before rendering. A failure to load is shown
+// as itself rather than as an empty form that would fail on submit.
+async function openWithdrawModal(service) {
+  let accounts = [];
+  try {
+    [accounts] = await Promise.all([loadPayoutBankAccounts({ refresh: true }), loadPayoutBanks()]);
+  } catch (error) {
+    // Failing to OPEN the screen is not a failed transaction. Saying
+    // "Transaction not confirmed" here would tell someone a withdrawal might
+    // have gone out when nothing was ever attempted.
+    openPayoutUnavailableModal(error, "Withdraw");
+    return;
+  }
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Withdraw</p><h2>Withdraw funds</h2><p class="lead">Withdrawals are handled through Peach Payments-supported payout processing after wallet checks and confirmation.</p></div>
+      <div><p class="eyebrow">Withdraw</p><h2>Withdraw funds</h2><p class="lead">Withdrawals are paid to your bank by Peach Payments after wallet checks and confirmation.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid money-form" data-form="transaction">
@@ -6870,28 +7023,36 @@ function openWithdrawModal(service) {
         <div class="input-affix currency-affix" data-prefix="R"><input id="wd-amount" name="amount" inputmode="decimal" required></div>
         ${quickAmountChips(QUICK_AMOUNTS, { includeAll: true })}
       </div>
-      <div class="field">
-        <label for="wd-account">Where should it go?</label>
-        <input id="wd-account" name="recipient" autocomplete="off" placeholder="Bank account number or saved beneficiary" required>
-        <p class="field-hint">Enter the account you have already given TitoPay, or its reference.</p>
+      <div class="field" data-bank-account-picker>
+        ${accounts.length ? `
+          <label for="wd-account">Pay out to</label>
+          <select id="wd-account" name="bankAccountId" required>${bankAccountOptions(accounts)}</select>
+          <p class="field-hint">Withdrawals only go to a bank account saved on your own profile.</p>
+        ` : `
+          <label>Pay out to</label>
+          <p class="field-hint">You have no saved bank account yet. Add the account below and it will be used for this withdrawal.</p>
+        `}
       </div>
-      <div class="field">
-        <label for="wd-speed">How soon do you need it?</label>
-        <select id="wd-speed" name="withdrawalSpeed" data-withdrawal-speed>
-          <option value="standard_peach_withdrawal">Standard</option>
-          <option value="instant_peach_withdrawal">Instant</option>
-        </select>
-        <p class="field-hint" data-withdrawal-hint>Processed through Peach Payments. The exact fee is shown on the review screen before you confirm.</p>
+      <div class="field" data-bank-account-new>
+        ${accounts.length ? "" : newBankAccountFields()}
       </div>
       <div class="field">
         <label for="wd-reference">Reference <span class="field-optional">optional</span></label>
         <input id="wd-reference" name="reference" placeholder="What is this withdrawal for?">
+        <p class="field-hint">Shown on the bank statement. Letters, digits and spaces only.</p>
       </div>
       <button class="btn primary" type="submit">${icon("withdraw")} Preview withdrawal</button>
     </form>
     <section class="integration-note" aria-label="Withdrawal security">
-      <p>${icon("shield")} <span><strong>Checked before it leaves.</strong> Wallet lock, beneficiary and fee are all confirmed on the review screen.</span></p>
+      <p>${icon("shield")} <span><strong>Checked before it leaves.</strong> Wallet lock, available balance and fee are all confirmed before anything is sent to your bank.</span></p>
+      <p>${icon("bank")} <span>Your wallet is debited when the payout is submitted. If your bank rejects it, the full amount is returned to your wallet automatically.</span></p>
     </section>
+    ${accounts.length ? `
+      <div class="auth-actions">
+        <details><summary>Add another bank account</summary>
+          <div class="form-grid">${newBankAccountFields()}</div>
+        </details>
+      </div>` : ""}
   `);
 }
 
@@ -8772,7 +8933,19 @@ function updateGiftCounter(field) {
 // tiles gave no clue which to use. They are separate service codes on the
 // backend, so they cannot be merged here; instead each one now says what it is
 // for. Payouts also gained the balance context and amount presets Withdraw has.
-function openPayoutModal(service) {
+// Business payouts run the same Peach Payouts lifecycle as a personal
+// withdrawal, so they use the same saved bank accounts.
+function payoutAccountsForForm() {
+  return state.payoutBankAccounts || [];
+}
+
+async function openPayoutModal(service) {
+  try {
+    await Promise.all([loadPayoutBankAccounts({ refresh: true }), loadPayoutBanks()]);
+  } catch (error) {
+    openPayoutUnavailableModal(error, "Payouts");
+    return;
+  }
   openModal(`
     <div class="modal-head">
       <div>
@@ -8791,18 +8964,18 @@ function openPayoutModal(service) {
         <div class="input-affix currency-affix" data-prefix="R"><input id="payout-amount" name="amount" inputmode="decimal" required></div>
         ${quickAmountChips(QUICK_AMOUNTS, { includeAll: true })}
       </div>
-      <div class="field">
-        <label for="payout-recipient">Bank account or beneficiary</label>
-        <input id="payout-recipient" name="recipient" autocomplete="off" placeholder="Saved bank beneficiary or account reference" required>
-        <p class="field-hint">Enter the beneficiary you have already given TitoPay, or its reference.</p>
+      <div class="field" data-bank-account-picker>
+        ${payoutAccountsForForm().length ? `
+          <label for="payout-recipient">Pay out to</label>
+          <select id="payout-recipient" name="bankAccountId" required>${bankAccountOptions(payoutAccountsForForm())}</select>
+          <p class="field-hint">Payouts only go to a bank account saved on this business profile.</p>
+        ` : `
+          <label>Pay out to</label>
+          <p class="field-hint">No saved bank account yet. Add the account below and it will be used for this payout.</p>
+        `}
       </div>
-      <div class="field">
-        <label for="payout-speed">How soon do you need it?</label>
-        <select id="payout-speed" name="payoutSpeed" data-payout-speed>
-          <option value="standard_peach_business_payout">Standard</option>
-          <option value="instant_peach_business_payout">Instant</option>
-        </select>
-        <p class="field-hint" data-payout-hint>Processed through Peach Payments. The exact fee is shown on the preview before you confirm.</p>
+      <div class="field" data-bank-account-new>
+        ${payoutAccountsForForm().length ? "" : newBankAccountFields()}
       </div>
       <div class="field">
         <label for="payout-reference">Reference <span class="field-optional">optional</span></label>
@@ -13572,6 +13745,21 @@ function transactionReviewRows(context) {
   return rows.map(([label, value, iconName, emphasis]) => settingsRow(label, value, iconName, emphasis)).join("");
 }
 
+// A withdrawal's destination is the single most important thing to confirm, so
+// it is shown as its own row rather than buried in the field list. The account
+// number is already masked by the API — the full number is never in the app.
+function withdrawalDestinationRow(context) {
+  const data = context.data || {};
+  if (!isWithdrawalService(data.serviceCode)) return "";
+  const account = (state.payoutBankAccounts || []).find((item) => item.id === data.bankAccountId);
+  if (!account) return "";
+  return `
+    <section class="integration-note" aria-label="Withdrawal destination">
+      <p>${icon("bank")} <span><strong>Paying out to:</strong> ${esc(account.accountHolder)} &middot; ${esc(account.bankName)} ${esc(account.accountNumber)} &middot; branch ${esc(account.branchCode)}</span></p>
+    </section>
+  `;
+}
+
 function openTransactionReviewModal(context) {
   const preview = context.preview || {};
   const total = Number(preview.total ?? context.amount ?? 0);
@@ -13581,6 +13769,7 @@ function openTransactionReviewModal(context) {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${recipientVerificationCards(context.verifiedRecipients || [], context.recipient)}
+    ${withdrawalDestinationRow(context)}
     <section class="activity-list review-transaction-list">
       ${transactionReviewRows(context)}
     </section>
@@ -13603,7 +13792,9 @@ function openTransactionReviewModal(context) {
 
 function renderTransactionEditFields(context) {
   const data = context.data || {};
-  const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "vasProductCode", "vasProductName", "vasProviderName", "vasJourney", "stockvelType", "stockvelGroupId", "stockvelGroupName", "documentAction"];
+  // The new-bank-account fields belong to the "save an account" action, not to
+  // the withdrawal itself, so they never appear on the edit or review screen.
+  const hidden = ["serviceCode", "transactionType", "integrationFlow", "vasProviderReady", "vasProductCode", "vasProductName", "vasProviderName", "vasJourney", "stockvelType", "stockvelGroupId", "stockvelGroupName", "documentAction", "bankAccountId", "newAccountHolder", "newBankName", "newAccountNumber", "newBranchCode", "newAccountType"];
   const labels = {
     recipient: "Recipient, account or reference",
     amount: "Amount",
@@ -13667,15 +13858,93 @@ function openTransactionEditModal(context) {
 // funds may or may not have moved. We therefore never offer Retry here -- the
 // user is routed to Activity and Support instead, preserving the existing
 // error mapping as the headline message.
-function openTransactionFailureModal(message) {
+// ---------------------------------------------------------------------------
+// Payment error presentation
+//
+// ONE place decides what a customer is told when a payment fails. Every payment
+// surface goes through it, so a technical string can never reach a customer by
+// being forgotten at one call site.
+//
+// The rule is deliberately inverted from ordinary forms: nothing the server or
+// a provider says is shown. A failure is recognised by its CODE and answered
+// with a sentence written here. An unrecognised failure falls back to a safe
+// sentence rather than to whatever text happened to arrive — so a database
+// error, a provider message, a stack trace or an internal route can never be
+// rendered even if one appeared in a response.
+//
+// The technical detail is not lost. It stays in the API logs, on the
+// transaction record, and in the Admin Portal's provider diagnostics.
+// ---------------------------------------------------------------------------
+
+const PAYMENT_ERROR_MESSAGES = {
+  // Provider configuration / availability
+  PEACH_MERCHANT_DOMAIN_NOT_ALLOWLISTED: "Card top-ups are temporarily unavailable. Please try again later.",
+  PROVIDER_DISABLED: "Card top-ups are temporarily unavailable. Please try again later.",
+  INVALID_CONFIGURATION: "Card top-ups are temporarily unavailable. Please try again later.",
+  PROVIDER_UNAVAILABLE: "Card top-ups are temporarily unavailable. Please try again shortly.",
+  PROVIDER_REQUEST_FAILED: "Card top-ups are temporarily unavailable. Please try again shortly.",
+  AUTHENTICATION_REJECTED: "Card top-ups are temporarily unavailable. Please try again later.",
+  NETWORK_TIMEOUT: "Card top-ups are temporarily unavailable. Please try again shortly.",
+  NETWORK_ERROR: "Card top-ups are temporarily unavailable. Please try again shortly.",
+
+  // Withdrawals / payouts
+  PAYOUT_NOT_CONFIGURED: "Withdrawals are temporarily unavailable. Please try again later.",
+  PAYOUT_DISABLED: "Withdrawals are temporarily unavailable. Please try again later.",
+  PAYOUT_NOT_VERIFIED: "Withdrawals are temporarily unavailable. Please try again later.",
+  PAYOUT_REJECTED: "This withdrawal could not be sent to your bank. Check your saved bank account details and try again.",
+  PAYOUT_DETAILS_INCOMPLETE: "Some of your bank account details are missing or invalid. Please check them and try again.",
+  BANK_ACCOUNT_NOT_FOUND: "Choose the bank account this should go to, then try again.",
+
+  // Wallet / limits
+  INSUFFICIENT_BALANCE: "You don't have enough available balance to complete this transaction.",
+  AMOUNT_BELOW_MINIMUM: "This amount is below the minimum allowed for this service.",
+  AMOUNT_ABOVE_MAXIMUM: "This amount is above the maximum allowed for this service.",
+  TOPUP_QUOTE_STALE: "The fee changed since this screen was opened. Please start again to see the current total.",
+
+  // Routing guards
+  USE_CARD_TOPUP_FLOW: "Please start this top up again from the Top Up screen.",
+  USE_WITHDRAWAL_FLOW: "Please start this withdrawal again from the Withdraw screen."
+};
+
+const PAYMENT_FALLBACK_MESSAGE = "We couldn't complete this transaction. Please try again later.";
+
+// Recognised by shape rather than code, in the order they must be checked.
+function paymentErrorMessage(error) {
+  const code = String(error?.details?.code || error?.code || "");
+  if (PAYMENT_ERROR_MESSAGES[code]) return PAYMENT_ERROR_MESSAGES[code];
+
+  const status = Number(error?.status || 0);
+  if (error?.fromSessionRefresh || status === 401 || status === 403) {
+    // A signed-out session stops the payment before it starts. Say so, because
+    // a customer who is not told this assumes the money left anyway.
+    return "Your session has expired. Please sign in again — your wallet and money are unaffected.";
+  }
+  if (status === 423) return "Your wallet is locked. Unlock it and try again.";
+  if (status === 429) return "Too many attempts. Please wait a few minutes and try again.";
+  if (error?.timedOut || status === 408) {
+    return "This is taking longer than usual. Check Activity before trying again — if it appears there, it went through.";
+  }
+  if (status === 0) return "We couldn't reach TitoPay. Please check your connection and try again.";
+  // A declined card comes back as a provider result, not a code we own.
+  if (/declin|not approved|rejected by/i.test(String(error?.message || ""))) {
+    return "Your payment could not be approved. Please try another payment method.";
+  }
+  return PAYMENT_FALLBACK_MESSAGE;
+}
+
+// The modal shows the mapped sentence and nothing else. No endpoint, no HTTP
+// status, no provider name, no internal code, no request id — those live in the
+// server logs and the Admin Portal, where an authorised operator can see them.
+function openTransactionFailureModal(message, error = null) {
+  const safeMessage = error ? paymentErrorMessage(error) : String(message || PAYMENT_FALLBACK_MESSAGE);
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Not confirmed</p><h2>Transaction not confirmed</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="failure-panel" aria-label="Transaction failure details">
-      <p class="failure-message">${esc(message)}</p>
-      <p class="failure-guidance">Check Activity before trying again. If the transaction appears there, it was received by TitoPay and you should not submit it a second time.</p>
+      <p class="failure-message">${esc(safeMessage)}</p>
+      <p class="failure-guidance">Nothing was charged and your wallet is unchanged. Check Activity before trying again — if the transaction appears there, it was received by TitoPay and you should not submit it a second time.</p>
     </section>
     <div class="tx-detail-actions">
       <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} Check Activity</button>
@@ -13696,10 +13965,24 @@ async function confirmReviewedTransaction() {
   setButtonBusy(button, true);
   try {
     const data = context.data || {};
-    // A card top-up is funded by Peach, not debited from the wallet, so it has
-    // its own endpoint and redirect. Everything else keeps the existing path.
+    // A top-up is funded from outside the wallet, so it never runs through the
+    // wallet-debit endpoint. WHICH outside route it takes is decided by the
+    // funding method the customer chose, not by the service code — choosing
+    // "EFT or bank transfer" used to launch the Peach CARD checkout because
+    // only the service code was checked here.
     if (isCardTopupService(data.serviceCode)) {
+      if (topupFundingMethod(data) === "eft_bank_transfer") {
+        await startEftTopup(context);
+        return;
+      }
       await startCardTopup(context);
+      return;
+    }
+    // A withdrawal or business payout debits the wallet AND submits a payout to
+    // Peach. The two have to happen inside one server-side lifecycle so a
+    // failed payout can be reversed exactly once, so it has its own endpoint.
+    if (isWithdrawalService(data.serviceCode)) {
+      await startWithdrawal(context);
       return;
     }
     const metadata = Object.assign({}, data);
@@ -13759,7 +14042,7 @@ async function confirmReviewedTransaction() {
   } catch (error) {
     // The failure modal already states the reason prominently; a duplicate
     // error toast just stacks on top of it and reads as a glitch.
-    openTransactionFailureModal(friendlyFormError(error, "transaction"));
+    openTransactionFailureModal(null, error);
   } finally {
     setButtonBusy(button, false);
   }
@@ -13782,6 +14065,38 @@ function isCardTopupService(serviceCode) {
   return CARD_TOPUP_SERVICE_CODES.has(String(serviceCode || "").trim().toLowerCase());
 }
 
+// The Top Up form offers two completely separate funding routes. Card goes to
+// Peach Checkout; EFT does not touch Peach at all. Anything unrecognised falls
+// back to card, which is the form's own default.
+function topupFundingMethod(data) {
+  const method = String(data?.fundingMethod || "").trim().toLowerCase();
+  return method === "eft_bank_transfer" ? "eft_bank_transfer" : "peach_card";
+}
+
+// EFT top-ups are deliberately NOT sent to Peach Checkout — that is a card
+// product, and pushing an EFT customer through it would charge their card.
+// TitoPay has no bank-deposit reconciliation workflow yet, so rather than
+// creating a pending record nothing can ever settle, the customer is told
+// plainly and sent back to the card route. Nothing is charged and no wallet
+// movement is made.
+async function startEftTopup(context) {
+  state.pendingTransactionReview = null;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Top Up</p><h2>EFT top ups are not available yet</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="failure-panel" aria-label="EFT top up unavailable">
+      <p class="failure-message">TitoPay cannot match bank transfers to your wallet automatically yet, so EFT top ups are switched off.</p>
+      <p class="failure-guidance">Nothing was charged and your wallet is unchanged. Do not transfer money to TitoPay by EFT — it cannot be credited. Choose <strong>Card &middot; instant</strong> on the Top Up screen to add ${esc(money(context.amount))} now.</p>
+    </section>
+    <div class="tx-detail-actions">
+      <button class="btn primary" type="button" data-action="topup-use-card">${icon("upload")} Top up by card instead</button>
+      <button class="btn ghost" type="button" data-close>Close</button>
+    </div>
+  `);
+}
+
 function rememberPendingTopup(result) {
   try {
     writeJson(TOPUP_PENDING_KEY, {
@@ -13800,18 +14115,47 @@ function forgetPendingTopup() {
   try { localStorage.removeItem(TOPUP_PENDING_KEY); } catch (error) { /* nothing to clean up */ }
 }
 
+// A money-submitting POST that timed out has very likely been carried out by
+// the server. Re-sending it with the SAME idempotency key is safe by design —
+// the API returns the original record instead of creating a second one — so it
+// is the correct way to find out what happened, and the only way to recover the
+// redirect URL the customer needs. It can never create a second payment.
+async function resubmitAfterTimeout(path, requestOptions, label) {
+  await new Promise((resolve) => window.setTimeout(resolve, 1500));
+  return api(path, { ...requestOptions, timeoutMs: PROVIDER_REQUEST_TIMEOUT_MS })
+    .catch((error) => {
+      error.recoveryFailed = true;
+      error.recoveryLabel = label;
+      throw error;
+    });
+}
+
 async function startCardTopup(context) {
   const data = context.data || {};
-  const result = await api("/v1/payments/topup", {
+  const request = {
     method: "POST",
     headers: { "Idempotency-Key": context.idempotencyKey },
     body: {
       amount: context.amount,
       currency: "ZAR",
       idempotencyKey: context.idempotencyKey,
+      // What the review screen quoted. The API refuses to charge anything else,
+      // so a screen left open across a fee change cannot surprise the customer.
+      quotedTotal: Number(context.preview?.total ?? context.amount),
       note: data.reference || ""
     }
-  });
+  };
+
+  let result;
+  try {
+    result = await api("/v1/payments/topup", request);
+  } catch (error) {
+    if (!error.timedOut) throw error;
+    // The checkout was probably created; the answer just did not get back in
+    // time. Ask again with the same key rather than telling the customer it
+    // failed and inviting them to start a second payment.
+    result = await resubmitAfterTimeout("/v1/payments/topup", request, "top up");
+  }
   state.pendingTransactionReview = null;
   rememberPendingTopup(result);
   if (result.redirectUrl) {
@@ -13828,7 +14172,7 @@ function openTopupRedirectModal(result) {
       <div><p class="eyebrow">Top Up</p><h2>Opening secure payment</h2></div>
     </div>
     <section class="integration-note" aria-label="Redirecting to Peach Payments">
-      <p>${icon("shield")} <span>Taking you to Peach Payments to pay ${esc(money(result.amount))} securely. Your wallet is credited once TitoPay confirms the payment.</span></p>
+      <p>${icon("shield")} <span>Taking you to Peach Payments to pay ${esc(money(result.total ?? result.amount))} securely.${Number(result.fee) > 0 ? ` That is ${esc(money(result.amount))} into your wallet plus a ${esc(money(result.fee))} TitoPay top up fee.` : ""} Your wallet is credited once TitoPay confirms the payment.</span></p>
     </section>
   `);
 }
@@ -13840,7 +14184,7 @@ function openTopupProcessingModal(reference) {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="failure-panel" aria-label="Top up processing">
-      <p class="failure-message">TitoPay is still confirming this payment with Peach Payments.</p>
+      <p class="failure-message">TitoPay is still confirming this payment.</p>
       <p class="failure-guidance">Do not pay again. If the money was taken, your wallet is credited as soon as Peach confirms it, and the top up appears in Activity. Reference ${esc(reference || "pending")}.</p>
     </section>
     <div class="tx-detail-actions">
@@ -13873,7 +14217,7 @@ function openTopupOutcomeModal(result) {
     return;
   }
   if (status === "failed") {
-    openTransactionFailureModal("Peach Payments declined this card payment. No money was taken and your wallet is unchanged. You can try again with another card.");
+    openTransactionFailureModal("Your payment could not be approved. Please try another payment method. No money was taken and your wallet is unchanged.");
     return;
   }
   openTopupProcessingModal(result.reference);
@@ -13924,6 +14268,285 @@ async function resumeTopupFromReturn() {
     return;
   }
   await pollAndPresentTopup(reference);
+}
+
+// ---------------------------------------------------------------------------
+// Peach Payouts withdrawal / business payout
+//
+// A withdrawal debits the wallet AND submits a payout to Peach. Those two have
+// to happen inside one server-side lifecycle so a payout Peach later fails can
+// be reversed exactly once, so this never posts to the generic wallet-debit
+// endpoint. It sends an amount and the id of a bank account the customer
+// already saved; every other value — fee, bank details, payout reference — is
+// resolved by the API. Nothing here decides an outcome: it starts the
+// withdrawal and then asks the API what Peach said.
+// ---------------------------------------------------------------------------
+
+const WITHDRAWAL_SERVICE_CODES = new Set([
+  "withdraw", "withdraw_money_to_bank", "withdraw-money-to-bank", "bank_transfer",
+  "bank_withdrawal", "payouts", "business_payout", "merchant_payout",
+  "merchant_payouts", "seller_payout"
+]);
+
+function isWithdrawalService(serviceCode) {
+  return WITHDRAWAL_SERVICE_CODES.has(String(serviceCode || "").trim().toLowerCase());
+}
+
+// The withdrawal screen could not be loaded. Nothing was submitted, so this
+// deliberately does NOT reuse the "Transaction not confirmed" modal — that
+// modal exists to warn that a payment may already be in flight, and saying it
+// here would frighten someone whose money never moved.
+function openPayoutUnavailableModal(error, title = "Withdraw") {
+  const offline = Number(error?.status || 0) === 0;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(title)}</p><h2>Could not open ${esc(title.toLowerCase())}</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="failure-panel" aria-label="${esc(title)} unavailable">
+      <p class="failure-message">${offline
+        ? "TitoPay could not be reached, so this screen could not load."
+        : esc(paymentErrorMessage(error))}</p>
+      <p class="failure-guidance"><strong>Nothing was submitted and your wallet is unchanged.</strong> ${offline
+        ? "Check your connection and open Withdraw again."
+        : "Try again in a moment. If it keeps happening, contact support."}</p>
+    </section>
+    <div class="tx-detail-actions">
+      <button class="btn secondary" type="button" data-action="support">${icon("send")} Contact support</button>
+      <button class="btn ghost" type="button" data-close>Close</button>
+    </div>
+  `);
+}
+
+// Cached for the lifetime of the screen so the form renders instantly on reopen.
+state.payoutBankAccounts = state.payoutBankAccounts || null;
+state.payoutBanks = state.payoutBanks || null;
+
+async function loadPayoutBankAccounts({ refresh = false } = {}) {
+  if (!refresh && state.payoutBankAccounts) return state.payoutBankAccounts;
+  const result = await api("/v1/payouts/bank-accounts");
+  state.payoutBankAccounts = result.items || [];
+  return state.payoutBankAccounts;
+}
+
+async function loadPayoutBanks() {
+  if (state.payoutBanks) return state.payoutBanks;
+  const result = await api("/v1/payouts/banks");
+  state.payoutBanks = result.banks || [];
+  state.payoutAccountTypes = result.accountTypes || ["cheque", "savings"];
+  return state.payoutBanks;
+}
+
+function bankAccountOptions(accounts) {
+  if (!accounts.length) return "";
+  return accounts.map((account) => `
+    <option value="${esc(account.id)}"${account.isDefault ? " selected" : ""}>
+      ${esc(account.bankName)} ${esc(account.accountNumber)}${account.nickname ? ` &middot; ${esc(account.nickname)}` : ""}
+    </option>
+  `).join("");
+}
+
+// The account fields Peach requires. Rendered inline rather than as a separate
+// screen so a customer with no saved account can still complete one withdrawal
+// journey without losing the amount they typed.
+function newBankAccountFields() {
+  const banks = state.payoutBanks || [];
+  const types = state.payoutAccountTypes || ["cheque", "savings"];
+  return `
+    <div class="field"><label for="ba-holder">Account holder</label>
+      <input id="ba-holder" name="newAccountHolder" autocomplete="off" placeholder="Name exactly as the bank has it"></div>
+    <div class="field"><label for="ba-bank">Bank</label>
+      <select id="ba-bank" name="newBankName">
+        <option value="">Choose your bank</option>
+        ${banks.map((bank) => `<option value="${esc(bank.value)}">${esc(bank.label)}</option>`).join("")}
+      </select></div>
+    <div class="field"><label for="ba-number">Account number</label>
+      <input id="ba-number" name="newAccountNumber" inputmode="numeric" autocomplete="off" placeholder="Digits only"></div>
+    <div class="field"><label for="ba-branch">Branch code</label>
+      <input id="ba-branch" name="newBranchCode" inputmode="numeric" autocomplete="off" placeholder="6 digits" maxlength="6"></div>
+    <div class="field"><label for="ba-type">Account type</label>
+      <select id="ba-type" name="newAccountType">
+        ${types.map((type) => `<option value="${esc(type)}">${esc(type.charAt(0).toUpperCase() + type.slice(1))}</option>`).join("")}
+      </select></div>
+    <button class="btn secondary" type="button" data-action="withdraw-add-bank-account">${icon("bank")} Save this bank account</button>
+  `;
+}
+
+async function submitNewBankAccount() {
+  const form = document.querySelector('form[data-form="transaction"]');
+  if (!form) return;
+  const button = document.querySelector('[data-action="withdraw-add-bank-account"]');
+  setButtonBusy(button, true);
+  try {
+    const result = await api("/v1/payouts/bank-accounts", {
+      method: "POST",
+      body: {
+        accountHolder: form.querySelector('[name="newAccountHolder"]')?.value || "",
+        bankName: form.querySelector('[name="newBankName"]')?.value || "",
+        accountNumber: form.querySelector('[name="newAccountNumber"]')?.value || "",
+        branchCode: form.querySelector('[name="newBranchCode"]')?.value || "",
+        accountType: form.querySelector('[name="newAccountType"]')?.value || "cheque"
+      }
+    });
+    await loadPayoutBankAccounts({ refresh: true });
+    showToast(`${result.account.bankName} ${result.account.accountNumber} saved.`, "success");
+    // Re-render the picker in place, keeping whatever amount was typed.
+    const picker = form.querySelector("[data-bank-account-picker]");
+    if (picker) {
+      picker.innerHTML = `
+        <label for="wd-account">Pay out to</label>
+        <select id="wd-account" name="bankAccountId" required>${bankAccountOptions(state.payoutBankAccounts)}</select>
+        <p class="field-hint">Withdrawals only go to a bank account saved on your own profile.</p>`;
+      const select = picker.querySelector("select");
+      if (select) select.value = result.account.id;
+    }
+    const adder = form.querySelector("[data-bank-account-new]");
+    if (adder) adder.innerHTML = `<p class="field-hint">${icon("shield")} Bank account saved. Choose it above, or reopen Withdraw to add another.</p>`;
+  } catch (error) {
+    showToast(friendlyFormError(error, "bank account"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function startWithdrawal(context) {
+  const data = context.data || {};
+  const bankAccountId = String(data.bankAccountId || "").trim();
+  if (!bankAccountId) {
+    state.pendingTransactionReview = null;
+    openTransactionFailureModal("Choose the bank account this should go to, then try again. No wallet debit was made.");
+    return;
+  }
+  const request = {
+    method: "POST",
+    headers: { "Idempotency-Key": context.idempotencyKey },
+    body: {
+      serviceCode: data.serviceCode,
+      amount: context.amount,
+      bankAccountId,
+      idempotencyKey: context.idempotencyKey,
+      note: data.reference || ""
+    }
+  };
+  let result;
+  try {
+    try {
+      result = await api("/v1/payouts/withdrawals", request);
+    } catch (error) {
+      if (!error.timedOut) throw error;
+      // The wallet may already be debited and the payout submitted. Asking
+      // again with the same key returns that same withdrawal — it cannot
+      // create a second one — so this is the only safe way to find out.
+      result = await resubmitAfterTimeout("/v1/payouts/withdrawals", request, "withdrawal");
+    }
+  } catch (error) {
+    state.pendingTransactionReview = null;
+    await refreshData().catch(() => {});
+    // An unconfirmed submission is NOT a failure. The money is held against the
+    // withdrawal and the API resolves it, so the customer must not be told to
+    // try again — that is how a payout gets sent twice.
+    if (error?.details?.code === "PAYOUT_SUBMISSION_UNCERTAIN") {
+      openWithdrawalProcessingModal(error.details.reference || "", { uncertain: true });
+      return;
+    }
+    // Even the idempotent re-ask timed out. The withdrawal may well exist and
+    // be in flight, so this is Processing — never "failed, try again".
+    if (error?.timedOut) {
+      openWithdrawalProcessingModal("", { uncertain: true });
+      return;
+    }
+    openTransactionFailureModal(null, error);
+    return;
+  }
+  state.pendingTransactionReview = null;
+  // Show Processing straight away. Peach can take a while to decide, and an
+  // unchanged screen after Confirm is what makes people tap again.
+  openWithdrawalProcessingModal(result.reference);
+  await refreshData().catch(() => {});
+  await pollAndPresentWithdrawal(result.reference, result);
+}
+
+function openWithdrawalProcessingModal(reference, { uncertain = false } = {}) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Withdraw</p><h2>Processing</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="integration-note" aria-label="Withdrawal processing">
+      <p>${icon("refresh")} <span>${uncertain
+        ? "TitoPay could not confirm this withdrawal with the payout provider yet. The amount is held against this withdrawal and it will either complete or be returned to your wallet automatically."
+        : "This payout is being processed. Your wallet has already been debited and Activity shows the live status."}</span></p>
+      <p>${icon("shield")} <span><strong>Do not try again.</strong> Sending it twice would pay the money out twice. Reference ${esc(reference || "pending")}.</span></p>
+    </section>
+    <div class="tx-detail-actions" data-withdrawal-reference="${esc(reference || "")}">
+      <button class="btn primary" type="button" data-action="withdraw-check-status">${icon("refresh")} Check status</button>
+      <button class="btn secondary" type="button" data-action="failure-view-activity">${icon("list")} View in Activity</button>
+      <button class="btn ghost" type="button" data-close>Close</button>
+    </div>
+  `);
+}
+
+function openWithdrawalOutcomeModal(result) {
+  const status = String(result.status || "").toLowerCase();
+  if (status === "completed") {
+    openModal(`
+      <div class="modal-head">
+        <div><p class="eyebrow">Withdraw</p><h2>Withdrawal successful</h2></div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <section class="integration-note" aria-label="Withdrawal successful">
+        <p>${icon("shield")} <span><strong>${esc(money(result.amount))} is on its way to ${esc(result.bankAccount?.bankName || "your bank")} ${esc(result.bankAccount?.accountNumber || "")}.</strong>
+        ${Number(result.fee) > 0 ? `A ${esc(money(result.fee))} fee was charged, so ${esc(money(result.total))} left your wallet.` : ""}
+        Reference ${esc(result.reference || "")}.</span></p>
+      </section>
+      <div class="tx-detail-actions">
+        <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} View in Activity</button>
+        <button class="btn ghost" type="button" data-close>Close</button>
+      </div>
+    `);
+    return;
+  }
+  if (status === "failed" || status === "cancelled") {
+    openModal(`
+      <div class="modal-head">
+        <div><p class="eyebrow">Withdraw</p><h2>Withdrawal failed</h2></div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <section class="failure-panel" aria-label="Withdrawal failed">
+        <p class="failure-message">This withdrawal could not be paid out${status === "cancelled" ? " and was cancelled" : ""}.</p>
+        <p class="failure-guidance"><strong>${esc(money(result.total ?? result.amount))} has been returned to your wallet in full.</strong> Check the account holder name, account number and branch code on your saved bank account, then try again. Reference ${esc(result.reference || "")}.</p>
+      </section>
+      <div class="tx-detail-actions">
+        <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} View in Activity</button>
+        <button class="btn secondary" type="button" data-action="support">${icon("send")} Contact support</button>
+        <button class="btn ghost" type="button" data-close>Close</button>
+      </div>
+    `);
+    return;
+  }
+  openWithdrawalProcessingModal(result.reference);
+}
+
+// Poll the API until the withdrawal reaches a final state. The API re-checks
+// with Peach on every call, so a slow confirmation resolves here rather than
+// being shown to the customer as a failure.
+async function pollAndPresentWithdrawal(reference, seed = null) {
+  if (!reference) return;
+  const delays = [0, 1500, 2500, 3500, 5000, 5000, 8000];
+  let latest = seed;
+  for (const delay of delays) {
+    if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+    try {
+      latest = await api(`/v1/payouts/withdrawals/${encodeURIComponent(reference)}`);
+    } catch (error) {
+      if (error.status === 404) break;
+      continue;
+    }
+    const status = String(latest.status || "").toLowerCase();
+    if (status === "completed" || status === "failed" || status === "cancelled") break;
+  }
+  try { await refreshData(); } catch (error) { /* the modal below still reports the outcome */ }
+  if (latest) openWithdrawalOutcomeModal(latest);
 }
 
 // Fallback for the rare case where there is no live form to render into.
@@ -17970,7 +18593,10 @@ async function confirmEmailStatement(button) {
 function downloadTransactionsCsv() {
   const items = filteredTransactions();
   const rows = [
-    ["Transaction ID", "Reference", "Date", "Time", "Service", "Direction", "Sender", "Recipient", "Amount", "Total", "Status"]
+    // "Amount" and "Total" describe what was ATTEMPTED. The two columns that
+    // say whether money actually moved are the last ones, taken from the wallet
+    // ledger — anyone reconciling this export must total those, not the others.
+    ["Transaction ID", "Reference", "Date", "Time", "Service", "Direction", "Sender", "Recipient", "Amount", "Total", "Status", "Posted To Wallet", "Wallet Movement"]
   ];
   items.forEach((item) => {
     rows.push([
@@ -17984,7 +18610,11 @@ function downloadTransactionsCsv() {
       item.recipient_reference || item.recipientReference || "",
       item.amount || "",
       item.total || "",
-      item.status || ""
+      item.status || "",
+      transactionPostedToWallet(item) ? "yes" : "no",
+      transactionPostedToWallet(item)
+        ? `${transactionIsCredit(item) ? "+" : "-"}${statementPostedAmount(item).toFixed(2)}`
+        : "0.00"
     ]);
   });
   const csv = "\uFEFF" + rows.map((row) => row.map(csvCell).join(",")).join("\n");
@@ -18090,8 +18720,13 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null }) {
   const contactLines = splitStatementText(contact, 42, 1);
   const addressLines = splitStatementText(address, 42, 1);
   const ficaStatus = ficaDisplayStatus(user.ficaStatus || user.fica_status);
-  const totalIn = items.filter(transactionIsCredit).reduce((sum, item) => sum + statementAmountNumber(item), 0);
-  const totalOut = items.filter((item) => !transactionIsCredit(item)).reduce((sum, item) => sum + statementAmountNumber(item), 0);
+  // Only movements the wallet ledger actually posted are money. Everything else
+  // is an attempt: it is still listed, clearly, but it contributes nothing to
+  // any total on this statement.
+  const posted = items.filter(transactionPostedToWallet);
+  const attempts = items.filter((item) => !transactionPostedToWallet(item));
+  const totalIn = posted.filter(transactionIsCredit).reduce((sum, item) => sum + statementAmountNumber(item), 0);
+  const totalOut = posted.filter((item) => !transactionIsCredit(item)).reduce((sum, item) => sum + statementAmountNumber(item), 0);
   const net = totalIn - totalOut;
   const issuedDate = now.toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
   const issuedTime = now.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -18170,14 +18805,15 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null }) {
   const netText = statementMoney(Math.abs(net), net >= 0 ? "+" : "-");
   text(404, 471, netText, statementAmountFontSize(netText, 126, 13), "F2", "0.04 0.11 0.27");
 
-  text(52, 430, `${state.accountType === "business" ? "BUSINESS" : "PERSONAL"} ACTIVITY (${items.length})`, 10, "F2", "0.12 0.32 0.62");
+  text(52, 430, `${state.accountType === "business" ? "BUSINESS" : "PERSONAL"} ACTIVITY (${posted.length})`, 10, "F2", "0.12 0.32 0.62");
   fill(52, 399, 491, 24, "0.03 0.08 0.22");
   text(64, 408, "DATE", 9, "F2", "1 1 1");
   text(155, 408, "DESCRIPTION", 9, "F2", "1 1 1");
   rightText(528, 408, "AMOUNT", 9, "F2", "1 1 1");
 
+  const postedRows = posted.slice(0, 8);
   let y = 375;
-  items.slice(0, 8).forEach((item, index) => {
+  postedRows.forEach((item, index) => {
     if (index % 2 === 0) fill(52, y - 3, 491, 23, "0.98 0.985 0.995");
     const credit = transactionIsCredit(item);
     const title = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
@@ -18189,10 +18825,33 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null }) {
     rightText(528, y + 4, amountText, statementAmountFontSize(amountText), "F2", credit ? "0.03 0.50 0.38" : "0.62 0.10 0.13");
     y -= 25;
   });
+  if (!postedRows.length) {
+    text(64, y + 4, "No settled wallet movements were recorded for this period.", 8.5, "F1", "0.42 0.46 0.55");
+    y -= 25;
+  }
   line(52, y + 13, 543, y + 13);
   text(52, y - 8, "Closing net for period", 10, "F2");
   const closingNetText = statementMoney(Math.abs(net), net >= 0 ? "+" : "-");
   rightText(528, y - 8, closingNetText, statementAmountFontSize(closingNetText, 120, 10), "F2", "0.04 0.11 0.27");
+  y -= 34;
+
+  // Attempts that never reached the wallet are disclosed, not hidden — but they
+  // sit below the closing figure, carry their real status, and are stated to
+  // have had no effect on any total above.
+  if (attempts.length) {
+    text(52, y, `UNSUCCESSFUL OR PENDING ATTEMPTS (${attempts.length}) - NO EFFECT ON THE TOTALS ABOVE`, 8, "F2", "0.62 0.10 0.13");
+    y -= 16;
+    attempts.slice(0, 6).forEach((item) => {
+      const title = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
+      const status = String(item.status || "not completed").toUpperCase();
+      text(64, y, splitStatementText(`${statementDateLabel(item.created_at || item.createdAt)}  ${title}  ${item.reference || ""}`, 62, 1)[0], 7, "F1", "0.42 0.46 0.55");
+      rightText(528, y, `${status} - ${statementMoney(statementAttemptedAmount(item))} NOT RECEIVED`, 7, "F1", "0.62 0.10 0.13");
+      y -= 12;
+    });
+    if (attempts.length > 6) {
+      text(64, y, `and ${attempts.length - 6} further attempt(s) with no wallet effect.`, 7, "F1", "0.42 0.46 0.55");
+    }
+  }
 
   fill(392, 108, 151, 58, "0.95 0.97 1.00");
   stroke(392, 108, 151, 58, "0.82 0.88 0.98");
@@ -18611,9 +19270,13 @@ function payoutReportPdf() {
   const businessContact = businessProfileContact();
   const businessAddress = businessProfileAddress();
   const reportReference = `PAY-${dateStamp(now)}-${leftPad(String(state.transactions.length + 1), 5, "0")}`;
+  // Same rule as the account statement: a payout report is a financial document,
+  // so it reports what the wallet ledger posted and never what was merely
+  // attempted.
   const items = state.transactions.filter((item) => {
     const key = `${item.service_code || item.serviceCode || ""} ${item.service_name || item.serviceName || ""}`.toLowerCase();
-    return key.includes("payout") || key.includes("settlement");
+    if (!key.includes("payout") && !key.includes("settlement")) return false;
+    return transactionPostedToWallet(item);
   });
   const total = items.reduce((sum, item) => sum + statementAmountNumber(item), 0);
   const commands = [];
@@ -18697,8 +19360,46 @@ function transactionIsCredit(item) {
   return (item.direction || "debit") === "credit";
 }
 
+// A transaction row is an ATTEMPT. It is created the moment a payment starts,
+// before the provider has been asked anything, and it survives whether that
+// payment succeeds, fails or is never completed. It is therefore never evidence
+// that money moved.
+//
+// The wallet ledger is that evidence, and the API reports it per transaction as
+// `wallet_posted` plus `posted_amount` — the signed amount by which the wallet
+// balance actually changed. A statement counts a transaction only when the
+// ledger says an entry was posted for it.
+function transactionPostedToWallet(item = {}) {
+  const posted = item.wallet_posted ?? item.walletPosted;
+  if (posted !== undefined && posted !== null) return posted === true || posted === "true" || posted === "t";
+  // An older API build that predates these fields cannot prove anything moved,
+  // so fall back to the strictest reading of what it does report: a terminal
+  // completed status. Never `pending`, never `failed`.
+  return ["completed", "success", "successful", "paid"].includes(String(item.status || "").toLowerCase());
+}
+
+// The signed amount the wallet actually moved by. Falls back to the transaction
+// fields only when the API cannot supply the ledger figure, and even then a
+// credit uses `amount`, never `total`: a top-up credits the amount, while the
+// fee is taken by the card charge and never enters the wallet.
+function statementPostedAmount(item = {}) {
+  const posted = item.posted_amount ?? item.postedAmount;
+  if (posted !== undefined && posted !== null && posted !== "" && Number.isFinite(Number(posted))) {
+    return Math.abs(Number(posted));
+  }
+  const fallback = transactionIsCredit(item)
+    ? (item.amount ?? item.total)
+    : (item.total ?? item.amount);
+  return Math.abs(Number(fallback || 0) || 0);
+}
+
+// Only for display of an ATTEMPT that moved no money — never for a total.
+function statementAttemptedAmount(item = {}) {
+  return Math.abs(Number(item.total ?? item.amount ?? 0) || 0);
+}
+
 function statementAmountNumber(item) {
-  return Math.abs(Number(item.total || item.amount || 0) || 0);
+  return statementPostedAmount(item);
 }
 
 function statementMoney(value, prefix = "") {

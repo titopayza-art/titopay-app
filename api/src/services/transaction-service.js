@@ -63,18 +63,24 @@ const CARD_TOPUP_SERVICES = new Set([
 // The service catalogue publishes the code "payouts"; without it here the block
 // only happened via the catch-all, and a fee preview first wrote a zero-fee
 // "payouts" pricing rule to the database.
-// Withdrawal processing is a separate build step from the provider connection.
-// Flipping this on must go hand in hand with the debit + payout-submission +
-// provider-confirmation lifecycle; it is deliberately not implied by a
-// successful payout connection test.
-const PAYOUT_PROCESSING_ENABLED = String(process.env.PEACH_PAYOUT_PROCESSING_ENABLED || "").toLowerCase() === "true";
-
+// Withdrawal processing was previously held behind PEACH_PAYOUT_PROCESSING_ENABLED
+// because a connected payout provider is not the same thing as a withdrawal
+// lifecycle: without the debit + submission + provider-confirmation chain, a
+// Confirm could have debited a wallet with nothing on the other side to move
+// the money. That chain now exists in peach-withdrawal-service, which debits
+// once inside the same database transaction that records the withdrawal,
+// submits to the Peach Payouts API, and reverses exactly once if Peach reports
+// the payout failed. The flag is therefore gone rather than bypassed — the
+// safety it was standing in for is implemented.
+// Bank payouts only. Peach Payouts pays a bank account by realtime-EFT, so a
+// CASH withdrawal is a different product with a different partner and is not
+// routed here — sending it to the payout flow would tell the customer to use an
+// endpoint that then refuses them. Cash stays with the unlaunched services
+// below until it has a provider of its own.
 const PEACH_PAYOUT_SERVICES = new Set([
   "withdraw",
   "withdraw_money_to_bank",
-  "withdraw_cash",
   "bank_withdrawal",
-  "cash_withdrawal",
   "bank_transfer",
   "payouts",
   "business_payout",
@@ -85,6 +91,10 @@ const PEACH_PAYOUT_SERVICES = new Set([
 ]);
 
 const PROVIDER_DEPENDENT_SERVICES = new Set([
+  // Cash out at a till or ATM. Peach Payouts cannot do this — it pays bank
+  // accounts — so it stays unavailable until it has its own provider.
+  "withdraw_cash",
+  "cash_withdrawal",
   "airtime",
   "data",
   "electricity",
@@ -133,32 +143,19 @@ async function assertServiceLaunched(normalizedServiceCode) {
   // told the real reason and a withdrawal can never be attempted through the
   // Checkout (Collection) endpoint.
   if (PEACH_PAYOUT_SERVICES.has(normalizedServiceCode)) {
-    // First the provider link, so the customer sees the real reason when the
-    // payout capability is unconfigured, disabled or unverified.
-    const availability = await payoutAvailability();
-    assertPayoutAvailable(availability);
-    // A connected payout provider proves the link works — it does not mean
-    // TitoPay has a withdrawal lifecycle yet. Until PAYOUT_PROCESSING_ENABLED
-    // is switched on, withdrawals stay blocked HERE, at the fee preview, so a
-    // customer is never walked through a fee to a Confirm that cannot settle,
-    // and createTransaction can never debit a wallet with nothing on the other
-    // side to move the money.
-    if (!PAYOUT_PROCESSING_ENABLED) {
-      throw new AppError(
-        503,
-        "Withdrawals are not open yet. The payout provider is connected, but TitoPay withdrawal processing is still being enabled. No wallet debit was made.",
-        { code: "PAYOUT_PROCESSING_NOT_ENABLED" }
-      );
-    }
+    // The provider link, so the customer sees the real reason when the payout
+    // capability is unconfigured, disabled or unverified — checked here, at the
+    // fee preview, so nobody is walked through a fee to a Confirm that cannot
+    // settle. The withdrawal itself runs at POST /v1/payouts/withdrawals.
+    assertPayoutAvailable(await payoutAvailability());
     return;
   }
-  if (CARD_TOPUP_SERVICES.has(normalizedServiceCode)) {
-    throw new AppError(
-      409,
-      "Card top-ups are completed through the secure card payment flow. No wallet debit was made.",
-      { code: "USE_CARD_TOPUP_FLOW", endpoint: "/v1/payments/topup" }
-    );
-  }
+  // Card top-ups are deliberately NOT rejected here. The fee preview is a
+  // read-only price calculation, and the customer has to be shown the top-up fee
+  // before they are sent to the card page — the amount charged at Peach is
+  // amount + fee. Blocking the preview stopped the top-up before it began. The
+  // wallet-debit path is refused in assertLiveTransactionSupported instead, so
+  // createTransaction still cannot be used to fake a top-up.
   if (REQUEST_ONLY_SERVICES.has(normalizedServiceCode)) {
     throw new AppError(409, "Payment requests create a request only. No wallet debit was made.");
   }
@@ -172,6 +169,27 @@ async function assertServiceLaunched(normalizedServiceCode) {
 
 async function assertLiveTransactionSupported(normalizedServiceCode, payload = {}) {
   await assertServiceLaunched(normalizedServiceCode);
+  // A card top-up is a wallet CREDIT funded by Peach Checkout, so it can never
+  // be created through the wallet-debit endpoint. Only createTransaction reaches
+  // this, which keeps the fee preview above working.
+  if (CARD_TOPUP_SERVICES.has(normalizedServiceCode)) {
+    throw new AppError(
+      409,
+      "Card top-ups are completed through the secure card payment flow. No wallet debit was made.",
+      { code: "USE_CARD_TOPUP_FLOW", endpoint: "/v1/payments/topup" }
+    );
+  }
+  // A withdrawal debits the wallet AND submits a payout to Peach, and the two
+  // have to happen in one controlled lifecycle so a failed payout can be
+  // reversed exactly once. createTransaction only does the debit, so it would
+  // take the money with nothing on the other side to move it.
+  if (PEACH_PAYOUT_SERVICES.has(normalizedServiceCode)) {
+    throw new AppError(
+      409,
+      "Withdrawals are completed through the payout flow. No wallet debit was made.",
+      { code: "USE_WITHDRAWAL_FLOW", endpoint: "/v1/payouts/withdrawals" }
+    );
+  }
   if (LIVE_QR_WALLET_SERVICES.has(normalizedServiceCode)) {
     if (!payload.metadata?.qrId) {
       throw new AppError(400, "QR payments must be started from a valid TitoPay QR code.");
@@ -405,11 +423,38 @@ async function createTransaction(actor, payload) {
   };
 }
 
+// A transaction row records an ATTEMPT. It exists from the moment a payment is
+// initiated, for audit and idempotency, and it says nothing about whether money
+// moved. Only a wallet_ledger entry does that.
+//
+// So every transaction carries the ledger's own answer with it: whether an entry
+// was posted against this wallet for this transaction, and the exact signed
+// amount by which the available balance moved. Statements and any other
+// financial total must use these two fields and never `amount`, `total` or
+// `status`, so a pending or failed attempt can never be presented as money
+// received. Every ledger entry type is an available_balance delta, so summing
+// them signed gives the true movement.
+const POSTED_LEDGER_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT COUNT(*)::INT AS entry_count,
+           COALESCE(SUM(
+             CASE WHEN wl.entry_type IN ('credit', 'release') THEN ABS(wl.amount)
+                  WHEN wl.entry_type IN ('debit', 'reserve') THEN -ABS(wl.amount)
+                  ELSE 0 END
+           ), 0) AS net_posted
+    FROM wallet_ledger wl
+    WHERE wl.transaction_id = t.id AND wl.wallet_id = t.wallet_id
+  ) posted ON TRUE`;
+
 async function listTransactionsForUser(userId) {
   const { rows } = await pool.query(
-    `SELECT t.*, pr.service_name, (t.metadata->>'netAmount')::NUMERIC AS net_amount
+    `SELECT t.*, pr.service_name, (t.metadata->>'netAmount')::NUMERIC AS net_amount,
+            (posted.entry_count > 0) AS wallet_posted,
+            posted.entry_count AS ledger_entry_count,
+            posted.net_posted AS posted_amount
      FROM transactions t
      LEFT JOIN pricing_rules pr ON pr.service_code = t.service_code
+     ${POSTED_LEDGER_LATERAL}
      WHERE t.user_id = $1
      ORDER BY t.created_at DESC
      LIMIT 100`,
@@ -495,7 +540,16 @@ async function listAllTransactions(filters = {}) {
          t.metadata->>'orderId' AS ticket_order_id,
          t.metadata->>'eventId' AS ticket_event_id,
          t.metadata->>'batchId' AS bulk_batch_id,
-         t.metadata->>'organisationId' AS bulk_organisation_id
+         t.metadata->>'organisationId' AS bulk_organisation_id,
+         -- Payment diagnostics for authorised admins. The customer is shown a
+         -- mapped sentence with none of this in it; the detail has to remain
+         -- somewhere an operator can reach, and this is that somewhere.
+         t.metadata->>'provider' AS provider,
+         t.metadata->>'providerState' AS provider_state,
+         t.metadata->>'failureReason' AS failure_reason,
+         t.metadata->>'resultCode' AS provider_result_code,
+         t.metadata->>'payoutStatus' AS payout_status,
+         (t.metadata->>'requiresReview')::BOOLEAN AS requires_review
        FROM transactions t
        LEFT JOIN pricing_rules pr ON pr.service_code = t.service_code
        LEFT JOIN users u ON u.id = t.user_id
