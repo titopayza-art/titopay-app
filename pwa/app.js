@@ -2448,10 +2448,19 @@ async function onClick(event) {
   }
   const chatSuggestion = event.target.closest("[data-chat-suggestion]");
   if (chatSuggestion) {
-    const input = document.querySelector(".modal-card input[name='message']");
-    if (input) {
-      input.value = chatSuggestion.dataset.chatSuggestion;
-      input.focus();
+    // A quick-help chip is a question, not a typing shortcut. It used to drop
+    // the text into the message box and focus it, so tapping "Speak to Customer
+    // Care" appeared to do nothing except pop the keyboard — which on a phone
+    // resizes the viewport and shifts the whole panel, so the tap read as the
+    // screen jumping rather than as the question being asked. It now asks it,
+    // through exactly the same path as pressing send.
+    try {
+      setButtonBusy(chatSuggestion, true);
+      await submitChatbotMessage({ message: chatSuggestion.dataset.chatSuggestion });
+    } catch (error) {
+      showToast(friendlyFormError(error, "chatbot"), "error");
+    } finally {
+      setButtonBusy(chatSuggestion, false);
     }
     return;
   }
