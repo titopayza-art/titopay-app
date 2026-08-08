@@ -2503,15 +2503,25 @@ function transactionFiltersHtml(rows = [], filters = {}) {
 // never have to guess whether an action is missing or merely unavailable. These
 // are the same three conditions reverseTransaction enforces server-side.
 function reverseUnavailableReason(row = {}) {
-  if (row.status === "reversed") return "Already reversed";
-  if (row.status !== "completed") return `Nothing to reverse — this payment ${row.status === "pending" || row.status === "processing" ? "has not completed" : "never completed"}`;
-  if (row.wallet_posted !== true) return "Nothing to reverse — no wallet entry was posted";
-  return "";
+  if (row.status === "reversed") return { short: "Already reversed", full: "This transaction has already been reversed." };
+  if (row.status !== "completed") {
+    return {
+      short: "Nothing to reverse",
+      full: `Nothing to reverse — this payment ${row.status === "pending" || row.status === "processing" ? "has not completed" : "never completed"}, so no money moved.`
+    };
+  }
+  if (row.wallet_posted !== true) {
+    return { short: "Nothing to reverse", full: "Nothing to reverse — no wallet ledger entry was posted for this transaction." };
+  }
+  return null;
 }
+// The Actions column is narrow. A clipped explanation is worse than a short
+// one, so the caption stays on one line and the full sentence lives in the
+// tooltip and the accessible name.
 function reverseActionCell(row = {}) {
   const reason = reverseUnavailableReason(row);
   if (!reason) return `<button data-transaction-reverse="${escapeHtml(row.id)}">Reverse</button>`;
-  return `<button type="button" disabled title="${escapeHtml(reason)}" aria-label="${escapeHtml(`Reverse unavailable. ${reason}`)}">Reverse</button><br><small>${escapeHtml(reason)}</small>`;
+  return `<button type="button" disabled title="${escapeHtml(reason.full)}" aria-label="${escapeHtml(`Reverse unavailable. ${reason.full}`)}">Reverse</button><br><small class="action-note">${escapeHtml(reason.short)}</small>`;
 }
 async function renderTransactions() {
   const filters = getTransactionFilterValues();

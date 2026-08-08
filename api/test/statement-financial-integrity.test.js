@@ -285,9 +285,12 @@ test("Reverse is live only where there is something to reverse", () => {
   assert.match(adminSource, /if \(!reason\) return `<button data-transaction-reverse=/);
   assert.match(adminSource, /return `<button type="button" disabled title=/);
   // The same three conditions the API enforces.
-  assert.match(adminSource, /if \(row\.status === "reversed"\) return "Already reversed"/);
+  assert.match(adminSource, /if \(row\.status === "reversed"\) return \{ short: "Already reversed"/);
   assert.match(adminSource, /if \(row\.status !== "completed"\)/);
-  assert.match(adminSource, /if \(row\.wallet_posted !== true\) return "Nothing to reverse — no wallet entry was posted"/);
+  assert.match(adminSource, /if \(row\.wallet_posted !== true\) \{\s*\n\s*return \{ short: "Nothing to reverse"/);
+  // The caption must stay short; the full sentence belongs in the tooltip.
+  assert.match(adminSource, /title="\$\{escapeHtml\(reason\.full\)\}"/);
+  assert.match(adminSource, /<small class="action-note">\$\{escapeHtml\(reason\.short\)\}<\/small>/);
 });
 
 test("the API refuses to reverse anything the ledger never posted", () => {

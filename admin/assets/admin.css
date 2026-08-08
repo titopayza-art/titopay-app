@@ -5794,3 +5794,14 @@ html[data-theme="dark"] .auth-panel-mark {
     scroll-behavior: auto !important;
   }
 }
+
+/* Caption under a disabled row action. The Actions column is narrow, so this
+   stays on one short line and the full sentence lives in the tooltip. */
+.action-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--tp-muted);
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  white-space: nowrap;
+}
