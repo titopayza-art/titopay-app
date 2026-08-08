@@ -50,6 +50,21 @@ const RANGES = ["today", "yesterday", "last_7", "last_30", "last_90", "this_mont
     page.on("request", (r) => { if (/assets\/admin[-.]/.test(r.url())) requested.push(r.url()); });
     await page.goto(`${ADMIN}${route}`, { waitUntil: "domcontentloaded", timeout: 25000 });
     await page.waitForTimeout(2500);
+
+    // Walking every analytics tab and every range preset costs more API calls
+    // than the general rate limiter's 60-second window allows, so the page
+    // opened next gets a 429 and the console correctly renders "Admin module
+    // unavailable". That is the API defending itself, not a broken module —
+    // wait the window out and ask again rather than reporting a false failure.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const limited = await page.evaluate(() => /Admin module unavailable|responded 429|Too many attempts/i.test(document.body.innerText || ""));
+      if (!limited) break;
+      console.log(`  ..    ${route} was rate limited; waiting out the 60s window (attempt ${attempt + 1})`);
+      await page.waitForTimeout(65000);
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 25000 });
+      await page.waitForTimeout(2500);
+    }
+
     // A bounced session renders the sign-in screen, and every check below it
     // would then pass or fail for the wrong reason. Say so once, loudly.
     const shell = await page.evaluate(() => ({
