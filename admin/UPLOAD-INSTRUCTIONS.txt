@@ -1,0 +1,46 @@
+TITOPAY ADMIN — AFRIHOST cPANEL UPLOAD
+Build: admin-console-v74
+
+This zip is packed from the document root: index.html, .htaccess and assets/
+sit at the top of the archive. Extracting it IN the document root overwrites
+the live build in place. Do not create an "admin" folder.
+
+STEPS
+
+1. Sign in to cPanel and open File Manager.
+2. Go to the document root for admin.titopay.co.za
+   (usually public_html, or the folder shown for the subdomain in
+   cPanel > Domains). You are in the right place if you can see the
+   current index.html and an assets folder.
+3. BACK UP FIRST: Select All > Compress > "admin-backup-<date>.zip",
+   then download that file. Rolling back = extracting it the same way.
+4. Upload admin.zip into that folder.
+5. Right-click admin.zip > Extract > confirm the path is the same
+   folder > choose to overwrite / replace existing files.
+6. Delete admin.zip from the server.
+7. In File Manager: Settings (top right) > tick "Show Hidden Files
+   (dotfiles)" > confirm .htaccess is present. The HTTPS redirect,
+   security headers and clean URLs all come from it.
+
+VERIFY (open in a browser)
+
+- https://admin.titopay.co.za/admin-version.txt
+      must read: Build: admin-console-v74
+- https://admin.titopay.co.za/
+      sign-in page loads; sign in works as before
+- https://admin.titopay.co.za/nonsense/
+      shows the branded "Page not found" page
+- Sidebar shows: Alerts (with the bell in the top bar),
+  Analytics, Platform > Service Builder, and
+  Communications > SMS Analytics.
+
+If a page still shows the previous layout, hard refresh once
+(Ctrl+F5 / Cmd+Shift+R). No other cache clearing is needed —
+pages are served no-store and assets are version-stamped.
+
+NOTES
+
+- PHP version, Node.js, databases: not applicable. This is a static
+  console — cPanel only serves the files.
+- The .md files in this package are documentation; the .htaccess
+  blocks them from being served, so they are not publicly readable.

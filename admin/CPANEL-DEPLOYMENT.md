@@ -2,7 +2,7 @@
 
 Static site. No Node.js, no build step, no database. Upload, extract, hard-refresh.
 
-**Build:** `admin-console-v64`
+**Build:** `admin-console-v74`
 **Target:** `admin.titopay.co.za`
 
 ---
@@ -47,9 +47,9 @@ and the 403/404 error pages. cPanel's File Manager hides dotfiles by default —
 
 ## Step 5 — Hard-refresh
 
-Assets moved from `?v=admin-console-v63` to `v64`. Open the console and press **Ctrl+F5**
-(Windows) or **Cmd+Shift+R** (Mac) once. Without it the browser may keep the old JavaScript and the
-Peach page will still show a single section.
+Assets are requested at `?v=admin-console-v74`, so the browser fetches them fresh.
+Open the console and press **Ctrl+F5** (Windows) or **Cmd+Shift+R** (Mac) once anyway —
+without it a browser holding the previous page HTML may keep the old JavaScript.
 
 ## Step 6 — Verify
 

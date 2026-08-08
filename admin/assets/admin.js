@@ -48,8 +48,21 @@ const ADMIN_API_BASE = (() => {
 })();
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
-   whether the console runs at the domain root or from a local path. */
-const ADMIN_ASSET_VERSION = "admin-console-v63";
+   whether the console runs at the domain root or from a local path.
+
+   The version is read from this script's own `?v=` rather than written down
+   twice. It had drifted: every page requested admin.js at v73 while the
+   modules were still being fetched at v63, so ten console builds shipped
+   without ever busting the cached analytics and service-builder modules. The
+   literal below is only the fallback for a page that loaded the script with no
+   stamp at all. */
+const ADMIN_ASSET_VERSION = (() => {
+  try {
+    const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
+    if (stamped) return stamped;
+  } catch {}
+  return "admin-console-v74";
+})();
 const ADMIN_ASSET_URL = (() => {
   try {
     const src = document.currentScript?.src;

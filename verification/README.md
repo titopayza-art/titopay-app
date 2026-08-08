@@ -39,3 +39,26 @@ Checkout host can be pointed at a mock; unset, the real Peach hosts are used.
 
 Payout authentication uses the Peach *dashboard* host, not the payouts host, so a local run needs
 `PEACH_PAYOUTS_SANDBOX_AUTH_URL=http://127.0.0.1:4401` alongside the payouts base URL.
+
+## Coverage harnesses
+
+These two exist because the file-level structure work — grouping `app.js`, `admin.js`,
+`admin-analytics.js` and `admin-service-builder.js` into named sections — can only be proven safe
+by running the code, not by reading it. A hoisting mistake surfaces as a `ReferenceError` the
+moment a code path executes, and only then.
+
+| File | What it does |
+| :-- | :-- |
+| `pwa-journeys.spec.js` | Walks **every** service journey in the customer app on both a personal and a business account: opens each one, types a plausible value into every field it exposes, and advances as far as the review step. 84 journeys, 96 checks. It never presses Pay, Confirm, Send, Withdraw or Buy, and asserts both wallet balances are unchanged at the end, so a journey that settles something behind its back fails the run. |
+| `admin-modules.spec.js` | Drives the two lazily imported Admin modules: all eight analytics tabs, all eight range presets, the XLSX and CSV exports, all ten Service Builder wizard steps and the detail view. It also asserts `admin.js` and both modules are fetched at one build stamp — they had drifted, and pages served at v73 were still fetching modules at `?v=admin-console-v63`. |
+
+```bash
+# Needs the API, the PWA on :8010 and the Admin console on :8020.
+# The Admin console pins connect-src to api.titopay.co.za, so a local run needs
+# a copy of the console whose CSP also allows the sandbox API origin.
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node pwa-journeys.spec.js
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node admin-modules.spec.js
+```
+
+`pwa-journeys.spec.js` bridges `https://api.titopay.co.za` to the local API with a Playwright
+route, because the shipped bundle hard-codes its API base to production.

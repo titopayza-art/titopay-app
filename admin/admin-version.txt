@@ -1,6 +1,24 @@
 TitoPay Admin
-Build: admin-console-v66
-Date: 2026-08-07
+Build: admin-console-v74
+Date: 2026-08-08
+
+v74 - Analytics and Service Builder are readable, and their cache stamp is
+correct for the first time since v63.
+
+  - assets/admin-analytics.js and assets/admin-service-builder.js are grouped
+    into ten and eleven named sections with a contents list at the top of each,
+    the same convention admin.js already follows. Only function declarations
+    moved, and a function declaration is hoisted before any statement in the
+    module runs, so no behaviour changed. Module state, the lookup tables and
+    the exported entry point kept their exact original order.
+  - admin.js requested both modules at a version it wrote down separately from
+    the one in the page markup, and the two had drifted: pages were served at
+    v73 while the modules were still fetched at ?v=admin-console-v63. Ten
+    console builds therefore shipped against cached modules. admin.js now reads
+    its build stamp off its own script tag, so the two can never disagree again.
+  - assets/titopay-logo.jpg is gone. The sign-in panel has used the wordmark
+    since v73 and nothing referenced the JPEG. Delete it from the server if an
+    earlier upload left it there.
 
 v66 - The Dashboard provider tile counts connected providers again.
 
@@ -390,5 +408,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v66; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v74; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
