@@ -16195,9 +16195,21 @@ async function hydrateSupportConversation(conversationId) {
     const wasAtBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48;
     const previousScrollHeight = thread.scrollHeight;
     const previousScrollTop = thread.scrollTop;
+
+    // The thread holds more than messages. The Customer Care escalation card
+    // and the rating card are rendered into it as well, and they carry the only
+    // controls the customer can act on — Start Live Chat, Request a Callback,
+    // Continue Waiting. replaceChildren() below destroys every child, so the
+    // first poll after the card appeared deleted it: measured at 2.8 seconds,
+    // well inside the time it takes someone to read three buttons and reach for
+    // one. They are lifted out here and put back afterwards, as the very same
+    // nodes, so nothing flickers and nothing is lost.
+    const pinned = Array.from(thread.querySelectorAll(":scope > .support-escalation, :scope > .support-rating"));
+
     const fragment = document.createDocumentFragment();
     normalizedMessages.forEach((item) => fragment.appendChild(createChatMessageElement(item.role, item.body, item.id)));
     thread.replaceChildren(fragment);
+    pinned.forEach((node) => thread.appendChild(node));
     thread.dataset.supportSignature = signature;
     if (wasAtBottom) thread.scrollTop = thread.scrollHeight;
     else thread.scrollTop = previousScrollTop + Math.max(0, thread.scrollHeight - previousScrollHeight);
@@ -16224,6 +16236,13 @@ function startSupportConversationPolling() {
       return;
     }
     if (document.hidden) return;
+    // No session, no polling. Without this the timer kept asking for the
+    // conversation every four seconds with no Authorization header once a
+    // session had lapsed, and the API answered 401 "Bearer token required"
+    // each time — a steady drip of authentication failures in the production
+    // log for a customer who was simply sitting on the support screen. It
+    // resumes on its own as soon as there is a token again.
+    if (!state.auth?.accessToken) return;
     const conversationId = sessionStorage.getItem("titopay_support_conversation_id");
     if (conversationId) hydrateSupportConversation(conversationId).catch(() => null);
   }, 4000);
