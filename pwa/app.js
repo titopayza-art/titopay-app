@@ -16105,35 +16105,39 @@ function openChatbotModal() {
   // app: something went wrong, then I can't get in, then what does it cost,
   // then how do I do this. Handover to a human is always last so it is in the
   // same place every time.
+  // Eight options, and eight is a measured number rather than a taste. On a
+  // 360x640 phone the Quick Help block has about 361px to work with before it
+  // would start eating the conversation; thirteen options need 461px. The two
+  // at the top were therefore scrolled out of sight, and tapping one near the
+  // bottom scrolled them further away — the options really did disappear.
+  // Eight come to 308px on that phone and fit outright, so nothing is ever
+  // hidden and there is nothing to scroll.
+  //
+  // Every label was checked against the live /v1/chatbot/messages endpoint and
+  // returns a real answer or a deliberate handover. Ordered by why people open
+  // support — something went wrong, then I cannot get in, then what does it
+  // cost, then how do I do this — with the handover last so it never moves.
+  // Anything not listed can still be typed; the assistant answers far more
+  // than eight topics.
   const suggestions = business
     ? [
       "A failed payment",
-      "Refund a payment",
       "Account access issues",
       "Security and fraud",
-      "Transaction history",
       "Fees and pricing",
-      "Top up the business wallet",
       "Business payouts",
       "Get paid by customers",
-      "QR payments",
       "Business profile and merchant tools",
-      "Verify my account (FICA)",
       "Speak to Customer Care"
     ]
     : [
       "A failed payment",
-      "Refund a payment",
       "Account access issues",
       "Security and fraud",
-      "Transaction history",
       "Fees and pricing",
       "Top up my wallet",
       "Withdraw to my bank",
       "Send money",
-      "Receive money",
-      "QR payments",
-      "Verify my account (FICA)",
       "Speak to Customer Care"
     ];
   openModal(`

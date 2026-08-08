@@ -11424,12 +11424,14 @@ button,
   contain: layout;
 }
 
-/* Wrapped options need a ceiling, or seventeen of them would push the
-   conversation off the top of a phone. Capped here, they take at most a third
-   of the panel and scroll within it; the thread keeps the rest and the
-   composer stays pinned where it has always been. */
+/* The ceiling is a safety net, not the layout. The option list is sized so it
+   fits outright on the smallest phone we support — eight options come to 308px
+   where 361px is available — so nothing is ever scrolled out of reach. This
+   only catches a future list that grows, or a text size that makes it taller,
+   and stops it pushing the composer off the screen. If it ever engages, the
+   list is too long and should be shortened rather than left to scroll. */
 .chatbot-fullscreen-modal .chatbot-suggestions {
-  max-height: min(38vh, 244px);
+  max-height: min(52vh, 340px);
 }
 
 .chatbot-fullscreen-modal .chat-thread {

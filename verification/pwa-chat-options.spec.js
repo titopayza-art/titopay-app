@@ -94,21 +94,26 @@ const VIEWPORTS = [
       geometry.scrollWidth <= geometry.clientWidth + 1,
       `${geometry.scrollWidth}px of content in a ${geometry.clientWidth}px row`);
 
-    check(`${viewport.name}: they wrap onto lines instead of one long strip`,
-      geometry.scrollHeight > geometry.clientHeight * 0.9 && geometry.chips > 10,
-      `${geometry.chips} options, ${geometry.scrollHeight}px tall in a ${geometry.clientHeight}px block`);
+    // The check that matters. Capping the block and letting it scroll simply
+    // moved the problem: the first two options sat above the fold, and tapping
+    // one near the bottom scrolled them further away. Every option must be on
+    // screen at once, with nothing to scroll in either direction.
+    check(`${viewport.name}: no option is hidden — the block does not scroll at all`,
+      geometry.scrollHeight <= geometry.clientHeight + 1,
+      `${geometry.scrollHeight}px of options in a ${geometry.clientHeight}px block`);
 
     check(`${viewport.name}: the message box stays on screen`, geometry.composeVisible);
 
     // Every option must be reachable by scrolling the block vertically, and
     // the point a finger lands on must belong to that option.
+    // Hit-test every option WITHOUT scrolling anything first. Scrolling to
+    // reach an option is the behaviour being removed, so a test that scrolls
+    // would hide the very fault it is meant to catch.
     const reach = await page.evaluate(async () => {
       const row = document.querySelector(".chatbot-suggestions");
       const chips = Array.from(row.querySelectorAll(".chip"));
       const unreachable = [];
       for (const chip of chips) {
-        chip.scrollIntoView({ block: "nearest" });
-        await new Promise((r) => setTimeout(r, 30));
         const rect = chip.getBoundingClientRect();
         const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
         if (hit !== chip && !chip.contains(hit)) unreachable.push(chip.textContent.trim());
@@ -124,8 +129,6 @@ const VIEWPORTS = [
     const tapped = await page.evaluate(async (label) => {
       const chip = Array.from(document.querySelectorAll(".chatbot-suggestions .chip")).find((c) => c.textContent.trim() === label);
       if (!chip) return { ok: false, why: "option missing" };
-      chip.scrollIntoView({ block: "nearest" });
-      await new Promise((r) => setTimeout(r, 60));
       const rect = chip.getBoundingClientRect();
       const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
       return { ok: hit === chip || chip.contains(hit), landedOn: (hit?.textContent || "").trim().slice(0, 40) };
@@ -133,6 +136,7 @@ const VIEWPORTS = [
     check(`${viewport.name}: tapping "${wanted}" hits that option`, tapped.ok, tapped.why || `landed on "${tapped.landedOn}"`);
 
     if (tapped.ok) {
+      const positionsBefore = await page.evaluate(() => Array.from(document.querySelectorAll(".chatbot-suggestions .chip")).map((c) => Math.round(c.getBoundingClientRect().y)));
       await page.evaluate((label) => {
         const chip = Array.from(document.querySelectorAll(".chatbot-suggestions .chip")).find((c) => c.textContent.trim() === label);
         chip?.click();
@@ -140,6 +144,18 @@ const VIEWPORTS = [
       await page.waitForTimeout(2000);
       const sent = await page.evaluate(() => (document.querySelector(".chatbot-fullscreen-modal .chat-thread")?.innerText || ""));
       check(`${viewport.name}: it puts that question into the conversation`, sent.includes(wanted), sent.replace(/\s+/g, " ").slice(-110));
+
+      // Asking a question must not move the options. This is the reported
+      // fault: tap one, and the ones above it slide out of view.
+      const positionsAfter = await page.evaluate(() => Array.from(document.querySelectorAll(".chatbot-suggestions .chip")).map((c) => Math.round(c.getBoundingClientRect().y)));
+      const moved = positionsBefore.filter((y, i) => Math.abs(y - (positionsAfter[i] ?? 1e6)) > 1).length;
+      check(`${viewport.name}: asking a question leaves every option where it was`, moved === 0,
+        `${moved} of ${positionsBefore.length} options moved`);
+      const stillAll = await page.evaluate(() => {
+        const row = document.querySelector(".chatbot-suggestions");
+        return { hidden: row.scrollHeight > row.clientHeight + 1, count: row.querySelectorAll(".chip").length };
+      });
+      check(`${viewport.name}: all ${stillAll.count} options are still on screen afterwards`, stillAll.hidden === false);
     }
 
     await page.screenshot({ path: `pwa-chat-options-${viewport.width}.png` });
