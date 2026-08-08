@@ -198,16 +198,23 @@ test("the transactions API derives wallet_posted and posted_amount from the ledg
   assert.match(source, /WHEN wl\.entry_type IN \('debit', 'reserve'\) THEN -ABS\(wl\.amount\)/);
 });
 
-test("the wallet is credited in exactly one place, behind a verified success", () => {
+test("the customer wallet is credited in exactly one place, behind a verified success", () => {
   const source = apiSource("services", "peach-checkout-service.js");
-  const credits = source.match(/applyWalletMovement\(/g) || [];
-  assert.equal(credits.length, 1, "exactly one wallet movement call in the top-up service");
+  // Two movements exist in this service: the customer's credit and the fee
+  // posted to the revenue wallet. Exactly one of them may touch the CUSTOMER's
+  // wallet, and it is the one guarded below.
+  const movements = source.match(/applyWalletMovement\(/g) || [];
+  assert.equal(movements.length, 2, "the customer credit and the revenue posting, and nothing else");
+  const customerMovements = source.match(/walletId: row\.wallet_id/g) || [];
+  assert.equal(customerMovements.length, 1, "exactly one movement against the customer's wallet");
+  const revenueMovements = source.match(/walletId: revenueWallet\.id/g) || [];
+  assert.equal(revenueMovements.length, 1, "exactly one movement against the revenue wallet");
   // It sits after the success gate and credits `amount`, never `total`.
   assert.match(source, /if \(verified\.providerState !== "successful"\)/);
   assert.match(source, /entryType: "credit",\s*\n\s*amount: Number\(row\.amount\)/);
   // And behind a row lock plus a ledger existence check.
   assert.match(source, /SELECT \* FROM transactions WHERE id = \$1 FOR UPDATE/);
-  assert.match(source, /FROM wallet_ledger\s+WHERE transaction_id = \$1 AND entry_type = 'credit'/);
+  assert.match(source, /FROM wallet_ledger\s+WHERE transaction_id = \$1 AND wallet_id = \$2 AND entry_type = 'credit'/);
 });
 
 test("a top-up row is created pending and is only ever marked failed on a provider error", () => {
@@ -297,4 +304,53 @@ test("the API refuses to reverse anything the ledger never posted", () => {
   const source = apiSource("services", "transaction-service.js");
   assert.match(source, /if \(transaction\.status !== "completed"\) \{\s*\n\s*throw new AppError\(409, "Only completed transactions can be reversed automatically"\)/);
   assert.match(source, /if \(!ledgerRows\.length\) throw new AppError\(409, "Transaction has no wallet ledger entries to reverse"\)/);
+});
+
+/* ---------------------- the top-up fee is recorded as revenue ------------- */
+
+test("the top-up fee is posted to the revenue wallet, not taken from the customer", () => {
+  const source = apiSource("services", "peach-checkout-service.js");
+  const fn = source.slice(source.indexOf("async function recordTopupFeeRevenue"));
+  // Credit to revenue, and nothing else. A debit here would charge the customer
+  // twice: once by Peach on the card, once again in their wallet.
+  assert.match(fn, /entryType: "credit",\s*\n\s*amount: fee/);
+  assert.ok(!/entryType: "debit"/.test(fn.slice(0, fn.indexOf("\n}"))), "the customer must never be debited the fee");
+  assert.match(fn, /INSERT INTO revenue_ledger \(id, transaction_id, service_code, fee_collected, revenue_wallet_id\)/);
+});
+
+test("the fee can only be recorded once", () => {
+  const source = apiSource("services", "peach-checkout-service.js");
+  assert.match(source, /SELECT id FROM revenue_ledger WHERE transaction_id = \$1 LIMIT 1/);
+  // Zero-fee transactions post nothing at all.
+  assert.match(source, /if \(!\(fee > 0\)\) return false;/);
+});
+
+test("a revenue failure can never cost the customer their credit", () => {
+  const source = apiSource("services", "peach-checkout-service.js");
+  // A failed statement aborts a Postgres transaction, so catching is not
+  // enough — the posting has to be able to roll back on its own.
+  assert.match(source, /SAVEPOINT topup_fee_revenue/);
+  assert.match(source, /ROLLBACK TO SAVEPOINT topup_fee_revenue/);
+  assert.match(source, /RELEASE SAVEPOINT topup_fee_revenue/);
+  // And the failure must be visible to an operator.
+  assert.match(source, /top-up fee revenue not recorded; the wallet credit still stands/);
+});
+
+test("the customer credit guard is scoped to the customer's own wallet", () => {
+  const source = apiSource("services", "peach-checkout-service.js");
+  // Without the wallet_id scope the revenue credit — same transaction, also a
+  // credit — satisfies this check and the customer is silently never credited.
+  assert.match(source, /WHERE transaction_id = \$1 AND wallet_id = \$2 AND entry_type = 'credit' AND metadata->>'provider' = \$3/);
+  assert.match(source, /\[transactionId, row\.wallet_id, PROVIDER\]/);
+});
+
+test("the revenue wallet provisioner is explicit and idempotent", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "scripts", "ensure-revenue-wallet.js"), "utf8");
+  // Dry run unless asked, one wallet only, and it refuses to guess when the
+  // platform already has more than one.
+  assert.match(source, /const CREATE = process\.argv\.includes\("--create"\)/);
+  assert.match(source, /if \(!CREATE\)/);
+  assert.match(source, /Re-run with --create to provision it\. Nothing has been changed\./);
+  assert.match(source, /revenue wallets exist\. There must be exactly one/);
+  assert.match(source, /are NOT backfilled/);
 });

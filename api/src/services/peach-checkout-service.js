@@ -20,6 +20,7 @@ const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { loadPeachConfig } = require("./peach-config-service");
 const { getAccessToken, CHECKOUT_SERVICE_URLS } = require("./peach-checkout-auth-service");
+const { calculateFee } = require("./pricing-service");
 const walletService = require("./wallet-service");
 
 const SERVICE_CODE = "wallet_top_up";
@@ -49,6 +50,14 @@ function apiBaseUrl() {
 
 function topupReturnUrl() {
   return `${apiBaseUrl()}/v1/payments/topup/return`;
+}
+
+// Peach's own wording when the Referer is not a domain allowlisted for the
+// merchant. Matched on the distinctive parts rather than the whole sentence so
+// a rephrasing on their side does not send it back to the generic bucket.
+function isMerchantDomainRejection(providerMessage) {
+  const text = String(providerMessage || "").toLowerCase();
+  return /domain/.test(text) && /(allow ?list|white ?list|not permitted|not registered)/.test(text);
 }
 
 // Preserve the existing TitoPay provider webhook endpoint.
@@ -151,18 +160,40 @@ async function peachRequest(effective, method, path, body, { timeoutMs = DEFAULT
   try { payload = raw ? JSON.parse(raw) : {}; } catch (_error) { payload = {}; }
 
   if (!response.ok) {
+    const providerMessage = String(payload?.result?.description || payload?.message || "").slice(0, 200);
     console.error("[peach-checkout] request failed", {
       method,
       path,
       environment,
       httpStatus: response.status,
-      providerMessage: String(payload?.result?.description || payload?.message || "").slice(0, 200)
+      providerMessage,
+      // The domain TitoPay presented. Peach requires the Referer to be a
+      // domain allowlisted for the merchant, so when it rejects one this is
+      // the single value an operator needs to compare against the Dashboard.
+      sentReferer: `${appBaseUrl()}/`,
+      sentOrigin: appBaseUrl()
     });
     if (response.status === 401 || response.status === 403) {
       throw new AppError(502, "Peach Payments rejected the request", { code: "AUTHENTICATION_REJECTED", providerStatus: response.status });
     }
     if (response.status === 404) throw new AppError(404, "Peach Payments checkout was not found", { code: "CHECKOUT_NOT_FOUND", providerStatus: response.status });
     if (response.status >= 500) throw new AppError(502, "Peach Payments is unavailable", { code: "PROVIDER_UNAVAILABLE", providerStatus: response.status });
+    // Peach rejects the checkout when the Referer is not a domain allowlisted
+    // for this merchant. It is a configuration problem on the Peach side, not
+    // a fault the customer can retry away, so it is reported as unavailable
+    // with its own code — and the customer is never shown the provider's text.
+    if (isMerchantDomainRejection(providerMessage)) {
+      console.error("[peach-checkout] PEACH_MERCHANT_DOMAIN_NOT_ALLOWLISTED — Peach must allowlist this domain for the merchant", {
+        domainSent: appBaseUrl(),
+        environment,
+        action: "Add this exact domain under the Peach Dashboard for this merchant, or correct APP_BASE_URL if it is wrong."
+      });
+      throw new AppError(
+        503,
+        "Card top-ups are temporarily unavailable. Please try again later.",
+        { code: "PEACH_MERCHANT_DOMAIN_NOT_ALLOWLISTED", providerStatus: response.status }
+      );
+    }
     throw new AppError(502, "Peach Payments could not process the request", { code: "PROVIDER_REQUEST_FAILED", providerStatus: response.status });
   }
   return payload;
@@ -189,7 +220,10 @@ function topupResponse(row, extra = {}) {
   return {
     transactionId: row.id,
     reference: row.reference,
+    // `amount` is what lands in the wallet; `total` is what the card is charged.
     amount: Number(row.amount),
+    fee: Number(row.fee || 0),
+    total: Number(row.total ?? row.amount),
     currency: metadata.currency || "ZAR",
     status: row.status,
     providerState: metadata.providerState || null,
@@ -226,6 +260,31 @@ async function createTopupCheckout(actor, payload = {}) {
     return topupResponse(row, { redirectUrl: metadata.redirectUrl || null, idempotentReplay: true });
   }
 
+  // The top-up fee comes from the same approved pricing rule the fee preview
+  // quoted, so the card is charged exactly the total the customer confirmed.
+  // The fee is collected at the card and never enters the wallet: the wallet is
+  // credited `amount`, the card is charged `amount + fee`.
+  const pricing = await calculateFee(SERVICE_CODE, amount);
+  const fee = roundMoney(pricing.fee || 0);
+  const chargeTotal = roundMoney(amount + fee);
+  if (chargeTotal <= 0) throw new AppError(400, "Top-up amount must be greater than zero");
+
+  // If the client tells us what the review screen quoted, refuse to charge
+  // anything different. This can only ever REFUSE a payment, never authorise a
+  // larger one, so it adds a safety net without trusting the browser: a review
+  // screen left open across a pricing change cannot send the customer to Peach
+  // for a total they never agreed to.
+  const quotedTotal = payload.quotedTotal === undefined || payload.quotedTotal === null || payload.quotedTotal === ""
+    ? null
+    : Number(payload.quotedTotal);
+  if (quotedTotal !== null && Number.isFinite(quotedTotal) && Math.abs(quotedTotal - chargeTotal) > 0.005) {
+    throw new AppError(
+      409,
+      "The top-up fee changed since this screen was opened. Nothing was charged — please start the top up again to see the current total.",
+      { code: "TOPUP_QUOTE_STALE" }
+    );
+  }
+
   const wallet = await walletService.getPrimaryWalletForUser(actor.userId);
   const transactionId = uuidv4();
   const reference = topupReference();
@@ -233,7 +292,7 @@ async function createTopupCheckout(actor, payload = {}) {
   await pool.query(
     `INSERT INTO transactions
       (id, user_id, wallet_id, service_code, amount, fee, total, status, direction, reference, recipient_reference, metadata)
-     VALUES ($1,$2,$3,$4,$5,0,$5,'pending','credit',$6,$6,$7::jsonb)`,
+     VALUES ($1,$2,$3,$4,$5,$8,$9,'pending','credit',$6,$6,$7::jsonb)`,
     [
       transactionId, actor.userId, wallet.id, SERVICE_CODE, amount, reference,
       JSON.stringify({
@@ -244,8 +303,12 @@ async function createTopupCheckout(actor, payload = {}) {
         clientIdempotencyKey: idempotencyKey,
         merchantTransactionId: reference,
         providerState: "created",
+        feeAmount: fee,
+        chargeTotal,
         note: String(payload.note || payload.reference || "").slice(0, 200) || undefined
-      })
+      }),
+      fee,
+      chargeTotal
     ]
   );
 
@@ -254,7 +317,7 @@ async function createTopupCheckout(actor, payload = {}) {
     checkout = await peachRequest(effective, "POST", "/v2/checkout", {
       authentication: { entityId: effective.entityId },
       merchantTransactionId: reference,
-      amount: Number(amount.toFixed(2)),
+      amount: Number(chargeTotal.toFixed(2)),
       currency,
       paymentType: "DB",
       nonce: nonce(),
@@ -286,7 +349,7 @@ async function createTopupCheckout(actor, payload = {}) {
   );
 
   console.info("[peach-checkout] checkout created", {
-    transactionId, reference, checkoutId, environment: effective.environment, amount, currency
+    transactionId, reference, checkoutId, environment: effective.environment, amount, fee, chargeTotal, currency
   });
 
   return topupResponse(rows[0], { redirectUrl, idempotentReplay: false });
@@ -326,10 +389,14 @@ async function settleTopupTransaction(client, transactionId, verified) {
 
   // Peach reported success. Confirm the amount and currency still match what
   // TitoPay created, so a tampered or mismatched notification cannot change
-  // what gets credited.
-  if (verified.amount !== null && Math.abs(Number(verified.amount) - Number(row.amount)) > 0.005) {
+  // what gets credited. Peach was asked to charge the TOTAL (amount + top-up
+  // fee), so that is what its answer must equal; the wallet is still credited
+  // only `amount`. Rows written before the fee existed carry total = amount, so
+  // this stays correct for them too.
+  const expectedCharge = Number(row.total ?? row.amount);
+  if (verified.amount !== null && Math.abs(Number(verified.amount) - expectedCharge) > 0.005) {
     console.error("[peach-checkout] amount mismatch; refusing to credit", {
-      transactionId, expected: Number(row.amount), reported: Number(verified.amount)
+      transactionId, expected: expectedCharge, reported: Number(verified.amount)
     });
     const { rows } = await client.query(
       `UPDATE transactions SET status='processing', metadata = metadata || $2::jsonb, updated_at=NOW()
@@ -341,10 +408,15 @@ async function settleTopupTransaction(client, transactionId, verified) {
 
   // Belt and braces alongside the row lock: never add a second credit for this
   // transaction even if a status row were somehow rewound.
+  //
+  // Scoped to the CUSTOMER's wallet. The fee posting below writes a second
+  // credit against the same transaction on the revenue wallet, and without this
+  // scope that row would satisfy this check and silently skip crediting the
+  // customer on any re-run.
   const existingCredit = await client.query(
     `SELECT id FROM wallet_ledger
-      WHERE transaction_id = $1 AND entry_type = 'credit' AND metadata->>'provider' = $2 LIMIT 1`,
-    [transactionId, PROVIDER]
+      WHERE transaction_id = $1 AND wallet_id = $2 AND entry_type = 'credit' AND metadata->>'provider' = $3 LIMIT 1`,
+    [transactionId, row.wallet_id, PROVIDER]
   );
 
   let credited = false;
@@ -360,6 +432,8 @@ async function settleTopupTransaction(client, transactionId, verified) {
     credited = true;
   }
 
+  const feeRecorded = await recordTopupFeeRevenue(client, row);
+
   const { rows } = await client.query(
     `UPDATE transactions SET status='completed', metadata = metadata || $2::jsonb, updated_at=NOW()
       WHERE id=$1 RETURNING *`,
@@ -372,7 +446,62 @@ async function settleTopupTransaction(client, transactionId, verified) {
       providerUpdatedAt: new Date().toISOString()
     })]
   );
-  return { row: rows[0], credited, alreadySettled: false };
+  return { row: rows[0], credited, feeRecorded, alreadySettled: false };
+}
+
+// The top-up fee is real money. Peach charges the customer amount + fee on the
+// card and settles the whole R506 to TitoPay, but only the R500 was ever posted
+// to the customer's wallet — the R6 reached TitoPay and was recorded nowhere, so
+// Revenue Recorded read R0.00 against a fee that had genuinely been collected
+// and every settled top-up sat flagged for reconciliation.
+//
+// This posts it the way every other fee in the platform is posted: a credit to
+// the revenue wallet plus a revenue_ledger row. There is deliberately NO debit
+// against the customer — they paid the fee to Peach on the card, and debiting
+// the wallet as well would charge them twice.
+//
+// Two rules govern it. It must never post twice, so revenue_ledger is the
+// idempotency key. And it must never cost a customer their credit: the whole
+// posting runs inside a SAVEPOINT, so if the revenue wallet is missing or the
+// insert fails, that part rolls back alone and the wallet credit above still
+// commits. A fee TitoPay failed to record is an accounting problem; a top-up
+// the customer paid for and did not receive is a much worse one.
+async function recordTopupFeeRevenue(client, row) {
+  const fee = roundMoney(Number(row.fee || 0));
+  if (!(fee > 0)) return false;
+
+  const already = await client.query("SELECT id FROM revenue_ledger WHERE transaction_id = $1 LIMIT 1", [row.id]);
+  if (already.rows[0]) return false;
+
+  await client.query("SAVEPOINT topup_fee_revenue");
+  try {
+    const revenueWallet = await walletService.getRevenueWallet();
+    await walletService.applyWalletMovement(client, {
+      walletId: revenueWallet.id,
+      transactionId: row.id,
+      entryType: "credit",
+      amount: fee,
+      reference: row.reference,
+      metadata: { serviceCode: SERVICE_CODE, source: "fee", collectedBy: PROVIDER }
+    });
+    await client.query(
+      `INSERT INTO revenue_ledger (id, transaction_id, service_code, fee_collected, revenue_wallet_id)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [uuidv4(), row.id, SERVICE_CODE, fee, revenueWallet.id]
+    );
+    await client.query("RELEASE SAVEPOINT topup_fee_revenue");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK TO SAVEPOINT topup_fee_revenue").catch(() => {});
+    await client.query("RELEASE SAVEPOINT topup_fee_revenue").catch(() => {});
+    console.error("[peach-checkout] top-up fee revenue not recorded; the wallet credit still stands", {
+      transactionId: row.id,
+      reference: row.reference,
+      fee,
+      reason: error?.message || "unknown"
+    });
+    return false;
+  }
 }
 
 // Ask Peach directly what happened. This is the only trusted source.

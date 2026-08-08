@@ -227,3 +227,73 @@ customer is affected. **I have not changed it**, because it means writing to the
 revenue ledger inside settlement, which is on the do-not-modify list. The
 reconciliation flag is now doing its job and pointing at it; it is your call
 whether TitoPay should record that fee as revenue at settlement.
+
+---
+
+## Addendum 2 — the top-up fee is now recorded as revenue
+
+The reconciliation flag, once the false positives were gone, pointed at
+something real: a **settled** top-up charged the R6 fee inside the R506 card
+charge but wrote no `revenue_ledger` row, so `Revenue Recorded` read R0.00
+against a fee TitoPay had genuinely collected — and every settled transaction
+sat flagged for review.
+
+The fee is now posted the way every other fee in the platform is posted: a
+credit to the revenue wallet plus a `revenue_ledger` row, inside the same
+database transaction as the customer's credit.
+
+**There is deliberately no debit against the customer.** They paid the fee to
+Peach on the card; debiting their wallet as well would charge them twice.
+
+### Two rules govern it
+
+**It can only post once.** `revenue_ledger` is the idempotency key. Replayed
+confirmations, duplicate webhooks and status polls post nothing further.
+
+**It can never cost a customer their credit.** The posting runs inside a
+`SAVEPOINT`. If the revenue wallet is missing or the insert fails, that part
+rolls back alone, the wallet credit still commits, and the failure is logged.
+A fee TitoPay failed to record is an accounting problem; a top-up the customer
+paid for and did not receive is a much worse one. This is not theoretical —
+the test database had no revenue wallet, and a harness proves the customer is
+still credited R500 in exactly that situation.
+
+### One subtle hazard this created, and closed
+
+The existing guard against double-crediting read:
+
+```sql
+WHERE transaction_id = $1 AND entry_type = 'credit' AND metadata->>'provider' = $2
+```
+
+The revenue posting is also a credit, against the same transaction. Left
+unscoped, that row would satisfy this check and the **customer would silently
+never be credited** on any re-run. The guard is now scoped to the customer's
+own wallet (`AND wallet_id = $2`), and a test asserts the scope.
+
+### The revenue wallet must exist
+
+Four services read a revenue wallet — top-up fees, Email Statement fees,
+ticketing and enterprise distribution — and **nothing in the codebase creates
+one**. On a database without it, Email Statement fails outright; top-up now
+degrades safely instead.
+
+```bash
+node scripts/ensure-revenue-wallet.js            # report only, changes nothing
+node scripts/ensure-revenue-wallet.js --create   # provision it
+```
+
+It is a dry run by default, idempotent, refuses to guess if more than one
+exists, and does **not** backfill fees collected before it was created — that
+is a finance decision, not something a provisioning script should assume.
+
+### Verified
+
+`topup-fee-revenue-e2e.js` **20/20** against a real ledger: the fee posts once
+at R6, the revenue wallet receives it, the customer is credited R500 and never
+debited the fee, replays and webhooks post nothing further, rejected and pending
+top-ups book no revenue, the Admin row reconciles as `matched`, and **every
+wallet still reconciles against the sum of its own ledger**.
+
+`no-revenue-wallet.js` **6/6**: with no revenue wallet configured, the customer
+is still credited R500 and the top-up still completes.
