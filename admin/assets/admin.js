@@ -1,3 +1,40 @@
+/*
+ * TitoPay Admin Portal — operations console
+ *
+ * One classic script, loaded by every page in this directory. Functions are
+ * grouped by domain below; a function declaration is hoisted, so its position
+ * in this file has no effect on behaviour and sections can be reordered freely.
+ *
+ * Anything that is NOT a function declaration — the constants, the module-level
+ * state and the event wiring — is order-sensitive. Those statements live in the
+ * two banner-marked blocks at the top and the bottom, in their original order.
+ * Add new constants to the top block and new wiring to the bottom one; put new
+ * functions in whichever section below they belong to.
+ *
+ * Contents
+ *
+ *    1. Authentication and session          27 functions
+ *    2. API client                           2 functions
+ *    3. Formatting and small helpers        19 functions
+ *    4. Console chrome                      17 functions
+ *    5. Shared UI primitives                 4 functions
+ *    6. Data table engine                   20 functions
+ *    7. Dashboard                           10 functions
+ *    8. Global search                       12 functions
+ *    9. Operations — money and accounts     17 functions
+ *   10. Support and chat monitoring         16 functions
+ *   11. Integration centre                  17 functions
+ *   12. Platform administration             12 functions
+ *   13. Ticketing and enterprise distribution   4 functions
+ *   14. Marketing                           17 functions
+ *   15. Email centre                        14 functions
+ *   16. Alert engine                        20 functions
+ *   17. Lazily loaded modules                4 functions
+ *   18. Router and page bootstrap            5 functions
+ */
+/* ==========================================================================
+   STATE AND CONFIGURATION — order matters here; do not reorder
+   ========================================================================== */
 const ADMIN_API_BASE = (() => {
   const configured = window.TITOPAY_ADMIN_CONFIG?.apiBaseUrl;
   const withVersion = (value) => {
@@ -9,7 +46,6 @@ const ADMIN_API_BASE = (() => {
   if (location.hostname === "127.0.0.1" || location.hostname === "localhost") return "http://127.0.0.1:8110/v1";
   return "https://api.titopay.co.za/v1";
 })();
-
 /* Asset version and location. `ADMIN_ASSET_URL` is the folder this script was
    served from, so the lazily imported analytics module resolves next to it
    whether the console runs at the domain root or from a local path. */
@@ -21,7 +57,6 @@ const ADMIN_ASSET_URL = (() => {
   } catch {}
   return new URL("/assets/", location.origin);
 })();
-
 const ADMIN_AUTH_KEY = "titopay_admin_auth_v1";
 const ADMIN_ALLOWED_HOSTS = new Set(["admin.titopay.co.za", "www.admin.titopay.co.za", "127.0.0.1", "localhost"]);
 const IDLE_WARNING_MS = 60 * 1000;
@@ -31,7 +66,6 @@ let chatMonitorRefreshTimer = null;
 let supportChatSocket = null;
 let supportChatReconnectTimer = null;
 let supportFallbackRefreshTimer = null;
-
 const NAV_GROUPS = [
   { title: "Operations", items: [
     ["/dashboard/", "dashboard", "Dashboard"],
@@ -85,7 +119,6 @@ const NAV_GROUPS = [
     ["/rbac-permissions/", "rbac-permissions", "RBAC / Permissions"],
   ]},
 ];
-
 const ADMIN_PAGE_ROUTES = new Map(
   NAV_GROUPS.flatMap((group) => group.items.map(([href, slug]) => [href, slug]))
 );
@@ -97,8 +130,76 @@ ADMIN_PAGE_ROUTES.set("/integrations/flash/", "integration-provider");
 ADMIN_PAGE_ROUTES.set("/integrations/ott/", "integration-provider");
 ADMIN_PAGE_ROUTES.set("/integrations/email-smtp/", "integration-provider");
 ADMIN_PAGE_ROUTES.set("/integrations/sms-provider/", "integration-provider");
-
 const PAGE_EXPORTS = {};
+/* Enterprise Analytics is gated on its own reporting permission. This is
+   additive: it grants nothing new on any other module, and full-access roles
+   keep the access they already had. */
+const ADMIN_ANALYTICS_PERMISSIONS = ["analytics", "reporting", "reports", "analytics_view", "ANALYTICS_VIEW", "REPORTING_VIEW", "REPORTS_VIEW"];
+/* Service Builder is gated the same additive way as Analytics: full-access
+   and owner roles keep what they had, and a dedicated permission opens it for
+   anyone else. No other module's rules change. */
+const ADMIN_SERVICE_BUILDER_PERMISSIONS = ["service_builder", "services", "platform", "SERVICE_BUILDER", "SERVICES_MANAGE"];
+/* Every existing caller passes a message and nothing else, so the tone is
+   read from the message itself. A confirmation and a failure no longer look
+   identical, and no call site had to change to get it. */
+const TOAST_ERROR_PATTERN = /\b(unable|failed|failure|cannot|can't|could not|error|invalid|expired|denied|rejected|not allowed|unavailable|no longer)\b/i;
+const TOAST_SUCCESS_PATTERN = /\b(saved|updated|created|added|sent|queued|approved|resolved|completed|refreshed|exported|disabled|enabled|assigned|closed|reopened|released|transferred|archived|acknowledged|reversed|verified|rotated|retried|cancelled|signed out|taken over|applied|reloaded)\b/i;
+/* --------------------------------------------------------------------------
+   Console chrome (presentation only)
+
+   The sidebar, topbar and page header are built once per document and then
+   updated in place. Earlier builds re-created the whole shell on every
+   navigation, which reset the sidebar scroll position and re-bound listeners
+   on each route change.
+   -------------------------------------------------------------------------- */
+
+const NAV_ICON_PATHS = {
+  dashboard: "M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6V11h-6v9Zm0-16v5h6V4h-6Z",
+  alerts: "M12 4a5 5 0 0 0-5 5v3.4l-1.7 2.9a1 1 0 0 0 .9 1.5h11.6a1 1 0 0 0 .9-1.5L17 12.4V9a5 5 0 0 0-5-5Zm-2 14.8a2 2 0 0 0 4 0",
+  analytics: "M4 4v16h16M8 16l3.2-4.2 3 2.4L19 8m0 0h-3.6M19 8v3.4",
+  search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm9 16-4.2-4.2",
+  users: "M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm11 10v-2a4 4 0 0 0-3-3.9M16 3.6a4 4 0 0 1 0 7.8",
+  merchants: "M3 9.5 4.5 5h15L21 9.5M3 9.5h18M3 9.5a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0M5 12v7h14v-7",
+  transactions: "M4 8h13m0 0-3-3m3 3-3 3M20 16H7m0 0 3-3m-3 3 3 3",
+  wallets: "M3 7.5A2.5 2.5 0 0 1 5.5 5H18v3M3 7.5V17a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2M3 7.5V10h16a2 2 0 0 1 2 2v3m0 0h-4a2 2 0 1 1 0-4h4",
+  beneficiaries: "M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm7-1 1.5 1.5L21 7.5",
+  "chat-monitor": "M20 12a8 8 0 1 1-3.2-6.4M21 4v5h-5",
+  ticketing: "M4 8.5A1.5 1.5 0 0 1 5.5 7h13A1.5 1.5 0 0 1 20 8.5v2a2 2 0 0 0 0 3.9v2A1.5 1.5 0 0 1 18.5 18h-13A1.5 1.5 0 0 1 4 16.4v-2a2 2 0 0 0 0-3.9v-2ZM12 7v11",
+  "enterprise-distribution": "M12 3v6m0 0-3.5 3.5M12 9l3.5 3.5M4 21v-4m0 0-1-1.5m1 1.5 1-1.5M20 21v-4m0 0-1-1.5m1 1.5 1-1.5M12 21v-4",
+  "qr-management": "M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 3h3m0 0v3m0-3h3m-6-3h6",
+  marketing: "M4 10v4h3l5 4V6L7 10H4Zm13-1.5a5 5 0 0 1 0 7",
+  "service-builder": "M4 6.5 12 3l8 3.5-8 3.5-8-3.5Zm0 5.5 8 3.5 4-1.75M4 17.5 9 15.7M18 14v3m0 0v3m0-3h3m-3 0h-3",
+  pricing: "M12 3v18M8.5 7.5h6.2a2.5 2.5 0 0 1 0 5H9.3a2.5 2.5 0 0 0 0 5h6.2",
+  integrations: "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
+  "integration-provider": "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
+  "feature-management": "M5 8h9m2 0h3M5 16h3m2 0h9M14 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Zm-4 8a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z",
+  "api-provider-settings": "M6 7h12M6 12h12M6 17h6M18 15v4m2-2h-4",
+  settings: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm7.4 3a7.4 7.4 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 0 0-2-1.2L14.6 3H9.4L9 5.7a7.4 7.4 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5a7.4 7.4 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-1a7.4 7.4 0 0 0 2 1.2l.4 2.7h5.2l.4-2.7a7.4 7.4 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.07-.4.1-.8.1-1.2Z",
+  support: "M4 12a8 8 0 0 1 16 0v5a2 2 0 0 1-2 2h-3M4 12v3a2 2 0 0 0 2 2h1v-5H4Zm16 0h-3v5h1a2 2 0 0 0 2-2v-3Z",
+  "sms-analytics": "M4 5h16v11H9.5L5 19.5V16H4V5Zm4 3.5h8m-8 3h5M17 3v2m3 0V3",
+  "chatbot-escalations": "M5 5h14v10H9l-4 4V5Zm4 4h6m-6 3h4",
+  "company-documents": "M6 3h7l5 5v13H6V3Zm7 0v5h5M9 13h6M9 17h6",
+  compliance: "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm-2.6 8.8 2 2 4-4",
+  revenue: "M4 18 9.5 12l3.5 3.5L20 8m0 0h-4.5M20 8v4.5",
+  security: "M6 10V7.5a6 6 0 0 1 12 0V10m-13 0h14v10H5V10Zm7 4v2",
+  "system-logs": "M6 3h12v18H6V3Zm3 4h6M9 11h6M9 15h4",
+  audit: "M5 4h14v16H5V4Zm3 4h8M8 12h8M8 16h5m4.5-1.5 1.5 1.5-1.5 1.5",
+  "development-tools": "m9 8-5 4 5 4m6-8 5 4-5 4m-2-11-2 14",
+  "engineering-tools": "M14.5 4.5a4.5 4.5 0 0 0-5.9 5.7L4 14.8 6.2 17l4.6-4.6a4.5 4.5 0 0 0 5.7-5.9l-2.5 2.5-2.1-2.1 2.6-2.4ZM15 15l4 4",
+  "database-health": "M12 4c4 0 7 1.1 7 2.5S16 9 12 9 5 7.9 5 6.5 8 4 12 4Zm7 2.5v11c0 1.4-3 2.5-7 2.5s-7-1.1-7-2.5v-11m14 5.5c0 1.4-3 2.5-7 2.5s-7-1.1-7-2.5",
+  "staff-management": "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8v-1a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v1",
+  "rbac-permissions": "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm0 6.5a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6Zm0 3.6V16",
+};
+const ADMIN_RAIL_KEY = "titopay_admin_rail_v1";
+const ADMIN_THEME_KEY = "titopay_admin_theme_v1";
+// Applied before first paint so the console never flashes the wrong theme.
+applyAdminTheme(storedAdminTheme());
+
+/* ==========================================================================
+   1. AUTHENTICATION AND SESSION
+   ========================================================================== */
+
+// Sign-in, role checks and the idle guard that signs an operator out.
 
 function getAuth() {
   try {
@@ -107,30 +208,50 @@ function getAuth() {
     return null;
   }
 }
-
 function setAuth(data) {
   localStorage.setItem(ADMIN_AUTH_KEY, JSON.stringify({
     ...data,
     clientLastSeenAt: Date.now(),
   }));
 }
-
 function clearAuth() {
   localStorage.removeItem(ADMIN_AUTH_KEY);
 }
-
+function hasAdminSession(payload = {}) {
+  return Boolean(payload.accessToken || payload.access_token || payload.token);
+}
+function normalizeAdminSession(payload = {}) {
+  return {
+    ...payload,
+    accessToken: payload.accessToken || payload.access_token || payload.token,
+    refreshToken: payload.refreshToken || payload.refresh_token,
+    tokenType: payload.tokenType || payload.token_type || "Bearer",
+  };
+}
+function adminLoginPayload(data = {}) {
+  const identifier = String(data.identifier || data.email || data.username || "").trim();
+  const payload = {
+    ...data,
+    identifier,
+    emailOrUsername: identifier,
+    usernameOrEmail: identifier,
+  };
+  if (identifier.includes("@")) {
+    payload.email = identifier.toLowerCase();
+  } else {
+    payload.username = identifier.replace(/^@/, "").toLowerCase();
+  }
+  return payload;
+}
 function normalizeAdminRole(role) {
   return String(role || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
-
 function isSuperAdminRole(role) {
   return ["owner", "root", "ceo", "super_admin"].includes(normalizeAdminRole(role));
 }
-
 function isPlatformOwnerRole(role) {
   return ["owner", "root", "ceo", "super_admin", "developer"].includes(normalizeAdminRole(role));
 }
-
 function adminPositionLabel(role) {
   const normalized = normalizeAdminRole(role);
   return {
@@ -150,61 +271,40 @@ function adminPositionLabel(role) {
     hr_director: "HR Director",
   }[normalized] || normalized.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
-
 function hasFullAdminAccess(me = {}) {
   const role = normalizeAdminRole(me.role || me.user?.role || me.admin?.role);
   const permissions = new Set(me.permissions || me.admin?.permissions || []);
   return isPlatformOwnerRole(role) || permissions.has("*");
 }
-
-/* Enterprise Analytics is gated on its own reporting permission. This is
-   additive: it grants nothing new on any other module, and full-access roles
-   keep the access they already had. */
-const ADMIN_ANALYTICS_PERMISSIONS = ["analytics", "reporting", "reports", "analytics_view", "ANALYTICS_VIEW", "REPORTING_VIEW", "REPORTS_VIEW"];
-
-/* Service Builder is gated the same additive way as Analytics: full-access
-   and owner roles keep what they had, and a dedicated permission opens it for
-   anyone else. No other module's rules change. */
-const ADMIN_SERVICE_BUILDER_PERMISSIONS = ["service_builder", "services", "platform", "SERVICE_BUILDER", "SERVICES_MANAGE"];
-
 function hasServiceBuilderAccess(me = {}) {
   if (hasFullAdminAccess(me)) return true;
   if (isPlatformOwnerRole(me.role || me.user?.role || me.admin?.role)) return true;
   const permissions = new Set(me.permissions || me.admin?.permissions || []);
   return ADMIN_SERVICE_BUILDER_PERMISSIONS.some((permission) => permissions.has(permission));
 }
-
 function hasAnalyticsAccess(me = {}) {
   if (hasFullAdminAccess(me)) return true;
   if (isPlatformOwnerRole(me.role || me.user?.role || me.admin?.role)) return true;
   const permissions = new Set(me.permissions || me.admin?.permissions || []);
   return ADMIN_ANALYTICS_PERMISSIONS.some((permission) => permissions.has(permission));
 }
-
+function hasEmailPermission(me, permission) {
+  return hasFullAdminAccess(me) || new Set(me?.permissions || []).has(permission);
+}
 function touchAuthActivity() {
   const auth = getAuth();
   if (!auth) return;
   auth.clientLastSeenAt = Date.now();
   localStorage.setItem(ADMIN_AUTH_KEY, JSON.stringify(auth));
 }
-
 function getIdleTimeoutMs() {
   const auth = getAuth();
   return Math.max(60, Number(auth?.sessionIdleTimeoutSeconds || 900)) * 1000;
 }
-
 function stopIdleGuard() {
   clearTimeout(idleWarningTimer);
   clearTimeout(idleLogoutTimer);
 }
-
-function logoutToLogin(message = "Session ended") {
-  clearAuth();
-  stopIdleGuard();
-  if (message) sessionStorage.setItem("titopay_admin_notice", message);
-  location.href = "/";
-}
-
 function startIdleGuard() {
   stopIdleGuard();
   const auth = getAuth();
@@ -225,7 +325,6 @@ function startIdleGuard() {
     logoutToLogin("Session expired due to inactivity");
   }, timeoutMs);
 }
-
 function registerActivityListeners() {
   ["pointerdown", "keydown", "mousemove", "touchstart", "scroll"].forEach((eventName) => {
     window.addEventListener(eventName, () => {
@@ -234,7 +333,12 @@ function registerActivityListeners() {
     }, { passive: true });
   });
 }
-
+function logoutToLogin(message = "Session ended") {
+  clearAuth();
+  stopIdleGuard();
+  if (message) sessionStorage.setItem("titopay_admin_notice", message);
+  location.href = "/";
+}
 function validateAdminHost() {
   if (location.protocol === "file:") return true;
   if (location.hostname === "www.admin.titopay.co.za") {
@@ -260,155 +364,180 @@ function validateAdminHost() {
   `;
   return false;
 }
-
-function money(value) {
-  const amount = Number(value || 0);
-  return new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR" }).format(amount);
-}
-
-function escapeHtml(value = "") {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll("\"", "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function chipClass(status = "") {
-  const value = String(status).toLowerCase();
-  if (value.includes("active") || value.includes("verified") || value.includes("approved") || value.includes("completed")) return "green";
-  if (value.includes("pending") || value.includes("review")) return "orange";
-  if (value.includes("suspend") || value.includes("failed") || value.includes("lock")) return "red";
-  return "blue";
-}
-
-/* Every existing caller passes a message and nothing else, so the tone is
-   read from the message itself. A confirmation and a failure no longer look
-   identical, and no call site had to change to get it. */
-const TOAST_ERROR_PATTERN = /\b(unable|failed|failure|cannot|can't|could not|error|invalid|expired|denied|rejected|not allowed|unavailable|no longer)\b/i;
-const TOAST_SUCCESS_PATTERN = /\b(saved|updated|created|added|sent|queued|approved|resolved|completed|refreshed|exported|disabled|enabled|assigned|closed|reopened|released|transferred|archived|acknowledged|reversed|verified|rotated|retried|cancelled|signed out|taken over|applied|reloaded)\b/i;
-
-function toastTone(message) {
-  const text = String(message || "");
-  if (TOAST_ERROR_PATTERN.test(text)) return "error";
-  if (TOAST_SUCCESS_PATTERN.test(text)) return "success";
-  return "info";
-}
-
-function showToast(message, tone) {
-  let toast = document.querySelector(".toast");
-  if (!toast) {
-    toast = document.createElement("div");
-    toast.className = "toast";
-    toast.setAttribute("role", "status");
-    toast.setAttribute("aria-live", "polite");
-    document.body.appendChild(toast);
-  }
-  const text = adminErrorMessage(message);
-  toast.textContent = text;
-  toast.dataset.tone = tone || toastTone(text);
-  clearTimeout(showToast._timer);
-  showToast._timer = setTimeout(() => toast.remove(), 2600);
-}
-
-function adminErrorMessage(message) {
-  const text = String(message || "Request failed").trim();
-  const lower = text.toLowerCase();
-  if (/bearer token required|jwt expired|token expired|unauthorized|session expired|invalid token|missing token/i.test(text)) {
-    return "Your admin session has expired. Please sign in again.";
-  }
-  if (lower.includes("otp delivery failed")) {
-    return "Sign in failed. Please check the staff email and password, then try again.";
-  }
-  if (isAuthModeBlockedError(text)) {
-    return "Sign in failed because the API is still using an older admin authentication mode. Upload the latest API package or run the password-only migration, then try again.";
-  }
-  // Rate limits and account lockouts must reach the operator verbatim: they are
-  // self-inflicted, temporary, and the wording tells them to wait rather than
-  // retry. The generic filter below matches "try again later" and was replacing
-  // them with advice to refresh, which makes the problem worse.
-  if (/too many attempts|too many requests|rate limit|temporarily locked|account is locked|try again in/i.test(text)) {
-    return text;
-  }
-  if (
-    !text ||
-    /something went wrong|try again later|internal server error|unexpected api response|request failed|networkerror/i.test(text) ||
-    /cannot read properties|is not defined|is not a function|is not iterable|undefined|null|typeerror|referenceerror|syntaxerror|nan|\[object /i.test(text) ||
-    /relation .* does not exist|column .* does not exist|syntax error|pg[_-]?pool|postgres|prisma|database/i.test(text) ||
-    /node_modules|\/opt\/titopay-api|\/src\/|stack:|at\s+\w+/i.test(text)
-  ) {
-    return "Unable to complete this admin action. Please refresh and try again.";
-  }
-  return text.replace(
-    "Configure the TitoPay Google Workspace email provider and retry.",
-    "Please check the staff email and password, then try again."
-  );
-}
-
 function isAuthModeBlockedError(message = "") {
   const text = String(message).toLowerCase();
   return text.includes("current authentication mode cannot complete") ||
     text.includes("security centre to password only") ||
     text.includes("security center to password only");
 }
-
-function hasAdminSession(payload = {}) {
-  return Boolean(payload.accessToken || payload.access_token || payload.token);
+/* Sign-in feedback. Same wording as before; `tone` only drives the colour so a
+   failed sign-in never reads as a neutral hint. */
+function setLoginStatus(message, tone = "") {
+  const target = document.getElementById("login-status");
+  if (!target) return;
+  target.textContent = message;
+  if (tone) target.dataset.tone = tone;
+  else delete target.dataset.tone;
 }
-
-function normalizeAdminSession(payload = {}) {
-  return {
-    ...payload,
-    accessToken: payload.accessToken || payload.access_token || payload.token,
-    refreshToken: payload.refreshToken || payload.refresh_token,
-    tokenType: payload.tokenType || payload.token_type || "Bearer",
-  };
-}
-
-function adminLoginPayload(data = {}) {
-  const identifier = String(data.identifier || data.email || data.username || "").trim();
-  const payload = {
-    ...data,
-    identifier,
-    emailOrUsername: identifier,
-    usernameOrEmail: identifier,
-  };
-  if (identifier.includes("@")) {
-    payload.email = identifier.toLowerCase();
+function setLoginPending(pending) {
+  const submit = document.getElementById("admin-login-submit");
+  if (!submit) return;
+  submit.disabled = pending;
+  if (pending) {
+    submit.dataset.pending = "true";
+    submit.textContent = "Signing in...";
   } else {
-    payload.username = identifier.replace(/^@/, "").toLowerCase();
+    delete submit.dataset.pending;
+    submit.textContent = "Sign in securely";
   }
-  return payload;
+}
+function bindSignInControls() {
+  const environment = document.getElementById("login-environment");
+  if (environment) {
+    const { label, nonProd } = adminEnvironment();
+    environment.textContent = label;
+    environment.classList.toggle("env-nonprod", nonProd);
+  }
+
+  const password = document.getElementById("password");
+  const toggle = document.querySelector("[data-password-toggle]");
+  toggle?.addEventListener("click", () => {
+    const reveal = password.type === "password";
+    password.type = reveal ? "text" : "password";
+    toggle.textContent = reveal ? "Hide" : "Show";
+    toggle.setAttribute("aria-pressed", reveal ? "true" : "false");
+    password.focus();
+  });
+
+  // Caps Lock silently defeats a correct password more often than anything else
+  // on a staff sign-in, so say so before the request is made.
+  const capsHint = document.getElementById("caps-hint");
+  const trackCapsLock = (event) => {
+    if (!capsHint || typeof event.getModifierState !== "function") return;
+    capsHint.hidden = !event.getModifierState("CapsLock");
+  };
+  password?.addEventListener("keydown", trackCapsLock);
+  password?.addEventListener("keyup", trackCapsLock);
+  password?.addEventListener("blur", () => {
+    if (capsHint) capsHint.hidden = true;
+  });
+
+  document.getElementById("identifier")?.focus();
+}
+function beginAdminEmailOtp(initialChallenge) {
+  const card=document.getElementById("reset-card");
+  if(!card)return;
+  let challenge={...initialChallenge};
+  card.hidden=false;
+  card.innerHTML=`<form id="admin-email-otp-form" class="form-grid"><div class="field"><label for="admin-email-otp">Email verification code</label><input id="admin-email-otp" name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" required aria-describedby="admin-email-otp-hint"><p class="field-hint" id="admin-email-otp-hint">Sent to ${escapeHtml(challenge.maskedDestination||"your email")}. <span id="admin-email-otp-countdown"></span> <span id="admin-email-otp-attempts"></span></p></div><button class="primary-btn" type="submit">Verify and sign in</button><button class="secondary-btn" type="button" id="admin-email-otp-resend">Resend code</button></form>`;
+  let started=Date.now(),duration=Number(challenge.expiresInSeconds||300)*1000;
+  const countdown=document.getElementById("admin-email-otp-countdown"),attempts=document.getElementById("admin-email-otp-attempts"),resend=document.getElementById("admin-email-otp-resend");
+  const update=()=>{const elapsed=Date.now()-started,left=Math.max(0,Math.ceil((duration-elapsed)/1000)),cooldown=Math.max(0,Math.ceil((Number(challenge.resendCooldownSeconds||60)*1000-elapsed)/1000));if(countdown)countdown.textContent=left?`Expires in ${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}.`:"Code expired.";if(attempts)attempts.textContent=`${Number(challenge.remainingAttempts??5)} attempts remaining.`;if(resend){resend.disabled=cooldown>0;resend.textContent=cooldown?`Resend in ${cooldown}s`:"Resend code";}};
+  const timer=setInterval(update,1000);update();
+  document.getElementById("admin-email-otp")?.focus();
+  document.getElementById("admin-email-otp-form")?.addEventListener("submit",async(event)=>{event.preventDefault();const otp=new FormData(event.currentTarget).get("otp");setLoginStatus("Verifying email code...","pending");try{const result=await apiFetch("/auth/email-otp/verify",{method:"POST",body:JSON.stringify({challengeId:challenge.challengeId,otp,deviceName:"Admin Browser",platform:"web"})});const session=normalizeAdminSession(result);if(!hasAdminSession(session))throw new Error("Verification could not complete sign in");clearInterval(timer);setAuth(session);startIdleGuard();setLoginStatus("Verified. Opening the console...","success");location.href="/dashboard/";}catch(error){if(error.payload?.details?.remainingAttempts!==undefined)challenge.remainingAttempts=error.payload.details.remainingAttempts;update();setLoginStatus(adminErrorMessage(error.message),"error");document.getElementById("admin-email-otp")?.select();}});
+  resend?.addEventListener("click",async()=>{resend.disabled=true;try{const result=await apiFetch("/auth/email-otp/resend",{method:"POST",body:JSON.stringify({challengeId:challenge.challengeId,deviceName:"Admin Browser"})});challenge={...challenge,...result};started=Date.now();duration=Number(challenge.expiresInSeconds||300)*1000;update();setLoginStatus("A new verification code has been queued.","success");}catch(error){setLoginStatus(adminErrorMessage(error.message),"error");update();}});
+}
+async function bootLogin() {
+  if (!validateAdminHost()) return;
+  const loginForm = document.getElementById("admin-login-form");
+  const resetToggle = document.getElementById("show-reset");
+  const resetCard = document.getElementById("reset-card");
+  const resetRequestForm = document.getElementById("admin-reset-request-form");
+
+  bindSignInControls();
+
+  const existingAuth = getAuth();
+  if (existingAuth?.accessToken) {
+    try {
+      await apiFetch("/admin/me");
+      location.href = "/dashboard/";
+      return;
+    } catch {
+      clearAuth();
+    }
+  }
+
+  const storedNotice = sessionStorage.getItem("titopay_admin_notice");
+  if (storedNotice) {
+    setLoginStatus(storedNotice);
+    sessionStorage.removeItem("titopay_admin_notice");
+  }
+
+  loginForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = adminLoginPayload(Object.fromEntries(new FormData(loginForm).entries()));
+    setLoginStatus("Checking staff credentials...", "pending");
+    setLoginPending(true);
+    try {
+      let result;
+      try {
+        result = await apiFetch("/admin/login", {
+          method: "POST",
+          body: JSON.stringify(data),
+        });
+      } catch (error) {
+        if (!isAuthModeBlockedError(error.message)) throw error;
+        result = await apiFetch("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ ...data, scope: "admin" }),
+        });
+      }
+      if (result.otpRequired && result.authenticationMode === "email_otp" && result.challengeId) {
+        beginAdminEmailOtp(result);
+        setLoginPending(false);
+        return;
+      }
+      const session = normalizeAdminSession(result);
+      if (!hasAdminSession(session)) {
+        setLoginStatus("Sign in failed. Please check the staff email and password, then try again.", "error");
+        setLoginPending(false);
+        return;
+      }
+      setAuth(session);
+      startIdleGuard();
+      setLoginStatus("Signed in. Opening the console...", "success");
+      location.href = "/dashboard/";
+    } catch (error) {
+      setLoginStatus(adminErrorMessage(error.message), "error");
+      setLoginPending(false);
+      document.getElementById("password")?.focus();
+    }
+  });
+
+  resetToggle?.addEventListener("click", () => {
+    const open = resetCard.hidden;
+    resetCard.hidden = !open;
+    resetToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    resetToggle.textContent = open ? "Cancel password reset" : "Forgot password?";
+    if (open) document.getElementById("reset-identifier")?.focus();
+  });
+
+  resetRequestForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(resetRequestForm).entries());
+    setLoginStatus("Sending password reset instructions...", "pending");
+    try {
+      await apiFetch("/auth/password-reset", {
+        method: "POST",
+        body: JSON.stringify({ mode: "request", userType: "admin", identifier: data.identifier }),
+      });
+      setLoginStatus("If the account exists, password reset instructions have been sent.", "success");
+      resetCard.hidden = true;
+      resetToggle?.setAttribute("aria-expanded", "false");
+      if (resetToggle) resetToggle.textContent = "Forgot password?";
+      resetRequestForm.reset();
+    } catch (error) {
+      setLoginStatus(adminErrorMessage(error.message), "error");
+    }
+  });
 }
 
-function downloadCsv(filename, rows) {
-  if (!rows?.length) {
-    showToast("Nothing to export yet");
-    return;
-  }
-  const columns = Array.from(rows.reduce((set, row) => {
-    Object.keys(row || {}).forEach((key) => set.add(key));
-    return set;
-  }, new Set()));
-  const csv = [
-    columns.join(","),
-    ...rows.map((row) => columns.map((column) => {
-      const value = row?.[column] ?? "";
-      const text = Array.isArray(value) ? value.join(" | ") : String(value);
-      return `"${text.replaceAll("\"", "\"\"")}"`;
-    }).join(",")),
-  ].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
+/* ==========================================================================
+   2. API CLIENT
+   ========================================================================== */
+
+// Every call to the TitoPay API goes through here. The Admin Portal never calls a third-party provider directly.
 
 async function apiFetch(path, options = {}) {
   const auth = getAuth();
@@ -482,7 +611,6 @@ async function apiFetch(path, options = {}) {
   }
   return payload;
 }
-
 function ensureAdminSupportSocket() {
   const auth = getAuth();
   if (!auth?.accessToken || supportChatSocket?.readyState === WebSocket.OPEN || supportChatSocket?.readyState === WebSocket.CONNECTING) return;
@@ -536,63 +664,236 @@ function ensureAdminSupportSocket() {
   supportChatSocket.addEventListener("error", () => supportChatSocket?.close());
 }
 
-/* --------------------------------------------------------------------------
-   Console chrome (presentation only)
+/* ==========================================================================
+   3. FORMATTING AND SMALL HELPERS
+   ========================================================================== */
 
-   The sidebar, topbar and page header are built once per document and then
-   updated in place. Earlier builds re-created the whole shell on every
-   navigation, which reset the sidebar scroll position and re-bound listeners
-   on each route change.
-   -------------------------------------------------------------------------- */
+function money(value) {
+  const amount = Number(value || 0);
+  return new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR" }).format(amount);
+}
+function escapeHtml(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+}
+function formatDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" });
+}
+function compactId(value = "") {
+  const text = String(value || "");
+  return text ? `${text.slice(0, 8)}...${text.slice(-4)}` : "-";
+}
+function normalizeSearchText(value = "") {
+  return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+function analyticsRate(value, supported) {
+  return supported ? `${Number(value||0).toFixed(2)}%` : "Not available";
+}
+function localDayKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function chipClass(status = "") {
+  const value = String(status).toLowerCase();
+  if (value.includes("active") || value.includes("verified") || value.includes("approved") || value.includes("completed")) return "green";
+  if (value.includes("pending") || value.includes("review")) return "orange";
+  if (value.includes("suspend") || value.includes("failed") || value.includes("lock")) return "red";
+  return "blue";
+}
+/* Support conversation statuses are uppercase with underscores
+   (WAITING_FOR_AGENT, AGENT_ACTIVE, ...) and do not match the generic
+   chipClass keywords, so they were all rendering the same neutral blue. */
+function supportStatusClass(status = "") {
+  const value = String(status || "").toLowerCase();
+  if (["agent_active", "reopened", "resolved"].includes(value)) return "green";
+  if (["escalated", "waiting_for_agent"].includes(value)) return "orange";
+  if (value === "closed") return "red";
+  return "blue";
+}
+function toastTone(message) {
+  const text = String(message || "");
+  if (TOAST_ERROR_PATTERN.test(text)) return "error";
+  if (TOAST_SUCCESS_PATTERN.test(text)) return "success";
+  return "info";
+}
+function showToast(message, tone) {
+  let toast = document.querySelector(".toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.className = "toast";
+    toast.setAttribute("role", "status");
+    toast.setAttribute("aria-live", "polite");
+    document.body.appendChild(toast);
+  }
+  const text = adminErrorMessage(message);
+  toast.textContent = text;
+  toast.dataset.tone = tone || toastTone(text);
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => toast.remove(), 2600);
+}
+function adminErrorMessage(message) {
+  const text = String(message || "Request failed").trim();
+  const lower = text.toLowerCase();
+  if (/bearer token required|jwt expired|token expired|unauthorized|session expired|invalid token|missing token/i.test(text)) {
+    return "Your admin session has expired. Please sign in again.";
+  }
+  if (lower.includes("otp delivery failed")) {
+    return "Sign in failed. Please check the staff email and password, then try again.";
+  }
+  if (isAuthModeBlockedError(text)) {
+    return "Sign in failed because the API is still using an older admin authentication mode. Upload the latest API package or run the password-only migration, then try again.";
+  }
+  // Rate limits and account lockouts must reach the operator verbatim: they are
+  // self-inflicted, temporary, and the wording tells them to wait rather than
+  // retry. The generic filter below matches "try again later" and was replacing
+  // them with advice to refresh, which makes the problem worse.
+  if (/too many attempts|too many requests|rate limit|temporarily locked|account is locked|try again in/i.test(text)) {
+    return text;
+  }
+  if (
+    !text ||
+    /something went wrong|try again later|internal server error|unexpected api response|request failed|networkerror/i.test(text) ||
+    /cannot read properties|is not defined|is not a function|is not iterable|undefined|null|typeerror|referenceerror|syntaxerror|nan|\[object /i.test(text) ||
+    /relation .* does not exist|column .* does not exist|syntax error|pg[_-]?pool|postgres|prisma|database/i.test(text) ||
+    /node_modules|\/opt\/titopay-api|\/src\/|stack:|at\s+\w+/i.test(text)
+  ) {
+    return "Unable to complete this admin action. Please refresh and try again.";
+  }
+  return text.replace(
+    "Configure the TitoPay Google Workspace email provider and retry.",
+    "Please check the staff email and password, then try again."
+  );
+}
+function profileInitials(row = {}) {
+  const text = row.full_name || row.business_name || row.username || row.email || "TP";
+  const parts = String(text).replace("@", "").split(/\s+|\./).filter(Boolean);
+  return (parts[0]?.[0] || "T").toUpperCase() + (parts[1]?.[0] || parts[0]?.[1] || "P").toUpperCase();
+}
+function profileAvatarHtml(row = {}) {
+  const src = row.profile_photo_url || row.business_logo_url || row.profilePhotoUrl || row.businessLogoUrl || "";
+  if (src) return `<div class="profile-avatar"><img src="${escapeHtml(src)}" alt="${escapeHtml(row.full_name || row.business_name || "Profile")}"></div>`;
+  return `<div class="profile-avatar">${escapeHtml(profileInitials(row))}</div>`;
+}
+function pricingCategory(row = {}) {
+  const text = `${row.service_code || ""} ${row.service_name || ""}`.toLowerCase();
+  if (text.includes("bulk") || text.includes("distribution")) return "Enterprise Distribution";
+  if (text.includes("business")) return "Business";
+  if (text.includes("merchant") || text.includes("marketplace") || text.includes("ticket")) return "Merchant & Marketplace";
+  if (text.includes("bank") || text.includes("withdraw") || text.includes("cash")) return "Cash-out & Bank Transfers";
+  if (text.includes("wallet") || text.includes("top") || text.includes("transfer")) return "Wallet";
+  if (text.includes("transaction") || text.includes("payment") || text.includes("qr")) return "Transactions";
+  return "Personal";
+}
+function downloadCsv(filename, rows) {
+  if (!rows?.length) {
+    showToast("Nothing to export yet");
+    return;
+  }
+  const columns = Array.from(rows.reduce((set, row) => {
+    Object.keys(row || {}).forEach((key) => set.add(key));
+    return set;
+  }, new Set()));
+  const csv = [
+    columns.join(","),
+    ...rows.map((row) => columns.map((column) => {
+      const value = row?.[column] ?? "";
+      const text = Array.isArray(value) ? value.join(" | ") : String(value);
+      return `"${text.replaceAll("\"", "\"\"")}"`;
+    }).join(",")),
+  ].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+function downloadText(filename, content, type = "text/plain;charset=utf-8") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+function downloadDataUrl(filename, dataUrl) {
+  if (!dataUrl) {
+    showToast("QR asset is not ready for download");
+    return;
+  }
+  try {
+    const [header, base64] = dataUrl.split(",");
+    const mime = header.match(/data:(.*?);base64/)?.[1] || "application/octet-stream";
+    const bytes = atob(base64 || "");
+    const buffer = new Uint8Array(bytes.length);
+    for (let index = 0; index < bytes.length; index += 1) buffer[index] = bytes.charCodeAt(index);
+    const blob = new Blob([buffer], { type: mime });
+    downloadText(filename, blob, mime);
+    return;
+  } catch (_error) {
+    // Fall back to a direct data URL for older browsers.
+  }
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+function printQrAsset(asset = {}) {
+  const win = window.open("", "_blank", "noopener,noreferrer");
+  if (!win) {
+    showToast("Allow pop-ups to print QR assets");
+    return;
+  }
+  win.document.write(`
+    <!doctype html>
+    <html><head><title>${escapeHtml(asset.label || "TitoPay QR Asset")}</title>
+    <style>
+      body{font-family:Inter,Arial,sans-serif;margin:0;padding:40px;color:#061a3d}
+      .sheet{max-width:720px;margin:0 auto;border:1px solid #dbe6f7;border-radius:28px;padding:34px;text-align:center}
+      h1{margin:0 0 8px;font-size:30px} p{color:#66748f}
+      img{width:320px;max-width:80%;height:auto;margin:24px auto;display:block}
+      .brand{font-weight:900;color:#0057ff;letter-spacing:.08em;text-transform:uppercase}
+    </style></head><body>
+      <main class="sheet">
+        <div class="brand">TitoPay</div>
+        <h1>${escapeHtml(asset.label || "QR Asset")}</h1>
+        <p>${escapeHtml(asset.destinationUrl || "")}</p>
+        <img alt="TitoPay QR" src="${asset.pngDataUrl}">
+        <p>Generated ${new Date().toLocaleString("en-ZA")}</p>
+      </main>
+      <script>window.print();</script>
+    </body></html>
+  `);
+  win.document.close();
+}
 
-const NAV_ICON_PATHS = {
-  dashboard: "M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6V11h-6v9Zm0-16v5h6V4h-6Z",
-  alerts: "M12 4a5 5 0 0 0-5 5v3.4l-1.7 2.9a1 1 0 0 0 .9 1.5h11.6a1 1 0 0 0 .9-1.5L17 12.4V9a5 5 0 0 0-5-5Zm-2 14.8a2 2 0 0 0 4 0",
-  analytics: "M4 4v16h16M8 16l3.2-4.2 3 2.4L19 8m0 0h-3.6M19 8v3.4",
-  search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm9 16-4.2-4.2",
-  users: "M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm11 10v-2a4 4 0 0 0-3-3.9M16 3.6a4 4 0 0 1 0 7.8",
-  merchants: "M3 9.5 4.5 5h15L21 9.5M3 9.5h18M3 9.5a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0M5 12v7h14v-7",
-  transactions: "M4 8h13m0 0-3-3m3 3-3 3M20 16H7m0 0 3-3m-3 3 3 3",
-  wallets: "M3 7.5A2.5 2.5 0 0 1 5.5 5H18v3M3 7.5V17a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2M3 7.5V10h16a2 2 0 0 1 2 2v3m0 0h-4a2 2 0 1 1 0-4h4",
-  beneficiaries: "M16 20v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 10a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm7-1 1.5 1.5L21 7.5",
-  "chat-monitor": "M20 12a8 8 0 1 1-3.2-6.4M21 4v5h-5",
-  ticketing: "M4 8.5A1.5 1.5 0 0 1 5.5 7h13A1.5 1.5 0 0 1 20 8.5v2a2 2 0 0 0 0 3.9v2A1.5 1.5 0 0 1 18.5 18h-13A1.5 1.5 0 0 1 4 16.4v-2a2 2 0 0 0 0-3.9v-2ZM12 7v11",
-  "enterprise-distribution": "M12 3v6m0 0-3.5 3.5M12 9l3.5 3.5M4 21v-4m0 0-1-1.5m1 1.5 1-1.5M20 21v-4m0 0-1-1.5m1 1.5 1-1.5M12 21v-4",
-  "qr-management": "M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 3h3m0 0v3m0-3h3m-6-3h6",
-  marketing: "M4 10v4h3l5 4V6L7 10H4Zm13-1.5a5 5 0 0 1 0 7",
-  "service-builder": "M4 6.5 12 3l8 3.5-8 3.5-8-3.5Zm0 5.5 8 3.5 4-1.75M4 17.5 9 15.7M18 14v3m0 0v3m0-3h3m-3 0h-3",
-  pricing: "M12 3v18M8.5 7.5h6.2a2.5 2.5 0 0 1 0 5H9.3a2.5 2.5 0 0 0 0 5h6.2",
-  integrations: "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
-  "integration-provider": "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
-  "feature-management": "M5 8h9m2 0h3M5 16h3m2 0h9M14 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Zm-4 8a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z",
-  "api-provider-settings": "M6 7h12M6 12h12M6 17h6M18 15v4m2-2h-4",
-  settings: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm7.4 3a7.4 7.4 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 0 0-2-1.2L14.6 3H9.4L9 5.7a7.4 7.4 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5a7.4 7.4 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-1a7.4 7.4 0 0 0 2 1.2l.4 2.7h5.2l.4-2.7a7.4 7.4 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.07-.4.1-.8.1-1.2Z",
-  support: "M4 12a8 8 0 0 1 16 0v5a2 2 0 0 1-2 2h-3M4 12v3a2 2 0 0 0 2 2h1v-5H4Zm16 0h-3v5h1a2 2 0 0 0 2-2v-3Z",
-  "sms-analytics": "M4 5h16v11H9.5L5 19.5V16H4V5Zm4 3.5h8m-8 3h5M17 3v2m3 0V3",
-  "chatbot-escalations": "M5 5h14v10H9l-4 4V5Zm4 4h6m-6 3h4",
-  "company-documents": "M6 3h7l5 5v13H6V3Zm7 0v5h5M9 13h6M9 17h6",
-  compliance: "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm-2.6 8.8 2 2 4-4",
-  revenue: "M4 18 9.5 12l3.5 3.5L20 8m0 0h-4.5M20 8v4.5",
-  security: "M6 10V7.5a6 6 0 0 1 12 0V10m-13 0h14v10H5V10Zm7 4v2",
-  "system-logs": "M6 3h12v18H6V3Zm3 4h6M9 11h6M9 15h4",
-  audit: "M5 4h14v16H5V4Zm3 4h8M8 12h8M8 16h5m4.5-1.5 1.5 1.5-1.5 1.5",
-  "development-tools": "m9 8-5 4 5 4m6-8 5 4-5 4m-2-11-2 14",
-  "engineering-tools": "M14.5 4.5a4.5 4.5 0 0 0-5.9 5.7L4 14.8 6.2 17l4.6-4.6a4.5 4.5 0 0 0 5.7-5.9l-2.5 2.5-2.1-2.1 2.6-2.4ZM15 15l4 4",
-  "database-health": "M12 4c4 0 7 1.1 7 2.5S16 9 12 9 5 7.9 5 6.5 8 4 12 4Zm7 2.5v11c0 1.4-3 2.5-7 2.5s-7-1.1-7-2.5v-11m14 5.5c0 1.4-3 2.5-7 2.5s-7-1.1-7-2.5",
-  "staff-management": "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8v-1a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v1",
-  "rbac-permissions": "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm0 6.5a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6Zm0 3.6V16",
-};
+/* ==========================================================================
+   4. CONSOLE CHROME
+   ========================================================================== */
+
+// The shell every page renders inside: sidebar, topbar, theme and the module skeletons.
 
 function navIcon(slug) {
   const path = NAV_ICON_PATHS[slug] || NAV_ICON_PATHS.dashboard;
   return `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="${path}"/></svg>`;
 }
-
 function navGroupTitleFor(page) {
   const group = NAV_GROUPS.find((entry) => entry.items.some(([, slug]) => slug === page));
   return group?.title || "Console";
 }
-
 function adminEnvironment() {
   const host = location.hostname;
   if (host === "admin.titopay.co.za" || host === "www.admin.titopay.co.za") {
@@ -600,9 +901,6 @@ function adminEnvironment() {
   }
   return { label: "Non-production", nonProd: true };
 }
-
-const ADMIN_RAIL_KEY = "titopay_admin_rail_v1";
-
 /* Rail collapse. Persisted per browser so an operator who works in tables
    keeps the wide workspace across navigations and sessions. The navigation
    itself is untouched: every item keeps its route, icon and accessible name,
@@ -615,7 +913,6 @@ function storedRailState() {
     return "expanded";
   }
 }
-
 function applyRailState(state) {
   const next = state === "collapsed" ? "collapsed" : "expanded";
   const shell = document.querySelector(".admin-shell");
@@ -639,15 +936,11 @@ function applyRailState(state) {
     localStorage.setItem(ADMIN_RAIL_KEY, next);
   } catch {}
 }
-
 /* A 2px line under the topbar while a module's first request is in flight. */
 function setRouteProgress(active) {
   const bar = document.getElementById("route-progress");
   if (bar) bar.dataset.active = active ? "true" : "false";
 }
-
-const ADMIN_THEME_KEY = "titopay_admin_theme_v1";
-
 function applyAdminTheme(theme) {
   const next = theme === "dark" ? "dark" : "light";
   document.documentElement.dataset.theme = next;
@@ -655,7 +948,6 @@ function applyAdminTheme(theme) {
     localStorage.setItem(ADMIN_THEME_KEY, next);
   } catch {}
 }
-
 function storedAdminTheme() {
   try {
     return localStorage.getItem(ADMIN_THEME_KEY) === "dark" ? "dark" : "light";
@@ -663,10 +955,6 @@ function storedAdminTheme() {
     return "light";
   }
 }
-
-// Applied before first paint so the console never flashes the wrong theme.
-applyAdminTheme(storedAdminTheme());
-
 function renderSidebar(page, me) {
   const role = me?.role || "admin";
   const adminName = me?.fullName || me?.full_name || me?.admin?.fullName || me?.admin?.full_name || me?.username || me?.admin?.username || "TitoPay Admin";
@@ -771,7 +1059,6 @@ function renderSidebar(page, me) {
     </aside>
   `;
 }
-
 function renderTopbar(page, title) {
   const environment = adminEnvironment();
   return `
@@ -813,7 +1100,6 @@ function renderTopbar(page, title) {
     </header>
   `;
 }
-
 function updateAdminClock() {
   const clock = document.getElementById("admin-clock");
   if (!clock) return;
@@ -830,7 +1116,6 @@ function updateAdminClock() {
     clock.textContent = new Date().toLocaleTimeString();
   }
 }
-
 function setNavDrawer(open) {
   const shell = document.querySelector(".admin-shell");
   if (!shell) return;
@@ -838,7 +1123,6 @@ function setNavDrawer(open) {
   else delete shell.dataset.nav;
   document.querySelector("[data-nav-toggle]")?.setAttribute("aria-expanded", open ? "true" : "false");
 }
-
 function bindConsoleChrome() {
   document.getElementById("admin-logout")?.addEventListener("click", async () => {
     const auth = getAuth();
@@ -911,7 +1195,6 @@ function bindConsoleChrome() {
   clearInterval(bindConsoleChrome._clock);
   bindConsoleChrome._clock = setInterval(updateAdminClock, 30000);
 }
-
 /* Builds the console chrome on first use, then updates the parts that change
    between modules. `pageShell` keeps its original signature and contract:
    after it returns, `#page-content` exists and is empty. */
@@ -969,14 +1252,12 @@ function pageShell(page, me, title, subtitle, controls = "") {
   const content = document.getElementById("page-content");
   if (content) content.innerHTML = "";
 }
-
 /* Placeholder shown while a module's first request is in flight. */
 function showModuleSkeleton() {
   const content = document.getElementById("page-content");
   if (!content) return;
   content.innerHTML = `<div class="admin-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>`;
 }
-
 function renderStandaloneModuleError(error) {
   const shell = document.querySelector(".admin-shell");
   if (!shell) return;
@@ -1023,7 +1304,6 @@ function renderStandaloneModuleError(error) {
     </main>
   `;
 }
-
 function renderModuleError(page, me, error) {
   const title = page ? page.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Admin Module";
   const message = adminErrorMessage(error?.message || "Unable to load this module right now.");
@@ -1045,6 +1325,10 @@ function renderModuleError(page, me, error) {
   `;
 }
 
+/* ==========================================================================
+   5. SHARED UI PRIMITIVES
+   ========================================================================== */
+
 function tableCard(title, body, note = "", meta = "") {
   const noteHtml = note ? `<p class="table-card-note">${escapeHtml(note)}</p>` : "";
   const metaHtml = meta ? `<span class="table-card-meta">${escapeHtml(meta)}</span>` : "";
@@ -1061,7 +1345,6 @@ function tableCard(title, body, note = "", meta = "") {
     </section>
   `;
 }
-
 function renderKeyValueList(rows = []) {
   return `
     <dl class="key-value-list">
@@ -1074,174 +1357,6 @@ function renderKeyValueList(rows = []) {
     </dl>
   `;
 }
-
-/* Sign-in feedback. Same wording as before; `tone` only drives the colour so a
-   failed sign-in never reads as a neutral hint. */
-function setLoginStatus(message, tone = "") {
-  const target = document.getElementById("login-status");
-  if (!target) return;
-  target.textContent = message;
-  if (tone) target.dataset.tone = tone;
-  else delete target.dataset.tone;
-}
-
-function setLoginPending(pending) {
-  const submit = document.getElementById("admin-login-submit");
-  if (!submit) return;
-  submit.disabled = pending;
-  if (pending) {
-    submit.dataset.pending = "true";
-    submit.textContent = "Signing in...";
-  } else {
-    delete submit.dataset.pending;
-    submit.textContent = "Sign in securely";
-  }
-}
-
-function bindSignInControls() {
-  const environment = document.getElementById("login-environment");
-  if (environment) {
-    const { label, nonProd } = adminEnvironment();
-    environment.textContent = label;
-    environment.classList.toggle("env-nonprod", nonProd);
-  }
-
-  const password = document.getElementById("password");
-  const toggle = document.querySelector("[data-password-toggle]");
-  toggle?.addEventListener("click", () => {
-    const reveal = password.type === "password";
-    password.type = reveal ? "text" : "password";
-    toggle.textContent = reveal ? "Hide" : "Show";
-    toggle.setAttribute("aria-pressed", reveal ? "true" : "false");
-    password.focus();
-  });
-
-  // Caps Lock silently defeats a correct password more often than anything else
-  // on a staff sign-in, so say so before the request is made.
-  const capsHint = document.getElementById("caps-hint");
-  const trackCapsLock = (event) => {
-    if (!capsHint || typeof event.getModifierState !== "function") return;
-    capsHint.hidden = !event.getModifierState("CapsLock");
-  };
-  password?.addEventListener("keydown", trackCapsLock);
-  password?.addEventListener("keyup", trackCapsLock);
-  password?.addEventListener("blur", () => {
-    if (capsHint) capsHint.hidden = true;
-  });
-
-  document.getElementById("identifier")?.focus();
-}
-
-function beginAdminEmailOtp(initialChallenge) {
-  const card=document.getElementById("reset-card");
-  if(!card)return;
-  let challenge={...initialChallenge};
-  card.hidden=false;
-  card.innerHTML=`<form id="admin-email-otp-form" class="form-grid"><div class="field"><label for="admin-email-otp">Email verification code</label><input id="admin-email-otp" name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" required aria-describedby="admin-email-otp-hint"><p class="field-hint" id="admin-email-otp-hint">Sent to ${escapeHtml(challenge.maskedDestination||"your email")}. <span id="admin-email-otp-countdown"></span> <span id="admin-email-otp-attempts"></span></p></div><button class="primary-btn" type="submit">Verify and sign in</button><button class="secondary-btn" type="button" id="admin-email-otp-resend">Resend code</button></form>`;
-  let started=Date.now(),duration=Number(challenge.expiresInSeconds||300)*1000;
-  const countdown=document.getElementById("admin-email-otp-countdown"),attempts=document.getElementById("admin-email-otp-attempts"),resend=document.getElementById("admin-email-otp-resend");
-  const update=()=>{const elapsed=Date.now()-started,left=Math.max(0,Math.ceil((duration-elapsed)/1000)),cooldown=Math.max(0,Math.ceil((Number(challenge.resendCooldownSeconds||60)*1000-elapsed)/1000));if(countdown)countdown.textContent=left?`Expires in ${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}.`:"Code expired.";if(attempts)attempts.textContent=`${Number(challenge.remainingAttempts??5)} attempts remaining.`;if(resend){resend.disabled=cooldown>0;resend.textContent=cooldown?`Resend in ${cooldown}s`:"Resend code";}};
-  const timer=setInterval(update,1000);update();
-  document.getElementById("admin-email-otp")?.focus();
-  document.getElementById("admin-email-otp-form")?.addEventListener("submit",async(event)=>{event.preventDefault();const otp=new FormData(event.currentTarget).get("otp");setLoginStatus("Verifying email code...","pending");try{const result=await apiFetch("/auth/email-otp/verify",{method:"POST",body:JSON.stringify({challengeId:challenge.challengeId,otp,deviceName:"Admin Browser",platform:"web"})});const session=normalizeAdminSession(result);if(!hasAdminSession(session))throw new Error("Verification could not complete sign in");clearInterval(timer);setAuth(session);startIdleGuard();setLoginStatus("Verified. Opening the console...","success");location.href="/dashboard/";}catch(error){if(error.payload?.details?.remainingAttempts!==undefined)challenge.remainingAttempts=error.payload.details.remainingAttempts;update();setLoginStatus(adminErrorMessage(error.message),"error");document.getElementById("admin-email-otp")?.select();}});
-  resend?.addEventListener("click",async()=>{resend.disabled=true;try{const result=await apiFetch("/auth/email-otp/resend",{method:"POST",body:JSON.stringify({challengeId:challenge.challengeId,deviceName:"Admin Browser"})});challenge={...challenge,...result};started=Date.now();duration=Number(challenge.expiresInSeconds||300)*1000;update();setLoginStatus("A new verification code has been queued.","success");}catch(error){setLoginStatus(adminErrorMessage(error.message),"error");update();}});
-}
-
-async function bootLogin() {
-  if (!validateAdminHost()) return;
-  const loginForm = document.getElementById("admin-login-form");
-  const resetToggle = document.getElementById("show-reset");
-  const resetCard = document.getElementById("reset-card");
-  const resetRequestForm = document.getElementById("admin-reset-request-form");
-
-  bindSignInControls();
-
-  const existingAuth = getAuth();
-  if (existingAuth?.accessToken) {
-    try {
-      await apiFetch("/admin/me");
-      location.href = "/dashboard/";
-      return;
-    } catch {
-      clearAuth();
-    }
-  }
-
-  const storedNotice = sessionStorage.getItem("titopay_admin_notice");
-  if (storedNotice) {
-    setLoginStatus(storedNotice);
-    sessionStorage.removeItem("titopay_admin_notice");
-  }
-
-  loginForm?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const data = adminLoginPayload(Object.fromEntries(new FormData(loginForm).entries()));
-    setLoginStatus("Checking staff credentials...", "pending");
-    setLoginPending(true);
-    try {
-      let result;
-      try {
-        result = await apiFetch("/admin/login", {
-          method: "POST",
-          body: JSON.stringify(data),
-        });
-      } catch (error) {
-        if (!isAuthModeBlockedError(error.message)) throw error;
-        result = await apiFetch("/auth/login", {
-          method: "POST",
-          body: JSON.stringify({ ...data, scope: "admin" }),
-        });
-      }
-      if (result.otpRequired && result.authenticationMode === "email_otp" && result.challengeId) {
-        beginAdminEmailOtp(result);
-        setLoginPending(false);
-        return;
-      }
-      const session = normalizeAdminSession(result);
-      if (!hasAdminSession(session)) {
-        setLoginStatus("Sign in failed. Please check the staff email and password, then try again.", "error");
-        setLoginPending(false);
-        return;
-      }
-      setAuth(session);
-      startIdleGuard();
-      setLoginStatus("Signed in. Opening the console...", "success");
-      location.href = "/dashboard/";
-    } catch (error) {
-      setLoginStatus(adminErrorMessage(error.message), "error");
-      setLoginPending(false);
-      document.getElementById("password")?.focus();
-    }
-  });
-
-  resetToggle?.addEventListener("click", () => {
-    const open = resetCard.hidden;
-    resetCard.hidden = !open;
-    resetToggle.setAttribute("aria-expanded", open ? "true" : "false");
-    resetToggle.textContent = open ? "Cancel password reset" : "Forgot password?";
-    if (open) document.getElementById("reset-identifier")?.focus();
-  });
-
-  resetRequestForm?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const data = Object.fromEntries(new FormData(resetRequestForm).entries());
-    setLoginStatus("Sending password reset instructions...", "pending");
-    try {
-      await apiFetch("/auth/password-reset", {
-        method: "POST",
-        body: JSON.stringify({ mode: "request", userType: "admin", identifier: data.identifier }),
-      });
-      setLoginStatus("If the account exists, password reset instructions have been sent.", "success");
-      resetCard.hidden = true;
-      resetToggle?.setAttribute("aria-expanded", "false");
-      if (resetToggle) resetToggle.textContent = "Forgot password?";
-      resetRequestForm.reset();
-    } catch (error) {
-      setLoginStatus(adminErrorMessage(error.message), "error");
-    }
-  });
-}
-
 function renderMetrics(metrics) {
   return `
     <section class="metrics-grid">
@@ -1254,7 +1369,6 @@ function renderMetrics(metrics) {
     </section>
   `;
 }
-
 function renderRows(rows, columns, actions = () => "") {
   if (!rows.length) {
     return `<div class="empty"><strong>Nothing to show yet</strong><small>The TitoPay API returned no records for this view. Adjust the filters above, or refresh once the queue has activity.</small></div>`;
@@ -1278,278 +1392,382 @@ function renderRows(rows, columns, actions = () => "") {
   `;
 }
 
-function normalizeSearchText(value = "") {
-  return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
-}
+/* ==========================================================================
+   6. DATA TABLE ENGINE
+   ========================================================================== */
 
-function compactId(value = "") {
-  const text = String(value || "");
-  return text ? `${text.slice(0, 8)}...${text.slice(-4)}` : "-";
-}
+// Sorting, column resizing, selection and export, applied to every rendered table.
 
-function formatDate(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" });
+function tableBodyRows(table) {
+  return Array.from(table.tBodies?.[0]?.rows || []);
 }
-
-function pricingCategory(row = {}) {
-  const text = `${row.service_code || ""} ${row.service_name || ""}`.toLowerCase();
-  if (text.includes("bulk") || text.includes("distribution")) return "Enterprise Distribution";
-  if (text.includes("business")) return "Business";
-  if (text.includes("merchant") || text.includes("marketplace") || text.includes("ticket")) return "Merchant & Marketplace";
-  if (text.includes("bank") || text.includes("withdraw") || text.includes("cash")) return "Cash-out & Bank Transfers";
-  if (text.includes("wallet") || text.includes("top") || text.includes("transfer")) return "Wallet";
-  if (text.includes("transaction") || text.includes("payment") || text.includes("qr")) return "Transactions";
-  return "Personal";
+function tableHeaderCells(table) {
+  return Array.from(table.tHead?.rows?.[0]?.cells || []);
 }
-
-function recordText(row = {}) {
-  return normalizeSearchText(Object.values(row).join(" "));
+function tableCellText(row, index) {
+  return (row.cells?.[index]?.textContent || "").replace(/\s+/g, " ").trim();
 }
-
-function recordMatchesSubject(subject = {}, row = {}) {
-  const subjectKeys = [
-    subject.id,
-    subject.user_id,
-    subject.merchant_id,
-    subject.wallet_id,
-    subject.username,
-    subject.email,
-    subject.phone,
-    subject.full_name,
-    subject.business_name,
-  ].filter(Boolean).map(normalizeSearchText);
-  const rowText = recordText(row);
-  return subjectKeys.some((key) => key && rowText.includes(key));
+/* Reads a cell as a figure. Handles the two decimal conventions the console
+   emits — "R 1,234.56" from Intl and "1 234,56" from a locale that groups with
+   spaces — and returns null for anything that is not predominantly a number. */
+function tableNumericValue(text) {
+  if (!/\d/.test(text)) return null;
+  if (!/^[^\d]{0,4}[\d\s.,-]+[^\d]{0,4}$/.test(text)) return null;
+  let digits = text.replace(/[^\d.,-]/g, "");
+  if (!digits || !/\d/.test(digits)) return null;
+  const lastComma = digits.lastIndexOf(",");
+  const lastDot = digits.lastIndexOf(".");
+  digits = lastComma > lastDot ? digits.replace(/\./g, "").replace(",", ".") : digits.replace(/,/g, "");
+  const value = Number(digits);
+  return Number.isFinite(value) ? value : null;
 }
-
-function profileInitials(row = {}) {
-  const text = row.full_name || row.business_name || row.username || row.email || "TP";
-  const parts = String(text).replace("@", "").split(/\s+|\./).filter(Boolean);
-  return (parts[0]?.[0] || "T").toUpperCase() + (parts[1]?.[0] || parts[0]?.[1] || "P").toUpperCase();
+function tableDateValue(text) {
+  if (!/\d{4}|\d{1,2}[/-]\d{1,2}/.test(text)) return null;
+  const time = Date.parse(text);
+  return Number.isNaN(time) ? null : time;
 }
-
-function profileAvatarHtml(row = {}) {
-  const src = row.profile_photo_url || row.business_logo_url || row.profilePhotoUrl || row.businessLogoUrl || "";
-  if (src) return `<div class="profile-avatar"><img src="${escapeHtml(src)}" alt="${escapeHtml(row.full_name || row.business_name || "Profile")}"></div>`;
-  return `<div class="profile-avatar">${escapeHtml(profileInitials(row))}</div>`;
+function compareTableCells(left, right) {
+  const leftNumber = tableNumericValue(left);
+  const rightNumber = tableNumericValue(right);
+  if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
+  const leftDate = tableDateValue(left);
+  const rightDate = tableDateValue(right);
+  if (leftDate !== null && rightDate !== null) return leftDate - rightDate;
+  // Blanks sort last in both directions rather than clustering at the top.
+  if (!left && right) return 1;
+  if (left && !right) return -1;
+  return left.localeCompare(right, "en-ZA", { numeric: true, sensitivity: "base" });
 }
-
-function searchRecordLabel(type = "") {
-  return {
-    user: "Customer profile",
-    merchant: "Merchant profile",
-    wallet: "Wallet profile",
-    transaction: "Transaction profile",
-  }[type] || "Record profile";
+function sortTableBy(table, index, direction) {
+  const body = table.tBodies?.[0];
+  if (!body) return;
+  const rows = tableBodyRows(table);
+  if (direction === "none") {
+    rows
+      .slice()
+      .sort((a, b) => Number(a.dataset.tpRow || 0) - Number(b.dataset.tpRow || 0))
+      .forEach((row) => body.appendChild(row));
+  } else {
+    const factor = direction === "descending" ? -1 : 1;
+    rows
+      .slice()
+      .sort((a, b) => factor * compareTableCells(tableCellText(a, index), tableCellText(b, index)))
+      .forEach((row) => body.appendChild(row));
+  }
+  tableHeaderCells(table).forEach((cell, cellIndex) => {
+    const active = cellIndex === index && direction !== "none";
+    if (active) cell.setAttribute("aria-sort", direction);
+    else cell.removeAttribute("aria-sort");
+    const mark = cell.querySelector(".tp-sort-mark");
+    if (mark) mark.textContent = active ? (direction === "ascending" ? "▲" : "▼") : "↕";
+  });
 }
-
-function findSearchRecord(type, id) {
-  const state = PAGE_EXPORTS.searchState || {};
-  const lists = {
-    user: state.users || [],
-    merchant: state.merchants || [],
-    wallet: state.wallets || [],
-    transaction: state.transactions || [],
-  };
-  return (lists[type] || []).find((row) => String(row.id || row.reference) === String(id));
+/* Locks the current column widths in pixels before the first drag so the
+   dragged column is the only one that moves. Written through CSSOM, never as a
+   style attribute, so the console's `style-src 'self'` policy still holds. */
+function lockTableLayout(table) {
+  if (table.dataset.tpLocked) return;
+  const cells = tableHeaderCells(table);
+  const widths = cells.map((cell) => cell.getBoundingClientRect().width);
+  cells.forEach((cell, index) => {
+    const width = `${Math.round(widths[index])}px`;
+    cell.style.width = width;
+    cell.style.minWidth = width;
+    cell.style.maxWidth = width;
+  });
+  table.style.tableLayout = "fixed";
+  table.dataset.tpLocked = "1";
 }
+function bindColumnResize(table, cell) {
+  const handle = document.createElement("span");
+  handle.className = "tp-col-resize";
+  handle.setAttribute("aria-hidden", "true");
+  cell.appendChild(handle);
 
-function updateSearchUserRecord(updatedUser = {}) {
-  if (!updatedUser?.id) return;
-  const state = PAGE_EXPORTS.searchState || {};
-  state.users = (state.users || []).map((row) =>
-    String(row.id) === String(updatedUser.id) ? { ...row, ...updatedUser } : row
-  );
-  PAGE_EXPORTS.searchState = state;
-  if (Array.isArray(PAGE_EXPORTS.search)) {
-    PAGE_EXPORTS.search = PAGE_EXPORTS.search.map((row) =>
-      row.type === "user" && String(row.id) === String(updatedUser.id)
-        ? { ...row, ...updatedUser, type: "user" }
-        : row
-    );
+  handle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    lockTableLayout(table);
+    const startX = event.clientX;
+    const startWidth = cell.getBoundingClientRect().width;
+    handle.classList.add("is-active");
+    handle.setPointerCapture(event.pointerId);
+
+    const move = (moveEvent) => {
+      const width = `${Math.max(64, Math.round(startWidth + (moveEvent.clientX - startX)))}px`;
+      cell.style.width = width;
+      cell.style.minWidth = width;
+      cell.style.maxWidth = width;
+    };
+    const stop = () => {
+      handle.classList.remove("is-active");
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  });
+}
+function tableVisibleRows(table) {
+  return tableBodyRows(table).filter((row) => !row.hidden);
+}
+function tableSelectedRows(table) {
+  return tableBodyRows(table).filter((row) => row.dataset.tpSelected === "1");
+}
+function updateTableCount(table) {
+  const tools = table.tpTools;
+  if (!tools) return;
+  const total = tableBodyRows(table).length;
+  const visible = tableVisibleRows(table).length;
+  tools.count.textContent = visible === total
+    ? `${total} row${total === 1 ? "" : "s"}`
+    : `${visible} of ${total} rows`;
+}
+function updateSelectionBar(table) {
+  const tools = table.tpTools;
+  if (!tools?.selectBar) return;
+  const selected = tableSelectedRows(table).length;
+  tools.selectBar.hidden = selected === 0;
+  if (selected) tools.selectLabel.textContent = `${selected} row${selected === 1 ? "" : "s"} selected`;
+  const selectAll = table.querySelector("th.tp-select-cell input");
+  if (selectAll) {
+    const visible = tableVisibleRows(table).length;
+    selectAll.checked = selected > 0 && selected === visible;
+    selectAll.indeterminate = selected > 0 && selected < visible;
   }
 }
-
-function renderLinkedWallets(record = {}) {
-  const wallets = (PAGE_EXPORTS.searchState?.wallets || []).filter((row) => recordMatchesSubject(record, row)).slice(0, 4);
-  if (!wallets.length) return `<div class="empty compact-empty">No linked wallets found in the current result set.</div>`;
-  return wallets.map((row) => `
-    <article class="linked-record">
-      <span>${escapeHtml(row.kind || row.account_type || "wallet")}</span>
-      <strong>${money(row.available_balance)}</strong>
-      <small>${escapeHtml(row.full_name || row.business_name || compactId(row.id))}</small>
-    </article>
-  `).join("");
+function setRowSelected(row, selected) {
+  if (selected) row.dataset.tpSelected = "1";
+  else delete row.dataset.tpSelected;
+  const box = row.querySelector("td.tp-select-cell input");
+  if (box) box.checked = selected;
 }
+function setTableSelectionMode(table, enabled) {
+  const headRow = table.tHead?.rows?.[0];
+  if (!headRow) return;
+  if (enabled) {
+    if (headRow.querySelector("th.tp-select-cell")) return;
+    const headCell = document.createElement("th");
+    headCell.className = "tp-select-cell";
+    const selectAll = document.createElement("input");
+    selectAll.type = "checkbox";
+    selectAll.setAttribute("aria-label", "Select all visible rows");
+    selectAll.addEventListener("change", () => {
+      tableVisibleRows(table).forEach((row) => setRowSelected(row, selectAll.checked));
+      updateSelectionBar(table);
+    });
+    headCell.appendChild(selectAll);
+    headRow.insertBefore(headCell, headRow.firstElementChild);
 
-function renderLinkedTransactions(record = {}) {
-  const transactions = (PAGE_EXPORTS.searchState?.transactions || []).filter((row) => recordMatchesSubject(record, row)).slice(0, 5);
-  if (!transactions.length) return `<div class="empty compact-empty">No linked transactions found in the current result set.</div>`;
-  return transactions.map((row) => `
-    <article class="linked-transaction">
-      <div>
-        <strong>${escapeHtml(row.service_name || row.service_code || "Transaction")}</strong>
-        <small>${escapeHtml(row.reference || compactId(row.id))}</small>
-      </div>
-      <div>
-        <strong>${money(row.amount)}</strong>
-        <span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "-")}</span>
-      </div>
-    </article>
-  `).join("");
-}
-
-function renderSearchDetail(type, id) {
-  const record = findSearchRecord(type, id);
-  if (!record) {
-    return tableCard("Record Details", `<div class="empty">Select a search result to view profile, wallet and transaction context.</div>`);
+    tableBodyRows(table).forEach((row) => {
+      const cell = row.insertCell(0);
+      cell.className = "tp-select-cell";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.setAttribute("aria-label", "Select row");
+      box.addEventListener("change", () => {
+        setRowSelected(row, box.checked);
+        updateSelectionBar(table);
+      });
+      cell.appendChild(box);
+    });
+  } else {
+    headRow.querySelector("th.tp-select-cell")?.remove();
+    tableBodyRows(table).forEach((row) => {
+      row.querySelector("td.tp-select-cell")?.remove();
+      delete row.dataset.tpSelected;
+    });
   }
-  const title = record.full_name || record.business_name || record.reference || compactId(record.id);
-  const subtitle = record.username || record.email || record.phone || record.service_name || searchRecordLabel(type);
-  return `
-    <section class="profile-detail-card">
-      <div class="profile-detail-hero">
-        ${profileAvatarHtml(record)}
-        <div>
-          <p class="eyebrow">${escapeHtml(searchRecordLabel(type))}</p>
-          <h3>${escapeHtml(title || "-")}</h3>
-          <p>${escapeHtml(subtitle || "-")}</p>
-        </div>
-        <span class="chip ${chipClass(record.status || record.fica_status || record.verification_status)}">${escapeHtml(record.status || record.fica_status || record.verification_status || "active")}</span>
-      </div>
-      <div class="profile-facts">
-        <span><small>Email</small><strong>${escapeHtml(record.email || "-")}</strong></span>
-        <span><small>Mobile</small><strong>${escapeHtml(record.phone || "-")}</strong></span>
-        <span><small>Wallet ID</small><strong>${escapeHtml(record.wallet_id || (record.kind ? record.id : "-"))}</strong></span>
-        <span><small>Business</small><strong>${escapeHtml(record.business_name || "-")}</strong></span>
-        <span><small>FICA / Verification</small><strong>${escapeHtml(record.fica_status || record.verification_status || "-")}</strong></span>
-        <span><small>Wallet Type</small><strong>${escapeHtml(record.wallet_type || record.kind || record.account_type || "-")}</strong></span>
-        <span><small>Recent Transactions</small><strong>${escapeHtml(record.recent_transactions ?? "-")}</strong></span>
-        <span><small>Linked Devices</small><strong>${escapeHtml(record.linked_devices ?? "-")}</strong></span>
-        <span><small>Linked Business</small><strong>${escapeHtml(userBusinessLink(record).linked ? userBusinessLink(record).label : "None reported")}</strong></span>
-        <span><small>Risk Flags</small><strong>${escapeHtml(Array.isArray(record.risk_flags) && record.risk_flags.length ? record.risk_flags.join(", ") : "None")}</strong></span>
-        <span><small>Reference</small><strong>${escapeHtml(record.reference || compactId(record.id))}</strong></span>
-      </div>
-      <div class="detail-grid">
-        <article>
-          <h4>Linked Wallets</h4>
-          <div class="linked-record-grid">${renderLinkedWallets(record)}</div>
-        </article>
-        <article>
-          <h4>Recent Activity</h4>
-          <div class="linked-transaction-list">${renderLinkedTransactions(record)}</div>
-        </article>
-      </div>
-    </section>
-  `;
+  updateSelectionBar(table);
 }
-
-function providerDisplayName(key = "") {
-  return {
-    peach_payments: "Peach Payments",
-    pos_provider: "Speedpoint / POS Provider",
-    docfox: "DocFox",
-    ott: "OTT",
-    flash: "Flash",
-    smtp: "Google Workspace SMTP",
-    sms: "SMS Provider",
-  }[key] || key.replaceAll("_", " ");
+/* Exports what is on screen, in the order it is on screen: the current sort,
+   the current filter and, when rows are ticked, only those rows. */
+function exportTableRows(table, onlySelected) {
+  const headers = tableHeaderCells(table)
+    .map((cell) => cell.textContent.replace(/[▲▼↕]/g, "").replace(/\s+/g, " ").trim())
+    .map((label, index) => label || `Column ${index + 1}`);
+  const source = onlySelected ? tableSelectedRows(table) : tableVisibleRows(table);
+  const rows = source.map((row) => {
+    const record = {};
+    Array.from(row.cells).forEach((cell, index) => {
+      const key = headers[index] || `Column ${index + 1}`;
+      if (key === "Actions" || cell.classList.contains("tp-select-cell")) return;
+      record[key] = (cell.textContent || "").replace(/\s+/g, " ").trim();
+    });
+    return record;
+  });
+  const page = document.querySelector(".admin-shell[data-page]")?.dataset.page || "table";
+  downloadCsv(`titopay-${page}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
 }
+function buildTableTools(table) {
+  const tools = document.createElement("div");
+  tools.className = "tp-table-tools";
 
-function providerSlug(key = "") {
-  return {
-    peach_payments: "peach-payments",
-    pos_provider: "pos-provider",
-    docfox: "docfox",
-    flash: "flash",
-    ott: "ott",
-    smtp: "email-smtp",
-    sms: "sms-provider",
-  }[key] || String(key).replaceAll("_", "-");
+  const main = document.createElement("div");
+  main.className = "tp-table-tools-main";
+
+  const searchLabel = document.createElement("label");
+  searchLabel.className = "tp-table-search";
+  searchLabel.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>`;
+  const search = document.createElement("input");
+  search.type = "search";
+  search.placeholder = "Filter rows on this page";
+  search.setAttribute("aria-label", "Filter the rows shown in this table");
+  searchLabel.appendChild(search);
+
+  const count = document.createElement("span");
+  count.className = "tp-table-count";
+  count.setAttribute("role", "status");
+
+  main.append(searchLabel, count);
+
+  const actions = document.createElement("div");
+  actions.className = "tp-table-tools-actions";
+
+  const selectToggle = document.createElement("button");
+  selectToggle.type = "button";
+  selectToggle.className = "tp-tool-btn";
+  selectToggle.setAttribute("aria-pressed", "false");
+  selectToggle.textContent = "Select rows";
+
+  const exportButton = document.createElement("button");
+  exportButton.type = "button";
+  exportButton.className = "tp-tool-btn";
+  exportButton.textContent = "Export table";
+
+  actions.append(selectToggle, exportButton);
+  tools.append(main, actions);
+
+  const selectBar = document.createElement("div");
+  selectBar.className = "tp-select-bar";
+  selectBar.hidden = true;
+  const selectLabel = document.createElement("strong");
+  const exportSelected = document.createElement("button");
+  exportSelected.type = "button";
+  exportSelected.className = "tp-tool-btn";
+  exportSelected.textContent = "Export selected";
+  const clearSelection = document.createElement("button");
+  clearSelection.type = "button";
+  clearSelection.className = "tp-tool-btn";
+  clearSelection.textContent = "Clear selection";
+  selectBar.append(selectLabel, exportSelected, clearSelection);
+
+  table.tpTools = { count, selectBar, selectLabel };
+
+  search.addEventListener("input", () => {
+    const query = search.value.trim().toLowerCase();
+    tableBodyRows(table).forEach((row) => {
+      row.hidden = Boolean(query) && !row.textContent.toLowerCase().includes(query);
+    });
+    updateTableCount(table);
+    updateSelectionBar(table);
+  });
+
+  selectToggle.addEventListener("click", () => {
+    const enabled = selectToggle.getAttribute("aria-pressed") !== "true";
+    selectToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+    selectToggle.textContent = enabled ? "Done selecting" : "Select rows";
+    setTableSelectionMode(table, enabled);
+  });
+
+  exportButton.addEventListener("click", () => {
+    exportTableRows(table, false);
+    showToast("Table exported", "success");
+  });
+
+  exportSelected.addEventListener("click", () => {
+    exportTableRows(table, true);
+    showToast("Selected rows exported", "success");
+  });
+
+  clearSelection.addEventListener("click", () => {
+    tableBodyRows(table).forEach((row) => setRowSelected(row, false));
+    updateSelectionBar(table);
+  });
+
+  return { tools, selectBar };
 }
+function enhanceTable(table) {
+  if (table.dataset.tpEnhanced) return;
+  table.dataset.tpEnhanced = "1";
 
-function providerKeyFromPath() {
-  const path = location.pathname.toLowerCase();
-  const slug = path.split("/").filter(Boolean).at(-1);
-  const map = {
-    "peach-payments": "peach_payments",
-    "pos-provider": "pos_provider",
-    docfox: "docfox",
-    flash: "flash",
-    ott: "ott",
-    "email-smtp": "smtp",
-    "sms-provider": "sms",
-  };
-  return map[slug] || slug?.replaceAll("-", "_") || "";
-}
+  const headerCells = tableHeaderCells(table);
+  const rows = tableBodyRows(table);
+  if (!headerCells.length) return;
 
-function downloadText(filename, content, type = "text/plain;charset=utf-8") {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
+  rows.forEach((row, index) => {
+    row.dataset.tpRow = String(index);
+  });
 
-function downloadDataUrl(filename, dataUrl) {
-  if (!dataUrl) {
-    showToast("QR asset is not ready for download");
-    return;
+  // renderRows() closes every table it builds with an Actions column. Sorting
+  // or resizing that column means nothing, so it is left alone.
+  const lastIndex = headerCells.length - 1;
+  const actionsColumn = headerCells[lastIndex]?.textContent.trim().toLowerCase() === "actions";
+
+  headerCells.forEach((cell, index) => {
+    if (actionsColumn && index === lastIndex) return;
+    cell.dataset.tpSortable = "1";
+    cell.tabIndex = 0;
+    cell.setAttribute("role", "columnheader");
+    const mark = document.createElement("span");
+    mark.className = "tp-sort-mark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.textContent = "↕";
+    cell.appendChild(mark);
+
+    const cycle = () => {
+      const current = cell.getAttribute("aria-sort");
+      const next = current === "ascending" ? "descending" : current === "descending" ? "none" : "ascending";
+      sortTableBy(table, index, next);
+    };
+    cell.addEventListener("click", (event) => {
+      if (event.target.closest(".tp-col-resize")) return;
+      cycle();
+    });
+    cell.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        cycle();
+      }
+    });
+
+    if (index !== lastIndex) bindColumnResize(table, cell);
+  });
+
+  if (rows.length >= TABLE_TOOLS_MIN_ROWS) {
+    const { tools, selectBar } = buildTableTools(table);
+    const anchor = table.closest(".table-wrap") || table;
+    anchor.parentNode?.insertBefore(tools, anchor);
+    anchor.parentNode?.insertBefore(selectBar, anchor);
+    updateTableCount(table);
   }
-  try {
-    const [header, base64] = dataUrl.split(",");
-    const mime = header.match(/data:(.*?);base64/)?.[1] || "application/octet-stream";
-    const bytes = atob(base64 || "");
-    const buffer = new Uint8Array(bytes.length);
-    for (let index = 0; index < bytes.length; index += 1) buffer[index] = bytes.charCodeAt(index);
-    const blob = new Blob([buffer], { type: mime });
-    downloadText(filename, blob, mime);
-    return;
-  } catch (_error) {
-    // Fall back to a direct data URL for older browsers.
-  }
-  const link = document.createElement("a");
-  link.href = dataUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+}
+function queueTableEnhancement() {
+  if (tableEnhancementQueued) return;
+  tableEnhancementQueued = true;
+  requestAnimationFrame(() => {
+    tableEnhancementQueued = false;
+    document.querySelectorAll("#page-content table:not([data-tp-enhanced])").forEach((table) => {
+      try {
+        enhanceTable(table);
+      } catch {
+        // A table that cannot be enhanced stays exactly as the module rendered
+        // it. The console must never lose a table to a presentation helper.
+        table.dataset.tpEnhanced = "1";
+      }
+    });
+  });
+}
+function startTableEnhancement() {
+  queueTableEnhancement();
+  new MutationObserver(queueTableEnhancement).observe(document.body, { childList: true, subtree: true });
 }
 
-function printQrAsset(asset = {}) {
-  const win = window.open("", "_blank", "noopener,noreferrer");
-  if (!win) {
-    showToast("Allow pop-ups to print QR assets");
-    return;
-  }
-  win.document.write(`
-    <!doctype html>
-    <html><head><title>${escapeHtml(asset.label || "TitoPay QR Asset")}</title>
-    <style>
-      body{font-family:Inter,Arial,sans-serif;margin:0;padding:40px;color:#061a3d}
-      .sheet{max-width:720px;margin:0 auto;border:1px solid #dbe6f7;border-radius:28px;padding:34px;text-align:center}
-      h1{margin:0 0 8px;font-size:30px} p{color:#66748f}
-      img{width:320px;max-width:80%;height:auto;margin:24px auto;display:block}
-      .brand{font-weight:900;color:#0057ff;letter-spacing:.08em;text-transform:uppercase}
-    </style></head><body>
-      <main class="sheet">
-        <div class="brand">TitoPay</div>
-        <h1>${escapeHtml(asset.label || "QR Asset")}</h1>
-        <p>${escapeHtml(asset.destinationUrl || "")}</p>
-        <img alt="TitoPay QR" src="${asset.pngDataUrl}">
-        <p>Generated ${new Date().toLocaleString("en-ZA")}</p>
-      </main>
-      <script>window.print();</script>
-    </body></html>
-  `);
-  win.document.close();
-}
+/* ==========================================================================
+   7. DASHBOARD
+   ========================================================================== */
 
 /* Shortcuts are read back out of the rendered sidebar so they can only ever
    offer modules this signed-in role is actually permitted to open. */
@@ -1563,7 +1781,6 @@ function dashboardQuickLinks(limit = 6) {
     .join("");
   return links ? `<div class="quick-link-grid">${links}</div>` : "";
 }
-
 /* == Dashboard ============================================================
    The operational overview an operator lands on. It keeps the four figures the
    previous build showed and the endpoint that produced them, then fills the
@@ -1585,7 +1802,6 @@ function dashboardTile(label, value, meta = "", tone = "", id = "") {
     </article>
   `;
 }
-
 function updateDashboardTile(id, value, meta, tone = "") {
   const tile = document.getElementById(id);
   if (!tile) return;
@@ -1601,7 +1817,6 @@ function updateDashboardTile(id, value, meta, tone = "") {
     tile.prepend(indicator);
   }
 }
-
 function dashboardStatusRow(label, value, tone = "neutral", detail = "") {
   const chipTone = { ok: "green", warn: "orange", bad: "red", info: "blue", neutral: "" }[tone] || "";
   return `
@@ -1614,7 +1829,6 @@ function dashboardStatusRow(label, value, tone = "neutral", detail = "") {
     </div>
   `;
 }
-
 function dashboardActivityList(events) {
   if (!events.length) {
     return `<div class="empty"><strong>No recent activity</strong><small>Administrative actions appear here as they are written to the audit log.</small></div>`;
@@ -1634,7 +1848,6 @@ function dashboardActivityList(events) {
     </ol>
   `;
 }
-
 function dashboardRelativeTime(value) {
   const date = value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) return "-";
@@ -1645,7 +1858,6 @@ function dashboardRelativeTime(value) {
   if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
   return date.toLocaleDateString("en-ZA", { day: "2-digit", month: "short" });
 }
-
 /* Best-effort read. A module that does not answer leaves its cards blank
    rather than taking the dashboard down with it. */
 async function dashboardSource(path) {
@@ -1655,7 +1867,6 @@ async function dashboardSource(path) {
     return { ok: false, data: null };
   }
 }
-
 async function renderDashboard(me) {
   const overview = await apiFetch("/admin/dashboard/overview");
   const page = document.getElementById("page-content");
@@ -1739,7 +1950,6 @@ async function renderDashboard(me) {
     if (activity) activity.innerHTML = dashboardActivityList([]);
   });
 }
-
 async function hydrateDashboard() {
   const [wallets, merchants, tickets, security, health, audit, providers] = await Promise.all([
     dashboardSource("/admin/wallets"),
@@ -1825,19 +2035,137 @@ async function hydrateDashboard() {
     activityHost.innerHTML = dashboardActivityList(events);
   }
 }
-
 function setDashboardText(id, value) {
   const element = document.getElementById(id);
   if (element) element.textContent = value;
 }
 
-const SEARCH_TABS = [
-  ["people", "People"],
-  ["businesses", "Businesses"],
-  ["wallets", "Wallets"],
-  ["transactions", "Transactions"],
-];
+/* ==========================================================================
+   8. GLOBAL SEARCH
+   ========================================================================== */
 
+function recordText(row = {}) {
+  return normalizeSearchText(Object.values(row).join(" "));
+}
+function recordMatchesSubject(subject = {}, row = {}) {
+  const subjectKeys = [
+    subject.id,
+    subject.user_id,
+    subject.merchant_id,
+    subject.wallet_id,
+    subject.username,
+    subject.email,
+    subject.phone,
+    subject.full_name,
+    subject.business_name,
+  ].filter(Boolean).map(normalizeSearchText);
+  const rowText = recordText(row);
+  return subjectKeys.some((key) => key && rowText.includes(key));
+}
+function searchRecordLabel(type = "") {
+  return {
+    user: "Customer profile",
+    merchant: "Merchant profile",
+    wallet: "Wallet profile",
+    transaction: "Transaction profile",
+  }[type] || "Record profile";
+}
+function findSearchRecord(type, id) {
+  const state = PAGE_EXPORTS.searchState || {};
+  const lists = {
+    user: state.users || [],
+    merchant: state.merchants || [],
+    wallet: state.wallets || [],
+    transaction: state.transactions || [],
+  };
+  return (lists[type] || []).find((row) => String(row.id || row.reference) === String(id));
+}
+function updateSearchUserRecord(updatedUser = {}) {
+  if (!updatedUser?.id) return;
+  const state = PAGE_EXPORTS.searchState || {};
+  state.users = (state.users || []).map((row) =>
+    String(row.id) === String(updatedUser.id) ? { ...row, ...updatedUser } : row
+  );
+  PAGE_EXPORTS.searchState = state;
+  if (Array.isArray(PAGE_EXPORTS.search)) {
+    PAGE_EXPORTS.search = PAGE_EXPORTS.search.map((row) =>
+      row.type === "user" && String(row.id) === String(updatedUser.id)
+        ? { ...row, ...updatedUser, type: "user" }
+        : row
+    );
+  }
+}
+function renderLinkedWallets(record = {}) {
+  const wallets = (PAGE_EXPORTS.searchState?.wallets || []).filter((row) => recordMatchesSubject(record, row)).slice(0, 4);
+  if (!wallets.length) return `<div class="empty compact-empty">No linked wallets found in the current result set.</div>`;
+  return wallets.map((row) => `
+    <article class="linked-record">
+      <span>${escapeHtml(row.kind || row.account_type || "wallet")}</span>
+      <strong>${money(row.available_balance)}</strong>
+      <small>${escapeHtml(row.full_name || row.business_name || compactId(row.id))}</small>
+    </article>
+  `).join("");
+}
+function renderLinkedTransactions(record = {}) {
+  const transactions = (PAGE_EXPORTS.searchState?.transactions || []).filter((row) => recordMatchesSubject(record, row)).slice(0, 5);
+  if (!transactions.length) return `<div class="empty compact-empty">No linked transactions found in the current result set.</div>`;
+  return transactions.map((row) => `
+    <article class="linked-transaction">
+      <div>
+        <strong>${escapeHtml(row.service_name || row.service_code || "Transaction")}</strong>
+        <small>${escapeHtml(row.reference || compactId(row.id))}</small>
+      </div>
+      <div>
+        <strong>${money(row.amount)}</strong>
+        <span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "-")}</span>
+      </div>
+    </article>
+  `).join("");
+}
+function renderSearchDetail(type, id) {
+  const record = findSearchRecord(type, id);
+  if (!record) {
+    return tableCard("Record Details", `<div class="empty">Select a search result to view profile, wallet and transaction context.</div>`);
+  }
+  const title = record.full_name || record.business_name || record.reference || compactId(record.id);
+  const subtitle = record.username || record.email || record.phone || record.service_name || searchRecordLabel(type);
+  return `
+    <section class="profile-detail-card">
+      <div class="profile-detail-hero">
+        ${profileAvatarHtml(record)}
+        <div>
+          <p class="eyebrow">${escapeHtml(searchRecordLabel(type))}</p>
+          <h3>${escapeHtml(title || "-")}</h3>
+          <p>${escapeHtml(subtitle || "-")}</p>
+        </div>
+        <span class="chip ${chipClass(record.status || record.fica_status || record.verification_status)}">${escapeHtml(record.status || record.fica_status || record.verification_status || "active")}</span>
+      </div>
+      <div class="profile-facts">
+        <span><small>Email</small><strong>${escapeHtml(record.email || "-")}</strong></span>
+        <span><small>Mobile</small><strong>${escapeHtml(record.phone || "-")}</strong></span>
+        <span><small>Wallet ID</small><strong>${escapeHtml(record.wallet_id || (record.kind ? record.id : "-"))}</strong></span>
+        <span><small>Business</small><strong>${escapeHtml(record.business_name || "-")}</strong></span>
+        <span><small>FICA / Verification</small><strong>${escapeHtml(record.fica_status || record.verification_status || "-")}</strong></span>
+        <span><small>Wallet Type</small><strong>${escapeHtml(record.wallet_type || record.kind || record.account_type || "-")}</strong></span>
+        <span><small>Recent Transactions</small><strong>${escapeHtml(record.recent_transactions ?? "-")}</strong></span>
+        <span><small>Linked Devices</small><strong>${escapeHtml(record.linked_devices ?? "-")}</strong></span>
+        <span><small>Linked Business</small><strong>${escapeHtml(userBusinessLink(record).linked ? userBusinessLink(record).label : "None reported")}</strong></span>
+        <span><small>Risk Flags</small><strong>${escapeHtml(Array.isArray(record.risk_flags) && record.risk_flags.length ? record.risk_flags.join(", ") : "None")}</strong></span>
+        <span><small>Reference</small><strong>${escapeHtml(record.reference || compactId(record.id))}</strong></span>
+      </div>
+      <div class="detail-grid">
+        <article>
+          <h4>Linked Wallets</h4>
+          <div class="linked-record-grid">${renderLinkedWallets(record)}</div>
+        </article>
+        <article>
+          <h4>Recent Activity</h4>
+          <div class="linked-transaction-list">${renderLinkedTransactions(record)}</div>
+        </article>
+      </div>
+    </section>
+  `;
+}
 /* Global Search has the same two modes as the Support Desk: a result list, and
    the record you picked. Showing four result tables plus a detail card at once
    meant the answer to a search was never the thing you were looking at. */
@@ -1853,7 +2181,6 @@ async function renderSearch() {
   PAGE_EXPORTS.openSearchRecord = null;
   renderSearchView();
 }
-
 function searchMatches(query) {
   const state = PAGE_EXPORTS.searchState || { users: [], merchants: [], wallets: [], transactions: [] };
   const q = normalizeSearchText(query);
@@ -1865,7 +2192,6 @@ function searchMatches(query) {
     transactions: !q ? state.transactions.slice(0, 25) : state.transactions.filter((row) => match(row, ["reference", "service_name", "service_code", "status", "id"])),
   };
 }
-
 function renderSearchView() {
   const page = document.getElementById("page-content");
   if (!page) return;
@@ -1952,7 +2278,6 @@ function renderSearchView() {
   `;
   bindSearchForm();
 }
-
 function bindSearchForm() {
   const form = document.getElementById("global-search-form");
   form?.addEventListener("submit", (event) => {
@@ -1963,6 +2288,12 @@ function bindSearchForm() {
     document.getElementById("global-search-input")?.focus();
   });
 }
+
+/* ==========================================================================
+   9. OPERATIONS — MONEY AND ACCOUNTS
+   ========================================================================== */
+
+// Users, merchants, wallets and transaction monitoring. Financial figures here come from the wallet ledger, never from a transaction's own status.
 
 /* Personal <-> business account linking. The console reads every field name
    the API might use for the linked counterpart - first match wins - and the
@@ -1977,7 +2308,6 @@ function userBusinessLink(row = {}) {
   if (id === null && !name && !wallet && !flagged) return { linked: false, id: "", label: "" };
   return { linked: true, id: id === null ? "" : String(id), label: String(name || wallet || id || "business account") };
 }
-
 async function renderUsers() {
   const result = await apiFetch("/admin/users");
   const items = result.items || [];
@@ -2029,7 +2359,6 @@ async function renderUsers() {
     document.getElementById("user-results").innerHTML = renderUserTable(rows);
   });
 }
-
 async function renderMerchants() {
   const result = await apiFetch("/admin/merchants");
   PAGE_EXPORTS.merchants = result.items;
@@ -2043,14 +2372,81 @@ async function renderMerchants() {
     ], (row) => row.verification_status !== "verified" ? `<button data-merchant-verify="${row.id}">Verify</button>` : "")
   );
 }
-
+async function renderWallets(me = {}) {
+  const result = await apiFetch("/admin/wallets");
+  const wallets = result.items || [];
+  const canManageWallets = hasFullAdminAccess(me) || hasFullAdminAccess(PAGE_EXPORTS.currentMe || {});
+  const personalWallets = wallets.filter((row) => row.account_type === "personal" || row.kind === "personal");
+  const businessWallets = wallets.filter((row) => row.account_type === "business" || row.kind === "merchant" || row.kind === "business" || row.business_name);
+  const platformWallets = wallets.filter((row) => !personalWallets.includes(row) && !businessWallets.includes(row));
+  PAGE_EXPORTS.wallets = wallets;
+  const walletColumns = [
+    { label: "Wallet", render: (row) => `<strong>${escapeHtml(row.full_name || row.business_name || "System Wallet")}</strong><br><small>ID ${escapeHtml(row.wallet_id || row.wallet_number || compactId(row.id))}</small>` },
+    { label: "Type", render: (row) => `<span class="chip blue">${escapeHtml(row.kind || row.account_type || "wallet")}</span>` },
+    { label: "Balance", render: (row) => `${money(Number(row.available_balance || 0) + Number(row.reserved_balance || 0))}<br><small>Available ${money(row.available_balance)}</small>` },
+    { label: "Pending / Limits", render: (row) => `${money(row.pending_balance ?? row.reserved_balance)}<br><small>${escapeHtml(row.limits || "-")}</small>` },
+    { label: "Verification / Risk", render: (row) => `<span class="chip ${chipClass(row.verification)}">${escapeHtml(row.verification || "-")}</span><br><small>${escapeHtml(row.risk_rating || "low")} risk</small>` },
+    { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "active")}</span>` },
+  ];
+  const walletActions = (row) => canManageWallets ? `
+    <button data-wallet-action="freeze" data-wallet-id="${escapeHtml(row.id)}">Freeze</button>
+    <button data-wallet-action="suspend" data-wallet-id="${escapeHtml(row.id)}">Suspend</button>
+    <button data-wallet-action="close" data-wallet-id="${escapeHtml(row.id)}">Close</button>
+    <button data-wallet-action="activate" data-wallet-id="${escapeHtml(row.id)}">Activate</button>
+  ` : "";
+  document.getElementById("page-content").innerHTML = `
+    ${renderMetrics([
+      ["Personal Wallets", personalWallets.length],
+      ["Business Wallets", businessWallets.length],
+      ["Platform Wallets", platformWallets.length],
+      ["Total Wallets", wallets.length],
+    ])}
+    <section class="wallet-section-stack">
+      ${tableCard("Personal Wallets", renderRows(personalWallets, walletColumns, walletActions), "Customer wallets with balance, limits, verification, risk rating and status controls.")}
+      ${tableCard("Business Wallets", renderRows(businessWallets, walletColumns, walletActions), "Merchant and business wallets used for payments, settlements and operational monitoring.")}
+      ${tableCard("System & Revenue Wallets", renderRows(platformWallets, walletColumns, walletActions), "Internal TitoPay wallets for revenue, suspense and platform operations.")}
+    </section>
+  `;
+}
+async function renderBeneficiaries(search = "") {
+  const query = String(search || "").trim();
+  const result = await apiFetch(`/admin/beneficiaries${query ? `?search=${encodeURIComponent(query)}` : ""}`);
+  const items = result.items || [];
+  PAGE_EXPORTS.beneficiaries = items;
+  const active = items.filter((row) => !row.disabled_at).length;
+  document.getElementById("page-content").innerHTML = `
+    ${renderMetrics([
+      ["Relationships", items.length],
+      ["Active", active],
+      ["Disabled", items.length - active],
+      ["Favourites", items.filter((row) => row.favourite).length],
+    ])}
+    <section class="panel">
+      <form id="beneficiary-admin-search" class="form-grid">
+        <div class="field field-full"><label>Search owner or beneficiary</label><input name="search" type="search" value="${escapeHtml(query)}" maxlength="120" placeholder="Name, username or nickname"></div>
+        <button class="primary-btn" type="submit">Search</button>
+      </form>
+    </section>
+    ${tableCard("Saved Beneficiary Relationships", renderRows(items, [
+      { label: "Owner", render: (row) => `<strong>${escapeHtml(row.owner_name || "-")}</strong><br><small>${escapeHtml(row.owner_username || "-")}</small>` },
+      { label: "Beneficiary", render: (row) => `<strong>${escapeHtml(row.beneficiary_name || "-")}</strong><br><small>${escapeHtml(row.beneficiary_username || "-")}</small>` },
+      { label: "Nickname / Type", render: (row) => `${escapeHtml(row.nickname || "-")}<br><small>${escapeHtml(String(row.relationship_type || "-").replaceAll("_", " "))}${row.favourite ? " · Favourite" : ""}</small>` },
+      { label: "Last Paid", render: (row) => row.last_paid_at ? `${escapeHtml(new Date(row.last_paid_at).toLocaleString("en-ZA"))}<br><small>R${Number(row.last_payment_amount || 0).toFixed(2)}</small>` : "-" },
+      { label: "Status", render: (row) => `<span class="chip ${row.disabled_at ? "red" : "green"}">${row.disabled_at ? "Disabled" : "Active"}</span>${row.disabled_reason ? `<br><small>${escapeHtml(row.disabled_reason)}</small>` : ""}` },
+    ], (row) => row.disabled_at ? "" : `<button class="secondary-btn" type="button" data-beneficiary-disable="${escapeHtml(row.id)}">Disable</button>`),
+    "Super Admins may inspect and disable abusive relationships. Customer beneficiary lists cannot be edited from the admin portal.")}
+  `;
+  document.getElementById("beneficiary-admin-search")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await renderBeneficiaries(new FormData(event.currentTarget).get("search"));
+  });
+}
 function getTransactionFilterValues() {
   const form = document.getElementById("transaction-filters");
   if (!form) return {};
   const data = new FormData(form);
   return Object.fromEntries(["search", "status", "service", "from", "to", "limit"].map((key) => [key, String(data.get(key) || "").trim()]));
 }
-
 function transactionFilterQuery(filters = getTransactionFilterValues()) {
   const params = new URLSearchParams();
   ["search", "status", "service", "from", "to", "limit"].forEach((key) => {
@@ -2060,7 +2456,6 @@ function transactionFilterQuery(filters = getTransactionFilterValues()) {
   const query = params.toString();
   return query ? `?${query}` : "";
 }
-
 function transactionFiltersHtml(rows = [], filters = {}) {
   const serviceCodes = [...new Set([...rows.map((row) => row.service_code), filters.service].filter(Boolean))].sort();
   return `
@@ -2103,7 +2498,6 @@ function transactionFiltersHtml(rows = [], filters = {}) {
     </form>
   `;
 }
-
 // Reversal moves money back, so it is offered only where money moved. Every
 // other row still shows the control, disabled, saying why — an operator should
 // never have to guess whether an action is missing or merely unavailable. These
@@ -2114,13 +2508,11 @@ function reverseUnavailableReason(row = {}) {
   if (row.wallet_posted !== true) return "Nothing to reverse — no wallet entry was posted";
   return "";
 }
-
 function reverseActionCell(row = {}) {
   const reason = reverseUnavailableReason(row);
   if (!reason) return `<button data-transaction-reverse="${escapeHtml(row.id)}">Reverse</button>`;
   return `<button type="button" disabled title="${escapeHtml(reason)}" aria-label="${escapeHtml(`Reverse unavailable. ${reason}`)}">Reverse</button><br><small>${escapeHtml(reason)}</small>`;
 }
-
 async function renderTransactions() {
   const filters = getTransactionFilterValues();
   const result = await apiFetch(`/admin/transactions${transactionFilterQuery(filters)}`);
@@ -2168,539 +2560,6 @@ async function renderTransactions() {
     `${rows.length} rows`
   );
 }
-
-async function renderWallets(me = {}) {
-  const result = await apiFetch("/admin/wallets");
-  const wallets = result.items || [];
-  const canManageWallets = hasFullAdminAccess(me) || hasFullAdminAccess(PAGE_EXPORTS.currentMe || {});
-  const personalWallets = wallets.filter((row) => row.account_type === "personal" || row.kind === "personal");
-  const businessWallets = wallets.filter((row) => row.account_type === "business" || row.kind === "merchant" || row.kind === "business" || row.business_name);
-  const platformWallets = wallets.filter((row) => !personalWallets.includes(row) && !businessWallets.includes(row));
-  PAGE_EXPORTS.wallets = wallets;
-  const walletColumns = [
-    { label: "Wallet", render: (row) => `<strong>${escapeHtml(row.full_name || row.business_name || "System Wallet")}</strong><br><small>ID ${escapeHtml(row.wallet_id || row.wallet_number || compactId(row.id))}</small>` },
-    { label: "Type", render: (row) => `<span class="chip blue">${escapeHtml(row.kind || row.account_type || "wallet")}</span>` },
-    { label: "Balance", render: (row) => `${money(Number(row.available_balance || 0) + Number(row.reserved_balance || 0))}<br><small>Available ${money(row.available_balance)}</small>` },
-    { label: "Pending / Limits", render: (row) => `${money(row.pending_balance ?? row.reserved_balance)}<br><small>${escapeHtml(row.limits || "-")}</small>` },
-    { label: "Verification / Risk", render: (row) => `<span class="chip ${chipClass(row.verification)}">${escapeHtml(row.verification || "-")}</span><br><small>${escapeHtml(row.risk_rating || "low")} risk</small>` },
-    { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "active")}</span>` },
-  ];
-  const walletActions = (row) => canManageWallets ? `
-    <button data-wallet-action="freeze" data-wallet-id="${escapeHtml(row.id)}">Freeze</button>
-    <button data-wallet-action="suspend" data-wallet-id="${escapeHtml(row.id)}">Suspend</button>
-    <button data-wallet-action="close" data-wallet-id="${escapeHtml(row.id)}">Close</button>
-    <button data-wallet-action="activate" data-wallet-id="${escapeHtml(row.id)}">Activate</button>
-  ` : "";
-  document.getElementById("page-content").innerHTML = `
-    ${renderMetrics([
-      ["Personal Wallets", personalWallets.length],
-      ["Business Wallets", businessWallets.length],
-      ["Platform Wallets", platformWallets.length],
-      ["Total Wallets", wallets.length],
-    ])}
-    <section class="wallet-section-stack">
-      ${tableCard("Personal Wallets", renderRows(personalWallets, walletColumns, walletActions), "Customer wallets with balance, limits, verification, risk rating and status controls.")}
-      ${tableCard("Business Wallets", renderRows(businessWallets, walletColumns, walletActions), "Merchant and business wallets used for payments, settlements and operational monitoring.")}
-      ${tableCard("System & Revenue Wallets", renderRows(platformWallets, walletColumns, walletActions), "Internal TitoPay wallets for revenue, suspense and platform operations.")}
-    </section>
-  `;
-}
-
-const SUPPORT_TABS = [
-  ["conversations", "Live conversations"],
-  ["tickets", "Tickets"],
-  ["approvals", "Profile approvals"],
-];
-
-/* The Support Desk has two modes. The queue lists work waiting to be picked up;
-   opening a conversation replaces the queue entirely so the agent is
-   unambiguously inside that chat, with one way back. Rendering the conversation
-   below the queue meant taking over a chat left the agent still looking at the
-   queue with the conversation off-screen. */
-async function renderSupport() {
-  captureSupportWorkspace();
-  ensureAdminSupportSocket();
-  const page = document.getElementById("page-content");
-  if (!page) return;
-
-  const openId = PAGE_EXPORTS.openSupportConversationId;
-  if (openId) {
-    try {
-      const context = await apiFetch(`/admin/support/conversations/${openId}/context`);
-      page.innerHTML = renderSupportConversationView(context);
-      const composer = document.getElementById("support-agent-message");
-      if (composer) {
-        if (PAGE_EXPORTS.supportDraft) composer.value = PAGE_EXPORTS.supportDraft;
-        if (PAGE_EXPORTS.supportDraftFocused !== false) {
-          composer.focus({ preventScroll: true });
-          const caret = Number(PAGE_EXPORTS.supportDraftCaret);
-          if (Number.isFinite(caret)) composer.setSelectionRange(caret, caret);
-        }
-      }
-      const thread = document.querySelector(".support-thread");
-      if (thread) {
-        const holdPosition = PAGE_EXPORTS.supportThreadPinned === false && !PAGE_EXPORTS.supportThreadForceBottom;
-        if (!holdPosition) {
-          // A forced jump also re-arms following, otherwise the next refresh
-          // would restore the position the agent had scrolled away from.
-          PAGE_EXPORTS.supportThreadPinned = true;
-        }
-        const target = () => {
-          thread.scrollTop = holdPosition ? Number(PAGE_EXPORTS.supportThreadScroll) || 0 : thread.scrollHeight;
-        };
-        target();
-        // Run again after layout: scrollHeight is not final in the same frame
-        // the markup is written, which left the transcript sitting at the top.
-        requestAnimationFrame(target);
-      }
-      PAGE_EXPORTS.supportThreadForceBottom = false;
-      return;
-    } catch (error) {
-      PAGE_EXPORTS.openSupportConversationId = null;
-      showToast(adminErrorMessage(error.message || "Unable to open that conversation."));
-    }
-  }
-
-  const [ticketResult, conversationResult, profileChangeResult] = await Promise.all([
-    apiFetch("/admin/support/tickets").catch(() => ({ items: [] })),
-    apiFetch("/admin/support/conversations").catch(() => ({ items: [] })),
-    apiFetch("/admin/profile-change-requests").catch(() => ({ items: [], metrics: {} })),
-  ]);
-  const tickets = ticketResult.items || [];
-  const conversations = conversationResult.items || [];
-  const counts = conversationResult.counts || {};
-  const profileChanges = profileChangeResult.items || [];
-  const openTickets = tickets.filter((row) => ["open", "in_progress", "pending"].includes(row.status)).length;
-  const waiting = Number(counts.waiting ?? conversations.filter((row) => ["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status)).length);
-  const activeChats = Number(counts.active ?? conversations.filter((row) => ["AGENT_ACTIVE", "REOPENED"].includes(row.status)).length);
-  const profilePending = profileChanges.filter((row) => ["pending", "in_review"].includes(row.status)).length;
-
-  PAGE_EXPORTS.support = tickets.concat(conversations.map((row) => ({
-    type: "chat",
-    id: row.id,
-    status: row.status,
-    participant_a: row.participant_a?.username || row.participant_a?.email || row.participant_a?.phone,
-    participant_b: row.participant_b?.username || row.participant_b?.email || row.participant_b?.phone,
-    last_message: row.last_message,
-    updated_at: row.updated_at,
-  }))).concat(profileChanges.map((row) => ({
-    type: "profile_change",
-    id: row.id,
-    status: row.status,
-    user: row.user?.fullName || row.user?.username,
-    fields: Object.keys(row.requestedChanges || {}).join(", "),
-    due_at: row.dueAt
-  })));
-
-  const tab = SUPPORT_TABS.some(([key]) => key === PAGE_EXPORTS.supportTab)
-    ? PAGE_EXPORTS.supportTab
-    : "conversations";
-  const tabCounts = { conversations: waiting + activeChats, tickets: openTickets, approvals: profilePending };
-  const chatParticipant = (participant) => {
-    if (!participant) return "-";
-    const name = participant.full_name || participant.username || participant.email || participant.phone || "TitoPay user";
-    const handle = participant.username ? `@${participant.username}` : participant.email || participant.phone || participant.account_type || "";
-    return `<strong>${escapeHtml(name)}</strong><br><small>${escapeHtml(handle)}</small>`;
-  };
-  const assignedTo = (row) => row.assignedAgent?.name || row.metadata?.assigned_to || row.metadata?.assignedTo || "Unassigned";
-
-  const panels = {
-    conversations: () => renderRows(conversations, [
-      { label: "Customer", render: (row) => chatParticipant(row.customer || row.participant_a) },
-      { label: "Reference", render: (row) => `<strong>${escapeHtml(row.ticketRef || compactId(row.id))}</strong>` },
-      { label: "Waiting", render: (row) => `<strong>${escapeHtml(monitorAge(row.waitingSeconds || 0))}</strong>` },
-      { label: "Last message", render: (row) => `<small>${escapeHtml(String(row.last_message || "No messages yet").slice(0, 90))}</small>` },
-      { label: "Status", render: (row) => `<span class="chip ${supportStatusClass(row.status)}">${escapeHtml(String(row.status || "WAITING_FOR_AGENT").replace(/_/g, " "))}</span><br><small>${escapeHtml(assignedTo(row))}</small>` },
-    ], (row) => ["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status)
-      ? `<button data-support-chat-takeover="${escapeHtml(row.id)}">Take over</button>`
-      : `<button data-support-chat-history="${escapeHtml(row.id)}">Open</button>`),
-
-    tickets: () => renderRows(tickets, [
-      { label: "Request", render: (row) => `<strong>${escapeHtml(row.subject)}</strong><br><small>${escapeHtml(row.category || "-")} · ${escapeHtml(new Date(row.created_at || Date.now()).toLocaleDateString("en-ZA"))}</small>` },
-      { label: "Customer", render: (row) => `${escapeHtml(row.full_name || "-")}<br><small>${escapeHtml(row.username || "-")}</small>` },
-      { label: "Details", render: (row) => `<small>${escapeHtml(String(row.message || "").slice(0, 120))}${String(row.message || "").length > 120 ? "..." : ""}</small>` },
-      { label: "Assigned", render: (row) => escapeHtml(row.assigned_to || "Unassigned") },
-      { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status)}</span>` },
-    ], (row) => `
-      <button data-support-status="in_progress" data-support-id="${row.id}">Take over</button>
-      <button data-support-status="resolved" data-support-id="${row.id}">Resolve</button>
-    `),
-
-    approvals: () => renderRows(profileChanges, [
-      { label: "User", render: (row) => `<strong>${escapeHtml(row.user?.fullName || row.user?.username || "-")}</strong><br><small>${escapeHtml(row.user?.phone || row.user?.email || "-")}</small>` },
-      { label: "Requested changes", render: (row) => Object.entries(row.requestedChanges || {}).map(([key, value]) => `<small><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value)}</small>`).join("<br>") || "-" },
-      { label: "SLA", render: (row) => `<strong>${escapeHtml(row.dueAt ? new Date(row.dueAt).toLocaleDateString("en-ZA") : "-")}</strong><br><small>${row.dueAt && new Date(row.dueAt).getTime() < Date.now() && ["pending", "in_review"].includes(row.status) ? "Overdue" : "72-hour review"}</small>` },
-      { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "pending")}</span>` },
-    ], (row) => ["pending", "in_review"].includes(row.status) ? `
-      <button data-profile-change-approve="${escapeHtml(row.id)}">Approve</button>
-      <button data-profile-change-reject="${escapeHtml(row.id)}">Reject</button>
-    ` : ""),
-  };
-
-  page.innerHTML = `
-    ${renderMetrics([
-      ["Waiting for an agent", waiting],
-      ["Active chats", activeChats],
-      ["Open tickets", openTickets],
-      ["Profile approvals", profilePending],
-    ])}
-    <section class="table-card">
-      <nav class="segmented" aria-label="Support queues">
-        ${SUPPORT_TABS.map(([key, label]) => `
-          <button type="button" class="segmented-btn ${tab === key ? "active" : ""}" data-support-tab="${key}" aria-pressed="${tab === key}">
-            ${escapeHtml(label)}${tabCounts[key] ? `<span class="segmented-count">${tabCounts[key]}</span>` : ""}
-          </button>
-        `).join("")}
-      </nav>
-      ${panels[tab]()}
-    </section>
-  `;
-}
-
-function renderSupportConversationView(context = {}) {
-  const conversation = context.conversation;
-  if (!conversation) return `<div class="empty">This conversation is no longer available.</div>`;
-  const status = String(conversation.status || "").toUpperCase();
-  const canReply = ["AGENT_ACTIVE", "REOPENED"].includes(status);
-  const notes = context.internalNotes || [];
-  const id = escapeHtml(conversation.id);
-  return `
-    <section class="table-card support-workspace">
-      <header class="support-workspace-head">
-        <button class="secondary-btn" type="button" data-support-back>&larr; Back to queue</button>
-        <div class="support-workspace-who">
-          <strong>${escapeHtml(conversation.customer?.name || "Customer")}</strong>
-          <small>${escapeHtml(conversation.customer?.accountIdentifier || conversation.customer?.username || "")}</small>
-        </div>
-        <span class="chip ${supportStatusClass(status)}">${escapeHtml(status.replace(/_/g, " "))}</span>
-        <span class="support-workspace-meta">
-          ${conversation.ticketRef ? `Ref <strong>${escapeHtml(conversation.ticketRef)}</strong> · ` : ""}
-          Assigned to <strong>${escapeHtml(conversation.assignedAgent?.name || "nobody")}</strong>
-        </span>
-        <div class="action-row support-workspace-actions">
-          ${["ESCALATED", "WAITING_FOR_AGENT"].includes(status) ? `<button data-support-chat-takeover="${id}">Take over</button>` : ""}
-          ${canReply ? `
-            <button data-support-chat-resolve="${id}">Resolve</button>
-            <button data-support-chat-unassign="${id}">Release</button>
-            <button data-support-chat-transfer="${id}">Transfer</button>
-          ` : ""}
-          ${status === "RESOLVED" ? `<button data-support-chat-reopen="${id}">Reopen</button><button data-support-chat-close="${id}">Close</button>` : ""}
-          ${status === "CLOSED" ? `<button data-support-chat-reopen="${id}">Reopen</button>` : ""}
-          <button data-support-chat-note="${id}">Add note</button>
-        </div>
-      </header>
-
-      ${renderSupportThread(context.messages)}
-
-      ${canReply ? `
-        ${supportQuickReplyPanel()}
-        <form id="support-agent-reply-form" class="support-composer" data-support-conversation-id="${id}">
-          <div class="field">
-            <label class="visually-hidden" for="support-agent-message">Reply to customer</label>
-            <textarea id="support-agent-message" name="message" rows="3" maxlength="4000" placeholder="Type your reply. The customer sees it immediately." required></textarea>
-          </div>
-          <button class="primary-btn" type="submit">Send reply</button>
-        </form>
-      ` : `<p class="table-card-note">Take over this conversation before replying.</p>`}
-
-      ${notes.length ? `
-        <details class="support-notes">
-          <summary>Internal notes (${notes.length}) — never shown to the customer</summary>
-          <ul>
-            ${notes.map((row) => `<li><strong>${escapeHtml(row.createdByLabel || row.createdBy || "Admin")}</strong> · ${escapeHtml(supportMessageTime(row.createdAt))}<br>${escapeHtml(row.note || "")}</li>`).join("")}
-          </ul>
-        </details>
-      ` : ""}
-    </section>
-  `;
-}
-
-/* A support transcript is a conversation, not a dataset. Rendering it as a
-   table forced an agent to read one message per row across four columns; this
-   reads top to bottom the way the customer sees it. */
-const SUPPORT_SENDER_LABELS = { CUSTOMER: "Customer", AGENT: "Support agent", BOT: "TitoPay Assistant", SYSTEM: "System" };
-
-/* Customer Care quick replies. [Agent Name] is substituted with the signed-in
-   operator's first name when the reply is inserted; the agent can still edit
-   everything before sending - inserting never sends.
-
-   The wording is editable in the portal: platform owners see a Manage button
-   on the panel, and edits are stored per browser under
-   titopay_admin_quick_replies_v1. A shared, team-wide store needs the
-   GET/PUT /admin/support/quick-replies endpoints specified in
-   ADMIN-API-REQUIREMENTS.md; until the API carries them, the manager says the
-   edits are local. Restore defaults always returns to this built-in set. */
-const SUPPORT_QUICK_REPLY_KEY = "titopay_admin_quick_replies_v1";
-const SUPPORT_QUICK_REPLY_GROUPS = ["Greeting & check-ins", "Investigation & escalation", "Resolution & closing"];
-const SUPPORT_QUICK_REPLY_DEFAULTS = [
-  { group: "Greeting & check-ins", title: "Greeting", text: "Welcome to TitoPay Customer Care. My name is [Agent Name], and I'll be assisting you today. How may I help you?" },
-  { group: "Greeting & check-ins", title: "Inactive - 2 minutes", text: "Hi! Just checking in to see if you're still with us. I'm here and ready to assist whenever you're ready." },
-  { group: "Greeting & check-ins", title: "Inactive - 4 minutes", text: "We haven't received a response yet. If you're still available, simply reply to this chat and we'll continue assisting you." },
-  { group: "Greeting & check-ins", title: "Inactive - 5 minutes", text: "It looks like you've stepped away. We'll keep this conversation open for a little while longer. If you still need assistance, simply reply to this chat and we'll be happy to continue helping you." },
-  { group: "Greeting & check-ins", title: "Final warning - 7 minutes", text: "As we haven't received a response, this conversation will automatically close in approximately 2 minutes. Reply to any message to keep the conversation active." },
-  { group: "Greeting & check-ins", title: "Closed due to inactivity", text: "This conversation has been closed due to inactivity. If you still require assistance, simply start a new chat from the TitoPay app and one of our Customer Care Specialists will gladly assist you. Thank you for choosing TitoPay." },
-  { group: "Investigation & escalation", title: "Requesting information", text: "To help us investigate your request, could you please provide the following information:\n\n\u2022 A brief description of the issue\n\u2022 The date and approximate time it occurred\n\u2022 Any relevant reference or transaction number\n\u2022 A screenshot, if available" },
-  { group: "Investigation & escalation", title: "Waiting while investigating", text: "Thank you for your patience. We're currently reviewing your request. This may take a few moments, and we'll update you as soon as we have more information." },
-  { group: "Investigation & escalation", title: "Unable to verify the account", text: "For your security, we're currently unable to verify your account with the information provided. Please provide the requested verification details so we can continue assisting you." },
-  { group: "Investigation & escalation", title: "Escalating to another department", text: "Your request requires assistance from a specialist team. We've escalated your case, and you'll receive an update as soon as possible. Thank you for your patience." },
-  { group: "Resolution & closing", title: "Issue resolved", text: "We're pleased to confirm that your request has been resolved. If you have any further questions or require additional assistance, please don't hesitate to contact us. Thank you for choosing TitoPay." },
-  { group: "Resolution & closing", title: "Closing after resolution", text: "Thank you for contacting TitoPay Customer Care. We're glad we could assist you today. Have a wonderful day, and thank you for choosing TitoPay." },
-];
-
-function getSupportQuickReplies() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(SUPPORT_QUICK_REPLY_KEY) || "null");
-    const templates = parsed?.templates;
-    if (Array.isArray(templates) && templates.length && templates.every((row) => row.title && row.text && row.group)) {
-      return templates.slice(0, 40);
-    }
-  } catch {}
-  return SUPPORT_QUICK_REPLY_DEFAULTS;
-}
-
-function saveSupportQuickReplies(templates) {
-  try {
-    localStorage.setItem(SUPPORT_QUICK_REPLY_KEY, JSON.stringify({ version: 1, templates }));
-    return true;
-  } catch {
-    showToast("Unable to store quick replies in this browser");
-    return false;
-  }
-}
-
-function canManageQuickReplies() {
-  const me = PAGE_EXPORTS.currentMe || {};
-  return hasFullAdminAccess(me) || isPlatformOwnerRole(me.role);
-}
-
-function supportAgentFirstName() {
-  const me = PAGE_EXPORTS.currentMe || {};
-  const name = me.fullName || me.full_name || me.admin?.fullName || me.username || "";
-  return String(name).trim().split(/\s+/)[0] || "";
-}
-
-function supportQuickReplyBody() {
-  const replies = getSupportQuickReplies();
-  if (PAGE_EXPORTS.sqrManaging && canManageQuickReplies()) {
-    return `
-      <div class="sqr-editor" id="sqr-editor">
-        ${replies.map((reply) => `
-          <div class="sqr-edit-row">
-            <input class="sqr-edit-title" value="${escapeHtml(reply.title)}" maxlength="60" aria-label="Reply title">
-            <select class="sqr-edit-group" aria-label="Group">
-              ${SUPPORT_QUICK_REPLY_GROUPS.map((group) => `<option value="${escapeHtml(group)}"${group === reply.group ? " selected" : ""}>${escapeHtml(group)}</option>`).join("")}
-            </select>
-            <button class="ghost-btn" type="button" data-sqr-remove aria-label="Remove this reply">Remove</button>
-            <textarea class="sqr-edit-text" rows="3" maxlength="1200" aria-label="Reply text">${escapeHtml(reply.text)}</textarea>
-          </div>
-        `).join("")}
-      </div>
-      <div class="action-row sqr-manage-actions">
-        <button class="secondary-btn" type="button" data-sqr-add>Add reply</button>
-        <button class="primary-btn" type="button" data-sqr-save>Save quick replies</button>
-        <button class="ghost-btn" type="button" data-sqr-restore>Restore defaults</button>
-        <button class="ghost-btn" type="button" data-sqr-cancel>Cancel</button>
-      </div>
-      <p class="sqr-note">Use [Agent Name] where the agent's first name should appear. Edits are stored in this browser until the API carries the shared quick-replies endpoints - see ADMIN-API-REQUIREMENTS.md.</p>
-    `;
-  }
-  const groups = [...new Set(replies.map((reply) => reply.group))];
-  return `
-    ${groups.map((group) => `
-      <div class="sqr-group">
-        <span class="sqr-group-title">${escapeHtml(group)}</span>
-        <div class="sqr-grid">
-          ${replies.map((reply, index) => reply.group === group ? `
-            <button type="button" class="sqr-item" data-support-quick-reply="${index}" title="Insert into the reply box">
-              <strong>${escapeHtml(reply.title)}</strong>
-              <small>${escapeHtml(reply.text.replace(/\n/g, " ").slice(0, 84))}${reply.text.length > 84 ? "…" : ""}</small>
-            </button>
-          ` : "").join("")}
-        </div>
-      </div>
-    `).join("")}
-    <p class="sqr-note">Inserting fills the reply box - nothing is sent until you press Send reply, so you can adjust the wording first.${canManageQuickReplies() ? ` <button class="link-btn" type="button" data-sqr-manage>Manage quick replies</button>` : ""}</p>
-  `;
-}
-
-function supportQuickReplyPanel() {
-  return `
-    <details class="support-quick-replies" ${PAGE_EXPORTS.sqrManaging ? "open" : ""}>
-      <summary>Quick replies <span class="segmented-count">${getSupportQuickReplies().length}</span></summary>
-      <div class="sqr-body" id="sqr-body">${supportQuickReplyBody()}</div>
-    </details>
-  `;
-}
-
-function repaintQuickReplyBody() {
-  const body = document.getElementById("sqr-body");
-  if (body) body.innerHTML = supportQuickReplyBody();
-  const count = document.querySelector(".support-quick-replies summary .segmented-count");
-  if (count) count.textContent = String(getSupportQuickReplies().length);
-}
-
-function supportMessageTime(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-}
-
-function renderSupportThread(messages = []) {
-  if (!messages.length) return `<div class="compact-empty">No messages in this conversation yet.</div>`;
-  return `
-    <ol class="support-thread">
-      ${messages.map((row) => {
-        const sender = String(row.senderType || row.sender_type || "SYSTEM").toUpperCase();
-        const who = row.senderName || row.sender_name || SUPPORT_SENDER_LABELS[sender] || "TitoPay";
-        const when = supportMessageTime(row.createdAt || row.created_at);
-        return `
-          <li class="support-msg" data-sender="${escapeHtml(sender.toLowerCase())}">
-            <p class="support-msg-meta"><strong>${escapeHtml(who)}</strong>${when ? `<span>${escapeHtml(when)}</span>` : ""}</p>
-            <p class="support-msg-body">${escapeHtml(row.body || row.message || "")}</p>
-          </li>
-        `;
-      }).join("")}
-    </ol>
-  `;
-}
-
-
-/* The conversation workspace renders below the queue tables, so an agent who
-   takes over or opens a chat would otherwise be left looking at the queue with
-   the workspace off-screen. */
-/* The draft reply is preserved across the re-renders that incoming support
-   events trigger, so another agent's activity cannot wipe a half-typed reply. */
-function captureSupportWorkspace() {
-  const thread = document.querySelector(".support-thread");
-  // A deliberate action (opening a chat, taking it over, sending a reply) asks
-  // for the newest message and must not be overridden by wherever the agent
-  // happened to be scrolled.
-  if (thread && !PAGE_EXPORTS.supportThreadForceBottom) {
-    // Standard chat behaviour otherwise: follow new messages only while the
-    // reader is already at the bottom. Scrolling up to read earlier messages
-    // must not be undone by the next incoming message or the ten-second poll.
-    const distanceFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
-    PAGE_EXPORTS.supportThreadPinned = distanceFromBottom <= 40;
-    PAGE_EXPORTS.supportThreadScroll = thread.scrollTop;
-  }
-  const composer = document.getElementById("support-agent-message");
-  if (!composer) return;
-  PAGE_EXPORTS.supportDraft = composer.value;
-  PAGE_EXPORTS.supportDraftCaret = composer.selectionStart;
-  PAGE_EXPORTS.supportDraftFocused = document.activeElement === composer;
-}
-
-function monitorAge(seconds) {
-  const value = Math.max(0, Number(seconds || 0));
-  if (value < 60) return `${value}s`;
-  if (value < 3600) return `${Math.floor(value / 60)}m`;
-  if (value < 86400) return `${Math.floor(value / 3600)}h`;
-  return `${Math.floor(value / 86400)}d`;
-}
-
-function monitorDate(value) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" });
-}
-
-function maskMonitorIp(value = "") {
-  const text = String(value);
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(text)) return text.replace(/\.\d+$/, ".•");
-  return text.length > 12 ? `${text.slice(0, 12)}…` : text || "-";
-}
-
-async function renderChatMonitor() {
-  const result = await apiFetch("/admin/chat-monitor/overview");
-  const metrics = result.metrics || {};
-  const onlineIds = new Set((result.onlineUsers || []).map((item) => String(item.userId)));
-  PAGE_EXPORTS["chat-monitor"] = (result.conversations || []).map((row) => ({
-    id: row.id,
-    type: row.thread_type,
-    status: row.status,
-    participant_a: row.participant_a?.username || row.participant_a?.name,
-    participant_b: row.participant_b?.username || row.participant_b?.name,
-    messages: row.message_count,
-    pending_delivery: row.pending_delivery_count,
-    failed: row.failed_count,
-    last_message_status: row.last_message_status,
-    last_message_at: row.last_message_at
-  }));
-  const participant = (user = {}) => `
-    <strong>${escapeHtml(user.name || user.username || "TitoPay user")}</strong><br>
-    <small>${escapeHtml(user.username ? `@${user.username}` : user.accountType || "")}</small>
-    ${onlineIds.has(String(user.id)) ? `<span class="monitor-online-label">Online</span>` : ""}
-  `;
-  const content = document.getElementById("page-content");
-  if (!content) return;
-  content.innerHTML = `
-    <section class="monitor-toolbar">
-      <div>
-        <span class="monitor-live-dot" aria-hidden="true"></span>
-        <strong>Live operational view</strong>
-        <small>Updated ${escapeHtml(monitorDate(result.generatedAt))} · refreshes every 10 seconds</small>
-      </div>
-      <button class="secondary-btn" type="button" data-chat-monitor-refresh>Refresh now</button>
-    </section>
-    ${renderMetrics([
-      ["Active conversations", metrics.activeConversations || 0],
-      ["Active in 15 min", metrics.activeRecently || 0],
-      ["Online users", metrics.onlineUsers || 0],
-      ["Socket connections", metrics.activeConnections || 0],
-      ["Failed deliveries", metrics.deliveryFailures || 0],
-      ["Stale deliveries", metrics.staleDeliveries || 0],
-      ["WebSocket failures (24h)", metrics.socketFailures24h || 0],
-      ["Queued notifications", metrics.queuedNotifications || 0]
-    ])}
-    <section class="monitor-health-note">
-      <strong>Privacy-safe monitoring</strong>
-      <p>This view shows delivery metadata and account identity only. Message bodies are not loaded or displayed.</p>
-    </section>
-    ${tableCard("Active Conversations", renderRows(result.conversations || [], [
-      { label: "Conversation", render: (row) => `<strong>${escapeHtml(row.thread_type || "direct")}</strong><br><small>${escapeHtml(compactId(row.id))}</small>` },
-      { label: "Participant A", render: (row) => participant(row.participant_a) },
-      { label: "Participant B", render: (row) => participant(row.participant_b) },
-      { label: "Messages", render: (row) => escapeHtml(row.message_count || 0) },
-      { label: "Delivery", render: (row) => `<span class="chip ${chipClass(row.last_message_status || "pending")}">${escapeHtml(row.last_message_status || "No messages")}</span><br><small>${escapeHtml(row.pending_delivery_count || 0)} pending · ${escapeHtml(row.failed_count || 0)} failed</small>` },
-      { label: "Last activity", render: (row) => escapeHtml(monitorDate(row.last_message_at || row.updated_at)) }
-    ]), "Operational metadata only; message content remains private.", `${(result.conversations || []).length} shown`)}
-    <section class="panel-grid monitor-grid">
-      ${tableCard("Online Users", renderRows(result.onlineUsers || [], [
-        { label: "User", render: (row) => `<strong>${escapeHtml(row.name)}</strong><br><small>${escapeHtml(row.username ? `@${row.username}` : compactId(row.userId))}</small>` },
-        { label: "Account", render: (row) => `<span class="chip blue">${escapeHtml(row.accountType || "personal")}</span>` },
-        { label: "Verification", render: (row) => `<span class="chip ${chipClass(row.verificationStatus)}">${escapeHtml(row.verificationStatus || "unknown")}</span>` },
-        { label: "Connections", key: "connections" },
-        { label: "Connected", render: (row) => escapeHtml(monitorDate(row.connectedAt)) }
-      ]), "Presence reflects connections on the active TitoPay API process.")}
-      ${tableCard("Notification Queue", renderRows(result.queueStatus || [], [
-        { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status)}</span>` },
-        { label: "Count", key: "count" },
-        { label: "Oldest", render: (row) => escapeHtml(monitorDate(row.oldest_created_at)) },
-        { label: "Latest update", render: (row) => escapeHtml(monitorDate(row.latest_updated_at)) }
-      ]), "Sent or queued records indicate recipients that have not yet synchronized.")}
-    </section>
-    ${tableCard("Delivery Failures & Timeouts", renderRows(result.deliveryFailures || [], [
-      { label: "Message", render: (row) => `<strong>${escapeHtml(row.failure_type === "failed" ? "Failed" : "Delivery timeout")}</strong><br><small>${escapeHtml(compactId(row.id))}</small>` },
-      { label: "Conversation", render: (row) => escapeHtml(compactId(row.thread_id)) },
-      { label: "Sender", render: (row) => `${escapeHtml(row.sender_name || "-")}<br><small>${escapeHtml(row.sender_username ? `@${row.sender_username}` : "")}</small>` },
-      { label: "Recipient", render: (row) => `${escapeHtml(row.recipient_name || "-")}<br><small>${escapeHtml(row.recipient_username ? `@${row.recipient_username}` : "")}</small>` },
-      { label: "Age", render: (row) => escapeHtml(monitorAge(row.age_seconds)) },
-      { label: "Status", render: (row) => `<span class="chip red">${escapeHtml(row.status)}</span>` }
-    ]), "A sent message older than 60 seconds is flagged for investigation; content is never returned.")}
-    ${tableCard("Failed WebSocket Connections — Last 24 Hours", renderRows(result.socketFailures || [], [
-      { label: "Time", render: (row) => escapeHtml(monitorDate(row.created_at)) },
-      { label: "Failure", render: (row) => `<strong>${escapeHtml(String(row.reason || "connection_failed").replaceAll("_", " "))}</strong><br><small>${escapeHtml(row.event_type)}</small>` },
-      { label: "IP", render: (row) => escapeHtml(maskMonitorIp(row.ip_address)) },
-      { label: "Client", render: (row) => `<small class="monitor-client">${escapeHtml(row.user_agent || "Unknown client")}</small>` }
-    ]), "Authentication and processing failure categories are logged server-side without JWTs or stack traces.")}
-  `;
-  clearInterval(chatMonitorRefreshTimer);
-  chatMonitorRefreshTimer = setInterval(() => {
-    if (document.querySelector('.admin-shell[data-page="chat-monitor"]')) {
-      renderChatMonitor().catch(() => null);
-    }
-  }, 10000);
-}
-
 async function renderCompliance() {
   const result = await apiFetch("/admin/compliance/queue");
   PAGE_EXPORTS.compliance = result.items;
@@ -2719,7 +2578,6 @@ async function renderCompliance() {
     `)
   );
 }
-
 async function renderRevenue() {
   const result = await apiFetch("/admin/revenue");
   PAGE_EXPORTS.revenue = [
@@ -2745,7 +2603,6 @@ async function renderRevenue() {
     </section>
   `;
 }
-
 async function renderSecurity(me = {}) {
   const result = await apiFetch("/admin/security");
   // Customer Email OTP is separate from the staff/admin sign-in OTP mode above.
@@ -2943,7 +2800,6 @@ async function renderSecurity(me = {}) {
     }
   });
 }
-
 async function renderAudit() {
   const result = await apiFetch("/admin/audit");
   PAGE_EXPORTS.audit = result.items;
@@ -2957,316 +2813,568 @@ async function renderAudit() {
     ], () => "")
   );
 }
-
-async function renderBeneficiaries(search = "") {
-  const query = String(search || "").trim();
-  const result = await apiFetch(`/admin/beneficiaries${query ? `?search=${encodeURIComponent(query)}` : ""}`);
-  const items = result.items || [];
-  PAGE_EXPORTS.beneficiaries = items;
-  const active = items.filter((row) => !row.disabled_at).length;
-  document.getElementById("page-content").innerHTML = `
-    ${renderMetrics([
-      ["Relationships", items.length],
-      ["Active", active],
-      ["Disabled", items.length - active],
-      ["Favourites", items.filter((row) => row.favourite).length],
-    ])}
-    <section class="panel">
-      <form id="beneficiary-admin-search" class="form-grid">
-        <div class="field field-full"><label>Search owner or beneficiary</label><input name="search" type="search" value="${escapeHtml(query)}" maxlength="120" placeholder="Name, username or nickname"></div>
-        <button class="primary-btn" type="submit">Search</button>
-      </form>
+async function renderQrManagement() {
+  const content = document.getElementById("page-content");
+  PAGE_EXPORTS["qr-management"] = [];
+  content.innerHTML = `
+    <section class="panel-grid">
+      <section class="panel">
+        <h3>QR Control Centre</h3>
+        <p>Create branded TitoPay QR assets for website, app downloads, onboarding, campaigns, events and referrals. QR generation is routed through the TitoPay API.</p>
+        <div class="ops-list ops-list-two">
+          <span><strong>Live</strong>QR generation</span>
+          <span><strong>Brand</strong>TitoPay output</span>
+          <span><strong>Ready</strong>PNG / SVG / PDF Export</span>
+          <span><strong>Print</strong>Camera-readable assets</span>
+        </div>
+      </section>
+      <section class="panel">
+        <h3>Create QR Asset</h3>
+        <form id="qr-asset-form" class="form-grid">
+          <div class="field"><label>QR Type</label><select name="type" required><option value="website">Website QR</option><option value="app_download">App QR</option><option value="merchant_qr">Merchant QR</option><option value="business_qr">Business QR</option><option value="referral_qr">Referral QR</option><option value="campaign">Campaign QR</option><option value="invoice_qr">Invoice QR</option><option value="product_qr">Product QR</option><option value="support_qr">Support QR</option><option value="merchant_onboarding">Merchant Onboarding</option><option value="business_registration">Business Registration</option><option value="personal_registration">Personal Registration</option><option value="marketing">Marketing QR Code</option><option value="event">Event QR Code</option><option value="dynamic_url">Dynamic URL</option></select></div>
+          <div class="field"><label>Asset Label</label><input name="label" placeholder="Public launch campaign" required></div>
+          <div class="field"><label>Destination URL</label><input name="destinationUrl" placeholder="https://titopay.co.za" required></div>
+          <button class="primary-btn" type="submit">Create QR Asset</button>
+        </form>
+      </section>
     </section>
-    ${tableCard("Saved Beneficiary Relationships", renderRows(items, [
-      { label: "Owner", render: (row) => `<strong>${escapeHtml(row.owner_name || "-")}</strong><br><small>${escapeHtml(row.owner_username || "-")}</small>` },
-      { label: "Beneficiary", render: (row) => `<strong>${escapeHtml(row.beneficiary_name || "-")}</strong><br><small>${escapeHtml(row.beneficiary_username || "-")}</small>` },
-      { label: "Nickname / Type", render: (row) => `${escapeHtml(row.nickname || "-")}<br><small>${escapeHtml(String(row.relationship_type || "-").replaceAll("_", " "))}${row.favourite ? " · Favourite" : ""}</small>` },
-      { label: "Last Paid", render: (row) => row.last_paid_at ? `${escapeHtml(new Date(row.last_paid_at).toLocaleString("en-ZA"))}<br><small>R${Number(row.last_payment_amount || 0).toFixed(2)}</small>` : "-" },
-      { label: "Status", render: (row) => `<span class="chip ${row.disabled_at ? "red" : "green"}">${row.disabled_at ? "Disabled" : "Active"}</span>${row.disabled_reason ? `<br><small>${escapeHtml(row.disabled_reason)}</small>` : ""}` },
-    ], (row) => row.disabled_at ? "" : `<button class="secondary-btn" type="button" data-beneficiary-disable="${escapeHtml(row.id)}">Disable</button>`),
-    "Super Admins may inspect and disable abusive relationships. Customer beneficiary lists cannot be edited from the admin portal.")}
+    <section id="qr-preview-host"></section>
   `;
-  document.getElementById("beneficiary-admin-search")?.addEventListener("submit", async (event) => {
+  document.getElementById("qr-asset-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await renderBeneficiaries(new FormData(event.currentTarget).get("search"));
+    const formData = new FormData(event.currentTarget);
+    try {
+      const result = await apiFetch("/admin/qr-assets", {
+        method: "POST",
+        body: JSON.stringify({
+          type: formData.get("type"),
+          label: formData.get("label"),
+          destinationUrl: formData.get("destinationUrl"),
+        }),
+      });
+      const asset = result.asset;
+      PAGE_EXPORTS["qr-management"] = [asset];
+      document.getElementById("qr-preview-host").innerHTML = renderQrPreview(asset);
+      showToast("QR asset generated");
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
   });
 }
-
-function renderTicketingEventActions(row = {}) {
-  const id = escapeHtml(row.id || "");
-  const actions = [];
-  if (["submitted", "additional_information_required"].includes(row.status)) actions.push(["under_review", "Review"]);
-  if (["submitted", "under_review", "additional_information_required"].includes(row.status)) {
-    actions.push(["approve", "Approve"], ["request_information", "Request Info"], ["reject", "Reject"]);
-  }
-  if (row.status === "approved") actions.push(["suspend", "Suspend"]);
-  if (row.status === "suspended") actions.push(["reinstate", "Reinstate"]);
-  actions.push(["report", "Report"]);
-  if (row.status === "approved") actions.push(["settlement", "Settle"]);
-  return actions.map(([action, label]) => `<button data-ticketing-action="${action}" data-ticketing-id="${id}">${escapeHtml(label)}</button>`).join(" ");
-}
-
-async function renderTicketing() {
-  const [result, refundResult] = await Promise.all([
-    apiFetch("/admin/ticketing/events"),
-    apiFetch("/admin/ticketing/refunds").catch(() => ({ items: [] })),
-  ]);
-  const rows = result.items || [];
-  const refunds = refundResult.items || [];
-  PAGE_EXPORTS.ticketing = rows;
-  PAGE_EXPORTS.ticketingRefunds = refunds;
-  const counts = rows.reduce((acc, item) => {
-    acc[item.status] = (acc[item.status] || 0) + 1;
-    return acc;
-  }, {});
-  document.getElementById("page-content").innerHTML = `
-    ${renderMetrics([
-      ["Events", rows.length],
-      ["Pending Review", (counts.submitted || 0) + (counts.under_review || 0)],
-      ["Approved", counts.approved || 0],
-      ["Refunds", refunds.filter((item) => item.status === "requested").length],
-    ])}
-    <div id="ticketing-detail-host"></div>
-    ${tableCard("Event Approval Queue", renderRows(rows, [
-      { label: "Event", render: (row) => `<strong>${escapeHtml(row.eventName || "-")}</strong><br><small>${escapeHtml(row.businessName || row.businessOwnerName || "Verified business")}</small>` },
-      { label: "Date", render: (row) => escapeHtml(String(row.eventDate || "-").slice(0, 10)) },
-      { label: "Status", render: (row) => `<span class="chip ${row.status === "approved" ? "green" : row.status === "rejected" || row.status === "suspended" ? "red" : "blue"}">${escapeHtml(String(row.status || "draft").replaceAll("_", " "))}</span>` },
-      { label: "Verification", render: (row) => `${escapeHtml(row.ownerFicaStatus || "-")}<br><small>${escapeHtml(row.merchantVerificationStatus || "-")}</small>` },
-    ], renderTicketingEventActions), "Only verified TitoPay Business accounts can submit events. Approvals and settlement actions are audit logged.")}
-    ${tableCard("Refund Queue", renderRows(refunds, [
-      { label: "Order", render: (row) => `<strong>${escapeHtml(row.order_reference || "-")}</strong><br><small>${escapeHtml(row.event_name || "-")}</small>` },
-      { label: "Requester", render: (row) => `${escapeHtml(row.requester_name || "-")}<br><small>${escapeHtml(row.requester_phone || "-")}</small>` },
-      { label: "Amount", render: (row) => `R${Number(row.amount || 0).toFixed(2)}` },
-      { label: "Status", render: (row) => `<span class="chip ${row.status === "approved" ? "green" : row.status === "rejected" ? "red" : "blue"}">${escapeHtml(row.status || "-")}</span>` },
-    ], (row) => row.status === "requested" ? `
-      <button data-ticket-refund-action="approve" data-ticket-refund-id="${escapeHtml(row.id)}">Approve</button>
-      <button data-ticket-refund-action="reject" data-ticket-refund-id="${escapeHtml(row.id)}">Reject</button>
-    ` : ""), "Approved refunds credit the buyer wallet and update ticket inventory.")}
-  `;
-}
-
-function renderEnterpriseApplicationActions(row = {}) {
-  const id = escapeHtml(row.id || "");
-  const status = String(row.status || "");
-  const actions = [];
-  if (["submitted", "under_review"].includes(status)) actions.push(["approve", "Approve"], ["reject", "Reject"]);
-  if (status === "submitted") actions.push(["review", "Mark review"]);
-  if (status === "approved") actions.push(["suspend", "Suspend"], ["revoke", "Revoke"]);
-  return actions.map(([action, label]) => `<button data-enterprise-action="${action}" data-enterprise-application-id="${id}">${escapeHtml(label)}</button>`).join(" ");
-}
-
-async function renderEnterpriseDistribution() {
-  const [overviewResult, applicationsResult, organisationsResult, batchesResult, payoutsResult, auditResult, reportResult] = await Promise.all([
-    apiFetch("/admin/enterprise-distribution/overview"),
-    apiFetch("/admin/enterprise-distribution/applications"),
-    apiFetch("/admin/enterprise-distribution/organisations"),
-    apiFetch("/admin/enterprise-distribution/batches"),
-    apiFetch("/admin/enterprise-distribution/payouts"),
-    apiFetch("/admin/enterprise-distribution/audit-logs"),
-    apiFetch("/admin/enterprise-distribution/report")
-  ]);
-  const overview = overviewResult.overview || {};
-  const applications = applicationsResult.items || [];
-  const organisations = organisationsResult.items || [];
-  const batches = batchesResult.items || [];
-  const payouts = payoutsResult.items || [];
-  const auditLogs = auditResult.items || [];
-  const report = reportResult.report || {};
-  const applicationCounts = (overview.applications || []).reduce((acc, item) => {
-    acc[item.status] = item.count;
-    return acc;
-  }, {});
-  const batchCounts = (overview.batches || []).reduce((acc, item) => {
-    acc[item.status] = item.count;
-    return acc;
-  }, {});
-  PAGE_EXPORTS["enterprise-distribution"] = [
-    ...applications.map((row) => ({ type: "application", ...row })),
-    ...organisations.map((row) => ({ type: "organisation", ...row })),
-    ...batches.map((row) => ({ type: "batch", ...row })),
-    ...payouts.map((row) => ({ type: "payout", ...row })),
-    ...auditLogs.map((row) => ({ type: "audit", ...row }))
-  ];
-  document.getElementById("page-content").innerHTML = `
-    ${renderMetrics([
-      ["Applications", applications.length],
-      ["Pending Approval", (applicationCounts.submitted || 0) + (applicationCounts.under_review || 0)],
-      ["Approved Organisations", organisations.filter((item) => item.status === "active" && item.licence_status === "active").length],
-      ["Draft Batches", (batchCounts.draft_validated || 0) + (batchCounts.draft_validation_failed || 0)],
-    ])}
-    <section class="panel">
-      <h3>Enterprise Distribution Control Layer</h3>
-      <p>Enterprise Bulk Distribution is active for TitoPay wallet recipients. Organisations validate batches, lock funding from their business wallet, and Admin releases approved wallet batches. Bank withdrawals and external payouts must use TitoPay’s existing Withdraw/Payout service.</p>
-      <div class="ops-list ops-list-two">
-        <span><strong>Approval first</strong>Only approved organisations can access the Business module.</span>
-        <span><strong>Funding lock</strong>Businesses must reserve funds before Admin can release a batch.</span>
-        <span><strong>Payout routing</strong>Wallet payouts run here; bank payouts stay in TitoPay Payouts.</span>
-        <span><strong>Audited</strong>Applications, approvals, funding locks and releases write audit records.</span>
-      </div>
-    </section>
-    <section class="panel">
-      <h3>Final Audit Report</h3>
-      <div class="ops-list ops-list-two">
-        <span><strong>Validated total</strong>${money(report.totals?.validated_total || 0)}</span>
-        <span><strong>Locked total</strong>${money(report.totals?.locked_total || 0)}</span>
-        <span><strong>Fees recorded</strong>${money(report.totals?.fee_total || 0)}</span>
-        <span><strong>Audit entries</strong>${escapeHtml(String(report.auditLogs || auditLogs.length || 0))}</span>
-      </div>
-    </section>
-    ${tableCard("Distribution Batches", renderRows(batches, [
-      { label: "Batch", render: (row) => `<strong>${escapeHtml(row.batch_name || "-")}</strong><br><small>${escapeHtml(row.batch_reference || "-")}</small>` },
-      { label: "Organisation", render: (row) => `${escapeHtml(row.organisation_name || "-")}<br><small>${escapeHtml(row.owner_email || row.owner_name || "-")}</small>` },
-      { label: "Rows", render: (row) => `${escapeHtml(String(row.valid_rows || 0))} valid<br><small>${escapeHtml(String(row.invalid_rows || 0))} invalid · ${escapeHtml(String(row.processed_rows || 0))} processed</small>` },
-      { label: "Funding", render: (row) => `${money(row.valid_total || 0)}<br><small>Fees ${money(row.fee_total || 0)} · Locked ${money(row.locked_total || 0)}</small>` },
-      { label: "Status", render: (row) => `<span class="chip ${row.status === "completed" ? "green" : row.status === "failed" || row.status === "partially_failed" ? "red" : "blue"}">${escapeHtml(String(row.status || "-").replaceAll("_", " "))}</span>` },
-    ], (row) => row.status === "funding_locked" ? `<button data-enterprise-batch-release="${escapeHtml(row.id)}">Release</button>` : ""), "Release only after funding, beneficiary and compliance checks pass. Wallet recipients are paid immediately. Bank payout rows must be handled through TitoPay Payouts.")}
-    ${tableCard("Payout Records", renderRows(payouts, [
-      { label: "Reference", render: (row) => `<strong>${escapeHtml(row.payout_reference || "-")}</strong><br><small>${escapeHtml(row.batch_reference || "-")}</small>` },
-      { label: "Organisation", render: (row) => escapeHtml(row.organisation_name || "-") },
-      { label: "Recipient", render: (row) => `${escapeHtml(row.recipient_name || "-")}<br><small>${escapeHtml(row.recipient_phone || "-")}</small>` },
-      { label: "Amount", render: (row) => `${money(row.amount || 0)}<br><small>Fee ${money(row.fee || 0)}</small>` },
-      { label: "Status", render: (row) => `<span class="chip ${row.status === "paid" ? "green" : row.status === "failed" ? "red" : "blue"}">${escapeHtml(String(row.status || "-").replaceAll("_", " "))}</span>` },
-    ], () => ""), "Only TitoPay wallet payout records are processed here.")}
-    ${tableCard("Organisation Applications", renderRows(applications, [
-      { label: "Organisation", render: (row) => `<strong>${escapeHtml(row.organisation_name || row.business_name || "-")}</strong><br><small>${escapeHtml(row.registration_number || "-")}</small>` },
-      { label: "Owner", render: (row) => `${escapeHtml(row.owner_name || "-")}<br><small>${escapeHtml(row.owner_email || row.owner_phone || "-")}</small>` },
-      { label: "Type / Purpose", render: (row) => `${escapeHtml(row.institution_type || "-")}<br><small>${escapeHtml(row.funding_purpose || "-")}</small>` },
-      { label: "Volume", render: (row) => `${money(row.expected_monthly_volume || 0)}<br><small>${escapeHtml(String(row.expected_beneficiaries || 0))} beneficiaries</small>` },
-      { label: "Status", render: (row) => `<span class="chip ${row.status === "approved" ? "green" : row.status === "rejected" || row.status === "revoked" ? "red" : "blue"}">${escapeHtml(String(row.status || "submitted").replaceAll("_", " "))}</span>` },
-    ], renderEnterpriseApplicationActions), "Approve only organisations that passed registration, bank verification, compliance document and risk checks.")}
-    ${tableCard("Approved Organisations", renderRows(organisations, [
-      { label: "Organisation", render: (row) => `<strong>${escapeHtml(row.organisation_name || "-")}</strong><br><small>${escapeHtml(row.organisation_code || "-")}</small>` },
-      { label: "Owner", render: (row) => `${escapeHtml(row.owner_name || "-")}<br><small>${escapeHtml(row.owner_email || row.owner_phone || "-")}</small>` },
-      { label: "Licence", render: (row) => `<span class="chip ${row.licence_status === "active" ? "green" : "red"}">${escapeHtml(row.licence_status || "-")}</span>` },
-      { label: "Risk", render: (row) => `<span class="chip orange">${escapeHtml(row.risk_rating || "medium")}</span>` },
-      { label: "Approved", render: (row) => escapeHtml(String(row.approved_at || "-").slice(0, 10)) },
-    ], () => ""), "These organisations can access the hidden Business Bulk Distribution module.")}
-    ${tableCard("Audit Trail", renderRows(auditLogs.slice(0, 100), [
-      { label: "Action", render: (row) => `<strong>${escapeHtml(String(row.action || "-").replaceAll("_", " "))}</strong><br><small>${escapeHtml(row.organisation_name || "-")}</small>` },
-      { label: "Actor", render: (row) => `${escapeHtml(row.actor_type || "-")}<br><small>${escapeHtml(row.actor_id || "-")}</small>` },
-      { label: "Reason", render: (row) => escapeHtml(row.reason || "-") },
-      { label: "When", render: (row) => escapeHtml(String(row.created_at || "-").slice(0, 19).replace("T", " ")) },
-    ], () => ""), "Every Enterprise Distribution approval, funding lock and release is recorded here.")}
-  `;
-}
-
-function renderPricingEditor(row = {}) {
-  return `
-    <section class="pricing-editor-card" id="pricing-editor">
+function renderQrPreview(asset) {
+  if (!asset) return "";
+  return tableCard("Generated QR Asset", `
+    <div class="qr-preview-card">
+      <img src="${escapeHtml(asset.pngDataUrl)}" alt="${escapeHtml(asset.label)} QR code">
       <div>
-        <p class="eyebrow">Pricing Rule</p>
-        <h3>Edit ${escapeHtml(row.service_name || "service pricing")}</h3>
-        <p>Changes are saved to the TitoPay API and reflected wherever this pricing rule is consumed.</p>
-      </div>
-      <form id="pricing-edit-form" class="form-grid" data-pricing-id="${escapeHtml(row.id)}">
-        <div class="field">
-          <label>Service name</label>
-          <input name="service_name" value="${escapeHtml(row.service_name || "")}" required>
-        </div>
-        <div class="field">
-          <label>Flat fee</label>
-          <input name="flat_fee" type="number" min="0" step="0.01" value="${escapeHtml(row.flat_fee ?? (row.fee_type === "FIXED" ? row.fee_value : 0))}" required>
-        </div>
-        <div class="field">
-          <label>Percentage fee</label>
-          <input name="percentage_fee" type="number" min="0" step="0.0001" value="${escapeHtml(row.percentage_fee ?? (row.fee_type === "PERCENTAGE" ? row.fee_value : 0))}" required>
-        </div>
-        <div class="field">
-          <label>Minimum fee</label>
-          <input name="minimum_fee" type="number" min="0" step="0.01" value="${escapeHtml(row.minimum_fee ?? 0)}">
-        </div>
-        <div class="field">
-          <label>Maximum fee</label>
-          <input name="maximum_fee" type="number" min="0" step="0.01" value="${escapeHtml(row.maximum_fee ?? 0)}">
-        </div>
-        <div class="field">
-          <label>VAT %</label>
-          <input name="vat_percentage" type="number" min="0" step="0.0001" value="${escapeHtml(row.vat_percentage ?? 0)}">
-        </div>
-        <div class="field">
-          <label>Effective date</label>
-          <input name="effective_date" type="date" value="${escapeHtml(String(row.effective_date || new Date().toISOString().slice(0, 10)).slice(0, 10))}">
-        </div>
-        <label class="toggle-row">
-          <input name="enabled" type="checkbox" ${row.enabled !== false && row.active !== false ? "checked" : ""}>
-          <span>Enabled pricing rule</span>
-        </label>
+        <h4>${escapeHtml(asset.label)}</h4>
+        <p>${escapeHtml(asset.destinationUrl)}</p>
+        <dl class="smtp-detail-grid">
+          <div><dt>Type</dt><dd>${escapeHtml(asset.type)}</dd></div>
+          <div><dt>Reference</dt><dd>${escapeHtml(asset.reference)}</dd></div>
+          <div><dt>Created</dt><dd>${escapeHtml(new Date(asset.createdAt).toLocaleString("en-ZA"))}</dd></div>
+          <div><dt>Exports</dt><dd>PNG, SVG, PDF</dd></div>
+        </dl>
         <div class="action-row">
-          <button class="primary-btn" type="submit">Save Pricing Rule</button>
-          <button class="secondary-btn" type="button" data-pricing-cancel>Cancel</button>
+          <button class="secondary-btn" type="button" data-qr-download-png="${escapeHtml(asset.reference)}">Download PNG</button>
+          <button class="secondary-btn" type="button" data-qr-download-svg="${escapeHtml(asset.reference)}">Download SVG</button>
+          <button class="secondary-btn" type="button" data-qr-print="${escapeHtml(asset.reference)}">Print / Save PDF</button>
         </div>
-      </form>
-    </section>
-  `;
-}
-
-async function renderPricing() {
-  const result = await apiFetch("/pricing");
-  const rows = (result.items || []).map((row) => ({ ...row, category: pricingCategory(row) }));
-  const categories = Array.from(new Set(rows.map((row) => row.category)));
-  PAGE_EXPORTS.pricing = rows;
-  document.getElementById("page-content").innerHTML = `
-    ${renderMetrics([
-      ["Pricing Rules", rows.length],
-      ["Enabled Rules", rows.filter((row) => row.enabled !== false && row.active !== false).length],
-      ["Categories", categories.length],
-      ["Currency", "ZAR"],
-    ])}
-    <section class="panel">
-      <h3>How to update prices and fees</h3>
-      <p>Click <strong>Edit rule</strong> on any service below, enter the flat fee, percentage fee, minimum fee, maximum fee, VAT-exclusive rate and effective date, then save. This Pricing Engine is the source of truth used by the TitoPay API.</p>
-      <div class="ops-list ops-list-two">
-        <span><strong>Flat Fee</strong>Fixed rand amount such as R0.50</span>
-        <span><strong>Percentage</strong>Percentage fee such as 1.5%</span>
-        <span><strong>Min / Max</strong>Controls fee floor and cap</span>
-        <span><strong>Enabled</strong>Turns service pricing on or off</span>
       </div>
+    </div>
+  `);
+}
+
+/* ==========================================================================
+   10. SUPPORT AND CHAT MONITORING
+   ========================================================================== */
+
+/* The Support Desk has two modes. The queue lists work waiting to be picked up;
+   opening a conversation replaces the queue entirely so the agent is
+   unambiguously inside that chat, with one way back. Rendering the conversation
+   below the queue meant taking over a chat left the agent still looking at the
+   queue with the conversation off-screen. */
+async function renderSupport() {
+  captureSupportWorkspace();
+  ensureAdminSupportSocket();
+  const page = document.getElementById("page-content");
+  if (!page) return;
+
+  const openId = PAGE_EXPORTS.openSupportConversationId;
+  if (openId) {
+    try {
+      const context = await apiFetch(`/admin/support/conversations/${openId}/context`);
+      page.innerHTML = renderSupportConversationView(context);
+      const composer = document.getElementById("support-agent-message");
+      if (composer) {
+        if (PAGE_EXPORTS.supportDraft) composer.value = PAGE_EXPORTS.supportDraft;
+        if (PAGE_EXPORTS.supportDraftFocused !== false) {
+          composer.focus({ preventScroll: true });
+          const caret = Number(PAGE_EXPORTS.supportDraftCaret);
+          if (Number.isFinite(caret)) composer.setSelectionRange(caret, caret);
+        }
+      }
+      const thread = document.querySelector(".support-thread");
+      if (thread) {
+        const holdPosition = PAGE_EXPORTS.supportThreadPinned === false && !PAGE_EXPORTS.supportThreadForceBottom;
+        if (!holdPosition) {
+          // A forced jump also re-arms following, otherwise the next refresh
+          // would restore the position the agent had scrolled away from.
+          PAGE_EXPORTS.supportThreadPinned = true;
+        }
+        const target = () => {
+          thread.scrollTop = holdPosition ? Number(PAGE_EXPORTS.supportThreadScroll) || 0 : thread.scrollHeight;
+        };
+        target();
+        // Run again after layout: scrollHeight is not final in the same frame
+        // the markup is written, which left the transcript sitting at the top.
+        requestAnimationFrame(target);
+      }
+      PAGE_EXPORTS.supportThreadForceBottom = false;
+      return;
+    } catch (error) {
+      PAGE_EXPORTS.openSupportConversationId = null;
+      showToast(adminErrorMessage(error.message || "Unable to open that conversation."));
+    }
+  }
+
+  const [ticketResult, conversationResult, profileChangeResult] = await Promise.all([
+    apiFetch("/admin/support/tickets").catch(() => ({ items: [] })),
+    apiFetch("/admin/support/conversations").catch(() => ({ items: [] })),
+    apiFetch("/admin/profile-change-requests").catch(() => ({ items: [], metrics: {} })),
+  ]);
+  const tickets = ticketResult.items || [];
+  const conversations = conversationResult.items || [];
+  const counts = conversationResult.counts || {};
+  const profileChanges = profileChangeResult.items || [];
+  const openTickets = tickets.filter((row) => ["open", "in_progress", "pending"].includes(row.status)).length;
+  const waiting = Number(counts.waiting ?? conversations.filter((row) => ["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status)).length);
+  const activeChats = Number(counts.active ?? conversations.filter((row) => ["AGENT_ACTIVE", "REOPENED"].includes(row.status)).length);
+  const profilePending = profileChanges.filter((row) => ["pending", "in_review"].includes(row.status)).length;
+
+  PAGE_EXPORTS.support = tickets.concat(conversations.map((row) => ({
+    type: "chat",
+    id: row.id,
+    status: row.status,
+    participant_a: row.participant_a?.username || row.participant_a?.email || row.participant_a?.phone,
+    participant_b: row.participant_b?.username || row.participant_b?.email || row.participant_b?.phone,
+    last_message: row.last_message,
+    updated_at: row.updated_at,
+  }))).concat(profileChanges.map((row) => ({
+    type: "profile_change",
+    id: row.id,
+    status: row.status,
+    user: row.user?.fullName || row.user?.username,
+    fields: Object.keys(row.requestedChanges || {}).join(", "),
+    due_at: row.dueAt
+  })));
+
+  const tab = SUPPORT_TABS.some(([key]) => key === PAGE_EXPORTS.supportTab)
+    ? PAGE_EXPORTS.supportTab
+    : "conversations";
+  const tabCounts = { conversations: waiting + activeChats, tickets: openTickets, approvals: profilePending };
+  const chatParticipant = (participant) => {
+    if (!participant) return "-";
+    const name = participant.full_name || participant.username || participant.email || participant.phone || "TitoPay user";
+    const handle = participant.username ? `@${participant.username}` : participant.email || participant.phone || participant.account_type || "";
+    return `<strong>${escapeHtml(name)}</strong><br><small>${escapeHtml(handle)}</small>`;
+  };
+  const assignedTo = (row) => row.assignedAgent?.name || row.metadata?.assigned_to || row.metadata?.assignedTo || "Unassigned";
+
+  const panels = {
+    conversations: () => renderRows(conversations, [
+      { label: "Customer", render: (row) => chatParticipant(row.customer || row.participant_a) },
+      { label: "Reference", render: (row) => `<strong>${escapeHtml(row.ticketRef || compactId(row.id))}</strong>` },
+      { label: "Waiting", render: (row) => `<strong>${escapeHtml(monitorAge(row.waitingSeconds || 0))}</strong>` },
+      { label: "Last message", render: (row) => `<small>${escapeHtml(String(row.last_message || "No messages yet").slice(0, 90))}</small>` },
+      { label: "Status", render: (row) => `<span class="chip ${supportStatusClass(row.status)}">${escapeHtml(String(row.status || "WAITING_FOR_AGENT").replace(/_/g, " "))}</span><br><small>${escapeHtml(assignedTo(row))}</small>` },
+    ], (row) => ["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status)
+      ? `<button data-support-chat-takeover="${escapeHtml(row.id)}">Take over</button>`
+      : `<button data-support-chat-history="${escapeHtml(row.id)}">Open</button>`),
+
+    tickets: () => renderRows(tickets, [
+      { label: "Request", render: (row) => `<strong>${escapeHtml(row.subject)}</strong><br><small>${escapeHtml(row.category || "-")} · ${escapeHtml(new Date(row.created_at || Date.now()).toLocaleDateString("en-ZA"))}</small>` },
+      { label: "Customer", render: (row) => `${escapeHtml(row.full_name || "-")}<br><small>${escapeHtml(row.username || "-")}</small>` },
+      { label: "Details", render: (row) => `<small>${escapeHtml(String(row.message || "").slice(0, 120))}${String(row.message || "").length > 120 ? "..." : ""}</small>` },
+      { label: "Assigned", render: (row) => escapeHtml(row.assigned_to || "Unassigned") },
+      { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status)}</span>` },
+    ], (row) => `
+      <button data-support-status="in_progress" data-support-id="${row.id}">Take over</button>
+      <button data-support-status="resolved" data-support-id="${row.id}">Resolve</button>
+    `),
+
+    approvals: () => renderRows(profileChanges, [
+      { label: "User", render: (row) => `<strong>${escapeHtml(row.user?.fullName || row.user?.username || "-")}</strong><br><small>${escapeHtml(row.user?.phone || row.user?.email || "-")}</small>` },
+      { label: "Requested changes", render: (row) => Object.entries(row.requestedChanges || {}).map(([key, value]) => `<small><strong>${escapeHtml(key)}</strong>: ${escapeHtml(value)}</small>`).join("<br>") || "-" },
+      { label: "SLA", render: (row) => `<strong>${escapeHtml(row.dueAt ? new Date(row.dueAt).toLocaleDateString("en-ZA") : "-")}</strong><br><small>${row.dueAt && new Date(row.dueAt).getTime() < Date.now() && ["pending", "in_review"].includes(row.status) ? "Overdue" : "72-hour review"}</small>` },
+      { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "pending")}</span>` },
+    ], (row) => ["pending", "in_review"].includes(row.status) ? `
+      <button data-profile-change-approve="${escapeHtml(row.id)}">Approve</button>
+      <button data-profile-change-reject="${escapeHtml(row.id)}">Reject</button>
+    ` : ""),
+  };
+
+  page.innerHTML = `
+    ${renderMetrics([
+      ["Waiting for an agent", waiting],
+      ["Active chats", activeChats],
+      ["Open tickets", openTickets],
+      ["Profile approvals", profilePending],
+    ])}
+    <section class="table-card">
+      <nav class="segmented" aria-label="Support queues">
+        ${SUPPORT_TABS.map(([key, label]) => `
+          <button type="button" class="segmented-btn ${tab === key ? "active" : ""}" data-support-tab="${key}" aria-pressed="${tab === key}">
+            ${escapeHtml(label)}${tabCounts[key] ? `<span class="segmented-count">${tabCounts[key]}</span>` : ""}
+          </button>
+        `).join("")}
+      </nav>
+      ${panels[tab]()}
     </section>
-    <section class="panel-grid pricing-summary-grid">
-      ${categories.map((category) => {
-        const categoryRows = rows.filter((row) => row.category === category);
-        return `<article class="panel">
-          <h3>${escapeHtml(category)}</h3>
-          <p>${categoryRows.length} pricing rules configured for ${escapeHtml(category.toLowerCase())} services.</p>
-          <div class="ops-list ops-list-two">
-            <span><strong>${categoryRows.filter((row) => row.enabled !== false && row.active !== false).length}</strong>Enabled</span>
-            <span><strong>${categoryRows.filter((row) => Number(row.percentage_fee || 0) > 0 || row.fee_type === "PERCENTAGE").length}</strong>Percentage fees</span>
-          </div>
-        </article>`;
-      }).join("")}
-    </section>
-    <div id="pricing-editor-host"></div>
-    ${tableCard("Pricing Management", renderRows(rows, [
-      { label: "Category", render: (row) => `<span class="chip blue">${escapeHtml(row.category)}</span>` },
-      { label: "Service", render: (row) => `<strong>${escapeHtml(row.service_name)}</strong><br><small>${escapeHtml(row.service_code)}</small>` },
-      { label: "Flat Fee", render: (row) => money(row.flat_fee ?? (row.fee_type === "FIXED" ? row.fee_value : 0)) },
-      { label: "Percentage", render: (row) => `${escapeHtml(row.percentage_fee ?? (row.fee_type === "PERCENTAGE" ? row.fee_value : 0))}%` },
-      { label: "Limits", render: (row) => `${money(row.minimum_fee)} min<br><small>${money(row.maximum_fee)} max</small>` },
-      { label: "VAT / Effective", render: (row) => `${escapeHtml(row.vat_percentage ?? 0)}%<br><small>${escapeHtml(String(row.effective_date || "-").slice(0, 10))}</small>` },
-      { label: "Status", render: (row) => `<span class="chip ${row.enabled !== false && row.active !== false ? "green" : "red"}">${row.enabled !== false && row.active !== false ? "Enabled" : "Disabled"}</span>` },
-    ], (row) => `<button data-pricing-edit="${row.id}">Edit rule</button>`), "Pricing updates are written through the TitoPay API and reflected wherever pricing rules are consumed.", "API controlled")}
   `;
 }
+function renderSupportConversationView(context = {}) {
+  const conversation = context.conversation;
+  if (!conversation) return `<div class="empty">This conversation is no longer available.</div>`;
+  const status = String(conversation.status || "").toUpperCase();
+  const canReply = ["AGENT_ACTIVE", "REOPENED"].includes(status);
+  const notes = context.internalNotes || [];
+  const id = escapeHtml(conversation.id);
+  return `
+    <section class="table-card support-workspace">
+      <header class="support-workspace-head">
+        <button class="secondary-btn" type="button" data-support-back>&larr; Back to queue</button>
+        <div class="support-workspace-who">
+          <strong>${escapeHtml(conversation.customer?.name || "Customer")}</strong>
+          <small>${escapeHtml(conversation.customer?.accountIdentifier || conversation.customer?.username || "")}</small>
+        </div>
+        <span class="chip ${supportStatusClass(status)}">${escapeHtml(status.replace(/_/g, " "))}</span>
+        <span class="support-workspace-meta">
+          ${conversation.ticketRef ? `Ref <strong>${escapeHtml(conversation.ticketRef)}</strong> · ` : ""}
+          Assigned to <strong>${escapeHtml(conversation.assignedAgent?.name || "nobody")}</strong>
+        </span>
+        <div class="action-row support-workspace-actions">
+          ${["ESCALATED", "WAITING_FOR_AGENT"].includes(status) ? `<button data-support-chat-takeover="${id}">Take over</button>` : ""}
+          ${canReply ? `
+            <button data-support-chat-resolve="${id}">Resolve</button>
+            <button data-support-chat-unassign="${id}">Release</button>
+            <button data-support-chat-transfer="${id}">Transfer</button>
+          ` : ""}
+          ${status === "RESOLVED" ? `<button data-support-chat-reopen="${id}">Reopen</button><button data-support-chat-close="${id}">Close</button>` : ""}
+          ${status === "CLOSED" ? `<button data-support-chat-reopen="${id}">Reopen</button>` : ""}
+          <button data-support-chat-note="${id}">Add note</button>
+        </div>
+      </header>
 
-/* Support conversation statuses are uppercase with underscores
-   (WAITING_FOR_AGENT, AGENT_ACTIVE, ...) and do not match the generic
-   chipClass keywords, so they were all rendering the same neutral blue. */
-function supportStatusClass(status = "") {
-  const value = String(status || "").toLowerCase();
-  if (["agent_active", "reopened", "resolved"].includes(value)) return "green";
-  if (["escalated", "waiting_for_agent"].includes(value)) return "orange";
-  if (value === "closed") return "red";
-  return "blue";
+      ${renderSupportThread(context.messages)}
+
+      ${canReply ? `
+        ${supportQuickReplyPanel()}
+        <form id="support-agent-reply-form" class="support-composer" data-support-conversation-id="${id}">
+          <div class="field">
+            <label class="visually-hidden" for="support-agent-message">Reply to customer</label>
+            <textarea id="support-agent-message" name="message" rows="3" maxlength="4000" placeholder="Type your reply. The customer sees it immediately." required></textarea>
+          </div>
+          <button class="primary-btn" type="submit">Send reply</button>
+        </form>
+      ` : `<p class="table-card-note">Take over this conversation before replying.</p>`}
+
+      ${notes.length ? `
+        <details class="support-notes">
+          <summary>Internal notes (${notes.length}) — never shown to the customer</summary>
+          <ul>
+            ${notes.map((row) => `<li><strong>${escapeHtml(row.createdByLabel || row.createdBy || "Admin")}</strong> · ${escapeHtml(supportMessageTime(row.createdAt))}<br>${escapeHtml(row.note || "")}</li>`).join("")}
+          </ul>
+        </details>
+      ` : ""}
+    </section>
+  `;
+}
+function getSupportQuickReplies() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SUPPORT_QUICK_REPLY_KEY) || "null");
+    const templates = parsed?.templates;
+    if (Array.isArray(templates) && templates.length && templates.every((row) => row.title && row.text && row.group)) {
+      return templates.slice(0, 40);
+    }
+  } catch {}
+  return SUPPORT_QUICK_REPLY_DEFAULTS;
+}
+function saveSupportQuickReplies(templates) {
+  try {
+    localStorage.setItem(SUPPORT_QUICK_REPLY_KEY, JSON.stringify({ version: 1, templates }));
+    return true;
+  } catch {
+    showToast("Unable to store quick replies in this browser");
+    return false;
+  }
+}
+function canManageQuickReplies() {
+  const me = PAGE_EXPORTS.currentMe || {};
+  return hasFullAdminAccess(me) || isPlatformOwnerRole(me.role);
+}
+function supportAgentFirstName() {
+  const me = PAGE_EXPORTS.currentMe || {};
+  const name = me.fullName || me.full_name || me.admin?.fullName || me.username || "";
+  return String(name).trim().split(/\s+/)[0] || "";
+}
+function supportQuickReplyBody() {
+  const replies = getSupportQuickReplies();
+  if (PAGE_EXPORTS.sqrManaging && canManageQuickReplies()) {
+    return `
+      <div class="sqr-editor" id="sqr-editor">
+        ${replies.map((reply) => `
+          <div class="sqr-edit-row">
+            <input class="sqr-edit-title" value="${escapeHtml(reply.title)}" maxlength="60" aria-label="Reply title">
+            <select class="sqr-edit-group" aria-label="Group">
+              ${SUPPORT_QUICK_REPLY_GROUPS.map((group) => `<option value="${escapeHtml(group)}"${group === reply.group ? " selected" : ""}>${escapeHtml(group)}</option>`).join("")}
+            </select>
+            <button class="ghost-btn" type="button" data-sqr-remove aria-label="Remove this reply">Remove</button>
+            <textarea class="sqr-edit-text" rows="3" maxlength="1200" aria-label="Reply text">${escapeHtml(reply.text)}</textarea>
+          </div>
+        `).join("")}
+      </div>
+      <div class="action-row sqr-manage-actions">
+        <button class="secondary-btn" type="button" data-sqr-add>Add reply</button>
+        <button class="primary-btn" type="button" data-sqr-save>Save quick replies</button>
+        <button class="ghost-btn" type="button" data-sqr-restore>Restore defaults</button>
+        <button class="ghost-btn" type="button" data-sqr-cancel>Cancel</button>
+      </div>
+      <p class="sqr-note">Use [Agent Name] where the agent's first name should appear. Edits are stored in this browser until the API carries the shared quick-replies endpoints - see ADMIN-API-REQUIREMENTS.md.</p>
+    `;
+  }
+  const groups = [...new Set(replies.map((reply) => reply.group))];
+  return `
+    ${groups.map((group) => `
+      <div class="sqr-group">
+        <span class="sqr-group-title">${escapeHtml(group)}</span>
+        <div class="sqr-grid">
+          ${replies.map((reply, index) => reply.group === group ? `
+            <button type="button" class="sqr-item" data-support-quick-reply="${index}" title="Insert into the reply box">
+              <strong>${escapeHtml(reply.title)}</strong>
+              <small>${escapeHtml(reply.text.replace(/\n/g, " ").slice(0, 84))}${reply.text.length > 84 ? "…" : ""}</small>
+            </button>
+          ` : "").join("")}
+        </div>
+      </div>
+    `).join("")}
+    <p class="sqr-note">Inserting fills the reply box - nothing is sent until you press Send reply, so you can adjust the wording first.${canManageQuickReplies() ? ` <button class="link-btn" type="button" data-sqr-manage>Manage quick replies</button>` : ""}</p>
+  `;
+}
+function supportQuickReplyPanel() {
+  return `
+    <details class="support-quick-replies" ${PAGE_EXPORTS.sqrManaging ? "open" : ""}>
+      <summary>Quick replies <span class="segmented-count">${getSupportQuickReplies().length}</span></summary>
+      <div class="sqr-body" id="sqr-body">${supportQuickReplyBody()}</div>
+    </details>
+  `;
+}
+function repaintQuickReplyBody() {
+  const body = document.getElementById("sqr-body");
+  if (body) body.innerHTML = supportQuickReplyBody();
+  const count = document.querySelector(".support-quick-replies summary .segmented-count");
+  if (count) count.textContent = String(getSupportQuickReplies().length);
+}
+function supportMessageTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+function renderSupportThread(messages = []) {
+  if (!messages.length) return `<div class="compact-empty">No messages in this conversation yet.</div>`;
+  return `
+    <ol class="support-thread">
+      ${messages.map((row) => {
+        const sender = String(row.senderType || row.sender_type || "SYSTEM").toUpperCase();
+        const who = row.senderName || row.sender_name || SUPPORT_SENDER_LABELS[sender] || "TitoPay";
+        const when = supportMessageTime(row.createdAt || row.created_at);
+        return `
+          <li class="support-msg" data-sender="${escapeHtml(sender.toLowerCase())}">
+            <p class="support-msg-meta"><strong>${escapeHtml(who)}</strong>${when ? `<span>${escapeHtml(when)}</span>` : ""}</p>
+            <p class="support-msg-body">${escapeHtml(row.body || row.message || "")}</p>
+          </li>
+        `;
+      }).join("")}
+    </ol>
+  `;
+}
+/* The conversation workspace renders below the queue tables, so an agent who
+   takes over or opens a chat would otherwise be left looking at the queue with
+   the workspace off-screen. */
+/* The draft reply is preserved across the re-renders that incoming support
+   events trigger, so another agent's activity cannot wipe a half-typed reply. */
+function captureSupportWorkspace() {
+  const thread = document.querySelector(".support-thread");
+  // A deliberate action (opening a chat, taking it over, sending a reply) asks
+  // for the newest message and must not be overridden by wherever the agent
+  // happened to be scrolled.
+  if (thread && !PAGE_EXPORTS.supportThreadForceBottom) {
+    // Standard chat behaviour otherwise: follow new messages only while the
+    // reader is already at the bottom. Scrolling up to read earlier messages
+    // must not be undone by the next incoming message or the ten-second poll.
+    const distanceFromBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+    PAGE_EXPORTS.supportThreadPinned = distanceFromBottom <= 40;
+    PAGE_EXPORTS.supportThreadScroll = thread.scrollTop;
+  }
+  const composer = document.getElementById("support-agent-message");
+  if (!composer) return;
+  PAGE_EXPORTS.supportDraft = composer.value;
+  PAGE_EXPORTS.supportDraftCaret = composer.selectionStart;
+  PAGE_EXPORTS.supportDraftFocused = document.activeElement === composer;
+}
+function monitorAge(seconds) {
+  const value = Math.max(0, Number(seconds || 0));
+  if (value < 60) return `${value}s`;
+  if (value < 3600) return `${Math.floor(value / 60)}m`;
+  if (value < 86400) return `${Math.floor(value / 3600)}h`;
+  return `${Math.floor(value / 86400)}d`;
+}
+function monitorDate(value) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" });
+}
+function maskMonitorIp(value = "") {
+  const text = String(value);
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(text)) return text.replace(/\.\d+$/, ".•");
+  return text.length > 12 ? `${text.slice(0, 12)}…` : text || "-";
+}
+async function renderChatMonitor() {
+  const result = await apiFetch("/admin/chat-monitor/overview");
+  const metrics = result.metrics || {};
+  const onlineIds = new Set((result.onlineUsers || []).map((item) => String(item.userId)));
+  PAGE_EXPORTS["chat-monitor"] = (result.conversations || []).map((row) => ({
+    id: row.id,
+    type: row.thread_type,
+    status: row.status,
+    participant_a: row.participant_a?.username || row.participant_a?.name,
+    participant_b: row.participant_b?.username || row.participant_b?.name,
+    messages: row.message_count,
+    pending_delivery: row.pending_delivery_count,
+    failed: row.failed_count,
+    last_message_status: row.last_message_status,
+    last_message_at: row.last_message_at
+  }));
+  const participant = (user = {}) => `
+    <strong>${escapeHtml(user.name || user.username || "TitoPay user")}</strong><br>
+    <small>${escapeHtml(user.username ? `@${user.username}` : user.accountType || "")}</small>
+    ${onlineIds.has(String(user.id)) ? `<span class="monitor-online-label">Online</span>` : ""}
+  `;
+  const content = document.getElementById("page-content");
+  if (!content) return;
+  content.innerHTML = `
+    <section class="monitor-toolbar">
+      <div>
+        <span class="monitor-live-dot" aria-hidden="true"></span>
+        <strong>Live operational view</strong>
+        <small>Updated ${escapeHtml(monitorDate(result.generatedAt))} · refreshes every 10 seconds</small>
+      </div>
+      <button class="secondary-btn" type="button" data-chat-monitor-refresh>Refresh now</button>
+    </section>
+    ${renderMetrics([
+      ["Active conversations", metrics.activeConversations || 0],
+      ["Active in 15 min", metrics.activeRecently || 0],
+      ["Online users", metrics.onlineUsers || 0],
+      ["Socket connections", metrics.activeConnections || 0],
+      ["Failed deliveries", metrics.deliveryFailures || 0],
+      ["Stale deliveries", metrics.staleDeliveries || 0],
+      ["WebSocket failures (24h)", metrics.socketFailures24h || 0],
+      ["Queued notifications", metrics.queuedNotifications || 0]
+    ])}
+    <section class="monitor-health-note">
+      <strong>Privacy-safe monitoring</strong>
+      <p>This view shows delivery metadata and account identity only. Message bodies are not loaded or displayed.</p>
+    </section>
+    ${tableCard("Active Conversations", renderRows(result.conversations || [], [
+      { label: "Conversation", render: (row) => `<strong>${escapeHtml(row.thread_type || "direct")}</strong><br><small>${escapeHtml(compactId(row.id))}</small>` },
+      { label: "Participant A", render: (row) => participant(row.participant_a) },
+      { label: "Participant B", render: (row) => participant(row.participant_b) },
+      { label: "Messages", render: (row) => escapeHtml(row.message_count || 0) },
+      { label: "Delivery", render: (row) => `<span class="chip ${chipClass(row.last_message_status || "pending")}">${escapeHtml(row.last_message_status || "No messages")}</span><br><small>${escapeHtml(row.pending_delivery_count || 0)} pending · ${escapeHtml(row.failed_count || 0)} failed</small>` },
+      { label: "Last activity", render: (row) => escapeHtml(monitorDate(row.last_message_at || row.updated_at)) }
+    ]), "Operational metadata only; message content remains private.", `${(result.conversations || []).length} shown`)}
+    <section class="panel-grid monitor-grid">
+      ${tableCard("Online Users", renderRows(result.onlineUsers || [], [
+        { label: "User", render: (row) => `<strong>${escapeHtml(row.name)}</strong><br><small>${escapeHtml(row.username ? `@${row.username}` : compactId(row.userId))}</small>` },
+        { label: "Account", render: (row) => `<span class="chip blue">${escapeHtml(row.accountType || "personal")}</span>` },
+        { label: "Verification", render: (row) => `<span class="chip ${chipClass(row.verificationStatus)}">${escapeHtml(row.verificationStatus || "unknown")}</span>` },
+        { label: "Connections", key: "connections" },
+        { label: "Connected", render: (row) => escapeHtml(monitorDate(row.connectedAt)) }
+      ]), "Presence reflects connections on the active TitoPay API process.")}
+      ${tableCard("Notification Queue", renderRows(result.queueStatus || [], [
+        { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status)}</span>` },
+        { label: "Count", key: "count" },
+        { label: "Oldest", render: (row) => escapeHtml(monitorDate(row.oldest_created_at)) },
+        { label: "Latest update", render: (row) => escapeHtml(monitorDate(row.latest_updated_at)) }
+      ]), "Sent or queued records indicate recipients that have not yet synchronized.")}
+    </section>
+    ${tableCard("Delivery Failures & Timeouts", renderRows(result.deliveryFailures || [], [
+      { label: "Message", render: (row) => `<strong>${escapeHtml(row.failure_type === "failed" ? "Failed" : "Delivery timeout")}</strong><br><small>${escapeHtml(compactId(row.id))}</small>` },
+      { label: "Conversation", render: (row) => escapeHtml(compactId(row.thread_id)) },
+      { label: "Sender", render: (row) => `${escapeHtml(row.sender_name || "-")}<br><small>${escapeHtml(row.sender_username ? `@${row.sender_username}` : "")}</small>` },
+      { label: "Recipient", render: (row) => `${escapeHtml(row.recipient_name || "-")}<br><small>${escapeHtml(row.recipient_username ? `@${row.recipient_username}` : "")}</small>` },
+      { label: "Age", render: (row) => escapeHtml(monitorAge(row.age_seconds)) },
+      { label: "Status", render: (row) => `<span class="chip red">${escapeHtml(row.status)}</span>` }
+    ]), "A sent message older than 60 seconds is flagged for investigation; content is never returned.")}
+    ${tableCard("Failed WebSocket Connections — Last 24 Hours", renderRows(result.socketFailures || [], [
+      { label: "Time", render: (row) => escapeHtml(monitorDate(row.created_at)) },
+      { label: "Failure", render: (row) => `<strong>${escapeHtml(String(row.reason || "connection_failed").replaceAll("_", " "))}</strong><br><small>${escapeHtml(row.event_type)}</small>` },
+      { label: "IP", render: (row) => escapeHtml(maskMonitorIp(row.ip_address)) },
+      { label: "Client", render: (row) => `<small class="monitor-client">${escapeHtml(row.user_agent || "Unknown client")}</small>` }
+    ]), "Authentication and processing failure categories are logged server-side without JWTs or stack traces.")}
+  `;
+  clearInterval(chatMonitorRefreshTimer);
+  chatMonitorRefreshTimer = setInterval(() => {
+    if (document.querySelector('.admin-shell[data-page="chat-monitor"]')) {
+      renderChatMonitor().catch(() => null);
+    }
+  }, 10000);
 }
 
-// Every way a connection test can end badly, so a count or a "last failed"
-// timestamp never misses one just because the provider named its failure.
-const INTEGRATION_FAILURE_STATUSES = ["failed", "authentication_failed", "account_validation_failed", "connection_failed"];
+/* ==========================================================================
+   11. INTEGRATION CENTRE
+   ========================================================================== */
 
+// Provider configuration and connection tests. Rendered entirely from the field list the API publishes, so a provider's form changes with no code change here.
+
+function providerDisplayName(key = "") {
+  return {
+    peach_payments: "Peach Payments",
+    pos_provider: "Speedpoint / POS Provider",
+    docfox: "DocFox",
+    ott: "OTT",
+    flash: "Flash",
+    smtp: "Google Workspace SMTP",
+    sms: "SMS Provider",
+  }[key] || key.replaceAll("_", " ");
+}
+function providerSlug(key = "") {
+  return {
+    peach_payments: "peach-payments",
+    pos_provider: "pos-provider",
+    docfox: "docfox",
+    flash: "flash",
+    ott: "ott",
+    smtp: "email-smtp",
+    sms: "sms-provider",
+  }[key] || String(key).replaceAll("_", "-");
+}
+function providerKeyFromPath() {
+  const path = location.pathname.toLowerCase();
+  const slug = path.split("/").filter(Boolean).at(-1);
+  const map = {
+    "peach-payments": "peach_payments",
+    "pos-provider": "pos_provider",
+    docfox: "docfox",
+    flash: "flash",
+    ott: "ott",
+    "email-smtp": "smtp",
+    "sms-provider": "sms",
+  };
+  return map[slug] || slug?.replaceAll("-", "_") || "";
+}
 function isIntegrationFailureStatus(status = "") {
   return INTEGRATION_FAILURE_STATUSES.includes(String(status || "").toLowerCase());
 }
-
 function integrationStatusClass(status = "") {
   const value = String(status || "").toLowerCase();
   if (value === "connected" || value === "ready") return "green";
@@ -3284,13 +3392,26 @@ function integrationStatusClass(status = "") {
   if (["down", "error", "unavailable", "offline", "unreachable"].includes(value)) return "red";
   return "blue";
 }
-
+function integrationStatusLabel(status = "") {
+  const value = String(status || "").toLowerCase();
+  if (value === "connected") return "Connected";
+  if (value === "ready") return "Receiver Ready";
+  if (value === "failed") return "Failed";
+  if (value === "not_configured") return "Not Configured";
+  if (value === "disabled") return "Disabled";
+  // A failing connection test says which step failed, so the operator knows
+  // whether to check the credential, the account number or the network.
+  if (value === "testing") return "Testing";
+  if (value === "authentication_failed") return "Authentication Failed";
+  if (value === "account_validation_failed") return "Account Validation Failed";
+  if (value === "connection_failed") return "Connection Failed";
+  return "Not Tested";
+}
 function integrationFieldValue(provider, fieldName) {
   if (fieldName === "environment") return provider.environment || provider.mode || "sandbox";
   if (fieldName === "enabled") return provider.enabled !== false;
   return provider[fieldName] || "";
 }
-
 function renderIntegrationField(provider, field, isSuperAdmin) {
   const disabled = isSuperAdmin && !field.readOnly ? "" : "disabled";
   const value = integrationFieldValue(provider, field.name);
@@ -3333,7 +3454,6 @@ function renderIntegrationField(provider, field, isSuperAdmin) {
     </div>
   `;
 }
-
 // A blank Base URL falls back to the provider's documented endpoint, so showing
 // that endpoint as the placeholder tells the operator what leaving it blank
 // will actually do. Never a value — the field itself stays empty.
@@ -3347,7 +3467,6 @@ function integrationFieldPlaceholder(provider, field) {
   if (field.name === "accountNumber") return "Flash account number";
   return "";
 }
-
 function renderIntegrationHealthDashboard(providers) {
   const connected = providers.filter((provider) => ["connected", "ready"].includes(provider.health?.status)).length;
   const failed = providers.filter((provider) => isIntegrationFailureStatus(provider.health?.status)).length;
@@ -3369,7 +3488,6 @@ function renderIntegrationHealthDashboard(providers) {
     ], (row) => `<button data-integration-test="${escapeHtml(row.key)}">Test</button>`), "Provider calls are performed by TitoPay API only. The Admin Portal never calls third-party providers directly.", "API controlled")}
   `;
 }
-
 async function renderIntegrations(me = {}) {
   const [configResult, logsResult, webhooksResult, routingResult] = await Promise.all([
     apiFetch("/admin/integrations/config"),
@@ -3524,14 +3642,6 @@ async function renderIntegrations(me = {}) {
     }
   });
 }
-
-// Peach Payments is one provider with two independent capabilities:
-// Collection/Top-up (money in, Checkout V2) and Payout/Withdrawal (money out,
-// Payouts API). They have separate credentials, separate stored configuration
-// and separate connection tests, so their statuses are never derived from each
-// other. Any provider the API marks with a `peachGroup` is rendered this way.
-const PROVIDER_COMPANIONS = { peach_payments: "peach_payouts" };
-
 // A capability that has never been tested and has nothing configured reads as
 // "Not Configured", not "Not Tested" — the operator has not failed a test, they
 // have not supplied an endpoint or credentials yet.
@@ -3541,23 +3651,6 @@ function capabilityStatus(provider = {}) {
   if (status && status !== "not_tested") return status;
   return provider.configured ? "not_tested" : "not_configured";
 }
-
-function integrationStatusLabel(status = "") {
-  const value = String(status || "").toLowerCase();
-  if (value === "connected") return "Connected";
-  if (value === "ready") return "Receiver Ready";
-  if (value === "failed") return "Failed";
-  if (value === "not_configured") return "Not Configured";
-  if (value === "disabled") return "Disabled";
-  // A failing connection test says which step failed, so the operator knows
-  // whether to check the credential, the account number or the network.
-  if (value === "testing") return "Testing";
-  if (value === "authentication_failed") return "Authentication Failed";
-  if (value === "account_validation_failed") return "Account Validation Failed";
-  if (value === "connection_failed") return "Connection Failed";
-  return "Not Tested";
-}
-
 // The parent Peach card never claims Connected because one capability works.
 function combinedCapabilityStatus(capabilities = []) {
   const present = capabilities.filter(Boolean);
@@ -3568,7 +3661,6 @@ function combinedCapabilityStatus(capabilities = []) {
   if (statuses.some((value) => isIntegrationFailureStatus(value))) return "failed";
   return "not_configured";
 }
-
 function capabilityStatusStrip(capabilities = []) {
   return `
     <div class="integration-status-strip">
@@ -3580,7 +3672,6 @@ function capabilityStatusStrip(capabilities = []) {
     </div>
   `;
 }
-
 // Identical markup for every capability, so a second section matches the first
 // exactly and nothing about the design changes.
 function integrationCapabilityCards(provider, providerKey, isSuperAdmin, heading) {
@@ -3610,7 +3701,6 @@ function integrationCapabilityCards(provider, providerKey, isSuperAdmin, heading
     `)}
   `;
 }
-
 function bindIntegrationForms(me) {
   // Every capability form on the page gets its own handler and PUTs to its own
   // provider key, so saving one capability cannot overwrite the other's stored
@@ -3653,7 +3743,6 @@ function bindIntegrationForms(me) {
     }
   });
 }
-
 async function renderIntegrationProvider(me = {}) {
   const providerKey = providerKeyFromPath();
   const companionKey = PROVIDER_COMPANIONS[providerKey] || "";
@@ -3706,6 +3795,12 @@ async function renderIntegrationProvider(me = {}) {
   bindIntegrationForms(me);
 }
 
+/* ==========================================================================
+   12. PLATFORM ADMINISTRATION
+   ========================================================================== */
+
+// Settings, RBAC, staff, features, documents, pricing and the engineering tools.
+
 async function renderFeatureManagement(me = {}) {
   const result = await apiFetch("/admin/features");
   const flags = result.flags || [];
@@ -3749,7 +3844,6 @@ async function renderFeatureManagement(me = {}) {
     }
   });
 }
-
 async function renderCompanyDocuments() {
   const result = await apiFetch("/admin/company-documents");
   const categories = result.categories || [];
@@ -3829,7 +3923,6 @@ async function renderCompanyDocuments() {
     }
   });
 }
-
 async function renderSettings() {
   const [maintenanceState] = await Promise.all([
     apiFetch("/admin/maintenance").catch(() => ({ maintenance: {} }))
@@ -3892,7 +3985,6 @@ async function renderSettings() {
     }
   });
 }
-
 /* RBAC editor. Reading the matrix stays available to anyone with the
    engineering permission; editing is offered only when the API says this
    session may manage roles (owner, root, super_admin or developer). The API
@@ -3999,7 +4091,6 @@ async function renderRbacPermissions() {
   document.getElementById("rbac-edit-form")?.addEventListener("change", syncRbacFullAccess);
   document.getElementById("rbac-create-form")?.addEventListener("change", syncRbacFullAccess);
 }
-
 /* Granting "*" makes the individual permissions meaningless, so they are
    disabled rather than left looking selectable. */
 function syncRbacFullAccess(event) {
@@ -4009,12 +4100,10 @@ function syncRbacFullAccess(event) {
     box.disabled = Boolean(full);
   });
 }
-
 function rbacFormPermissions(form) {
   if (form.querySelector('[name="fullAccess"]')?.checked) return ["*"];
   return Array.from(form.querySelectorAll('[name="permissions"]:checked')).map((box) => box.value);
 }
-
 async function renderStaffManagement() {
   const result = await apiFetch("/admin/staff");
   const rows = result.items || [];
@@ -4071,7 +4160,6 @@ async function renderStaffManagement() {
     ], () => ""), "This page reads and creates real admin_users records only. Temporary passwords are never displayed again.")}
   `;
 }
-
 async function renderEngineeringTools() {
   const [health, integrations] = await Promise.all([
     apiFetch("/admin/module-health"),
@@ -4098,7 +4186,6 @@ async function renderEngineeringTools() {
     ], () => ""), "Secrets remain masked and are never exposed here.")}
   `;
 }
-
 async function renderDevelopmentTools() {
   const health = await apiFetch("/admin/module-health");
   const modules = health.modules || {};
@@ -4116,7 +4203,6 @@ async function renderDevelopmentTools() {
     ], () => ""))}
   `;
 }
-
 async function renderDatabaseHealth() {
   const health = await apiFetch("/admin/module-health");
   const tables = health.tables || [];
@@ -4134,64 +4220,265 @@ async function renderDatabaseHealth() {
     ], () => ""))}
   `;
 }
-
-
-async function renderQrManagement() {
-  const content = document.getElementById("page-content");
-  PAGE_EXPORTS["qr-management"] = [];
-  content.innerHTML = `
-    <section class="panel-grid">
-      <section class="panel">
-        <h3>QR Control Centre</h3>
-        <p>Create branded TitoPay QR assets for website, app downloads, onboarding, campaigns, events and referrals. QR generation is routed through the TitoPay API.</p>
-        <div class="ops-list ops-list-two">
-          <span><strong>Live</strong>QR generation</span>
-          <span><strong>Brand</strong>TitoPay output</span>
-          <span><strong>Ready</strong>PNG / SVG / PDF Export</span>
-          <span><strong>Print</strong>Camera-readable assets</span>
+function renderPricingEditor(row = {}) {
+  return `
+    <section class="pricing-editor-card" id="pricing-editor">
+      <div>
+        <p class="eyebrow">Pricing Rule</p>
+        <h3>Edit ${escapeHtml(row.service_name || "service pricing")}</h3>
+        <p>Changes are saved to the TitoPay API and reflected wherever this pricing rule is consumed.</p>
+      </div>
+      <form id="pricing-edit-form" class="form-grid" data-pricing-id="${escapeHtml(row.id)}">
+        <div class="field">
+          <label>Service name</label>
+          <input name="service_name" value="${escapeHtml(row.service_name || "")}" required>
         </div>
-      </section>
-      <section class="panel">
-        <h3>Create QR Asset</h3>
-        <form id="qr-asset-form" class="form-grid">
-          <div class="field"><label>QR Type</label><select name="type" required><option value="website">Website QR</option><option value="app_download">App QR</option><option value="merchant_qr">Merchant QR</option><option value="business_qr">Business QR</option><option value="referral_qr">Referral QR</option><option value="campaign">Campaign QR</option><option value="invoice_qr">Invoice QR</option><option value="product_qr">Product QR</option><option value="support_qr">Support QR</option><option value="merchant_onboarding">Merchant Onboarding</option><option value="business_registration">Business Registration</option><option value="personal_registration">Personal Registration</option><option value="marketing">Marketing QR Code</option><option value="event">Event QR Code</option><option value="dynamic_url">Dynamic URL</option></select></div>
-          <div class="field"><label>Asset Label</label><input name="label" placeholder="Public launch campaign" required></div>
-          <div class="field"><label>Destination URL</label><input name="destinationUrl" placeholder="https://titopay.co.za" required></div>
-          <button class="primary-btn" type="submit">Create QR Asset</button>
-        </form>
-      </section>
+        <div class="field">
+          <label>Flat fee</label>
+          <input name="flat_fee" type="number" min="0" step="0.01" value="${escapeHtml(row.flat_fee ?? (row.fee_type === "FIXED" ? row.fee_value : 0))}" required>
+        </div>
+        <div class="field">
+          <label>Percentage fee</label>
+          <input name="percentage_fee" type="number" min="0" step="0.0001" value="${escapeHtml(row.percentage_fee ?? (row.fee_type === "PERCENTAGE" ? row.fee_value : 0))}" required>
+        </div>
+        <div class="field">
+          <label>Minimum fee</label>
+          <input name="minimum_fee" type="number" min="0" step="0.01" value="${escapeHtml(row.minimum_fee ?? 0)}">
+        </div>
+        <div class="field">
+          <label>Maximum fee</label>
+          <input name="maximum_fee" type="number" min="0" step="0.01" value="${escapeHtml(row.maximum_fee ?? 0)}">
+        </div>
+        <div class="field">
+          <label>VAT %</label>
+          <input name="vat_percentage" type="number" min="0" step="0.0001" value="${escapeHtml(row.vat_percentage ?? 0)}">
+        </div>
+        <div class="field">
+          <label>Effective date</label>
+          <input name="effective_date" type="date" value="${escapeHtml(String(row.effective_date || new Date().toISOString().slice(0, 10)).slice(0, 10))}">
+        </div>
+        <label class="toggle-row">
+          <input name="enabled" type="checkbox" ${row.enabled !== false && row.active !== false ? "checked" : ""}>
+          <span>Enabled pricing rule</span>
+        </label>
+        <div class="action-row">
+          <button class="primary-btn" type="submit">Save Pricing Rule</button>
+          <button class="secondary-btn" type="button" data-pricing-cancel>Cancel</button>
+        </div>
+      </form>
     </section>
-    <section id="qr-preview-host"></section>
   `;
-  document.getElementById("qr-asset-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    try {
-      const result = await apiFetch("/admin/qr-assets", {
-        method: "POST",
-        body: JSON.stringify({
-          type: formData.get("type"),
-          label: formData.get("label"),
-          destinationUrl: formData.get("destinationUrl"),
-        }),
-      });
-      const asset = result.asset;
-      PAGE_EXPORTS["qr-management"] = [asset];
-      document.getElementById("qr-preview-host").innerHTML = renderQrPreview(asset);
-      showToast("QR asset generated");
-    } catch (error) {
-      showToast(adminErrorMessage(error.message));
-    }
-  });
+}
+async function renderPricing() {
+  const result = await apiFetch("/pricing");
+  const rows = (result.items || []).map((row) => ({ ...row, category: pricingCategory(row) }));
+  const categories = Array.from(new Set(rows.map((row) => row.category)));
+  PAGE_EXPORTS.pricing = rows;
+  document.getElementById("page-content").innerHTML = `
+    ${renderMetrics([
+      ["Pricing Rules", rows.length],
+      ["Enabled Rules", rows.filter((row) => row.enabled !== false && row.active !== false).length],
+      ["Categories", categories.length],
+      ["Currency", "ZAR"],
+    ])}
+    <section class="panel">
+      <h3>How to update prices and fees</h3>
+      <p>Click <strong>Edit rule</strong> on any service below, enter the flat fee, percentage fee, minimum fee, maximum fee, VAT-exclusive rate and effective date, then save. This Pricing Engine is the source of truth used by the TitoPay API.</p>
+      <div class="ops-list ops-list-two">
+        <span><strong>Flat Fee</strong>Fixed rand amount such as R0.50</span>
+        <span><strong>Percentage</strong>Percentage fee such as 1.5%</span>
+        <span><strong>Min / Max</strong>Controls fee floor and cap</span>
+        <span><strong>Enabled</strong>Turns service pricing on or off</span>
+      </div>
+    </section>
+    <section class="panel-grid pricing-summary-grid">
+      ${categories.map((category) => {
+        const categoryRows = rows.filter((row) => row.category === category);
+        return `<article class="panel">
+          <h3>${escapeHtml(category)}</h3>
+          <p>${categoryRows.length} pricing rules configured for ${escapeHtml(category.toLowerCase())} services.</p>
+          <div class="ops-list ops-list-two">
+            <span><strong>${categoryRows.filter((row) => row.enabled !== false && row.active !== false).length}</strong>Enabled</span>
+            <span><strong>${categoryRows.filter((row) => Number(row.percentage_fee || 0) > 0 || row.fee_type === "PERCENTAGE").length}</strong>Percentage fees</span>
+          </div>
+        </article>`;
+      }).join("")}
+    </section>
+    <div id="pricing-editor-host"></div>
+    ${tableCard("Pricing Management", renderRows(rows, [
+      { label: "Category", render: (row) => `<span class="chip blue">${escapeHtml(row.category)}</span>` },
+      { label: "Service", render: (row) => `<strong>${escapeHtml(row.service_name)}</strong><br><small>${escapeHtml(row.service_code)}</small>` },
+      { label: "Flat Fee", render: (row) => money(row.flat_fee ?? (row.fee_type === "FIXED" ? row.fee_value : 0)) },
+      { label: "Percentage", render: (row) => `${escapeHtml(row.percentage_fee ?? (row.fee_type === "PERCENTAGE" ? row.fee_value : 0))}%` },
+      { label: "Limits", render: (row) => `${money(row.minimum_fee)} min<br><small>${money(row.maximum_fee)} max</small>` },
+      { label: "VAT / Effective", render: (row) => `${escapeHtml(row.vat_percentage ?? 0)}%<br><small>${escapeHtml(String(row.effective_date || "-").slice(0, 10))}</small>` },
+      { label: "Status", render: (row) => `<span class="chip ${row.enabled !== false && row.active !== false ? "green" : "red"}">${row.enabled !== false && row.active !== false ? "Enabled" : "Disabled"}</span>` },
+    ], (row) => `<button data-pricing-edit="${row.id}">Edit rule</button>`), "Pricing updates are written through the TitoPay API and reflected wherever pricing rules are consumed.", "API controlled")}
+  `;
 }
 
-/* --- Marketing toolkit (v61) --------------------------------------------
-   Console-side only: reusable templates, an SMS segment meter, UTM links,
-   a campaign calendar and a cross-channel month summary. Nothing here
-   changes any API call the page already makes. */
+/* ==========================================================================
+   13. TICKETING AND ENTERPRISE DISTRIBUTION
+   ========================================================================== */
 
-const MARKETING_TEMPLATES_KEY = "titopay_admin_marketing_templates_v1";
-const MARKETING_TEMPLATE_LIMIT = 40;
+function renderTicketingEventActions(row = {}) {
+  const id = escapeHtml(row.id || "");
+  const actions = [];
+  if (["submitted", "additional_information_required"].includes(row.status)) actions.push(["under_review", "Review"]);
+  if (["submitted", "under_review", "additional_information_required"].includes(row.status)) {
+    actions.push(["approve", "Approve"], ["request_information", "Request Info"], ["reject", "Reject"]);
+  }
+  if (row.status === "approved") actions.push(["suspend", "Suspend"]);
+  if (row.status === "suspended") actions.push(["reinstate", "Reinstate"]);
+  actions.push(["report", "Report"]);
+  if (row.status === "approved") actions.push(["settlement", "Settle"]);
+  return actions.map(([action, label]) => `<button data-ticketing-action="${action}" data-ticketing-id="${id}">${escapeHtml(label)}</button>`).join(" ");
+}
+async function renderTicketing() {
+  const [result, refundResult] = await Promise.all([
+    apiFetch("/admin/ticketing/events"),
+    apiFetch("/admin/ticketing/refunds").catch(() => ({ items: [] })),
+  ]);
+  const rows = result.items || [];
+  const refunds = refundResult.items || [];
+  PAGE_EXPORTS.ticketing = rows;
+  PAGE_EXPORTS.ticketingRefunds = refunds;
+  const counts = rows.reduce((acc, item) => {
+    acc[item.status] = (acc[item.status] || 0) + 1;
+    return acc;
+  }, {});
+  document.getElementById("page-content").innerHTML = `
+    ${renderMetrics([
+      ["Events", rows.length],
+      ["Pending Review", (counts.submitted || 0) + (counts.under_review || 0)],
+      ["Approved", counts.approved || 0],
+      ["Refunds", refunds.filter((item) => item.status === "requested").length],
+    ])}
+    <div id="ticketing-detail-host"></div>
+    ${tableCard("Event Approval Queue", renderRows(rows, [
+      { label: "Event", render: (row) => `<strong>${escapeHtml(row.eventName || "-")}</strong><br><small>${escapeHtml(row.businessName || row.businessOwnerName || "Verified business")}</small>` },
+      { label: "Date", render: (row) => escapeHtml(String(row.eventDate || "-").slice(0, 10)) },
+      { label: "Status", render: (row) => `<span class="chip ${row.status === "approved" ? "green" : row.status === "rejected" || row.status === "suspended" ? "red" : "blue"}">${escapeHtml(String(row.status || "draft").replaceAll("_", " "))}</span>` },
+      { label: "Verification", render: (row) => `${escapeHtml(row.ownerFicaStatus || "-")}<br><small>${escapeHtml(row.merchantVerificationStatus || "-")}</small>` },
+    ], renderTicketingEventActions), "Only verified TitoPay Business accounts can submit events. Approvals and settlement actions are audit logged.")}
+    ${tableCard("Refund Queue", renderRows(refunds, [
+      { label: "Order", render: (row) => `<strong>${escapeHtml(row.order_reference || "-")}</strong><br><small>${escapeHtml(row.event_name || "-")}</small>` },
+      { label: "Requester", render: (row) => `${escapeHtml(row.requester_name || "-")}<br><small>${escapeHtml(row.requester_phone || "-")}</small>` },
+      { label: "Amount", render: (row) => `R${Number(row.amount || 0).toFixed(2)}` },
+      { label: "Status", render: (row) => `<span class="chip ${row.status === "approved" ? "green" : row.status === "rejected" ? "red" : "blue"}">${escapeHtml(row.status || "-")}</span>` },
+    ], (row) => row.status === "requested" ? `
+      <button data-ticket-refund-action="approve" data-ticket-refund-id="${escapeHtml(row.id)}">Approve</button>
+      <button data-ticket-refund-action="reject" data-ticket-refund-id="${escapeHtml(row.id)}">Reject</button>
+    ` : ""), "Approved refunds credit the buyer wallet and update ticket inventory.")}
+  `;
+}
+function renderEnterpriseApplicationActions(row = {}) {
+  const id = escapeHtml(row.id || "");
+  const status = String(row.status || "");
+  const actions = [];
+  if (["submitted", "under_review"].includes(status)) actions.push(["approve", "Approve"], ["reject", "Reject"]);
+  if (status === "submitted") actions.push(["review", "Mark review"]);
+  if (status === "approved") actions.push(["suspend", "Suspend"], ["revoke", "Revoke"]);
+  return actions.map(([action, label]) => `<button data-enterprise-action="${action}" data-enterprise-application-id="${id}">${escapeHtml(label)}</button>`).join(" ");
+}
+async function renderEnterpriseDistribution() {
+  const [overviewResult, applicationsResult, organisationsResult, batchesResult, payoutsResult, auditResult, reportResult] = await Promise.all([
+    apiFetch("/admin/enterprise-distribution/overview"),
+    apiFetch("/admin/enterprise-distribution/applications"),
+    apiFetch("/admin/enterprise-distribution/organisations"),
+    apiFetch("/admin/enterprise-distribution/batches"),
+    apiFetch("/admin/enterprise-distribution/payouts"),
+    apiFetch("/admin/enterprise-distribution/audit-logs"),
+    apiFetch("/admin/enterprise-distribution/report")
+  ]);
+  const overview = overviewResult.overview || {};
+  const applications = applicationsResult.items || [];
+  const organisations = organisationsResult.items || [];
+  const batches = batchesResult.items || [];
+  const payouts = payoutsResult.items || [];
+  const auditLogs = auditResult.items || [];
+  const report = reportResult.report || {};
+  const applicationCounts = (overview.applications || []).reduce((acc, item) => {
+    acc[item.status] = item.count;
+    return acc;
+  }, {});
+  const batchCounts = (overview.batches || []).reduce((acc, item) => {
+    acc[item.status] = item.count;
+    return acc;
+  }, {});
+  PAGE_EXPORTS["enterprise-distribution"] = [
+    ...applications.map((row) => ({ type: "application", ...row })),
+    ...organisations.map((row) => ({ type: "organisation", ...row })),
+    ...batches.map((row) => ({ type: "batch", ...row })),
+    ...payouts.map((row) => ({ type: "payout", ...row })),
+    ...auditLogs.map((row) => ({ type: "audit", ...row }))
+  ];
+  document.getElementById("page-content").innerHTML = `
+    ${renderMetrics([
+      ["Applications", applications.length],
+      ["Pending Approval", (applicationCounts.submitted || 0) + (applicationCounts.under_review || 0)],
+      ["Approved Organisations", organisations.filter((item) => item.status === "active" && item.licence_status === "active").length],
+      ["Draft Batches", (batchCounts.draft_validated || 0) + (batchCounts.draft_validation_failed || 0)],
+    ])}
+    <section class="panel">
+      <h3>Enterprise Distribution Control Layer</h3>
+      <p>Enterprise Bulk Distribution is active for TitoPay wallet recipients. Organisations validate batches, lock funding from their business wallet, and Admin releases approved wallet batches. Bank withdrawals and external payouts must use TitoPay’s existing Withdraw/Payout service.</p>
+      <div class="ops-list ops-list-two">
+        <span><strong>Approval first</strong>Only approved organisations can access the Business module.</span>
+        <span><strong>Funding lock</strong>Businesses must reserve funds before Admin can release a batch.</span>
+        <span><strong>Payout routing</strong>Wallet payouts run here; bank payouts stay in TitoPay Payouts.</span>
+        <span><strong>Audited</strong>Applications, approvals, funding locks and releases write audit records.</span>
+      </div>
+    </section>
+    <section class="panel">
+      <h3>Final Audit Report</h3>
+      <div class="ops-list ops-list-two">
+        <span><strong>Validated total</strong>${money(report.totals?.validated_total || 0)}</span>
+        <span><strong>Locked total</strong>${money(report.totals?.locked_total || 0)}</span>
+        <span><strong>Fees recorded</strong>${money(report.totals?.fee_total || 0)}</span>
+        <span><strong>Audit entries</strong>${escapeHtml(String(report.auditLogs || auditLogs.length || 0))}</span>
+      </div>
+    </section>
+    ${tableCard("Distribution Batches", renderRows(batches, [
+      { label: "Batch", render: (row) => `<strong>${escapeHtml(row.batch_name || "-")}</strong><br><small>${escapeHtml(row.batch_reference || "-")}</small>` },
+      { label: "Organisation", render: (row) => `${escapeHtml(row.organisation_name || "-")}<br><small>${escapeHtml(row.owner_email || row.owner_name || "-")}</small>` },
+      { label: "Rows", render: (row) => `${escapeHtml(String(row.valid_rows || 0))} valid<br><small>${escapeHtml(String(row.invalid_rows || 0))} invalid · ${escapeHtml(String(row.processed_rows || 0))} processed</small>` },
+      { label: "Funding", render: (row) => `${money(row.valid_total || 0)}<br><small>Fees ${money(row.fee_total || 0)} · Locked ${money(row.locked_total || 0)}</small>` },
+      { label: "Status", render: (row) => `<span class="chip ${row.status === "completed" ? "green" : row.status === "failed" || row.status === "partially_failed" ? "red" : "blue"}">${escapeHtml(String(row.status || "-").replaceAll("_", " "))}</span>` },
+    ], (row) => row.status === "funding_locked" ? `<button data-enterprise-batch-release="${escapeHtml(row.id)}">Release</button>` : ""), "Release only after funding, beneficiary and compliance checks pass. Wallet recipients are paid immediately. Bank payout rows must be handled through TitoPay Payouts.")}
+    ${tableCard("Payout Records", renderRows(payouts, [
+      { label: "Reference", render: (row) => `<strong>${escapeHtml(row.payout_reference || "-")}</strong><br><small>${escapeHtml(row.batch_reference || "-")}</small>` },
+      { label: "Organisation", render: (row) => escapeHtml(row.organisation_name || "-") },
+      { label: "Recipient", render: (row) => `${escapeHtml(row.recipient_name || "-")}<br><small>${escapeHtml(row.recipient_phone || "-")}</small>` },
+      { label: "Amount", render: (row) => `${money(row.amount || 0)}<br><small>Fee ${money(row.fee || 0)}</small>` },
+      { label: "Status", render: (row) => `<span class="chip ${row.status === "paid" ? "green" : row.status === "failed" ? "red" : "blue"}">${escapeHtml(String(row.status || "-").replaceAll("_", " "))}</span>` },
+    ], () => ""), "Only TitoPay wallet payout records are processed here.")}
+    ${tableCard("Organisation Applications", renderRows(applications, [
+      { label: "Organisation", render: (row) => `<strong>${escapeHtml(row.organisation_name || row.business_name || "-")}</strong><br><small>${escapeHtml(row.registration_number || "-")}</small>` },
+      { label: "Owner", render: (row) => `${escapeHtml(row.owner_name || "-")}<br><small>${escapeHtml(row.owner_email || row.owner_phone || "-")}</small>` },
+      { label: "Type / Purpose", render: (row) => `${escapeHtml(row.institution_type || "-")}<br><small>${escapeHtml(row.funding_purpose || "-")}</small>` },
+      { label: "Volume", render: (row) => `${money(row.expected_monthly_volume || 0)}<br><small>${escapeHtml(String(row.expected_beneficiaries || 0))} beneficiaries</small>` },
+      { label: "Status", render: (row) => `<span class="chip ${row.status === "approved" ? "green" : row.status === "rejected" || row.status === "revoked" ? "red" : "blue"}">${escapeHtml(String(row.status || "submitted").replaceAll("_", " "))}</span>` },
+    ], renderEnterpriseApplicationActions), "Approve only organisations that passed registration, bank verification, compliance document and risk checks.")}
+    ${tableCard("Approved Organisations", renderRows(organisations, [
+      { label: "Organisation", render: (row) => `<strong>${escapeHtml(row.organisation_name || "-")}</strong><br><small>${escapeHtml(row.organisation_code || "-")}</small>` },
+      { label: "Owner", render: (row) => `${escapeHtml(row.owner_name || "-")}<br><small>${escapeHtml(row.owner_email || row.owner_phone || "-")}</small>` },
+      { label: "Licence", render: (row) => `<span class="chip ${row.licence_status === "active" ? "green" : "red"}">${escapeHtml(row.licence_status || "-")}</span>` },
+      { label: "Risk", render: (row) => `<span class="chip orange">${escapeHtml(row.risk_rating || "medium")}</span>` },
+      { label: "Approved", render: (row) => escapeHtml(String(row.approved_at || "-").slice(0, 10)) },
+    ], () => ""), "These organisations can access the hidden Business Bulk Distribution module.")}
+    ${tableCard("Audit Trail", renderRows(auditLogs.slice(0, 100), [
+      { label: "Action", render: (row) => `<strong>${escapeHtml(String(row.action || "-").replaceAll("_", " "))}</strong><br><small>${escapeHtml(row.organisation_name || "-")}</small>` },
+      { label: "Actor", render: (row) => `${escapeHtml(row.actor_type || "-")}<br><small>${escapeHtml(row.actor_id || "-")}</small>` },
+      { label: "Reason", render: (row) => escapeHtml(row.reason || "-") },
+      { label: "When", render: (row) => escapeHtml(String(row.created_at || "-").slice(0, 19).replace("T", " ")) },
+    ], () => ""), "Every Enterprise Distribution approval, funding lock and release is recorded here.")}
+  `;
+}
+
+/* ==========================================================================
+   14. MARKETING
+   ========================================================================== */
 
 function marketingTemplates() {
   try {
@@ -4201,11 +4488,9 @@ function marketingTemplates() {
     return [];
   }
 }
-
 function saveMarketingTemplates(templates) {
   localStorage.setItem(MARKETING_TEMPLATES_KEY, JSON.stringify({ version: 1, templates: templates.slice(0, MARKETING_TEMPLATE_LIMIT) }));
 }
-
 function marketingTemplateRow(type) {
   return `
     <div class="mkt-template-row" data-mkt-type="${type}">
@@ -4215,7 +4500,6 @@ function marketingTemplateRow(type) {
       <button type="button" class="ghost-btn" data-mkt-delete>Delete</button>
     </div>`;
 }
-
 function wireMarketingTemplateRow(type, formId) {
   const row = document.querySelector(`.mkt-template-row[data-mkt-type="${type}"]`);
   const form = document.getElementById(formId);
@@ -4256,12 +4540,6 @@ function wireMarketingTemplateRow(type, formId) {
     showToast("Template deleted");
   });
 }
-
-/* GSM-7 basic set per 3GPP TS 23.038; the extension table characters cost a
-   second septet. Anything outside forces UCS-2 (70/67 chars per segment). */
-const GSM_EXTENDED_RE = /[\^{}\\\[\]~|€]/g;
-const GSM_BASIC_RE = /^[@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-.\/0-9:;<=>?¡A-ZÄÖÑܧ¿a-zäöñüà]*$/;
-
 function smsSegmentInfo(text) {
   const value = String(text || "");
   const extendedCount = (value.match(GSM_EXTENDED_RE) || []).length;
@@ -4270,7 +4548,6 @@ function smsSegmentInfo(text) {
   const perSegment = gsm ? (units <= 160 ? 160 : 153) : (units <= 70 ? 70 : 67);
   return { encoding: gsm ? "GSM-7" : "Unicode", units, segments: value ? Math.ceil(units / perSegment) : 0 };
 }
-
 function campaignUrlWithUtm(destination, source, medium, campaignName) {
   try {
     const url = new URL(String(destination || "").trim());
@@ -4282,11 +4559,6 @@ function campaignUrlWithUtm(destination, source, medium, campaignName) {
     return null;
   }
 }
-
-function localDayKey(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
 function marketingCalendarEvents(announcements, smsCampaigns, emailCampaigns) {
   const events = [];
   const push = (rows, channel) => (rows || []).forEach((row) => {
@@ -4298,7 +4570,6 @@ function marketingCalendarEvents(announcements, smsCampaigns, emailCampaigns) {
   push(emailCampaigns, "email");
   return events;
 }
-
 function marketingCalendarHtml(events, offset) {
   const anchor = new Date();
   anchor.setDate(1);
@@ -4344,11 +4615,9 @@ function marketingCalendarHtml(events, offset) {
       </div>
     </section>`;
 }
-
 function canApproveMarketingSms(role) {
   return ["owner", "root", "ceo", "coo", "super_admin"].includes(normalizeAdminRole(role));
 }
-
 function smsStatusChip(status = "") {
   const text = String(status || "pending_approval").replaceAll("_", " ");
   if (status === "sent") return `<span class="chip green">${escapeHtml(text)}</span>`;
@@ -4356,7 +4625,6 @@ function smsStatusChip(status = "") {
   if (status === "failed") return `<span class="chip red">${escapeHtml(text)}</span>`;
   return `<span class="chip">${escapeHtml(text)}</span>`;
 }
-
 /* Rejection support for the three marketing approval queues. A rejection
    always carries a reason: it is shown on the row and travels to the API in
    the reject call's body. */
@@ -4370,13 +4638,11 @@ function marketingRejectionReason(label) {
   }
   return trimmed.slice(0, 500);
 }
-
 function marketingRejectionNote(campaign = {}) {
   const reason = campaign.rejectionReason || campaign.rejection_reason || campaign.rejectReason || "";
   const by = campaign.rejectedByRole || campaign.rejected_by_role || "";
   return `<small>${escapeHtml([by ? `Rejected by ${by}` : "Rejected", reason].filter(Boolean).join(": "))}</small>`;
 }
-
 function renderMarketingSmsCampaigns(campaigns = [], canApprove = false) {
   if (!campaigns.length) {
     return `<p class="table-card-note">No SMS campaigns have been submitted yet.</p>`;
@@ -4424,9 +4690,7 @@ function renderMarketingSmsCampaigns(campaigns = [], canApprove = false) {
     </div>
   `;
 }
-
 function renderMarketingEmailCampaigns(campaigns=[],canApprove=false){if(!campaigns.length)return `<p class="table-card-note">No email productions have been submitted yet.</p>`;return `<div class="table-wrap"><table><thead><tr><th>Production</th><th>Subject</th><th>Audience</th><th>Recipients</th><th>Status</th><th>Queued</th><th>Failed</th><th>Approval</th></tr></thead><tbody>${campaigns.map((campaign)=>`<tr><td><strong>${escapeHtml(campaign.title)}</strong><small>${escapeHtml(String(campaign.textBody||"").slice(0,120))}${String(campaign.textBody||"").length>120?"…":""}</small></td><td>${escapeHtml(campaign.subject)}</td><td>${escapeHtml(campaign.audience==="specific"&&campaign.targetLabel?`Specific: ${campaign.targetLabel}`:campaign.audience)}</td><td>${escapeHtml(campaign.estimatedRecipients||0)}</td><td>${smsStatusChip(campaign.status)}</td><td>${escapeHtml(campaign.queuedCount||0)}</td><td>${escapeHtml(campaign.failedCount||0)}</td><td>${campaign.status==="pending_approval"&&canApprove?`<button type="button" class="secondary-btn" data-marketing-email-approve="${escapeHtml(campaign.id)}">Approve & Publish</button> <button type="button" class="secondary-btn reject-btn" data-marketing-email-reject="${escapeHtml(campaign.id)}">Reject</button>`:campaign.status==="rejected"?marketingRejectionNote(campaign):escapeHtml(campaign.approvedByRole?`Approved by ${campaign.approvedByRole}`:"Awaiting CEO/COO")}</td></tr>`).join("")}</tbody></table></div>`;}
-
 function renderInAppAnnouncements(campaigns = [], approvalRole = null) {
   if (!campaigns.length) {
     return `<p class="table-card-note">No in-app announcements have been submitted yet.</p>`;
@@ -4484,7 +4748,6 @@ function renderInAppAnnouncements(campaigns = [], approvalRole = null) {
     </div>
   `;
 }
-
 function renderPwaReviews(reviews = []) {
   if (!reviews.length) {
     return `<p class="table-card-note">No PWA reviews have been submitted yet.</p>`;
@@ -4521,7 +4784,6 @@ function renderPwaReviews(reviews = []) {
     </div>
   `;
 }
-
 async function renderMarketing(me = {}) {
   const content = document.getElementById("page-content");
   const [smsState, announcementState, reviewState, emailState] = await Promise.all([
@@ -4779,47 +5041,21 @@ async function renderMarketing(me = {}) {
   }
 }
 
-function renderQrPreview(asset) {
-  if (!asset) return "";
-  return tableCard("Generated QR Asset", `
-    <div class="qr-preview-card">
-      <img src="${escapeHtml(asset.pngDataUrl)}" alt="${escapeHtml(asset.label)} QR code">
-      <div>
-        <h4>${escapeHtml(asset.label)}</h4>
-        <p>${escapeHtml(asset.destinationUrl)}</p>
-        <dl class="smtp-detail-grid">
-          <div><dt>Type</dt><dd>${escapeHtml(asset.type)}</dd></div>
-          <div><dt>Reference</dt><dd>${escapeHtml(asset.reference)}</dd></div>
-          <div><dt>Created</dt><dd>${escapeHtml(new Date(asset.createdAt).toLocaleString("en-ZA"))}</dd></div>
-          <div><dt>Exports</dt><dd>PNG, SVG, PDF</dd></div>
-        </dl>
-        <div class="action-row">
-          <button class="secondary-btn" type="button" data-qr-download-png="${escapeHtml(asset.reference)}">Download PNG</button>
-          <button class="secondary-btn" type="button" data-qr-download-svg="${escapeHtml(asset.reference)}">Download SVG</button>
-          <button class="secondary-btn" type="button" data-qr-print="${escapeHtml(asset.reference)}">Print / Save PDF</button>
-        </div>
-      </div>
-    </div>
-  `);
-}
+/* ==========================================================================
+   15. EMAIL CENTRE
+   ========================================================================== */
 
 function emailStatusChip(status) {
   const value = String(status || "unknown").toLowerCase();
   const tone = ["delivered", "sent", "enabled"].includes(value) ? "green" : ["failed", "dead_lettered", "cancelled", "disabled"].includes(value) ? "red" : "blue";
   return `<span class="chip ${tone}">${escapeHtml(value.replaceAll("_", " "))}</span>`;
 }
-
-function hasEmailPermission(me, permission) {
-  return hasFullAdminAccess(me) || new Set(me?.permissions || []).has(permission);
-}
-
 function emailChart(title, rows, labelKey, valueKey) {
   const maximum = Math.max(1, ...rows.map((row) => Number(row[valueKey] || 0)));
   return `<section class="table-card"><h3>${escapeHtml(title)}</h3><div class="email-chart">${rows.length ? rows.map((row) => `
     <div class="email-chart-row"><span>${escapeHtml(row[labelKey] || "-")}</span><div><i data-chart-width="${Math.max(2, Math.round(Number(row[valueKey] || 0) / maximum * 100))}"></i></div><strong>${escapeHtml(row[valueKey] || 0)}</strong></div>
   `).join("") : '<div class="empty">No email activity in this period.</div>'}</div></section>`;
 }
-
 /* Bar widths are applied through the CSSOM after render because the console's
    CSP (style-src 'self') forbids inline style attributes. */
 function applyChartBarWidths() {
@@ -4828,16 +5064,10 @@ function applyChartBarWidths() {
     bar.style.width = `${width}%`;
   });
 }
-
 function emailAnalyticsChart(title, rows) {
   const chartRows=(rows||[]).map((row)=>({label:String(row.period||"").slice(0,10),value:Number(row.sent||0)}));
   return emailChart(title,chartRows,"label","value");
 }
-
-function analyticsRate(value, supported) {
-  return supported ? `${Number(value||0).toFixed(2)}%` : "Not available";
-}
-
 async function renderEmailAnalytics() {
   const result=await apiFetch("/admin/email/analytics?days=30");
   const summary=result.summary||{};
@@ -4850,7 +5080,6 @@ async function renderEmailAnalytics() {
     <div class="email-chart-grid">${emailAnalyticsChart("Daily emails sent",result.series?.daily||[])}${emailAnalyticsChart("Weekly emails sent",result.series?.weekly||[])}${emailAnalyticsChart("Monthly emails sent",result.series?.monthly||[])}</div>
     ${tableCard("Delivery detail",renderRows((result.series?.daily||[]).slice(-14).reverse(),[{label:"Period",render:(row)=>formatDate(row.period)},{label:"Sent",key:"sent"},{label:"Delivered",key:"delivered"},{label:"Bounced",key:"bounced"},{label:"Opened",key:"opened"},{label:"Clicked",key:"clicked"},{label:"Spam complaints",key:"spam_complaints"},{label:"Avg delivery",render:(row)=>`${row.average_delivery_seconds||0}s`}]))}`;
 }
-
 /* SMS analytics mirrors the Email Analytics page. It prefers the dedicated
    GET /admin/sms/analytics endpoint (specified as A-P1-6 in
    ADMIN-API-REQUIREMENTS.md) and, until the API carries it, derives every
@@ -4953,13 +5182,11 @@ async function renderSmsAnalytics() {
     ], () => "") : `<div class="empty"><strong>No SMS campaigns yet</strong><small>Campaign delivery figures appear here as soon as the first broadcast is submitted in the Marketing Centre.</small></div>`, "The newest fourteen campaigns. Export CSV in the header carries every campaign.")}
   `;
 }
-
 function emailPagination(total,page,limit,prefix) {
   const pages=Math.max(1,Math.ceil(Number(total||0)/Number(limit||25)));
   if(pages<=1)return "";
   return `<div class="action-row"><button class="secondary-btn" type="button" data-${prefix}-page="${page-1}" ${page<=1?"disabled":""}>Previous</button><span>Page ${page} of ${pages}</span><button class="secondary-btn" type="button" data-${prefix}-page="${page+1}" ${page>=pages?"disabled":""}>Next</button></div>`;
 }
-
 async function renderEmailDashboard() {
   const result = await apiFetch("/admin/email/dashboard");
   const metrics = result.metrics || {};
@@ -4969,14 +5196,12 @@ async function renderEmailDashboard() {
     <div class="email-chart-grid">${emailChart("Emails sent per day",result.charts?.perDay||[],"day","sent")}${emailChart("Successful versus failed",result.charts?.deliveryOutcomes||[],"outcome","count")}${emailChart("Emails by template",result.charts?.byTemplate||[],"template_key","count")}${emailChart("Queue activity",result.charts?.queueActivity||[],"status","count")}</div>
     ${tableCard("Recent Activity",renderRows(result.recentActivity||[],[{label:"Recipient",key:"recipient"},{label:"Subject",key:"subject"},{label:"Template",key:"template_key"},{label:"Status",render:(row)=>emailStatusChip(row.status)},{label:"Sent time",render:(row)=>formatDate(row.sent_time)}]))}`;
 }
-
 function emailTemplateEditor(template = {}) {
   return `<section class="table-card"><h3>${template.id?"Edit template":"Create template"}</h3><p class="table-card-note">Only supported variables are interpolated. User-controlled values are escaped.</p><form id="email-template-form" class="form-grid" data-template-id="${escapeHtml(template.id||"")}">
     <label>Template name<input name="name" required maxlength="120" value="${escapeHtml(template.name||"")}"></label><label>Template key<input name="templateKey" required pattern="[a-z][a-z0-9_]{2,79}" value="${escapeHtml(template.template_key||"")}" ${template.id?"readonly":""}></label>
     <label class="field-full">Subject<input name="subject" required maxlength="300" value="${escapeHtml(template.subject||"")}"></label><label class="field-full">HTML body<textarea name="htmlBody" rows="10" required>${escapeHtml(template.html_body||"")}</textarea></label><label class="field-full">Plain-text body<textarea name="textBody" rows="8" required>${escapeHtml(template.text_body||"")}</textarea></label>
     <label class="toggle-row"><input name="enabled" type="checkbox" ${template.enabled!==false?"checked":""}>Enabled</label><div class="form-actions field-full"><button class="primary-btn" type="submit">Save template</button><button class="secondary-btn" type="button" data-email-template-cancel>Cancel</button></div></form>${template.versions?.length?`<h4>Version history</h4>${renderRows(template.versions,[{label:"Version",key:"version"},{label:"Subject",key:"subject"},{label:"Status",render:(row)=>emailStatusChip(row.enabled?"enabled":"disabled")},{label:"Created",render:(row)=>formatDate(row.created_at)},{label:"Created by",render:(row)=>compactId(row.created_by)}])}`:""}</section>`;
 }
-
 async function renderEmailTemplates(me={}) {
   const result=await apiFetch("/admin/email/templates"),items=result.items||[];let selected=null;
   const canEdit=hasEmailPermission(me,"EMAIL_TEMPLATE_EDIT"),canTest=hasEmailPermission(me,"EMAIL_TEST_SEND");
@@ -4990,7 +5215,6 @@ async function renderEmailTemplates(me={}) {
   document.querySelector("[data-email-template-cancel]")?.addEventListener("click",()=>{PAGE_EXPORTS.emailTemplateEditing=null;PAGE_EXPORTS.emailTemplateNew=false;renderEmailTemplates(me);});
   document.getElementById("email-template-form")?.addEventListener("submit",async(event)=>{event.preventDefault();const form=event.currentTarget,data=new FormData(form),id=form.dataset.templateId;try{await apiFetch(id?`/admin/email/templates/${id}`:"/admin/email/templates",{method:id?"PUT":"POST",body:JSON.stringify({name:data.get("name"),templateKey:data.get("templateKey"),subject:data.get("subject"),htmlBody:data.get("htmlBody"),textBody:data.get("textBody"),enabled:data.get("enabled")==="on"})});PAGE_EXPORTS.emailTemplateEditing=null;PAGE_EXPORTS.emailTemplateNew=false;showToast("Email template saved");await renderEmailTemplates(me);}catch(error){showToast(adminErrorMessage(error.message));}});
 }
-
 async function renderEmailQueue(me={},pageOverride=null) {
   const previous=document.getElementById("email-queue-filters"),params=previous?new URLSearchParams(new FormData(previous)):new URLSearchParams();if(pageOverride!==null)params.set("page",String(pageOverride));const result=await apiFetch(`/admin/email/queue?${params.toString()}`);PAGE_EXPORTS["email-queue"]=result.items||[];
   const canManage=hasEmailPermission(me,"EMAIL_QUEUE_MANAGE");
@@ -5001,7 +5225,6 @@ async function renderEmailQueue(me={},pageOverride=null) {
   document.querySelectorAll("[data-email-retry]").forEach((button)=>button.addEventListener("click",async()=>{if(!window.confirm("Retry this email job?"))return;try{await apiFetch(`/admin/email/queue/${button.dataset.emailRetry}/retry`,{method:"POST",body:"{}"});showToast("Email queued for retry");await renderEmailQueue(me);}catch(error){showToast(adminErrorMessage(error.message));}}));
   document.querySelectorAll("[data-email-cancel]").forEach((button)=>button.addEventListener("click",async()=>{if(!window.confirm("Cancel this queued email?"))return;try{await apiFetch(`/admin/email/queue/${button.dataset.emailCancel}/cancel`,{method:"POST",body:"{}"});showToast("Email cancelled");await renderEmailQueue(me);}catch(error){showToast(adminErrorMessage(error.message));}}));
 }
-
 async function renderEmailLogs(_me={},pageOverride=null) {
   const previous=document.getElementById("email-log-filters"),params=previous?new URLSearchParams(new FormData(previous)):new URLSearchParams();if(pageOverride!==null)params.set("page",String(pageOverride));const result=await apiFetch(`/admin/email/logs?${params.toString()}`);PAGE_EXPORTS["email-logs"]=result.items||[];
   document.getElementById("page-content").innerHTML=`<section class="table-card"><form id="email-log-filters" class="admin-filter-grid"><label>Status<input name="status" value="${escapeHtml(params.get("status")||"")}"></label><label>Template<input name="template" value="${escapeHtml(params.get("template")||"")}"></label><label>Recipient<input name="recipient" type="search" value="${escapeHtml(params.get("recipient")||"")}"></label><label>Provider<input name="provider" value="${escapeHtml(params.get("provider")||"")}"></label><label>From<input name="from" type="date" value="${escapeHtml(params.get("from")||"")}"></label><label>To<input name="to" type="date" value="${escapeHtml(params.get("to")||"")}"></label><input name="page" type="hidden" value="${escapeHtml(result.page||1)}"><button class="secondary-btn" type="submit">Apply filters</button></form></section>${tableCard(`Immutable delivery attempts (${result.total||0})`,renderRows(result.items||[],[{label:"Recipient",key:"recipient"},{label:"Subject",key:"subject"},{label:"Template",key:"template_key"},{label:"Status",render:(row)=>emailStatusChip(row.status)},{label:"Provider",key:"provider"},{label:"Message ID",render:(row)=>compactId(row.provider_message_id)},{label:"Attempt",key:"attempt_number"},{label:"Sent",render:(row)=>formatDate(row.sent_at)},{label:"Delivered",render:(row)=>formatDate(row.delivered_at)},{label:"Failed",render:(row)=>formatDate(row.failed_at)},{label:"Error",render:(row)=>escapeHtml(row.error_message||"-")}],(row)=>`<button data-email-log-view="${row.id}">View</button>`))}${emailPagination(result.total,result.page||1,result.limit||25,"email-log")}`;
@@ -5009,7 +5232,6 @@ async function renderEmailLogs(_me={},pageOverride=null) {
   document.querySelectorAll("[data-email-log-page]").forEach((button)=>button.addEventListener("click",()=>renderEmailLogs(_me,Number(button.dataset.emailLogPage))));
   document.querySelectorAll("[data-email-log-view]").forEach((button)=>button.addEventListener("click",async()=>{try{const data=await apiFetch(`/admin/email/logs/${button.dataset.emailLogView}`);window.alert(JSON.stringify(data.item,null,2));}catch(error){showToast(adminErrorMessage(error.message));}}));
 }
-
 async function renderEmailSettings(me={}) {
   const result=await apiFetch("/admin/email/settings"),s=result.settings||{};
   const canEdit=hasEmailPermission(me,"EMAIL_SETTINGS_EDIT"),canTest=hasEmailPermission(me,"EMAIL_TEST_SEND"),canEditProvider=isPlatformOwnerRole(me.role);
@@ -5018,7 +5240,6 @@ async function renderEmailSettings(me={}) {
   document.querySelector("[data-email-provider-test]")?.addEventListener("click",async()=>{const to=window.prompt("Send the connection test to:");if(!to)return;try{await apiFetch("/admin/email/provider/test",{method:"POST",body:JSON.stringify({to})});showToast("Provider connection and send test succeeded");}catch(error){showToast(adminErrorMessage(error.message));}});
   document.querySelector("[data-email-test-send]")?.addEventListener("click",async()=>{const to=window.prompt("Send a queued test email to:");if(!to)return;try{await apiFetch("/admin/email/test",{method:"POST",body:JSON.stringify({to,templateKey:"welcome_email",variables:{firstName:"Test",accountType:"personal"}})});showToast("Test email queued");}catch(error){showToast(adminErrorMessage(error.message));}});
 }
-
 async function renderEmailOtp(me={}) {
   const [dashboardState,logsState,settingsState]=await Promise.all([apiFetch("/admin/email-otp/dashboard"),apiFetch("/admin/email-otp/logs"),apiFetch("/admin/email-otp/settings")]);
   // Keep the customer wallet-unlock channel visible even when an older API
@@ -5046,33 +5267,9 @@ async function renderEmailOtp(me={}) {
   document.querySelectorAll("[data-email-otp-admin-resend]").forEach((button)=>button.addEventListener("click",async()=>{if(!window.confirm("Queue a replacement Email OTP?"))return;try{await apiFetch(`/admin/email-otp/${button.dataset.emailOtpAdminResend}/resend`,{method:"POST",body:"{}"});showToast("Replacement Email OTP queued");await renderEmailOtp(me);}catch(error){showToast(adminErrorMessage(error.message));}}));
 }
 
-/* == Alert Centre =========================================================
-   The platform emails the owner on every security and operational event; the
-   Alert Centre keeps those same events inside the console instead. A bell in
-   the topbar carries the unread count on every page, its panel shows the most
-   recent alerts, and the /alerts/ module is the full centre with severity and
-   category filters, pagination and read state.
-
-   Every alert is derived from a response the API actually returned - the same
-   sources the dashboard and analytics already read. Nothing is invented, and a
-   source that does not answer simply contributes no alerts. Read state is
-   stored per browser (localStorage): the API has no endpoint for it, and the
-   page says so rather than pretending it is shared.
-   ======================================================================== */
-
-const ADMIN_ALERT_READS_KEY = "titopay_admin_alert_reads_v1";
-const ALERT_TTL_MS = 90 * 1000;
-const ALERT_POLL_MS = 2 * 60 * 1000;
-const ALERT_CAP = 250;
-const ALERTS_PAGE_SIZE = 20;
-
-let alertState = {
-  alerts: [],
-  builtAt: 0,
-  inFlight: null,
-  timer: null,
-  sources: { answered: 0, total: 0 },
-};
+/* ==========================================================================
+   16. ALERT ENGINE
+   ========================================================================== */
 
 function alertReads() {
   try {
@@ -5082,24 +5279,20 @@ function alertReads() {
     return { seen: {}, first: {}, allReadAt: 0 };
   }
 }
-
 function saveAlertReads(reads) {
   try {
     localStorage.setItem(ADMIN_ALERT_READS_KEY, JSON.stringify(reads));
   } catch {}
 }
-
 function alertIsUnread(alert, reads) {
   if (reads.seen[alert.id]) return false;
   const firstSeen = Number(reads.first[alert.id] || 0);
   return firstSeen > reads.allReadAt;
 }
-
 function alertTime(value) {
   const date = value ? new Date(value) : null;
   return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
 }
-
 async function alertSource(path) {
   try {
     return await apiFetch(path);
@@ -5107,7 +5300,6 @@ async function alertSource(path) {
     return null;
   }
 }
-
 /* Derives the alert list from the modules that already exist. Each alert has a
    deterministic id, so read state survives refreshes and re-derivations. */
 async function buildAdminAlerts() {
@@ -5212,7 +5404,6 @@ async function buildAdminAlerts() {
 
   return { alerts: capped, answered, total: 8 };
 }
-
 async function refreshAdminAlerts({ force = false } = {}) {
   if (!getAuth()?.accessToken) return alertState.alerts;
   if (alertState.inFlight) return alertState.inFlight;
@@ -5231,12 +5422,10 @@ async function refreshAdminAlerts({ force = false } = {}) {
     });
   return alertState.inFlight;
 }
-
 function unreadAlertCount() {
   const reads = alertReads();
   return alertState.alerts.filter((alert) => alertIsUnread(alert, reads)).length;
 }
-
 function updateAlertBadge() {
   const badge = document.getElementById("alert-badge");
   const bell = document.querySelector("[data-alert-bell]");
@@ -5246,7 +5435,6 @@ function updateAlertBadge() {
   badge.hidden = unread === 0;
   bell.setAttribute("aria-label", unread ? `Alerts, ${unread} unread` : "Alerts");
 }
-
 function markAllAlertsRead() {
   const reads = alertReads();
   saveAlertReads({ ...reads, allReadAt: Date.now(), seen: {} });
@@ -5256,14 +5444,12 @@ function markAllAlertsRead() {
     renderAlertCentreView();
   }
 }
-
 function markAlertRead(id) {
   const reads = alertReads();
   reads.seen[id] = Date.now();
   saveAlertReads(reads);
   updateAlertBadge();
 }
-
 function alertRelativeTime(timestamp) {
   if (!timestamp) return "—";
   const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
@@ -5273,13 +5459,6 @@ function alertRelativeTime(timestamp) {
   if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`;
   return new Date(timestamp).toLocaleDateString("en-ZA", { day: "2-digit", month: "short" });
 }
-
-const ALERT_SEVERITY_META = {
-  critical: ["Critical", "red"],
-  warning: ["Warning", "orange"],
-  info: ["Info", "blue"],
-};
-
 function alertRowHtml(alert, reads, compact = false) {
   const unread = alertIsUnread(alert, reads);
   return `
@@ -5293,7 +5472,6 @@ function alertRowHtml(alert, reads, compact = false) {
     </a>
   `;
 }
-
 function renderAlertPanelList() {
   const host = document.getElementById("alert-panel-list");
   if (!host) return;
@@ -5303,7 +5481,6 @@ function renderAlertPanelList() {
     ? recent.map((alert) => alertRowHtml(alert, reads, true)).join("")
     : `<p class="tp-alert-empty">No alerts right now. Platform events appear here as they happen.</p>`;
 }
-
 function setAlertPanel(open) {
   const panel = document.getElementById("alert-panel");
   const bell = document.querySelector("[data-alert-bell]");
@@ -5312,7 +5489,6 @@ function setAlertPanel(open) {
   bell.setAttribute("aria-expanded", open ? "true" : "false");
   if (open) renderAlertPanelList();
 }
-
 function bindAlertBell() {
   const bell = document.querySelector("[data-alert-bell]");
   if (!bell || bell.dataset.bound) return;
@@ -5344,7 +5520,6 @@ function bindAlertBell() {
     }
   });
 }
-
 function startAlertEngine() {
   bindAlertBell();
   refreshAdminAlerts();
@@ -5353,24 +5528,10 @@ function startAlertEngine() {
     if (!document.hidden) refreshAdminAlerts();
   }, ALERT_POLL_MS);
 }
-
-/* == Alert Centre page ==================================================== */
-
-document.addEventListener("change", (event) => {
-  const category = event.target.closest("[data-alert-category]");
-  if (category) {
-    const view = alertCentreFilters();
-    view.category = category.value;
-    view.page = 1;
-    renderAlertCentreView();
-  }
-});
-
 function alertCentreFilters() {
   if (!PAGE_EXPORTS.alertsView) PAGE_EXPORTS.alertsView = { severity: "", category: "", unreadOnly: false, page: 1 };
   return PAGE_EXPORTS.alertsView;
 }
-
 function renderAlertCentreView() {
   const content = document.getElementById("page-content");
   if (!content) return;
@@ -5455,40 +5616,16 @@ function renderAlertCentreView() {
     )}
   `;
 }
-
 async function renderAlertCentre() {
   await refreshAdminAlerts({ force: alertState.builtAt === 0 });
   renderAlertCentreView();
 }
 
-/* Enterprise Analytics ----------------------------------------------------
-   The module lives in its own file and is imported the first time an operator
-   opens the Analytics page, so every other console page loads exactly the
-   payload it loaded before this module existed. The host object below is the
-   only surface the module is given: it can read data through apiFetch and draw
-   with the console's own primitives, and it cannot reach anything else. */
+/* ==========================================================================
+   17. LAZILY LOADED MODULES
+   ========================================================================== */
 
-const ANALYTICS_HOST = {
-  apiFetch,
-  escapeHtml,
-  money,
-  chipClass,
-  formatDate,
-  showToast,
-  adminErrorMessage,
-  tableCard,
-  renderKeyValueList,
-  renderMetrics,
-  renderRows,
-  downloadCsv,
-  hasFullAdminAccess,
-  isPlatformOwnerRole,
-  normalizeAdminRole,
-  adminEnvironment,
-  PAGE_EXPORTS,
-};
-
-let analyticsModulePromise = null;
+// Analytics and the Service Builder ship as separate files and load on demand.
 
 function loadAnalyticsModule() {
   if (!analyticsModulePromise) {
@@ -5504,14 +5641,10 @@ function loadAnalyticsModule() {
   }
   return analyticsModulePromise;
 }
-
 async function renderAnalytics(me = {}) {
   const module = await loadAnalyticsModule();
   await module.renderAnalytics(me, ANALYTICS_HOST);
 }
-
-let serviceBuilderModulePromise = null;
-
 function loadServiceBuilderModule() {
   if (!serviceBuilderModulePromise) {
     const moduleUrl = new URL(`admin-service-builder.js?v=${ADMIN_ASSET_VERSION}`, ADMIN_ASSET_URL).href;
@@ -5525,410 +5658,14 @@ function loadServiceBuilderModule() {
   }
   return serviceBuilderModulePromise;
 }
-
 async function renderServiceBuilder(me = {}) {
   const module = await loadServiceBuilderModule();
   await module.renderServiceBuilder(me, ANALYTICS_HOST);
 }
 
-/* == Table enhancement layer ==============================================
-   Every table the console renders gains sorting, a row filter, bulk selection,
-   export and column resizing. The layer works on the table that is already on
-   screen: it reorders, hides and reads rows, and never refetches, never calls
-   an endpoint and never changes what a module rendered. Modules were not
-   modified to receive it — a MutationObserver picks up each table as it
-   appears, including the ones modules re-render internally.
-   ======================================================================== */
-
-const TABLE_TOOLS_MIN_ROWS = 6;
-
-function tableBodyRows(table) {
-  return Array.from(table.tBodies?.[0]?.rows || []);
-}
-
-function tableHeaderCells(table) {
-  return Array.from(table.tHead?.rows?.[0]?.cells || []);
-}
-
-function tableCellText(row, index) {
-  return (row.cells?.[index]?.textContent || "").replace(/\s+/g, " ").trim();
-}
-
-/* Reads a cell as a figure. Handles the two decimal conventions the console
-   emits — "R 1,234.56" from Intl and "1 234,56" from a locale that groups with
-   spaces — and returns null for anything that is not predominantly a number. */
-function tableNumericValue(text) {
-  if (!/\d/.test(text)) return null;
-  if (!/^[^\d]{0,4}[\d\s.,-]+[^\d]{0,4}$/.test(text)) return null;
-  let digits = text.replace(/[^\d.,-]/g, "");
-  if (!digits || !/\d/.test(digits)) return null;
-  const lastComma = digits.lastIndexOf(",");
-  const lastDot = digits.lastIndexOf(".");
-  digits = lastComma > lastDot ? digits.replace(/\./g, "").replace(",", ".") : digits.replace(/,/g, "");
-  const value = Number(digits);
-  return Number.isFinite(value) ? value : null;
-}
-
-function tableDateValue(text) {
-  if (!/\d{4}|\d{1,2}[/-]\d{1,2}/.test(text)) return null;
-  const time = Date.parse(text);
-  return Number.isNaN(time) ? null : time;
-}
-
-function compareTableCells(left, right) {
-  const leftNumber = tableNumericValue(left);
-  const rightNumber = tableNumericValue(right);
-  if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
-  const leftDate = tableDateValue(left);
-  const rightDate = tableDateValue(right);
-  if (leftDate !== null && rightDate !== null) return leftDate - rightDate;
-  // Blanks sort last in both directions rather than clustering at the top.
-  if (!left && right) return 1;
-  if (left && !right) return -1;
-  return left.localeCompare(right, "en-ZA", { numeric: true, sensitivity: "base" });
-}
-
-function sortTableBy(table, index, direction) {
-  const body = table.tBodies?.[0];
-  if (!body) return;
-  const rows = tableBodyRows(table);
-  if (direction === "none") {
-    rows
-      .slice()
-      .sort((a, b) => Number(a.dataset.tpRow || 0) - Number(b.dataset.tpRow || 0))
-      .forEach((row) => body.appendChild(row));
-  } else {
-    const factor = direction === "descending" ? -1 : 1;
-    rows
-      .slice()
-      .sort((a, b) => factor * compareTableCells(tableCellText(a, index), tableCellText(b, index)))
-      .forEach((row) => body.appendChild(row));
-  }
-  tableHeaderCells(table).forEach((cell, cellIndex) => {
-    const active = cellIndex === index && direction !== "none";
-    if (active) cell.setAttribute("aria-sort", direction);
-    else cell.removeAttribute("aria-sort");
-    const mark = cell.querySelector(".tp-sort-mark");
-    if (mark) mark.textContent = active ? (direction === "ascending" ? "▲" : "▼") : "↕";
-  });
-}
-
-/* Locks the current column widths in pixels before the first drag so the
-   dragged column is the only one that moves. Written through CSSOM, never as a
-   style attribute, so the console's `style-src 'self'` policy still holds. */
-function lockTableLayout(table) {
-  if (table.dataset.tpLocked) return;
-  const cells = tableHeaderCells(table);
-  const widths = cells.map((cell) => cell.getBoundingClientRect().width);
-  cells.forEach((cell, index) => {
-    const width = `${Math.round(widths[index])}px`;
-    cell.style.width = width;
-    cell.style.minWidth = width;
-    cell.style.maxWidth = width;
-  });
-  table.style.tableLayout = "fixed";
-  table.dataset.tpLocked = "1";
-}
-
-function bindColumnResize(table, cell) {
-  const handle = document.createElement("span");
-  handle.className = "tp-col-resize";
-  handle.setAttribute("aria-hidden", "true");
-  cell.appendChild(handle);
-
-  handle.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    lockTableLayout(table);
-    const startX = event.clientX;
-    const startWidth = cell.getBoundingClientRect().width;
-    handle.classList.add("is-active");
-    handle.setPointerCapture(event.pointerId);
-
-    const move = (moveEvent) => {
-      const width = `${Math.max(64, Math.round(startWidth + (moveEvent.clientX - startX)))}px`;
-      cell.style.width = width;
-      cell.style.minWidth = width;
-      cell.style.maxWidth = width;
-    };
-    const stop = () => {
-      handle.classList.remove("is-active");
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", stop);
-      handle.removeEventListener("pointercancel", stop);
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", stop);
-    handle.addEventListener("pointercancel", stop);
-  });
-}
-
-function tableVisibleRows(table) {
-  return tableBodyRows(table).filter((row) => !row.hidden);
-}
-
-function tableSelectedRows(table) {
-  return tableBodyRows(table).filter((row) => row.dataset.tpSelected === "1");
-}
-
-function updateTableCount(table) {
-  const tools = table.tpTools;
-  if (!tools) return;
-  const total = tableBodyRows(table).length;
-  const visible = tableVisibleRows(table).length;
-  tools.count.textContent = visible === total
-    ? `${total} row${total === 1 ? "" : "s"}`
-    : `${visible} of ${total} rows`;
-}
-
-function updateSelectionBar(table) {
-  const tools = table.tpTools;
-  if (!tools?.selectBar) return;
-  const selected = tableSelectedRows(table).length;
-  tools.selectBar.hidden = selected === 0;
-  if (selected) tools.selectLabel.textContent = `${selected} row${selected === 1 ? "" : "s"} selected`;
-  const selectAll = table.querySelector("th.tp-select-cell input");
-  if (selectAll) {
-    const visible = tableVisibleRows(table).length;
-    selectAll.checked = selected > 0 && selected === visible;
-    selectAll.indeterminate = selected > 0 && selected < visible;
-  }
-}
-
-function setRowSelected(row, selected) {
-  if (selected) row.dataset.tpSelected = "1";
-  else delete row.dataset.tpSelected;
-  const box = row.querySelector("td.tp-select-cell input");
-  if (box) box.checked = selected;
-}
-
-function setTableSelectionMode(table, enabled) {
-  const headRow = table.tHead?.rows?.[0];
-  if (!headRow) return;
-  if (enabled) {
-    if (headRow.querySelector("th.tp-select-cell")) return;
-    const headCell = document.createElement("th");
-    headCell.className = "tp-select-cell";
-    const selectAll = document.createElement("input");
-    selectAll.type = "checkbox";
-    selectAll.setAttribute("aria-label", "Select all visible rows");
-    selectAll.addEventListener("change", () => {
-      tableVisibleRows(table).forEach((row) => setRowSelected(row, selectAll.checked));
-      updateSelectionBar(table);
-    });
-    headCell.appendChild(selectAll);
-    headRow.insertBefore(headCell, headRow.firstElementChild);
-
-    tableBodyRows(table).forEach((row) => {
-      const cell = row.insertCell(0);
-      cell.className = "tp-select-cell";
-      const box = document.createElement("input");
-      box.type = "checkbox";
-      box.setAttribute("aria-label", "Select row");
-      box.addEventListener("change", () => {
-        setRowSelected(row, box.checked);
-        updateSelectionBar(table);
-      });
-      cell.appendChild(box);
-    });
-  } else {
-    headRow.querySelector("th.tp-select-cell")?.remove();
-    tableBodyRows(table).forEach((row) => {
-      row.querySelector("td.tp-select-cell")?.remove();
-      delete row.dataset.tpSelected;
-    });
-  }
-  updateSelectionBar(table);
-}
-
-/* Exports what is on screen, in the order it is on screen: the current sort,
-   the current filter and, when rows are ticked, only those rows. */
-function exportTableRows(table, onlySelected) {
-  const headers = tableHeaderCells(table)
-    .map((cell) => cell.textContent.replace(/[▲▼↕]/g, "").replace(/\s+/g, " ").trim())
-    .map((label, index) => label || `Column ${index + 1}`);
-  const source = onlySelected ? tableSelectedRows(table) : tableVisibleRows(table);
-  const rows = source.map((row) => {
-    const record = {};
-    Array.from(row.cells).forEach((cell, index) => {
-      const key = headers[index] || `Column ${index + 1}`;
-      if (key === "Actions" || cell.classList.contains("tp-select-cell")) return;
-      record[key] = (cell.textContent || "").replace(/\s+/g, " ").trim();
-    });
-    return record;
-  });
-  const page = document.querySelector(".admin-shell[data-page]")?.dataset.page || "table";
-  downloadCsv(`titopay-${page}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
-}
-
-function buildTableTools(table) {
-  const tools = document.createElement("div");
-  tools.className = "tp-table-tools";
-
-  const main = document.createElement("div");
-  main.className = "tp-table-tools-main";
-
-  const searchLabel = document.createElement("label");
-  searchLabel.className = "tp-table-search";
-  searchLabel.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>`;
-  const search = document.createElement("input");
-  search.type = "search";
-  search.placeholder = "Filter rows on this page";
-  search.setAttribute("aria-label", "Filter the rows shown in this table");
-  searchLabel.appendChild(search);
-
-  const count = document.createElement("span");
-  count.className = "tp-table-count";
-  count.setAttribute("role", "status");
-
-  main.append(searchLabel, count);
-
-  const actions = document.createElement("div");
-  actions.className = "tp-table-tools-actions";
-
-  const selectToggle = document.createElement("button");
-  selectToggle.type = "button";
-  selectToggle.className = "tp-tool-btn";
-  selectToggle.setAttribute("aria-pressed", "false");
-  selectToggle.textContent = "Select rows";
-
-  const exportButton = document.createElement("button");
-  exportButton.type = "button";
-  exportButton.className = "tp-tool-btn";
-  exportButton.textContent = "Export table";
-
-  actions.append(selectToggle, exportButton);
-  tools.append(main, actions);
-
-  const selectBar = document.createElement("div");
-  selectBar.className = "tp-select-bar";
-  selectBar.hidden = true;
-  const selectLabel = document.createElement("strong");
-  const exportSelected = document.createElement("button");
-  exportSelected.type = "button";
-  exportSelected.className = "tp-tool-btn";
-  exportSelected.textContent = "Export selected";
-  const clearSelection = document.createElement("button");
-  clearSelection.type = "button";
-  clearSelection.className = "tp-tool-btn";
-  clearSelection.textContent = "Clear selection";
-  selectBar.append(selectLabel, exportSelected, clearSelection);
-
-  table.tpTools = { count, selectBar, selectLabel };
-
-  search.addEventListener("input", () => {
-    const query = search.value.trim().toLowerCase();
-    tableBodyRows(table).forEach((row) => {
-      row.hidden = Boolean(query) && !row.textContent.toLowerCase().includes(query);
-    });
-    updateTableCount(table);
-    updateSelectionBar(table);
-  });
-
-  selectToggle.addEventListener("click", () => {
-    const enabled = selectToggle.getAttribute("aria-pressed") !== "true";
-    selectToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
-    selectToggle.textContent = enabled ? "Done selecting" : "Select rows";
-    setTableSelectionMode(table, enabled);
-  });
-
-  exportButton.addEventListener("click", () => {
-    exportTableRows(table, false);
-    showToast("Table exported", "success");
-  });
-
-  exportSelected.addEventListener("click", () => {
-    exportTableRows(table, true);
-    showToast("Selected rows exported", "success");
-  });
-
-  clearSelection.addEventListener("click", () => {
-    tableBodyRows(table).forEach((row) => setRowSelected(row, false));
-    updateSelectionBar(table);
-  });
-
-  return { tools, selectBar };
-}
-
-function enhanceTable(table) {
-  if (table.dataset.tpEnhanced) return;
-  table.dataset.tpEnhanced = "1";
-
-  const headerCells = tableHeaderCells(table);
-  const rows = tableBodyRows(table);
-  if (!headerCells.length) return;
-
-  rows.forEach((row, index) => {
-    row.dataset.tpRow = String(index);
-  });
-
-  // renderRows() closes every table it builds with an Actions column. Sorting
-  // or resizing that column means nothing, so it is left alone.
-  const lastIndex = headerCells.length - 1;
-  const actionsColumn = headerCells[lastIndex]?.textContent.trim().toLowerCase() === "actions";
-
-  headerCells.forEach((cell, index) => {
-    if (actionsColumn && index === lastIndex) return;
-    cell.dataset.tpSortable = "1";
-    cell.tabIndex = 0;
-    cell.setAttribute("role", "columnheader");
-    const mark = document.createElement("span");
-    mark.className = "tp-sort-mark";
-    mark.setAttribute("aria-hidden", "true");
-    mark.textContent = "↕";
-    cell.appendChild(mark);
-
-    const cycle = () => {
-      const current = cell.getAttribute("aria-sort");
-      const next = current === "ascending" ? "descending" : current === "descending" ? "none" : "ascending";
-      sortTableBy(table, index, next);
-    };
-    cell.addEventListener("click", (event) => {
-      if (event.target.closest(".tp-col-resize")) return;
-      cycle();
-    });
-    cell.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        cycle();
-      }
-    });
-
-    if (index !== lastIndex) bindColumnResize(table, cell);
-  });
-
-  if (rows.length >= TABLE_TOOLS_MIN_ROWS) {
-    const { tools, selectBar } = buildTableTools(table);
-    const anchor = table.closest(".table-wrap") || table;
-    anchor.parentNode?.insertBefore(tools, anchor);
-    anchor.parentNode?.insertBefore(selectBar, anchor);
-    updateTableCount(table);
-  }
-}
-
-let tableEnhancementQueued = false;
-
-function queueTableEnhancement() {
-  if (tableEnhancementQueued) return;
-  tableEnhancementQueued = true;
-  requestAnimationFrame(() => {
-    tableEnhancementQueued = false;
-    document.querySelectorAll("#page-content table:not([data-tp-enhanced])").forEach((table) => {
-      try {
-        enhanceTable(table);
-      } catch {
-        // A table that cannot be enhanced stays exactly as the module rendered
-        // it. The console must never lose a table to a presentation helper.
-        table.dataset.tpEnhanced = "1";
-      }
-    });
-  });
-}
-
-function startTableEnhancement() {
-  queueTableEnhancement();
-  new MutationObserver(queueTableEnhancement).observe(document.body, { childList: true, subtree: true });
-}
+/* ==========================================================================
+   18. ROUTER AND PAGE BOOTSTRAP
+   ========================================================================== */
 
 function adminPageDescriptors() {
   return {
@@ -5976,7 +5713,6 @@ function adminPageDescriptors() {
     "sms-analytics": ["SMS Analytics", "Delivery and campaign reporting for TitoPay SMS, mirroring the Email Analytics view."],
   };
 }
-
 function adminPageLoaders() {
   return {
     dashboard: renderDashboard,
@@ -6023,7 +5759,6 @@ function adminPageLoaders() {
     "sms-analytics": renderSmsAnalytics,
   };
 }
-
 async function renderAdminPage(page, me, options = {}) {
   const descriptors = adminPageDescriptors();
   const loaders = adminPageLoaders();
@@ -6057,7 +5792,6 @@ async function renderAdminPage(page, me, options = {}) {
     document.querySelector(".main-area")?.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }
 }
-
 function internalAdminRouteFromHref(href) {
   try {
     const url = new URL(href, location.origin);
@@ -6068,7 +5802,6 @@ function internalAdminRouteFromHref(href) {
     return null;
   }
 }
-
 async function bootPage() {
   if (!validateAdminHost()) return;
   const root = document.querySelector(".admin-shell[data-page]");
@@ -6103,6 +5836,152 @@ async function bootPage() {
   }
 }
 
+/* ==========================================================================
+   PAGE STATE AND EVENT WIRING — order matters here; do not reorder
+   ========================================================================== */
+
+const SEARCH_TABS = [
+  ["people", "People"],
+  ["businesses", "Businesses"],
+  ["wallets", "Wallets"],
+  ["transactions", "Transactions"],
+];
+const SUPPORT_TABS = [
+  ["conversations", "Live conversations"],
+  ["tickets", "Tickets"],
+  ["approvals", "Profile approvals"],
+];
+/* A support transcript is a conversation, not a dataset. Rendering it as a
+   table forced an agent to read one message per row across four columns; this
+   reads top to bottom the way the customer sees it. */
+const SUPPORT_SENDER_LABELS = { CUSTOMER: "Customer", AGENT: "Support agent", BOT: "TitoPay Assistant", SYSTEM: "System" };
+/* Customer Care quick replies. [Agent Name] is substituted with the signed-in
+   operator's first name when the reply is inserted; the agent can still edit
+   everything before sending - inserting never sends.
+
+   The wording is editable in the portal: platform owners see a Manage button
+   on the panel, and edits are stored per browser under
+   titopay_admin_quick_replies_v1. A shared, team-wide store needs the
+   GET/PUT /admin/support/quick-replies endpoints specified in
+   ADMIN-API-REQUIREMENTS.md; until the API carries them, the manager says the
+   edits are local. Restore defaults always returns to this built-in set. */
+const SUPPORT_QUICK_REPLY_KEY = "titopay_admin_quick_replies_v1";
+const SUPPORT_QUICK_REPLY_GROUPS = ["Greeting & check-ins", "Investigation & escalation", "Resolution & closing"];
+const SUPPORT_QUICK_REPLY_DEFAULTS = [
+  { group: "Greeting & check-ins", title: "Greeting", text: "Welcome to TitoPay Customer Care. My name is [Agent Name], and I'll be assisting you today. How may I help you?" },
+  { group: "Greeting & check-ins", title: "Inactive - 2 minutes", text: "Hi! Just checking in to see if you're still with us. I'm here and ready to assist whenever you're ready." },
+  { group: "Greeting & check-ins", title: "Inactive - 4 minutes", text: "We haven't received a response yet. If you're still available, simply reply to this chat and we'll continue assisting you." },
+  { group: "Greeting & check-ins", title: "Inactive - 5 minutes", text: "It looks like you've stepped away. We'll keep this conversation open for a little while longer. If you still need assistance, simply reply to this chat and we'll be happy to continue helping you." },
+  { group: "Greeting & check-ins", title: "Final warning - 7 minutes", text: "As we haven't received a response, this conversation will automatically close in approximately 2 minutes. Reply to any message to keep the conversation active." },
+  { group: "Greeting & check-ins", title: "Closed due to inactivity", text: "This conversation has been closed due to inactivity. If you still require assistance, simply start a new chat from the TitoPay app and one of our Customer Care Specialists will gladly assist you. Thank you for choosing TitoPay." },
+  { group: "Investigation & escalation", title: "Requesting information", text: "To help us investigate your request, could you please provide the following information:\n\n\u2022 A brief description of the issue\n\u2022 The date and approximate time it occurred\n\u2022 Any relevant reference or transaction number\n\u2022 A screenshot, if available" },
+  { group: "Investigation & escalation", title: "Waiting while investigating", text: "Thank you for your patience. We're currently reviewing your request. This may take a few moments, and we'll update you as soon as we have more information." },
+  { group: "Investigation & escalation", title: "Unable to verify the account", text: "For your security, we're currently unable to verify your account with the information provided. Please provide the requested verification details so we can continue assisting you." },
+  { group: "Investigation & escalation", title: "Escalating to another department", text: "Your request requires assistance from a specialist team. We've escalated your case, and you'll receive an update as soon as possible. Thank you for your patience." },
+  { group: "Resolution & closing", title: "Issue resolved", text: "We're pleased to confirm that your request has been resolved. If you have any further questions or require additional assistance, please don't hesitate to contact us. Thank you for choosing TitoPay." },
+  { group: "Resolution & closing", title: "Closing after resolution", text: "Thank you for contacting TitoPay Customer Care. We're glad we could assist you today. Have a wonderful day, and thank you for choosing TitoPay." },
+];
+// Every way a connection test can end badly, so a count or a "last failed"
+// timestamp never misses one just because the provider named its failure.
+const INTEGRATION_FAILURE_STATUSES = ["failed", "authentication_failed", "account_validation_failed", "connection_failed"];
+// Peach Payments is one provider with two independent capabilities:
+// Collection/Top-up (money in, Checkout V2) and Payout/Withdrawal (money out,
+// Payouts API). They have separate credentials, separate stored configuration
+// and separate connection tests, so their statuses are never derived from each
+// other. Any provider the API marks with a `peachGroup` is rendered this way.
+const PROVIDER_COMPANIONS = { peach_payments: "peach_payouts" };
+/* --- Marketing toolkit (v61) --------------------------------------------
+   Console-side only: reusable templates, an SMS segment meter, UTM links,
+   a campaign calendar and a cross-channel month summary. Nothing here
+   changes any API call the page already makes. */
+
+const MARKETING_TEMPLATES_KEY = "titopay_admin_marketing_templates_v1";
+const MARKETING_TEMPLATE_LIMIT = 40;
+/* GSM-7 basic set per 3GPP TS 23.038; the extension table characters cost a
+   second septet. Anything outside forces UCS-2 (70/67 chars per segment). */
+const GSM_EXTENDED_RE = /[\^{}\\\[\]~|€]/g;
+const GSM_BASIC_RE = /^[@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-.\/0-9:;<=>?¡A-ZÄÖÑܧ¿a-zäöñüà]*$/;
+/* == Alert Centre =========================================================
+   The platform emails the owner on every security and operational event; the
+   Alert Centre keeps those same events inside the console instead. A bell in
+   the topbar carries the unread count on every page, its panel shows the most
+   recent alerts, and the /alerts/ module is the full centre with severity and
+   category filters, pagination and read state.
+
+   Every alert is derived from a response the API actually returned - the same
+   sources the dashboard and analytics already read. Nothing is invented, and a
+   source that does not answer simply contributes no alerts. Read state is
+   stored per browser (localStorage): the API has no endpoint for it, and the
+   page says so rather than pretending it is shared.
+   ======================================================================== */
+
+const ADMIN_ALERT_READS_KEY = "titopay_admin_alert_reads_v1";
+const ALERT_TTL_MS = 90 * 1000;
+const ALERT_POLL_MS = 2 * 60 * 1000;
+const ALERT_CAP = 250;
+const ALERTS_PAGE_SIZE = 20;
+let alertState = {
+  alerts: [],
+  builtAt: 0,
+  inFlight: null,
+  timer: null,
+  sources: { answered: 0, total: 0 },
+};
+const ALERT_SEVERITY_META = {
+  critical: ["Critical", "red"],
+  warning: ["Warning", "orange"],
+  info: ["Info", "blue"],
+};
+/* == Alert Centre page ==================================================== */
+
+document.addEventListener("change", (event) => {
+  const category = event.target.closest("[data-alert-category]");
+  if (category) {
+    const view = alertCentreFilters();
+    view.category = category.value;
+    view.page = 1;
+    renderAlertCentreView();
+  }
+});
+/* Enterprise Analytics ----------------------------------------------------
+   The module lives in its own file and is imported the first time an operator
+   opens the Analytics page, so every other console page loads exactly the
+   payload it loaded before this module existed. The host object below is the
+   only surface the module is given: it can read data through apiFetch and draw
+   with the console's own primitives, and it cannot reach anything else. */
+
+const ANALYTICS_HOST = {
+  apiFetch,
+  escapeHtml,
+  money,
+  chipClass,
+  formatDate,
+  showToast,
+  adminErrorMessage,
+  tableCard,
+  renderKeyValueList,
+  renderMetrics,
+  renderRows,
+  downloadCsv,
+  hasFullAdminAccess,
+  isPlatformOwnerRole,
+  normalizeAdminRole,
+  adminEnvironment,
+  PAGE_EXPORTS,
+};
+let analyticsModulePromise = null;
+let serviceBuilderModulePromise = null;
+/* == Table enhancement layer ==============================================
+   Every table the console renders gains sorting, a row filter, bulk selection,
+   export and column resizing. The layer works on the table that is already on
+   screen: it reorders, hides and reads rows, and never refetches, never calls
+   an endpoint and never changes what a module rendered. Modules were not
+   modified to receive it — a MutationObserver picks up each table as it
+   appears, including the ones modules re-render internally.
+   ======================================================================== */
+
+const TABLE_TOOLS_MIN_ROWS = 6;
+let tableEnhancementQueued = false;
 document.addEventListener("submit", async (event) => {
   const supportReplyForm = event.target.closest("#support-agent-reply-form");
   if (supportReplyForm) {
@@ -6231,7 +6110,6 @@ document.addEventListener("submit", async (event) => {
     }
   }
 });
-
 document.addEventListener("click", async (event) => {
   const beneficiaryDisable = event.target.closest("[data-beneficiary-disable]");
   if (beneficiaryDisable) {
@@ -7106,7 +6984,6 @@ document.addEventListener("click", async (event) => {
     }
   }
 });
-
 window.addEventListener("popstate", async () => {
   if (!PAGE_EXPORTS.currentMe) return;
   const path = location.pathname.endsWith("/") ? location.pathname : `${location.pathname}/`;
@@ -7118,16 +6995,13 @@ window.addEventListener("popstate", async () => {
     showToast(adminErrorMessage(error.message || "Unable to load module."));
   }
 });
-
 window.addEventListener("unhandledrejection", (event) => {
   const message = event.reason?.message || event.reason || "Unable to complete this admin action.";
   showToast(adminErrorMessage(message));
 });
-
 window.addEventListener("error", (event) => {
   showToast(adminErrorMessage(event.message || "Unable to complete this admin action."));
 });
-
 window.addEventListener("DOMContentLoaded", () => {
   registerActivityListeners();
   if (document.body.dataset.page === "login") {
