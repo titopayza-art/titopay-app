@@ -50,6 +50,8 @@ moment a code path executes, and only then.
 | File | What it does |
 | :-- | :-- |
 | `pwa-journeys.spec.js` | Walks **every** service journey in the customer app on both a personal and a business account: opens each one, types a plausible value into every field it exposes, and advances as far as the review step. 84 journeys, 96 checks. It never presses Pay, Confirm, Send, Withdraw or Buy, and asserts both wallet balances are unchanged at the end, so a journey that settles something behind its back fails the run. |
+| `wallet-lock-semantics.js` | What a locked wallet may and may not do, against the real API and ledger: transfers, airtime, electricity, bill payments, withdrawals and the owner's own card top-up are all refused with 423 and move no money; another customer can still pay in and the balance goes up; unlocking restores sending; every wallet still reconciles against its own ledger afterwards. 21 checks. |
+| `pwa-wallet-lock.spec.js` | The same two Profile journeys a customer uses, driven in Chromium against the shipped bundle: choosing the OTP method (Email or SMS), then Lock Wallet → confirm → the row becoming Unlock Wallet → the OTP screen. Also asserts the customer app never says "freeze" — that is the admin portal's separate action. 10 checks. |
 | `admin-modules.spec.js` | Drives the two lazily imported Admin modules: all eight analytics tabs, all eight range presets, the XLSX and CSV exports, all ten Service Builder wizard steps and the detail view. It also asserts `admin.js` and both modules are fetched at one build stamp — they had drifted, and pages served at v73 were still fetching modules at `?v=admin-console-v63`. |
 
 ```bash
