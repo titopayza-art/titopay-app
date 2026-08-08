@@ -1493,7 +1493,7 @@ function openReportFraudModal() {
           : `<button class="btn primary" type="button" data-action="lock-wallet">${icon("lock")} Lock my wallet now</button>`}
         <button class="btn secondary" type="button" data-action="change-password">${icon("shield")} Change my PIN / password</button>
       </div>
-      <p class="field-hint">Locking blocks outgoing payments immediately. You can unlock later with an OTP.</p>
+      <p class="field-hint">Locking stops everything leaving your wallet immediately. Other people can still pay you, and you can unlock later with an OTP.</p>
     </section>
     <form class="form-grid" data-form="support">
       <input type="hidden" name="category" value="Fraud & Security">
@@ -4467,7 +4467,7 @@ function securityStatusStrip() {
   const detail = [
     connectionIsEncrypted() ? "Encrypted connection" : "",
     "OTP-protected recovery",
-    "Wallet freeze on demand"
+    "Wallet lock on demand"
   ].filter(Boolean).join(" · ");
   return `<button class="security-status-strip" type="button" data-action="security-centre" aria-label="Open the TitoPay Security Centre">
     ${icon("shield")}
@@ -4555,8 +4555,8 @@ function openSecurityCentreModal() {
     <section class="section-head compact"><h2>Protect & respond</h2></section>
     <section class="profile-feature-grid">
       ${locked
-        ? securityCentreRow("Unlock Wallet", "Your wallet is locked. Verify an OTP to unlock outgoing payments.", "shield", "unlock-wallet")
-        : securityCentreRow("Freeze Wallet", "Block outgoing payments instantly. Unlock later with an OTP.", "lock", "lock-wallet")}
+        ? securityCentreRow("Unlock Wallet", "Your wallet is locked: people can pay you, but nothing can leave. Verify an OTP to unlock.", "shield", "unlock-wallet")
+        : securityCentreRow("Lock Wallet", "Stops anything leaving your wallet. Other people can still pay you. Unlock with an OTP.", "lock", "lock-wallet")}
       ${securityCentreRow("Report Fraud", "Something wrong? Lock first, then tell TitoPay what happened.", "send", "report-fraud")}
       ${securityCentreRow("Security Tips", "Practical habits that keep your wallet safe.", "check-circle", "security-tips")}
       ${securityCentreRow("Why Trust TitoPay?", "How your money and information are protected, in plain language.", "heart", "why-trust-titopay")}
@@ -4640,7 +4640,7 @@ function openSecurityTipsModal() {
       ${settingsRow("Never share codes", "TitoPay will never ask for your PIN, password or OTP — not by phone, SMS, email or WhatsApp.", "lock")}
       ${settingsRow("Check before you pay", "Read the verified recipient name and the fee preview before you press Confirm.", "check-circle")}
       ${settingsRow("Keep contact details current", "Your registered cellphone and email are how you recover access.", "mail")}
-      ${settingsRow("Lock your wallet fast", "If something feels wrong, freeze outgoing payments from the Security Centre.", "shield")}
+      ${settingsRow("Lock your wallet fast", "If something feels wrong, stop everything leaving from the Security Centre. Other people can still pay you.", "shield")}
       ${settingsRow("Beware of urgency", "Scammers rush you. TitoPay never pressures you to move money.", "bell")}
       ${settingsRow("Use your device lock", "A device PIN, fingerprint or face unlock protects TitoPay if your phone is lost.", "phone")}
     </section>
@@ -4662,7 +4662,7 @@ function openWhyTrustModal() {
       ${settingsRow("Device recognition", "Sign-ins are linked to device sessions you can review any time in the Security Centre.", "phone")}
       ${settingsRow("Identity verification", "Every TitoPay profile carries FICA identity verification with a clear status: Not Started, Pending Review, Approved or Rejected.", "check-circle")}
       ${settingsRow("Payments you can check first", "Every payment shows the verified recipient and the exact fees before you confirm, and confirmations are protected against duplicate taps.", "receipt-list")}
-      ${settingsRow("Wallet lock", "Freeze outgoing payments instantly, and unlock with an OTP when you are ready.", "lock")}
+      ${settingsRow("Wallet lock", "Stops anything leaving your wallet instantly while payments to you still arrive. Unlock with an OTP when you are ready.", "lock")}
       ${settingsRow("Account recovery", "Recover access with a one-time code to your registered cellphone or email. Critical security emails are always on.", "mail")}
       ${settingsRow("Camera & QR privacy", "QR codes are read on your device. Camera video is used only while the scanner is open and is never uploaded.", "scan")}
       ${settingsRow("Privacy commitment", "TitoPay asks only for the information needed to open and operate your wallet. Optional alerts are opt-in, and feedback contact details are shared only with your permission.", "user")}
@@ -4889,7 +4889,7 @@ function profileView() {
     </section>
     <section class="section-head compact"><h2>Security</h2></section>
     <section class="profile-feature-grid">
-      ${profileFeature("Security Centre", locked ? "Your wallet is locked. Unlock it and manage all protections here." : "Score, devices, wallet freeze, PIN changes and privacy — all in one place.", "shield", "security-centre", true)}
+      ${profileFeature("Security Centre", locked ? "Your wallet is locked. Unlock it and manage all protections here." : "Score, devices, wallet lock, PIN changes and privacy — all in one place.", "shield", "security-centre", true)}
     </section>
     <section class="section-head compact"><h2>${isBusiness ? "Grow your business" : "Share & tools"}</h2></section>
     <section class="profile-feature-grid">
@@ -5860,12 +5860,12 @@ function isWalletLocked() {
   return Boolean(state.user && (state.user.profileLocked || state.user.profile_locked));
 }
 async function lockWallet() {
-  const confirmed = confirm("Lock your TitoPay wallet now? Outgoing transactions, withdrawals, transfers and QR payments will be disabled.");
+  const confirmed = confirm("Lock your TitoPay wallet now?\n\nNothing will be able to leave your wallet — no payments, transfers, purchases, QR payments, withdrawals or top ups. Other people can still pay you, and the money will be waiting when you unlock with an OTP.");
   if (!confirmed) return;
   const result = await api("/v1/security/wallet-lock", { method: "POST", body: {} });
   state.user = Object.assign({}, state.user, result.user || {}, { profileLocked: true, profile_locked: true });
   render();
-  showToast("Wallet locked.");
+  showToast("Wallet locked. Other people can still pay you; nothing can leave until you unlock.");
 }
 async function requestWalletUnlock() {
   try {
@@ -16093,25 +16093,49 @@ function toggleActiveChatBlock() {
 }
 function openChatbotModal() {
   const business = state.accountType === "business";
-  const suggestions = [
-    "How do I send money?",
-    "How do I receive money?",
-    "How do QR payments work?",
-    "How do I withdraw funds?",
-    "How do I top up my wallet?",
-    "How do I verify my account?",
-    business ? "How do I create a business profile?" : "How do I create a payment request?",
-    business ? "How do payouts work?" : "How do TitoPay users get detected?",
-    "Transaction issues",
-    "Failed payments",
-    "Refund requests",
-    "Security and fraud support",
-    "Account access issues",
-    "Fee information",
-    "Speak to Customer Care",
-    "Request a callback",
-    "General FAQs"
-  ];
+  // Every option below was checked against the live /v1/chatbot/messages
+  // endpoint and returns either a real answer or a deliberate handover to
+  // Customer Care. Three of the options this list used to carry did neither —
+  // "How do I create a payment request?", "How do TitoPay users get detected?"
+  // and "Request a callback" all fell through to the generic "I may need a
+  // Customer Care Specialist for this", so tapping them looked like the
+  // assistant had nothing to say. They are gone.
+  //
+  // The order is why people open support, not the order features appear in the
+  // app: something went wrong, then I can't get in, then what does it cost,
+  // then how do I do this. Handover to a human is always last so it is in the
+  // same place every time.
+  const suggestions = business
+    ? [
+      "A failed payment",
+      "Refund a payment",
+      "Account access issues",
+      "Security and fraud",
+      "Transaction history",
+      "Fees and pricing",
+      "Top up the business wallet",
+      "Business payouts",
+      "Get paid by customers",
+      "QR payments",
+      "Business profile and merchant tools",
+      "Verify my account (FICA)",
+      "Speak to Customer Care"
+    ]
+    : [
+      "A failed payment",
+      "Refund a payment",
+      "Account access issues",
+      "Security and fraud",
+      "Transaction history",
+      "Fees and pricing",
+      "Top up my wallet",
+      "Withdraw to my bank",
+      "Send money",
+      "Receive money",
+      "QR payments",
+      "Verify my account (FICA)",
+      "Speak to Customer Care"
+    ];
   openModal(`
     <div class="modal-head chatbot-head">
       <div><p class="eyebrow">TitoPay Assistant</p><h2>${business ? "Business support" : "Personal support"}</h2><p class="lead">Ask a question, choose a quick topic, or request Customer Care.</p></div>
