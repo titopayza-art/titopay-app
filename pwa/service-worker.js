@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v283-ledger-backed-statements";
+const CACHE_NAME = "titopay-pwa-v284-domain-sections";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=283",
-  "./app.min.js?v=283",
+  "./styles.min.css?v=284",
+  "./app.min.js?v=284",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
