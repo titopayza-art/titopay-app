@@ -249,3 +249,41 @@ test("the statement totals and the payout report both filter on posted movement"
 test("the CSV export carries the ledger columns a reconciliation needs", () => {
   assert.match(appSource, /"Posted To Wallet", "Wallet Movement"/);
 });
+
+/* ------------------- the Admin transaction monitoring console ------------- */
+
+test("the admin transaction list also carries the ledger's answer", () => {
+  const source = apiSource("services", "transaction-service.js");
+  const projection = source.slice(source.indexOf("async function listAllTransactions"));
+  assert.match(projection, /\(posted\.entry_count > 0\) AS wallet_posted/);
+  assert.match(projection, /posted\.net_posted AS posted_amount/);
+});
+
+test("an unsettled transaction has nothing to reconcile", () => {
+  const source = apiSource("services", "transaction-service.js");
+  // A quoted fee on a failed attempt must not be compared against zero
+  // collected revenue — that flagged every failed attempt for review.
+  assert.match(source, /reconciliation_status: !row\.wallet_posted\s*\n\s*\? "not_settled"/);
+  assert.match(source, /fee_charged: row\.wallet_posted \? Number\(row\.fee \|\| 0\) : 0/);
+  assert.match(source, /financial_route: row\.wallet_posted[\s\S]{0,200}"No money moved"/);
+});
+
+test("the console totals fees actually charged, not fees quoted on attempts", () => {
+  const adminSource = fs.readFileSync(path.join(__dirname, "../../admin/assets/admin.js"), "utf8");
+  assert.match(adminSource, /const settled = rows\.filter\(\(row\) => row\.wallet_posted === true\)/);
+  assert.match(adminSource, /const totalFees = settled\.reduce\(\(sum, row\) => sum \+ Number\(row\.fee_charged \?\? row\.fee \?\? 0\), 0\)/);
+  assert.match(adminSource, /\["Fees Charged", money\(totalFees\)\]/);
+  assert.ok(!/\["Fees in View"/.test(adminSource), "the misleading tile is gone");
+  assert.match(adminSource, /\["Attempts \(no money moved\)", attemptCount\]/);
+});
+
+test("Reverse is offered only where there is something to reverse", () => {
+  const adminSource = fs.readFileSync(path.join(__dirname, "../../admin/assets/admin.js"), "utf8");
+  assert.match(adminSource, /row\.status === "completed" && row\.wallet_posted === true\s*\n\s*\? `<button data-transaction-reverse=/);
+});
+
+test("the API refuses to reverse anything the ledger never posted", () => {
+  const source = apiSource("services", "transaction-service.js");
+  assert.match(source, /if \(transaction\.status !== "completed"\) \{\s*\n\s*throw new AppError\(409, "Only completed transactions can be reversed automatically"\)/);
+  assert.match(source, /if \(!ledgerRows\.length\) throw new AppError\(409, "Transaction has no wallet ledger entries to reverse"\)/);
+});

@@ -2109,15 +2109,23 @@ async function renderTransactions() {
   const result = await apiFetch(`/admin/transactions${transactionFilterQuery(filters)}`);
   const rows = result.items || [];
   PAGE_EXPORTS.transactions = rows;
-  const totalFees = rows.reduce((sum, row) => sum + Number(row.fee || 0), 0);
+  // A fee on an attempt the wallet ledger never posted was quoted, not charged.
+  // Summing those would report money TitoPay never took, so the tile counts
+  // only fees on settled movement — which is what "Revenue Recorded" beside it
+  // should equal. A gap between the two is a real reconciliation break.
+  const settled = rows.filter((row) => row.wallet_posted === true);
+  const totalFees = settled.reduce((sum, row) => sum + Number(row.fee_charged ?? row.fee ?? 0), 0);
   const totalRevenue = rows.reduce((sum, row) => sum + Number(row.revenue_recorded || 0), 0);
   const reviewCount = rows.filter((row) => row.reconciliation_status === "review").length;
+  const attemptCount = rows.length - settled.length;
   document.getElementById("page-content").innerHTML = tableCard(
     "All Transactions",
     `
       ${renderMetrics([
         ["Visible Rows", rows.length],
-        ["Fees in View", money(totalFees)],
+        ["Settled Movements", settled.length],
+        ["Attempts (no money moved)", attemptCount],
+        ["Fees Charged", money(totalFees)],
         ["Revenue Recorded", money(totalRevenue)],
         ["Needs Review", reviewCount],
       ])}
@@ -2128,11 +2136,18 @@ async function renderTransactions() {
       { label: "Wallet / Merchant", render: (row) => `<strong>${escapeHtml(row.wallet_number || compactId(row.wallet_id))}</strong><br><small>${escapeHtml(row.wallet_kind || row.account_type || "-")} ${row.merchant_number ? `• ${escapeHtml(row.merchant_number)}` : ""}</small>` },
       { label: "Service", render: (row) => `<strong>${escapeHtml(row.service_name || row.service_code)}</strong><br><small>${escapeHtml(row.service_code)}</small>` },
       { label: "Counterparty", render: (row) => `${escapeHtml(row.recipient_reference || "-")}<br><small>${escapeHtml(row.qr_reference || row.ticket_order_id || row.bulk_batch_id || "-")}</small>` },
-      { label: "Amounts", render: (row) => `${money(row.amount)}<br><small>Fee ${money(row.fee)} • Total ${money(row.total)}</small>` },
+      { label: "Amounts", render: (row) => row.wallet_posted
+        ? `${money(row.amount)}<br><small>Fee ${money(row.fee)} • Total ${money(row.total)}</small>`
+        : `${money(row.amount)}<br><small>Attempted • Fee ${money(row.fee)} not charged</small>` },
       { label: "Revenue", render: (row) => `${money(row.revenue_recorded)}<br><small>${escapeHtml(row.financial_route || "-")}</small>` },
       { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status)}</span>` },
       { label: "Reconciliation", render: (row) => `<span class="chip ${chipClass(row.reconciliation_status)}">${escapeHtml(row.reconciliation_status || "-")}</span>` },
-    ], (row) => row.status !== "reversed" ? `<button data-transaction-reverse="${row.id}">Reverse</button>` : "")}
+    // Reversal is offered only where there is something to reverse. The API
+    // already refuses anything else; showing the button anyway invited an
+    // operator to try to reverse a payment that never happened.
+    ], (row) => row.status === "completed" && row.wallet_posted === true
+      ? `<button data-transaction-reverse="${row.id}">Reverse</button>`
+      : "")}
     `,
     "CEO and Finance can search all visible wallet, merchant, ticketing, QR and bulk-distribution transaction records from the production API.",
     `${rows.length} rows`

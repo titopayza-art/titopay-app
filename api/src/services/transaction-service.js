@@ -549,8 +549,11 @@ async function listAllTransactions(filters = {}) {
          t.metadata->>'failureReason' AS failure_reason,
          t.metadata->>'resultCode' AS provider_result_code,
          t.metadata->>'payoutStatus' AS payout_status,
-         (t.metadata->>'requiresReview')::BOOLEAN AS requires_review
+         (t.metadata->>'requiresReview')::BOOLEAN AS requires_review,
+         (posted.entry_count > 0) AS wallet_posted,
+         posted.net_posted AS posted_amount
        FROM transactions t
+       ${POSTED_LEDGER_LATERAL}
        LEFT JOIN pricing_rules pr ON pr.service_code = t.service_code
        LEFT JOIN users u ON u.id = t.user_id
        LEFT JOIN wallets w ON w.id = t.wallet_id
@@ -571,8 +574,22 @@ async function listAllTransactions(filters = {}) {
       owner_name: row.business_name || row.full_name || "System / Platform",
       owner_identifier: row.username || row.email || row.phone || row.merchant_number || row.wallet_number || null,
       service_name: row.service_name || row.service_code,
-      financial_route: row.revenue_recorded > 0 ? "Customer/Merchant + TitoPay Revenue" : "Customer/Merchant Funds",
-      reconciliation_status: Number(row.revenue_recorded || 0) === Number(row.fee || 0) ? "matched" : Number(row.fee || 0) === 0 ? "no_fee" : "review"
+      financial_route: row.wallet_posted
+        ? (row.revenue_recorded > 0 ? "Customer/Merchant + TitoPay Revenue" : "Customer/Merchant Funds")
+        : "No money moved",
+      // A transaction the wallet ledger never posted has nothing to reconcile:
+      // its fee was quoted, not charged, so comparing it against zero collected
+      // revenue would flag every failed attempt for review and bury the real
+      // breaks — a settled transaction whose fee never reached the revenue
+      // ledger — under the noise.
+      reconciliation_status: !row.wallet_posted
+        ? "not_settled"
+        : Number(row.revenue_recorded || 0) === Number(row.fee || 0) ? "matched"
+        : Number(row.fee || 0) === 0 ? "no_fee"
+        : "review",
+      // What the customer was actually charged, as opposed to what an attempt
+      // quoted. Zero until the wallet ledger says the movement happened.
+      fee_charged: row.wallet_posted ? Number(row.fee || 0) : 0
     }));
   } catch (error) {
     if (!isMissingDbObjectError(error)) throw error;

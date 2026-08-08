@@ -182,3 +182,48 @@ Chromium with the exact eight rows from the reported statement (**20/20**):
 extracted from `app.js` and proves a `completed` status cannot override a ledger
 that posted nothing, that a credit totals `amount` and a debit totals `total`,
 and that the statement net always equals the sum of posted ledger movement.
+
+---
+
+## Addendum — Admin Transaction Monitoring
+
+The same defect appeared on the Operations console, where the eight rejected
+attempts showed **FEES IN VIEW R48.00** and **NEEDS REVIEW 8**.
+
+`REVENUE RECORDED R0.00` and the eight `Failed` statuses were correct: no money
+and no revenue. The other two were the attempted-versus-actual confusion again.
+
+| Symptom | Cause | Now |
+|---|---|---|
+| `FEES IN VIEW R48.00` | summed `row.fee` over every visible row; a fee on a failed attempt was *quoted*, never charged | tile is **Fees Charged**, summed over rows the ledger posted |
+| `NEEDS REVIEW 8` | `reconciliation_status` compared a quoted fee against zero collected revenue, so every failed attempt looked like a break | a transaction with no ledger entry reconciles as `not_settled` — nothing to reconcile |
+| `Reverse` offered on a failed row | the button was rendered for any non-reversed row | offered only for `completed` rows with a posted ledger entry |
+
+Two tiles were added — **Settled Movements** and **Attempts (no money moved)** —
+so the split is visible without reading the table, and the Amounts column now
+reads `Attempted • Fee R6.00 not charged` on an unsettled row.
+
+`reverseTransaction` was **already** safe and is unchanged: it refuses anything
+that is not `completed` (409) and anything with no ledger entries (409). The
+button was misleading, not dangerous, and a test now drives that 409 and
+confirms no ledger entry appears.
+
+### A real gap this surfaced
+
+With the false positives gone, `NEEDS REVIEW` dropped from 8 to **1** — and that
+one is genuine. A **settled** top-up charges the R6 fee inside the R506 card
+charge, but no `revenue_ledger` row is written for it, so `revenue_recorded`
+stays R0.00 against a `fee` of R6.00. Verified directly:
+
+```
+status     service_code   fee    revenue
+completed  wallet_top_up  6.00   0
+completed  wallet_top_up  6.00   0
+completed  wallet_top_up  6.00   0
+```
+
+This is revenue recognition, not customer money — no wallet is wrong and no
+customer is affected. **I have not changed it**, because it means writing to the
+revenue ledger inside settlement, which is on the do-not-modify list. The
+reconciliation flag is now doing its job and pointing at it; it is your call
+whether TitoPay should record that fee as revenue at settlement.
