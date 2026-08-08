@@ -779,16 +779,15 @@ body[data-page="login"] {
    wordmark is set in type here instead: nothing sits behind it, and it stays
    sharp at any resolution. The artwork is still used on the light panel, where
    its white background is invisible. */
+/* The real mark, with its geometric cuts on the T and the y, keyed to
+   transparency from the brand artwork. It belongs on this column and nowhere
+   else in the console: "Tito" is white, so on the light sign-in panel it could
+   only be shown by putting a dark plate behind it — the same sticker the old
+   logo was. That panel keeps the wordmark set in type. */
 .auth-brand-wordmark {
-  color: #fff;
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1;
-}
-
-.auth-brand-wordmark span {
-  color: #6fb2ff;
+  display: block;
+  width: auto;
+  height: clamp(24px, 2.1vw, 30px);
 }
 
 .auth-brand-tag {
