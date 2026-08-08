@@ -324,6 +324,39 @@ async function createTransaction(actor, payload) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // The transaction row is written FIRST because every wallet_ledger entry
+    // below carries its id, and wallet_ledger.transaction_id is a plain
+    // non-deferrable foreign key. Writing the ledger first violated it on the
+    // very first statement, so createTransaction raised
+    // "wallet_ledger_transaction_id_fkey" and returned a 500 for every service
+    // that debits a wallet — Send Money, airtime, data, electricity, vouchers,
+    // Pay Bills, Bill Split, Tip, Send Gift, QR Pay and stokvel contributions.
+    // Top-ups, withdrawals and payouts were unaffected because they have their
+    // own lifecycles that insert the transaction before touching the ledger.
+    //
+    // Nothing else moves. The insert uses only values resolved before BEGIN,
+    // it is inside the same BEGIN/COMMIT as the ledger writes, and any later
+    // failure still rolls the whole thing back — so a transaction row can no
+    // more exist without its ledger entries than it could before.
+    await client.query(
+      `INSERT INTO transactions
+        (id, user_id, wallet_id, service_code, amount, fee, total, status, direction, reference, recipient_reference, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'completed','debit',$8,$9,$10)`,
+      [
+        txId,
+        actor.userId,
+        wallet.id,
+        normalizedServiceCode,
+        amount,
+        preview.fee,
+        debitTotal,
+        reference,
+        payload.recipient || null,
+        JSON.stringify({ ...payload.metadata, clientIdempotencyKey: idempotencyKey || payload.metadata?.clientIdempotencyKey || null, netAmount, recipientWalletId: recipientWallet?.id || null })
+      ]
+    );
+
     await applyWalletMovement(client, {
       walletId: wallet.id,
       transactionId: txId,
@@ -358,23 +391,6 @@ async function createTransaction(actor, payload) {
         [uuidv4(), txId, normalizedServiceCode, preview.fee, revenueWallet.id]
       );
     }
-    await client.query(
-      `INSERT INTO transactions
-        (id, user_id, wallet_id, service_code, amount, fee, total, status, direction, reference, recipient_reference, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'completed','debit',$8,$9,$10)`,
-      [
-        txId,
-        actor.userId,
-        wallet.id,
-        normalizedServiceCode,
-        amount,
-        preview.fee,
-        debitTotal,
-        reference,
-        payload.recipient || null,
-        JSON.stringify({ ...payload.metadata, clientIdempotencyKey: idempotencyKey || payload.metadata?.clientIdempotencyKey || null, netAmount, recipientWalletId: recipientWallet?.id || null })
-      ]
-    );
     if (recipientWallet?.user_id) {
       await recordBeneficiaryPayment(actor.userId, recipientWallet.user_id, amount, client);
     }
