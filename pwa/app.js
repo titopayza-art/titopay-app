@@ -1642,9 +1642,21 @@ function renderSupportEscalation(message) {
   `);
   thread.scrollTop = thread.scrollHeight;
 }
+// Which conversations the customer has already rated. Kept in localStorage
+// because the card is re-rendered from the conversation's status on every poll,
+// so "already answered" has to outlive the DOM and the session.
+function supportTicketRated(ticketId) {
+  return (readJson("titopay_support_rated_v1") || []).includes(String(ticketId || ""));
+}
+function markSupportTicketRated(ticketId) {
+  const rated = readJson("titopay_support_rated_v1") || [];
+  if (!rated.includes(String(ticketId || ""))) rated.push(String(ticketId || ""));
+  localStorage.setItem("titopay_support_rated_v1", JSON.stringify(rated.slice(-50)));
+}
 function renderSupportRating(ticketId) {
   const thread = document.querySelector(".chatbot-fullscreen-modal .chat-thread");
   if (!thread) return;
+  if (supportTicketRated(ticketId)) return;
   const existing = thread.querySelector(".support-rating");
   if (existing && existing.dataset.supportTicket === String(ticketId || "")) return;
   thread.querySelectorAll(".support-rating").forEach((item) => item.remove());
@@ -3328,7 +3340,19 @@ async function submitSupportRating(rating) {
       notificationType: "support_rating"
     }
   });
-  appendChatMessage("assistant", "Thank you. Your rating has been sent to TitoPay Customer Care.");
+  // The stars used to stay up after being pressed, so the same conversation
+  // could be rated over and over and the card sat there implying it had not
+  // been answered. Worse, the card is re-rendered from the conversation status
+  // on every four-second poll, so simply removing it would have put it straight
+  // back. The ticket is recorded as rated — which renderSupportRating now
+  // checks — and the card turns into its own acknowledgement rather than a
+  // chat message, because a chat message would be wiped by the next rebuild.
+  markSupportTicketRated(ticketId);
+  const card = document.querySelector(".support-rating");
+  if (card) {
+    card.innerHTML = `<strong>Thanks for the feedback.</strong><p class="support-rating-done">Your rating has been sent to TitoPay Customer Care.</p>`;
+    card.dataset.supportRated = "true";
+  }
 }
 function isFocusRestorationTarget(element) {
   return element instanceof HTMLElement
@@ -17370,12 +17394,25 @@ function markNotificationReadById(noticeId) {
 // Which drawer of the inbox a notification belongs in. Payments come from the
 // transaction sync; messages are chat and support; everything security-marked
 // or critical is security; the rest is account noise.
+// Anything to do with getting into the account, or with the devices and
+// sessions that can, is security.
+//
+// The API sends "login_notification" every time someone signs in — the single
+// most common alert a customer receives. It contains none of the words the old
+// rule looked for (security, otp, pin, password, lock), so every sign-in fell
+// through to "account", and the Security filter sat permanently empty while the
+// alerts a customer most needs to check were filed nowhere.
+//
+// The parts are matched between underscores rather than as bare substrings, so
+// "pin" cannot be caught inside an unrelated word, and the check runs BEFORE
+// the support/chat rule so a security alert can never be filed as a message.
+const SECURITY_NOTIFICATION = /(^|_)(login|signin|sign|device|devices|session|sessions|otp|pin|passcode|password|lock|unlock|locked|security|fraud|verification|verify|trusted|recovery)(_|$)/;
 function notificationCategory(item = {}) {
   const metadata = item.metadata || {};
   if (metadata.category === "payment" || String(item.type || "").startsWith("payment-")) return "payments";
   const serverType = String(metadata.notificationType || item.type || "").toLowerCase();
+  if (item.critical || SECURITY_NOTIFICATION.test(serverType)) return "security";
   if (/chat|support|message/.test(serverType) || metadata.ticketRef || metadata.ticketId) return "messages";
-  if (item.critical || /security|otp|pin|password|lock/.test(serverType)) return "security";
   return "account";
 }
 function notificationItemIcon(item) {

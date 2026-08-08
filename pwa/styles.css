@@ -11504,6 +11504,12 @@ button,
   margin-block-start: auto;
 }
 
+.support-rating-done {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 
 .chatbot-fullscreen-modal .chat-thread {
   overflow-x: hidden;
