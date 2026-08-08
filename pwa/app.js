@@ -16123,27 +16123,16 @@ function openChatbotModal() {
   // cost, then how do I do this — with the handover last so it never moves.
   // Anything not listed can still be typed; the assistant answers far more
   // than eight topics.
+  // Short labels on purpose. Each one still has to contain the words the
+  // assistant matches on — checked against the live /v1/chatbot/messages
+  // endpoint, all sixteen return a real answer or a deliberate handover — but
+  // "A failed payment" and "Speak to Customer Care" cost a whole row each on a
+  // narrow phone. Trimmed to "Failed payment" and "Talk to a human" they pack
+  // two to a row, which is what lets this block sit under the conversation
+  // instead of competing with it.
   const suggestions = business
-    ? [
-      "A failed payment",
-      "Account access issues",
-      "Security and fraud",
-      "Fees and pricing",
-      "Business payouts",
-      "Get paid by customers",
-      "Business profile and merchant tools",
-      "Speak to Customer Care"
-    ]
-    : [
-      "A failed payment",
-      "Account access issues",
-      "Security and fraud",
-      "Fees and pricing",
-      "Top up my wallet",
-      "Withdraw to my bank",
-      "Send money",
-      "Speak to Customer Care"
-    ];
+    ? ["Failed payment", "Account access", "Security", "Fees", "Top up", "Payouts", "Get paid", "Talk to a human"]
+    : ["Failed payment", "Account access", "Security", "Fees", "Top up", "Withdraw", "Send money", "Talk to a human"];
   openModal(`
     <div class="modal-head chatbot-head">
       <div><p class="eyebrow">TitoPay Assistant</p><h2>${business ? "Business support" : "Personal support"}</h2><p class="lead">Ask a question, choose a quick topic, or request Customer Care.</p></div>

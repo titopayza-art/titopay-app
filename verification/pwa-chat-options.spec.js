@@ -104,6 +104,18 @@ const VIEWPORTS = [
 
     check(`${viewport.name}: the message box stays on screen`, geometry.composeVisible);
 
+    // Quick Help is a launcher and must stay subordinate to the conversation.
+    // Before this was tightened it took 308px of a 496px panel on the smallest
+    // phone — more room than the chat itself.
+    const share = await page.evaluate(() => {
+      const h = (sel) => document.querySelector(sel)?.getBoundingClientRect().height || 0;
+      const panel = h(".chatbot-panel");
+      return { quick: (h(".chatbot-suggestions") + h(".chatbot-quick-title")) / panel, thread: h(".chat-thread") / panel };
+    });
+    check(`${viewport.name}: the conversation gets more room than Quick Help`,
+      share.thread > share.quick * 2,
+      `Quick Help ${Math.round(share.quick * 100)}% of the panel, conversation ${Math.round(share.thread * 100)}%`);
+
     // Every option must be reachable by scrolling the block vertically, and
     // the point a finger lands on must belong to that option.
     // Hit-test every option WITHOUT scrolling anything first. Scrolling to
@@ -117,7 +129,12 @@ const VIEWPORTS = [
         const rect = chip.getBoundingClientRect();
         const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
         if (hit !== chip && !chip.contains(hit)) unreachable.push(chip.textContent.trim());
-        if (rect.height < 40) unreachable.push(`${chip.textContent.trim()} (only ${Math.round(rect.height)}px tall)`);
+        // 36px, not the 44px used for primary chips elsewhere. Quick Help is a
+        // secondary launcher and was deliberately made to recede so it stops
+        // competing with the conversation; 36px is comfortably above the 24px
+        // minimum target size in WCAG 2.5.8 and is a normal secondary-chip
+        // height. The floor is asserted so it cannot drift smaller by accident.
+        if (rect.height < 36) unreachable.push(`${chip.textContent.trim()} (only ${Math.round(rect.height)}px tall)`);
       }
       return { total: chips.length, unreachable };
     });
@@ -125,7 +142,7 @@ const VIEWPORTS = [
       reach.unreachable.length === 0, reach.unreachable.slice(0, 3).join(" | "));
 
     // Tapping the one people need most must send that question, not its neighbour.
-    const wanted = "Speak to Customer Care";
+    const wanted = "Talk to a human";
     const tapped = await page.evaluate(async (label) => {
       const chip = Array.from(document.querySelectorAll(".chatbot-suggestions .chip")).find((c) => c.textContent.trim() === label);
       if (!chip) return { ok: false, why: "option missing" };

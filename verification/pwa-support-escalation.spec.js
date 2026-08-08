@@ -72,7 +72,7 @@ const SAMPLE_MS = 500;
   await page.evaluate(() => handleAction("chatbot"));
   await page.waitForTimeout(1500);
   await page.evaluate(() => {
-    const chip = Array.from(document.querySelectorAll(".chatbot-suggestions .chip")).find((c) => c.textContent.trim() === "Speak to Customer Care");
+    const chip = Array.from(document.querySelectorAll(".chatbot-suggestions .chip")).find((c) => c.textContent.trim() === "Talk to a human");
     chip?.click();
   });
   await page.waitForTimeout(3000);

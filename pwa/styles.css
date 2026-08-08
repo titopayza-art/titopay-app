@@ -4391,6 +4391,7 @@ body.landing-static .landing-flow.auth-screen {
 .chat-message.system {
   grid-template-columns: 1fr;
   justify-self: center;
+  align-self: center;
   max-width: 92%;
   padding: 2px 4px;
   color: var(--muted);
@@ -4443,11 +4444,36 @@ body.landing-static .landing-flow.auth-screen {
   display: none;
 }
 
+/* Quick help is a launcher, not the point of the screen. As full-weight blue
+   pills at the same 44px and 600 weight used for primary chips elsewhere, eight
+   of them read louder than the conversation above them. Here they are
+   deliberately secondary: smaller type, normal weight, a near-white fill and a
+   hairline border, so they are legible and obviously tappable but recede.
+
+   36px is the visible height, comfortably above the 24px minimum target size in
+   WCAG 2.5.8 and in line with what banking apps use for a secondary chip row.
+   The old 44px was the AAA figure and is kept for the primary chips elsewhere
+   in the app, which are untouched. */
 .chatbot-suggestions .chip {
-  min-height: 44px;
-  padding-inline: 14px;
-  font-size: 0.78rem;
+  min-height: 36px;
+  padding-inline: 12px;
+  color: var(--navy);
+  background: #fff;
+  border-color: var(--line);
+  font-size: 0.72rem;
+  font-weight: 500;
   white-space: nowrap;
+}
+
+.chatbot-suggestions {
+  gap: 6px;
+}
+
+/* The heading is a signpost, not a title. */
+.chatbot-fullscreen-modal .chatbot-quick-title {
+  font-size: 0.66rem;
+  font-weight: 600;
+  opacity: 0.75;
 }
 
 .chatbot-compose {
@@ -11454,6 +11480,30 @@ button,
 .chatbot-fullscreen-modal .chatbot-suggestions {
   max-height: min(52vh, 340px);
 }
+/* A short conversation belongs at the BOTTOM of the thread, next to the box you
+   type in, not stranded at the top with half a screen of nothing under it.
+
+   align-content: end is the obvious way to do that and it is a trap: measured
+   here, an overflowing thread then reports scrollHeight === clientHeight and
+   renders its first message 508px above the container with no way to scroll to
+   it. The messages would be genuinely unreachable.
+
+   An auto top margin on the first child does the same job safely, because an
+   auto margin only absorbs POSITIVE free space. Short conversation: it takes up
+   the slack and everything sits at the bottom. Overflowing conversation: there
+   is no free space, the margin collapses to zero and the thread scrolls
+   normally — verified at scrollHeight 1054 against clientHeight 544 with the
+   first message reachable. Scoped to the assistant panel; TitoPay Chat's own
+   thread is untouched. */
+.chatbot-fullscreen-modal .chat-thread {
+  display: flex;
+  flex-direction: column;
+}
+
+.chatbot-fullscreen-modal .chat-thread > :first-child {
+  margin-block-start: auto;
+}
+
 
 .chatbot-fullscreen-modal .chat-thread {
   overflow-x: hidden;
