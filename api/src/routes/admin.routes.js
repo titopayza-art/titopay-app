@@ -31,6 +31,7 @@ const { getEmailProviderStatus, sendSmtpTestEmail, deliverSms } = require("../se
 const { queueEmail, queueRawEmail } = require("../services/email-centre-service");
 const { testCheckoutAuthentication } = require("../services/peach-checkout-auth-service");
 const { testPayoutConnection } = require("../services/peach-payout-service");
+const { testFlashConnection, FLASH_SERVICE_URLS } = require("../services/flash-service");
 const { shouldSendCustomerEmail } = require("../services/customer-notification-preference-service");
 const { ensureAuthenticationPreferenceSchema } = require("../services/authentication-preference-service");
 const { getChatPresenceSnapshot } = require("../realtime/chat-hub");
@@ -189,21 +190,29 @@ const INTEGRATION_PROVIDERS = {
     secretKeys: ["apiKey", "apiSecret", "password", "webhookSecret"],
     requiredFields: ["baseUrl", "apiKey"]
   },
+  // Flash — Partner API v4. OAuth 2.0 client credentials against a single API
+  // key, then an account/product read to prove the account number is real.
+  // The generic API Secret / Username / Password / Merchant ID / Webhook Secret
+  // fields are deliberately absent: Flash authenticates with the one Basic
+  // credential, and TitoPay has no Flash callback consumer, so asking for them
+  // only invites an operator to paste a credential somewhere it is never read.
   flash: {
     label: "Flash",
-    description: "Airtime, electricity, data and bill payment VAS provider.",
+    description: "Airtime, electricity, data, prepaid utilities and voucher VAS provider (Partner API v4).",
     category: "vas",
     env: {
-      mode: process.env.FLASH_MODE || "production",
+      mode: process.env.FLASH_MODE || "sandbox",
       baseUrl: process.env.FLASH_BASE_URL || "",
       apiKey: process.env.FLASH_API_KEY || "",
-      apiSecret: process.env.FLASH_API_SECRET || "",
-      username: process.env.FLASH_USERNAME || "",
-      password: process.env.FLASH_PASSWORD || ""
+      accountNumber: process.env.FLASH_ACCOUNT_NUMBER || ""
     },
-    fields: ["enabled", "environment", "baseUrl", "apiKey", "apiSecret", "username", "password", "merchantId", "webhookSecret", "callbackUrl"],
-    secretKeys: ["apiKey", "apiSecret", "password", "webhookSecret"],
-    requiredFields: ["baseUrl", "apiKey"]
+    fields: ["enabled", "environment", "baseUrl", "apiKey", "accountNumber"],
+    secretKeys: ["apiKey"],
+    // The base URL defaults to the documented endpoint for the selected
+    // environment, so only the credential and the account number are required.
+    requiredFields: ["apiKey", "accountNumber"],
+    defaultBaseUrl: FLASH_SERVICE_URLS.sandbox,
+    defaultBaseUrls: FLASH_SERVICE_URLS
   },
   smtp: {
     label: "Email / SMTP",
@@ -313,6 +322,7 @@ const INTEGRATION_FIELD_LABELS = {
   username: "Username",
   password: "Password",
   merchantId: "Merchant ID",
+  accountNumber: "Flash Account Number",
   entityId: "Entity ID",
   providerName: "Provider Name",
   webhookSecret: "Webhook Secret",
@@ -457,6 +467,7 @@ function publicIntegrationState(key, stored = {}) {
     clientId: stored.clientId || env.clientId || "",
     username: stored.username || env.username || "",
     merchantId: stored.merchantId || env.merchantId || "",
+    accountNumber: stored.accountNumber || env.accountNumber || "",
     entityId: stored.entityId || env.entityId || "",
     callbackUrl: stored.callbackUrl || env.callbackUrl || "",
     providerName: stored.providerName || env.providerName || "",
@@ -473,7 +484,11 @@ function publicIntegrationState(key, stored = {}) {
     peachGroup: provider.peachGroup || null,
     // Documented default endpoint, shown as a placeholder only. The saved value
     // always wins, so the endpoint stays configurable and is never assumed.
-    defaultBaseUrl: provider.defaultBaseUrl || "",
+    // Where a provider documents one endpoint per environment, the placeholder
+    // follows the selected environment and the whole map goes with it so the
+    // form can swap it as the operator changes the dropdown.
+    defaultBaseUrl: provider.defaultBaseUrls?.[environment] || provider.defaultBaseUrl || "",
+    defaultBaseUrls: provider.defaultBaseUrls || null,
     fields: integrationFieldDefinitions(provider),
     health: {
       status: health.status || "not_tested",
@@ -1125,7 +1140,9 @@ function missingProviderFieldsFromEffective(provider, effective = {}) {
 function providerAuthenticationType(providerKey, effective = {}) {
   if (providerKey === "sms") return "bearer";
   if (providerKey === "peach_payments" || providerKey === "peach_payouts") return "oauth_client_credentials";
-  if ((providerKey === "ott" || providerKey === "flash") && effective.username && effective.password) return "basic_username_password";
+  // Flash Partner API v4: Basic API key on POST /token, Bearer thereafter.
+  if (providerKey === "flash") return "oauth_client_credentials";
+  if (providerKey === "ott" && effective.username && effective.password) return "basic_username_password";
   if (providerKey === "docfox" && effective.apiKey) return "bearer_api_key";
   if (effective.apiKey) return "x-api-key";
   if (effective.clientId || effective.clientSecret) return "client_headers";
@@ -1154,7 +1171,7 @@ function providerHeaders(providerKey, effective = {}) {
   if (clientId) headers["x-client-id"] = clientId;
   if (clientSecret) headers["x-client-secret"] = clientSecret;
   if (providerKey === "docfox" && apiKey) headers.authorization = `Bearer ${apiKey}`;
-  if ((providerKey === "ott" || providerKey === "flash") && effective.username && effective.password) {
+  if (providerKey === "ott" && effective.username && effective.password) {
     headers.authorization = `Basic ${Buffer.from(`${effective.username}:${effective.password}`).toString("base64")}`;
   }
   return headers;
@@ -1373,9 +1390,11 @@ async function testProviderConnection(providerKey, adminId) {
   const started = Date.now();
   const testedAt = new Date().toISOString();
   let connection = { ok: false, error: "Provider is disabled" };
-  // Payout reports its own PAYOUT_NOT_CONFIGURED state, which distinguishes a
-  // missing endpoint from missing credentials.
-  const missing = providerKey === "peach_payouts" ? [] : missingProviderFieldsFromEffective(provider, effective);
+  // Payout and Flash report their own not_configured state, which distinguishes
+  // a missing endpoint or account number from missing credentials.
+  const missing = providerKey === "peach_payouts" || providerKey === "flash"
+    ? []
+    : missingProviderFieldsFromEffective(provider, effective);
   const authenticationType = providerAuthenticationType(providerKey, effective);
 
   console.info("[integration-test] configuration loaded", {
@@ -1410,6 +1429,11 @@ async function testProviderConnection(providerKey, adminId) {
       // It never falls back to Checkout authentication, so Collection being
       // connected can never make Payout look connected.
       connection = await testPayoutConnection(effective);
+    } else if (providerKey === "flash") {
+      // Flash Partner API v4: a real POST /token followed by a real read of the
+      // configured account's product list. Never a URL reachability probe, and
+      // never a purchase.
+      connection = await testFlashConnection(effective);
     } else if (providerKey === "pos_provider") {
       connection = {
         ok: true,
@@ -1428,9 +1452,13 @@ async function testProviderConnection(providerKey, adminId) {
   }
 
   const health = {
+    // A provider that classified its own outcome keeps that classification, so
+    // "authentication failed" and "account validation failed" survive instead of
+    // collapsing into one indistinguishable "failed". Providers that report
+    // nothing keep the previous two-state behaviour exactly.
     status: connection.ok
-      ? (providerKey === "pos_provider" ? "ready" : "connected")
-      : (connection.status === "not_configured" ? "not_configured" : "failed"),
+      ? (connection.status || (providerKey === "pos_provider" ? "ready" : "connected"))
+      : (connection.status || "failed"),
     environment: effective.environment,
     responseTimeMs: Date.now() - started,
     lastTestedAt: testedAt,
@@ -1472,7 +1500,12 @@ async function testProviderConnection(providerKey, adminId) {
       clientId: providerKey === "peach_payments" ? Boolean(effective.clientId) : undefined,
       clientSecret: providerKey === "peach_payments" ? Boolean(effective.clientSecret) : undefined,
       merchantId: providerKey === "peach_payments" ? Boolean(effective.merchantId) : undefined,
-      integration: providerKey === "peach_payments" ? "checkout_v2" : undefined
+      integration: providerKey === "peach_payments" ? "checkout_v2" : undefined,
+      // Flash: the account number is an identifier, not a credential, and it is
+      // the field an operator most often gets wrong. The resolved base URL is
+      // shown because a blank field falls back to the documented endpoint.
+      accountNumber: providerKey === "flash" ? effective.accountNumber || "" : undefined,
+      resolvedBaseUrl: providerKey === "flash" ? connection.providerResponse?.baseUrl || "" : undefined
     }
   };
 }

@@ -3229,12 +3229,24 @@ function supportStatusClass(status = "") {
   return "blue";
 }
 
+// Every way a connection test can end badly, so a count or a "last failed"
+// timestamp never misses one just because the provider named its failure.
+const INTEGRATION_FAILURE_STATUSES = ["failed", "authentication_failed", "account_validation_failed", "connection_failed"];
+
+function isIntegrationFailureStatus(status = "") {
+  return INTEGRATION_FAILURE_STATUSES.includes(String(status || "").toLowerCase());
+}
+
 function integrationStatusClass(status = "") {
   const value = String(status || "").toLowerCase();
   if (value === "connected" || value === "ready") return "green";
   if (value === "failed") return "red";
   if (value === "not_tested") return "orange";
   if (value === "not_configured") return "orange";
+  // A provider that says exactly how it failed is still a failure. Keeping the
+  // colour red means the extra precision never softens what an operator sees.
+  if (["authentication_failed", "account_validation_failed", "connection_failed"].includes(value)) return "red";
+  if (value === "testing") return "blue";
   // Health states reported by the API render with the same colour language, so
   // an operator can see a provider is down without reading every row.
   if (["healthy", "ok", "up", "active", "operational"].includes(value)) return "green";
@@ -3261,10 +3273,15 @@ function renderIntegrationField(provider, field, isSuperAdmin) {
     `;
   }
   if (field.name === "environment") {
+    // Providers that document one endpoint per environment carry the whole map,
+    // so changing the dropdown moves the Base URL placeholder with it.
+    const environmentDefaults = provider.defaultBaseUrls
+      ? ` data-base-url-defaults="${escapeHtml(JSON.stringify(provider.defaultBaseUrls))}"`
+      : "";
     return `
       <div class="field">
         <label>${escapeHtml(field.label)}</label>
-        <select name="environment" ${disabled}>
+        <select name="environment" ${disabled}${environmentDefaults}>
           <option value="sandbox" ${String(value).toLowerCase() === "sandbox" ? "selected" : ""}>Sandbox</option>
           <option value="production" ${String(value).toLowerCase() === "production" ? "selected" : ""}>Production</option>
         </select>
@@ -3282,14 +3299,28 @@ function renderIntegrationField(provider, field, isSuperAdmin) {
   return `
     <div class="field">
       <label>${escapeHtml(field.label)}</label>
-      <input name="${escapeHtml(field.name)}" value="${escapeHtml(value)}" placeholder="${field.name === "callbackUrl" ? (provider.key === "pos_provider" ? "https://api.titopay.co.za/v1/webhooks/pos-provider" : "https://api.titopay.co.za/v1/webhooks/provider") : ""}" ${disabled}>
+      <input name="${escapeHtml(field.name)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(integrationFieldPlaceholder(provider, field))}" ${disabled}>
     </div>
   `;
 }
 
+// A blank Base URL falls back to the provider's documented endpoint, so showing
+// that endpoint as the placeholder tells the operator what leaving it blank
+// will actually do. Never a value — the field itself stays empty.
+function integrationFieldPlaceholder(provider, field) {
+  if (field.name === "callbackUrl") {
+    return provider.key === "pos_provider"
+      ? "https://api.titopay.co.za/v1/webhooks/pos-provider"
+      : "https://api.titopay.co.za/v1/webhooks/provider";
+  }
+  if (field.name === "baseUrl") return provider.defaultBaseUrl || "";
+  if (field.name === "accountNumber") return "Flash account number";
+  return "";
+}
+
 function renderIntegrationHealthDashboard(providers) {
   const connected = providers.filter((provider) => ["connected", "ready"].includes(provider.health?.status)).length;
-  const failed = providers.filter((provider) => provider.health?.status === "failed").length;
+  const failed = providers.filter((provider) => isIntegrationFailureStatus(provider.health?.status)).length;
   const enabled = providers.filter((provider) => provider.enabled !== false).length;
   return `
     ${renderMetrics([
@@ -3300,7 +3331,7 @@ function renderIntegrationHealthDashboard(providers) {
     ])}
     ${tableCard("Integration Health", renderRows(providers, [
       { label: "Provider", render: (row) => `<strong>${escapeHtml(row.label)}</strong><br><small>${escapeHtml(row.category || "provider")}</small>` },
-      { label: "Status", render: (row) => `<span class="chip ${integrationStatusClass(row.health?.status)}">${escapeHtml(row.health?.status || "not_tested")}</span>` },
+      { label: "Status", render: (row) => `<span class="chip ${integrationStatusClass(row.health?.status)}">${escapeHtml(integrationStatusLabel(row.health?.status || "not_tested"))}</span>` },
       { label: "Environment", render: (row) => escapeHtml(row.environment || row.mode || "production") },
       { label: "Response", render: (row) => row.health?.responseTimeMs === null || row.health?.responseTimeMs === undefined ? "-" : `${escapeHtml(row.health.responseTimeMs)}ms` },
       { label: "Last Success", render: (row) => escapeHtml(row.health?.lastSuccessfulConnectionAt ? new Date(row.health.lastSuccessfulConnectionAt).toLocaleString("en-ZA") : "Never") },
@@ -3377,7 +3408,7 @@ async function renderIntegrations(me = {}) {
           <dl class="smtp-detail-grid">
             <div><dt>Environment</dt><dd>${escapeHtml(provider.environment || provider.mode || "sandbox")}</dd></div>
             <div><dt>Base URL / Host</dt><dd>${escapeHtml(provider.baseUrl || "Not set")}</dd></div>
-            <div><dt>Status</dt><dd><span class="chip ${integrationStatusClass(provider.health?.status)}">${escapeHtml(provider.health?.status || "not_tested")}</span></dd></div>
+            <div><dt>Status</dt><dd><span class="chip ${integrationStatusClass(provider.health?.status)}">${escapeHtml(integrationStatusLabel(provider.health?.status || "not_tested"))}</span></dd></div>
             <div><dt>Updated</dt><dd>${escapeHtml(provider.updatedAt ? new Date(provider.updatedAt).toLocaleString("en-ZA") : "Never")}</dd></div>
           </dl>
           <div class="integration-status-strip">
@@ -3488,6 +3519,12 @@ function integrationStatusLabel(status = "") {
   if (value === "failed") return "Failed";
   if (value === "not_configured") return "Not Configured";
   if (value === "disabled") return "Disabled";
+  // A failing connection test says which step failed, so the operator knows
+  // whether to check the credential, the account number or the network.
+  if (value === "testing") return "Testing";
+  if (value === "authentication_failed") return "Authentication Failed";
+  if (value === "account_validation_failed") return "Account Validation Failed";
+  if (value === "connection_failed") return "Connection Failed";
   return "Not Tested";
 }
 
@@ -3498,7 +3535,7 @@ function combinedCapabilityStatus(capabilities = []) {
   const statuses = present.map((item) => capabilityStatus(item));
   if (statuses.every((value) => value === "connected" || value === "ready")) return "connected";
   if (statuses.some((value) => value === "connected" || value === "ready")) return "partially_configured";
-  if (statuses.some((value) => value === "failed")) return "failed";
+  if (statuses.some((value) => isIntegrationFailureStatus(value))) return "failed";
   return "not_configured";
 }
 
@@ -3533,7 +3570,7 @@ function integrationCapabilityCards(provider, providerKey, isSuperAdmin, heading
       <dl class="smtp-detail-grid">
         <div><dt>Status</dt><dd>${escapeHtml(integrationStatusLabel(capabilityStatus(provider)))}</dd></div>
         <div><dt>Last Successful</dt><dd>${escapeHtml(provider.health?.lastSuccessfulConnectionAt ? new Date(provider.health.lastSuccessfulConnectionAt).toLocaleString("en-ZA") : "Never")}</dd></div>
-        <div><dt>Last Failed</dt><dd>${escapeHtml(provider.health?.status === "failed" ? new Date(provider.health.lastTestedAt || Date.now()).toLocaleString("en-ZA") : "Never")}</dd></div>
+        <div><dt>Last Failed</dt><dd>${escapeHtml(isIntegrationFailureStatus(provider.health?.status) ? new Date(provider.health.lastTestedAt || Date.now()).toLocaleString("en-ZA") : "Never")}</dd></div>
         <div><dt>Last Tested</dt><dd>${escapeHtml(provider.health?.lastTestedAt ? new Date(provider.health.lastTestedAt).toLocaleString("en-ZA") : "Never")}</dd></div>
         <div><dt>Response Time</dt><dd>${provider.health?.responseTimeMs === null || provider.health?.responseTimeMs === undefined ? "-" : `${escapeHtml(String(provider.health.responseTimeMs))}ms`}</dd></div>
         <div><dt>Current Environment</dt><dd>${escapeHtml(provider.environment || provider.mode || "sandbox")}</dd></div>
@@ -3566,6 +3603,24 @@ function bindIntegrationForms(me) {
         showToast(adminErrorMessage(error.message));
       }
     });
+
+    // Switching Sandbox / Production moves the Base URL placeholder to the
+    // endpoint that environment actually uses. A base URL the operator typed is
+    // never touched — only the hint behind an empty field changes.
+    const environmentSelect = form.querySelector('select[name="environment"][data-base-url-defaults]');
+    const baseUrlInput = form.querySelector('input[name="baseUrl"]');
+    if (environmentSelect && baseUrlInput) {
+      let defaults = {};
+      try {
+        defaults = JSON.parse(environmentSelect.dataset.baseUrlDefaults || "{}");
+      } catch (_error) {
+        defaults = {};
+      }
+      environmentSelect.addEventListener("change", () => {
+        const next = defaults[environmentSelect.value];
+        if (next) baseUrlInput.placeholder = next;
+      });
+    }
   });
 }
 
@@ -3600,7 +3655,7 @@ async function renderIntegrationProvider(me = {}) {
       </div>
     </section>
     ${renderMetrics([
-      ["Status", companion ? overall.replace(/_/g, " ") : (provider.health?.status || "not_tested")],
+      ["Status", companion ? overall.replace(/_/g, " ") : integrationStatusLabel(capabilityStatus(provider))],
       ["Response Time", provider.health?.responseTimeMs === null || provider.health?.responseTimeMs === undefined ? "-" : `${provider.health.responseTimeMs}ms`],
       ["Environment", provider.environment || provider.mode || "sandbox"],
       ["Powered Services", poweredServices.length],
@@ -6524,6 +6579,11 @@ document.addEventListener("click", async (event) => {
   }
   const integrationTest = event.target.closest("[data-integration-test]");
   if (integrationTest) {
+    // A real authentication round trip takes seconds. Say so, and refuse a
+    // second click, so the operator is never left guessing whether it started.
+    const restoreLabel = integrationTest.textContent;
+    integrationTest.disabled = true;
+    integrationTest.textContent = "Testing…";
     try {
       const result = await apiFetch(`/admin/integrations/${integrationTest.dataset.integrationTest}/test`, {
         method: "POST",
@@ -6534,6 +6594,13 @@ document.addEventListener("click", async (event) => {
       if (document.querySelector('.admin-shell[data-page="integration-provider"]')) await renderIntegrationProvider(PAGE_EXPORTS.currentMe || {});
     } catch (error) {
       showToast(adminErrorMessage(error.message));
+    } finally {
+      // The page re-renders on success, which replaces this button; restoring it
+      // matters for the failure path, where the old markup is still on screen.
+      if (integrationTest.isConnected) {
+        integrationTest.disabled = false;
+        integrationTest.textContent = restoreLabel;
+      }
     }
   }
   const integrationDisable = event.target.closest("[data-integration-disable]");
