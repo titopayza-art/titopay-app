@@ -136,6 +136,61 @@ const SAMPLE_MS = 500;
     `${unauthenticated} unauthenticated request(s)`);
 
   await page.screenshot({ path: "pwa-support-escalation.png" });
+
+  /* ---- the rest of the conversation's life -------------------------------- */
+  // Every card in the thread is only true at one stage. Walk the conversation
+  // through to closed from the agent's side and check the customer's screen
+  // never contradicts itself.
+  console.log("\n--- agent takes over, resolves, closes ---\n");
+  const admin = await fetch(`${API}/admin/login`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ identifier: "e2e@titopay.local", password: "LocalE2E!Passw0rd#2026" })
+  }).then((r) => r.json());
+  const conversationId = await page.evaluate(() => sessionStorage.getItem("titopay_support_conversation_id"));
+
+  // Ask for a live agent so the conversation leaves BOT_ACTIVE.
+  await page.evaluate(() => document.querySelector('[data-support-escalation="live_chat"]')?.click());
+  await page.waitForTimeout(3000);
+  check("asking for a live agent keeps the queue card up while waiting",
+    await page.evaluate(() => Boolean(document.querySelector(".support-escalation"))));
+
+  const agent = async (action) => (await fetch(`${API}/admin/support/conversations/${conversationId}/${action}`, {
+    method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${admin.accessToken}` }, body: "{}"
+  })).status;
+
+  check("an agent can take the conversation over", await agent("takeover") === 200);
+  await page.waitForTimeout(6000);
+  check("the queue card goes once an agent is on it",
+    await page.evaluate(() => !document.querySelector(".support-escalation")),
+    "\"please wait while we connect you\" is false once someone has");
+
+  check("the agent can resolve it", await agent("resolve") === 200);
+  check("the agent can close it", await agent("close") === 200);
+  await page.waitForTimeout(6000);
+
+  const ended = await page.evaluate(() => {
+    const thread = document.querySelector(".chat-thread");
+    const text = thread.innerText || "";
+    return {
+      escalation: Boolean(thread.querySelector(".support-escalation")),
+      rating: Boolean(thread.querySelector(".support-rating")),
+      ratingText: (thread.querySelector(".support-rating strong")?.textContent || "").trim(),
+      systemLines: thread.querySelectorAll(".chat-message.system").length,
+      avatarsOnSystemLines: thread.querySelectorAll(".chat-message.system .icon-bubble").length,
+      saysClosed: /has been closed/i.test(text),
+      saysWaiting: /please wait while we connect/i.test(text)
+    };
+  });
+  check("a closed conversation never still says it is connecting you",
+    ended.saysClosed && !ended.saysWaiting && ended.escalation === false,
+    `closed=${ended.saysClosed} waiting=${ended.saysWaiting}`);
+  check("the rating card appears only now that it has actually ended", ended.rating, ended.ratingText);
+  check("and it asks the question plainly", /how was this support experience/i.test(ended.ratingText), ended.ratingText);
+  check("status events read as notes, not as the assistant talking",
+    ended.systemLines >= 3 && ended.avatarsOnSystemLines === 0,
+    `${ended.systemLines} status lines, ${ended.avatarsOnSystemLines} of them wearing an avatar`);
+
+  await page.screenshot({ path: "pwa-support-closed.png" });
   check("no script errors", errors.length === 0, errors.slice(0, 2).join(" | ").slice(0, 160));
 
   await browser.close();

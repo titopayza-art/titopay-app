@@ -739,7 +739,11 @@ async function requestSupportEscalation(mode) {
       notificationType: "support_reference"
     }
   });
-  renderSupportRating(ticketRef);
+  // The rating card used to go up the moment the ticket was created, which is
+  // why its wording had to hedge — "rate this after it is resolved" — while the
+  // customer was still in the queue. The reference is kept instead and the card
+  // is shown when the conversation actually ends.
+  sessionStorage.setItem("titopay_support_ticket_ref", ticketRef || "");
 }
 
 /* ==========================================================================
@@ -1646,7 +1650,7 @@ function renderSupportRating(ticketId) {
   thread.querySelectorAll(".support-rating").forEach((item) => item.remove());
   thread.insertAdjacentHTML("beforeend", `
     <section class="support-rating" data-support-ticket="${esc(ticketId)}" aria-label="Support rating">
-      <strong>Rate this support experience after it is resolved.</strong>
+      <strong>How was this support experience?</strong>
       <div class="support-rating-actions">
         ${[5, 4, 3, 2, 1].map((rating) => `<button type="button" class="chip" data-support-ticket="${esc(ticketId)}" data-support-rating="${rating}">${rating} star${rating === 1 ? "" : "s"}</button>`).join("")}
       </div>
@@ -16185,9 +16189,13 @@ async function hydrateSupportConversation(conversationId) {
   const messages = result.messages || result.items || [];
   const thread = document.querySelector(".chatbot-fullscreen-modal .chat-thread");
   if (!thread) return;
+  // Three kinds of line, not two. SYSTEM entries are status events — escalated,
+  // an agent joined, resolved, closed — and dressing them as the assistant
+  // speaking, complete with a headset avatar and a full bubble, made a short
+  // conversation read as a wall of chatter from a bot that never said any of it.
   const normalizedMessages = messages.map((item) => ({
     id: String(item.id || item.messageId || item.message_id || ""),
-    role: item.senderType === "CUSTOMER" ? "user" : "assistant",
+    role: item.senderType === "CUSTOMER" ? "user" : item.senderType === "SYSTEM" ? "system" : "assistant",
     body: String(item.body || item.message || "")
   }));
   const signature = normalizedMessages.map((item) => `${item.id}\u001f${item.role}\u001f${item.body}`).join("\u001e");
@@ -16221,6 +16229,31 @@ async function hydrateSupportConversation(conversationId) {
   const conversationResult = await api(`/v1/support/conversations/${encodeURIComponent(conversationId)}`);
   const status = conversationResult.conversation?.status;
   if (status) sessionStorage.setItem("titopay_support_conversation_status", status);
+  applySupportConversationStatus(status);
+}
+// Each card in the thread is only true at one point in the conversation.
+// "Please wait while we connect you", with its three live buttons, is true
+// while the queue is still the answer; once an agent has joined, or the
+// conversation has been resolved or closed, it sits there contradicting the
+// line above it that says the conversation is closed. The rating card is the
+// mirror image: it belongs at the end and nowhere else.
+function applySupportConversationStatus(status) {
+  const thread = document.querySelector(".chatbot-fullscreen-modal .chat-thread");
+  if (!thread) return;
+  const stage = String(status || "").toUpperCase();
+  // The card is the offer of a human and then the queue for one, so it belongs
+  // in BOT_ACTIVE and WAITING_FOR_AGENT. It stops being true the moment someone
+  // picks the conversation up, and it is plainly false once the thing is
+  // resolved or closed.
+  const overtaken = ["AGENT_ACTIVE", "RESOLVED", "CLOSED"].includes(stage);
+  const finished = stage === "RESOLVED" || stage === "CLOSED";
+  if (overtaken) thread.querySelectorAll(".support-escalation").forEach((node) => node.remove());
+  if (finished) {
+    sessionStorage.removeItem("titopay_pending_support_message");
+    renderSupportRating(sessionStorage.getItem("titopay_support_ticket_ref") || "");
+  } else {
+    thread.querySelectorAll(".support-rating").forEach((node) => node.remove());
+  }
 }
 // A Customer Care reply reaches the phone over the chat socket, but mobile
 // networks and shared-host proxies drop that socket often. So while the
@@ -16322,6 +16355,7 @@ function createChatMessageElement(role, message, id = "") {
   article.innerHTML = role === "assistant"
     ? `<span class="icon-bubble">${icon("chatbot")}</span><p>${esc(message)}</p>`
     : `<p>${esc(message)}</p>`;
+  if (role === "system") article.setAttribute("role", "status");
   return article;
 }
 function appendChatMessage(role, message, id = "") {

@@ -4383,6 +4383,27 @@ body.landing-static .landing-flow.auth-screen {
   border-color: rgba(10, 77, 255, 0.18);
 }
 
+/* "Escalated to Customer Care", "an agent has joined", "resolved", "closed" —
+   these are things that HAPPENED to the conversation, not things anyone said.
+   Rendered as assistant bubbles they came with a headset avatar and the same
+   weight as a real reply, so four status lines buried the two messages that
+   mattered. They now read as a quiet centred note between the messages. */
+.chat-message.system {
+  grid-template-columns: 1fr;
+  justify-self: center;
+  max-width: 92%;
+  padding: 2px 4px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  text-align: center;
+}
+
+.chat-message.system p {
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
 .chatbot-quick-title {
   color: var(--muted);
   font-size: 0.78rem;
