@@ -277,9 +277,17 @@ test("the console totals fees actually charged, not fees quoted on attempts", ()
   assert.match(adminSource, /\["Attempts \(no money moved\)", attemptCount\]/);
 });
 
-test("Reverse is offered only where there is something to reverse", () => {
+test("Reverse is live only where there is something to reverse", () => {
   const adminSource = fs.readFileSync(path.join(__dirname, "../../admin/assets/admin.js"), "utf8");
-  assert.match(adminSource, /row\.status === "completed" && row\.wallet_posted === true\s*\n\s*\? `<button data-transaction-reverse=/);
+  // The control is always rendered, so the column never goes silently blank,
+  // but it is only clickable where the ledger actually posted a movement.
+  assert.match(adminSource, /function reverseActionCell/);
+  assert.match(adminSource, /if \(!reason\) return `<button data-transaction-reverse=/);
+  assert.match(adminSource, /return `<button type="button" disabled title=/);
+  // The same three conditions the API enforces.
+  assert.match(adminSource, /if \(row\.status === "reversed"\) return "Already reversed"/);
+  assert.match(adminSource, /if \(row\.status !== "completed"\)/);
+  assert.match(adminSource, /if \(row\.wallet_posted !== true\) return "Nothing to reverse — no wallet entry was posted"/);
 });
 
 test("the API refuses to reverse anything the ledger never posted", () => {

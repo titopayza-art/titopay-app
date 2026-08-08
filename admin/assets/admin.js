@@ -2104,6 +2104,23 @@ function transactionFiltersHtml(rows = [], filters = {}) {
   `;
 }
 
+// Reversal moves money back, so it is offered only where money moved. Every
+// other row still shows the control, disabled, saying why — an operator should
+// never have to guess whether an action is missing or merely unavailable. These
+// are the same three conditions reverseTransaction enforces server-side.
+function reverseUnavailableReason(row = {}) {
+  if (row.status === "reversed") return "Already reversed";
+  if (row.status !== "completed") return `Nothing to reverse — this payment ${row.status === "pending" || row.status === "processing" ? "has not completed" : "never completed"}`;
+  if (row.wallet_posted !== true) return "Nothing to reverse — no wallet entry was posted";
+  return "";
+}
+
+function reverseActionCell(row = {}) {
+  const reason = reverseUnavailableReason(row);
+  if (!reason) return `<button data-transaction-reverse="${escapeHtml(row.id)}">Reverse</button>`;
+  return `<button type="button" disabled title="${escapeHtml(reason)}" aria-label="${escapeHtml(`Reverse unavailable. ${reason}`)}">Reverse</button><br><small>${escapeHtml(reason)}</small>`;
+}
+
 async function renderTransactions() {
   const filters = getTransactionFilterValues();
   const result = await apiFetch(`/admin/transactions${transactionFilterQuery(filters)}`);
@@ -2142,12 +2159,10 @@ async function renderTransactions() {
       { label: "Revenue", render: (row) => `${money(row.revenue_recorded)}<br><small>${escapeHtml(row.financial_route || "-")}</small>` },
       { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status)}</span>` },
       { label: "Reconciliation", render: (row) => `<span class="chip ${chipClass(row.reconciliation_status)}">${escapeHtml(row.reconciliation_status || "-")}</span>` },
-    // Reversal is offered only where there is something to reverse. The API
-    // already refuses anything else; showing the button anyway invited an
-    // operator to try to reverse a payment that never happened.
-    ], (row) => row.status === "completed" && row.wallet_posted === true
-      ? `<button data-transaction-reverse="${row.id}">Reverse</button>`
-      : "")}
+    // Reversal is live only where there is something to reverse — the API
+    // refuses anything else. But an empty cell explains nothing, so the button
+    // stays visible and disabled, carrying the reason it cannot be used.
+    ], (row) => reverseActionCell(row))}
     `,
     "CEO and Finance can search all visible wallet, merchant, ticketing, QR and bulk-distribution transaction records from the production API.",
     `${rows.length} rows`
