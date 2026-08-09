@@ -12619,9 +12619,93 @@ button,
   }
 
   .modal-backdrop:not(.auth-modal-backdrop) > .modal-card > .auth-actions:last-child,
-  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card > .form-grid:last-child,
   .modal-backdrop:not(.auth-modal-backdrop) > .modal-card > .modal-actions:last-child {
     margin-top: auto;
     padding-top: 18px;
+  }
+}
+
+/* ==========================================================================
+   Service forms, calmed down
+   ==========================================================================
+   Now that every service is full-screen, the forms inside them are what makes
+   them feel heavy: every field label is a bold near-black heading competing
+   with the screen's actual title, controls are 58px tall so three fields fill
+   a phone, and an informational notice about a missing product list is styled
+   like a warning.
+
+   This is the same approach as the full-screen change — the shared primitives,
+   once, so all eighteen services improve together and no screen's markup or
+   form contract is touched. Labels become quiet captions the way they already
+   are on the money screens, controls come down to a comfortable 52px, and the
+   notice reads as information rather than as something going wrong. */
+
+@media (max-width: 519px) {
+  .modal-card .field label {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* Not the money screens, which set their own. */
+  .modal-card:not(.fullscreen-modal) .field input,
+  .modal-card:not(.fullscreen-modal) .field select,
+  .modal-card:not(.fullscreen-modal) .field textarea {
+    min-height: 52px;
+    border-radius: 14px;
+  }
+
+  .modal-card .field textarea {
+    min-height: 84px;
+    padding-block: 14px;
+  }
+
+  .modal-card .field {
+    gap: 6px;
+  }
+
+  /* A missing product list is not an error — the customer can still type an
+     amount and carry on. It should not look like one. */
+  .modal-card .vas-notice {
+    padding: 12px 14px;
+    background: var(--soft);
+    border-color: var(--line);
+  }
+
+  .modal-card .vas-notice-head {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  /* The step marker is orientation, not a headline. */
+  .modal-card .form-step-label,
+  .modal-card .step-eyebrow {
+    font-size: 0.68rem;
+  }
+}
+
+/* On a full-screen sheet the header is a signpost, not the content. Three
+   lines of explanation above the first control means the customer scrolls
+   before they can do anything, so the title comes down a step and the lead
+   becomes a single quiet line. The words are unchanged — only their weight. */
+@media (max-width: 519px) {
+  .modal-card > .modal-head h2 {
+    font-size: 1.28rem;
+    line-height: 1.2;
+  }
+
+  .modal-card > .modal-head .lead {
+    margin-top: 4px;
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+
+  .modal-card > .modal-head .eyebrow {
+    font-size: 0.66rem;
   }
 }
