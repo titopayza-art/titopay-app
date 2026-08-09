@@ -2,7 +2,7 @@
 
 Static site. No Node.js, no build step. **Target:** `app.titopay.co.za`
 
-**Build:** `event-tags-and-full-screen-services-v295`
+**Build:** `event-tags-and-full-screen-services-v296`
 
 ## Deploy order
 
@@ -23,8 +23,8 @@ reason to ship in the wrong order.
    Delete the uploaded ZIP afterwards.
 4. **Keep `.htaccess`.** Turn on File Manager → Settings → **Show Hidden Files (dotfiles)** and
    confirm it survived the extract.
-5. **Hard-refresh** (Ctrl+F5 / Cmd+Shift+R). Assets moved from `?v=291` to `?v=295` and the service
-   worker cache name changed to `titopay-pwa-v295-calmer-service-forms`, so returning users pick the
+5. **Hard-refresh** (Ctrl+F5 / Cmd+Shift+R). Assets moved from `?v=291` to `?v=296` and the service
+   worker cache name changed to `titopay-pwa-v296-offline-fallback-works`, so returning users pick the
    new bundle up on their next visit without being told to do anything.
 
 ## What changed

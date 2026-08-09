@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v295-calmer-service-forms";
+const CACHE_NAME = "titopay-pwa-v296-offline-fallback-works";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=295",
-  "./app.min.js?v=295",
+  "./styles.min.css?v=296",
+  "./app.min.js?v=296",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
@@ -41,7 +41,17 @@ self.addEventListener("fetch", (event) => {
       if (response && response.ok) cache.put(event.request, response.clone());
       return response;
     } catch (error) {
-      return caches.match(event.request) || caches.match("./index.html") || caches.match("./offline.html");
+      // Each of these is a Promise, and every Promise is truthy, so chaining
+      // them with || returned the FIRST one regardless of whether it resolved
+      // to anything. On a cache miss the handler resolved to undefined,
+      // respondWith got a non-Response, and the request failed as a network
+      // error instead of falling back — which is why offline.html has never
+      // once been served despite being precached since the day it shipped.
+      // Await each in turn so the fallback is a fallback.
+      return (await caches.match(event.request))
+        || (await caches.match("./index.html"))
+        || (await caches.match("./offline.html"))
+        || Response.error();
     }
   };
 
