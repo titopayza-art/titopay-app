@@ -288,7 +288,7 @@ signing stack, and Chromium.
 | Suite | Result |
 |---|---|
 | API unit + structure tests | **324 / 326** |
-| `event-tag-e2e.js` — the full journey and refusal matrix | **79 / 79** |
+| `event-tag-e2e.js` — the full journey and refusal matrix | **82 / 82** |
 | `event-tag-consoles.spec.js` — organiser and admin consoles in a browser | **29 / 29** |
 | `pwa-event-tags.spec.js` — the attendee's screen in a browser | **24 / 24** |
 | `event-tag-structure.test.js` — static invariants | **14 / 14** |

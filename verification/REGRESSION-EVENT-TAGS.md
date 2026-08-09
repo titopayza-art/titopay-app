@@ -9,7 +9,7 @@ providers, which have always been stood in for locally.
 | Suite | Result |
 |---|---|
 | `api/test/event-tag-structure.test.js` — static invariants | 14/14 |
-| `verification/event-tag-e2e.js` — full journey + refusal matrix | 79/79 |
+| `verification/event-tag-e2e.js` — full journey + refusal matrix | 82/82 |
 | `verification/event-tag-consoles.spec.js` — organiser + admin consoles | 29/29 |
 | `verification/pwa-event-tags.spec.js` — the attendee's screen | 24/24 |
 

@@ -495,6 +495,10 @@ async function terminalCall(terminal, path, body, { idempotencyKey, nonce } = {}
   // An event the admin has suspended. Ticket sales already stop when this
   // happens; the wristbands must stop with them, or an event pulled for fraud
   // keeps taking money at the bar.
+  // The burst above deliberately spent this wallet to nothing, so put money
+  // back first — otherwise the reinstated tap below would be refused for
+  // insufficient balance and prove nothing about suspension.
+  await fundWallet(attendee.token, 50);
   const beforeSuspend = await balanceOf(attendee.token);
   await call(`/ticketing/admin/events/${eventId}/action`, {
     token: admin.accessToken, method: "POST", body: { action: "suspend", note: "Suspended during testing" } });
