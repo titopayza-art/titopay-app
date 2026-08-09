@@ -64,3 +64,42 @@ PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node admin-modules.spec.js
 
 `pwa-journeys.spec.js` bridges `https://api.titopay.co.za` to the local API with a Playwright
 route, because the shipped bundle hard-codes its API base to production.
+
+## Event Tags
+
+Cashless NFC/RFID credentials for events. The claim every one of these exists to
+test is a single sentence: **an Event Tag is a credential, not a wallet.**
+
+| File | What it does |
+| :-- | :-- |
+| `event-tag-e2e.js` | The whole journey and the whole refusal matrix, against a real Postgres, the real API and the real POS HMAC signing stack: create event → approve → enable cashless → authorise a vendor → sell a ticket → issue blank tags → assign → tap → block → replace → the replacement pays from the same wallet. Then it tries to break the claim: it looks for a balance column in every tag table, a second ledger anywhere in the database, and an extra wallet on the attendee; it repeats a tap, reuses an idempotency key for a different amount, and fires four terminals at one wristband for more than the balance; and it checks every refusal — a live funded tag from another event, a suspended event, an unauthorised vendor, an unassigned tag, a forged credential, an unsigned request, a replayed nonce, a locked wallet, another customer's tag, anonymous access. 82 checks. |
+| `event-tag-consoles.spec.js` | The organiser's console in the PWA and the admin's in the operations console, both driven in Chromium: switch cashless on, authorise a vendor, mint blank credentials and read them off the screen once, assign one, then block it from Admin and read its audit trail. Asserts the credentials never reappear after the one-time reveal, that no screen anywhere shows a balance, and that blocking moves R0.00. 29 checks. |
+| `pwa-event-tags.spec.js` | What the attendee sees. The tag card shows a status and an event and **no balance**; Top Up is the app's own wallet button (`data-service="top-up"`), not an event top-up; reporting the tag lost asks first, says the money stays in the wallet, and moves nothing. 25 checks. |
+| `../api/test/event-tag-structure.test.js` | The static guards, so a later change cannot quietly undo the rule: no balance-like column in any tag table, no second wallet or ledger, every migration additive and `IF NOT EXISTS`, cashless off by default, only hashes stored, `publicTag` leaking neither credential nor holder, zero logging calls in the tag path, the charge resolving everything server-side, exactly one debit and one credit, `pos/service.js` untouched, and `event_tags` granted to three roles rather than everyone. 14 checks. |
+
+## Screen layout
+
+| File | What it does |
+| :-- | :-- |
+| `pwa-money-screens.spec.js` | The redesigned Top Up / Send Money screens are presentation only, and this follows the money to prove it: drives the keypad, checks grouping and the two-decimal limit, then submits — the fee on the review screen matches the API's fee to the cent, nothing is charged at review, and confirming really moves the money (R800 → R650 out, R150 in). 23 checks. |
+| `service-screens-full-bleed.js` | Opens every service screen at iPhone 15 Pro size and **measures** the modal card — position, size and corner radius — rather than eyeballing a screenshot. 18 screens; Transactions and Profile & Security are excluded because they navigate to full pages rather than opening a modal. |
+
+```bash
+# All of these bridge https://api.titopay.co.za to the local API with a
+# Playwright route, and all of them wait out the API's 120-request-per-minute
+# rate limit rather than failing on it.
+node event-tag-e2e.js
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node event-tag-consoles.spec.js
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node pwa-event-tags.spec.js
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node pwa-money-screens.spec.js
+PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node service-screens-full-bleed.js
+```
+
+**Run them one at a time.** The API rate-limits per client IP and several of these
+spend most of a window on their own; back to back they starve each other, and the
+symptom is a first-step failure ("customer created FAIL", "admin signed in FAIL")
+that looks like a product break and is not.
+
+`split-e2e.js` scores 34/34 alone and 31/34 when it follows `withdrawal-e2e.js` —
+a long-standing ordering dependency between those two harnesses, since split
+configures the payout capability withdrawal consumes.
