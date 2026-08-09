@@ -2,7 +2,23 @@
 
 Node.js application. **Target:** `api.titopay.co.za`
 
-**No database migration. No new environment variable is required.**
+**No manual database migration. No new environment variable is required.**
+
+The schema *does* change — this package adds `event_tags`, `event_vendors` and
+`event_tag_events`, plus two columns on `events` — but it applies itself on first
+use through the ticketing module's existing bootstrap. Every statement is
+`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`, nothing is dropped,
+renamed or reset, no existing row is touched, and re-running is a no-op. The
+new column `events.cashless_tags_enabled` defaults to FALSE, so every event that
+already exists behaves exactly as it does today until an organiser switches
+cashless on. Take the backup in Step 1 regardless.
+
+There is also one repair in this package worth knowing about before you deploy:
+`createTransaction` wrote its `wallet_ledger` rows before the `transactions` row
+they reference, and that foreign key is not deferrable, so **every wallet-debit
+service — Send Money, Airtime, Electricity, Pay Bills — has been failing with a
+500**. The insert order is corrected here. Nothing about the accounting changed;
+the rows are written in the order the constraint requires.
 
 ---
 

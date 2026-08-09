@@ -1,6 +1,31 @@
 TitoPay Admin
-Build: admin-console-v74
-Date: 2026-08-08
+Build: admin-console-v75
+Date: 2026-08-09
+
+v75 - Event Tag management joins the ticketing console.
+
+  - An approved event that has cashless Event Tags switched on gains an Event
+    Tags action in the Event Approval Queue. It opens a panel over the queue
+    showing tags issued, active, lost or blocked and replaced, the tap payments
+    and tap sales taken from the transactions ledger rather than a separate
+    tally, sales broken down by vendor and terminal, and the merchants
+    authorised to take tag payments at that event.
+  - Support can block a tag from the panel, with a required reason, and read
+    any tag's full append-only history. Blocking stops the tag paying
+    immediately and moves no money - an Event Tag holds no balance, so there is
+    nothing on it to lose. The panel deliberately shows no balance column and
+    offers no way to load funds, because neither exists.
+  - The panel is behind a new event_tags permission, granted to Customer
+    Support, Compliance and Finance in addition to the platform-owner roles.
+    Marketing holds ticketing for sales reporting and does not receive it -
+    disabling an attendee's wristband is a support and fraud action, not a
+    reporting one. Widening it later needs no console change; the existing
+    admin_role_permission_overrides setting covers it.
+  - Admin can look, and can change a tag's status. Admin cannot mint, assign or
+    replace a tag; those stay with the organiser and the gate.
+  - Requires the API package of the same date, which adds the Event Tag
+    endpoints and the permission. Without it the button does not appear,
+    because the console only offers it for events the API reports as cashless.
 
 v74 - Analytics and Service Builder are readable, and their cache stamp is
 correct for the first time since v63.
@@ -408,5 +433,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v74; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v75; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
