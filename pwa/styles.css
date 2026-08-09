@@ -12709,3 +12709,17 @@ button,
     font-size: 0.66rem;
   }
 }
+
+/* .field-label is the same job as a .field label — it just sits on a group of
+   controls rather than one. It should read the same, or Bill Split and Send
+   Gift end up with one bold black heading among a column of quiet captions. */
+@media (max-width: 519px) {
+  .modal-card .field-label {
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+}
