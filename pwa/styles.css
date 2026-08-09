@@ -12544,3 +12544,84 @@ button,
 .tag-link-note {
   margin-top: auto;
 }
+
+/* ==========================================================================
+   Every service screen is full-screen on a phone
+   ==========================================================================
+   A dialog floating in the middle of a blurred page is a desktop idea. On a
+   phone it wastes the edges, puts the primary action somewhere in the middle,
+   and leaves a strip of the page behind showing through — which is where the
+   stray controls people were tapping by mistake came from.
+
+   Doing it here, on .modal-card, means every service gets it at once: Stokvel,
+   My Tickets, Airtime, Pay Bills, Vouchers, the lot. No screen had to be
+   rewritten, and none of their markup or form contracts changed.
+
+   Auth is excluded on purpose: it has its own visual-viewport handling for the
+   software keyboard, and that is not a thing to disturb from here. */
+
+@media (max-width: 519px) {
+  .modal-backdrop:not(.auth-modal-backdrop) {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card {
+    width: 100%;
+    max-width: none;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    padding: 0 16px calc(20px + var(--safe-bottom));
+    border: 0;
+    border-radius: 0;
+    background: var(--card);
+  }
+
+  /* The heading stays put while the content moves under it, so a long screen
+     never scrolls its own title away from the close button. */
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card > .modal-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: calc(16px + var(--safe-top)) 0 14px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  /* The full-screen money and tag screens manage their own head and padding. */
+  .modal-backdrop > .modal-card.fullscreen-modal {
+    padding: 0;
+  }
+
+  .modal-backdrop > .modal-card.chatbot-fullscreen-modal {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+}
+
+/* On a full-screen sheet the primary action belongs at the bottom, under the
+   thumb, not floating in the middle with dead space beneath it.
+
+   The column is flex ONLY so that margin-top:auto works on the trailing action
+   row. Every child is pinned to flex:0 0 auto, which reproduces block sizing
+   exactly — without it, flex would shrink children that currently rely on
+   their natural height, and forty screens would subtly change shape. */
+@media (max-width: 519px) {
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:not(.fullscreen-modal):not(.chatbot-fullscreen-modal) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:not(.fullscreen-modal):not(.chatbot-fullscreen-modal) > * {
+    flex: 0 0 auto;
+  }
+
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card > .auth-actions:last-child,
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card > .form-grid:last-child,
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card > .modal-actions:last-child {
+    margin-top: auto;
+    padding-top: 18px;
+  }
+}

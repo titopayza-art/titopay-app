@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v293-event-tags-and-money-screens";
+const CACHE_NAME = "titopay-pwa-v294-full-screen-services";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=293",
-  "./app.min.js?v=293",
+  "./styles.min.css?v=294",
+  "./app.min.js?v=294",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

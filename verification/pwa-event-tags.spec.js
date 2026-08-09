@@ -247,12 +247,21 @@ async function fundWallet(token, amount) {
   await page.evaluate(() => document.querySelector('[data-action^="event-tag-lost-confirm:"]')?.click());
   await sleep(3000);
 
+  // Once a tag is reported lost the ticket is waiting for a wristband again, so
+  // the screen now carries two cards: the offer to link a replacement, and the
+  // lost tag itself. Read them separately rather than whichever is first.
   const afterLost = await page.evaluate(() => {
-    const el = document.querySelector(".event-tag-card");
-    return el ? el.innerText.replace(/\s+/g, " ").trim() : "";
+    const cards = Array.from(document.querySelectorAll(".event-tag-card"))
+      .map((el) => el.innerText.replace(/\s+/g, " ").trim());
+    return {
+      all: cards,
+      lost: cards.find((t) => /reported lost/i.test(t)) || "",
+      link: cards.find((t) => /not linked/i.test(t)) || ""
+    };
   });
-  check("the card now reads as reported lost", /reported lost/i.test(afterLost), afterLost.slice(0, 80));
-  check("a lost tag no longer offers Report Tag Lost", !/report tag lost/i.test(afterLost));
+  check("the tag now reads as reported lost", Boolean(afterLost.lost), afterLost.all.join(" || ").slice(0, 120));
+  check("a lost tag no longer offers Report Tag Lost", !/report tag lost/i.test(afterLost.lost));
+  check("and the attendee is offered a replacement to link", Boolean(afterLost.link), afterLost.link.slice(0, 80));
 
   const balanceAfter = await page.evaluate(async () => {
     const r = await api("/v1/wallets");

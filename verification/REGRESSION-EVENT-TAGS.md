@@ -4,6 +4,20 @@ Every run below was against a real Postgres 16, the real API, the real POS HMAC
 signing stack, and Chromium. Nothing was mocked except the two payment
 providers, which have always been stood in for locally.
 
+## Full-screen service screens
+
+Every service modal is full-screen on a phone, fixed once on `.modal-card`
+rather than screen by screen. `verification/service-screens-full-bleed.js`
+opens each one at iPhone 15 Pro size and **measures** the card — position,
+size and corner radius — instead of eyeballing a screenshot:
+
+| Screens measured | Full-bleed |
+|---|---|
+| 18 service modals (Stokvel, My Tickets, Events, Receive, QR Pay, Airtime, Airtime & Data, Data, Electricity, Voucher, Pay Bills, Payment Request, Bill Split, Send Gift, Statements, Refund, Learn, Tip) | **18 / 18** |
+
+Transactions and Profile & Security are not modals — they navigate to full
+pages already — so there is nothing there to make full-screen.
+
 ## New coverage
 
 | Suite | Result |
@@ -11,7 +25,8 @@ providers, which have always been stood in for locally.
 | `api/test/event-tag-structure.test.js` — static invariants | 14/14 |
 | `verification/event-tag-e2e.js` — full journey + refusal matrix | 82/82 |
 | `verification/event-tag-consoles.spec.js` — organiser + admin consoles | 29/29 |
-| `verification/pwa-event-tags.spec.js` — the attendee's screen | 24/24 |
+| `verification/pwa-event-tags.spec.js` — the attendee's screen | 25/25 |
+| `verification/pwa-money-screens.spec.js` — the redesigned money screens move real money | 23/23 |
 
 ## API suite
 
