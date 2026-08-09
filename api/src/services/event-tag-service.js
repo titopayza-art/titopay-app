@@ -236,6 +236,122 @@ async function assignTag(actor, eventId, { token, ticketCode, activate = true })
   }
 }
 
+// The attendee linking their own wristband, by holding it against their phone.
+//
+// This is assignTag with the gate swapped: instead of "is the caller staff for
+// this event", the question is "is this the caller's own ticket". Everything
+// else is identical and is re-checked here — the tag must be a blank tag, it
+// must belong to the same event as the ticket, and the ticket must be valid.
+//
+// Handing this to the customer is safe because possession of the physical tag
+// is the thing being asserted, and the organiser controls who gets one. What it
+// cannot do is attach a tag to somebody else's ticket, take over a tag that is
+// already live, or reach across to another event.
+async function linkMyTag(actor, { token, ticketCode, ticketId } = {}) {
+  await ensureSchema();
+  if (!token) throw new AppError(400, "Tag credential is required");
+  if (!ticketCode && !ticketId) throw new AppError(400, "Ticket is required");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // The ticket first, and only if it is this customer's own.
+    const ticketResult = await client.query(
+      `SELECT t.id, t.event_id, t.owner_user_id, t.status,
+              e.event_name, e.status AS event_status, e.cashless_tags_enabled
+         FROM tickets t
+         JOIN events e ON e.id = t.event_id
+        WHERE ${ticketId ? "t.id = $1" : "t.ticket_code = $1"}
+          AND t.owner_user_id = $2
+        LIMIT 1
+        FOR UPDATE OF t`,
+      [String(ticketId || ticketCode).trim(), actor.userId]
+    );
+    const ticket = ticketResult.rows[0];
+    if (!ticket) throw new AppError(404, "Ticket not found");
+    if (!ticket.cashless_tags_enabled) throw new AppError(409, "This event does not use Event Tags");
+    if (ticket.event_status !== "approved") throw new AppError(409, "This event is not currently accepting Event Tags");
+    if (ticket.status !== "valid") throw new AppError(409, `Ticket is ${ticket.status}`);
+
+    const tagResult = await client.query(
+      "SELECT * FROM event_tags WHERE token_hash = $1 LIMIT 1 FOR UPDATE",
+      [sha256(token)]
+    );
+    const tag = tagResult.rows[0];
+    if (!tag) throw new AppError(404, "That tag is not recognised. Ask event staff to check it.");
+    if (tag.event_id !== ticket.event_id) throw new AppError(409, "That tag belongs to a different event");
+    if (tag.status === "ACTIVE" || tag.status === "ASSIGNED") {
+      // If it is already theirs, say so kindly rather than refusing blankly.
+      if (tag.user_id === actor.userId) throw new AppError(409, "This tag is already linked to your ticket");
+      throw new AppError(409, "That tag is already linked to another attendee");
+    }
+    if (tag.status !== "UNASSIGNED") throw new AppError(409, `That tag is ${tag.status.toLowerCase()} and cannot be linked`);
+
+    let linked;
+    try {
+      const result = await client.query(
+        `UPDATE event_tags
+            SET ticket_id = $2, user_id = $3, status = 'ACTIVE',
+                assigned_at = NOW(), activated_at = NOW(), updated_at = NOW()
+          WHERE id = $1 RETURNING *`,
+        [tag.id, ticket.id, actor.userId]
+      );
+      linked = result.rows[0];
+    } catch (error) {
+      if (error.code === "23505") throw new AppError(409, "This ticket already has a tag linked to it");
+      throw error;
+    }
+
+    await recordTagEvent(client, {
+      tagId: tag.id, eventId: ticket.event_id, action: "linked_by_attendee",
+      previousStatus: tag.status, nextStatus: "ACTIVE", actor,
+      metadata: { ticketId: ticket.id, channel: "self_service" }
+    });
+    await client.query("COMMIT");
+    await writeAuditLog({
+      actorType: actor.userType, actorId: actor.userId, action: "event_tag_self_linked",
+      entityType: "event_tag", entityId: tag.id, metadata: { eventId: ticket.event_id, ticketId: ticket.id }
+    }).catch(() => {});
+    return { ...publicTag(linked), eventName: ticket.event_name };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// The tickets this customer holds for cashless events that have no tag on them
+// yet — which is exactly the list the "Link Event Tag" screen offers.
+async function linkableTickets(userId) {
+  await ensureSchema();
+  const { rows } = await pool.query(
+    `SELECT t.id, t.ticket_code, e.id AS event_id, e.event_name, e.slug, e.event_date, e.venue_name
+       FROM tickets t
+       JOIN events e ON e.id = t.event_id
+      WHERE t.owner_user_id = $1
+        AND t.status = 'valid'
+        AND e.cashless_tags_enabled = TRUE
+        AND e.status = 'approved'
+        AND NOT EXISTS (
+          SELECT 1 FROM event_tags g
+           WHERE g.ticket_id = t.id AND g.status IN ('ASSIGNED','ACTIVE')
+        )
+      ORDER BY e.event_date ASC NULLS LAST
+      LIMIT 50`,
+    [userId]
+  );
+  return rows.map((row) => ({
+    ticketId: row.id,
+    ticketCode: row.ticket_code,
+    eventId: row.event_id,
+    eventName: row.event_name,
+    eventSlug: row.slug,
+    eventDate: row.event_date,
+    venueName: row.venue_name
+  }));
+}
+
 async function setTagStatus(actor, tagId, nextStatus, { reason = "" } = {}) {
   await ensureSchema();
   const allowed = ["ACTIVE", "BLOCKED", "LOST", "DEACTIVATED"];
@@ -687,6 +803,8 @@ module.exports = {
   mintTagToken,
   issueTags,
   assignTag,
+  linkMyTag,
+  linkableTickets,
   setTagStatus,
   replaceTag,
   chargeEventTag,

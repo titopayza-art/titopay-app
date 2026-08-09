@@ -201,8 +201,37 @@ GET  /v1/ticketing/business/events/:id/tags/analytics
 
 ```
 GET  /v1/ticketing/tags                  their own tags, resolved from their token
+GET  /v1/ticketing/tags/linkable         their tickets still waiting for a wristband
+POST /v1/ticketing/tags/link             link a wristband to their OWN ticket
 POST /v1/ticketing/tags/:tagId/lost      block their own tag
 ```
+
+`POST /tags/link` is `assignTag` with the gate swapped: instead of *is the
+caller staff for this event*, the question is *is this the caller's own
+ticket*. Every other check is identical and re-run — the tag must be blank, it
+must belong to the same event as the ticket, the ticket must be valid, and the
+event must be approved and cashless. It cannot attach a tag to someone else's
+ticket, take over a live tag, or reach across to another event.
+
+### Linking it from the phone
+
+**Events → My Tickets → Link Event Tag → tap the wristband → confirm →
+activated.**
+
+The reader is the phone. Web NFC (`NDEFReader`) is Chrome-on-Android only, so
+every step degrades rather than dead-ends:
+
+| Situation | What the customer gets |
+|---|---|
+| Chrome on Android | Tap the wristband against the back of the phone |
+| Any browser without Web NFC (all iOS) | The same screen, with the code printed on the tag typed in instead |
+| Neither works | The screen says to ask event staff, who have always been able to link a tag |
+
+The credential is read off the tag and posted as-is; the phone decides nothing.
+The tag may be written as an NDEF text or URI record — the app scans every
+record for the credential shape rather than hard-coding one encoding, so the
+choice stays an integration detail. **The read itself is still untested on real
+hardware** (see REQUIRES PHYSICAL HARDWARE TESTING above).
 
 ### Admin — behind the new `event_tags` permission
 

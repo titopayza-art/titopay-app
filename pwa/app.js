@@ -164,7 +164,9 @@ const state = {
   pendingTransactionReview: null,
   pendingQrPaymentReview: null,
   stockvel: { status: "idle", groups: [], invitations: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
-  ticketing: { eligibility: null, events: [], loading: false, search: "", myTickets: [], myTags: [], myTicketsStatus: "idle" },
+  ticketing: { eligibility: null, events: [], loading: false, search: "", myTickets: [], myTags: [], linkableTickets: [], myTicketsStatus: "idle" },
+  eventTagLink: null,
+  eventTagReader: null,
   pendingTicketPurchase: null,
   learn: { search: "", category: "all", open: "" },
   enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
@@ -2073,6 +2075,11 @@ async function onSubmit(event) {
     if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data);
     if (form.dataset.form === "business-staff") await submitBusinessStaff(data);
     if (form.dataset.form === "ticketing-scan") await submitTicketingScan(data);
+    if (form.dataset.form === "event-tag-link-manual") {
+      const typed = String(data.token || "").trim();
+      if (!/^ETAG_[A-Za-z0-9_-]{20,}$/.test(typed)) throw new Error("That does not look like a TitoPay Event Tag code.");
+      acceptEventTagCredential(typed);
+    }
     if (form.dataset.form === "ticketing-cashless") await submitTicketingCashless(data);
     if (form.dataset.form === "ticketing-vendor") await submitTicketingVendor(data);
     if (form.dataset.form === "ticketing-tag-issue") await submitTicketingTagIssue(data);
@@ -2483,6 +2490,11 @@ async function onClick(event) {
     if (input) input.dispatchEvent(new Event("input", { bubbles: true }));
     return;
   }
+  const moneyKey = event.target.closest("[data-money-key]");
+  if (moneyKey) {
+    pressMoneyKey(moneyKey);
+    return;
+  }
   const chatSuggestion = event.target.closest("[data-chat-suggestion]");
   if (chatSuggestion) {
     // A quick-help chip is a question, not a typing shortcut. It used to drop
@@ -2780,6 +2792,12 @@ async function handleAction(action, actionElement = null) {
   }
   if (String(action || "").startsWith("share-titopay:")) {
     await shareTitoPayApp(action.split(":")[1]);
+    return;
+  }
+  // Both go to the picker that already exists, rather than a second one built
+  // into the send screen.
+  if (action === "send-pick-beneficiary" || action === "send-change-recipient") {
+    openSavedBeneficiariesModal();
     return;
   }
   if (String(action || "").startsWith("beneficiary-select:")) {
@@ -3210,6 +3228,26 @@ async function handleAction(action, actionElement = null) {
   if (action === "event-tag-transactions") {
     closeModal();
     location.hash = "activity";
+    return;
+  }
+  if (String(action || "").startsWith("event-tag-link:")) {
+    const ticketId = action.split(":").slice(1).join(":");
+    const ticket = (state.ticketing.linkableTickets || []).find((item) => item.ticketId === ticketId);
+    if (!ticket) throw new Error("That ticket is no longer waiting for a tag.");
+    openLinkEventTagModal(ticket);
+    return;
+  }
+  if (action === "event-tag-link-scan") {
+    await startEventTagScan();
+    return;
+  }
+  if (action === "event-tag-link-restart") {
+    state.eventTagLink = { ...(state.eventTagLink || {}), token: "", status: "idle" };
+    renderLinkEventTagStep();
+    return;
+  }
+  if (action === "event-tag-link-confirm") {
+    await confirmEventTagLink(actionElement);
     return;
   }
   if (String(action || "").startsWith("event-tag-lost:")) {
@@ -6017,40 +6055,187 @@ function transactionPostedToWallet(item = {}) {
 
 // Card top-ups through Peach Checkout, EFT, and withdrawals to a bank account.
 
+/* ==========================================================================
+   FULL-SCREEN MONEY SCREENS
+   ==========================================================================
+   Top Up, Send Money, Withdraw and Payout all ask the same question — how
+   much, and to whom — so they now share one screen instead of four different
+   stacks of form fields.
+
+   The layout is the one a bank app uses: who it is going to at the top, the
+   amount as the largest thing on the screen with the available balance under
+   it, then the options, then one button. Nothing scrolls on a normal phone.
+
+   Crucially this is presentation only. The form underneath is still
+   data-form="transaction" with the same hidden fields, so the fee preview,
+   the review screen, the confirm step and every duplicate-tap protection
+   behave exactly as they did — none of that pipeline was touched. The keypad
+   writes into the same [name="amount"] input the old form had. */
+
+function moneyScreenAmount(form) {
+  return form ? form.querySelector('[name="amount"]') : null;
+}
+
+// The big number. Grouped with spaces so R12 500 does not read as R125 00.
+function formatAmountDisplay(raw) {
+  const text = String(raw || "");
+  if (!text) return "0";
+  const [whole, decimals] = text.split(".");
+  const grouped = (whole || "0").replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return decimals === undefined ? grouped : `${grouped}.${decimals}`;
+}
+
+function syncMoneyScreen(form) {
+  if (!form) return;
+  const field = moneyScreenAmount(form);
+  const display = form.querySelector("[data-amount-display]");
+  const submit = form.querySelector('button[type="submit"]');
+  if (!field || !display) return;
+  const raw = String(field.value || "");
+  display.textContent = formatAmountDisplay(raw);
+  display.classList.toggle("is-empty", !raw || Number(raw) === 0);
+  const amount = Number(raw);
+  const valid = Number.isFinite(amount) && amount > 0;
+  if (submit) {
+    submit.disabled = !valid;
+    const label = submit.querySelector("[data-cta-amount]");
+    if (label) label.textContent = valid ? ` ${money(amount)}` : "";
+  }
+  // Spending more than is there is worth saying before the customer taps, not
+  // after the API refuses it.
+  const balance = walletAvailableBalance();
+  const warn = form.querySelector("[data-amount-warning]");
+  if (warn && form.dataset.checkBalance === "true") {
+    const over = balance != null && valid && amount > Number(balance);
+    warn.hidden = !over;
+  }
+}
+
+// A phone keypad, so the number pad never has to be summoned and the layout
+// never jumps when it is.
+function moneyKeypad() {
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "back"];
+  return `<div class="money-keypad" role="group" aria-label="Amount keypad">
+    ${keys.map((key) => key === "back"
+      ? `<button class="money-key money-key-back" type="button" data-money-key="back" aria-label="Delete last digit">${icon("arrow-left")}</button>`
+      : `<button class="money-key${key === "." ? " money-key-dot" : ""}" type="button" data-money-key="${key}" aria-label="${key === "." ? "Decimal point" : key}">${key}</button>`
+    ).join("")}
+  </div>`;
+}
+
+function pressMoneyKey(button) {
+  const form = button.closest("form");
+  const field = moneyScreenAmount(form);
+  if (!field) return;
+  const key = button.dataset.moneyKey;
+  let value = String(field.value || "");
+  if (key === "back") {
+    value = value.slice(0, -1);
+  } else if (key === ".") {
+    if (!value.includes(".")) value = value === "" ? "0." : `${value}.`;
+  } else {
+    // Cents stop at two digits, and a leading zero is replaced rather than
+    // grown into "05".
+    if (value.includes(".") && value.split(".")[1].length >= 2) return;
+    if (value === "0") value = key;
+    else value = `${value}${key}`;
+    if (value.replace(".", "").length > 9) return;
+  }
+  field.value = value;
+  syncMoneyScreen(form);
+}
+
+// One shell, four screens. Everything a caller passes is already-escaped HTML
+// or plain text run through esc() here.
+function moneyScreen({
+  eyebrow,
+  title,
+  toCard = "",
+  hiddenFields = "",
+  optionRows = "",
+  extraFields = "",
+  ctaLabel,
+  ctaIcon = "send",
+  checkBalance = false,
+  footnote = ""
+}) {
+  const balance = walletAvailableBalance();
+  return `
+    <header class="money-screen-head">
+      <button class="icon-btn" type="button" data-close aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">${esc(eyebrow)}</p><h2>${esc(title)}</h2></div>
+      <span class="money-screen-spacer" aria-hidden="true"></span>
+    </header>
+    <form class="money-screen" data-form="transaction" data-check-balance="${checkBalance ? "true" : "false"}">
+      ${hiddenFields}
+      <input type="hidden" name="amount" value="">
+      ${toCard}
+      <div class="money-amount" role="group" aria-label="Amount">
+        <p class="money-amount-value"><span class="money-amount-currency">R</span><span data-amount-display class="is-empty">0</span></p>
+        ${balance == null ? "" : `<p class="money-amount-available">Available: <strong>${esc(money(balance))}</strong></p>`}
+        <p class="money-amount-warning" data-amount-warning hidden>That is more than your available balance.</p>
+      </div>
+      ${optionRows}
+      ${extraFields}
+      ${moneyKeypad()}
+      <button class="btn primary money-cta" type="submit" disabled>${icon(ctaIcon)} ${esc(ctaLabel)}<span data-cta-amount></span></button>
+      ${footnote ? `<p class="money-screen-foot">${footnote}</p>` : ""}
+    </form>
+  `;
+}
+
+// A tappable row: a label, a value, and "Change". The same shape the reference
+// design uses for both the recipient and the method.
+function moneyOptionRow({ label, value, sub = "", action, changeLabel = "Change", initial = "" }) {
+  return `
+    <button class="money-option" type="button" ${action ? `data-action="${esc(action)}"` : "disabled"}>
+      <span class="money-option-mark" aria-hidden="true">${initial ? esc(initial) : icon("wallet")}</span>
+      <span class="money-option-body">
+        <small>${esc(label)}</small>
+        <strong>${esc(value)}</strong>
+        ${sub ? `<small class="money-option-sub">${esc(sub)}</small>` : ""}
+      </span>
+      ${action ? `<span class="money-option-change">${esc(changeLabel)}</span>` : ""}
+    </button>`;
+}
+
+function openFullScreenModal(html, extraClass = "") {
+  openModal(html);
+  const backdrop = document.querySelector(".modal-backdrop");
+  const card = backdrop?.querySelector(".modal-card");
+  if (backdrop && card) {
+    backdrop.classList.add("fullscreen-backdrop");
+    card.classList.add("fullscreen-modal");
+    if (extraClass) card.classList.add(extraClass);
+  }
+  const form = card?.querySelector(".money-screen");
+  if (form) syncMoneyScreen(form);
+}
+
 function openTopUpModal(service) {
-  openModal(`
-    <div class="modal-head">
-      <div><p class="eyebrow">Top Up</p><h2>Add money to your wallet</h2><p class="lead">Card top ups are processed securely by Peach Payments. TitoPay will show the fee preview first.</p></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
-    <form class="form-grid money-form" data-form="transaction">
+  openFullScreenModal(moneyScreen({
+    eyebrow: "Top Up",
+    title: "Add money",
+    hiddenFields: `
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="recipient" value="TitoPay Wallet">
       <input type="hidden" name="integrationFlow" value="wallet_top_up">
-      ${balanceContextRow("Wallet balance now")}
-      <div class="field">
-        <label for="topup-amount">Amount</label>
-        <div class="input-affix currency-affix" data-prefix="R"><input id="topup-amount" name="amount" inputmode="decimal" required></div>
-        ${quickAmountChips()}
-      </div>
-      <div class="field">
-        <label for="topup-method">How are you paying?</label>
-        <select id="topup-method" name="fundingMethod" data-funding-method>
-          <option value="peach_card">Card &middot; instant</option>
-          <option value="eft_bank_transfer">EFT or bank transfer &middot; not available yet</option>
-        </select>
-        <p class="field-hint" data-funding-hint>Paid by card through Peach Payments. Your wallet is credited once the payment is confirmed.</p>
-      </div>
-      <div class="field">
-        <label for="topup-reference">Reference <span class="field-optional">optional</span></label>
-        <input id="topup-reference" name="reference" placeholder="What is this top up for?">
-      </div>
-      <button class="btn primary" type="submit">${icon("upload")} Preview top up</button>
-    </form>
-    <section class="integration-note" aria-label="Top up security">
-      <p>${icon("shield")} <span><strong>You see the fee first.</strong> Nothing is charged until you confirm on the review screen.</span></p>
-    </section>
-  `);
+      <input type="hidden" name="fundingMethod" value="peach_card">`,
+    toCard: moneyOptionRow({
+      label: "Into",
+      value: "My TitoPay Wallet",
+      sub: displayWalletId(primaryWallet()),
+      initial: ""
+    }),
+    optionRows: moneyOptionRow({
+      label: "Paying with",
+      value: "Card · instant",
+      sub: "Processed securely by Peach Payments"
+    }),
+    ctaLabel: "Top up",
+    ctaIcon: "upload",
+    footnote: `${icon("shield")} You see the fee before anything is charged.`
+  }));
 }
 // The withdrawal form needs the customer's saved bank accounts and the banks
 // Peach can pay, so it loads them before rendering. A failure to load is shown
@@ -7196,32 +7381,46 @@ function sendMoneyBeneficiaryPicker() {
 }
 function openSendMoneyModal(service = coreWalletAction("send"), selected = null) {
   const selectedRecipient = selected ? beneficiaryRecipient(selected) : "";
-  openModal(`
-    <div class="modal-head">
-      <div><p class="eyebrow">Send Money</p><h2>Who are you sending to?</h2><p class="lead">TitoPay shows the fee preview before anything is processed.</p></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
-    ${sendMoneyBeneficiaryPicker()}
-    <form class="form-grid stable-service-form" data-form="transaction">
+  const name = selected ? beneficiaryDisplayName(selected) : "";
+  // With a beneficiary chosen the screen is the reference layout: who, how
+  // much, send. Without one it still has to ask who, so the picker leads and
+  // the amount follows underneath it.
+  openFullScreenModal(moneyScreen({
+    eyebrow: "Send Money",
+    title: selected ? "How much?" : "Who are you sending to?",
+    hiddenFields: `
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode || "wallet_transfer")}">
       ${selected ? `<input type="hidden" name="beneficiaryUserId" value="${esc(selected.beneficiaryUserId || "")}">` : ""}
-      ${recipientMethodField("auto")}
-      <div class="field"><label>Recipient</label><input name="recipient" autocomplete="off" placeholder="Search @username, +27 cellphone or email" value="${esc(selectedRecipient)}" required></div>
-      ${selected ? `<div class="recipient-verify-result"><p class="rv-head">Saved beneficiary selected</p><div class="rv-row"><span class="rv-icon">${icon("shield")}</span><span><strong>${esc(beneficiaryDisplayName(selected))}</strong><small>${esc([displayUsername(selected.username), selected.walletId ? `Wallet ${selected.walletId}` : "", selected.qrReference ? `QR ${selected.qrReference}` : "", enumLabel(selected.accountType)].filter(Boolean).join(" · "))}</small></span></div></div>` : ""}
-      ${contactSuggestions()}
-      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Reference</label><input name="reference" placeholder="What is this payment for?"></div>
-      <div class="field"><label>Note</label><textarea name="note" placeholder="Optional message"></textarea></div>
-      <button class="btn primary" type="submit">${icon("send")} Preview send money</button>
-    </form>
-    <section class="reassure-card" role="note" aria-label="How this payment is protected">
-      <span class="icon-bubble">${icon("shield")}</span>
-      <div>
-        <strong>Your money is protected</strong>
-        <small>Recipients are checked against the TitoPay directory, every fee shows before you confirm, and confirmations are protected against duplicate taps.</small>
+      ${selected
+        ? `<input type="hidden" name="recipient" value="${esc(selectedRecipient)}">
+           <input type="hidden" name="recipientMethod" value="auto">`
+        : ""}`,
+    toCard: selected
+      ? moneyOptionRow({
+        label: "Send to",
+        value: name,
+        sub: [displayUsername(selected.username), enumLabel(selected.accountType)].filter(Boolean).join(" · "),
+        action: "send-change-recipient",
+        initial: name.trim().slice(0, 2).toUpperCase()
+      })
+      : "",
+    extraFields: selected ? `
+      <input class="money-inline-input" name="reference" placeholder="Add a reference (optional)" autocomplete="off" aria-label="Reference">`
+      : `
+      <div class="money-field">
+        <label for="send-recipient">Recipient</label>
+        <input id="send-recipient" name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" required>
       </div>
-    </section>
-  `);
+      ${recipientMethodField("auto")}
+      <input class="money-inline-input" name="reference" placeholder="Add a reference (optional)" autocomplete="off" aria-label="Reference">`,
+    optionRows: selected ? "" : `<div class="money-inline-actions">
+      <button class="btn ghost mini" type="button" data-action="send-pick-beneficiary">${icon("contacts")} Saved beneficiaries</button>
+    </div>`,
+    ctaLabel: "Send",
+    ctaIcon: "send",
+    checkBalance: true,
+    footnote: `${icon("shield")} Recipients are checked against the TitoPay directory, and you see the fee before you confirm.`
+  }));
 }
 function filteredBeneficiaries() {
   const query = String(state.beneficiarySearch || "").trim().toLowerCase();
@@ -13983,12 +14182,14 @@ async function refreshMyTickets() {
     // the screen: an attendee with no cashless event should see their tickets
     // exactly as they always have, and an attendee with one should still see
     // them if the tag lookup is unavailable.
-    const [result, tagResult] = await Promise.all([
+    const [result, tagResult, linkableResult] = await Promise.all([
       api("/v1/ticketing/tickets"),
-      api("/v1/ticketing/tags").catch(() => ({ items: [] }))
+      api("/v1/ticketing/tags").catch(() => ({ items: [] })),
+      api("/v1/ticketing/tags/linkable").catch(() => ({ items: [] }))
     ]);
     state.ticketing.myTickets = Array.isArray(result.items) ? result.items : Array.isArray(result.tickets) ? result.tickets : [];
     state.ticketing.myTags = Array.isArray(tagResult.items) ? tagResult.items : [];
+    state.ticketing.linkableTickets = Array.isArray(linkableResult.items) ? linkableResult.items : [];
     state.ticketing.myTicketsStatus = "ready";
     renderMyTickets();
   } catch (error) {
@@ -14020,7 +14221,7 @@ function renderMyTickets() {
   setMyTicketsLead(tickets.length
     ? `${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"} ready to show at the entrance.`
     : "Tickets you buy appear here.");
-  if (!tickets.length && !tags.length) {
+  if (!tickets.length && !tags.length && !(state.ticketing.linkableTickets || []).length) {
     host.innerHTML = `
       <section class="empty-state compact-state">
         ${icon("ticket")}
@@ -14031,6 +14232,7 @@ function renderMyTickets() {
     return;
   }
   host.innerHTML = `
+    ${(state.ticketing.linkableTickets || []).map(eventTagLinkCard).join("")}
     ${tags.map(eventTagCard).join("")}
     <section class="ticket-stub-list">${tickets
       .map((ticket) => ticketStub(ticket, ticket.order || {}, ticket.event || {}))
@@ -14049,6 +14251,27 @@ function renderMyTickets() {
 function eventTagsToShow() {
   // A replaced tag is history, not something the customer needs on screen.
   return (state.ticketing.myTags || []).filter((tag) => tag && tag.status !== "REPLACED");
+}
+
+// Shown for a ticket at a cashless event that has no wristband on it yet. It
+// is the entry point to the whole tap-to-link flow, and it disappears the
+// moment a tag is linked, because then the tag card above says it all.
+function eventTagLinkCard(ticket = {}) {
+  return `
+    <article class="event-tag-card is-link">
+      <header class="event-tag-head">
+        <div>
+          <p class="eyebrow">Event Tag</p>
+          <strong>${esc(ticket.eventName || "TitoPay Event")}</strong>
+        </div>
+        <em class="sv-chip warn">Not linked</em>
+      </header>
+      <p class="event-tag-says">This event is cashless. Link your wristband or card to pay by tapping it at any vendor.</p>
+      <p class="event-tag-wallet">${icon("wallet")} Pays from your TitoPay Wallet. There is no separate event balance.</p>
+      <div class="event-tag-actions">
+        <button class="btn primary" type="button" data-action="event-tag-link:${esc(ticket.ticketId)}">${icon("scan")} Link Event Tag</button>
+      </div>
+    </article>`;
 }
 
 function eventTagCard(tag = {}) {
@@ -14081,6 +14304,184 @@ function eventTagCard(tag = {}) {
 // Reporting a tag lost blocks the credential. It moves no money, and saying so
 // plainly is the point — an attendee who believes their balance is on the
 // wristband will hesitate to block it, which is exactly the wrong outcome.
+/* ==========================================================================
+   LINK EVENT TAG — tap the wristband against the phone
+   ==========================================================================
+   Events -> My Tickets -> Link Event Tag -> tap -> confirm -> activated.
+
+   The reader is the phone itself. Web NFC (NDEFReader) is Chrome-on-Android
+   only, so every step degrades: if the browser cannot read NFC, the same
+   screen accepts the code printed on the tag, and if that fails too it says to
+   ask event staff — who have had the ability to link a tag from the start.
+
+   Nothing here decides anything. The credential is read off the tag and posted
+   as-is; the server checks the tag is blank, belongs to this event, and that
+   the ticket is the caller's own. The phone is a reader, not an authority. */
+
+function nfcAvailable() {
+  return typeof window !== "undefined" && "NDEFReader" in window;
+}
+
+// A tag can be written as an NDEF text/URL record, or the credential may be
+// the record's raw payload. Read every record and take the first thing shaped
+// like a TitoPay credential, so the encoding choice stays an integration
+// detail rather than something the app hard-codes.
+function credentialFromNdef(message) {
+  const decoder = new TextDecoder();
+  for (const record of message.records || []) {
+    let text = "";
+    try {
+      text = decoder.decode(record.data);
+    } catch {
+      continue;
+    }
+    const match = String(text).match(/ETAG_[A-Za-z0-9_-]{20,}/);
+    if (match) return match[0];
+  }
+  return "";
+}
+
+function openLinkEventTagModal(ticket) {
+  state.eventTagLink = { ticket, token: "", status: "idle" };
+  renderLinkEventTagStep();
+}
+
+function renderLinkEventTagStep() {
+  const link = state.eventTagLink || {};
+  const ticket = link.ticket || {};
+  const supported = nfcAvailable();
+
+  const body = link.status === "done"
+    ? `
+      <div class="tag-link-stage is-done">
+        <span class="tag-link-mark is-done">${icon("shield")}</span>
+        <strong>Tag activated</strong>
+        <p>Your wristband is linked to ${esc(ticket.eventName || "this event")}. Tap it at any vendor to pay from your TitoPay Wallet.</p>
+      </div>
+      <div class="tag-link-actions">
+        <button class="btn primary" type="button" data-action="my-tickets">${icon("ticket")} Done</button>
+      </div>`
+    : link.status === "found"
+      ? `
+      <div class="tag-link-stage is-found">
+        <span class="tag-link-mark is-found">${icon("check-circle")}</span>
+        <strong>Tag read</strong>
+        <p>Link this wristband to your ticket for ${esc(ticket.eventName || "this event")}?</p>
+      </div>
+      <ul class="tag-link-facts">
+        <li><span>Event</span><strong>${esc(ticket.eventName || "—")}</strong></li>
+        <li><span>Ticket</span><strong>${esc(ticket.ticketCode || "—")}</strong></li>
+        <li><span>Pays from</span><strong>My TitoPay Wallet</strong></li>
+      </ul>
+      <p class="tag-link-note">${icon("shield")} No money is stored on the tag. Every tap comes out of your wallet, and you can block it from this screen if you lose it.</p>
+      <div class="tag-link-actions">
+        <button class="btn secondary" type="button" data-action="event-tag-link-restart">Read a different tag</button>
+        <button class="btn primary" type="button" data-action="event-tag-link-confirm">${icon("shield")} Confirm and activate</button>
+      </div>`
+      : `
+      <div class="tag-link-stage${link.status === "scanning" ? " is-scanning" : ""}">
+        <span class="tag-link-mark" aria-hidden="true">${icon("scan")}</span>
+        <strong>${link.status === "scanning" ? "Hold the tag against your phone" : "Tap your wristband"}</strong>
+        <p>${link.status === "scanning"
+          ? "Keep it against the back of your phone until it reads."
+          : supported
+            ? "Hold your wristband or card against the back of your phone to link it to your ticket."
+            : "This phone cannot read NFC in the browser. Enter the code printed on your tag instead, or ask event staff to link it for you."}</p>
+      </div>
+      <ul class="tag-link-facts">
+        <li><span>Event</span><strong>${esc(ticket.eventName || "—")}</strong></li>
+        <li><span>Ticket</span><strong>${esc(ticket.ticketCode || "—")}</strong></li>
+      </ul>
+      ${supported ? `<div class="tag-link-actions">
+        <button class="btn primary" type="button" data-action="event-tag-link-scan"${link.status === "scanning" ? " disabled" : ""}>
+          ${icon("scan")} ${link.status === "scanning" ? "Waiting for the tag…" : "Tap wristband"}
+        </button>
+      </div>` : ""}
+      <details class="tag-link-manual"${supported ? "" : " open"}>
+        <summary>Enter the code instead</summary>
+        <form class="form-grid" data-form="event-tag-link-manual">
+          <label>Tag code<input name="token" autocomplete="off" placeholder="ETAG_…" required></label>
+          <button class="btn secondary" type="submit">${icon("shield")} Use this code</button>
+        </form>
+      </details>
+      <p class="tag-link-note">${icon("shield")} No money is stored on the tag. It only tells the vendor which TitoPay Wallet to charge.</p>`;
+
+  openFullScreenModal(`
+    <header class="money-screen-head">
+      <button class="icon-btn" type="button" data-close aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">Event Tag</p><h2>Link your tag</h2></div>
+      <span class="money-screen-spacer" aria-hidden="true"></span>
+    </header>
+    <section class="tag-link-screen">${body}</section>
+  `, "tag-link-modal");
+}
+
+// The read itself. A live NDEFReader is kept on state so a second press does
+// not stack readers, and it is abandoned when the screen closes.
+async function startEventTagScan() {
+  if (!nfcAvailable()) {
+    showToast("This phone cannot read NFC in the browser. Enter the code instead.", "error");
+    return;
+  }
+  const link = state.eventTagLink || {};
+  link.status = "scanning";
+  renderLinkEventTagStep();
+  try {
+    const reader = new window.NDEFReader();
+    state.eventTagReader = reader;
+    await reader.scan();
+    reader.onreading = (event) => {
+      const token = credentialFromNdef(event.message);
+      if (!token) {
+        showToast("That tag is not a TitoPay Event Tag.", "error");
+        return;
+      }
+      acceptEventTagCredential(token);
+    };
+    reader.onreadingerror = () => showToast("The tag could not be read. Try again.", "error");
+  } catch (error) {
+    state.eventTagLink.status = "idle";
+    renderLinkEventTagStep();
+    showToast(/NotAllowed/i.test(String(error && error.name))
+      ? "TitoPay needs permission to use NFC on this phone."
+      : "NFC could not be started. Enter the code instead.", "error");
+  }
+}
+
+function acceptEventTagCredential(token) {
+  const link = state.eventTagLink || {};
+  link.token = token;
+  link.status = "found";
+  stopEventTagScan();
+  renderLinkEventTagStep();
+}
+
+function stopEventTagScan() {
+  state.eventTagReader = null;
+}
+
+async function confirmEventTagLink(trigger) {
+  const link = state.eventTagLink || {};
+  if (!link.token) return;
+  try {
+    setButtonBusy(trigger, true);
+    const result = await api("/v1/ticketing/tags/link", {
+      method: "POST",
+      body: { token: link.token, ticketId: link.ticket?.ticketId, ticketCode: link.ticket?.ticketCode }
+    });
+    // The credential is not kept a moment longer than the request needs it.
+    link.token = "";
+    link.status = "done";
+    link.tag = result.tag;
+    renderLinkEventTagStep();
+    state.ticketing.myTags = null;
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  } finally {
+    setButtonBusy(trigger, false);
+  }
+}
+
 function openEventTagLostConfirm(tagId) {
   const tag = eventTagsToShow().find((item) => item.tagId === tagId);
   openModal(`

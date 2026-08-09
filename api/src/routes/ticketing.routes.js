@@ -341,6 +341,26 @@ router.get("/tags", requireAuth, async (req, res, next) => {
   }
 });
 
+// The tickets waiting for a wristband — what the "Link Event Tag" screen lists.
+router.get("/tags/linkable", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await eventTags.linkableTickets(req.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The attendee links their own wristband by holding it against their phone.
+// Their user id comes from the token, so this can only ever attach a tag to a
+// ticket they own.
+router.post("/tags/link", requireAuth, async (req, res, next) => {
+  try {
+    res.status(201).json({ ok: true, tag: await eventTags.linkMyTag(req.auth, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Reporting a lost wristband is the one write an attendee can make. It blocks
 // the credential; it moves no money, because the money was never on it.
 router.post("/tags/:tagId/lost", requireAuth, async (req, res, next) => {

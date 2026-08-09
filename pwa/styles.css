@@ -12064,3 +12064,483 @@ button,
   font-size: 0.72rem;
   overflow-wrap: anywhere;
 }
+
+/* ==========================================================================
+   Full-screen money screens — Top Up, Send Money, Withdraw, Payout
+   ==========================================================================
+   One layout for all of them: who it is going to, the amount as the biggest
+   thing on the screen, the options, one button. Nothing scrolls on a phone.
+   This is presentation only; the form contract underneath is unchanged. */
+
+.modal-backdrop.fullscreen-backdrop {
+  padding: 0;
+  align-items: stretch;
+}
+
+.modal-card.fullscreen-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  max-width: 480px;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  border-radius: 0;
+  gap: 0;
+}
+
+@media (min-width: 520px) {
+  .modal-backdrop.fullscreen-backdrop {
+    align-items: center;
+    padding: 20px;
+  }
+
+  .modal-card.fullscreen-modal {
+    height: min(94dvh, 900px);
+    max-height: min(94dvh, 900px);
+    border-radius: 24px;
+  }
+}
+
+.money-screen-head {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  padding: calc(14px + var(--safe-top, 0px)) 16px 12px;
+  text-align: center;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+
+.money-screen-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.money-screen-head .eyebrow {
+  margin: 0 0 1px;
+}
+
+.money-screen-spacer {
+  display: block;
+  width: 44px;
+}
+
+.money-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  padding: 16px 16px calc(16px + var(--safe-bottom, 0px));
+  overflow-y: auto;
+  background: var(--soft);
+}
+
+/* The amount is the point of the screen, so it gets the space. The auto
+   margins let it sit in whatever room the options and keypad leave. */
+.money-amount {
+  display: grid;
+  gap: 6px;
+  margin: auto 0;
+  text-align: center;
+}
+
+.money-amount-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  color: var(--navy);
+  font-size: clamp(2.4rem, 12vw, 3.4rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+
+.money-amount-currency {
+  font-size: 0.5em;
+  font-weight: 700;
+}
+
+.money-amount-value [data-amount-display].is-empty {
+  color: var(--line);
+}
+
+.money-amount-available {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.money-amount-warning {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+.money-amount-warning svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* A tappable row: who, or how. */
+.money-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+}
+
+.money-option:disabled {
+  opacity: 1;
+}
+
+.money-option-mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  color: var(--blue);
+  font-size: 0.78rem;
+  font-weight: 700;
+  border-radius: 50%;
+  background: var(--soft-blue);
+}
+
+.money-option-mark svg {
+  width: 20px;
+  height: 20px;
+}
+
+.money-option-body {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.money-option-body small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.money-option-body strong {
+  overflow-wrap: anywhere;
+}
+
+.money-option-sub {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+.money-option-change {
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  color: var(--navy);
+  font-size: 0.76rem;
+  font-weight: 600;
+  border-radius: 999px;
+  background: var(--soft);
+}
+
+.money-inline-actions {
+  display: flex;
+  justify-content: center;
+}
+
+.money-field {
+  display: grid;
+  gap: 5px;
+}
+
+.money-field label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.money-field input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+/* The keypad means the OS keyboard never opens, so the layout never jumps. */
+.money-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border-radius: 20px;
+  background: var(--card);
+}
+
+.money-key {
+  min-height: 52px;
+  color: var(--navy);
+  font-size: 1.25rem;
+  font-weight: 600;
+  border: 0;
+  border-radius: 14px;
+  background: var(--soft);
+}
+
+.money-key:active {
+  background: var(--soft-blue);
+}
+
+.money-key-back svg {
+  width: 22px;
+  height: 22px;
+}
+
+.money-cta {
+  min-height: 54px;
+  font-size: 0.95rem;
+}
+
+.money-cta:disabled {
+  opacity: 0.45;
+}
+
+.money-screen-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.money-screen-foot svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+}
+
+/* ---- Link Event Tag ------------------------------------------------------ */
+
+.tag-link-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  padding: 20px 16px calc(20px + var(--safe-bottom, 0px));
+  overflow-y: auto;
+  background: var(--soft);
+}
+
+.tag-link-stage {
+  display: grid;
+  gap: 10px;
+  padding: 26px 18px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--card);
+}
+
+.tag-link-stage strong {
+  font-size: 1.05rem;
+}
+
+.tag-link-stage p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.tag-link-mark {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  margin: 0 auto;
+  color: var(--blue);
+  border-radius: 50%;
+  background: var(--soft-blue);
+}
+
+.tag-link-mark svg {
+  width: 34px;
+  height: 34px;
+}
+
+/* A slow pulse while the reader is live, so "waiting" looks like waiting
+   rather than like nothing happening. */
+.tag-link-stage.is-scanning .tag-link-mark {
+  animation: tag-link-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tag-link-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(10, 77, 255, 0.28); }
+  50% { box-shadow: 0 0 0 16px rgba(10, 77, 255, 0); }
+}
+
+.tag-link-mark.is-found,
+.tag-link-mark.is-done {
+  color: var(--success);
+  background: rgba(11, 159, 106, 0.14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tag-link-stage.is-scanning .tag-link-mark {
+    animation: none;
+  }
+}
+
+.tag-link-facts {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  margin: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+}
+
+.tag-link-facts li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.tag-link-facts span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tag-link-facts strong {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.tag-link-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.tag-link-manual summary {
+  padding: 12px 0;
+  color: var(--blue);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tag-link-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.tag-link-note svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+.event-tag-card.is-link {
+  border-color: var(--card-line);
+}
+
+/* The option rows are <button>s, which inherit the UA's washed-out button
+   colour. Say what they should be instead of relying on inheritance. */
+.money-option,
+.money-option .money-option-body strong {
+  color: var(--text);
+}
+
+.money-key-back svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* A reference is optional and usually skipped, so it gets one line rather
+   than a labelled field — which is also what keeps the screen from scrolling
+   on a small phone. */
+.money-inline-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+
+/* The manual-code fallback is a real form, not an afterthought: it is the only
+   way in on a phone whose browser cannot read NFC at all. */
+.tag-link-manual {
+  padding: 4px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+}
+
+.tag-link-manual[open] summary {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+
+.tag-link-manual .form-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.tag-link-manual label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tag-link-manual input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.82rem;
+  text-transform: none;
+  letter-spacing: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--soft);
+}
+
+.tag-link-note {
+  margin-top: auto;
+}
