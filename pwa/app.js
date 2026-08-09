@@ -47,6 +47,23 @@ const API_BASE = "https://api.titopay.co.za";
 const AUTH_KEY = "titopay_candidate_auth_v1";
 const SESSION_KEY = "titopay_candidate_session_v1";
 const PROFILE_PHOTO_PREFIX = "titopay_profile_photo_v1";
+
+// How an Event Tag's status reads to the attendee. A lookup table, kept here
+// with the rest of the configuration because every top-level const in this
+// file must sit in one of the two order-sensitive blocks.
+const EVENT_TAG_STATES = {
+  ASSIGNED: { label: "Ready to activate", tone: "", says: "Staff will activate this at the gate." },
+  ACTIVE: { label: "Active", tone: "settled", says: "Tap to pay at any vendor at this event." },
+  BLOCKED: { label: "Blocked", tone: "failed", says: "This tag has been blocked and cannot pay." },
+  LOST: { label: "Reported lost", tone: "failed", says: "This tag can no longer pay. Ask staff for a replacement." },
+  DEACTIVATED: { label: "Deactivated", tone: "failed", says: "This tag is no longer in use." }
+};
+
+// Which notifications are security alerts. The parts are matched between
+// underscores rather than as bare substrings, so "pin" cannot be caught inside
+// an unrelated word, and notificationCategory checks this BEFORE the
+// support/chat rule so a security alert can never be filed as a message.
+const SECURITY_NOTIFICATION = /(^|_)(login|signin|sign|device|devices|session|sessions|otp|pin|passcode|password|lock|unlock|locked|security|fraud|verification|verify|trusted|recovery)(_|$)/;
 const BUSINESS_LOGO_PREFIX = "titopay_business_logo_v1";
 const USERNAME_REGISTRY_KEY = "titopay_username_registry_v1";
 const KNOWN_TITOPAY_USERS_KEY = "titopay_known_users_v1";
@@ -147,7 +164,7 @@ const state = {
   pendingTransactionReview: null,
   pendingQrPaymentReview: null,
   stockvel: { status: "idle", groups: [], invitations: [], error: "", activeId: "", section: "overview", detail: null, detailStatus: "idle", detailError: "", search: "", activityFilter: "all", step: 0 },
-  ticketing: { eligibility: null, events: [], loading: false, search: "", myTickets: [], myTicketsStatus: "idle" },
+  ticketing: { eligibility: null, events: [], loading: false, search: "", myTickets: [], myTags: [], myTicketsStatus: "idle" },
   pendingTicketPurchase: null,
   learn: { search: "", category: "all", open: "" },
   enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
@@ -2056,6 +2073,10 @@ async function onSubmit(event) {
     if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data);
     if (form.dataset.form === "business-staff") await submitBusinessStaff(data);
     if (form.dataset.form === "ticketing-scan") await submitTicketingScan(data);
+    if (form.dataset.form === "ticketing-cashless") await submitTicketingCashless(data);
+    if (form.dataset.form === "ticketing-vendor") await submitTicketingVendor(data);
+    if (form.dataset.form === "ticketing-tag-issue") await submitTicketingTagIssue(data);
+    if (form.dataset.form === "ticketing-tag-assign") await submitTicketingTagAssign(data);
     if (form.dataset.form === "enterprise-distribution-application") await submitEnterpriseDistributionApplication(data);
     if (form.dataset.form === "enterprise-beneficiary") await submitEnterpriseBeneficiary(data);
     if (form.dataset.form === "beneficiary") await submitBeneficiary(data);
@@ -3177,6 +3198,27 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "my-tickets-refresh") {
     await refreshMyTickets();
+  }
+  // Event Tag payments are ordinary wallet transactions, so "View Transactions"
+  // goes to the Activity screen every other payment goes to. There is no
+  // separate event history to build.
+  if (action === "event-tag-clear-tokens") {
+    const host = document.querySelector("[data-event-tag-issue-result]");
+    if (host) host.innerHTML = "";
+    return;
+  }
+  if (action === "event-tag-transactions") {
+    closeModal();
+    location.hash = "activity";
+    return;
+  }
+  if (String(action || "").startsWith("event-tag-lost:")) {
+    openEventTagLostConfirm(action.split(":").slice(1).join(":"));
+    return;
+  }
+  if (String(action || "").startsWith("event-tag-lost-confirm:")) {
+    await reportEventTagLost(action.split(":").slice(1).join(":"), actionElement);
+    return;
   }
   if (String(action || "").startsWith("ticket-wallet:")) {
     const [, kind, ...rest] = String(action).split(":");
@@ -13937,8 +13979,16 @@ async function refreshMyTickets() {
   const host = document.querySelector("[data-my-ticket-list]");
   if (!host) return;
   try {
-    const result = await api("/v1/ticketing/tickets");
+    // Event Tags are fetched alongside the tickets but never allowed to fail
+    // the screen: an attendee with no cashless event should see their tickets
+    // exactly as they always have, and an attendee with one should still see
+    // them if the tag lookup is unavailable.
+    const [result, tagResult] = await Promise.all([
+      api("/v1/ticketing/tickets"),
+      api("/v1/ticketing/tags").catch(() => ({ items: [] }))
+    ]);
     state.ticketing.myTickets = Array.isArray(result.items) ? result.items : Array.isArray(result.tickets) ? result.tickets : [];
+    state.ticketing.myTags = Array.isArray(tagResult.items) ? tagResult.items : [];
     state.ticketing.myTicketsStatus = "ready";
     renderMyTickets();
   } catch (error) {
@@ -13965,11 +14015,12 @@ function renderMyTickets() {
   const host = document.querySelector("[data-my-ticket-list]");
   if (!host) return;
   const tickets = state.ticketing.myTickets || [];
+  const tags = eventTagsToShow();
   host.removeAttribute("aria-busy");
   setMyTicketsLead(tickets.length
     ? `${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"} ready to show at the entrance.`
     : "Tickets you buy appear here.");
-  if (!tickets.length) {
+  if (!tickets.length && !tags.length) {
     host.innerHTML = `
       <section class="empty-state compact-state">
         ${icon("ticket")}
@@ -13979,9 +14030,86 @@ function renderMyTickets() {
       </section>`;
     return;
   }
-  host.innerHTML = `<section class="ticket-stub-list">${tickets
-    .map((ticket) => ticketStub(ticket, ticket.order || {}, ticket.event || {}))
-    .join("")}</section>`;
+  host.innerHTML = `
+    ${tags.map(eventTagCard).join("")}
+    <section class="ticket-stub-list">${tickets
+      .map((ticket) => ticketStub(ticket, ticket.order || {}, ticket.event || {}))
+      .join("")}</section>`;
+}
+
+/* ---- Event Tags -----------------------------------------------------------
+   The attendee's cashless wristband. It is shown here, with their tickets,
+   because that is what it belongs to — and it is deliberately NOT shown
+   anywhere near the wallet, because it is not one.
+
+   There is no balance on this card and there is nothing to load onto it. The
+   money is in the TitoPay wallet the customer already has, which is why Top Up
+   below is the same button as everywhere else in the app rather than a second
+   top-up screen built for events. */
+function eventTagsToShow() {
+  // A replaced tag is history, not something the customer needs on screen.
+  return (state.ticketing.myTags || []).filter((tag) => tag && tag.status !== "REPLACED");
+}
+
+function eventTagCard(tag = {}) {
+  const meta = EVENT_TAG_STATES[tag.status] || { label: tag.status || "Unknown", tone: "", says: "" };
+  const canReportLost = ["ASSIGNED", "ACTIVE"].includes(tag.status);
+  return `
+    <article class="event-tag-card">
+      <header class="event-tag-head">
+        <div>
+          <p class="eyebrow">Event Tag</p>
+          <strong>${esc(tag.eventName || "TitoPay Event")}</strong>
+        </div>
+        <em class="sv-chip${meta.tone ? " " + meta.tone : ""}">${esc(meta.label)}</em>
+      </header>
+      <p class="event-tag-says">${esc(meta.says)}</p>
+      <p class="event-tag-wallet">${icon("wallet")} Uses your TitoPay Wallet. There is no separate event balance.</p>
+      <dl class="event-tag-facts">
+        <div><dt>Tag</dt><dd>${esc(tag.tagLabel || "—")}</dd></div>
+        <div><dt>Status</dt><dd>${esc(meta.label)}</dd></div>
+      </dl>
+      <div class="event-tag-actions">
+        <button class="btn primary" type="button" data-service="top-up">${icon("upload")} Top Up Wallet</button>
+        <button class="btn secondary" type="button" data-action="event-tag-transactions">${icon("list")} View Transactions</button>
+        ${tag.eventSlug ? `<button class="btn secondary" type="button" data-action="ticketing-open-event:${esc(tag.eventSlug)}">${icon("ticket")} Event Information</button>` : ""}
+        ${canReportLost ? `<button class="btn secondary event-tag-lost" type="button" data-action="event-tag-lost:${esc(tag.tagId)}">${icon("shield")} Report Tag Lost</button>` : ""}
+      </div>
+    </article>`;
+}
+
+// Reporting a tag lost blocks the credential. It moves no money, and saying so
+// plainly is the point — an attendee who believes their balance is on the
+// wristband will hesitate to block it, which is exactly the wrong outcome.
+function openEventTagLostConfirm(tagId) {
+  const tag = eventTagsToShow().find((item) => item.tagId === tagId);
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Event Tag</p>
+        <h2>Report this tag lost?</h2>
+        <p class="lead">This blocks the tag straight away, so nobody else can use it at ${esc(tag?.eventName || "the event")}. Your money stays in your TitoPay Wallet — there is nothing on the tag itself. Event staff can give you a replacement.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="auth-actions">
+      <button class="btn secondary" type="button" data-action="my-tickets">Cancel</button>
+      <button class="btn primary" type="button" data-action="event-tag-lost-confirm:${esc(tagId)}">${icon("shield")} Report lost</button>
+    </section>
+  `);
+}
+
+async function reportEventTagLost(tagId, trigger) {
+  try {
+    setButtonBusy(trigger, true);
+    await api(`/v1/ticketing/tags/${encodeURIComponent(tagId)}/lost`, { method: "POST", body: {} });
+    showToast("Tag blocked. Your wallet is untouched.");
+    await openMyTicketsModal();
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  } finally {
+    setButtonBusy(trigger, false);
+  }
 }
 async function openBusinessTicketingDashboard(options = {}) {
   if (state.accountType !== "business") {
@@ -14052,6 +14180,7 @@ async function openBusinessTicketingDashboard(options = {}) {
       </div>
       ${options.staffFocus ? ticketingStaffForm(events) : ""}
       ${ticketingScannerForm(events)}
+      ${ticketingEventTagsPanel(events)}
       <section class="settings-list">
         ${events.length ? events.map((event) => ticketingEventRow(event)).join("") : `<p class="muted">No ticketing events yet. Create your first draft when your event details are ready.</p>`}
       </section>
@@ -14142,6 +14271,107 @@ function ticketingScannerForm(events = []) {
     </section>
   `;
 }
+/* ---- Event Tags, from the organiser's side --------------------------------
+   Switch cashless on for an approved event, say which merchants may take tag
+   payments there, mint blank credentials and hand them to attendees.
+
+   There is no "load funds onto a tag" control here, and there never will be:
+   attendees pay from their own TitoPay wallets, so the organiser holds no
+   float and owes no refunds when the event ends. That is the whole reason the
+   tag is a credential rather than a purse. */
+function ticketingEventTagsPanel(events = []) {
+  const approved = events.filter((event) => event.status === "approved");
+  if (!approved.length) return "";
+  const options = approved.map((event) =>
+    `<option value="${esc(event.id)}">${esc(event.eventName)}${event.cashlessTagsEnabled ? " — cashless on" : ""}</option>`).join("");
+  return `
+    <section class="panel inner-panel">
+      <h3>Event Tags (cashless)</h3>
+      <p class="muted">NFC/RFID wristbands and cards for your event. Attendees tap to pay from their own TitoPay Wallet — you hold no float, and there is no event balance to reconcile afterwards.</p>
+
+      <form class="form-grid" data-form="ticketing-cashless">
+        <label>Event<select name="eventId">${options}</select></label>
+        <label>Cashless Event Tags
+          <select name="enabled">
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+        </label>
+        <button class="btn secondary" type="submit">${icon("shield")} Save cashless setting</button>
+      </form>
+
+      <form class="form-grid" data-form="ticketing-vendor">
+        <label>Event<select name="eventId">${options}</select></label>
+        <label>Vendor merchant ID<input name="merchantId" placeholder="Merchant UUID from the vendor's TitoPay Business profile" required></label>
+        <button class="btn secondary" type="submit">${icon("contacts")} Authorise vendor</button>
+      </form>
+
+      <form class="form-grid" data-form="ticketing-tag-issue">
+        <label>Event<select name="eventId">${options}</select></label>
+        <label>How many blank tags<input name="count" type="number" min="1" max="500" value="10" required></label>
+        <button class="btn secondary" type="submit">${icon("plus")} Issue blank tags</button>
+      </form>
+      <div data-event-tag-issue-result></div>
+
+      <form class="form-grid" data-form="ticketing-tag-assign">
+        <label>Event<select name="eventId">${options}</select></label>
+        <label>Tag credential<input name="token" placeholder="Read from the tag" required autocomplete="off"></label>
+        <label>Ticket code<input name="ticketCode" inputmode="numeric" maxlength="10" placeholder="10 digit ticket code" required></label>
+        <button class="btn primary" type="submit">${icon("scan")} Assign and activate</button>
+      </form>
+    </section>
+  `;
+}
+
+async function submitTicketingCashless(data) {
+  const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/cashless`, {
+    method: "POST",
+    body: { enabled: data.enabled === "true" }
+  });
+  showToast(result.cashless?.cashlessTagsEnabled ? "Event Tags are on for this event." : "Event Tags are off for this event.");
+  await openBusinessTicketingDashboard({ refresh: true });
+}
+
+async function submitTicketingVendor(data) {
+  const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/vendors`, {
+    method: "POST",
+    body: { merchantId: data.merchantId }
+  });
+  showToast(`${result.vendor?.businessName || "Vendor"} can now take Event Tag payments.`);
+}
+
+// The credentials come back exactly once. They are shown here for writing to
+// the physical tags and are not retrievable afterwards from any screen — which
+// is the point: the database stores only their hashes.
+async function submitTicketingTagIssue(data) {
+  const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/tags/issue`, {
+    method: "POST",
+    body: { count: Number(data.count) || 1 }
+  });
+  const issued = Array.isArray(result.issued) ? result.issued : [];
+  const host = document.querySelector("[data-event-tag-issue-result]");
+  if (host) {
+    host.innerHTML = `
+      <section class="event-tag-issued">
+        <strong>${issued.length} blank ${issued.length === 1 ? "tag" : "tags"} issued</strong>
+        <p class="muted">Write each credential to its tag now. They are shown once and cannot be read back — TitoPay stores only a one-way hash of them.</p>
+        <ol class="event-tag-token-list">
+          ${issued.map((tag) => `<li><span>${esc(tag.tagLabel)}</span><code>${esc(tag.token)}</code></li>`).join("")}
+        </ol>
+        <button class="btn secondary" type="button" data-action="event-tag-clear-tokens">${icon("x")} Done, hide these</button>
+      </section>`;
+  }
+  showToast(`${issued.length} tag${issued.length === 1 ? "" : "s"} issued.`);
+}
+
+async function submitTicketingTagAssign(data) {
+  const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/tags/assign`, {
+    method: "POST",
+    body: { token: data.token, ticketCode: data.ticketCode, activate: true }
+  });
+  showToast(`Tag ${result.tag?.tagLabel || ""} is active for this attendee.`);
+}
+
 function openTicketingEventForm() {
   openModal(`
     <div class="modal-head">
@@ -17406,7 +17636,6 @@ function markNotificationReadById(noticeId) {
 // The parts are matched between underscores rather than as bare substrings, so
 // "pin" cannot be caught inside an unrelated word, and the check runs BEFORE
 // the support/chat rule so a security alert can never be filed as a message.
-const SECURITY_NOTIFICATION = /(^|_)(login|signin|sign|device|devices|session|sessions|otp|pin|passcode|password|lock|unlock|locked|security|fraud|verification|verify|trusted|recovery)(_|$)/;
 function notificationCategory(item = {}) {
   const metadata = item.metadata || {};
   if (metadata.category === "payment" || String(item.type || "").startsWith("payment-")) return "payments";

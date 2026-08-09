@@ -11938,3 +11938,129 @@ button,
 .staff-storage-note {
   margin-top: 10px;
 }
+
+/* Event Tag — the attendee's cashless wristband, shown with their tickets.
+   It carries a status and an event, never a balance, because the money lives
+   in the TitoPay wallet the customer already has. The Top Up button inside it
+   is the ordinary wallet Top Up, not an event-specific one. */
+
+.event-tag-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+}
+
+.event-tag-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.event-tag-head strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.event-tag-says {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* Said once, on every tag, on purpose: an attendee who thinks the money is on
+   the wristband is an attendee who will not report it lost. */
+.event-tag-wallet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--navy);
+  font-size: 0.78rem;
+  border-radius: 12px;
+  background: var(--soft);
+}
+
+.event-tag-wallet svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+}
+
+.event-tag-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin: 0;
+}
+
+.event-tag-facts dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.event-tag-facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.event-tag-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.event-tag-actions .btn {
+  width: 100%;
+}
+
+.event-tag-lost {
+  color: var(--danger);
+  border-color: rgba(217, 66, 66, 0.35);
+}
+
+/* The one-time reveal of freshly minted tag credentials. They are shown here,
+   for writing to the physical tags, and are never retrievable again. */
+
+.event-tag-issued {
+  padding: 14px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--soft);
+}
+
+.event-tag-token-list {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  padding-left: 20px;
+  margin: 10px 0;
+  overflow-y: auto;
+}
+
+.event-tag-token-list li {
+  min-width: 0;
+}
+
+.event-tag-token-list span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.event-tag-token-list code {
+  display: block;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}

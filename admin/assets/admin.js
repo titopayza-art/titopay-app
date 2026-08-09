@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v74";
+  return "admin-console-v75";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -4355,7 +4355,73 @@ function renderTicketingEventActions(row = {}) {
   if (row.status === "suspended") actions.push(["reinstate", "Reinstate"]);
   actions.push(["report", "Report"]);
   if (row.status === "approved") actions.push(["settlement", "Settle"]);
+  // Only offered where it means something: a tag console for an event that has
+  // no cashless tags would open onto an empty table and imply a feature the
+  // organiser never switched on.
+  if (row.cashlessTagsEnabled) actions.push(["tags", "Event Tags"]);
   return actions.map(([action, label]) => `<button data-ticketing-action="${action}" data-ticketing-id="${id}">${escapeHtml(label)}</button>`).join(" ");
+}
+
+/* ---- Event Tags ----------------------------------------------------------
+   Admin's view of an event's cashless credentials. It shows what the tags are
+   doing and lets support stop one that has been lost or is being abused.
+
+   There is deliberately no balance column and no "load funds" control, because
+   an Event Tag holds no money — it points at the attendee's own TitoPay wallet.
+   The totals below come from the transactions ledger, so they cannot disagree
+   with it. */
+
+function renderEventTagPanel(eventId, tags, analytics, vendors) {
+  const status = analytics.tagsByStatus || {};
+  return `
+    <section class="card">
+      <header class="card-head">
+        <h3>Event Tags</h3>
+        <button data-ticketing-action="tags-close" data-ticketing-id="${escapeHtml(eventId)}">Close</button>
+      </header>
+      <p class="muted">Cashless NFC/RFID credentials for this event. A tag holds no money — every tap is paid from the attendee's own TitoPay wallet through the normal ledger.</p>
+      ${renderMetrics([
+        ["Tags Issued", analytics.tagsIssued || 0],
+        ["Active", analytics.tagsActive || 0],
+        ["Lost or Blocked", analytics.tagsLostOrBlocked || 0],
+        ["Replaced", analytics.tagsReplaced || 0],
+        ["Tap Payments", analytics.payments || 0],
+        ["Tap Sales", `R${Number(analytics.totalSales || 0).toFixed(2)}`],
+      ])}
+      ${tableCard("Sales by vendor", renderRows(analytics.salesByVendor || [], [
+        { label: "Vendor", render: (row) => escapeHtml(row.vendor || "-") },
+        { label: "Payments", render: (row) => String(row.payments || 0) },
+        { label: "Total", render: (row) => `R${Number(row.total || 0).toFixed(2)}` },
+      ]), "Taken from the transactions ledger, not from a separate tally.")}
+      ${tableCard("Authorised vendors", renderRows(vendors, [
+        { label: "Vendor", render: (row) => escapeHtml(row.businessName || "-") },
+        { label: "Merchant", render: (row) => escapeHtml(row.merchantCode || "-") },
+        { label: "Status", render: (row) => `<span class="chip ${row.status === "active" ? "green" : "red"}">${escapeHtml(row.status || "-")}</span>` },
+      ]), "Only these merchants can take Event Tag payments at this event. A tag from another event is refused here, and a tag from this event is refused everywhere else.")}
+      ${tableCard(`Tags (${tags.length})`, renderRows(tags, [
+        { label: "Tag", render: (row) => `<strong>${escapeHtml(row.tagLabel || "-")}</strong>` },
+        { label: "Attendee", render: (row) => `${escapeHtml(row.attendeeName || "Unassigned")}<br><small>${escapeHtml(row.ticketCode || "-")}</small>` },
+        { label: "Status", render: (row) => `<span class="chip ${row.status === "ACTIVE" ? "green" : ["LOST", "BLOCKED", "DEACTIVATED"].includes(row.status) ? "red" : "blue"}">${escapeHtml(row.status || "-")}</span>` },
+        { label: "Activated", render: (row) => escapeHtml(String(row.activatedAt || "-").slice(0, 19).replace("T", " ")) },
+      ], (row) => `
+        ${["ASSIGNED", "ACTIVE"].includes(row.status) ? `<button data-event-tag-action="BLOCKED" data-event-tag-id="${escapeHtml(row.tagId)}" data-event-tag-event="${escapeHtml(eventId)}">Block</button>` : ""}
+        <button data-event-tag-action="audit" data-event-tag-id="${escapeHtml(row.tagId)}" data-event-tag-event="${escapeHtml(eventId)}">Audit</button>
+      `), `Statuses: ${Object.entries(status).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml(String(v))}`).join(", ") || "none issued"}. Blocking a tag stops it paying immediately and moves no money.`)}
+      <div id="event-tag-audit-host"></div>
+    </section>`;
+}
+
+async function openEventTagPanel(eventId) {
+  const host = document.getElementById("ticketing-detail-host");
+  if (!host) return;
+  host.innerHTML = `<section class="card"><p class="muted">Loading Event Tags…</p></section>`;
+  const [tagResult, analyticsResult, vendorResult] = await Promise.all([
+    apiFetch(`/admin/ticketing/events/${eventId}/tags`),
+    apiFetch(`/admin/ticketing/events/${eventId}/tags/analytics`),
+    apiFetch(`/admin/ticketing/events/${eventId}/vendors`).catch(() => ({ items: [] })),
+  ]);
+  host.innerHTML = renderEventTagPanel(eventId, tagResult.items || [], analyticsResult.analytics || {}, vendorResult.items || []);
+  host.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 async function renderTicketing() {
   const [result, refundResult] = await Promise.all([
@@ -6268,6 +6334,14 @@ document.addEventListener("click", async (event) => {
         }
         return;
       }
+      if (action === "tags") {
+        await openEventTagPanel(eventId);
+        return;
+      }
+      if (action === "tags-close") {
+        if (host) host.innerHTML = "";
+        return;
+      }
       if (action === "settlement") {
         if (!window.confirm("Create settlement record for this event?")) return;
         const result = await apiFetch(`/admin/ticketing/events/${eventId}/settlement`, { method: "POST", body: JSON.stringify({}) });
@@ -6284,6 +6358,39 @@ document.addEventListener("click", async (event) => {
       });
       showToast(`Ticketing event ${action.replaceAll("_", " ")} completed`);
       await renderTicketing();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+    return;
+  }
+  const eventTagAction = event.target.closest("[data-event-tag-action]");
+  if (eventTagAction) {
+    const action = eventTagAction.dataset.eventTagAction;
+    const tagId = eventTagAction.dataset.eventTagId;
+    const eventId = eventTagAction.dataset.eventTagEvent;
+    try {
+      if (action === "audit") {
+        const result = await apiFetch(`/admin/ticketing/tags/${tagId}/audit`);
+        const auditHost = document.getElementById("event-tag-audit-host");
+        if (auditHost) {
+          auditHost.innerHTML = tableCard("Tag history", renderRows(result.items || [], [
+            { label: "When", render: (row) => escapeHtml(String(row.created_at || "-").slice(0, 19).replace("T", " ")) },
+            { label: "Action", render: (row) => escapeHtml(String(row.action || "-").replaceAll("_", " ")) },
+            { label: "Status", render: (row) => escapeHtml([row.previous_status, row.next_status].filter(Boolean).join(" -> ") || "-") },
+            { label: "By", render: (row) => escapeHtml(row.actor_type || "-") },
+          ]), "Append-only. The tag credential itself never appears here.");
+          auditHost.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        return;
+      }
+      const reason = window.prompt("Reason for blocking this tag:");
+      if (!reason) return;
+      await apiFetch(`/admin/ticketing/tags/${tagId}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status: action, reason })
+      });
+      showToast("Tag blocked. No money was moved.");
+      await openEventTagPanel(eventId);
     } catch (error) {
       showToast(adminErrorMessage(error.message));
     }

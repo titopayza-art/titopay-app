@@ -56,6 +56,13 @@ const {
   createTicketSettlement
 } = require("../services/ticketing-service");
 const {
+  listEventTags,
+  eventTagAnalytics,
+  listEventVendors,
+  setTagStatus,
+  tagAuditTrail
+} = require("../services/event-tag-service");
+const {
   adminOverview: enterpriseDistributionOverview,
   listApplications: listEnterpriseDistributionApplications,
   listOrganisations: listEnterpriseDistributionOrganisations,
@@ -3589,6 +3596,63 @@ router.post("/ticketing/refunds/:id/action", requireAdminPermission("ticketing")
   try {
     const refundId = requireUuid(req.params.id, "Refund ID");
     res.json({ ok: true, refund: await processTicketRefund(refundId, req.body, req.auth, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ---- Event Tags ----------------------------------------------------------
+   Admin oversight of an event's cashless credentials, behind its own
+   "event_tags" permission rather than the broader "ticketing" one: reading
+   sales reports is a reporting job, while blocking an attendee's wristband is
+   a fraud-and-support job, and they are not the same people.
+
+   Nothing here can create, activate or replace a tag — those stay with the
+   organiser and the gate. Admin can look, and can stop a tag. */
+
+router.get("/ticketing/events/:id/tags", requireAdminPermission("event_tags"), async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, items: await listEventTags(eventId, { status: req.query.status, limit: req.query.limit }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/ticketing/events/:id/tags/analytics", requireAdminPermission("event_tags"), async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, analytics: await eventTagAnalytics(eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/ticketing/events/:id/vendors", requireAdminPermission("event_tags"), async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, items: await listEventVendors(eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/ticketing/tags/:tagId/status", requireAdminPermission("event_tags"), async (req, res, next) => {
+  try {
+    const tagId = requireUuid(req.params.tagId, "Tag ID");
+    res.json({
+      ok: true,
+      tag: await setTagStatus(req.auth, tagId, String(req.body?.status || "").toUpperCase(), { reason: req.body?.reason })
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/ticketing/tags/:tagId/audit", requireAdminPermission("event_tags"), async (req, res, next) => {
+  try {
+    const tagId = requireUuid(req.params.tagId, "Tag ID");
+    res.json({ ok: true, items: await tagAuditTrail(tagId, req.query.limit) });
   } catch (error) {
     next(error);
   }
