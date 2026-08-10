@@ -26,6 +26,10 @@ const RESULT_CODES = {
   failed: ["800.100.152", "transaction declined by authorization system"]
 };
 
+let SLOW_MS = 0;
+let DOMAIN_BLOCK = false;
+let SEEN_REFERER = "";
+let SLOW_AUTH_MS = 0;
 const checkouts = new Map();
 const log = [];
 
@@ -88,6 +92,7 @@ const server = http.createServer((req, res) => {
     console.log(`[fake-peach] ${req.method} ${path}`);
 
     if (req.method === "POST" && path === "/api/oauth/token") {
+      if (SLOW_AUTH_MS > 0) await new Promise((r) => setTimeout(r, SLOW_AUTH_MS));
       const ok = body.clientId === VALID.clientId && body.clientSecret === VALID.clientSecret && body.merchantId === VALID.merchantId;
       if (!ok) return send(res, 400, { message: "Invalid client ID or secret." });
       return send(res, 200, { access_token: "local.checkout.access.token", expires_in: "1800", token_type: "Bearer" });
@@ -98,7 +103,15 @@ const server = http.createServer((req, res) => {
       return send(res, 401, { result: { code: "800.900.300", description: "invalid authentication information" } });
     }
 
+    // Test hook: make Peach slow, the way a real provider round trip can be.
+    if (req.method === "POST" && path === "/__domain-block") { DOMAIN_BLOCK = Boolean(body.on); return send(res, 200, { ok: true, DOMAIN_BLOCK }); }
+    if (req.method === "GET" && path === "/__referer") return send(res, 200, { referer: SEEN_REFERER });
+    if (req.method === "POST" && path === "/__slow") { SLOW_MS = Number(body.ms || 0); SLOW_AUTH_MS = Number(body.authMs || 0); return send(res, 200, { ok: true, slowMs: SLOW_MS, slowAuthMs: SLOW_AUTH_MS }); }
+
     if (req.method === "POST" && path === "/v2/checkout") {
+      SEEN_REFERER = String(req.headers.referer || req.headers.referrer || "");
+      if (DOMAIN_BLOCK) return send(res, 400, { message: "Merchant domain is not allowlisted" });
+      if (SLOW_MS > 0) await new Promise((r) => setTimeout(r, SLOW_MS));
       const missing = ["merchantTransactionId", "amount", "currency", "nonce", "shopperResultUrl"].filter((f) => body[f] === undefined || body[f] === "");
       if (!body.authentication || !body.authentication.entityId) missing.push("authentication.entityId");
       if (missing.length) return send(res, 400, { result: { code: "200.300.404", description: `invalid or missing parameter: ${missing.join(", ")}` } });
@@ -125,7 +138,7 @@ const server = http.createServer((req, res) => {
     if (req.method === "GET" && statusMatch) {
       const checkout = checkouts.get(statusMatch[1]);
       if (!checkout) return send(res, 404, { result: { code: "200.300.404", description: "checkout not found" } });
-      const [code, description] = RESULT_CODES[checkout.outcome];
+      const [code, description] = RESULT_CODES[checkout.outcome] || RESULT_CODES.failed;
       log.push({ kind: "status", checkoutId: checkout.checkoutId, outcome: checkout.outcome });
       return send(res, 200, {
         amount: checkout.amount.toFixed(2),
@@ -178,7 +191,11 @@ const server = http.createServer((req, res) => {
       const checkout = checkouts.get(body.checkoutId) || [...checkouts.values()].find((c) => c.merchantTransactionId === body.merchantTransactionId);
       if (!checkout) return send(res, 404, { error: "unknown checkout" });
       checkout.outcome = body.outcome || "successful";
-      return send(res, 200, { ok: true, checkoutId: checkout.checkoutId, outcome: checkout.outcome });
+      // Let a test make the provider report an amount other than the one the
+      // checkout was created for. This is how a compromised or buggy provider
+      // response looks, and the API must never credit a wallet from it.
+      if (body.amount !== undefined) checkout.amount = Number(body.amount);
+      return send(res, 200, { ok: true, checkoutId: checkout.checkoutId, outcome: checkout.outcome, amount: checkout.amount });
     }
     if (req.method === "POST" && path === "/__webhook") {
       const checkout = checkouts.get(body.checkoutId) || [...checkouts.values()].find((c) => c.merchantTransactionId === body.merchantTransactionId);

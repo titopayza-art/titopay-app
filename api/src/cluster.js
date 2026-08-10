@@ -49,21 +49,66 @@ if (!cluster.isPrimary || workers === 1) {
 
   console.log(`TitoPay API cluster starting ${workers} workers on ${os.cpus().length} cores`);
 
-  for (let i = 0; i < workers; i += 1) cluster.fork();
-
   // A worker that dies takes its in-flight requests with it; not replacing it
   // would silently shrink capacity until a restart. Replaced unless we are
   // deliberately shutting down, which is what `stopping` distinguishes.
+  //
+  // But replacing unconditionally is worse than not replacing at all. If
+  // workers die immediately — the port already taken, a bad environment
+  // variable, a missing migration — an unconditional respawn becomes an
+  // infinite fork loop that burns a core, floods the log and never recovers,
+  // while the port stays held so an operator's restart appears to succeed and
+  // silently does nothing. That happened during testing of this very file: a
+  // stale primary respawned workers for forty minutes while every "restart"
+  // quietly served stale code.
+  //
+  // So a worker that dies young counts against a budget. Crossing it stops the
+  // cluster with a clear reason instead of thrashing, and the supervisor gets a
+  // non-zero exit — which is what makes pm2's own restart backoff apply.
+  const YOUNG_MS = 10000;
+  const MAX_RAPID_FAILURES = 10;
+  const startedAt = new Map();
   let stopping = false;
+  let rapidFailures = 0;
+
+  function fork() {
+    const worker = cluster.fork();
+    startedAt.set(worker.id, Date.now());
+    return worker;
+  }
+
+  for (let i = 0; i < workers; i += 1) fork();
 
   cluster.on("exit", (worker, code, signal) => {
+    const age = Date.now() - (startedAt.get(worker.id) || 0);
+    startedAt.delete(worker.id);
     if (stopping) return;
-    console.error("[cluster] worker exited; starting a replacement", {
-      pid: worker.process.pid,
-      code,
-      signal: signal || null
-    });
-    cluster.fork();
+
+    if (age < YOUNG_MS) {
+      rapidFailures += 1;
+      console.error("[cluster] worker died within " + YOUNG_MS + "ms of starting", {
+        pid: worker.process.pid, code, signal: signal || null,
+        rapidFailures, limit: MAX_RAPID_FAILURES
+      });
+      if (rapidFailures >= MAX_RAPID_FAILURES) {
+        console.error(
+          "[cluster] " + MAX_RAPID_FAILURES + " workers failed to stay up. Refusing to keep forking — " +
+          "this is a startup fault, not a crash. Check that the port is free, the environment is complete " +
+          "and the database is reachable. Exiting so the supervisor can back off."
+        );
+        stopping = true;
+        for (const w of Object.values(cluster.workers || {})) w.kill("SIGKILL");
+        process.exit(1);
+      }
+    } else {
+      // A worker that ran for a while and then died is an ordinary crash, so
+      // the budget resets. Only a run of young deaths means startup is broken.
+      rapidFailures = 0;
+      console.error("[cluster] worker exited; starting a replacement", {
+        pid: worker.process.pid, code, signal: signal || null, ranForMs: age
+      });
+    }
+    fork();
   });
 
   function shutdown(signal) {
