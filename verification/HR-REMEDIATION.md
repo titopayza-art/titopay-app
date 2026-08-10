@@ -2,7 +2,8 @@
 
 Against the HR PRODUCTION HARDENING audit (`hr_2.zip`).
 
-Commits: `d6a9392`, `0d2c923`, `9cf97be`, `8c91f38` on `claude/peach-payments-403-fix-6sv7cy`.
+Commits: `d6a9392`, `0d2c923`, `9cf97be`, `8c91f38`, `08dbdd9` on
+`claude/peach-payments-403-fix-6sv7cy`.
 
 Evidence for everything below is reproducible:
 
@@ -10,7 +11,11 @@ Evidence for everything below is reproducible:
 npm test                                  # from api/  — 328/330
 node verification/hr-remediation.js 8110  # 79 checks
 node verification/hr-data-isolation.js    # 17 checks
+node verification/hr-portal.spec.js       # 47 checks, in a real browser
 ```
+
+The portal harness needs the sandbox copy: `bash verification/sync-hrserve.sh`
+then `node verification/hr-static.js`.
 
 ---
 
@@ -70,16 +75,39 @@ employee could list, edit and delete another's claims, leave, tickets and
 performance reviews. Row-level ownership now applies to every self-scoped
 resource on read, write and delete.
 
-**N-04 / N-05 — Record deletion.** Not a server defect: deletion works for both
-announcements and recruitment candidates, is a soft delete, refuses an
-unauthorised user, removes the record from lists, and answers 404 on a second
-attempt. Twelve checks now hold that in place. The missing part is the button —
-see §3.
+**N-02 — Learning Hub "Open resource".** The button was not broken; it was
+aimed at a placeholder. Every seeded course was written with
+`course_url = 'hr-learning'`, and the portal renders the link whenever that
+field has a value, so all fifteen courses offered a link to a relative path that
+does not exist — including the three mandatory ones the audit named. The
+material was never missing: it is the course's handbook content and lessons,
+read in the app. The placeholder is cleared, the seed no longer writes one, and
+a course can no longer be saved with a link a browser cannot open (a bare word,
+a host with no scheme, or a `javascript:`/`data:` URL aimed at whoever clicked).
+Verified in the browser: no course offers a dead link, and all three mandatory
+courses are on screen with working controls.
 
-**N-02 — Learning Hub resource links (server-side half).** A course could be
-published with a link nothing can open: a bare word, a host with no scheme, or a
-`javascript:`/`data:` URL aimed at whoever clicked. Links are now validated on
-create and edit. The root cause of the three broken mandatory courses is in §3.
+**N-04 / N-05 — Deleting candidates and announcements.** Both render as cards,
+and only table rows were given the edit and delete controls the rest of the
+portal has. The API supported deletion the whole time. Both lists now carry a
+delete control that goes through the ordinary endpoint — soft delete, audit
+entry naming the actor, server free to refuse. A card carries no record id, so
+the record is matched on what the card shows; if that matches more than one
+record nothing is deleted and it says why. Verified end to end in the browser
+for both, including that the row survives as a soft delete.
+
+**Announcement approval decisions were being discarded.** The portal sends
+`submittedBy`/`submittedAt` on submission and `approvedBy`/`publishedAt` on
+approval. None of those columns existed, so all four were dropped on the way in:
+an approved announcement could not say when it went live or who allowed it.
+Added and backfilled. Not in the audit.
+
+**Misleading deletion copy.** The confirmation said "This action cannot be
+undone" and offered "Delete permanently". Neither was true — the record is
+retained for the audit trail. It now says what actually happens.
+
+**The page scrolled behind the open mobile menu**, because the scroll lock has
+to go on `<html>`, which is what scrolls here, not `<body>`. Not in the audit.
 
 **Audit log attribution.** Every Login — and every action taken through the
 login path — was recorded with no actor at all. `audit()` reads `auth.userId`,
@@ -130,25 +158,33 @@ link. Fixing what that button does needs the frontend source (§3).
 
 ## 3. Not fixed, and why
 
-**The HR portal frontend is a minified React bundle with no source and no source
-map.** `hr/index.html` is 433 KB of compiled output. These findings are all in
-it, and hand-editing minified output would be unmaintainable and unsafe:
+**N-03 — Scrolling does not reproduce.** Tested signed in, at 1440, 1280, 820,
+390 and 360 wide. The Learning Hub renders twenty courses over 8500px and
+scrolls to the last one at every size; the menu opens, closes from its own X and
+from a tap outside, and the page scrolls again afterwards. The one thing that
+did fail was reloading a route — and that was the test sandbox, not the product:
+`hr/.htaccess` carries the SPA rewrite, and `verification/hr-static.js` now
+gives the sandbox the same rule. If the tester can say which screen and which
+device, I will chase it; there is nothing to fix from the report as written.
 
-- **N-03** — scrolling. Needs the layout CSS.
-- **N-04 / N-05** — the delete buttons. The API is proven; the controls are missing.
-- **F-13** — Company Documents version field showing the statute title. The
-  server stores whatever it is given; the form is putting the title in both
-  fields.
-- **F-15** — announcement approval counter. There is no counter in the API — it
-  is computed in the bundle. The spec says not to guess what it should mean, and
-  I cannot see the current definition to correct it.
-- **F-20 / F-21 / F-22** — "Super Adminstrator". The string is not in the API, the
-  database, or the bundle's readable text. It is most likely a job title on a
-  production employee record, which is a one-field edit in the portal.
-- **N-02** — making "Open resource" render in-app material instead of following a
-  URL.
+**F-13 — Company Documents version field.** The server stores what it is given,
+and the form is putting the document title into both Version and Description.
+Correcting the form needs the React source; correcting the affected rows needs
+production data. Both are listed in §2 and §9.
 
-**What I need:** the HR frontend source repository. With it, all of the above are
+**F-20 / F-21 / F-22 — "Super Adminstrator".** Not in the API, the database or
+the portal's text — it is a job title typed onto an employee record in
+production. One field edit in Employees. Recruitment, Reports and the Audit log
+all load: Recruitment opens on its Jobs tab, and candidates are behind the
+"Candidate pipeline" tab beside it, which is worth knowing if the tester
+concluded the module was empty.
+
+**Still needs the React source.** `hr/index.html` is a 444 KB compiled bundle
+with no source map. Everything above was repaired either server-side or by an
+additive script against the rendered DOM — the pattern this file already used
+for three earlier fixes. That approach has a limit: changing what a form *field*
+does (F-13), or how the Learning Hub renders in-app material rather than
+following a link, wants the component. With the frontend repository those become
 ordinary work.
 
 **A decision, not a defect (F-04).** Who signs a disciplinary case *off* —
@@ -212,9 +248,22 @@ No endpoint was added or removed. Behaviour changed on:
 
 ## 7. Frontend changes
 
-None. `hr/` is now under version control — it never was, which is why
+`hr/` is now under version control — it never was, which is why
 `api/test/hr-session.test.js` could not find `hr-session.js` and the whole file
 failed. That test now runs and passes (4/4).
+
+- `hr/index.html` — an additive repair script (delete controls for the candidate
+  and announcement lists; the mobile scroll lock), and two corrected strings in
+  the deletion confirmation. The compiled bundle is otherwise untouched. The
+  file already carried three scripts of this kind; this is the fourth, written
+  the same way and marked for removal once the fix exists in source.
+- `hr/hr-session.js` — publishes the API base it already knew, so the repair
+  script calls the same address this bridge authenticates instead of carrying
+  its own copy.
+
+The readable source of the repair script is kept at
+`verification/hr-portal-repairs.source.js` so it can be reviewed without
+reading it out of a 444 KB file.
 
 ---
 
@@ -225,7 +274,8 @@ failed. That test now runs and passes (4/4).
 | `api` unit and structure suite | **328 / 330** — the two failures are the Peach Checkout sandbox tests, which need an external service, and fail identically before these changes |
 | `verification/hr-remediation.js` | **79 / 79** |
 | `verification/hr-data-isolation.js` | **17 / 17** |
-| Mutation testing | 6 mutants, each killed by the matching assertion |
+| `verification/hr-portal.spec.js` | **47 / 47** — a real browser, five screen sizes |
+| Mutation testing | 9 mutants, each killed by the matching assertion |
 
 The mutants: self-approval check removed; claim status derived from the payload
 instead of the stored row; employee resolution never refusing; clock-in identity
