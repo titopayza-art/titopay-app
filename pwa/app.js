@@ -3024,6 +3024,10 @@ async function handleAction(action, actionElement = null) {
     closeModal();
     showToast("Transaction cancelled. No funds were deducted.");
   }
+  if (action === "cancel-topup-redirect") {
+    cancelTopupRedirect();
+    return;
+  }
   if (action === "confirm-qr-payment-review") {
     await confirmReviewedQrPayment();
   }
@@ -6487,23 +6491,67 @@ async function startCardTopup(context) {
     // failed and inviting them to start a second payment.
     result = await resubmitAfterTimeout("/v1/payments/topup", request, "top up");
   }
+  // Handed to the redirect screen so Back can put the customer exactly where
+  // they were, with the SAME idempotency key — confirming again then returns the
+  // checkout that already exists instead of opening a second one.
+  const reviewContext = state.pendingTransactionReview;
   state.pendingTransactionReview = null;
   rememberPendingTopup(result);
   if (result.redirectUrl) {
     openTopupRedirectModal(result);
-    window.setTimeout(() => window.location.assign(result.redirectUrl), 400);
+    pendingTopupRedirect = {
+      reviewContext,
+      // Only the timer handle is cleared, not the context. The screen the
+      // customer is stuck on is precisely the one AFTER this has fired — the
+      // browser is waiting on a slow Peach page while this document is still
+      // alive — so Back has to keep working, with the same key, from here on.
+      timer: window.setTimeout(() => {
+        if (pendingTopupRedirect) pendingTopupRedirect.timer = null;
+        window.location.assign(result.redirectUrl);
+      }, 400)
+    };
     return;
   }
   await pollAndPresentTopup(result.reference);
 }
+
+// Back from the redirect screen. Nothing financial happens here: no request is
+// sent, no wallet moves, and the checkout that was already created is left
+// exactly as it is — Peach and the webhook remain the only things that decide
+// whether that payment succeeded. The stored pending reference is deliberately
+// kept too, so if the customer did reach Peach and pay, the app still reconciles
+// it on the next open the same way it always has.
+function cancelTopupRedirect() {
+  const pending = pendingTopupRedirect;
+  pendingTopupRedirect = null;
+  if (pending?.timer) window.clearTimeout(pending.timer);
+  // If the browser already started loading Peach, stop it. Harmless otherwise.
+  try { window.stop(); } catch (error) { /* not supported here; the timer is cleared either way */ }
+
+  if (pending?.reviewContext) {
+    // Same context, same idempotency key: pressing Confirm again reuses the
+    // checkout that exists rather than creating another one.
+    state.pendingTransactionReview = pending.reviewContext;
+    openTransactionReviewModal(pending.reviewContext);
+  } else {
+    closeModal();
+    openTopUpModal({ id: "top-up", label: "Top Up", serviceCode: "wallet_top_up" });
+  }
+  showToast("Payment not started. Nothing was taken from your wallet.");
+}
+
 function openTopupRedirectModal(result) {
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Top Up</p><h2>Opening secure payment</h2></div>
+      <button class="icon-btn" type="button" data-action="cancel-topup-redirect" aria-label="Go back to Top Up">${icon("arrow-left")}</button>
     </div>
     <section class="integration-note" aria-label="Redirecting to Peach Payments">
       <p>${icon("shield")} <span>Taking you to Peach Payments to pay ${esc(money(result.total ?? result.amount))} securely.${Number(result.fee) > 0 ? ` That is ${esc(money(result.amount))} into your wallet plus a ${esc(money(result.fee))} TitoPay top up fee.` : ""} Your wallet is credited once TitoPay confirms the payment.</span></p>
     </section>
+    <div class="tx-detail-actions">
+      <button class="btn ghost" type="button" data-action="cancel-topup-redirect">${icon("arrow-left")} Back to Top Up</button>
+    </div>
   `);
 }
 function openTopupProcessingModal(reference) {
@@ -19951,6 +19999,13 @@ const PAYMENT_FALLBACK_MESSAGE = "We couldn't complete this transaction. Please 
 // ---------------------------------------------------------------------------
 
 const TOPUP_PENDING_KEY = "titopay.pendingTopup";
+// The top-up redirect in flight, so it can be called off. The "Opening secure
+// payment" screen used to have no way out: it shows for 400ms and then the
+// browser leaves for Peach — but the current document stays alive and
+// interactive for as long as the Peach page takes to load, which on a poor
+// connection is a long time to sit there with no control. That is the state
+// customers got stuck in. Holding the timer here lets Back clear it.
+let pendingTopupRedirect = null;
 const CARD_TOPUP_SERVICE_CODES = new Set(["wallet_top_up", "top_up", "top-up", "card_topups", "card_payments"]);
 // ---------------------------------------------------------------------------
 // Peach Payouts withdrawal / business payout

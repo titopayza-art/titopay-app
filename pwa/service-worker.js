@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v296-offline-fallback-works";
+const CACHE_NAME = "titopay-pwa-v297-topup-back-action";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=296",
-  "./app.min.js?v=296",
+  "./styles.min.css?v=297",
+  "./app.min.js?v=297",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
