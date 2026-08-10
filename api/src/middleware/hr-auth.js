@@ -30,7 +30,11 @@ const fullAccessRoles = new Set(["CEO", "Super Admin"]);
 
 const permissions = {
   "HR Director": ["*"],
-  "HR Administrator": ["dashboard", "employees", "onboarding", "leave", "attendance", "payroll", "performance", "documents", "tickets", "projects", "meetings", "recruitment", "reports", "learning", "assets", "expenses", "announcements", "organisation", "audit"],
+  // "disciplinary" was the one module an HR Administrator held no grant on, so
+  // the page answered 403 for the role that runs the process (F-04). Who signs
+  // OFF a case — records the outcome and closes it — is a separate question
+  // this grant does not settle; Compliance Officer keeps its own grant.
+  "HR Administrator": ["dashboard", "employees", "onboarding", "leave", "attendance", "payroll", "performance", "disciplinary", "documents", "tickets", "projects", "meetings", "recruitment", "reports", "learning", "assets", "expenses", "announcements", "organisation", "audit"],
   Finance: ["dashboard", "employees:read", "payroll", "tickets:read", "reports", "expenses"],
   "Payroll Officer": ["dashboard", "employees:read", "payroll", "reports"],
   "Compliance Officer": ["dashboard", "employees:read", "disciplinary", "documents", "tickets:read", "reports", "audit"],

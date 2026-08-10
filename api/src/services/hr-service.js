@@ -44,42 +44,42 @@ const resources = {
     module: "onboarding",
     table: "hr_onboarding_tasks",
     searchable: ["employee", "title", "category", "status"],
-    columns: { employee: "employee", title: "title", category: "category", dueDate: "due_date", status: "status", notes: "notes" },
+    columns: { employeeId: "employee_id", employee: "employee", title: "title", category: "category", dueDate: "due_date", status: "status", notes: "notes" },
     defaultOrder: "due_date ASC NULLS LAST, created_at DESC"
   },
   leave: {
     module: "leave",
     table: "hr_leave_requests",
     searchable: ["employee", "type", "reason", "status"],
-    columns: { employee: "employee", type: "type", startDate: "start_date", endDate: "end_date", days: "days", reason: "reason", status: "status", managerComment: "manager_comment", hrComment: "hr_comment" },
+    columns: { employeeId: "employee_id", employee: "employee", type: "type", startDate: "start_date", endDate: "end_date", days: "days", reason: "reason", status: "status", managerComment: "manager_comment", hrComment: "hr_comment" },
     defaultOrder: "created_at DESC"
   },
   attendance: {
     module: "attendance",
     table: "hr_attendance_records",
     searchable: ["employee", "work_mode", "status"],
-    columns: { employee: "employee", workDate: "work_date", clockIn: "clock_in", clockOut: "clock_out", lunchStart: "lunch_start", lunchEnd: "lunch_end", breakMinutes: "break_minutes", regularMinutes: "regular_minutes", workMode: "work_mode", status: "status", minutesLate: "minutes_late", overtimeMinutes: "overtime_minutes", employeeSignature: "employee_signature", apologyReason: "apology_reason", attendanceSource: "attendance_source" },
+    columns: { employeeId: "employee_id", employee: "employee", workDate: "work_date", clockIn: "clock_in", clockOut: "clock_out", lunchStart: "lunch_start", lunchEnd: "lunch_end", breakMinutes: "break_minutes", regularMinutes: "regular_minutes", workMode: "work_mode", status: "status", minutesLate: "minutes_late", overtimeMinutes: "overtime_minutes", employeeSignature: "employee_signature", apologyReason: "apology_reason", attendanceSource: "attendance_source" },
     defaultOrder: "work_date DESC, created_at DESC"
   },
   payroll: {
     module: "payroll",
     table: "hr_payroll_records",
     searchable: ["employee", "period", "status"],
-    columns: { employee: "employee", period: "period", baseSalary: "base_salary", allowances: "allowances", deductions: "deductions", bonuses: "bonuses", tax: "tax", uif: "uif", pension: "pension", medicalAid: "medical_aid", reimbursements: "reimbursements", netPay: "net_pay", status: "status" },
+    columns: { employeeId: "employee_id", employee: "employee", period: "period", baseSalary: "base_salary", allowances: "allowances", deductions: "deductions", bonuses: "bonuses", tax: "tax", uif: "uif", pension: "pension", medicalAid: "medical_aid", reimbursements: "reimbursements", netPay: "net_pay", status: "status" },
     defaultOrder: "period DESC, created_at DESC"
   },
   performance: {
     module: "performance",
     table: "hr_performance_reviews",
     searchable: ["employee", "period", "kpis", "status"],
-    columns: { employee: "employee", period: "period", kpis: "kpis", objectives: "objectives", selfReview: "self_review", managerFeedback: "manager_feedback", peerReview: "peer_review", score: "score", improvementPlan: "improvement_plan", promotionRecommendation: "promotion_recommendation", status: "status" },
+    columns: { employeeId: "employee_id", employee: "employee", period: "period", kpis: "kpis", objectives: "objectives", selfReview: "self_review", managerFeedback: "manager_feedback", peerReview: "peer_review", score: "score", improvementPlan: "improvement_plan", promotionRecommendation: "promotion_recommendation", status: "status" },
     defaultOrder: "created_at DESC"
   },
   disciplinary: {
     module: "disciplinary",
     table: "hr_disciplinary_cases",
     searchable: ["case_number", "employee", "type", "status"],
-    columns: { caseNumber: "case_number", employee: "employee", type: "type", incidentDate: "incident_date", description: "description", investigationNotes: "investigation_notes", hearingDate: "hearing_date", outcome: "outcome", evidenceUrl: "evidence_url", status: "status" },
+    columns: { employeeId: "employee_id", caseNumber: "case_number", employee: "employee", type: "type", incidentDate: "incident_date", description: "description", investigationNotes: "investigation_notes", hearingDate: "hearing_date", outcome: "outcome", evidenceUrl: "evidence_url", status: "status" },
     defaultOrder: "created_at DESC"
   },
   documents: {
@@ -223,7 +223,7 @@ const resources = {
     module: "expenses",
     table: "hr_expense_claims",
     searchable: ["employee", "type", "status"],
-    columns: { employee: "employee", type: "type", amount: "amount", currency: "currency", receiptUrl: "receipt_url", description: "description", managerStatus: "manager_status", financeStatus: "finance_status", paymentStatus: "payment_status", status: "status" },
+    columns: { employeeId: "employee_id", employee: "employee", type: "type", amount: "amount", currency: "currency", receiptUrl: "receipt_url", description: "description", managerStatus: "manager_status", financeStatus: "finance_status", paymentStatus: "payment_status", status: "status" },
     defaultOrder: "created_at DESC"
   },
   announcements: {
@@ -353,7 +353,13 @@ function withAliases(payload = {}, aliases = {}) {
   return next;
 }
 
-function normaliseHrPayload(resourceName, payload = {}, auth = {}) {
+// `mode` separates creating a record from editing one. It matters for the
+// fields this function fills in from the signed-in account: on a new record an
+// absent employee name means "mine", but on an edit it means "not mentioned",
+// and defaulting it there rewrote the employee on someone else's record to
+// whoever happened to be editing it.
+function normaliseHrPayload(resourceName, payload = {}, auth = {}, mode = "create") {
+  const creating = mode !== "update";
   let next = { ...payload };
 
   if (resourceName === "employees") {
@@ -406,7 +412,8 @@ function normaliseHrPayload(resourceName, payload = {}, auth = {}) {
       dueDate: ["due_date", "deadline"],
       status: ["state"]
     });
-    next.employee = asTrimmedText(next.employee) || auth.name || auth.email || "Staff member";
+    next.employee = asTrimmedText(next.employee)
+      || (creating ? (auth.name || auth.email || "Staff member") : undefined);
     next.title = asTrimmedText(next.title) || "Self onboarding";
     next.category = asTrimmedText(next.category) || "Self onboarding";
     next.dueDate = normaliseDate(next.dueDate);
@@ -424,7 +431,8 @@ function normaliseHrPayload(resourceName, payload = {}, auth = {}) {
       apologyReason: ["apology_reason", "reason"],
       attendanceSource: ["attendance_source", "source"]
     });
-    next.employee = asTrimmedText(next.employee) || auth.name || auth.email || "Staff member";
+    next.employee = asTrimmedText(next.employee)
+      || (creating ? (auth.name || auth.email || "Staff member") : undefined);
     next.workDate = normaliseDate(next.workDate);
     next.workMode = asTrimmedText(next.workMode) || "Office";
     next.status = normaliseStatus(next.status, ["present", "absent", "apology", "lunch", "complete"], "present");
@@ -441,8 +449,19 @@ function normaliseHrPayload(resourceName, payload = {}, auth = {}) {
     });
     const moneyFields = ["baseSalary", "allowances", "deductions", "bonuses", "tax", "uif", "pension", "medicalAid", "reimbursements"];
     for (const field of moneyFields) {
-      const value = asNumber(next[field] ?? 0);
-      if (!Number.isFinite(value) || value < 0) throw new AppError(400, `${field} must be a non-negative amount`);
+      // A field left blank is zero, not an error.
+      //
+      // `next[field] ?? 0` only catches null and undefined, so an empty string —
+      // which is what an untouched form field sends — reached asNumber(""),
+      // came back undefined, and was rejected as "must be a non-negative
+      // amount". That is why an all-zero payslip could not be saved. Genuinely
+      // invalid input such as "abc" is still refused; only blank means zero.
+      const raw = next[field];
+      const blank = raw === undefined || raw === null || String(raw).trim() === "";
+      const value = blank ? 0 : asNumber(raw);
+      if (value === undefined || !Number.isFinite(value) || value < 0) {
+        throw new AppError(400, `${field} must be a non-negative amount`);
+      }
       next[field] = Math.round((value + Number.EPSILON) * 100) / 100;
     }
     const grossCents = ["baseSalary", "allowances", "bonuses", "reimbursements"]
@@ -457,6 +476,62 @@ function normaliseHrPayload(resourceName, payload = {}, auth = {}) {
     if (!next.employee) throw new AppError(400, "Employee is required");
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(next.period || "")) throw new AppError(400, "Payroll period must use YYYY-MM");
     next.status = normaliseStatus(next.status, ["draft", "review", "processed"], "draft");
+  } else if (resourceName === "expenses") {
+    next = withAliases(next, {
+      managerStatus: ["manager_status"],
+      financeStatus: ["finance_status"],
+      paymentStatus: ["payment_status"]
+    });
+    next.employee = asTrimmedText(next.employee);
+    if (next.amount !== undefined) {
+      // Blank means zero here too, for the same reason it does on a payslip.
+      const blank = next.amount === null || String(next.amount).trim() === "";
+      const amount = blank ? 0 : asNumber(next.amount);
+      if (amount === undefined || !Number.isFinite(amount) || amount < 0) {
+        throw new AppError(400, "Claim amount must be a non-negative amount");
+      }
+      next.amount = Math.round((amount + Number.EPSILON) * 100) / 100;
+    }
+
+    // Separation of duties. The three approval fields decide whether money is
+    // owed, so they are writable only by a role whose grant on expenses is the
+    // full module — never by a self-scoped requester. The audit could not
+    // conclusively test this (F-08); previously there was no expenses block at
+    // all and all four status columns were written straight from the request
+    // body. Whether this is the approver's OWN claim is decided in update()
+    // against the stored employee name, because a PATCH that changes nothing
+    // but the status carries no employee field to check here.
+    const scope = hrGrantScope(auth?.role, "expenses");
+    if (scope === "self") {
+      // A self-scoped person files claims in their own name, not a colleague's,
+      // and cannot reassign one afterwards. create() fills the name in from the
+      // signed-in account; here the supplied one is simply dropped.
+      delete next.employee;
+      delete next.employeeId;
+    }
+    if (scope !== "full") {
+      delete next.managerStatus;
+      delete next.financeStatus;
+      delete next.paymentStatus;
+    } else {
+      // Only what was actually supplied is normalised. Defaulting the two
+      // fields a PATCH did not mention would send "pending" back over an
+      // approval that had already happened.
+      if (next.managerStatus !== undefined) {
+        next.managerStatus = normaliseStatus(next.managerStatus, ["pending", "approved", "rejected"], "pending");
+      }
+      if (next.financeStatus !== undefined) {
+        next.financeStatus = normaliseStatus(next.financeStatus, ["pending", "approved", "rejected"], "pending");
+      }
+      if (next.paymentStatus !== undefined) {
+        next.paymentStatus = normaliseStatus(next.paymentStatus, ["unpaid", "scheduled", "paid"], "unpaid");
+      }
+    }
+    // The displayed status is always DERIVED from the three decisions, never
+    // supplied. This is what let "Payment Scheduled" and "Manager Review" show
+    // on the same record: four independent columns and nothing keeping them in
+    // step. create() and update() set it; the request body never does.
+    delete next.status;
   } else if (resourceName === "projects") {
     next = withAliases(next, {
       projectName: ["name", "title", "project_name"],
@@ -599,6 +674,123 @@ function normaliseHrPayload(resourceName, payload = {}, auth = {}) {
     if (next[key] === undefined) delete next[key];
   });
   return next;
+}
+
+// One authoritative claim status, derived from the three decisions that
+// actually happened. Order matters: a rejection anywhere ends the claim, and
+// payment can only be reported once finance has approved.
+function deriveClaimStatus(claim) {
+  if (claim.managerStatus === "rejected" || claim.financeStatus === "rejected") return "rejected";
+  if (claim.paymentStatus === "paid") return "paid";
+  if (claim.paymentStatus === "scheduled") return "payment_scheduled";
+  if (claim.financeStatus === "approved") return "finance_approved";
+  if (claim.managerStatus === "approved") return "manager_approved";
+  return "manager_review";
+}
+
+// Resources whose records belong to a named employee and carry the FK to prove
+// it. Every one of these has an employee_id column; until now none of them
+// wrote it through the ordinary create/update path, so records were joined to
+// people by matching text.
+const EMPLOYEE_LINKED = new Set([
+  "onboarding", "leave", "attendance", "payroll", "performance", "disciplinary", "expenses"
+]);
+
+// Turns whatever identifies an employee into the employee.
+//
+// F-06: a leave request could be filed for "hh" and a claim for a person who
+// does not work here, because nothing ever checked the name against the staff
+// list. This resolves an id, an employee number, an email address or a full
+// name to one hr_employees row and stores BOTH the id and that employee's real
+// name, so the text column and the FK can no longer disagree.
+//
+// It runs only when the request actually supplies an employee. A PATCH that
+// changes a date leaves the link exactly as it was.
+//
+// Naming SOMEONE ELSE has to resolve; naming yourself does not. An HR user
+// with no employee record of their own can still clock in and file their own
+// claim, exactly as before — that is their account's gap, not a typo. Writing a
+// record against another person, on the other hand, is the case F-06 is about,
+// and it now has to identify a real member of staff.
+async function resolveEmployeeLink(resourceName, data, auth = {}) {
+  if (!EMPLOYEE_LINKED.has(resourceName)) return;
+  const suppliedId = asTrimmedText(data.employee_id);
+  const suppliedName = asTrimmedText(data.employee);
+  if (!suppliedId && !suppliedName) return;
+
+  const mine = [auth.name, auth.email].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+  const strict = !(suppliedId && suppliedId === auth.employeeId)
+    && !(suppliedName && mine.includes(suppliedName.toLowerCase()));
+
+  const lookup = suppliedId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(suppliedId)
+    ? await pool.query(
+      `SELECT id, first_name, last_name FROM hr_employees
+        WHERE id = $1 AND deleted_at IS NULL`, [suppliedId])
+    : await pool.query(
+      `SELECT id, first_name, last_name FROM hr_employees
+        WHERE deleted_at IS NULL
+          AND (LOWER(employee_number) = LOWER($1)
+            OR LOWER(email) = LOWER($1)
+            OR LOWER(TRIM(first_name || ' ' || last_name)) = LOWER(TRIM($1)))
+        LIMIT 3`, [suppliedName || suppliedId]);
+
+  if (!lookup.rows.length) {
+    if (!strict) return;
+    throw new AppError(400,
+      `"${suppliedName || suppliedId}" is not an employee on this system. `
+      + "Choose someone from the employee list, or add them under Employees first.");
+  }
+  if (lookup.rows.length > 1) {
+    throw new AppError(400,
+      `More than one employee is called "${suppliedName}". `
+      + "Use their employee number or work email address instead.");
+  }
+  const employee = lookup.rows[0];
+  data.employee_id = employee.id;
+  data.employee = `${employee.first_name} ${employee.last_name}`.trim();
+}
+
+const CLAIM_DECISION_COLUMNS = ["manager_status", "finance_status", "payment_status"];
+
+// Applies an approval decision to an expense claim against the claim as it
+// stands in the database, not as the request body describes it.
+//
+// Three things can only be decided here rather than in normaliseHrPayload:
+//
+//   1. Nobody approves their own claim. A PATCH that sets nothing but
+//      manager_status carries no employee name, so the check has to read the
+//      stored one.
+//   2. The decisions a PATCH does not mention must keep their stored values —
+//      the derived status is computed over the merge, not over the payload.
+//   3. The ladder runs manager -> finance -> payment. Marking a claim paid
+//      while finance is still pending would otherwise record money as gone out
+//      on a claim nobody approved.
+async function applyClaimDecision(id, auth, data) {
+  if (!CLAIM_DECISION_COLUMNS.some((column) => column in data)) return;
+
+  const current = await pool.query(
+    `SELECT employee, manager_status, finance_status, payment_status
+       FROM hr_expense_claims WHERE id = $1 AND deleted_at IS NULL`, [id]);
+  const row = current.rows[0];
+  if (!row) return; // The UPDATE that follows answers 404 for this.
+
+  const mine = [auth?.name, auth?.email].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+  if (mine.includes(String(row.employee || "").trim().toLowerCase())) {
+    throw new AppError(403, "You cannot approve or reject your own expense claim.");
+  }
+
+  const merged = {
+    managerStatus: data.manager_status ?? row.manager_status,
+    financeStatus: data.finance_status ?? row.finance_status,
+    paymentStatus: data.payment_status ?? row.payment_status
+  };
+  if (merged.financeStatus === "approved" && merged.managerStatus !== "approved") {
+    throw new AppError(400, "A manager must approve this claim before finance can.");
+  }
+  if (merged.paymentStatus !== "unpaid" && merged.financeStatus !== "approved") {
+    throw new AppError(400, "Finance must approve this claim before it can be scheduled or paid.");
+  }
+  data.status = deriveClaimStatus(merged);
 }
 
 function rowToApi(row) {
@@ -1283,6 +1475,26 @@ async function create(resourceName, auth, payload, meta = {}) {
     data.title = data.title || "HR meeting";
     data.status = data.status || "scheduled";
   }
+  if (effectiveResourceName === "expenses") {
+    // A self-scoped claimant is identified by their account, not by whatever
+    // name reached the request body — and by their employee id in particular,
+    // because two people can share a name.
+    if (hrGrantScope(auth.role, "expenses") === "self") {
+      data.employee = auth.name || auth.email;
+      if (auth.employeeId) data.employee_id = auth.employeeId;
+    }
+    data.employee = data.employee || auth.name || auth.email;
+    if (!data.employee) throw new AppError(400, "Employee is required");
+    if (!data.type) throw new AppError(400, "Claim type is required");
+    data.manager_status = data.manager_status || "pending";
+    data.finance_status = data.finance_status || "pending";
+    data.payment_status = data.payment_status || "unpaid";
+    data.status = deriveClaimStatus({
+      managerStatus: data.manager_status,
+      financeStatus: data.finance_status,
+      paymentStatus: data.payment_status
+    });
+  }
   if (effectiveResourceName === "uploads") {
     data.title = data.title || normalizedPayload.fileName || normalizedPayload.name || "HR document";
     data.category = data.category || "General";
@@ -1333,6 +1545,7 @@ async function create(resourceName, auth, payload, meta = {}) {
     data.work_end_time = data.work_end_time || "17:00";
     data.lunch_minutes = data.lunch_minutes ?? 60;
   }
+  await resolveEmployeeLink(effectiveResourceName, data, auth);
   if (effectiveResourceName === "payroll") {
     const duplicate = await pool.query(
       `SELECT id
@@ -1394,10 +1607,27 @@ async function update(resourceName, id, auth, payload, meta = {}) {
   const config = assertResource(resourceName);
   if (config.readOnly) throw new AppError(405, "This HR resource is read-only");
   assertPermission(auth, config, "write");
-  const normalizedPayload = normaliseHrPayload(effectiveResourceName, payload, auth);
+  const normalizedPayload = normaliseHrPayload(effectiveResourceName, payload, auth, "update");
   const data = cleanPayload(normalizedPayload, config);
+  await resolveEmployeeLink(effectiveResourceName, data, auth);
+  if (effectiveResourceName === "expenses") await applyClaimDecision(id, auth, data);
   const keys = Object.keys(data);
-  if (!keys.length) throw new AppError(400, "No valid HR fields supplied");
+  if (!keys.length) {
+    // Nothing writable was supplied — but WHY matters. A request aimed at
+    // someone else's record must answer the same way it would if the record did
+    // not exist, rather than "no valid fields", which confirms it does. This is
+    // the shape of a self-scoped person PATCHing another employee's claim with
+    // nothing but approval fields: all of them are stripped, and what is left
+    // must not become a lookup oracle.
+    const visible = [id];
+    const scopeFilter = ownerFilter(auth, effectiveResourceName, visible);
+    if (scopeFilter) {
+      const seen = await pool.query(
+        `SELECT 1 FROM ${config.table} WHERE id = $1 AND deleted_at IS NULL${scopeFilter}`, visible);
+      if (!seen.rows[0]) throw new AppError(404, "HR record not found");
+    }
+    throw new AppError(400, "No valid HR fields supplied");
+  }
   const assignments = keys.map((key, index) => `${key} = $${index + 1}`);
   const updateValues = keys.map((key) => data[key]);
   updateValues.push(id);

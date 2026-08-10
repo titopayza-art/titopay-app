@@ -1,0 +1,34 @@
+Options -Indexes
+DirectoryIndex index.html
+<IfModule mod_headers.c>
+# index.html carries the whole application inline, so it must never be cached
+# — a stale copy is a stale portal.
+Header set Cache-Control "no-cache, no-store, must-revalidate"
+Header set Pragma "no-cache"
+Header set Expires "0"
+
+# The logo and favicon are immutable and account for ~120 KB. Sending them
+# no-store meant every page load re-fetched them, which on South African
+# mobile data is a cost staff pay for nothing. Version them by filename if
+# they ever change.
+<FilesMatch "\.(png|ico|jpg|jpeg|svg|webp|woff2?)$">
+Header set Cache-Control "public, max-age=2592000, immutable"
+Header unset Pragma
+Header unset Expires
+</FilesMatch>
+</IfModule>
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.html$ - [L]
+# Root assets requested from a nested route. index.html references
+# ./hr-session.js and ./titopay-logo.png relatively, so on a two-segment URL
+# such as /employees/42 the browser asks for /employees/hr-session.js. Without
+# this rule that miss falls through to the SPA fallback below and is answered
+# with index.html, so the session shim is parsed as HTML and never installs.
+RewriteRule ^.+/(hr-session\.js|titopay-logo\.png|favicon\.ico)$ /$1 [L]
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+RewriteRule . /index.html [L]
+</IfModule>
