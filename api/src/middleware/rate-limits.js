@@ -1,6 +1,7 @@
 const rateLimitPackage = require("express-rate-limit");
 const { writeSecurityLog } = require("../services/audit-service");
 const { CLOUDFLARE_CIDRS, compileCidrs, isInCidr } = require("../lib/ip-range");
+const { sharedStore } = require("../lib/rate-limit-store");
 
 const rateLimit = rateLimitPackage.rateLimit || rateLimitPackage;
 const ipKeyGenerator = rateLimitPackage.ipKeyGenerator || ((ip) => ip);
@@ -117,6 +118,10 @@ const commonLimiterOptions = {
   handler: rateLimitHandler("general", 60)
 };
 
+// The five-per-fifteen-minutes limits are security controls, so they count in
+// PostgreSQL and mean the same number no matter how many processes are running.
+// Each limiter gets its own store instance because express-rate-limit calls
+// init() on whatever it is handed.
 const sensitiveLimiterOptions = {
   ...commonLimiterOptions,
   windowMs: SENSITIVE_WINDOW_MS,
@@ -126,14 +131,22 @@ const sensitiveLimiterOptions = {
 };
 
 const authLimiter = rateLimit({
-  ...sensitiveLimiterOptions
+  ...sensitiveLimiterOptions,
+  store: sharedStore("auth")
 });
 
 const otpLimiter = rateLimit({
   ...sensitiveLimiterOptions,
+  store: sharedStore("otp"),
   handler: rateLimitHandler("otp", 15 * 60)
 });
 
+// Deliberately left in process memory. This one is a fairness control rather
+// than a security control — 120 requests a minute is about stopping a runaway
+// client, not about stopping an attacker — and putting a database write in
+// front of every single request to spread it across processes would cost more
+// than it protects. Worst case with N workers it allows 120N a minute, which is
+// still a limit and still bounded.
 const generalLimiter = rateLimit({
   ...commonLimiterOptions,
   windowMs: GENERAL_WINDOW_MS,
@@ -144,6 +157,7 @@ const publicContactLimiter = rateLimit({
   ...commonLimiterOptions,
   windowMs: SENSITIVE_WINDOW_MS,
   max: 5,
+  store: sharedStore("public_contact"),
   handler: rateLimitHandler("public_contact", 15 * 60)
 });
 

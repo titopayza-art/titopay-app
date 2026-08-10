@@ -1340,3 +1340,22 @@ CREATE INDEX IF NOT EXISTS idx_payout_bank_accounts_owner
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_bank_accounts_unique
   ON payout_bank_accounts (user_id, bank_name, account_number, branch_code)
   WHERE deleted_at IS NULL;
+
+-- Rate-limit counters, shared by every API process.
+--
+-- express-rate-limit's default store lives in one process's memory, so running
+-- more than one process would silently multiply every limit by the number of
+-- processes. Counting here instead keeps "five attempts per fifteen minutes"
+-- meaning five however many workers are serving.
+--
+-- The key is a SHA-256 of the rate-limit key, never the key itself: rate-limit
+-- keys contain the email address or phone number someone typed, and this table
+-- has no need to hold those. Rows are disposable — the sweeper deletes expired
+-- ones, and losing the table entirely costs nothing but a reset window.
+CREATE TABLE IF NOT EXISTS rate_limit_counters (
+  key TEXT PRIMARY KEY,
+  hits INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_counters_expires
+  ON rate_limit_counters (expires_at);
