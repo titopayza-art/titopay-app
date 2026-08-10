@@ -230,7 +230,7 @@ const resources = {
     module: "announcements",
     table: "hr_announcements",
     searchable: ["title", "audience", "status"],
-    columns: { title: "title", body: "body", audience: "audience", priority: "priority", publishAt: "publish_at", status: "status" },
+    columns: { title: "title", body: "body", audience: "audience", priority: "priority", publishAt: "publish_at", status: "status", submittedBy: "submitted_by", submittedAt: "submitted_at", approvedBy: "approved_by", publishedAt: "published_at" },
     defaultOrder: "created_at DESC"
   },
   departments: {
@@ -676,7 +676,13 @@ function normaliseHrPayload(resourceName, payload = {}, auth = {}, mode = "creat
     next.featured = asBoolean(next.featured) ?? false;
     next.handbookContent = asTrimmedText(next.handbookContent);
     next.passMark = asInteger(next.passMark) ?? 80;
-    next.courseUrl = asTrimmedText(next.courseUrl) || "hr-learning";
+    // No default. "hr-learning" used to be filled in here and by the seed, and
+    // the portal renders "Open resource" as <a href={courseUrl}> whenever the
+    // field is truthy — so every course got a link pointing at a relative path
+    // that does not exist. That is N-02: the button was not broken, it was
+    // pointed at a placeholder. Left empty, the portal correctly shows no link
+    // and the course material is read in the app, where it actually lives.
+    next.courseUrl = asTrimmedText(next.courseUrl);
     next.videoUrl = asTrimmedText(next.videoUrl);
     next.pdfUrl = asTrimmedText(next.pdfUrl);
     next.presentationUrl = asTrimmedText(next.presentationUrl);
@@ -685,8 +691,8 @@ function normaliseHrPayload(resourceName, payload = {}, auth = {}, mode = "creat
     // "Open resource" was dead on the mandatory courses because nothing checked
     // what went into these fields — a bare word, a typo or a "www." with no
     // scheme all saved happily and produced a link that goes nowhere.
-    for (const [field, label] of [["videoUrl", "Video"], ["pdfUrl", "PDF"],
-      ["presentationUrl", "Presentation"], ["imageUrl", "Image"]]) {
+    for (const [field, label] of [["courseUrl", "External resource"], ["videoUrl", "Video"],
+      ["pdfUrl", "PDF"], ["presentationUrl", "Presentation"], ["imageUrl", "Image"]]) {
       if (next[field] === undefined) continue;
       if (!isOpenableResource(next[field])) {
         throw new AppError(400,
@@ -1241,7 +1247,7 @@ async function ensureLearningDefaults() {
     const result = await pool.query(
       `INSERT INTO hr_learning_courses
         (title, category, description, course_url, mandatory, assessment_required, status, featured, duration_minutes, due_days, tags, handbook_content, pass_mark)
-       SELECT $1, $2, $3, 'hr-learning', $4, $5, 'active', $6, $7, $8, $9, $10, 80
+       SELECT $1, $2, $3, NULL, $4, $5, 'active', $6, $7, $8, $9, $10, 80
        WHERE NOT EXISTS (
          SELECT 1 FROM hr_learning_courses
           WHERE lower(title) = lower($1) AND deleted_at IS NULL

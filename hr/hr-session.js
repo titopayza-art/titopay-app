@@ -8,6 +8,10 @@
   const SESSION_BUILD_KEY = "titopay_hr_session_build";
   const SESSION_BUILD = "6";
   const nativeFetch = window.fetch.bind(window);
+
+  // Published so the page's own repair scripts call the same API this bridge
+  // authenticates, instead of each one carrying its own copy of the address.
+  window.TITOPAY_HR_API_BASE = HR_API_BASE;
   let refreshPromise = null;
 
   function requestUrl(input) {
