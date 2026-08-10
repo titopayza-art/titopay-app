@@ -19,6 +19,7 @@ const { requireAdminPermission } = require("../middleware/rbac");
 const { AppError } = require("../lib/errors");
 const { boundedText, requireEnum, requireUuid } = require("../lib/validation");
 const { writeAuditLog } = require("../services/audit-service");
+const { isMissingDbObjectError, logDbCompatibilityWarning } = require("../lib/db-safe");
 const marketing = require("../services/marketing-service");
 const sales = require("../services/marketing-sales-service");
 const analytics = require("../services/marketing-analytics-service");
@@ -56,8 +57,38 @@ async function audit(req, action, entityType, entityId, metadata = {}) {
   }).catch(() => {});
 }
 
+// One wrapper for every marketing endpoint, and it does one extra thing.
+//
+// If the marketing tables are not there — the package deployed but the
+// migration not yet run — every query fails with undefined_table and the
+// generic handler turns it into "Unable to complete the request. Please try
+// again." That is true and useless: it sends an operator looking for a bug
+// when the answer is one command. This turns it into the command.
+//
+// Safe to say out loud: these endpoints are admin-only and already behind a
+// permission, and a migration filename is operational information, not a
+// credential, a path or a SQL error.
+// Deliberately without the .sql extension, and the sentence below deliberately
+// avoids the word "database". normalizeError() replaces any 5xx message
+// matching /sql|database|stack|exception/ with the generic "Unable to complete
+// the request" — which is exactly the message this fix exists to replace. Say
+// it in words that survive the scrubber.
+const MIGRATION = "20260810_marketing_command_centre";
+
 const handle = (fn) => async (req, res, next) => {
-  try { await fn(req, res); } catch (error) { next(error); }
+  try {
+    await fn(req, res);
+  } catch (error) {
+    if (isMissingDbObjectError(error)) {
+      logDbCompatibilityWarning("marketing", error);
+      next(new AppError(503,
+        "Marketing & Sales is not installed on this environment yet. Run the "
+        + MIGRATION + " migration on the API, then reload this page.",
+        { code: "MARKETING_MIGRATION_REQUIRED" }));
+      return;
+    }
+    next(error);
+  }
 };
 
 /* ------------------------------------------------------------------ overview */
