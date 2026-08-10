@@ -37,5 +37,8 @@
     "qrcode": "^1.5.4",
     "uuid": "^11.0.3",
     "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "bcrypt": "^6.0.0"
   }
 }
