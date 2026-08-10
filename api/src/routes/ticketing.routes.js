@@ -301,13 +301,17 @@ router.post("/business/events/:id/tags/assign", requireAuth, async (req, res, ne
   }
 });
 
+// requireTagStaff returns the event the caller is authorised for. Both routes
+// below take a tag id from the URL as well, and the two must be checked against
+// each other — being staff at one event authorises nothing at another. The
+// service does that check; these routes exist to carry the answer to it.
 router.post("/business/events/:id/tags/:tagId/status", requireAuth, async (req, res, next) => {
   try {
-    await requireTagStaff(req);
+    const eventId = await requireTagStaff(req);
     const tagId = requireUuid(req.params.tagId, "Tag ID");
     res.json({
       ok: true,
-      tag: await eventTags.setTagStatus(req.auth, tagId, String(req.body?.status || "").toUpperCase(), { reason: req.body?.reason })
+      tag: await eventTags.setTagStatus(req.auth, eventId, tagId, String(req.body?.status || "").toUpperCase(), { reason: req.body?.reason })
     });
   } catch (error) {
     next(error);
@@ -316,9 +320,9 @@ router.post("/business/events/:id/tags/:tagId/status", requireAuth, async (req, 
 
 router.post("/business/events/:id/tags/:tagId/replace", requireAuth, async (req, res, next) => {
   try {
-    await requireTagStaff(req);
+    const eventId = await requireTagStaff(req);
     const tagId = requireUuid(req.params.tagId, "Tag ID");
-    res.status(201).json({ ok: true, ...(await eventTags.replaceTag(req.auth, tagId, req.body || {})) });
+    res.status(201).json({ ok: true, ...(await eventTags.replaceTag(req.auth, eventId, tagId, req.body || {})) });
   } catch (error) {
     next(error);
   }

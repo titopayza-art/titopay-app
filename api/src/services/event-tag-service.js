@@ -38,6 +38,15 @@ const { writeAuditLog } = require("./audit-service");
 
 const TAG_PREFIX = "ETAG";
 
+// Passed as `eventId` by the two callers whose authority is deliberately NOT
+// scoped to a single event: the platform admin console, gated by
+// requireAdminPermission("event_tags"), and an attendee reporting their own
+// wristband lost, gated by ownership of the tag. Every event-scoped caller must
+// pass the real event id it was authorised against — otherwise staff at one
+// event can act on another event's wristbands. Named rather than a bare null so
+// the choice is visible at each call site and greppable from here.
+const PLATFORM_SCOPE = null;
+
 // The Event Tag tables are created by ensureTicketingSchema alongside the rest
 // of the ticketing schema, which is the established bootstrap for this module.
 // That function replays its whole DO block on every call, so it is run once per
@@ -352,7 +361,7 @@ async function linkableTickets(userId) {
   }));
 }
 
-async function setTagStatus(actor, tagId, nextStatus, { reason = "" } = {}) {
+async function setTagStatus(actor, eventId, tagId, nextStatus, { reason = "" } = {}) {
   await ensureSchema();
   const allowed = ["ACTIVE", "BLOCKED", "LOST", "DEACTIVATED"];
   if (!allowed.includes(nextStatus)) throw new AppError(400, "Unsupported tag status");
@@ -362,6 +371,13 @@ async function setTagStatus(actor, tagId, nextStatus, { reason = "" } = {}) {
     const { rows } = await client.query("SELECT * FROM event_tags WHERE id = $1 LIMIT 1 FOR UPDATE", [tagId]);
     const tag = rows[0];
     if (!tag) throw new AppError(404, "Tag not found");
+    // The caller was authorised against `eventId`; the tag came from the URL.
+    // Without this the two were never compared, so staff at any approved event
+    // could act on any other event's wristband — including switching a blocked
+    // or lost one back to ACTIVE, which re-opens spending against that
+    // attendee's wallet. assignTag has always made this check; these two did
+    // not. Same 404 as an unknown tag, so nothing leaks about what exists.
+    if (eventId !== PLATFORM_SCOPE && tag.event_id !== eventId) throw new AppError(404, "Tag not found");
     if (tag.status === "REPLACED") throw new AppError(409, "A replaced tag cannot change status");
     if (nextStatus === "ACTIVE" && !tag.ticket_id) throw new AppError(409, "Assign the tag to an attendee before activating it");
 
@@ -392,7 +408,7 @@ async function setTagStatus(actor, tagId, nextStatus, { reason = "" } = {}) {
 // the whole point of the credential model. The attendee's money never left
 // their TitoPay wallet, so a replacement is a new credential pointing at the
 // same person, not a transfer of value off a wristband.
-async function replaceTag(actor, oldTagId, { token, reason = "" }) {
+async function replaceTag(actor, eventId, oldTagId, { token, reason = "" }) {
   await ensureSchema();
   if (!token) throw new AppError(400, "Replacement tag credential is required");
   const client = await pool.connect();
@@ -401,6 +417,11 @@ async function replaceTag(actor, oldTagId, { token, reason = "" }) {
     const { rows } = await client.query("SELECT * FROM event_tags WHERE id = $1 LIMIT 1 FOR UPDATE", [oldTagId]);
     const oldTag = rows[0];
     if (!oldTag) throw new AppError(404, "Tag not found");
+    // As in setTagStatus: the caller's authority is over `eventId`, and the tag
+    // arrived separately in the URL. The replacement is already checked against
+    // oldTag.event_id further down; this checks oldTag itself belongs to the
+    // event the caller actually staffs.
+    if (eventId !== PLATFORM_SCOPE && oldTag.event_id !== eventId) throw new AppError(404, "Tag not found");
     if (!oldTag.ticket_id) throw new AppError(409, "Only a tag assigned to an attendee can be replaced");
     if (oldTag.status === "REPLACED") throw new AppError(409, "Tag has already been replaced");
 
@@ -671,7 +692,7 @@ async function reportMyTagLost(actor, tagId) {
   await ensureSchema();
   const { rows } = await pool.query("SELECT id, user_id FROM event_tags WHERE id = $1 LIMIT 1", [tagId]);
   if (!rows[0] || rows[0].user_id !== actor.userId) throw new AppError(404, "Tag not found");
-  return setTagStatus(actor, tagId, "LOST", { reason: "Reported lost by the attendee" });
+  return setTagStatus(actor, PLATFORM_SCOPE, tagId, "LOST", { reason: "Reported lost by the attendee" });
 }
 
 async function eventTagAnalytics(eventId) {
@@ -800,6 +821,7 @@ async function tagAuditTrail(tagId, limit = 100) {
 }
 
 module.exports = {
+  PLATFORM_SCOPE,
   mintTagToken,
   issueTags,
   assignTag,

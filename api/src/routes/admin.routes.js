@@ -60,6 +60,7 @@ const {
   eventTagAnalytics,
   listEventVendors,
   setTagStatus,
+  PLATFORM_SCOPE,
   tagAuditTrail
 } = require("../services/event-tag-service");
 const {
@@ -3642,7 +3643,10 @@ router.post("/ticketing/tags/:tagId/status", requireAdminPermission("event_tags"
     const tagId = requireUuid(req.params.tagId, "Tag ID");
     res.json({
       ok: true,
-      tag: await setTagStatus(req.auth, tagId, String(req.body?.status || "").toUpperCase(), { reason: req.body?.reason })
+      // PLATFORM_SCOPE: the admin console is gated by
+      // requireAdminPermission("event_tags") and is deliberately not tied to
+      // one event, unlike the organiser-facing route in ticketing.routes.js.
+      tag: await setTagStatus(req.auth, PLATFORM_SCOPE, tagId, String(req.body?.status || "").toUpperCase(), { reason: req.body?.reason })
     });
   } catch (error) {
     next(error);
