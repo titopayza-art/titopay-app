@@ -13,9 +13,25 @@ const email = require("../src/services/email-centre-service");
 const root = path.join(__dirname, "..");
 
 test("Email Centre seeds every required transactional template", () => {
-  assert.equal(email.DEFAULT_TEMPLATES.length, 24);
+  // 24 customer and transactional templates, plus 6 for HR work communications.
+  // The exact count is the guard: it catches a template being dropped, which a
+  // list of required keys alone would not.
+  assert.equal(email.DEFAULT_TEMPLATES.length, 30);
   const keys = new Set(email.DEFAULT_TEMPLATES.map((item) => item[0]));
+  assert.equal(keys.size, email.DEFAULT_TEMPLATES.length, "template keys must be unique");
   for (const key of ["welcome_email","personal_account_welcome","business_account_welcome","email_statement","verify_email_address","password_reset","password_changed","qr_payment_receipt","kyc_approved","support_ticket_resolved"]) assert.ok(keys.has(key));
+  for (const key of ["hr_announcement","hr_leave_decision","hr_claim_decision","hr_request_update","hr_onboarding_task","hr_training_reminder"]) {
+    assert.ok(keys.has(key), `HR template ${key} is missing`);
+  }
+  // Every variable an HR template refers to has to be permitted, or it renders
+  // as an empty string and the message goes out with a hole in it.
+  for (const [key, , subject, body] of email.DEFAULT_TEMPLATES) {
+    if (!key.startsWith("hr_")) continue;
+    for (const match of `${subject} ${body}`.matchAll(/\{\{\s*(\w+)\s*\}\}/g)) {
+      assert.ok(email.ALLOWED_VARIABLES.has(match[1]),
+        `${key} uses {{${match[1]}}}, which is not an allowed variable`);
+    }
+  }
 });
 
 test("Email OTP generator is cryptographically random, numeric and correctly sized", () => {

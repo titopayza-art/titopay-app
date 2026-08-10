@@ -1025,6 +1025,52 @@ async function audit(auth, action, entity, detail, metadata = {}) {
   );
 }
 
+// Tell the person a thing happened to them, by email.
+//
+// Called after a write has already succeeded and deliberately not awaited by
+// the caller: approving leave is the operation, telling someone about it is
+// not, and a mail provider having a bad afternoon must not turn a successful
+// approval into a 500.
+//
+// Which rows raise a message is decided here rather than in the mail service,
+// because it is a question about HR workflow: a leave request becoming
+// "approved" is news, a leave request being created is not. Sending more than
+// once is prevented in the mail service by an idempotency key built from the
+// record and its new state, so re-saving an approved request sends nothing.
+function dispatchHrEmail(resourceName, row) {
+  if (!row) return;
+  const hrEmail = require("./hr-email-service");
+  const decided = (value) => ["approved", "rejected", "cancelled"].includes(String(value || ""));
+
+  let job = null;
+  if (resourceName === "announcements" && row.status === "published") {
+    job = hrEmail.announcementPublished(row);
+  } else if (resourceName === "leave" && decided(row.status)) {
+    job = hrEmail.leaveDecided(row);
+  } else if (resourceName === "expenses"
+    && ["manager_approved", "finance_approved", "payment_scheduled", "paid", "rejected"].includes(String(row.status))) {
+    job = hrEmail.claimDecided(row);
+  } else if (resourceName === "tickets" && ["resolved", "answered", "closed"].includes(String(row.status))) {
+    job = hrEmail.requestUpdated(row);
+  } else if (resourceName === "onboarding") {
+    job = hrEmail.onboardingAssigned(row);
+  }
+  if (job && typeof job.catch === "function") {
+    job.catch((error) => console.error("[hr-email] dispatch failed",
+      { resource: resourceName, id: row.id, message: error.message }));
+  }
+}
+
+// Turning staff email on, or changing what it sends, is an administrative act
+// on the whole company's inbox. It is recorded with the before and after, by
+// the same audit path every other HR action uses.
+async function recordEmailSettingChange(auth, before, after, meta = {}) {
+  await audit(auth, "Changed staff email settings", "email",
+    after.operatorEnabled ? "enabled" : "disabled",
+    { ...meta, before: { enabled: before.operatorEnabled, audience: before.announcementAudience, events: before.events },
+      after: { enabled: after.operatorEnabled, audience: after.announcementAudience, events: after.events } });
+}
+
 function normaliseAction(action) {
   const value = String(action || "toggle").toLowerCase().replace(/[\s-]+/g, "_");
   if (["clock_in", "sign_in", "in"].includes(value)) return "clock_in";
@@ -1683,6 +1729,7 @@ async function create(resourceName, auth, payload, meta = {}) {
     );
   }
   await audit(auth, "Created record", resourceName, normalizedPayload.email || normalizedPayload.title || normalizedPayload.subject || normalizedPayload.employee || returning.rows[0].id, meta);
+  dispatchHrEmail(effectiveResourceName, returning.rows[0]);
   return { data: rowToApi(returning.rows[0]) };
 }
 
@@ -1727,6 +1774,7 @@ async function update(resourceName, id, auth, payload, meta = {}) {
   );
   if (!result.rows[0]) throw new AppError(404, "HR record not found");
   await audit(auth, "Updated record", resourceName, normalizedPayload.email || normalizedPayload.title || normalizedPayload.subject || normalizedPayload.employee || id, meta);
+  dispatchHrEmail(effectiveResourceName, result.rows[0]);
   return { data: rowToApi(result.rows[0]) };
 }
 
@@ -1756,6 +1804,7 @@ async function leaveDecision(id, auth, decision, comment, meta = {}) {
   );
   if (!result.rows[0]) throw new AppError(404, "Leave request not found");
   await audit(auth, "Leave decision", "leave", `${decision}: ${id}`, meta);
+  dispatchHrEmail("leave", result.rows[0]);
   return { data: rowToApi(result.rows[0]) };
 }
 
@@ -2089,6 +2138,7 @@ function simplePdf(title, rows) {
 }
 
 module.exports = {
+  recordEmailSettingChange,
   resources,
   hashPassword,
   health,
