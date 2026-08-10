@@ -129,6 +129,38 @@ async function employeeById(employeeId, fallbackName) {
   return rows.length === 1 ? rows[0] : null;
 }
 
+// The colour an outcome is drawn in. Fixed here rather than decided in the
+// template, because a template is a static string and cannot branch — and
+// fixed as a small map rather than passed through from anywhere a person can
+// type, because it lands inside a style attribute.
+const TONES = {
+  approved: "#127a4a", manager_approved: "#127a4a", finance_approved: "#127a4a",
+  paid: "#0b3f8f", payment_scheduled: "#0b3f8f",
+  rejected: "#b3261e", cancelled: "#5b7799",
+  resolved: "#127a4a", answered: "#127a4a", closed: "#5b7799"
+};
+function toneFor(decision) {
+  return TONES[String(decision || "").toLowerCase().replace(/\s+/g, "_")] || "#0b3f8f";
+}
+
+// "5 days", "1 day" — not "5 day(s)", which is the sort of thing that tells a
+// reader the message was assembled by a machine that did not care.
+function dayCount(value) {
+  const days = Number(value);
+  if (!Number.isFinite(days) || days <= 0) return "";
+  const rounded = Math.round(days * 2) / 2;
+  return `${rounded % 1 === 0 ? rounded : rounded.toFixed(1)} ${rounded === 1 ? "day" : "days"}`;
+}
+
+// The eyebrow reads "TitoPay staff · <this>", so it has to be a complete phrase
+// for every priority rather than a bare word that sometimes disappears.
+function priorityPhrase(priority) {
+  const value = String(priority || "").toLowerCase();
+  if (value === "urgent" || value === "critical") return "Urgent announcement";
+  if (value === "high" || value === "important") return "Important announcement";
+  return "Staff announcement";
+}
+
 /* ----------------------------------------------------------------- sending */
 
 // One place every HR message goes through, so the switch, the null user_id and
@@ -152,6 +184,9 @@ async function send({ event, employee, templateKey, variables, reference }) {
       // the customer users table, and either would fail the insert.
       userId: null,
       variables: {
+        // Present on every HR message because the eyebrow is on every template.
+        announcementPriority: "Internal message",
+        decisionTone: "#0b3f8f",
         firstName: firstNameOf(employee),
         fullName: `${employee.first_name || ""} ${employee.last_name || ""}`.trim(),
         email: employee.email,
@@ -190,7 +225,7 @@ async function announcementPublished(announcement) {
     variables: {
       announcementTitle: announcement.title || "Company announcement",
       announcementBody: announcement.body || "",
-      announcementPriority: String(announcement.priority || "normal")
+      announcementPriority: priorityPhrase(announcement.priority)
     }
   })));
   return { sent: results.filter((r) => r && !r.skipped).length, considered: staff.length };
@@ -208,8 +243,9 @@ async function leaveDecided(leave) {
       leaveType: String(leave.type || "leave"),
       leaveStart: String(leave.start_date || "").slice(0, 10),
       leaveEnd: String(leave.end_date || "").slice(0, 10),
-      leaveDays: String(leave.days ?? ""),
+      leaveDays: dayCount(leave.days),
       decision: String(leave.status || ""),
+      decisionTone: toneFor(leave.status),
       decisionComment: String(leave.manager_comment || "")
     }
   });
@@ -229,7 +265,8 @@ async function claimDecided(claim) {
       claimType: String(claim.type || "expense"),
       claimAmount: Number(claim.amount || 0).toFixed(2),
       currency: String(claim.currency || "ZAR"),
-      decision: String(claim.status || "").replace(/_/g, " ")
+      decision: String(claim.status || "").replace(/_/g, " "),
+      decisionTone: toneFor(claim.status)
     }
   });
 }
@@ -257,7 +294,9 @@ async function requestUpdated(ticket) {
     variables: {
       requestReference: String(ticket.id || "").slice(0, 8),
       requestSubject: String(ticket.subject || "your request"),
-      requestStatus: String(ticket.status || "").replace(/_/g, " ")
+      requestStatus: String(ticket.status || "").replace(/_/g, " "),
+      decision: String(ticket.status || "").replace(/_/g, " "),
+      decisionTone: toneFor(ticket.status)
     }
   });
 }

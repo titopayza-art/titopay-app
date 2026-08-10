@@ -18,6 +18,7 @@ const { Client } = require("./api/node_modules/pg");
 const CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const PORTAL = "http://127.0.0.1:8030/index.html";
 const EMAIL = "portal.admin@titopay.local";
+const DIRECTOR_EMAIL = "portal.director@titopay.local";
 const PASSWORD = "PortalTest!2026#x";
 const POSTGRES_URL = process.env.POSTGRES_URL
   || fs.readFileSync(`${__dirname}/local.env`, "utf8").match(/^POSTGRES_URL=(.*)$/m)[1];
@@ -201,8 +202,62 @@ async function go(page, module, narrow = false) {
   check("the live counter counts the published ones on screen",
     counts.live === counts.onScreenPublished, `counter ${counts.live}, on screen ${counts.onScreenPublished}`);
 
+  /* ======================================================== staff email */
+  section("5. Staff email can be managed from the portal, by the right people");
+  await go(page, "Announcements");
+  const adminSees = await page.evaluate(() => Boolean(document.querySelector('[data-repair="email-panel"]')));
+  check("AN HR ADMINISTRATOR IS NOT OFFERED THE STAFF EMAIL CONTROLS", !adminSees,
+    "mailing every employee is not something a module permission should imply");
+  await page.close();
+
+  const dir = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+  dir.on("pageerror", (e) => scriptErrors.push(e.message.slice(0, 120)));
+  await dir.goto(PORTAL, { waitUntil: "domcontentloaded" });
+  await dir.waitForTimeout(1600);
+  const dirInputs = await dir.$$("input");
+  await dirInputs[0].fill(DIRECTOR_EMAIL);
+  await dirInputs[1].fill(PASSWORD);
+  await dir.click("text=Sign in securely");
+  await dir.waitForTimeout(3000);
+  await go(dir, "Announcements");
+  await dir.waitForTimeout(1200);
+
+  const panel = await dir.evaluate(() => {
+    const el = document.querySelector('[data-repair="email-panel"]');
+    return el ? { text: el.innerText, toggle: Boolean(el.querySelector('[data-repair="email-toggle"]')),
+      events: el.querySelectorAll('[data-repair^="email-event-"]').length,
+      audience: el.querySelectorAll('[data-repair^="email-audience-"]').length } : null;
+  });
+  check("an HR Director IS offered them", Boolean(panel));
+  if (panel) {
+    check("it says whether staff email is on", /\bOn\b|\bOff\b/.test(panel.text));
+    check("IT SAYS WHY IT IS OFF, NOT JUST THAT IT IS",
+      /not configured to send staff email|switch below is off/i.test(panel.text),
+      "the environment lever and the operator switch are different things");
+    check("every event can be turned on or off individually", panel.events === 5, `${panel.events} controls`);
+    check("and the announcement audience can be chosen", panel.audience === 2, `${panel.audience} options`);
+
+    // Changing it must actually persist, not just move a checkbox.
+    const before = await dir.evaluate(() =>
+      document.querySelector('[data-repair="email-event-leave"]').checked);
+    await dir.click('[data-repair="email-event-leave"]');
+    await dir.waitForTimeout(1800);
+    const stored = await db.query(
+      "SELECT value FROM platform_settings WHERE key = 'hr_email'").catch(() => ({ rows: [] }));
+    const savedValue = stored.rows[0]?.value;
+    check("TURNING AN EVENT OFF IS SAVED ON THE SERVER, NOT JUST ON SCREEN",
+      savedValue && savedValue.events && savedValue.events.leave === !before,
+      JSON.stringify(savedValue?.events || {}));
+    const afterReload = await dir.evaluate(() =>
+      document.querySelector('[data-repair="email-event-leave"]')?.checked);
+    check("and the panel shows what the server now holds", afterReload === !before);
+    await dir.click('[data-repair="email-event-leave"]');
+    await dir.waitForTimeout(1500);
+  }
+  await dir.close();
+
   /* =============================================================== N-03 */
-  section("5. The site scrolls, and the drawer lets go");
+  section("6. The site scrolls, and the drawer lets go");
   await page.close();
   for (const [label, width, height] of [["desktop", 1440, 900], ["laptop", 1280, 720],
     ["tablet", 820, 1180], ["mobile", 390, 844], ["small phone", 360, 640]]) {

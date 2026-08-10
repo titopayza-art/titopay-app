@@ -106,6 +106,29 @@ const queued = (db, event) => db.query(
     body: { enabled: true } });
   check("a department manager cannot turn staff email on", managerTry.status === 403, `HTTP ${managerTry.status}`);
   const staffTry = await call("/email/settings", { method: "POST", token: staff.token, body: { enabled: true } });
+  // The role that holds nearly every HR module is the interesting one: the
+  // portal hides these controls from an HR Administrator, and the server has to
+  // refuse them independently, because hiding a button protects nobody.
+  const adminEmail = `hradmin${stamp}@titopay.local`;
+  const adminEmp = await db.query(
+    `INSERT INTO hr_employees (employee_number, first_name, last_name, email, job_title, department, status)
+     VALUES ($1,'Hugo','Mailer',$2,'Analyst','Testing','active') RETURNING id`,
+    [`M${String(stamp).slice(-6)}X`, adminEmail]);
+  const adminUser = await db.query(
+    `INSERT INTO hr_users (name, email, password_hash, role, status, employee_id)
+     VALUES ('Hugo Mailer',$1,$2,'HR Administrator','active',$3) RETURNING id`,
+    [adminEmail, hash, adminEmp.rows[0].id]);
+  const adminLogin = await call("/auth/login", { method: "POST", body: { email: adminEmail, password: PASSWORD } });
+  const adminToken = adminLogin.payload?.accessToken || adminLogin.payload?.tokens?.accessToken;
+  const adminRead = await call("/email/settings", { token: adminToken });
+  const adminWrite = await call("/email/settings", { method: "POST", token: adminToken, body: { enabled: true } });
+  check("AN HR ADMINISTRATOR CANNOT READ THE STAFF EMAIL SETTINGS", adminRead.status === 403,
+    `HTTP ${adminRead.status}`);
+  check("NOR CHANGE THEM, WHATEVER THE PORTAL SHOWS THEM", adminWrite.status === 403,
+    `HTTP ${adminWrite.status}`);
+  await db.query("DELETE FROM hr_sessions WHERE user_id = $1", [adminUser.rows[0].id]);
+  await db.query("DELETE FROM hr_users WHERE id = $1", [adminUser.rows[0].id]);
+  await db.query("DELETE FROM hr_employees WHERE id = $1", [adminEmp.rows[0].id]);
   check("an employee cannot turn staff email on", staffTry.status === 403, `HTTP ${staffTry.status}`);
   const stillOff = await call("/email/settings", { token: director.token });
   check("and it is still off after those attempts", stillOff.payload?.settings?.operatorEnabled === false);

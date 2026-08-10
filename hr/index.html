@@ -167,6 +167,12 @@
  *   Drawer  On a phone the page underneath keeps scrolling behind the open
  *         menu, so a swipe meant for the menu moves the page instead.
  *
+ *   Staff email  The API can turn work emails on and choose what they send,
+ *         and the compiled portal has no screen for any of it. The panel below
+ *         puts those controls on the Announcements page, which is where the
+ *         decision belongs — it is the announcement audience that makes this a
+ *         question about everybody's inbox.
+ *
  * Deletion here goes through the ordinary API endpoint, which soft-deletes,
  * writes an audit entry naming the actor, and refuses anyone whose role may not
  * delete. Nothing about permission is decided in this file: the button is
@@ -401,6 +407,154 @@
     });
   }
 
+  /* --------------------------------------------------------- staff email */
+
+  // Only these roles can change it, and the API says so independently. Showing
+  // the panel to anyone else would offer a control that answers 403.
+  var EMAIL_SETTING_ROLES = ["CEO", "Super Admin", "HR Director"];
+
+  var EVENTS = [
+    ["announcements", "Announcements", "Everyone gets an email when an announcement is published."],
+    ["leave", "Leave decisions", "The person who asked is told when leave is approved or refused."],
+    ["claims", "Expense claim decisions", "The claimant is told when a claim is approved, refused or paid."],
+    ["requests", "Internal request replies", "Says a reply is waiting. The reply itself stays in the portal."],
+    ["onboarding", "Onboarding and training", "New starters get their tasks; overdue mandatory courses are chased."]
+  ];
+
+  function el(tag, attrs, text) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (key) {
+      if (key === "style") node.style.cssText = attrs[key];
+      else node.setAttribute(key, attrs[key]);
+    });
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function renderEmailPanel(host, settings, recipients) {
+    host.innerHTML = "";
+    host.appendChild(el("h3", { style: "margin:0 0 4px" }, "Email to staff"));
+
+    // The two levers are separate on purpose and the difference matters, so it
+    // is stated rather than collapsed into one green dot.
+    var live = settings.enabled;
+    var reason = live ? "Staff are being emailed."
+      : !settings.environmentAllows
+        ? "This server is not configured to send staff email, so nothing is sent even when the switch below is on. "
+          + "Set HR_EMAIL_ENABLED on the API to allow it."
+        : "The switch below is off, so nothing is sent.";
+    var status = el("div", { style: "display:flex;align-items:center;gap:10px;margin:10px 0 6px" });
+    status.appendChild(el("span", { style: "width:10px;height:10px;border-radius:50%;flex:none;background:"
+      + (live ? "#127a4a" : "#98a9bf") }));
+    status.appendChild(el("b", { style: "font-size:15px" }, live ? "On" : "Off"));
+    host.appendChild(status);
+    host.appendChild(el("p", { style: "margin:0 0 14px;color:#5b7799;font-size:14px;line-height:1.55" }, reason));
+
+    if (live || settings.operatorEnabled) {
+      host.appendChild(el("p", { style: "margin:0 0 14px;font-size:14px;color:#22405f" },
+        "An announcement published now would email " + recipients + " "
+          + (recipients === 1 ? "person" : "people") + "."));
+    }
+
+    var toggle = el("button", { type: "button", class: live || settings.operatorEnabled ? "secondary" : "primary" },
+      settings.operatorEnabled ? "Turn staff email off" : "Turn staff email on");
+    toggle.setAttribute("data-repair", "email-toggle");
+    toggle.addEventListener("click", function () {
+      toggle.disabled = true;
+      toggle.textContent = "Saving…";
+      save({ enabled: !settings.operatorEnabled }, host);
+    });
+    host.appendChild(toggle);
+
+    var list = el("div", { style: "margin:18px 0 0;border-top:1px solid #e2ebf5;padding-top:14px" });
+    list.appendChild(el("div", { style: "font-size:12px;letter-spacing:.07em;text-transform:uppercase;"
+      + "color:#5b7799;font-weight:700;margin-bottom:10px" }, "What sends"));
+    EVENTS.forEach(function (entry) {
+      var row = el("label", { style: "display:flex;gap:10px;align-items:flex-start;margin:0 0 12px;cursor:pointer" });
+      var box = el("input", { type: "checkbox" });
+      box.checked = settings.events[entry[0]] !== false;
+      box.setAttribute("data-repair", "email-event-" + entry[0]);
+      box.addEventListener("change", function () {
+        var patch = { events: {} };
+        patch.events[entry[0]] = box.checked;
+        save(patch, host);
+      });
+      var copy = el("span", {});
+      copy.appendChild(el("b", { style: "display:block;font-size:14px;color:#0b1f3f" }, entry[1]));
+      copy.appendChild(el("span", { style: "display:block;font-size:13px;color:#5b7799;line-height:1.5" }, entry[2]));
+      row.appendChild(box);
+      row.appendChild(copy);
+      list.appendChild(row);
+    });
+    host.appendChild(list);
+
+    var audience = el("div", { style: "margin:4px 0 0;border-top:1px solid #e2ebf5;padding-top:14px" });
+    audience.appendChild(el("div", { style: "font-size:12px;letter-spacing:.07em;text-transform:uppercase;"
+      + "color:#5b7799;font-weight:700;margin-bottom:10px" }, "Who gets announcements"));
+    [["all", "Every member of staff", "Regardless of the announcement's audience."],
+     ["audience", "Only the audience it names", "A department announcement reaches that department."]
+    ].forEach(function (option) {
+      var row = el("label", { style: "display:flex;gap:10px;align-items:flex-start;margin:0 0 12px;cursor:pointer" });
+      var radio = el("input", { type: "radio", name: "hr-email-audience" });
+      radio.checked = settings.announcementAudience === option[0];
+      radio.setAttribute("data-repair", "email-audience-" + option[0]);
+      radio.addEventListener("change", function () {
+        if (radio.checked) save({ announcementAudience: option[0] }, host);
+      });
+      var copy = el("span", {});
+      copy.appendChild(el("b", { style: "display:block;font-size:14px;color:#0b1f3f" }, option[1]));
+      copy.appendChild(el("span", { style: "display:block;font-size:13px;color:#5b7799;line-height:1.5" }, option[2]));
+      row.appendChild(radio);
+      row.appendChild(copy);
+      audience.appendChild(row);
+    });
+    host.appendChild(audience);
+  }
+
+  function save(patch, host) {
+    api("/email/settings", { method: "POST", body: JSON.stringify(patch) })
+      .then(function (response) {
+        if (!response.ok) {
+          return response.json().catch(function () { return {}; }).then(function (body) {
+            throw new Error(body && body.error ? body.error : "The server would not save that.");
+          });
+        }
+        return response.json();
+      })
+      .then(function () { return loadEmailPanel(host, true); })
+      .catch(function (error) {
+        host.innerHTML = "";
+        host.appendChild(el("h3", { style: "margin:0 0 8px" }, "Email to staff"));
+        host.appendChild(el("p", { style: "margin:0;color:#b3261e;font-size:14px;line-height:1.55" },
+          error.message));
+      });
+  }
+
+  function loadEmailPanel(host, force) {
+    if (host.dataset.loading === "1" && !force) return;
+    host.dataset.loading = "1";
+    return Promise.all([
+      api("/email/settings").then(function (r) { return r.ok ? r.json() : null; }),
+      api("/email/preview-audience?audience=all").then(function (r) { return r.ok ? r.json() : null; })
+    ]).then(function (both) {
+      host.dataset.loading = "0";
+      if (!both[0] || !both[0].settings) { host.remove(); return; }
+      renderEmailPanel(host, both[0].settings, (both[1] && both[1].recipients) || 0);
+    }).catch(function () { host.dataset.loading = "0"; });
+  }
+
+  function mountEmailPanel() {
+    if (EMAIL_SETTING_ROLES.indexOf(currentRole()) === -1) return;
+    // The Announcements page, identified by the control that is only on it.
+    var grid = document.querySelector(".announcement-grid");
+    if (!grid) return;
+    if (document.querySelector('[data-repair="email-panel"]')) return;
+    var panel = el("section", { class: "card", "data-repair": "email-panel",
+      style: "padding:20px 22px;margin:0 0 18px" });
+    grid.parentNode.insertBefore(panel, grid);
+    loadEmailPanel(panel);
+  }
+
   /* -------------------------------------------------------------- drawer */
 
   // With the drawer open, the page behind it still scrolled: a swipe meant to
@@ -438,7 +592,7 @@
   var pending;
   function schedule() {
     window.clearTimeout(pending);
-    pending = window.setTimeout(function () { decorate(); syncDrawer(); }, 60);
+    pending = window.setTimeout(function () { decorate(); syncDrawer(); mountEmailPanel(); }, 60);
   }
 
   if (document.readyState === "loading") {
