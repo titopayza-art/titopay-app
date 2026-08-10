@@ -12723,3 +12723,78 @@ button,
     text-transform: uppercase;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Cost breakdown on the transaction review screen.
+
+   Three money lines and one plain-language outcome, so nobody has to work out
+   which of the numbers is the one they end up with. The total is the loudest
+   thing in the panel because it is the number leaving the wallet; the outcome
+   line is the number arriving, and they are deliberately styled differently so
+   the two are never mistaken for each other.
+   ------------------------------------------------------------------------- */
+.cost-breakdown {
+  display: grid;
+  gap: 0;
+  padding: 16px 18px;
+  background: var(--card);
+  border: 1px solid var(--card-line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+}
+
+.cost-breakdown .cb-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+}
+
+.cost-breakdown .cb-label {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.cost-breakdown .cb-value {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cost-breakdown .cb-total {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.cost-breakdown .cb-total .cb-label {
+  color: var(--navy);
+  font-weight: 700;
+}
+
+.cost-breakdown .cb-total .cb-value {
+  color: var(--navy);
+  font-weight: 800;
+  font-size: 1.15rem;
+}
+
+.cost-breakdown .cb-outcome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  color: #0b7a53;
+  background: #e8f7f0;
+  border-radius: var(--radius-control);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.cost-breakdown .cb-outcome svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+}

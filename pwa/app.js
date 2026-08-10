@@ -5695,11 +5695,14 @@ async function processTransaction(data) {
   openTransactionReviewModal(state.pendingTransactionReview);
 }
 function transactionConfirmationText(preview, verifiedRecipients, data, recipient) {
+  const net = Number(preview.recipientAmount ?? preview.netAmount ?? preview.amount ?? 0);
+  const wording = transactionCostWording(data?.serviceCode, net, Number(preview.amount ?? 0));
   const lines = [
-    `Amount: ${money(preview.amount)}`,
-    `TitoPay fee: ${money(preview.fee)}`,
-    `Total: ${money(preview.total)}`
+    `${wording.amountLabel}: ${money(preview.amount)}`,
+    `${wording.feeLabel}: ${Number(preview.fee) > 0 ? money(preview.fee) : "No fee"}`,
+    `${wording.totalLabel}: ${money(preview.total)}`
   ];
+  if (wording.outcome) lines.push("", wording.outcome);
   if (verifiedRecipients && verifiedRecipients.length) {
     lines.push("", "Verified TitoPay recipient:");
     verifiedRecipients.slice(0, 4).forEach((item, index) => {
@@ -5730,25 +5733,103 @@ function primaryWallet() {
     || (state.wallets || [])[0]
     || {};
 }
+// What the words on the money lines should be, per flow.
+//
+// "Total" means opposite things depending on the direction, and that is exactly
+// where people were being left to guess. On a withdrawal the total LEAVES the
+// wallet and the amount ARRIVES at the bank. On a top up the total is charged
+// to the card and the amount ARRIVES in the wallet. Calling both of them
+// "Amount / TitoPay fee / Total debit" was accurate and still unclear, because
+// it never said which of the two numbers the customer actually ends up with.
+function transactionCostWording(serviceCode, netAmount, amount) {
+  if (isWithdrawalService(serviceCode)) {
+    return {
+      amountLabel: "Withdrawal amount",
+      feeLabel: "TitoPay withdrawal fee",
+      totalLabel: "Total deducted",
+      netLabel: "You receive",
+      outcome: `You${"’"}ll receive ${money(netAmount)} in your bank account`
+    };
+  }
+  if (isCardTopupService(serviceCode)) {
+    return {
+      amountLabel: "Top up amount",
+      feeLabel: "TitoPay top up fee",
+      totalLabel: "Total to pay",
+      netLabel: "Added to your wallet",
+      outcome: `${money(amount)} will be added to your wallet`
+    };
+  }
+  return {
+    amountLabel: "Amount",
+    feeLabel: "TitoPay fee",
+    totalLabel: "Total deducted",
+    netLabel: "Recipient amount",
+    outcome: ""
+  };
+}
+
+// Who or what is on the other end of this transaction.
+//
+// The generic card falls back to context.recipient, which for a withdrawal is
+// the service code — so the screen used to read "Destination: withdraw" sitting
+// directly above "Paying out to: FNB ••••4567". Two destinations, one of them
+// meaningless. When the real bank destination is known it is the only one shown.
+function transactionReviewDestination(context) {
+  const bankDestination = withdrawalDestinationRow(context);
+  if (bankDestination) return bankDestination;
+  // Same reason, for the case where the saved account could not be resolved:
+  // name the kind of destination rather than echoing the service code.
+  if (isWithdrawalService(context.data?.serviceCode)) {
+    return recipientVerificationCards([], "Your linked bank account");
+  }
+  return recipientVerificationCards(context.verifiedRecipients || [], context.recipient);
+}
+
+// The three money lines, up front, before the full record below them.
+//
+// Read-only: every number comes from the fee preview the API already returned
+// for this exact transaction. Nothing is calculated here that the server did
+// not already state, so this cannot disagree with what is charged.
+function transactionCostPanel(context) {
+  const preview = context.preview || {};
+  const amount = Number(preview.amount ?? context.amount ?? 0);
+  const fee = Number(preview.fee ?? 0);
+  const total = Number(preview.total ?? amount + fee);
+  const net = Number(preview.recipientAmount ?? preview.netAmount ?? amount);
+  const wording = transactionCostWording(context.data?.serviceCode, net, amount);
+  // A recipient-facing service still deserves the "and they get X" line; a
+  // service with no recipient (buying airtime, paying a bill) does not, because
+  // the three rows above already say everything true about it.
+  const outcome = wording.outcome || (context.recipient && net > 0 ? `The recipient receives ${money(net)}` : "");
+  return `
+    <section class="cost-breakdown" aria-label="What this transaction costs">
+      <div class="cb-row"><span class="cb-label">${esc(wording.amountLabel)}</span><span class="cb-value">${esc(money(amount))}</span></div>
+      <div class="cb-row"><span class="cb-label">${esc(wording.feeLabel)}</span><span class="cb-value">${fee > 0 ? esc(money(fee)) : "No fee"}</span></div>
+      <div class="cb-row cb-total"><span class="cb-label">${esc(wording.totalLabel)}</span><span class="cb-value">${esc(money(total))}</span></div>
+      ${outcome ? `<p class="cb-outcome">${icon("check-circle")} <span>${esc(outcome)}</span></p>` : ""}
+    </section>`;
+}
 function transactionReviewRows(context) {
   const preview = context.preview || {};
   const data = context.data || {};
   const wallet = primaryWallet();
-  const amount = Number(preview.amount ?? context.amount ?? 0);
-  const fee = Number(preview.fee ?? 0);
-  const total = Number(preview.total ?? amount + fee);
-  const recipientAmount = Number(preview.recipientAmount ?? preview.netAmount ?? amount);
+  const thirdPartyFee = Number(preview.thirdPartyFee || data.thirdPartyFee || 0);
   const rows = [
     ["Service", serviceLabelForCode(data.serviceCode), "grid"],
     // Provider selection and product only appear when the journey captured them.
     ...(data.vasProviderName || data.provider ? [["Provider", data.vasProviderName || data.provider, "bank"]] : []),
     ...(data.vasProductName ? [["Product", data.vasProductName, "tag"]] : []),
     ...vasProviderFieldRows(data),
-    ["Amount", money(amount), "wallet", "strong"],
-    ["TitoPay fee", money(fee), "shield"],
-    ["Third-party fee", money(Number(preview.thirdPartyFee || data.thirdPartyFee || 0)), "bank"],
-    ["Total debit", money(total), "withdraw", "total"],
-    ["Recipient amount", money(recipientAmount), "send"],
+    // The money lines are NOT repeated here. They are the whole point of the
+    // cost panel directly above, and listing them a second time three rows
+    // later made the customer compare two lists to find one number.
+    //
+    // A third-party fee is the exception, because the panel does not carry it.
+    // It only appears when there is one: the API returns none for any service
+    // today, so this row used to read a permanent R0.00 next to a real fee,
+    // which suggests some other charge exists and is the opposite of clear.
+    ...(thirdPartyFee > 0 ? [["Third-party fee", money(thirdPartyFee), "bank"]] : []),
     ["Source wallet", displayWalletId(wallet) !== "Generating" ? `Wallet ${displayWalletId(wallet)}` : `${state.accountType === "business" ? "Business" : "Personal"} wallet`, "wallet"],
     ["Date and time", formatDate(context.createdAt), "list"],
     ["Reference / note", data.reference || data.note || data.description || "Not supplied", "tag"],
@@ -5758,21 +5839,18 @@ function transactionReviewRows(context) {
   return rows.map(([label, value, iconName, emphasis]) => settingsRow(label, value, iconName, emphasis)).join("");
 }
 function openTransactionReviewModal(context) {
-  const preview = context.preview || {};
-  const total = Number(preview.total ?? context.amount ?? 0);
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Transaction Review</p><h2>Review before confirming</h2><p class="lead">No funds leave your wallet until you press Confirm.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    ${recipientVerificationCards(context.verifiedRecipients || [], context.recipient)}
-    ${withdrawalDestinationRow(context)}
+    ${transactionReviewDestination(context)}
+    ${transactionCostPanel(context)}
     <section class="activity-list review-transaction-list">
       ${transactionReviewRows(context)}
     </section>
     <section class="integration-note" aria-label="Transaction safety">
       <p>${icon("shield")} <span><strong>Safety:</strong> Confirm is protected against multiple taps. If this fails, TitoPay will state whether any funds were deducted.</span></p>
-      <p>${icon("wallet")} <span><strong>Total debit:</strong> ${esc(money(total))}</span></p>
     </section>
     ${trustChips([
       ...(connectionIsEncrypted() ? [["lock", "Secure transaction · encrypted connection"]] : []),
