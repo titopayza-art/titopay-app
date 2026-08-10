@@ -288,6 +288,11 @@ async function createTransaction(actor, payload) {
   await assertLiveTransactionSupported(normalizedServiceCode, payload);
   const idempotencyKey = String(payload.idempotencyKey || payload.metadata?.clientIdempotencyKey || "").trim().slice(0, 120);
 
+  // Fast path only. This unlocked read answers the ordinary case — a customer
+  // pressing Confirm again a second later — without paying for a fee preview
+  // and a pooled connection. It is NOT the guard: two copies of one request
+  // arriving together both find nothing here and both carry on. The guard that
+  // actually holds is the advisory lock inside the transaction below.
   if (idempotencyKey) {
     const { rows } = await pool.query(
       `SELECT *
@@ -324,6 +329,36 @@ async function createTransaction(actor, payload) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // THE idempotency guard. The check above runs unlocked on the pool, so two
+    // deliveries of one request — a double tap, two tabs, a mobile network
+    // retrying a POST it already delivered — both miss it and both proceed to
+    // here. This advisory lock is transaction-scoped, so the first arrival holds
+    // it until COMMIT and the second waits, then re-reads and finds the row the
+    // first one wrote. Whichever loses the race returns the original record
+    // instead of charging the customer a second time.
+    //
+    // Same shape as pos/service.js:110 and event-tag-service.js:480, which have
+    // always done this correctly; these two older money paths predate it.
+    if (idempotencyKey) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`tx:${actor.userId}:${idempotencyKey}`]);
+      const { rows: replayed } = await client.query(
+        `SELECT *
+         FROM transactions
+         WHERE user_id = $1
+           AND metadata->>'clientIdempotencyKey' = $2
+           AND created_at > NOW() - INTERVAL '24 hours'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [actor.userId, idempotencyKey]
+      );
+      if (replayed[0]) {
+        // ROLLBACK, not COMMIT: nothing was written, only a lock taken, and a
+        // transaction-scoped advisory lock is released either way.
+        await client.query("ROLLBACK");
+        return transactionResponseFromRow(replayed[0]);
+      }
+    }
 
     // The transaction row is written FIRST because every wallet_ledger entry
     // below carries its id, and wallet_ledger.transaction_id is a plain
