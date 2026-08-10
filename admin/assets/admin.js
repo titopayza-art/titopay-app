@@ -96,6 +96,21 @@ const NAV_GROUPS = [
     ["/qr-management/", "qr-management", "QR Management"],
     ["/marketing/", "marketing", "Marketing"],
   ]},
+  { title: "Marketing & Sales", items: [
+    ["/marketing-sales/", "marketing-overview", "Overview"],
+    ["/marketing-sales/campaigns/", "marketing-campaigns", "Campaigns"],
+    ["/marketing-sales/audiences/", "marketing-audiences", "Audiences"],
+    ["/marketing-sales/promotions/", "marketing-promotions", "Promotions & Coupons"],
+    ["/marketing-sales/referrals/", "marketing-referrals", "Referrals & Affiliates"],
+    ["/marketing-sales/leads/", "marketing-leads", "Leads / CRM"],
+    ["/marketing-sales/pipeline/", "marketing-pipeline", "Sales Pipeline"],
+    ["/marketing-sales/acquisition/", "marketing-acquisition", "Merchant Acquisition"],
+    ["/marketing-sales/team/", "marketing-team", "Sales Team"],
+    ["/marketing-sales/links/", "marketing-links", "Marketing Links"],
+    ["/marketing-sales/experiments/", "marketing-experiments", "Growth Experiments"],
+    ["/marketing-sales/analytics/", "marketing-analytics", "Analytics"],
+    ["/marketing-sales/roi/", "marketing-roi", "ROI & Attribution"],
+  ]},
   { title: "Platform", items: [
     ["/service-builder/", "service-builder", "Service Builder"],
     ["/pricing/", "pricing", "Pricing Engine"],
@@ -5734,6 +5749,25 @@ async function renderAnalytics(me = {}) {
   const module = await loadAnalyticsModule();
   await module.renderAnalytics(me, ANALYTICS_HOST);
 }
+function loadMarketingModule() {
+  if (!marketingModulePromise) {
+    const moduleUrl = new URL(`admin-marketing.js?v=${ADMIN_ASSET_VERSION}`, ADMIN_ASSET_URL).href;
+    marketingModulePromise = import(moduleUrl).catch((error) => {
+      marketingModulePromise = null;
+      const failure = new Error("The Marketing module did not load. Confirm assets/admin-marketing.js was uploaded with this build.");
+      failure.status = 0;
+      failure.cause = error;
+      throw failure;
+    });
+  }
+  return marketingModulePromise;
+}
+// One module, thirteen console pages. The page key carries which view to open,
+// so the nav reads as a normal tree while the module stays a single download.
+async function renderMarketingSales(me = {}, view = "overview") {
+  const module = await loadMarketingModule();
+  await module.renderMarketing(me, ANALYTICS_HOST, view);
+}
 function loadServiceBuilderModule() {
   if (!serviceBuilderModulePromise) {
     const moduleUrl = new URL(`admin-service-builder.js?v=${ADMIN_ASSET_VERSION}`, ADMIN_ASSET_URL).href;
@@ -5800,6 +5834,19 @@ function adminPageDescriptors() {
     "email-settings": ["Email Settings", "Configure sender identity, limits, expiry periods and the active provider."],
     "email-otp": ["Email OTP", "Configure, monitor and audit queued Email OTP authentication."],
     "sms-analytics": ["SMS Analytics", "Delivery and campaign reporting for TitoPay SMS, mirroring the Email Analytics view."],
+    "marketing-overview": ["Marketing · Overview", "Campaign, lead and revenue performance at a glance."],
+    "marketing-campaigns": ["Marketing · Campaigns", "Plan campaigns, track budget and record spend."],
+    "marketing-audiences": ["Marketing · Audiences", "Build and refresh customer segments."],
+    "marketing-promotions": ["Marketing · Promotions & Coupons", "Create coupons and control how often they can be claimed."],
+    "marketing-referrals": ["Marketing · Referrals & Affiliates", "Referral qualification, rewards and affiliate partners."],
+    "marketing-leads": ["Marketing · Leads / CRM", "Merchant acquisition leads and their history."],
+    "marketing-pipeline": ["Marketing · Sales Pipeline", "Move leads through the sales stages."],
+    "marketing-acquisition": ["Marketing · Merchant Acquisition", "Onboarding links and the merchant journey."],
+    "marketing-team": ["Marketing · Sales Team", "Assigned leads and conversion by salesperson."],
+    "marketing-links": ["Marketing · Marketing Links", "Trackable links and their attribution funnel."],
+    "marketing-experiments": ["Marketing · Growth Experiments", "Compare two offers under a controlled split."],
+    "marketing-analytics": ["Marketing · Analytics", "Funnels, acquisition cost and conversion."],
+    "marketing-roi": ["Marketing · ROI & Attribution", "Cost against attributed revenue, per campaign."],
   };
 }
 function adminPageLoaders() {
@@ -5807,6 +5854,19 @@ function adminPageLoaders() {
     dashboard: renderDashboard,
     alerts: renderAlertCentre,
     analytics: renderAnalytics,
+    "marketing-overview": (me) => renderMarketingSales(me, "overview"),
+    "marketing-campaigns": (me) => renderMarketingSales(me, "campaigns"),
+    "marketing-audiences": (me) => renderMarketingSales(me, "audiences"),
+    "marketing-promotions": (me) => renderMarketingSales(me, "promotions"),
+    "marketing-referrals": (me) => renderMarketingSales(me, "referrals"),
+    "marketing-leads": (me) => renderMarketingSales(me, "leads"),
+    "marketing-pipeline": (me) => renderMarketingSales(me, "pipeline"),
+    "marketing-acquisition": (me) => renderMarketingSales(me, "acquisition"),
+    "marketing-team": (me) => renderMarketingSales(me, "team"),
+    "marketing-links": (me) => renderMarketingSales(me, "links"),
+    "marketing-experiments": (me) => renderMarketingSales(me, "experiments"),
+    "marketing-analytics": (me) => renderMarketingSales(me, "analytics"),
+    "marketing-roi": (me) => renderMarketingSales(me, "roi"),
     "service-builder": renderServiceBuilder,
     users: renderUsers,
     merchants: renderMerchants,
@@ -6060,6 +6120,7 @@ const ANALYTICS_HOST = {
 };
 let analyticsModulePromise = null;
 let serviceBuilderModulePromise = null;
+let marketingModulePromise = null;
 /* == Table enhancement layer ==============================================
    Every table the console renders gains sorting, a row filter, bulk selection,
    export and column resizing. The layer works on the table that is already on

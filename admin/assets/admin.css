@@ -5805,3 +5805,190 @@ html[data-theme="dark"] .auth-panel-mark {
   line-height: 1.3;
   white-space: nowrap;
 }
+
+/* ==========================================================================
+   Marketing & Sales Command Centre
+   --------------------------------------------------------------------------
+   Every colour, radius and shadow comes from the tokens already declared at the
+   top of this file, so these pages follow the console's theme with no second
+   code path. Nothing here restyles an existing class.
+
+   The bar ladder exists because the console pages declare `style-src 'self'`:
+   an inline width would be blocked, so proportion is expressed as one of eleven
+   classes instead.
+   ========================================================================== */
+
+.mk-shell { display: grid; gap: 20px; }
+
+.mk-tabs {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--tp-border);
+}
+.mk-tab {
+  padding: 7px 14px;
+  font: inherit; font-size: 0.86rem;
+  color: var(--tp-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.mk-tab:hover { color: var(--tp-text-strong); background: var(--tp-surface-sunken); }
+.mk-tab.is-active {
+  color: var(--tp-blue-strong); background: var(--tp-blue-soft);
+  border-color: var(--tp-blue-line); font-weight: 600;
+}
+.mk-tab:focus-visible { outline: 2px solid var(--tp-blue); outline-offset: 2px; }
+
+.mk-range { display: flex; flex-wrap: wrap; gap: 6px; }
+.mk-range-btn {
+  padding: 5px 11px; font: inherit; font-size: 0.8rem;
+  color: var(--tp-muted); background: var(--tp-surface);
+  border: 1px solid var(--tp-border); border-radius: 8px; cursor: pointer;
+}
+.mk-range-btn.is-active {
+  color: var(--tp-blue-strong); background: var(--tp-blue-soft); border-color: var(--tp-blue-line);
+  font-weight: 600;
+}
+.mk-range-btn:focus-visible { outline: 2px solid var(--tp-blue); outline-offset: 2px; }
+
+.mk-cards {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+}
+.mk-card {
+  display: grid; gap: 4px; align-content: start;
+  padding: 14px 16px;
+  background: var(--tp-surface);
+  border: 1px solid var(--tp-border);
+  border-radius: 12px;
+}
+.mk-card-label { font-size: 0.74rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--tp-muted); }
+.mk-card-value { font-size: 1.4rem; font-weight: 700; color: var(--tp-text-strong); font-variant-numeric: tabular-nums; }
+.mk-card-note { font-size: 0.74rem; color: var(--tp-faint); }
+
+.mk-panel {
+  padding: 16px 18px;
+  background: var(--tp-surface);
+  border: 1px solid var(--tp-border);
+  border-radius: 12px;
+}
+.mk-panel h3 { margin: 0 0 12px; font-size: 0.95rem; color: var(--tp-text-strong); }
+.mk-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.mk-panel-head h3 { margin-bottom: 2px; }
+.mk-panel-head small { color: var(--tp-muted); }
+
+.mk-split { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+
+.mk-heading { margin: 4px 0 0; font-size: 0.95rem; color: var(--tp-text-strong); }
+
+.mk-note {
+  padding: 12px 14px;
+  font-size: 0.85rem; line-height: 1.5; color: var(--tp-text);
+  background: var(--tp-info-soft);
+  border: 1px solid var(--tp-info-line);
+  border-radius: 10px;
+}
+.mk-warn { display: block; color: var(--tp-warning); font-size: 0.74rem; }
+
+.mk-empty {
+  display: grid; gap: 4px; justify-items: center;
+  padding: 28px 16px; text-align: center;
+  color: var(--tp-muted);
+  background: var(--tp-surface-sunken);
+  border: 1px dashed var(--tp-border-strong);
+  border-radius: 12px;
+}
+.mk-empty p { margin: 0; }
+.mk-empty small { color: var(--tp-faint); }
+.mk-empty-error { color: var(--tp-danger); background: var(--tp-danger-soft); border-color: var(--tp-danger-line); }
+
+.mk-chip {
+  display: inline-block; padding: 2px 9px;
+  font-size: 0.72rem; font-weight: 600; white-space: nowrap;
+  color: var(--tp-neutral); background: var(--tp-neutral-soft);
+  border: 1px solid var(--tp-neutral-line); border-radius: 999px;
+}
+.mk-chip.ok { color: var(--tp-success); background: var(--tp-success-soft); border-color: var(--tp-success-line); }
+.mk-chip.warn { color: var(--tp-warning); background: var(--tp-warning-soft); border-color: var(--tp-warning-line); }
+.mk-chip.bad { color: var(--tp-danger); background: var(--tp-danger-soft); border-color: var(--tp-danger-line); }
+
+/* Forms */
+.mk-form-wrap {
+  background: var(--tp-surface);
+  border: 1px solid var(--tp-border);
+  border-radius: 12px;
+}
+.mk-form-wrap > summary {
+  padding: 12px 16px; font-weight: 600; color: var(--tp-text-strong); cursor: pointer;
+}
+.mk-form-wrap > summary:focus-visible { outline: 2px solid var(--tp-blue); outline-offset: -2px; }
+.mk-form {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  padding: 0 16px 16px;
+}
+.mk-form .field { display: grid; gap: 4px; }
+.mk-form button[type="submit"] { align-self: end; }
+.mk-form-note { grid-column: 1 / -1; margin: 0; font-size: 0.78rem; color: var(--tp-muted); line-height: 1.5; }
+.mk-checks { display: grid; gap: 6px; border: 1px solid var(--tp-border); border-radius: 8px; padding: 8px 10px; }
+.mk-checks legend { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--tp-muted); }
+.mk-check { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; }
+
+.mk-toolbar { display: flex; gap: 10px; flex-wrap: wrap; }
+.mk-search { flex: 1 1 260px; }
+.mk-search input { width: 100%; }
+
+/* Bars. Eleven steps, because an inline width is blocked by the page CSP. */
+.mk-bar-fill { display: block; height: 100%; background: var(--tp-blue); border-radius: 3px; }
+.mk-bar-0 { width: 0; }
+.mk-bar-10 { width: 10%; }
+.mk-bar-20 { width: 20%; }
+.mk-bar-30 { width: 30%; }
+.mk-bar-40 { width: 40%; }
+.mk-bar-50 { width: 50%; }
+.mk-bar-60 { width: 60%; }
+.mk-bar-70 { width: 70%; }
+.mk-bar-80 { width: 80%; }
+.mk-bar-90 { width: 90%; }
+.mk-bar-100 { width: 100%; }
+
+.mk-spark { display: flex; align-items: flex-end; gap: 3px; height: 88px; }
+.mk-spark-col { display: flex; align-items: flex-end; flex: 1 1 auto; height: 100%; min-width: 3px; }
+.mk-spark-col .mk-bar-fill { width: 100%; height: 100%; }
+.mk-spark-col .mk-bar-0 { height: 2%; }
+.mk-spark-col .mk-bar-10 { height: 10%; }
+.mk-spark-col .mk-bar-20 { height: 20%; }
+.mk-spark-col .mk-bar-30 { height: 30%; }
+.mk-spark-col .mk-bar-40 { height: 40%; }
+.mk-spark-col .mk-bar-50 { height: 50%; }
+.mk-spark-col .mk-bar-60 { height: 60%; }
+.mk-spark-col .mk-bar-70 { height: 70%; }
+.mk-spark-col .mk-bar-80 { height: 80%; }
+.mk-spark-col .mk-bar-90 { height: 90%; }
+.mk-spark-col .mk-bar-100 { height: 100%; }
+
+/* Funnel */
+.mk-funnel { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.mk-funnel-step { display: grid; grid-template-columns: 132px 1fr 56px; gap: 10px; align-items: center; }
+.mk-funnel-label { font-size: 0.8rem; color: var(--tp-muted); }
+.mk-funnel-track { height: 14px; background: var(--tp-surface-sunken); border-radius: 3px; overflow: hidden; }
+.mk-funnel-value { font-size: 0.85rem; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Kanban */
+.mk-kanban {
+  display: grid; gap: 12px; overflow-x: auto;
+  grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr);
+  padding-bottom: 8px;
+}
+.mk-column { display: grid; gap: 8px; align-content: start; background: var(--tp-surface-sunken); border: 1px solid var(--tp-border); border-radius: 12px; padding: 10px; }
+.mk-column-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mk-column-head strong { font-size: 0.82rem; color: var(--tp-text-strong); }
+.mk-column-head small { width: 100%; font-size: 0.74rem; color: var(--tp-muted); font-variant-numeric: tabular-nums; }
+.mk-column-body { display: grid; gap: 8px; }
+.mk-column-empty { margin: 0; padding: 12px 0; text-align: center; font-size: 0.78rem; color: var(--tp-faint); }
+.mk-lead-card { display: grid; gap: 4px; padding: 10px; background: var(--tp-surface); border: 1px solid var(--tp-border); border-radius: 9px; }
+.mk-lead-card strong { font-size: 0.84rem; color: var(--tp-text-strong); }
+.mk-lead-card small { font-size: 0.74rem; color: var(--tp-muted); }
+.mk-move { font-size: 0.78rem; }
