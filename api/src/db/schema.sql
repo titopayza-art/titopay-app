@@ -657,10 +657,17 @@ CREATE TABLE IF NOT EXISTS announcement_campaigns (
   audience TEXT NOT NULL CHECK (audience IN ('personal', 'business', 'specific', 'both')),
   target_user_id UUID REFERENCES users(id) ON DELETE RESTRICT,
   status TEXT NOT NULL DEFAULT 'pending_approval'
-    CHECK (status IN ('pending_approval', 'sent')),
+    CHECK (status IN ('pending_approval', 'sent', 'rejected', 'escalated')),
   estimated_recipients INTEGER NOT NULL DEFAULT 0,
   sent_count INTEGER NOT NULL DEFAULT 0,
   created_by UUID NOT NULL REFERENCES admin_users(id) ON DELETE RESTRICT,
+  -- Why a decision was taken, and by whom, for a rejection or an escalation.
+  decision_reason TEXT,
+  decided_by UUID REFERENCES admin_users(id) ON DELETE SET NULL,
+  decided_at TIMESTAMPTZ,
+  escalated_by UUID REFERENCES admin_users(id) ON DELETE SET NULL,
+  escalated_at TIMESTAMPTZ,
+  escalation_note TEXT,
   sent_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -674,7 +681,9 @@ ALTER TABLE announcement_campaigns
 
 CREATE TABLE IF NOT EXISTS announcement_approvals (
   campaign_id UUID NOT NULL REFERENCES announcement_campaigns(id) ON DELETE CASCADE,
-  approval_role TEXT NOT NULL CHECK (approval_role IN ('ceo', 'coo')),
+  -- Three approval seats: the CEO, the COO and Senior Marketing. One row per
+  -- seat, so the same person cannot approve twice under two hats.
+  approval_role TEXT NOT NULL CHECK (approval_role IN ('ceo', 'coo', 'senior_marketing')),
   approved_by UUID NOT NULL REFERENCES admin_users(id) ON DELETE RESTRICT,
   approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (campaign_id, approval_role),

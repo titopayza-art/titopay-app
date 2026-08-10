@@ -6,6 +6,7 @@ const qrRoutes = require("./qr.routes");
 const adminRoutes = require("./admin.routes");
 const adminSupportRoutes = require("./admin-support.routes");
 const marketingRoutes = require("./marketing.routes");
+const scanToPayRoutes = require("./scan-to-pay.routes");
 const pricingRoutes = require("./pricing.routes");
 const integrationsRoutes = require("./integrations.routes");
 const transactionRoutes = require("./transaction.routes");
@@ -103,6 +104,10 @@ function mountVersionedRoutes(prefix) {
   // admin.routes.js — announcements, sms-campaigns, email-campaigns, reviews —
   // are still reached exactly as before. This router only adds new paths.
   router.use(`${prefix}/admin/marketing`, marketingRoutes);
+  // Scan to Pay adds no payment path — creating, resolving and confirming a QR
+  // payment stay in the POS router, untouched. This mount carries the capability
+  // check the app asks before offering the feature, and the admin monitoring.
+  router.use(`${prefix}/scan-to-pay`, scanToPayRoutes);
   router.use(`${prefix}/admin`, adminRoutes);
   router.use(`${prefix}/pricing`, pricingRoutes);
   router.use(`${prefix}/integrations`, integrationsRoutes);
