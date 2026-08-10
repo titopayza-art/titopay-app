@@ -176,11 +176,18 @@ test("attendance clock-in and clock-out use the authenticated identity and Johan
   pool.query = async (sql, params = []) => {
     const query = String(sql).replace(/\s+/g, " ").trim();
     queries.push(query);
+    // The employee record the signed-in account is linked to. Its spelling of
+    // the name is the canonical one and is what gets stored — the account name
+    // is only the fallback for an HR user with no employee record.
     if (query.startsWith("SELECT id, concat_ws")) {
+      assert.ok(
+        params.includes("employee-1"),
+        "the contract must be looked up by the authenticated employee id"
+      );
       return {
         rows: [{
           id: "employee-1",
-          employee_name: "Different Contract Name",
+          employee_name: "Canonical Employee Name",
           work_start_time: "08:00",
           work_end_time: "17:00",
           lunch_minutes: 60
@@ -192,7 +199,8 @@ test("attendance clock-in and clock-out use the authenticated identity and Johan
       return { rows: attendanceLookup === 1 ? [] : [openRow] };
     }
     if (query.startsWith("INSERT INTO hr_attendance_records")) {
-      assert.equal(params[1], "HR Admin");
+      assert.equal(params[1], "Canonical Employee Name");
+      assert.equal(params[0], "employee-1", "the record must carry the employee foreign key");
       return { rows: [openRow] };
     }
     if (query.startsWith("UPDATE hr_attendance_records") && query.includes("clock_out")) {
@@ -209,8 +217,17 @@ test("attendance clock-in and clock-out use the authenticated identity and Johan
   };
   try {
     const auth = { ...hrAdmin, employeeId: "employee-1" };
-    const clockIn = await hr.clock(auth, { action: "clock_in", workMode: "Remote" });
+    // A name in the request body is a signature, never an identity: posting a
+    // colleague's name must not move the record onto them.
+    const clockIn = await hr.clock(auth, {
+      action: "clock_in", workMode: "Remote",
+      fullName: "Somebody Else", employee: "Somebody Else"
+    });
     const clockOut = await hr.clock(auth, { action: "clock_out", workMode: "Remote" });
+    assert.ok(
+      !queries.some((query) => query.includes("lower(concat_ws(' ', first_name, last_name)) = lower(")),
+      "the employee must never be looked up by a name from the request body"
+    );
 
     assert.equal(clockIn.action, "clocked_in");
     assert.equal(clockOut.action, "clocked_out");

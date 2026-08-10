@@ -292,6 +292,148 @@ async function call(path, { method = "GET", body, token } = {}) {
     rows.length > 0 && rows.every((row) => row.employee === claimant.name),
     `${rows.length} row(s)`);
 
+  /* ============================================= F-02  attendance clock in */
+  section("7. Clocking in records the person who is signed in");
+  const clockIn = await call("/attendance/clock", { method: "POST", token: claimant.token,
+    body: { action: "clock_in", workMode: "Office" } });
+  check("an employee can clock in", clockIn.status === 200, `HTTP ${clockIn.status}`);
+  const clockRow = await db.query(
+    `SELECT id, employee, employee_id, clock_in, work_date, status, attendance_source
+       FROM hr_attendance_records WHERE employee_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [claimant.employeeId]);
+  check("the record is linked to their employee record",
+    clockRow.rows[0]?.employee_id === claimant.employeeId, clockRow.rows[0]?.employee || "no row");
+  check("the timestamp is written by the server, not sent by the browser",
+    Boolean(clockRow.rows[0]?.clock_in), String(clockRow.rows[0]?.clock_in || ""));
+  const saDate = await db.query("SELECT (NOW() AT TIME ZONE 'Africa/Johannesburg')::date AS d");
+  check("the work date is today in South Africa",
+    String(clockRow.rows[0]?.work_date) === String(saDate.rows[0].d),
+    `${clockRow.rows[0]?.work_date} vs ${saDate.rows[0].d}`);
+
+  const clockAgain = await call("/attendance/clock", { method: "POST", token: claimant.token,
+    body: { action: "clock_in" } });
+  check("clocking in twice is refused rather than duplicated", clockAgain.status === 409,
+    `HTTP ${clockAgain.status}`);
+  const dupes = await db.query(
+    `SELECT COUNT(*)::int n FROM hr_attendance_records
+      WHERE employee_id = $1 AND work_date = (NOW() AT TIME ZONE 'Africa/Johannesburg')::date
+        AND deleted_at IS NULL`, [claimant.employeeId]);
+  check("exactly one attendance record exists for today", dupes.rows[0].n === 1, `${dupes.rows[0].n} row(s)`);
+
+  // The identity must come from the session, not the request body.
+  const impersonate = await call("/attendance/clock", { method: "POST", token: finance.token,
+    body: { action: "clock_in", fullName: claimant.name, employee: claimant.name } });
+  const stolen = await db.query(
+    `SELECT COUNT(*)::int n FROM hr_attendance_records
+      WHERE employee_id = $1 AND work_date = (NOW() AT TIME ZONE 'Africa/Johannesburg')::date
+        AND deleted_at IS NULL`, [claimant.employeeId]);
+  check("ONE EMPLOYEE CANNOT CLOCK IN AS ANOTHER", stolen.rows[0].n === 1,
+    `HTTP ${impersonate.status}, ${stolen.rows[0].n} record(s) against the claimant`);
+  const financeRow = await db.query(
+    `SELECT employee, employee_id FROM hr_attendance_records
+      WHERE employee_id = $1 ORDER BY created_at DESC LIMIT 1`, [finance.employeeId]);
+  check("their clock-in is recorded against themselves instead",
+    financeRow.rows[0]?.employee === finance.name, String(financeRow.rows[0]?.employee));
+
+  const clockOut = await call("/attendance/clock", { method: "POST", token: claimant.token,
+    body: { action: "clock_out" } });
+  check("clock out works", clockOut.status === 200, `HTTP ${clockOut.status}`);
+  const outAgain = await call("/attendance/clock", { method: "POST", token: claimant.token,
+    body: { action: "clock_out" } });
+  check("clocking out twice is refused", outAgain.status === 409, `HTTP ${outAgain.status}`);
+
+  // The sharpest version of the same question: with the target having no record
+  // at all today, does a name in the request body create one against them?
+  await db.query("DELETE FROM hr_attendance_records WHERE employee_id = ANY($1::uuid[])",
+    [cast.map((p) => p.employeeId)]);
+  const forged = await call("/attendance/clock", { method: "POST", token: hradmin.token,
+    body: { action: "clock_in", fullName: claimant.name, employee: claimant.name } });
+  const forgedRows = await db.query(
+    `SELECT COUNT(*)::int n FROM hr_attendance_records
+      WHERE (employee_id = $1 OR LOWER(employee) = LOWER($2))
+        AND work_date = (NOW() AT TIME ZONE 'Africa/Johannesburg')::date
+        AND deleted_at IS NULL`, [claimant.employeeId, claimant.name]);
+  check("A NAME IN THE REQUEST BODY CREATES NO RECORD AGAINST THAT PERSON",
+    forgedRows.rows[0].n === 0, `HTTP ${forged.status}, ${forgedRows.rows[0].n} record(s) against the claimant`);
+
+  await db.query("DELETE FROM hr_attendance_records WHERE employee_id = ANY($1::uuid[])",
+    [cast.map((p) => p.employeeId)]);
+
+  /* ======================================== N-04/N-05  deleting records */
+  section("8. Records that should be removable can be removed, safely");
+  for (const [resource, table, body] of [
+    ["announcements", "hr_announcements", { title: `Test announcement ${stamp}`, body: "Placeholder", audience: "all" }],
+    ["recruitment", "hr_recruitment_candidates", { candidateName: `Test Candidate ${stamp}`, email: `cand${stamp}@titopay.local`, stage: "applied" }]
+  ]) {
+    const made = await call(`/${resource}`, { method: "POST", token: hradmin.token, body });
+    const recordId = made.payload?.data?.id;
+    check(`${resource}: a record can be created`, Boolean(recordId),
+      recordId ? "" : `HTTP ${made.status} ${JSON.stringify(made.payload).slice(0, 80)}`);
+    if (!recordId) continue;
+
+    const refused = await call(`/${resource}/${recordId}`, { method: "DELETE", token: claimant.token });
+    check(`${resource}: an ordinary employee cannot delete it`, refused.status === 403 || refused.status === 404,
+      `HTTP ${refused.status}`);
+
+    const removed = await call(`/${resource}/${recordId}`, { method: "DELETE", token: hradmin.token });
+    check(`${resource}: an authorised user CAN delete it`, removed.status === 200, `HTTP ${removed.status}`);
+
+    const after = await db.query(`SELECT deleted_at FROM ${table} WHERE id = $1`, [recordId]);
+    check(`${resource}: the row is kept for the record, not destroyed`,
+      after.rows.length === 1 && after.rows[0].deleted_at !== null,
+      after.rows.length ? "soft deleted" : "ROW GONE");
+
+    const listed = await call(`/${resource}?limit=200`, { token: hradmin.token });
+    check(`${resource}: it disappears from the list`,
+      !(listed.payload?.data || []).some((row) => row.id === recordId));
+
+    const twice = await call(`/${resource}/${recordId}`, { method: "DELETE", token: hradmin.token });
+    check(`${resource}: deleting it again says so rather than failing oddly`, twice.status === 404,
+      `HTTP ${twice.status}`);
+
+    await db.query(`DELETE FROM ${table} WHERE id = $1`, [recordId]);
+  }
+
+  /* ================================== N-02  learning resource validation */
+  section("9. A course cannot publish a link that goes nowhere");
+  const courseBase = { title: `Test course ${stamp}`, category: "Testing", description: "Test" };
+  const badLinks = [
+    ["a bare word", { videoUrl: "hr-learning" }],
+    ["a host with no scheme", { pdfUrl: "www.example.com/policy.pdf" }],
+    ["a javascript: URL", { presentationUrl: "javascript:alert(1)" }],
+    ["a data: URL", { pdfUrl: "data:text/html,<script>alert(1)</script>" }]
+  ];
+  for (const [label, link] of badLinks) {
+    const r = await call("/learning", { method: "POST", token: hradmin.token, body: { ...courseBase, ...link } });
+    check(`a course cannot be saved with ${label}`, r.status === 400, `HTTP ${r.status}`);
+    if (r.payload?.data?.id) await db.query("DELETE FROM hr_learning_courses WHERE id = $1", [r.payload.data.id]);
+  }
+  const goodCourse = await call("/learning", { method: "POST", token: hradmin.token,
+    body: { ...courseBase, pdfUrl: "https://titopay.co.za/learning/policy.pdf", videoUrl: "/hr/media/intro.mp4" } });
+  check("a course with real links still saves", goodCourse.status === 200 || goodCourse.status === 201,
+    `HTTP ${goodCourse.status} ${goodCourse.status >= 400 ? JSON.stringify(goodCourse.payload).slice(0, 80) : ""}`);
+  if (goodCourse.payload?.data?.id) {
+    await db.query("DELETE FROM hr_learning_courses WHERE id = $1", [goodCourse.payload.data.id]);
+  }
+
+  /* ================================================ audit attribution */
+  section("10. The audit log names who did it");
+  const attribution = await db.query(
+    `SELECT action, user_id, user_email, metadata FROM hr_audit_logs
+      WHERE user_email = ANY($1::text[]) AND created_at > NOW() - INTERVAL '10 minutes'
+      ORDER BY created_at DESC LIMIT 40`, [cast.map((p) => p.email)]);
+  check("recent actions were recorded at all", attribution.rows.length > 0,
+    `${attribution.rows.length} entries`);
+  check("EVERY ENTRY CARRIES THE ACTOR'S ID",
+    attribution.rows.length > 0 && attribution.rows.every((row) => row.user_id),
+    `${attribution.rows.filter((r) => r.user_id).length}/${attribution.rows.length}`);
+  const logins = attribution.rows.filter((row) => row.action === "Login");
+  check("logins are attributed too, which they were not before",
+    logins.length > 0 && logins.every((row) => row.user_id), `${logins.length} login entries`);
+  check("each entry records the role the person acted under",
+    attribution.rows.every((row) => row.metadata?.actorRole),
+    String(attribution.rows[0]?.metadata?.actorRole));
+
   // Cleanup: only what this test created.
   for (const [table, ids] of [["hr_payroll_records", created.payroll],
     ["hr_expense_claims", created.expenses], ["hr_disciplinary_cases", created.disciplinary]]) {

@@ -23,7 +23,8 @@
     "verify:infra": "node scripts/verify-infrastructure.js",
     "test": "node --test",
     "peach:diagnose-payout": "node scripts/diagnose-peach-payout.js",
-    "db:apply-migrations": "node scripts/apply-migrations.js"
+    "db:apply-migrations": "node scripts/apply-migrations.js",
+    "hr:hygiene": "node scripts/hr-data-hygiene.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

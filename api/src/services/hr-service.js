@@ -3,7 +3,7 @@ const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require("../lib/jwt");
 const { hashPassword, verifyPassword } = require("../lib/passwords");
-const { tokenHash, hasHrPermission, hrGrantScope } = require("../middleware/hr-auth");
+const { tokenHash, hasHrPermission, hrGrantScope, canonicalHrRole } = require("../middleware/hr-auth");
 
 const refreshTokenDays = Number(process.env.HR_REFRESH_TOKEN_DAYS || 7);
 
@@ -358,6 +358,23 @@ function withAliases(payload = {}, aliases = {}) {
 // absent employee name means "mine", but on an edit it means "not mentioned",
 // and defaulting it there rewrote the employee on someone else's record to
 // whoever happened to be editing it.
+// Can a browser actually open this? Absolute http(s) URLs, and site-relative
+// paths for material this application serves itself. Everything else — a bare
+// word, "www.example.com" with no scheme, a javascript: or data: URL — is not a
+// resource a person can be sent to, and two of those are ways to attack whoever
+// clicks.
+function isOpenableResource(value) {
+  const text = asTrimmedText(value);
+  if (!text) return true; // Empty means "no resource", which is allowed.
+  if (text.startsWith("/")) return !text.startsWith("//");
+  try {
+    const url = new URL(text);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function normaliseHrPayload(resourceName, payload = {}, auth = {}, mode = "create") {
   const creating = mode !== "update";
   let next = { ...payload };
@@ -664,6 +681,19 @@ function normaliseHrPayload(resourceName, payload = {}, auth = {}, mode = "creat
     next.pdfUrl = asTrimmedText(next.pdfUrl);
     next.presentationUrl = asTrimmedText(next.presentationUrl);
     next.imageUrl = asTrimmedText(next.imageUrl);
+    // A resource link that cannot be opened must not be publishable (N-02).
+    // "Open resource" was dead on the mandatory courses because nothing checked
+    // what went into these fields — a bare word, a typo or a "www." with no
+    // scheme all saved happily and produced a link that goes nowhere.
+    for (const [field, label] of [["videoUrl", "Video"], ["pdfUrl", "PDF"],
+      ["presentationUrl", "Presentation"], ["imageUrl", "Image"]]) {
+      if (next[field] === undefined) continue;
+      if (!isOpenableResource(next[field])) {
+        throw new AppError(400,
+          `The ${label} link does not look like something a browser can open. `
+          + "Use a full https:// address, or leave it empty if there is no file.");
+      }
+    }
     next.certificateEnabled = asBoolean(next.certificateEnabled) ?? false;
     next.mandatory = asBoolean(next.mandatory) ?? false;
     next.assessmentRequired = asBoolean(next.assessmentRequired) ?? false;
@@ -969,11 +999,23 @@ function assertPermission(auth, config, action) {
   }
 }
 
+// Every sensitive action names who took it.
+//
+// The actor id is read from the signed-in identity, never from the request
+// body. Two shapes reach this function: the req.hrAuth built by the middleware,
+// which calls it `userId`, and the raw hr_users row the login path has in hand,
+// which calls it `id`. Only the first was read, so every Login, logout and
+// password change was recorded against nobody — the blank attribution the audit
+// reported. Role and actor name go into metadata alongside it, because "who"
+// on an HR record means the person AND the authority they acted under.
 async function audit(auth, action, entity, detail, metadata = {}) {
+  const actorId = auth?.userId || auth?.id || null;
   await pool.query(
     `INSERT INTO hr_audit_logs (user_id, user_email, action, entity, detail, ip_address, user_agent, metadata)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [auth?.userId || null, auth?.email || "system", action, entity, String(detail || ""), metadata.ip || null, metadata.userAgent || null, metadata]
+    [actorId, auth?.email || "system", action, entity, String(detail || ""),
+      metadata.ip || null, metadata.userAgent || null,
+      { ...metadata, actorName: auth?.name || null, actorRole: canonicalHrRole(auth?.role) || null }]
   );
 }
 
@@ -1023,31 +1065,33 @@ function minutesBetween(start, end) {
   return Math.max(0, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60000));
 }
 
-async function employeeContract(auth, employeeName) {
-  const clauses = [];
-  const values = [];
+// Which employee record belongs to the signed-in person.
+//
+// This used to accept a name from the request body as a third OR clause, so
+// posting someone else's name to /attendance/clock matched THEIR contract and
+// wrote the day against them — clocking in as a colleague, from an ordinary
+// account. Identity comes from the session now: the employee id the login
+// resolved, or failing that the account's own email address. A name in the
+// body is a signature, not an identity.
+async function employeeContract(auth) {
+  // The id the login resolved is the answer when there is one. Falling back to
+  // the email address is for an HR account that was never linked to a staff
+  // record. These were previously one query joined with OR and ordered by
+  // updated_at, so an account whose email happened to match a different
+  // employee row could pick that row instead of its own.
+  const columns = "id, concat_ws(' ', first_name, last_name) AS employee_name, "
+    + "work_start_time, work_end_time, lunch_minutes, hourly_rate, contract_hours_per_week";
   if (auth.employeeId) {
-    values.push(auth.employeeId);
-    clauses.push(`id = $${values.length}`);
+    const byId = await pool.query(
+      `SELECT ${columns} FROM hr_employees WHERE id = $1 AND deleted_at IS NULL`, [auth.employeeId]);
+    if (byId.rows[0]) return byId.rows[0];
   }
-  if (auth.email) {
-    values.push(auth.email);
-    clauses.push(`lower(email) = lower($${values.length})`);
-  }
-  if (employeeName) {
-    values.push(employeeName);
-    clauses.push(`lower(concat_ws(' ', first_name, last_name)) = lower($${values.length})`);
-  }
-  if (!clauses.length) return null;
-  const result = await pool.query(
-    `SELECT id, concat_ws(' ', first_name, last_name) AS employee_name, work_start_time, work_end_time, lunch_minutes, hourly_rate, contract_hours_per_week
-       FROM hr_employees
-      WHERE deleted_at IS NULL AND (${clauses.join(" OR ")})
-      ORDER BY updated_at DESC
-      LIMIT 1`,
-    values
-  );
-  return result.rows[0] || null;
+  if (!auth.email) return null;
+  const byEmail = await pool.query(
+    `SELECT ${columns} FROM hr_employees
+      WHERE lower(email) = lower($1) AND deleted_at IS NULL
+      ORDER BY updated_at DESC LIMIT 1`, [auth.email]);
+  return byEmail.rows[0] || null;
 }
 
 function attendanceTotals(row, contract, now = new Date()) {
@@ -1710,11 +1754,12 @@ async function leaveDecision(id, auth, decision, comment, meta = {}) {
 }
 
 async function clock(auth, payload = {}, meta = {}) {
-  const requestedName = payload.fullName || payload.employee || auth.name || auth.email;
-  const contract = await employeeContract(auth, requestedName);
-  // Keep self-service attendance aligned with the authenticated HR identity.
-  // The portal uses this value to detect an open session after a reload.
-  const name = payload.fullName || auth.name || contract?.employee_name || requestedName;
+  const contract = await employeeContract(auth);
+  // Self-service attendance is always the signed-in person's own. The employee
+  // record wins where there is one, because that is the canonical spelling of
+  // the name; the account name is the fallback for an HR user with no employee
+  // record of their own.
+  const name = contract?.employee_name || auth.name || auth.email;
   const action = normaliseAction(payload.action);
   const existing = await pool.query(
     `SELECT *
