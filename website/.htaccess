@@ -1,0 +1,37 @@
+RewriteEngine On
+
+# Do not serve internal archives from the public website root.
+<FilesMatch "\.(zip|bak|sql|env)$">
+Require all denied
+</FilesMatch>
+
+# Force HTTPS.
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Keep one canonical host.
+RewriteCond %{HTTP_HOST} ^www\.titopay\.co\.za$ [NC]
+RewriteRule ^ https://titopay.co.za%{REQUEST_URI} [L,R=301]
+
+# Use only the official TitoPay logo for browser icon requests.
+RewriteRule ^favicon\.ico$ /assets/titopay-official-logo.png [L,R=302]
+
+# Prefer the clean homepage URL.
+RewriteCond %{THE_REQUEST} \s/+index\.html[\s?] [NC]
+RewriteRule ^index\.html$ / [L,R=301]
+
+# Prefer clean public page URLs.
+RewriteCond %{THE_REQUEST} \s/+((personal|business|events|security|about|newsroom|careers|faqs|contact|legal|waitlist)\.html)[\s?] [NC]
+RewriteRule ^(.+)\.html$ /$1 [L,R=301]
+
+# Remove trailing slashes from clean page URLs when they are not real folders.
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.+)/$ /$1 [L,R=301]
+
+# Support clean page URLs such as /careers, /business and /contact.
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}\.html -f
+RewriteRule ^(.+?)/?$ $1.html [L]
+
+# Friendly fallback instead of the host default 404 page.
+ErrorDocument 404 /

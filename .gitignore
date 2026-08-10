@@ -1,3 +1,6 @@
 node_modules/
 tests/artifacts/
 *.zip
+
+# Site secrets: admin credential hashes live only in the deployment package.
+website/api/config.local.php
