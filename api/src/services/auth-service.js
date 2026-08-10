@@ -351,6 +351,11 @@ async function createOtpChallenge({ user, purpose, channels, ipAddress, userAgen
   };
 }
 
+// The only two challenge purposes that may be redeemed for a full login session.
+// Everything else in otp_codes — wallet unlock, password change, step-up
+// verification — authorises its own narrow action and is verified elsewhere.
+const LOGIN_OTP_PURPOSES = ["login", "admin_login"];
+
 async function getLatestOtpChallengeId({ userType, userId, purpose }) {
   await ensureAuthRuntimeSchema();
   const { rows } = await pool.query(
@@ -1111,12 +1116,21 @@ async function verifyOtpLogin(payload, meta) {
     purpose: payload.scope === "customer" || payload.userType === "customer" ? "login" : "admin_login"
   });
   if (!challengeId) throw new AppError(404, "OTP challenge not found");
+  // Every one-time code the platform issues lands in otp_codes — sign-in, wallet
+  // unlock, password change, step-up verification — separated only by `purpose`.
+  // This query ignored that column, so a challenge created for any of them could
+  // be redeemed here for a full login session: a wallet-unlock code posted to
+  // this unauthenticated endpoint was accepted as a sign-in. The fallback lookup
+  // directly above already restricts itself to login purposes; this applies the
+  // same rule when the caller supplies the challenge id itself, which was the way
+  // around it.
   const { rows } = await pool.query(
     `SELECT *
      FROM otp_codes
      WHERE id = $1
+       AND purpose = ANY($2::TEXT[])
      LIMIT 1`,
-    [challengeId]
+    [challengeId, LOGIN_OTP_PURPOSES]
   );
   const row = rows[0];
   if (!row) throw new AppError(404, "OTP challenge not found");
