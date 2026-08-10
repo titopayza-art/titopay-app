@@ -229,8 +229,63 @@ async function call(path, { method = "GET", body, token } = {}) {
   check("an employee number identifies the same person",
     byNumber.payload?.data?.employee === claimant.name, String(byNumber.payload?.data?.employee));
 
+  /* ============================================ salary and bank details */
+  section("5. The employee directory does not hand out salaries");
+  // A team lead needs the directory. They do not need everyone's bank account.
+  const leadEmail = `hrlead${stamp}@titopay.local`;
+  const leadEmp = await db.query(
+    `INSERT INTO hr_employees (employee_number, first_name, last_name, email, job_title, department, status,
+                               salary, hourly_rate, tax_number, bank_name, bank_account, medical_info, emergency_contact)
+     VALUES ($1,'Lena','Lead',$2,'Team Lead','Testing','active',
+             81000, 450, 'TAX-1234', 'Test Bank', '99887766', '{"notes":"private"}'::jsonb, '{"name":"Next Of Kin"}'::jsonb)
+     RETURNING id`, [`L${String(stamp).slice(-6)}`, leadEmail]);
+  const leadUser = await db.query(
+    `INSERT INTO hr_users (name, email, password_hash, role, status, employee_id)
+     VALUES ('Lena Lead',$1,$2,'Team Lead','active',$3) RETURNING id`, [leadEmail, hash, leadEmp.rows[0].id]);
+  const leadLogin = await call("/auth/login", { method: "POST", body: { email: leadEmail, password: PASSWORD } });
+  const leadToken = leadLogin.payload?.accessToken || leadLogin.payload?.tokens?.accessToken;
+  check("Team Lead signed in", Boolean(leadToken));
+
+  // Give the claimant pay details worth protecting.
+  await db.query(
+    `UPDATE hr_employees SET salary = 55000, bank_account = '11223344', tax_number = 'TAX-9999',
+            medical_info = '{"notes":"confidential"}'::jsonb WHERE id = $1`, [claimant.employeeId]);
+
+  const leadView = await call("/employees?limit=200", { token: leadToken });
+  const others = (leadView.payload?.data || []).filter((row) => row.email !== leadEmail);
+  check("Team Lead can still see the staff directory",
+    leadView.status === 200 && others.length > 0, `${others.length} colleague(s)`);
+  check("A TEAM LEAD CANNOT SEE COLLEAGUES' SALARIES",
+    others.every((row) => row.salary === undefined && row.bankAccount === undefined
+      && row.taxNumber === undefined && row.medicalInfo === undefined),
+    JSON.stringify(others.find((row) => row.salary !== undefined) || {}).slice(0, 90));
+  const ownRow = (leadView.payload?.data || []).find((row) => row.email === leadEmail);
+  check("but they can see their OWN salary", ownRow && ownRow.salary !== undefined,
+    ownRow ? `salary ${ownRow.salary}` : "own record missing");
+  const leadNames = (leadView.payload?.data || []).filter((row) => row.name && row.jobTitle);
+  check("the directory still carries names and job titles", leadNames.length > 0,
+    `${leadNames.length} row(s)`);
+
+  const csv = await fetch(`${API}/export/employees.csv`, { headers: { authorization: `Bearer ${leadToken}` } });
+  const csvBody = await csv.text();
+  check("THE CSV EXPORT IS REDACTED THE SAME WAY",
+    !csvBody.includes("11223344") && !csvBody.includes("TAX-9999") && !csvBody.includes("confidential"),
+    `${csvBody.length} bytes`);
+
+  const payrollView = await call("/employees?limit=200", { token: finance.token });
+  const payrollRows = (payrollView.payload?.data || []).filter((row) => row.email === claimant.email);
+  check("Finance CAN see salaries, because paying people needs them",
+    payrollRows.length === 1 && payrollRows[0].salary !== undefined,
+    payrollRows.length ? `salary ${payrollRows[0].salary}` : "not found");
+  check("but Finance does not see medical notes",
+    payrollRows.length === 1 && payrollRows[0].medicalInfo === undefined);
+
+  await db.query("DELETE FROM hr_sessions WHERE user_id = $1", [leadUser.rows[0].id]);
+  await db.query("DELETE FROM hr_users WHERE id = $1", [leadUser.rows[0].id]);
+  await db.query("DELETE FROM hr_employees WHERE id = $1", [leadEmp.rows[0].id]);
+
   /* ====================================================== nothing regressed */
-  section("5. The isolation fixes still hold");
+  section("6. The isolation fixes still hold");
   const otherClaims = await call("/expenses?limit=200", { token: claimant.token });
   const rows = otherClaims.payload?.data || [];
   check("an employee sees only their own claims",

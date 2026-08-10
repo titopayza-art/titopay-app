@@ -750,6 +750,36 @@ async function resolveEmployeeLink(resourceName, data, auth = {}) {
   data.employee = `${employee.first_name} ${employee.last_name}`.trim();
 }
 
+// What an employee record holds that is nobody's business by default.
+//
+// Listing employees ran `SELECT *`, so every role holding employees:read — a
+// team lead, a recruiter, a read-only account — received salary, hourly rate,
+// tax number, bank account, medical notes and next of kin for all staff. The
+// list itself is legitimate: people need a directory. The pay and bank details
+// are the part that has to be earned, and the medical and emergency details
+// are not pay data at all, so they are held tighter still.
+const PAY_FIELDS = ["salary", "hourlyRate", "taxNumber", "bankName", "bankAccount"];
+const PRIVATE_FIELDS = ["medicalInfo", "emergencyContact"];
+
+function redactEmployee(row, auth) {
+  const scope = hrGrantScope(auth?.role, "employees");
+  if (scope === "full") return row;
+
+  // Your own record is yours: your salary, your bank details, your next of kin.
+  const mine = [auth?.name, auth?.email].filter(Boolean).map((value) => String(value).trim().toLowerCase());
+  const isSelf = (auth?.employeeId && row.id === auth.employeeId)
+    || mine.includes(String(row.email || "").trim().toLowerCase())
+    || mine.includes(`${row.firstName || ""} ${row.lastName || ""}`.trim().toLowerCase());
+  if (isSelf) return row;
+
+  // Paying people requires seeing what they are paid.
+  const paysPeople = Boolean(hrGrantScope(auth?.role, "payroll"));
+  const hidden = paysPeople ? PRIVATE_FIELDS : [...PAY_FIELDS, ...PRIVATE_FIELDS];
+  const out = { ...row };
+  for (const field of hidden) delete out[field];
+  return out;
+}
+
 const CLAIM_DECISION_COLUMNS = ["manager_status", "finance_status", "payment_status"];
 
 // Applies an approval decision to an expense claim against the claim as it
@@ -1373,7 +1403,11 @@ async function list(resourceName, auth, query = {}) {
     `SELECT * FROM ${config.table} WHERE ${filters.join(" AND ")} ORDER BY ${config.defaultOrder} LIMIT $${values.length - 1} OFFSET $${values.length}`,
     values
   );
-  return { data: result.rows.map(rowToApi), pagination: { limit, offset, count: result.rowCount } };
+  const rows = result.rows.map(rowToApi);
+  return {
+    data: effectiveResourceName === "employees" ? rows.map((row) => redactEmployee(row, auth)) : rows,
+    pagination: { limit, offset, count: result.rowCount }
+  };
 }
 
 async function enrolLearning(courseId, auth, meta = {}) {
