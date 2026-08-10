@@ -509,6 +509,31 @@
       audience.appendChild(row);
     });
     host.appendChild(audience);
+
+    // Where staff write back to. Shown last because it changes least, but it is
+    // on the same screen as the switch so nobody turns email on without seeing
+    // which desk the replies land on.
+    var contact = el("div", { style: "margin:4px 0 0;border-top:1px solid #e2ebf5;padding-top:14px" });
+    contact.appendChild(el("div", { style: "font-size:12px;letter-spacing:.07em;text-transform:uppercase;"
+      + "color:#5b7799;font-weight:700;margin-bottom:6px" }, "Where staff reply"));
+    contact.appendChild(el("p", { style: "margin:0 0 10px;font-size:13px;color:#5b7799;line-height:1.5" },
+      "Shown in every HR email, and where a reply goes. Customer email is unaffected."));
+    var row = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center" });
+    var input = el("input", { type: "email", value: settings.contactEmail || "",
+      "data-repair": "email-contact",
+      style: "flex:1 1 260px;min-width:220px;padding:9px 11px;border:1px solid #cfdcec;"
+        + "border-radius:6px;font-size:14px;color:#0b1f3f" });
+    input.value = settings.contactEmail || "";
+    var saveBtn = el("button", { type: "button", class: "secondary", "data-repair": "email-contact-save" }, "Save");
+    saveBtn.addEventListener("click", function () {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving…";
+      save({ contactEmail: input.value }, host);
+    });
+    row.appendChild(input);
+    row.appendChild(saveBtn);
+    contact.appendChild(row);
+    host.appendChild(contact);
   }
 
   function save(patch, host) {

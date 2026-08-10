@@ -35,10 +35,18 @@
 const crypto = require("crypto");
 const { pool } = require("../db/pool");
 const { config } = require("../config/env");
+const { AppError } = require("../lib/errors");
 const { getPlatformSetting, setPlatformSetting } = require("./platform-settings-service");
 const { queueEmail } = require("./email-centre-service");
 
 const SETTING_KEY = "hr_email";
+
+// Where staff write back to. It is HR's own desk rather than the customer
+// support address the rest of TitoPay's email replies to — a person answering
+// a leave decision should reach the people who took it, and a customer
+// enquiry should not land in HR.
+const DEFAULT_CONTACT_EMAIL = "hr@titopay.co.za";
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // The environment is a floor, not a switch: an operator can turn HR mail off
 // from the Admin Portal at any time, but nobody can turn it on in an
@@ -60,6 +68,9 @@ async function getHrEmailConfig() {
     // the operator rather than fixed here, because it is a policy question
     // about who should read what.
     announcementAudience: stored?.value?.announcementAudience === "audience" ? "audience" : "all",
+    contactEmail: EMAIL_SHAPE.test(String(stored?.value?.contactEmail || ""))
+      ? String(stored.value.contactEmail).trim().toLowerCase()
+      : DEFAULT_CONTACT_EMAIL,
     events: {
       announcements: stored?.value?.events?.announcements !== false,
       leave: stored?.value?.events?.leave !== false,
@@ -73,7 +84,18 @@ async function getHrEmailConfig() {
 
 async function setHrEmailConfig(patch = {}, adminId = null) {
   const current = await getHrEmailConfig();
+  let contactEmail = current.contactEmail;
+  if (patch.contactEmail !== undefined) {
+    const wanted = String(patch.contactEmail || "").trim().toLowerCase();
+    // Refused rather than quietly ignored: an address nobody reads is worse
+    // than the default, because the message still tells staff to write to it.
+    if (!EMAIL_SHAPE.test(wanted)) {
+      throw new AppError(400, `"${patch.contactEmail}" is not an email address staff could write to.`);
+    }
+    contactEmail = wanted;
+  }
   const next = {
+    contactEmail,
     enabled: patch.enabled === undefined ? current.operatorEnabled : Boolean(patch.enabled),
     announcementAudience: patch.announcementAudience === "audience" ? "audience"
       : patch.announcementAudience === "all" ? "all" : current.announcementAudience,
@@ -187,6 +209,7 @@ async function send({ event, employee, templateKey, variables, reference }) {
         // Present on every HR message because the eyebrow is on every template.
         announcementPriority: "Internal message",
         decisionTone: "#0b3f8f",
+        hrContactEmail: settings.contactEmail,
         firstName: firstNameOf(employee),
         fullName: `${employee.first_name || ""} ${employee.last_name || ""}`.trim(),
         email: employee.email,
@@ -194,7 +217,11 @@ async function send({ event, employee, templateKey, variables, reference }) {
         ...variables
       },
       idempotencyKey,
-      metadata: { source: "hr", event, hrEmployeeId: employee.id || null, reference }
+      // replyTo is read by the worker and overrides the global reply address for
+      // this message only, so pressing Reply reaches HR instead of customer
+      // support — without changing where customer email replies go.
+      metadata: { source: "hr", event, hrEmployeeId: employee.id || null, reference,
+        replyTo: settings.contactEmail }
     });
     return job;
   } catch (error) {

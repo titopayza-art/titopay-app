@@ -81,7 +81,16 @@ const queued = (db, event) => db.query(
   if (cast.some((p) => !p.token)) { console.log("\n  Cannot continue.\n"); await db.end(); process.exit(1); }
 
   const made = { announcements: [], leave: [], expenses: [] };
-  const cleanQueue = () => db.query("DELETE FROM email_queue WHERE metadata->>'source' = 'hr'");
+  // Delivery logs reference the queue, so anything actually sent has to have
+  // its log removed first — otherwise the foreign key refuses the delete.
+  const cleanQueue = async () => {
+    await db.query(`DELETE FROM email_delivery_events WHERE log_id IN
+      (SELECT id FROM email_delivery_logs WHERE queue_id IN
+        (SELECT id FROM email_queue WHERE metadata->>'source' = 'hr'))`).catch(() => {});
+    await db.query(`DELETE FROM email_delivery_logs WHERE queue_id IN
+      (SELECT id FROM email_queue WHERE metadata->>'source' = 'hr')`).catch(() => {});
+    await db.query("DELETE FROM email_queue WHERE metadata->>'source' = 'hr'");
+  };
   await cleanQueue();
 
   /* ================================================= the switch is the point */
@@ -246,8 +255,46 @@ const queued = (db, event) => db.query(
       (await queued(db, "announcements")).rows.length === 0);
   }
 
+  /* ===================================== where staff write back to */
+  section("4. Replies reach HR, and customer email is untouched");
+  const cfg = await call("/email/settings", { token: director.token });
+  check("the HR desk defaults to hr@titopay.co.za",
+    cfg.payload?.settings?.contactEmail === "hr@titopay.co.za",
+    String(cfg.payload?.settings?.contactEmail));
+
+  const rubbish = await call("/email/settings", { method: "POST", token: director.token,
+    body: { contactEmail: "not-an-address" } });
+  check("an address staff could not write to is refused", rubbish.status === 400, `HTTP ${rubbish.status}`);
+  const unchanged = await call("/email/settings", { token: director.token });
+  check("and the address is left as it was",
+    unchanged.payload?.settings?.contactEmail === "hr@titopay.co.za");
+
+  // Reply-To is one global setting shared with every customer email. Changing
+  // it for HR must not change it for them.
+  const globalReplyTo = await db.query("SELECT reply_to_email, sender_email FROM email_settings LIMIT 1");
+  check("THE GLOBAL REPLY ADDRESS IS UNTOUCHED BY ANY OF THIS",
+    globalReplyTo.rows[0]?.reply_to_email !== "hr@titopay.co.za",
+    `customer email still replies to ${globalReplyTo.rows[0]?.reply_to_email}`);
+
+  if (envAllows) {
+    await cleanQueue();
+    await call("/email/settings", { method: "POST", token: director.token, body: { enabled: true } });
+    const note = await call("/announcements", { method: "POST", token: director.token,
+      body: { title: `Reply-to check ${stamp}`, body: "Where does a reply go?", audience: "all", status: "published" } });
+    if (note.payload?.data?.id) made.announcements.push(note.payload.data.id);
+    await new Promise((r) => setTimeout(r, 1400));
+    const rows = (await queued(db, "announcements")).rows;
+    check("every HR message names the HR desk as its reply address",
+      rows.length > 0 && rows.every((row) => row.metadata?.replyTo === "hr@titopay.co.za"),
+      `${rows.length} message(s), replyTo ${rows[0]?.metadata?.replyTo}`);
+    check("and carries the address staff can write to",
+      rows.length > 0 && rows.every((row) => row.variables?.hrContactEmail === "hr@titopay.co.za"),
+      String(rows[0]?.variables?.hrContactEmail));
+    await call("/email/settings", { method: "POST", token: director.token, body: { enabled: false } });
+  }
+
   /* ============================ the environment lever, on its own instance */
-  section("4. A box that was never configured for staff email cannot send");
+  section("5. A box that was never configured for staff email cannot send");
   // The operator switch is in the shared database and is ON at this point in
   // the run. A second API without HR_EMAIL_ENABLED must still send nothing —
   // that is the whole point of the environment being a floor rather than a
@@ -286,7 +333,7 @@ const queued = (db, event) => db.query(
   await call("/email/settings", { method: "POST", token: director.token, body: { enabled: false } });
 
   /* ============================================== the HR action still works */
-  section("5. Email never gets in the way of the HR action itself");
+  section("6. Email never gets in the way of the HR action itself");
   const worksRegardless = await call("/announcements", { method: "POST", token: director.token,
     body: { title: `Still works ${stamp}`, body: "The record is what matters.", audience: "all", status: "draft" } });
   check("HR records still save whatever email is doing",
@@ -306,7 +353,7 @@ const queued = (db, event) => db.query(
     && settingsAudit.rows[0].metadata?.before !== undefined);
 
   // Cleanup.
-  await db.query("DELETE FROM email_queue WHERE metadata->>'source' = 'hr'");
+  await cleanQueue();
   for (const [table, ids] of [["hr_announcements", made.announcements.filter(Boolean)],
     ["hr_leave_requests", made.leave], ["hr_expense_claims", made.expenses.filter(Boolean)]]) {
     if (ids.length) await db.query(`DELETE FROM ${table} WHERE id = ANY($1::uuid[])`, [ids]);
