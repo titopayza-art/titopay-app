@@ -103,3 +103,12 @@ that looks like a product break and is not.
 `split-e2e.js` scores 34/34 alone and 31/34 when it follows `withdrawal-e2e.js` —
 a long-standing ordering dependency between those two harnesses, since split
 configures the payout capability withdrawal consumes.
+
+## The deployment archives
+
+`ARCHIVE-AUDIT.md` is what four independent auditors found when pointed at
+`api.zip`, `app.zip` and `admin.zip` with the brief *assume it is broken and
+prove it* — every finding then handed to a separate agent whose job was to
+refute it. It records what could not be broken, what was found and fixed, and
+the one item deferred with a recommendation. `ARCHIVE-CHECKSUMS.txt` carries the
+SHA-256 of each archive so an upload can be checked against what was built.

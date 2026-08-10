@@ -1,0 +1,68 @@
+# TitoPay PWA — caching rules for Apache (cPanel) and any CDN in front of it.
+#
+# WHY THIS FILE EXISTS
+# service-worker.js was being edge-cached by the CDN for hours. After an upload,
+# different cache nodes held DIFFERENT versions of the worker, so the app kept
+# "updating" back and forth and reloaded itself in a loop — visible as the app
+# twitching/jumping. A service worker must always come straight from the origin.
+#
+# Cloudflare respects these origin Cache-Control headers by default, so this
+# file fixes the problem at the root for both browsers and the CDN.
+
+# WHAT IS NOT SERVED
+#
+# The package ships more than the browser loads, and everything extra lands in
+# a public document root. Nothing is deleted from the package — the sources
+# stay on the server where they are useful for support — but Apache will not
+# hand them to the internet.
+#
+#   app.js / styles.css   The unminified sources. index.html and the service
+#                         worker load only the .min versions, so nothing
+#                         references these; left unguarded they were a 1 MB
+#                         download of the frontend source with every internal
+#                         engineering comment intact.
+#   *.md                  Deployment documentation. It names internal route
+#                         paths and the deploy procedure. The admin package has
+#                         always denied these; this one did not.
+#
+# DEPLOYMENT_BUILD_MARKER.txt stays reachable on purpose: it is what a deploy is
+# verified against.
+#
+# WHY REWRITE AND NOT "Require all denied"
+# The admin document root blocks its documentation with `Require all denied`,
+# and that is confirmed working in production. `Require` belongs to Apache's
+# AuthConfig override class though, and this document root has never used a
+# directive from that class — if AllowOverride here does not include it, Apache
+# answers every request with 500, taking the whole app down rather than just
+# hiding one file. RewriteRule belongs to the FileInfo class, which the
+# Cache-Control rules below already prove is permitted here, so the worst case
+# is that the block does nothing. The IfModule guard covers mod_rewrite being
+# absent for the same reason. Same 403, none of the blast radius.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^\.ht                   - [F,L]
+  RewriteRule ^(app\.js|styles\.css)$ - [F,L]
+  RewriteRule \.md$                   - [F,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  # The service worker is the update mechanism itself — never cache it anywhere.
+  <FilesMatch "^service-worker\.js$">
+    Header set Cache-Control "no-store, max-age=0"
+  </FilesMatch>
+
+  # The HTML shell, manifest and build marker must always revalidate so a new
+  # build is picked up immediately.
+  <FilesMatch "^(index\.html|offline\.html|manifest\.webmanifest|DEPLOYMENT_BUILD_MARKER\.txt|services-default\.json)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+
+  # Versioned assets (?v=N in their URLs) are immutable per version — cache hard.
+  <FilesMatch "\.(css|js)$">
+    Header setifempty Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "\.(png|jpg|ico|webmanifest)$">
+    Header setifempty Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>

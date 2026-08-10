@@ -1,6 +1,6 @@
 # TitoPay Admin — Enterprise Analytics
 
-Build `admin-console-v74`. This document covers what the Analytics module does,
+Build `admin-console-v75`. This document covers what the Analytics module does,
 where every number comes from, and what an API change would add to it.
 
 ## What was added
