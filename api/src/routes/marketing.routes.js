@@ -248,6 +248,35 @@ router.get("/affiliates", requireAdminPermission("marketing"), handle(async (_re
   });
 }));
 
+router.post("/affiliates", requireAdminPermission("marketing_referrals"), handle(async (req, res) => {
+  const { pool } = require("../db/pool");
+  const code = String(req.body?.code || "").trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(code)) {
+    throw new AppError(400, "An affiliate code must be 3–32 characters: letters, numbers, hyphen or underscore.");
+  }
+  const commissionType = requireEnum(req.body?.commissionType, ["fixed", "percentage"], "Commission type");
+  const commissionValue = Number(req.body?.commissionValue || 0);
+  if (!(commissionValue > 0)) throw new AppError(400, "Enter a commission greater than zero.");
+  if (commissionType === "percentage" && commissionValue > 100) {
+    throw new AppError(400, "A percentage commission cannot exceed 100%.");
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO marketing_affiliates
+         (name, code, contact_email, contact_phone, commission_type, commission_value, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, name, code`,
+      [boundedText(req.body?.name, "Affiliate name", { min: 2, max: 120 }), code,
+        req.body?.contactEmail || null, req.body?.contactPhone || null,
+        commissionType, commissionValue, actorFrom(req).adminId]);
+    await audit(req, "marketing.affiliate.created", "marketing_affiliate", rows[0].id,
+      { code, commissionType, commissionValue });
+    res.status(201).json({ ok: true, affiliate: rows[0] });
+  } catch (error) {
+    if (error.code === "23505") throw new AppError(409, `The affiliate code ${code} is already in use.`);
+    throw error;
+  }
+}));
+
 /* ------------------------------------------------------------- leads / CRM */
 
 router.get("/leads", requireAdminPermission("marketing_leads"), handle(async (req, res) => {

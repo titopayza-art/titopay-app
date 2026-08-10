@@ -380,8 +380,37 @@ async function viewReferrals(root) {
       ${table(["Referrer", "Referred", "KYC", "First transaction", "Volume", "Reward", "Status", ""],
         rows, "No referrals recorded yet.")}
       <h3 class="mk-heading">Affiliates</h3>
-      ${table(["Affiliate", "Commission", "Value", "Referred", "Status"], affiliateRows,
-        "No affiliates registered.")}`;
+      <div class="mk-note">
+        <strong>How an affiliate earns.</strong> An affiliate is paid on the same rule as a
+        referral, not on sign-ups: the person they brought in must complete KYC
+        <em>and</em> settle a first transaction before anything is owed.
+        A <em>fixed</em> commission pays that rand amount once per qualified customer.
+        A <em>percentage</em> commission pays that share of the revenue TitoPay earns from
+        that customer. Commission is <strong>recorded here and paid through the normal
+        payout process</strong> — this page never moves money by itself.
+      </div>
+      <details class="mk-form-wrap"><summary>New affiliate</summary>
+        <form class="mk-form" data-mk-form="affiliate">
+          <div class="field"><label for="mk-f-name">Affiliate name</label>
+            <input id="mk-f-name" name="name" required minlength="2" maxlength="120"></div>
+          <div class="field"><label for="mk-f-code">Affiliate code</label>
+            <input id="mk-f-code" name="code" required maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_-]{2,31}"></div>
+          <div class="field"><label for="mk-f-email">Contact email</label>
+            <input id="mk-f-email" name="contactEmail" type="email" maxlength="160"></div>
+          <div class="field"><label for="mk-f-phone">Contact phone</label>
+            <input id="mk-f-phone" name="contactPhone" maxlength="32"></div>
+          <div class="field"><label for="mk-f-type">Commission type</label>
+            <select id="mk-f-type" name="commissionType">
+              <option value="fixed">Fixed rand amount per qualified customer</option>
+              <option value="percentage">Percentage of revenue from that customer</option>
+            </select></div>
+          <div class="field"><label for="mk-f-value">Commission value (R or %)</label>
+            <input id="mk-f-value" name="commissionValue" type="number" min="0.01" step="0.01" required></div>
+          <button type="submit" class="primary-btn">Add affiliate</button>
+          <p class="mk-form-note">A percentage commission cannot exceed 100%. Codes are unique.</p>
+        </form></details>
+      ${table(["Affiliate", "Commission", "Value", "Qualified customers", "Status"], affiliateRows,
+        "No affiliates yet. Add one above.")}`;
   } catch (error) {
     root.innerHTML = errorState(error);
   }
@@ -864,6 +893,10 @@ function wire(container) {
       } else if (kind === "lead") {
         await H.apiFetch("/admin/marketing/leads", { method: "POST", body: values });
         H.showToast("Lead created.", "success");
+      } else if (kind === "affiliate") {
+        await H.apiFetch("/admin/marketing/affiliates", { method: "POST", body: {
+          ...values, commissionValue: Number(values.commissionValue || 0) } });
+        H.showToast("Affiliate added.", "success");
       } else if (kind === "link") {
         await H.apiFetch("/admin/marketing/links", { method: "POST", body: values });
         H.showToast("Tracked link created.", "success");

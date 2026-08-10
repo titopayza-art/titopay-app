@@ -29,7 +29,7 @@ const ADMIN_ROLE_PERMISSIONS = {
   coo: ["dashboard", "analytics", "marketing", "marketing_sms_approve", "marketing_email_approve", "ticketing", "enterprise_distribution", "audit",
     "marketing_campaigns", "marketing_audiences", "marketing_promotions", "marketing_referrals",
     "marketing_leads", "marketing_sales", "marketing_links", "marketing_experiments",
-    "marketing_analytics", "marketing_export"],
+    "marketing_analytics", "marketing_export", "marketing_approve", "marketing_escalate"],
   developer: ["*"],
   engineering: ["engineering", "security", "audit", "dashboard", "transactions", "services", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_QUEUE_MANAGE", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
   // "event_tags" gates the Event Tag console: searching an attendee's cashless
@@ -45,6 +45,17 @@ const ADMIN_ROLE_PERMISSIONS = {
     // Finance owns what a promotion costs, so it can issue and stop one, and
     // read the ROI reporting — but has no reason to edit campaigns or the CRM.
     "marketing_promotions", "marketing_referrals", "marketing_analytics"],
+  // Senior Marketing is the third approver on the marketing send workflow.
+  // It can approve or reject an announcement on its own authority, and escalate
+  // one to the CEO or COO when the call is above its pay grade. It deliberately
+  // does NOT carry marketing_promotions or marketing_referrals: approving a
+  // message to customers and deciding a customer is owed money are different
+  // powers, and this role holds only the first.
+  senior_marketing: ["dashboard", "analytics", "marketing", "ticketing",
+    "marketing_approve", "marketing_escalate",
+    "marketing_campaigns", "marketing_audiences", "marketing_leads",
+    "marketing_sales", "marketing_links", "marketing_experiments",
+    "marketing_analytics"],
   marketing: ["dashboard", "analytics", "marketing", "ticketing",
     // Marketing & Sales Command Centre. Deliberately NOT the whole set: this
     // role plans and reports, and can run the sales side, but issuing coupons

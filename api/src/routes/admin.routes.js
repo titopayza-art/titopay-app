@@ -537,7 +537,25 @@ async function savePlatformSettingValue(key, value, adminId) {
 
 function canApproveMarketingSms(role) {
   const normalized = normalizeAdminRole(role);
-  return ["owner", "root", "ceo", "coo", "super_admin"].includes(normalized);
+  return ["owner", "root", "ceo", "coo", "super_admin", "senior_marketing"].includes(normalized);
+}
+
+// Which of the three approval seats this admin occupies.
+//
+// Three people can now approve or reject: the CEO, the COO and Senior
+// Marketing. Each holds one seat, so the same person cannot approve twice under
+// two hats, and super_admin/owner act in the CEO seat as they always have.
+function marketingApprovalSeat(role) {
+  const normalized = normalizeAdminRole(role);
+  if (["ceo", "super_admin", "owner", "root"].includes(normalized)) return "ceo";
+  if (normalized === "coo") return "coo";
+  if (normalized === "senior_marketing") return "senior_marketing";
+  return null;
+}
+
+// Senior Marketing may raise something to the CEO or COO rather than decide it.
+function canEscalateMarketing(role) {
+  return normalizeAdminRole(role) === "senior_marketing";
 }
 
 function maskPhone(value) {
@@ -3434,11 +3452,71 @@ router.post("/marketing/announcements", requireAdminPermission("marketing"), asy
   }
 });
 
+// Reject an announcement. Any of the three approval seats may do it, and a
+// reason is required — "rejected" with no explanation tells the author nothing
+// and leaves no defensible record of why a message to customers was stopped.
+router.post("/marketing/announcements/:id/reject", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    const seat = marketingApprovalSeat(req.auth?.role);
+    if (!seat) throw new AppError(403, "Rejection requires the CEO, the COO or Senior Marketing");
+    const campaignId = requireUuid(req.params.id, "Announcement ID");
+    const reason = boundedText(req.body?.reason, "Rejection reason", { min: 4, max: 500 });
+
+    const { rows } = await pool.query(
+      `UPDATE announcement_campaigns
+          SET status = 'rejected', decision_reason = $2, decided_by = $3, decided_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND status IN ('pending_approval', 'escalated')
+        RETURNING id, title, status`,
+      [campaignId, reason, req.auth.userId]
+    );
+    if (!rows[0]) {
+      throw new AppError(409, "That announcement is no longer awaiting a decision.");
+    }
+    await writeAuditLog({
+      actorType: "admin", actorId: req.auth.userId,
+      action: "in_app_announcement_rejected", entityType: "announcement_campaign", entityId: campaignId,
+      ipAddress: req.ip, userAgent: req.get("user-agent"),
+      metadata: { seat, reason, title: rows[0].title }
+    });
+    res.json({ ok: true, announcement: rows[0] });
+  } catch (error) { next(error); }
+});
+
+// Escalate to the CEO or COO. Senior Marketing only: the point of the seat is
+// that it can decide most things and hand the rest up, so the two seats above
+// it have nobody to escalate to and are refused here rather than silently
+// allowed to mark their own work as needing someone else.
+router.post("/marketing/announcements/:id/escalate", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    if (!canEscalateMarketing(req.auth?.role)) {
+      throw new AppError(403, "Only Senior Marketing can escalate an announcement to the CEO or COO");
+    }
+    const campaignId = requireUuid(req.params.id, "Announcement ID");
+    const note = boundedText(req.body?.note, "Escalation note", { min: 4, max: 500 });
+
+    const { rows } = await pool.query(
+      `UPDATE announcement_campaigns
+          SET status = 'escalated', escalation_note = $2, escalated_by = $3, escalated_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND status = 'pending_approval'
+        RETURNING id, title, status`,
+      [campaignId, note, req.auth.userId]
+    );
+    if (!rows[0]) throw new AppError(409, "That announcement is not awaiting approval.");
+
+    await writeAuditLog({
+      actorType: "admin", actorId: req.auth.userId,
+      action: "in_app_announcement_escalated", entityType: "announcement_campaign", entityId: campaignId,
+      ipAddress: req.ip, userAgent: req.get("user-agent"),
+      metadata: { note, title: rows[0].title }
+    });
+    res.json({ ok: true, announcement: rows[0] });
+  } catch (error) { next(error); }
+});
+
 router.post("/marketing/announcements/:id/approve", requireAdminPermission("marketing"), async (req, res, next) => {
-  const authenticatedRole = normalizeAdminRole(req.auth?.role);
-  const approvalRole = authenticatedRole === "super_admin" ? "ceo" : authenticatedRole;
-  if (!["ceo", "coo"].includes(approvalRole)) {
-    next(new AppError(403, "CEO or COO approval is required"));
+  const approvalRole = marketingApprovalSeat(req.auth?.role);
+  if (!approvalRole) {
+    next(new AppError(403, "Approval requires the CEO, the COO or Senior Marketing"));
     return;
   }
   const campaignId = requireUuid(req.params.id, "Announcement ID");
@@ -3451,7 +3529,15 @@ router.post("/marketing/announcements/:id/approve", requireAdminPermission("mark
     );
     const campaign = campaignResult.rows[0];
     if (!campaign) throw new AppError(404, "Announcement not found");
-    if (campaign.status !== "pending_approval") throw new AppError(409, "Announcement has already been sent");
+    if (!["pending_approval", "escalated"].includes(campaign.status)) {
+      throw new AppError(409, "Announcement has already been decided");
+    }
+    // An escalated announcement was deliberately handed upwards. Letting Senior
+    // Marketing then approve it themselves would make the escalation
+    // meaningless, so only the two seats above can close one out.
+    if (campaign.status === "escalated" && approvalRole === "senior_marketing") {
+      throw new AppError(403, "This announcement was escalated and needs the CEO or COO");
+    }
     const approvalResult = await client.query(
       `INSERT INTO announcement_approvals (campaign_id, approval_role, approved_by)
        VALUES ($1, $2, $3)
