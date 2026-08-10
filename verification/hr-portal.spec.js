@@ -222,6 +222,50 @@ async function go(page, module, narrow = false) {
   await go(dir, "Announcements");
   await dir.waitForTimeout(1200);
 
+  // On a phone this used to sit 800px down, below four stacked metric cards, and
+  // stand nearly a thousand pixels tall — present, and unfindable.
+  const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  phone.on("pageerror", (e) => scriptErrors.push(e.message.slice(0, 120)));
+  await phone.goto(PORTAL, { waitUntil: "domcontentloaded" });
+  await phone.waitForTimeout(1600);
+  const phoneInputs = await phone.$$("input");
+  await phoneInputs[0].fill(DIRECTOR_EMAIL);
+  await phoneInputs[1].fill(PASSWORD);
+  await phone.click("text=Sign in securely");
+  await phone.waitForTimeout(3000);
+  await go(phone, "Announcements", true);
+  await phone.waitForTimeout(1200);
+  const onPhone = await phone.evaluate(() => {
+    const el = document.querySelector('[data-repair="email-panel"]');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { top: Math.round(r.top), height: Math.round(r.height), viewport: window.innerHeight,
+      onFirstScreen: r.top >= 0 && r.top < window.innerHeight,
+      summary: Boolean(el.querySelector('[data-repair="email-summary"]')),
+      expandedControls: el.querySelectorAll('[data-repair^="email-event-"]').length };
+  });
+  check("ON A PHONE IT IS ON THE FIRST SCREEN, NOT BURIED", Boolean(onPhone) && onPhone.onFirstScreen,
+    onPhone ? `${onPhone.top}px down a ${onPhone.viewport}px screen` : "panel missing");
+  check("and it is one line until asked to open", Boolean(onPhone) && onPhone.height < 140
+    && onPhone.expandedControls === 0, onPhone ? `${onPhone.height}px tall` : "");
+  if (onPhone && onPhone.summary) {
+    await phone.click('[data-repair="email-summary"]');
+    await phone.waitForTimeout(700);
+    const opened = await phone.evaluate(() => ({
+      controls: document.querySelectorAll('[data-repair^="email-event-"]').length,
+      contact: Boolean(document.querySelector('[data-repair="email-contact"]'))
+    }));
+    check("tapping Manage opens the controls", opened.controls === 5 && opened.contact,
+      `${opened.controls} event controls`);
+    await phone.click('[data-repair="email-summary"]');
+    await phone.waitForTimeout(500);
+    check("and tapping again folds it away",
+      await phone.evaluate(() => document.querySelectorAll('[data-repair^="email-event-"]').length === 0));
+  }
+  await phone.close();
+
+  await dir.click('[data-repair="email-summary"]').catch(() => {});
+  await dir.waitForTimeout(600);
   const panel = await dir.evaluate(() => {
     const el = document.querySelector('[data-repair="email-panel"]');
     return el ? { text: el.innerText, toggle: Boolean(el.querySelector('[data-repair="email-toggle"]')),

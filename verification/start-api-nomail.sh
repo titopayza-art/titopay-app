@@ -1,8 +1,6 @@
 #!/bin/bash
 # A second API on 8176 with HR_EMAIL_ENABLED deliberately NOT set — a stand-in
-# for a staging box that was never configured to mail staff. The operator
-# switch lives in the shared database, so this instance sees it turned ON and
-# must still send nothing.
+# for a staging box that was never configured to mail staff.
 cd /tmp/claude-0/-home-user-titopay-app/b46bca12-b8d1-59fa-a0f4-cf119e42703a/scratchpad || exit 1
 pid=$(fuser -n tcp 8176 2>/dev/null | tr -d ' '); [ -n "$pid" ] && kill $pid 2>/dev/null
 sleep 2

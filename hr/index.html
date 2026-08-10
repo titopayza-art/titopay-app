@@ -431,23 +431,54 @@
     return node;
   }
 
+  var OPEN_KEY = "titopay_hr_email_panel_open";
+  function panelIsOpen() {
+    try { return localStorage.getItem(OPEN_KEY) === "1"; } catch (error) { return false; }
+  }
+  function setPanelOpen(open) {
+    try { localStorage.setItem(OPEN_KEY, open ? "1" : "0"); } catch (error) { /* private mode */ }
+  }
+
   function renderEmailPanel(host, settings, recipients) {
     host.innerHTML = "";
-    host.appendChild(el("h3", { style: "margin:0 0 4px" }, "Email to staff"));
+
+    // Collapsed to one line unless asked for. Expanded it is nearly a thousand
+    // pixels tall, which on a phone is longer than the screen and pushed the
+    // announcements themselves off the bottom of a very long page — the panel
+    // was there, but nobody could see it.
+    var open = panelIsOpen();
+    var live = settings.enabled;
+
+    var summary = el("button", { type: "button", "data-repair": "email-summary",
+      style: "display:flex;align-items:center;gap:10px;width:100%;padding:0;border:0;background:none;"
+        + "cursor:pointer;text-align:left;font:inherit;color:inherit" });
+    summary.appendChild(el("span", { style: "width:10px;height:10px;border-radius:50%;flex:none;background:"
+      + (live ? "#127a4a" : "#98a9bf") }));
+    var summaryText = el("span", { style: "flex:1 1 auto;min-width:0" });
+    summaryText.appendChild(el("b", { style: "display:block;font-size:15px" }, "Email to staff"));
+    summaryText.appendChild(el("span", { style: "display:block;font-size:13px;color:#5b7799" },
+      live ? "On \u00b7 staff are being emailed" : "Off \u00b7 nothing is being sent"));
+    summary.appendChild(summaryText);
+    summary.appendChild(el("span", { style: "flex:none;font-size:13px;font-weight:700;color:#0b3f8f" },
+      open ? "Hide" : "Manage"));
+    summary.addEventListener("click", function () {
+      setPanelOpen(!open);
+      renderEmailPanel(host, settings, recipients);
+    });
+    host.appendChild(summary);
+    if (!open) return;
+
+    var body = el("div", { style: "margin-top:16px;border-top:1px solid #e2ebf5;padding-top:16px" });
+    host.appendChild(body);
+    host = body;
 
     // The two levers are separate on purpose and the difference matters, so it
     // is stated rather than collapsed into one green dot.
-    var live = settings.enabled;
     var reason = live ? "Staff are being emailed."
       : !settings.environmentAllows
         ? "This server is not configured to send staff email, so nothing is sent even when the switch below is on. "
           + "Set HR_EMAIL_ENABLED on the API to allow it."
         : "The switch below is off, so nothing is sent.";
-    var status = el("div", { style: "display:flex;align-items:center;gap:10px;margin:10px 0 6px" });
-    status.appendChild(el("span", { style: "width:10px;height:10px;border-radius:50%;flex:none;background:"
-      + (live ? "#127a4a" : "#98a9bf") }));
-    status.appendChild(el("b", { style: "font-size:15px" }, live ? "On" : "Off"));
-    host.appendChild(status);
     host.appendChild(el("p", { style: "margin:0 0 14px;color:#5b7799;font-size:14px;line-height:1.55" }, reason));
 
     if (live || settings.operatorEnabled) {
@@ -570,13 +601,18 @@
 
   function mountEmailPanel() {
     if (EMAIL_SETTING_ROLES.indexOf(currentRole()) === -1) return;
-    // The Announcements page, identified by the control that is only on it.
+    // The Announcements page, identified by the grid that is only on it.
     var grid = document.querySelector(".announcement-grid");
     if (!grid) return;
     if (document.querySelector('[data-repair="email-panel"]')) return;
     var panel = el("section", { class: "card", "data-repair": "email-panel",
-      style: "padding:20px 22px;margin:0 0 18px" });
-    grid.parentNode.insertBefore(panel, grid);
+      style: "padding:16px 18px;margin:0 0 18px" });
+    // Above the metrics rather than below them. Sitting before the
+    // announcement grid put it 800px down a phone screen, behind four stacked
+    // metric cards, where a person looking for it would never scroll.
+    var metrics = document.querySelector("main.content .metrics, .content .metrics");
+    if (metrics && metrics.parentNode) metrics.parentNode.insertBefore(panel, metrics);
+    else grid.parentNode.insertBefore(panel, grid);
     loadEmailPanel(panel);
   }
 
