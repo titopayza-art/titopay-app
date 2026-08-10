@@ -1,6 +1,39 @@
 TitoPay Admin
-Build: admin-console-v75
-Date: 2026-08-09
+Build: admin-console-v76
+Date: 2026-08-10
+
+v76 - Marketing & Sales Command Centre, and a third seat on the approval
+workflow.
+
+  - New "Marketing & Sales" group in the sidebar with thirteen pages: Overview,
+    Campaigns, Audiences, Promotions & Coupons, Referrals & Affiliates,
+    Leads / CRM, Sales Pipeline, Merchant Acquisition, Sales Team, Marketing
+    Links, Growth Experiments, Analytics, and ROI & Attribution. The existing
+    Marketing page is untouched and still sits above the new group - it remains
+    the announcement, SMS and email production console.
+  - The module is its own lazily-imported file, assets/admin-marketing.js, so
+    every other console page loads exactly the payload it loaded in v75.
+  - Campaigns carry a budget and an append-only spend record, and warn at 75%,
+    90% and 100% of budget. Nothing here spends money or sends a message:
+    customer messages still go out only through the existing approval queues.
+  - Promotions record an entitlement, never a wallet movement. A percentage
+    promotion must carry a maximum benefit. Usage limits, per-customer limits
+    and budgets hold under simultaneous redemption.
+  - Audiences are built into a stored membership table rather than recomputed
+    when a page opens, so the console never scans the customer base.
+  - Marketing links may only point at TitoPay addresses, so a tracked link
+    cannot become an open redirect.
+  - ROI reports direct, assisted and estimated revenue as three separate
+    figures and never adds them together; only direct feeds net return.
+  - Approvals: the CEO, the COO and a new Senior Marketing role can each
+    approve or reject an announcement, and Senior Marketing can escalate one to
+    the CEO or COO. Whoever escalates cannot then approve it. Rejection now
+    exists for announcements and always requires a written reason.
+  - Affiliates can now be created, not just listed, and the page states in
+    plain words how an affiliate earns: on the same rule as a referral - KYC
+    and a first settled transaction - never on a sign-up.
+  - Requires the API package of the same date, which adds the marketing
+    endpoints, the marketing_* permissions and the senior_marketing role.
 
 v75 - Event Tag management joins the ticketing console.
 
@@ -433,5 +466,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v75; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v76; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
