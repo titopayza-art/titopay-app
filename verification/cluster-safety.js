@@ -5,8 +5,13 @@
 // condition the old code got wrong: each process counted on its own, so the
 // five-attempts limit became five per process.
 //
-// Usage: node verify-change1.js <port> [port...]
-const PORTS = process.argv.slice(2).map(Number);
+// Usage: node cluster-safety.js [port...]   (defaults to 8110)
+//
+// Pass several ports to drive separately-started processes, or one port when
+// the cluster shares it — the shared-counter assertion holds either way, since
+// what it measures is the total across whoever answers.
+const PORTS = process.argv.slice(2).map(Number).filter((p) => Number.isFinite(p) && p > 0);
+if (!PORTS.length) PORTS.push(8110);
 const stamp = Date.now();
 
 const results = [];
