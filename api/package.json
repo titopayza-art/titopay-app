@@ -22,7 +22,8 @@
     "email:verify": "node scripts/verify-email-otp.js",
     "verify:infra": "node scripts/verify-infrastructure.js",
     "test": "node --test",
-    "peach:diagnose-payout": "node scripts/diagnose-peach-payout.js"
+    "peach:diagnose-payout": "node scripts/diagnose-peach-payout.js",
+    "db:apply-migrations": "node scripts/apply-migrations.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
