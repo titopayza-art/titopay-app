@@ -1945,23 +1945,56 @@ async function clock(auth, payload = {}, meta = {}) {
   };
 }
 
+// WHAT AN ANONYMOUS STRANGER MAY PUT IN THE DATABASE.
+//
+// receiveWebsiteApplication is reachable without any credential whenever
+// HR_WEBSITE_TOKEN is unset, and it wrote whatever it was given. Measured
+// against a running API: one request carrying a 200 KB cover letter stored
+// 200000 bytes, in the same Postgres that serves payments. The JSON body limit
+// is 768 KB, so that was the real ceiling per request.
+//
+// These are the sizes a genuine job application needs, with room to spare. The
+// caps live here rather than on the route because a second, older copy of the
+// public handler exists in middleware/auth.js; a guard bolted to one route
+// would leave the other one open.
+const FIELD_LIMITS = {
+  name: 200,
+  email: 320,            // the longest address RFC 5321 permits
+  jobTitle: 200,
+  phone: 60,
+  qualification: 300,
+  portfolio: 500,
+  notes: 5000,
+  websiteApplicationId: 200
+};
+
+function capText(value, limit) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim().slice(0, limit);
+}
+
 async function receiveWebsiteApplication(payload = {}, meta = {}) {
-  const name = String(payload.name || `${payload.firstName || ""} ${payload.lastName || ""}`.trim()).trim();
-  const email = String(payload.email || "").trim().toLowerCase();
-  const jobTitle = String(payload.jobTitle || payload.role || payload.position || "").trim();
+  const name = capText(payload.name || `${payload.firstName || ""} ${payload.lastName || ""}`.trim(), FIELD_LIMITS.name);
+  const email = capText(payload.email, FIELD_LIMITS.email).toLowerCase();
+  const jobTitle = capText(payload.jobTitle || payload.role || payload.position, FIELD_LIMITS.jobTitle);
   if (!name) throw new AppError(400, "Applicant full name is required");
   if (!email) throw new AppError(400, "Applicant email is required");
   if (!jobTitle) throw new AppError(400, "Role applied for is required");
 
-  const notes = [
+  // Capped after joining, not before: five fields each just under their own
+  // limit would otherwise add up to something none of them allowed.
+  const notes = capText([
     payload.notes,
     payload.message,
     payload.coverLetter,
     payload.experience ? `Experience: ${payload.experience}` : "",
     payload.availability ? `Availability: ${payload.availability}` : ""
-  ].filter(Boolean).join("\n\n");
+  ].filter(Boolean).join("\n\n"), FIELD_LIMITS.notes);
 
-  const websiteApplicationId = String(payload.id || payload.applicationId || payload.websiteApplicationId || crypto.randomUUID());
+  const websiteApplicationId = capText(
+    payload.id || payload.applicationId || payload.websiteApplicationId || crypto.randomUUID(),
+    FIELD_LIMITS.websiteApplicationId
+  );
   const result = await pool.query(
     `INSERT INTO hr_recruitment_candidates
        (name, email, job_title, source, phone, qualification, portfolio, website_application_id, stage, notes, status)
@@ -1976,7 +2009,16 @@ async function receiveWebsiteApplication(payload = {}, meta = {}) {
            notes = EXCLUDED.notes,
            updated_at = NOW()
      RETURNING *`,
-    [name, email, jobTitle, payload.phone || null, payload.qualification || null, payload.portfolio || payload.portfolioUrl || null, websiteApplicationId, notes || null]
+    [
+      name,
+      email,
+      jobTitle,
+      capText(payload.phone, FIELD_LIMITS.phone) || null,
+      capText(payload.qualification, FIELD_LIMITS.qualification) || null,
+      capText(payload.portfolio || payload.portfolioUrl, FIELD_LIMITS.portfolio) || null,
+      websiteApplicationId,
+      notes || null
+    ]
   );
   await audit({ email: "marketing-website" }, "Received website application", "recruitment", `${name} - ${jobTitle}`, meta);
   return { ok: true, data: rowToApi(result.rows[0]) };
@@ -2161,5 +2203,8 @@ module.exports = {
   notifications,
   passwordReset,
   upload,
-  exportResource
+  exportResource,
+  // Exported so the caps can be tested for what they do to a 200 KB value,
+  // rather than by reading that they exist.
+  __applicationLimits: { capText, FIELD_LIMITS }
 };

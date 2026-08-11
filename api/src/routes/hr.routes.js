@@ -1,5 +1,12 @@
 const express = require("express");
 const { requireHrAuth, requireHrPermission } = require("../middleware/hr-auth");
+// This file imported no limiter. Measured against a running API, HR login took
+// 60 password guesses without complaint while customer and admin login both
+// stopped at 5 — the only thing in front of it was generalLimiter, which its own
+// comment calls "a fairness control rather than a security control" at 120 per
+// 60 seconds. Account lockout still applied, but lockout is per account and does
+// nothing against one common password tried across every staff address.
+const { authLimiter, publicContactLimiter } = require("../middleware/rate-limits");
 const { AppError } = require("../lib/errors");
 const hr = require("../services/hr-service");
 const hrEmail = require("../services/hr-email-service");
@@ -29,7 +36,10 @@ router.get("/health", async (_req, res, next) => {
   }
 });
 
-router.post("/auth/login", async (req, res, next) => {
+// Keyed on IP + identifier + route, so this is 5 attempts per staff ADDRESS,
+// not 5 for the office. A shared NAT is unaffected, and the ceiling now matches
+// the account lockout that was already there.
+router.post("/auth/login", authLimiter, async (req, res, next) => {
   try {
     res.json(await hr.login(req.body || {}, requestMeta(req)));
   } catch (error) {
@@ -37,6 +47,12 @@ router.post("/auth/login", async (req, res, next) => {
   }
 });
 
+// DELIBERATELY NOT authLimiter, and this is the one that would have broken the
+// portal. A refresh request carries a refreshToken and no email, so the
+// sensitive key falls back to "anonymous" and every member of staff behind one
+// office IP collapses into the same bucket — five refreshes per fifteen minutes
+// for the whole company. Refresh already requires a valid signed token, so it is
+// not a guessing surface in the way login is.
 router.post("/auth/refresh", async (req, res, next) => {
   try {
     res.json(await hr.refresh(req.body?.refreshToken));
@@ -45,7 +61,8 @@ router.post("/auth/refresh", async (req, res, next) => {
   }
 });
 
-router.post("/auth/reset", async (req, res, next) => {
+// Unlimited, this is a way to mail every staff address as often as you like.
+router.post("/auth/reset", authLimiter, async (req, res, next) => {
   try {
     res.json(await hr.passwordReset(req.body || {}));
   } catch (error) {
@@ -62,7 +79,18 @@ router.post("/auth/logout", requireHrAuth, async (req, res, next) => {
   }
 });
 
-router.post("/public/career-application", async (req, res, next) => {
+// An unset HR_WEBSITE_TOKEN used to open this endpoint silently. Said once per
+// process rather than per request, so it is visible in the log without becoming
+// the log. The guard below is still fail-open on purpose: flipping it would take
+// the careers form off any deployment where the variable was never set, and
+// whether that is yours cannot be determined from here. Set the variable and
+// this line stops appearing.
+let unguardedApplicationWarned = false;
+
+// Unauthenticated, and it writes a row. publicContactLimiter is the limiter that
+// already existed for exactly this shape: 5 per 15 minutes. Before it, the only
+// ceiling was 120 a minute.
+router.post("/public/career-application", publicContactLimiter, async (req, res, next) => {
   try {
     const configuredToken = process.env.HR_WEBSITE_TOKEN || "";
     if (configuredToken) {
@@ -70,6 +98,13 @@ router.post("/public/career-application", async (req, res, next) => {
       if (suppliedToken !== configuredToken) {
         return res.status(401).json({ ok: false, error: "Website application token required" });
       }
+    } else if (!unguardedApplicationWarned) {
+      unguardedApplicationWarned = true;
+      console.warn(
+        "[hr-public-application]",
+        "HR_WEBSITE_TOKEN is not set, so /public/career-application accepts writes from anyone.",
+        "Rate limiting and field caps apply, but set HR_WEBSITE_TOKEN to close it."
+      );
     }
     res.status(201).json(await hr.receiveWebsiteApplication(req.body || {}, requestMeta(req)));
   } catch (error) {
