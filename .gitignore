@@ -1,3 +1,25 @@
 node_modules/
 tests/artifacts/
 *.zip
+
+# SECRETS
+#
+# Nothing matching these has ever been committed — checked, not assumed. This is
+# what keeps that true. The API loads its configuration through dotenv, so the
+# working file on any machine that runs it is a .env holding the live database
+# URL, the JWT signing secrets and the Peach Payments credentials. One `git add
+# -A` from a directory containing it and those are on GitHub, and rotating them
+# afterwards means a production outage while every one is replaced.
+#
+# .env.example is deliberately exempt: a checked-in template of the NAMES with
+# no values is how somebody knows what to set.
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Private keys, whatever they end up being called.
+*.pem
+*.key
+*.p12
+*.pfx
