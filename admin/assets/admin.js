@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v76";
+  return "admin-console-v77";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -4584,6 +4584,54 @@ async function renderEnterpriseDistribution() {
    14. MARKETING
    ========================================================================== */
 
+// Templates TitoPay ships, as against the ones an admin saves.
+//
+// Saved templates live in localStorage, so every admin on every machine opened
+// this page to "Saved templates (0)" and wrote the same maintenance notice from
+// scratch, under pressure, in their own words. These are the messages this
+// company actually has to send — an outage, a fraud warning, a fee change —
+// written once, in South African English, with the things a payments business
+// must never get wrong already right: TitoPay never asks for a PIN or an OTP,
+// amounts are in rand, times are SAST.
+//
+// They are built in rather than seeded into a browser: they cannot be deleted
+// by accident, they do not count against the saved-template limit, and a new
+// admin on a new laptop has them on the first load.
+//
+// [[LIKE_THIS]] marks something the sender must replace. guardMarketingPlaceholders
+// below refuses to send while any of them are still in the text, so a
+// half-filled template cannot go out to every customer.
+//
+// The templates themselves are in MARKETING_STARTER_TEMPLATES, down in the
+// state block with the other marketing constants — this file keeps every
+// order-sensitive declaration there rather than beside the code that reads it.
+function marketingStarterTemplates(type) {
+  return MARKETING_STARTER_TEMPLATES.filter((template) => template.type === type);
+}
+
+// The distinct [[TOKENS]] still sitting unfilled in a composer, in the order met.
+function marketingPlaceholders(form) {
+  const found = [];
+  [...new FormData(form).values()].forEach((value) => {
+    (String(value).match(MARKETING_PLACEHOLDER_RE) || []).forEach((token) => {
+      if (!found.includes(token)) found.push(token);
+    });
+  });
+  return found;
+}
+
+function guardMarketingPlaceholders(formId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  form.addEventListener("submit", (event) => {
+    const gaps = marketingPlaceholders(form);
+    if (!gaps.length) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    showToast(`Still to fill in: ${gaps.slice(0, 4).join(", ")}${gaps.length > 4 ? ` and ${gaps.length - 4} more` : ""}`);
+  });
+}
+
 function marketingTemplates() {
   try {
     const parsed = JSON.parse(localStorage.getItem(MARKETING_TEMPLATES_KEY) || "null");
@@ -4598,7 +4646,7 @@ function saveMarketingTemplates(templates) {
 function marketingTemplateRow(type) {
   return `
     <div class="mkt-template-row" data-mkt-type="${type}">
-      <select data-mkt-select aria-label="Saved ${type} templates" title="Templates are saved in this browser"></select>
+      <select data-mkt-select aria-label="${type} templates" title="Starter templates are built in. Your own are saved in this browser."></select>
       <button type="button" class="ghost-btn" data-mkt-apply>Apply</button>
       <button type="button" class="ghost-btn" data-mkt-save>Save as template</button>
       <button type="button" class="ghost-btn" data-mkt-delete>Delete</button>
@@ -4609,21 +4657,28 @@ function wireMarketingTemplateRow(type, formId) {
   const form = document.getElementById(formId);
   if (!row || !form) return;
   const select = row.querySelector("[data-mkt-select]");
+  const options = (templates) => templates.map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)}</option>`).join("");
   const refill = () => {
-    const templates = marketingTemplates().filter((template) => template.type === type);
-    select.innerHTML = `<option value="">Saved templates (${templates.length})</option>${templates.map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)}</option>`).join("")}`;
+    const starters = marketingStarterTemplates(type);
+    const saved = marketingTemplates().filter((template) => template.type === type);
+    select.innerHTML = `<option value="">Choose a template (${starters.length + saved.length})</option>`
+      + `<optgroup label="TitoPay starter templates">${options(starters)}</optgroup>`
+      + (saved.length ? `<optgroup label="Saved in this browser">${options(saved)}</optgroup>` : "");
   };
   refill();
   row.querySelector("[data-mkt-apply]").addEventListener("click", () => {
-    const template = marketingTemplates().find((entry) => entry.id === select.value);
-    if (!template) { showToast("Choose a saved template first"); return; }
+    const template = [...marketingStarterTemplates(type), ...marketingTemplates()].find((entry) => entry.id === select.value);
+    if (!template) { showToast("Choose a template first"); return; }
     Object.entries(template.fields || {}).forEach(([key, value]) => {
       const field = form.elements[key];
       if (field && typeof field.value === "string") field.value = String(value);
     });
     form.querySelector('select[name="audience"]')?.dispatchEvent(new Event("change"));
     form.querySelector("textarea")?.dispatchEvent(new Event("input"));
-    showToast("Template applied - review before submitting");
+    const gaps = marketingPlaceholders(form);
+    showToast(gaps.length
+      ? `Template applied - fill in ${gaps.slice(0, 3).join(", ")}${gaps.length > 3 ? ` and ${gaps.length - 3} more` : ""}`
+      : "Template applied - review before submitting");
   });
   row.querySelector("[data-mkt-save]").addEventListener("click", () => {
     const fields = {};
@@ -4639,6 +4694,7 @@ function wireMarketingTemplateRow(type, formId) {
   });
   row.querySelector("[data-mkt-delete]").addEventListener("click", () => {
     if (!select.value) { showToast("Choose a saved template first"); return; }
+    if (select.value.startsWith("starter_")) { showToast("Starter templates are built in and cannot be deleted"); return; }
     saveMarketingTemplates(marketingTemplates().filter((entry) => entry.id !== select.value));
     refill();
     showToast("Template deleted");
@@ -4987,6 +5043,10 @@ async function renderMarketing(me = {}) {
     ${tableCard("SMS Approval Queue", renderMarketingSmsCampaigns(rows, canApprove), "Marketing and Communications can draft SMS messages. CEO or COO approval sends the message to existing TitoPay phone numbers for the selected audience.")}
     ${tableCard("Email Production Approval Queue", renderMarketingEmailCampaigns(emailCampaigns, Boolean(emailState.canApprove || canApprove)), "Approved productions publish through the Email Centre background queue. Email notification delivery is free; configured OTP and statement prices remain separate pricing services.")}
   `;
+  // Registered before the three submit handlers below, so it runs first and can
+  // stop them: a template that still says [[DATE]] must not go out to customers.
+  ["marketing-announcement-form", "marketing-sms-form", "marketing-email-form"]
+    .forEach((formId) => guardMarketingPlaceholders(formId));
   const announcementAudience = document.getElementById("announcement-audience");
   const announcementRecipientField = document.getElementById("announcement-recipient-field");
   const syncAnnouncementRecipient = () => {
@@ -6044,6 +6104,155 @@ const PROVIDER_COMPANIONS = { peach_payments: "peach_payouts" };
    a campaign calendar and a cross-channel month summary. Nothing here
    changes any API call the page already makes. */
 
+const MARKETING_STARTER_TEMPLATES = [
+  {
+    type: "announcement", name: "Planned maintenance",
+    fields: { audience: "both", category: "service",
+      title: "Planned maintenance on [[DATE]]",
+      body: "TitoPay will be unavailable for scheduled maintenance on [[DATE]] "
+        + "from [[START_TIME]] to [[END_TIME]] SAST.\n\nDuring this time you will not be able to "
+        + "send money, top up or make payments. Your money is safe and your balance is unchanged. "
+        + "Anything you started before the maintenance window will complete afterwards.\n\n"
+        + "We are sorry for the inconvenience." }
+  },
+  {
+    type: "announcement", name: "Fraud and phishing warning",
+    fields: { audience: "both", category: "security",
+      title: "TitoPay will never ask for your PIN or OTP",
+      body: "We are seeing attempts to trick TitoPay customers into giving away their details.\n\n"
+        + "TitoPay staff will NEVER ask you for your PIN, your password, your card number or a "
+        + "one-time PIN (OTP) — not by phone, SMS, email or WhatsApp. Anyone who does is not from "
+        + "TitoPay.\n\nIf someone asks, end the conversation and report it to "
+        + "support@titopay.co.za. If you think you have already shared something, change your "
+        + "password in the app immediately." }
+  },
+  {
+    type: "announcement", name: "Service disruption — we are on it",
+    fields: { audience: "both", category: "service",
+      title: "Some payments are delayed",
+      body: "We are aware that [[WHAT_IS_AFFECTED]] is currently slow or failing, and we are "
+        + "working on it.\n\nYour money is safe. Any payment that did not go through has not "
+        + "been taken from your wallet. If an amount looks wrong, please wait before retrying — "
+        + "it may still be settling.\n\nWe will post an update here as soon as this is "
+        + "resolved." }
+  },
+  {
+    type: "announcement", name: "Service restored",
+    fields: { audience: "both", category: "service",
+      title: "Everything is working normally again",
+      body: "The problem affecting [[WHAT_WAS_AFFECTED]] has been resolved and TitoPay is working "
+        + "normally.\n\nIf a payment is still showing as pending, please check your Activity "
+        + "screen — it should now be settled. Anything that failed was never taken from your "
+        + "wallet.\n\nThank you for your patience." }
+  },
+  {
+    type: "announcement", name: "Fee change notice",
+    fields: { audience: "both", category: "general",
+      title: "A change to our fees from [[EFFECTIVE_DATE]]",
+      body: "From [[EFFECTIVE_DATE]], the fee for [[SERVICE_NAME]] changes from R[[OLD_FEE]] to "
+        + "R[[NEW_FEE]].\n\nEvery fee is shown to you before you confirm a payment, so you will "
+        + "always see what you are paying before it is taken. No other fees are changing.\n\n"
+        + "The full fee schedule is in the app under Profile." }
+  },
+  {
+    type: "announcement", name: "Complete your FICA verification",
+    fields: { audience: "both", category: "general",
+      title: "Please complete your FICA verification",
+      body: "South African law requires us to verify who our customers are before some services "
+        + "can be used.\n\nOpen Profile in the TitoPay app to finish your verification. It takes "
+        + "a few minutes and you will need your ID and proof of address.\n\nUntil it is "
+        + "complete, some limits apply to your account." }
+  },
+
+  {
+    type: "sms", name: "Fraud warning — never share your OTP",
+    fields: { audience: "both", title: "Fraud warning",
+      message: "TitoPay will NEVER ask for your PIN, password or OTP. If someone asks, it is a "
+        + "scam. Report it to support@titopay.co.za" }
+  },
+  {
+    type: "sms", name: "Planned maintenance",
+    fields: { audience: "both", title: "Planned maintenance",
+      message: "TitoPay is down for planned maintenance on [[DATE]], [[START_TIME]]-[[END_TIME]] "
+        + "SAST. Your money is safe. We are sorry for the inconvenience." }
+  },
+  {
+    type: "sms", name: "Service restored",
+    fields: { audience: "both", title: "Service restored",
+      message: "TitoPay is working normally again. Any payment that failed was not taken from "
+        + "your wallet. Thank you for your patience." }
+  },
+  {
+    type: "sms", name: "FICA verification reminder",
+    fields: { audience: "both", title: "FICA verification reminder",
+      message: "Please complete your FICA verification in the TitoPay app under Profile to keep "
+        + "full access to your account. You will need your ID and proof of address." }
+  },
+
+  {
+    type: "email", name: "Planned maintenance",
+    fields: { audience: "both", title: "Planned maintenance notice",
+      subject: "TitoPay maintenance on [[DATE]]",
+      htmlBody: "<p>Hello,</p><p>TitoPay will be unavailable for scheduled maintenance on "
+        + "<strong>[[DATE]]</strong> from <strong>[[START_TIME]] to [[END_TIME]] SAST</strong>.</p>"
+        + "<p>During this time you will not be able to send money, top up or make payments. "
+        + "Your money is safe and your balance is unchanged. Anything started before the window "
+        + "will complete afterwards.</p><p>We are sorry for the inconvenience.</p>",
+      textBody: "Hello,\n\nTitoPay will be unavailable for scheduled maintenance on [[DATE]] "
+        + "from [[START_TIME]] to [[END_TIME]] SAST.\n\nDuring this time you will not be able "
+        + "to send money, top up or make payments. Your money is safe and your balance is "
+        + "unchanged. Anything started before the window will complete afterwards.\n\n"
+        + "We are sorry for the inconvenience." }
+  },
+  {
+    type: "email", name: "Fraud and phishing warning",
+    fields: { audience: "both", title: "Fraud awareness notice",
+      subject: "TitoPay will never ask for your PIN or OTP",
+      htmlBody: "<p>Hello,</p><p>We are seeing attempts to trick TitoPay customers into giving "
+        + "away their details.</p><p><strong>TitoPay staff will never ask you for your PIN, your "
+        + "password, your card number or a one-time PIN (OTP)</strong> — not by phone, SMS, email "
+        + "or WhatsApp. Anyone who does is not from TitoPay.</p><p>If someone asks, end the "
+        + "conversation and report it to <a href=\"mailto:support@titopay.co.za\">"
+        + "support@titopay.co.za</a>. If you think you have already shared something, change your "
+        + "password in the app immediately.</p>",
+      textBody: "Hello,\n\nWe are seeing attempts to trick TitoPay customers into giving away "
+        + "their details.\n\nTitoPay staff will NEVER ask you for your PIN, your password, your "
+        + "card number or a one-time PIN (OTP) - not by phone, SMS, email or WhatsApp. Anyone who "
+        + "does is not from TitoPay.\n\nIf someone asks, end the conversation and report it to "
+        + "support@titopay.co.za. If you think you have already shared something, change your "
+        + "password in the app immediately." }
+  },
+  {
+    type: "email", name: "Incident update",
+    fields: { audience: "both", title: "Incident update",
+      subject: "Update on the problem affecting [[WHAT_IS_AFFECTED]]",
+      htmlBody: "<p>Hello,</p><p>We are aware that <strong>[[WHAT_IS_AFFECTED]]</strong> has been "
+        + "affected since [[START_TIME]] SAST, and we are working on it.</p><p>Your money is "
+        + "safe. Any payment that did not go through has not been taken from your wallet.</p>"
+        + "<p>We will write again as soon as this is resolved.</p>",
+      textBody: "Hello,\n\nWe are aware that [[WHAT_IS_AFFECTED]] has been affected since "
+        + "[[START_TIME]] SAST, and we are working on it.\n\nYour money is safe. Any payment "
+        + "that did not go through has not been taken from your wallet.\n\nWe will write again "
+        + "as soon as this is resolved." }
+  },
+  {
+    type: "email", name: "Fee change notice",
+    fields: { audience: "both", title: "Fee change notice",
+      subject: "A change to TitoPay fees from [[EFFECTIVE_DATE]]",
+      htmlBody: "<p>Hello,</p><p>From <strong>[[EFFECTIVE_DATE]]</strong>, the fee for "
+        + "[[SERVICE_NAME]] changes from <strong>R[[OLD_FEE]]</strong> to "
+        + "<strong>R[[NEW_FEE]]</strong>.</p><p>Every fee is shown to you before you confirm a "
+        + "payment, so you will always see what you are paying before it is taken. No other fees "
+        + "are changing.</p><p>The full fee schedule is in the app under Profile.</p>",
+      textBody: "Hello,\n\nFrom [[EFFECTIVE_DATE]], the fee for [[SERVICE_NAME]] changes from "
+        + "R[[OLD_FEE]] to R[[NEW_FEE]].\n\nEvery fee is shown to you before you confirm a "
+        + "payment, so you will always see what you are paying before it is taken. No other fees "
+        + "are changing.\n\nThe full fee schedule is in the app under Profile." }
+  }
+].map((template, index) => ({ ...template, id: `starter_${template.type}_${index}`, starter: true }));
+
+// Anything still wearing [[BRACKETS]] has not been filled in.
+const MARKETING_PLACEHOLDER_RE = /\[\[[A-Z0-9_]+\]\]/g;
 const MARKETING_TEMPLATES_KEY = "titopay_admin_marketing_templates_v1";
 const MARKETING_TEMPLATE_LIMIT = 40;
 /* GSM-7 basic set per 3GPP TS 23.038; the extension table characters cost a

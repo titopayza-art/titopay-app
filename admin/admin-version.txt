@@ -1,6 +1,26 @@
 TitoPay Admin
-Build: admin-console-v76
-Date: 2026-08-10
+Build: admin-console-v77
+Date: 2026-08-11
+
+v77 - Starter templates in the Marketing Centre.
+
+  - The three composers on the Marketing page (in-app announcement, bulk SMS,
+    email production) now offer fourteen built-in templates: planned
+    maintenance, a fraud and phishing warning, service disruption, service
+    restored, a fee change notice, FICA verification, and an incident update.
+    Six announcement, four SMS, four email.
+  - They are written in South African English, in rand and SAST, and the fraud
+    ones say plainly that TitoPay never asks for a PIN, password or OTP.
+  - Templates are built into the console rather than seeded into a browser, so
+    they cannot be deleted by accident, they do not count against the
+    forty-template limit, and a new admin on a new laptop has them on first
+    load. Templates you save yourself are unchanged and still live in that
+    browser; the two are listed under separate headings.
+  - Anything the sender must supply is marked [[LIKE_THIS]], and a composer
+    refuses to submit while any of those are still in the text. A half-filled
+    template cannot reach customers.
+  - Nothing about approval changed: a message still goes to the CEO/COO queue
+    exactly as before, and nothing here sends anything.
 
 v76 - Marketing & Sales Command Centre, and a third seat on the approval
 workflow.
@@ -466,5 +486,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v76; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v77; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
