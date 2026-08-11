@@ -15,7 +15,11 @@ cd /tmp/claude-0/-home-user-titopay-app/b46bca12-b8d1-59fa-a0f4-cf119e42703a/scr
 current=$(grep -o 'app\.min\.js?v=[0-9]*' index.html | head -1 | grep -o '[0-9]*')
 next=$((current + 1))
 
-npx --yes terser app.js --compress --mangle --output app.min.js
+# Pinned. `npx --yes terser` resolved whatever the registry served at the
+# moment of the build, so two builds of identical source could produce
+# different bundles — and a minifier is the one tool in the chain that rewrites
+# every line of the customer app.
+npx --yes terser@5.49.2 app.js --compress --mangle --output app.min.js
 sed -i "s/app\.min\.js?v=${current}/app.min.js?v=${next}/g" index.html service-worker.js
 sed -i "s/titopay-pwa-v${current}/titopay-pwa-v${next}/g" service-worker.js
 
