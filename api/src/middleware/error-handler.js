@@ -4,36 +4,54 @@ function notFoundHandler(req, _res, next) {
   next(new AppError(404, "Not found"));
 }
 
+const GENERIC_5XX = "Unable to complete the request. Please try again.";
+const TECHNICAL = /pricing rule not found|sql|database|stack|webrtc|dtls|srtp|exception|internal server error/i;
+
+// A sentence the throw site wrote FOR the customer, opted in explicitly:
+//
+//   throw new AppError(500, "TitoPay revenue wallet is not configured", {
+//     publicMessage: "Statement request unavailable. Please try again later."
+//   });
+//
+// The first argument stays as it is — it is what goes in the log, beside the
+// requestId the response already carries. Only the second one is ever shown.
+// Scrubbed as well, so a careless author cannot opt technical wording in.
+function authoredForCustomer(details) {
+  const text = typeof details?.publicMessage === "string" ? details.publicMessage.trim() : "";
+  return text && !TECHNICAL.test(text) ? text : "";
+}
+
 function normalizeError(error) {
   const rawMessage = String(error?.message || "");
-  const technicalPublicMessage = /pricing rule not found|sql|database|stack|webrtc|dtls|srtp|exception|internal server error/i.test(rawMessage)
-    ? "Unable to complete the request. Please try again."
-    : null;
+  const technicalPublicMessage = TECHNICAL.test(rawMessage) ? GENERIC_5XX : null;
   if (error instanceof AppError) {
+    const authored = authoredForCustomer(error.details);
+    const providerState = [502, 503, 504].includes(error.statusCode);
     return {
       status: error.statusCode,
-      message: technicalPublicMessage || error.message,
+      message: authored || technicalPublicMessage || error.message,
       details: error.details,
-      // AppError messages are authored deliberately, in this codebase, for the
-      // person reading them — and anything technical has already been replaced
-      // above. So an AppError that survived that scrub is safe to show whatever
-      // its status, not only on 502/503/504.
+      // A 5xx says nothing specific to a customer unless somebody decided it
+      // should. "Authored in this codebase" and "safe for the person paying"
+      // are different questions, and a previous version of this file treated
+      // them as one: every AppError message survived at any status, so
+      // "TitoPay revenue wallet is not configured" — TitoPay's internal wallet
+      // architecture and a configuration state — was what a customer saw when
+      // they pressed Confirm on an Email Statement. It named a fault they
+      // cannot act on and cannot understand.
       //
-      // The old rule kept the generic replacement for 500, which threw away the
-      // only useful thing the server knew. "TitoPay revenue wallet is not
-      // configured" and "Card top-up is not configured yet" both reached people
-      // as "Unable to complete the request. Please try again." — a sentence that
-      // describes nothing, invites a pointless retry, and sent somebody hunting
-      // through logs for a fault the server had already named.
+      // The cause is not lost. It is logged below against the requestId that
+      // goes back in the response, which is how an operator finds it.
       //
-      // Errors that are NOT AppError still fall through to the generic message
-      // below, so a raw driver or provider failure cannot ride out on a 5xx.
-      clientSafe: !technicalPublicMessage,
+      // 502/503/504 keep their sentence, as they always have. Those describe a
+      // provider being unreachable or slow, which is a state the customer is
+      // genuinely in and can act on by waiting.
+      clientSafe: Boolean(authored) || (!technicalPublicMessage && providerState),
       // The machine-readable code is a different question from the sentence.
       // It tells the customer app whether money moved — "rejected, returned"
       // against "unconfirmed, held" — and that distinction only exists for
       // provider-state errors. It stays restricted to those, unchanged.
-      codeSafe: !technicalPublicMessage && [502, 503, 504].includes(error.statusCode)
+      codeSafe: !technicalPublicMessage && providerState
     };
   }
   if (error?.type === "entity.parse.failed") {
@@ -62,7 +80,7 @@ function errorHandler(error, req, res, _next) {
     message: error?.message || "Unexpected error",
     stack: error?.stack
   });
-  const publicMessage = status >= 500 && !clientSafe ? "Unable to complete the request. Please try again." : message;
+  const publicMessage = status >= 500 && !clientSafe ? GENERIC_5XX : message;
   res.status(status).json({
     ok: false,
     error: publicMessage,

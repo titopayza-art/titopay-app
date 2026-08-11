@@ -120,6 +120,19 @@ if (typeof Element !== "undefined" && !Element.prototype.closest) {
     return null;
   };
 }
+// The only five routes appView() can render, in nav order.
+//
+// appView() is a chain of `route === "x" ? view() : ""` with no fallback, so an
+// unrecognised hash rendered the top bar and the bottom nav around an empty
+// screen — no message, nothing to tap, no way to tell a broken app from a
+// finished one. A stale push notification was enough to do it: the service
+// worker builds its destination from notification.data.route and will happily
+// send someone to a route this shell has never had.
+//
+// Declared above `state` because the state initialiser normalises through it,
+// and a const cannot be read before it is initialised. navItems below must
+// carry these same five ids; api/test/pwa-structure.test.js holds them level.
+const APP_ROUTES = ["dashboard", "services", "qr", "activity", "profile"];
 const state = {
   auth: readJson(AUTH_KEY),
   user: null,
@@ -142,7 +155,7 @@ const state = {
   apiOnline: false,
   accountType: "personal",
   authMode: "landing",
-  route: location.hash.replace("#", "") || "dashboard",
+  route: normalizeRoute(location.hash),
   loading: false,
   balanceHidden: sessionStorage.getItem(BALANCE_HIDDEN_KEY) === "true",
   transactionFilters: { search: "", from: "", to: "", direction: "all" },
@@ -248,7 +261,7 @@ window.addEventListener("hashchange", () => {
   const navigatedToServices = servicesNavPending;
   servicesNavPending = false;
   rememberRouteScroll(previousRoute);
-  state.route = location.hash.replace("#", "") || "dashboard";
+  state.route = normalizeRoute(location.hash);
   render();
   // Only a deliberate tap on Services settles at the top of the grid. Back and
   // forward still restore the position the reader left the route on.
@@ -771,6 +784,17 @@ async function requestSupportEscalation(mode) {
 
 // The landing page, the dashboard, routes and the screens they render into.
 
+// Every hash the app will act on, resolved to one of APP_ROUTES.
+//
+// An unknown route is sent to the dashboard rather than shown as an error: the
+// customer did not do anything wrong, and the dashboard is where they were
+// going anyway. Empty hash resolves the same way, which is what the old
+// `|| "dashboard"` already did — this only adds the case it missed, an unknown
+// hash rather than an absent one.
+function normalizeRoute(hash) {
+  const route = String(hash || "").replace(/^#/, "").trim();
+  return APP_ROUTES.includes(route) ? route : "dashboard";
+}
 function currentScrollY() {
   return window.scrollY || document.documentElement.scrollTop || 0;
 }

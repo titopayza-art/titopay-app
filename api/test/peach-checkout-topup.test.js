@@ -219,11 +219,10 @@ test("A deliberate 503 reaches the customer instead of the generic error", () =>
   assert.match(source, /\[502, 503, 504\]\.includes\(error\.statusCode\)/);
   assert.ok(new AppError(503, "x") instanceof Error);
 
-  // Asserted as behaviour rather than source shape, because the rule widened:
-  // an authored message now survives on any 5xx, not only 502/503/504. It had
-  // to — "TitoPay revenue wallet is not configured" was being replaced by
-  // "Unable to complete the request. Please try again." on the Email Statement
-  // screen, which named nothing and invited a retry that could not work.
+  // Asserted as behaviour rather than source shape. 502/503/504 keep their
+  // sentence — a provider being unreachable is a state the customer is really
+  // in. A 500 does not: it briefly did, and that is how TitoPay's internal
+  // wallet configuration ended up on the Email Statement screen.
   const say = (error) => {
     const sent = {};
     const res = { status(code) { sent.status = code; return this; }, json(body) { sent.body = body; return this; } };
@@ -234,7 +233,10 @@ test("A deliberate 503 reaches the customer instead of the generic error", () =>
   };
   assert.equal(say(new AppError(503, "Card top-up is not configured yet")), "Card top-up is not configured yet");
   assert.equal(say(new AppError(500, "TitoPay revenue wallet is not configured")),
-    "TitoPay revenue wallet is not configured");
+    "Unable to complete the request. Please try again.");
+  assert.equal(say(new AppError(500, "TitoPay revenue wallet is not configured",
+    { publicMessage: "Statement request unavailable. Please try again later." })),
+    "Statement request unavailable. Please try again later.");
   assert.equal(say(new AppError(500, "relation \"x\" does not exist — sql")),
     "Unable to complete the request. Please try again.");
   assert.equal(say(new Error("ECONNREFUSED password=hunter2")),
@@ -271,14 +273,15 @@ test("A 5xx returns a safe code at most, never the provider's details", () => {
   errorHandler(new AppError(502, "held", { code: "Invalid client ID or secret." }), { requestId: "r" }, unsafe.res);
   assert.equal(unsafe.sent.body.details, undefined);
 
-  // A 500 still carries no code — that signal is only meaningful for provider
-  // state. Its authored sentence does now reach the reader, which is the point
-  // of the change: the server knowing what is wrong and refusing to say so
-  // helped nobody.
+  // A 500 carries no code — that signal is only meaningful for provider state —
+  // and no sentence of its own either, unless the throw site wrote one for the
+  // customer. Both are withheld by default; the requestId is what carries the
+  // cause to whoever can act on it.
   const generic = capture();
   errorHandler(new AppError(500, "boom", { code: "SOMETHING" }), { requestId: "r" }, generic.res);
   assert.equal(generic.sent.body.details, undefined, "no machine-readable code on a plain 500");
-  assert.equal(generic.sent.body.error, "boom");
+  assert.equal(generic.sent.body.error, "Unable to complete the request. Please try again.");
+  assert.equal(generic.sent.body.requestId, "r");
 
   // And a 500 whose text is technical is still replaced.
   const technical = capture();

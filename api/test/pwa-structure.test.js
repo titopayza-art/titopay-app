@@ -73,6 +73,42 @@ test("primaryWallet is the account-type-aware one", () => {
   assert.match(match[0], /state\.accountType/, "the surviving copy resolves by account type");
 });
 
+test("every hash resolves to a route the shell can actually render", () => {
+  // appView() is a chain of `route === "x"` with no fallback, so an unknown
+  // hash used to render an empty screen under a nav bar. Reachable from a push
+  // notification: the service worker builds its destination from
+  // notification.data.route, unchecked.
+  const routes = source.match(/^const APP_ROUTES = \[([^\]]+)\];/m);
+  assert.ok(routes, "APP_ROUTES must exist");
+  const allowed = routes[1].split(",").map((s) => s.trim().replace(/^"|"$/g, "")).filter(Boolean);
+
+  // The nav and the allow-list are two copies of the same fact; drift between
+  // them is a route you can tap and cannot render, or the reverse.
+  const nav = source.match(/^const navItems = \[([\s\S]*?)^\];/m);
+  assert.ok(nav, "navItems must exist");
+  const navIds = [...nav[1].matchAll(/\["([a-z-]+)",/g)].map((m) => m[1]);
+  assert.deepEqual(allowed, navIds, "APP_ROUTES and navItems must list the same five routes, in order");
+
+  // Both entry points normalise; neither reads the hash raw.
+  assert.doesNotMatch(source, /location\.hash\.replace\("#", ""\)/,
+    "the raw hash must not become state.route without passing the allow-list");
+  assert.equal((source.match(/normalizeRoute\(location\.hash\)/g) || []).length, 2,
+    "the initial state and the hashchange handler must both normalise");
+
+  // And the function does what its name says.
+  const fn = source.match(/function normalizeRoute\(hash\) \{[\s\S]*?\n\}/);
+  assert.ok(fn, "normalizeRoute must exist");
+  // eslint-disable-next-line no-new-func
+  const normalizeRoute = new Function("APP_ROUTES", `${fn[0]}; return normalizeRoute;`)(allowed);
+  for (const known of allowed) assert.equal(normalizeRoute(`#${known}`), known);
+  for (const unknown of ["#stockvel", "#send", "#not-a-route", "#", "", "#PROFILE", "#profile "]) {
+    const resolved = normalizeRoute(unknown);
+    assert.ok(allowed.includes(resolved), `"${unknown}" resolved to "${resolved}", which cannot render`);
+  }
+  assert.equal(normalizeRoute("#stockvel"), "dashboard");
+  assert.equal(normalizeRoute("#profile "), "profile", "a trailing space is a typo, not a dead route");
+});
+
 test("the whole app is still there", () => {
   const declared = (source.match(/^(?:async )?function [A-Za-z0-9_$]+/gm) || []).length;
   assert.ok(declared > 850, `expected the full app, found ${declared} top-level functions`);

@@ -2,14 +2,20 @@
 
 // WHAT A 5xx ACTUALLY TELLS THE PERSON READING IT.
 //
-// "Unable to complete the request. Please try again." is the right thing to say
-// when the server does not know what went wrong. It is the wrong thing to say
-// when it does. The Email Statement screen showed it while the server was
-// holding "TitoPay revenue wallet is not configured" — a sentence that names
-// the fault and the fix — and threw it away because the status was 500.
+// A 500 means TitoPay broke, not that the customer did something. The only
+// things worth saying to them are that it failed, that they can try again, and
+// a reference an operator can trace. Anything more specific is either useless
+// to them or a description of TitoPay's insides.
 //
-// These pin both halves: an authored message reaches the person, and a
-// technical one never does.
+// This file previously asserted the reverse — that "TitoPay revenue wallet is
+// not configured" SHOULD reach the person pressing Confirm on an Email
+// Statement, on the reasoning that the server knew something and should say it.
+// The server did know something. The customer was the wrong audience for it.
+// The requestId in every response is the right way to carry it to the operator.
+//
+// These pin all three halves: a 5xx is generic by default; a throw site can opt
+// in a sentence it wrote for the customer; and technical wording never reaches
+// them by either route.
 
 process.env.NODE_ENV = "test";
 process.env.POSTGRES_URL ||= "postgres://test:test@127.0.0.1:5432/test";
@@ -41,11 +47,34 @@ function send(error) {
   return captured;
 }
 
-test("a 500 the server can explain says what is wrong", () => {
+test("a 500 never hands the customer TitoPay's own internal state", () => {
+  // This test used to assert the opposite, and was wrong to. "Authored in this
+  // codebase" is not the same question as "safe for the person paying":
+  // customers pressing Confirm on an Email Statement were shown TitoPay's
+  // wallet architecture and a configuration fault they can do nothing about.
   const result = send(new AppError(500, "TitoPay revenue wallet is not configured"));
   assert.equal(result.status, 500);
-  assert.equal(result.body.error, "TitoPay revenue wallet is not configured",
-    "the only useful thing the server knew must reach the person reading it");
+  assert.equal(result.body.error, "Unable to complete the request. Please try again.");
+  assert.doesNotMatch(JSON.stringify(result.body), /revenue wallet|not configured/i);
+  // The cause is not lost — the requestId in the response is how it is found.
+  assert.equal(result.body.requestId, "test");
+});
+
+test("a 500 says something specific only when the throw site wrote it for the customer", () => {
+  const result = send(new AppError(500, "TitoPay revenue wallet is not configured", {
+    publicMessage: "Statement request unavailable. Please try again later."
+  }));
+  assert.equal(result.status, 500);
+  assert.equal(result.body.error, "Statement request unavailable. Please try again later.");
+  assert.doesNotMatch(JSON.stringify(result.body), /revenue wallet/i,
+    "the internal sentence stays in the log, never in the response");
+});
+
+test("an opted-in message is scrubbed too, so technical wording cannot be opted in", () => {
+  const result = send(new AppError(500, "boom", {
+    publicMessage: 'relation "email_queue" does not exist — sql error'
+  }));
+  assert.equal(result.body.error, "Unable to complete the request. Please try again.");
 });
 
 test("provider-state messages still survive, as they always did", () => {
