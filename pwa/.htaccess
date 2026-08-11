@@ -47,6 +47,39 @@
 </IfModule>
 
 <IfModule mod_headers.c>
+  # SECURITY HEADERS
+  #
+  # The admin document root has carried these since it shipped. This one never
+  # did, and the gap is not cosmetic: index.html declares its policy in a
+  # <meta http-equiv> tag, and a meta tag CANNOT deliver frame-ancestors. The
+  # spec ignores it there. So the customer app — the one that moves money — was
+  # frameable, while the admin portal was not. A lookalike page could load the
+  # real app in an invisible iframe and sit its own buttons on top of the send
+  # flow.
+  #
+  # The policy below is character-for-character the one already in the meta tag,
+  # so nothing about what the app may load changes. When a page carries both,
+  # the browser enforces both, and two identical policies intersect to the same
+  # policy. The single practical difference is that frame-ancestors now binds.
+  # If the meta tag is ever edited, edit this line with it.
+  Header always set Content-Security-Policy "default-src 'self'; connect-src 'self' https://api.titopay.co.za wss://api.titopay.co.za; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self'"
+
+  # X-Frame-Options is redundant against frame-ancestors on a current browser
+  # and is the only protection on an old one. It costs a header.
+  Header always set X-Frame-Options "DENY"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "no-referrer"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+
+  # HSTS WITHOUT includeSubDomains, deliberately.
+  #
+  # A browser caches this for a year and there is no way to reach out and undo
+  # it. includeSubDomains would extend that promise to every host under the
+  # domain, including any this repository does not know about, and one of those
+  # answering on plain HTTP would be unreachable for its customers for twelve
+  # months. This origin is the thing being protected; it is the thing declared.
+  Header always set Strict-Transport-Security "max-age=31536000"
+
   # The service worker is the update mechanism itself — never cache it anywhere.
   <FilesMatch "^service-worker\.js$">
     Header set Cache-Control "no-store, max-age=0"

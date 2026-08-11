@@ -1,6 +1,33 @@
 Options -Indexes
 DirectoryIndex index.html
 <IfModule mod_headers.c>
+# SECURITY HEADERS
+#
+# This portal shows salary, disciplinary, leave and payroll information, and it
+# shipped without a single one of these — while the admin portal, which shows
+# less sensitive data, has had the full set since it launched. Framing is the
+# one that matters most here: without X-Frame-Options nothing stopped this
+# portal being loaded inside someone else's page.
+#
+# NO Content-Security-Policy IS SET HERE, AND THAT IS ON PURPOSE.
+#
+# index.html carries the entire application inline — three <script> blocks and a
+# <style> block, noted in the caching comment below. A policy of script-src
+# 'self', which is what the admin portal sends, would block every one of them
+# and leave staff looking at a blank page. Giving this portal a CSP means first
+# moving that inline code into files, which is a change to the application, not
+# to its delivery. The headers below are the ones that are safe to send today;
+# the CSP is a separate piece of work, not an oversight.
+Header always set X-Frame-Options "DENY"
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "no-referrer"
+Header always set X-Robots-Tag "noindex, nofollow"
+Header always set Cross-Origin-Opener-Policy "same-origin"
+Header always set Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=(), usb=(), interest-cohort=()"
+# Scoped to this origin only — see the note in pwa/.htaccess for why
+# includeSubDomains is not sent from a document root that cannot enumerate them.
+Header always set Strict-Transport-Security "max-age=31536000"
+
 # index.html carries the whole application inline, so it must never be cached
 # — a stale copy is a stale portal.
 Header set Cache-Control "no-cache, no-store, must-revalidate"
