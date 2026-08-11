@@ -182,6 +182,26 @@ const commonLimiterOptions = {
 
 // The five-per-fifteen-minutes limits are security controls, so they count in
 // PostgreSQL and mean the same number no matter how many processes are running.
+// The general limiter's ceiling, overridable so a staging box can be load
+// tested without editing code. Nothing else is overridable: the sensitive
+// limiters guard sign-in, OTP and password reset, and those are security
+// controls rather than capacity knobs.
+//
+// The default is the historical 120 and an unset variable changes nothing. A
+// deliberately loud line at boot when it IS set, because a raised limit that
+// nobody remembers raising is how a staging convenience becomes a production
+// hole.
+function generalLimitMax() {
+  const raw = Number(process.env.GENERAL_RATE_LIMIT_MAX);
+  if (!Number.isFinite(raw) || raw <= 0) return 120;
+  const value = Math.min(1000000, Math.floor(raw));
+  console.warn(
+    `[rate-limit] GENERAL_RATE_LIMIT_MAX is set: allowing ${value} requests per minute per caller ` +
+    "instead of the default 120. This is intended for load testing a staging box, not for production."
+  );
+  return value;
+}
+
 // Each limiter gets its own store instance because express-rate-limit calls
 // init() on whatever it is handed.
 const sensitiveLimiterOptions = {
@@ -212,7 +232,7 @@ const otpLimiter = rateLimit({
 const generalLimiter = rateLimit({
   ...commonLimiterOptions,
   windowMs: GENERAL_WINDOW_MS,
-  max: 120
+  max: generalLimitMax()
 });
 
 const publicContactLimiter = rateLimit({
