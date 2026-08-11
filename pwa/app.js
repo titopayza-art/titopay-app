@@ -2153,6 +2153,11 @@ async function onClick(event) {
       }
       servicesNavPending = true;
     }
+    // A route link inside a modal has to take the modal with it. Business
+    // Ticketing's "Open Profile" set the hash and left its own sheet covering
+    // the page it had just navigated to, so the button read as dead: it worked
+    // perfectly and the result was hidden behind the thing that offered it.
+    if (route.closest(".modal-backdrop")) closeModal();
     location.hash = destination;
     return;
   }
