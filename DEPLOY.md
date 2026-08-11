@@ -141,6 +141,37 @@ You want `"status":"ok"`. Also look at the `emailWorker` field in that response:
   is lost, it sits in the queue, but nobody receives anything until the worker
   runs. See below.
 
+### Running more than one API process (optional, and how to do it safely)
+
+The API runs as a single process unless you say otherwise, which is one CPU
+core for every customer request, payment and webhook — and one crash away from a
+full outage.
+
+Set `API_WORKERS` in `.env` to fork that many HTTP workers:
+
+```
+API_WORKERS=4
+```
+
+A worker that dies is replaced automatically, and the connection pool is
+**divided** between workers rather than multiplied by them, so four workers stay
+inside the database's connection budget instead of exhausting it.
+
+**One thing you must not skip.** Live chat keeps its open sockets in one
+process's memory, so clustered workers refuse chat connections — structurally,
+not by configuration. If you set `API_WORKERS` and do nothing else, **live chat
+stops connecting.** Run one additional instance with `API_WORKERS` unset, on its
+own port, and point nginx at it:
+
+```nginx
+location /v1/chat/socket { proxy_pass http://127.0.0.1:8101; }
+location /v1/            { proxy_pass http://127.0.0.1:8100; }
+```
+
+Worker 1 prints a reminder of this at every boot. If you are not ready to run
+the second instance, leave `API_WORKERS` unset — the single-process behaviour is
+unchanged and nothing here applies.
+
 ### The email worker
 
 It is a separate process from the API. If `/health` says it is not ready:
