@@ -82,11 +82,73 @@ function retryAfterSeconds(req, fallbackSeconds) {
   return Math.max(1, Math.ceil((new Date(reset).getTime() - Date.now()) / 1000));
 }
 
+// One security_logs INSERT per REJECTED request meant the cheap path cost the
+// most: the busier or more hostile the traffic, the more database work the
+// rejections created. A spike or a crude flood turned the database into the
+// bottleneck rather than the shield, and the writes were already logging as
+// slow at 246ms on an idle box.
+//
+// The signal is worth keeping — you want to know somebody is hammering you —
+// but not one row per attempt. So the first rejection for a given caller and
+// policy is written immediately, because that is the one that tells you it
+// started, and everything after it is counted and flushed as a single row
+// carrying the total.
+//
+// Bounded on purpose. An attacker rotating IPs would otherwise grow this map
+// without limit, which would be a memory exhaustion bug traded for a write
+// amplification one. Past the cap, further keys fall back to writing directly.
+const BLOCK_FLUSH_MS = 30000;
+const BLOCK_KEY_CAP = 5000;
+const blockTallies = new Map();
+let blockFlushTimer = null;
+
+function flushBlockTallies() {
+  const pending = [...blockTallies.entries()];
+  blockTallies.clear();
+  if (blockFlushTimer) { clearInterval(blockFlushTimer); blockFlushTimer = null; }
+  for (const [, tally] of pending) {
+    if (tally.suppressed <= 0) continue;
+    writeSecurityLog({
+      actorType: "unknown",
+      eventType: "rate_limit_blocked",
+      severity: "warning",
+      ipAddress: tally.ipAddress,
+      userAgent: tally.userAgent,
+      success: false,
+      metadata: { ...tally.metadata, blockedAttempts: tally.suppressed, coalesced: true }
+    }).catch(() => {});
+  }
+}
+
+function recordRateLimitBlock(entry, key) {
+  const existing = blockTallies.get(key);
+  if (existing) {
+    existing.suppressed += 1;
+    return;
+  }
+  // The first one is written straight away, so a flood is visible in seconds
+  // rather than after a flush interval.
+  writeSecurityLog(entry).catch(() => {});
+  if (blockTallies.size >= BLOCK_KEY_CAP) return;
+  blockTallies.set(key, {
+    suppressed: 0,
+    ipAddress: entry.ipAddress,
+    userAgent: entry.userAgent,
+    metadata: entry.metadata
+  });
+  if (!blockFlushTimer) {
+    blockFlushTimer = setInterval(flushBlockTallies, BLOCK_FLUSH_MS);
+    // Never hold the process open for a log flush.
+    if (typeof blockFlushTimer.unref === "function") blockFlushTimer.unref();
+  }
+}
+
 function rateLimitHandler(policyName, fallbackSeconds) {
   return (req, res) => {
     const retryAfter = retryAfterSeconds(req, fallbackSeconds);
     res.set("Retry-After", String(retryAfter));
-    writeSecurityLog({
+    const identifier = normalizedIdentifier(req);
+    recordRateLimitBlock({
       actorType: "unknown",
       eventType: "rate_limit_blocked",
       severity: "warning",
@@ -97,10 +159,10 @@ function rateLimitHandler(policyName, fallbackSeconds) {
         policy: policyName,
         method: req.method,
         route: req.route?.path || req.path,
-        identifier: normalizedIdentifier(req),
+        identifier,
         retryAfterSeconds: retryAfter
       }
-    }).catch(() => {});
+    }, `${policyName}:${req.ip}:${identifier}`);
     res.status(429).json({
       ok: false,
       error: "Too many attempts. Please try again later.",
@@ -169,5 +231,8 @@ module.exports = {
   registrationLimiter: authLimiter,
   passwordResetLimiter: authLimiter,
   pinLimiter: authLimiter,
-  accountRecoveryLimiter: authLimiter
+  accountRecoveryLimiter: authLimiter,
+  // Exported so the coalescing can be tested for what it actually does —
+  // how many writes N rejections produce — rather than by reading the source.
+  __rateLimitLogging: { recordRateLimitBlock, flushBlockTallies, blockTallies, BLOCK_KEY_CAP }
 };
