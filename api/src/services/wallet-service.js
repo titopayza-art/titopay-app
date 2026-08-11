@@ -139,6 +139,26 @@ function renderStatementLines(statement) {
   return [header,...lines].join("\n");
 }
 
+// Where a statement is delivered.
+//
+// It defaults to the account holder's own email, and until now that was the
+// only possibility. A customer sending a statement to their bookkeeper had to
+// forward it themselves.
+//
+// A statement is the customer's full transaction history, so the destination is
+// deliberately narrow: a single, well-formed address, recorded on the
+// transaction so it appears in Activity beside the charge. Nobody can send one
+// anywhere without it being visible in their own account afterwards.
+function resolveStatementRecipient(requested, accountEmail) {
+  const asked = String(requested || "").trim().toLowerCase();
+  if (!asked) return String(accountEmail || "").trim().toLowerCase();
+  if (asked.length > 254) throw new AppError(400, "That email address is too long.");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(asked)) {
+    throw new AppError(400, "Enter a valid email address for the statement.");
+  }
+  return asked;
+}
+
 async function previewEmailStatement(userId, walletId, range = {}) {
   const [statement,pricing]=await Promise.all([
     loadEmailStatementData(pool,userId,walletId,range),
@@ -166,15 +186,21 @@ async function emailWalletStatement(userId, walletId, range = {}, actor = {}) {
   try {
     await client.query("BEGIN");
     const statement=await loadEmailStatementData(client,userId,walletId,range,{lockWallet:true});
+    // The destination is part of what makes a request unique. Without it in the
+    // key, a customer who typed the wrong address, corrected it and confirmed
+    // again would hit the duplicate guard and be told it was already sent —
+    // to the wrong address, with no way to reach the right one.
+    const destination=resolveStatementRecipient(range.recipient,statement.account.email);
+    const sendingElsewhere=destination!==String(statement.account.email||"").trim().toLowerCase();
     transactionId=uuidv4();
     reference=`TP-EST-${Date.now().toString(36).toUpperCase()}-${transactionId.slice(0,8).toUpperCase()}`;
     const names=String(statement.account.full_name||"").trim().split(/\s+/);
     const net=roundMoney(statement.totals.moneyIn-statement.totals.moneyOut);
     queueJob=await queueEmail({
-      recipient:statement.account.email,
+      recipient:destination,
       templateKey:"email_statement",
       userId,
-      idempotencyKey:`email-statement:${userId}:${idempotencyKey}`,
+      idempotencyKey:`email-statement:${userId}:${destination}:${idempotencyKey}`,
       db:client,
       variables:{
         firstName:names[0]||"there",lastName:names.slice(1).join(" "),fullName:statement.account.full_name,
@@ -184,24 +210,24 @@ async function emailWalletStatement(userId, walletId, range = {}, actor = {}) {
         netMovement:`${net<0?"-":""}${statementMoney(net)}`,statementLines:renderStatementLines(statement),
         statementFee:statementMoney(pricing.fee)
       },
-      metadata:{serviceCode:"email_statement",transactionId,statementReference:reference,walletId,from:statement.from,to:statement.to,fee:pricing.fee}
+      metadata:{serviceCode:"email_statement",transactionId,statementReference:reference,walletId,from:statement.from,to:statement.to,fee:pricing.fee,destination,sentElsewhere:sendingElsewhere}
     });
     if(queueJob.skipped)throw new AppError(409,"Email Statements are temporarily unavailable");
-    if(queueJob.deduplicated){await client.query("ROLLBACK");return {queued:true,deduplicated:true,queueId:queueJob.id,fee:pricing.fee,recipient:statement.account.email,reference:queueJob.metadata?.statementReference||null};}
+    if(queueJob.deduplicated){await client.query("ROLLBACK");return {queued:true,deduplicated:true,queueId:queueJob.id,fee:pricing.fee,recipient:destination,reference:queueJob.metadata?.statementReference||null};}
     if(Number(statement.account.available_balance)<pricing.fee)throw new AppError(400,"Insufficient balance for the R0.10 Email Statement fee");
     await client.query(
       `INSERT INTO transactions(id,user_id,wallet_id,service_code,amount,fee,total,status,direction,reference,recipient_reference,metadata)
        VALUES($1,$2,$3,'email_statement',0,$4,$4,'completed','debit',$5,$6,$7::jsonb)`,
-      [transactionId,userId,walletId,pricing.fee,reference,statement.account.email,JSON.stringify({clientIdempotencyKey:idempotencyKey,emailQueueId:queueJob.id,from:statement.from,to:statement.to})]
+      [transactionId,userId,walletId,pricing.fee,reference,destination,JSON.stringify({clientIdempotencyKey:idempotencyKey,emailQueueId:queueJob.id,from:statement.from,to:statement.to,destination,sentElsewhere:sendingElsewhere})]
     );
     if(pricing.fee>0){
       await applyWalletMovement(client,{walletId,transactionId,entryType:"debit",amount:pricing.fee,reference,metadata:{serviceCode:"email_statement",emailQueueId:queueJob.id}});
       await applyWalletMovement(client,{walletId:revenueWallet.id,transactionId,entryType:"credit",amount:pricing.fee,reference,metadata:{serviceCode:"email_statement",source:"fee"}});
       await client.query(`INSERT INTO revenue_ledger(id,transaction_id,service_code,fee_collected,revenue_wallet_id) VALUES($1,$2,'email_statement',$3,$4)`,[uuidv4(),transactionId,pricing.fee,revenueWallet.id]);
     }
-    await writeAuditLog({actorType:"customer",actorId:userId,action:"email_statement_queued",entityType:"email_queue",entityId:queueJob.id,ipAddress:actor.ipAddress,userAgent:actor.userAgent,metadata:{transactionId,walletId,statementReference:reference,fee:pricing.fee,from:statement.from,to:statement.to},db:client});
+    await writeAuditLog({actorType:"customer",actorId:userId,action:"email_statement_queued",entityType:"email_queue",entityId:queueJob.id,ipAddress:actor.ipAddress,userAgent:actor.userAgent,metadata:{transactionId,walletId,statementReference:reference,fee:pricing.fee,from:statement.from,to:statement.to,destination,sentElsewhere:sendingElsewhere},db:client});
     await client.query("COMMIT");
-    return {queued:true,deduplicated:false,queueId:queueJob.id,transactionId,fee:pricing.fee,recipient:statement.account.email,reference};
+    return {queued:true,deduplicated:false,queueId:queueJob.id,transactionId,fee:pricing.fee,recipient:destination,reference};
   } catch(error) {
     await client.query("ROLLBACK").catch(()=>{});
     throw error;

@@ -380,7 +380,12 @@ test("Email Statement wallet operations are authenticated, priced, atomic and id
   assert.match(routes,/statement\/email\/preview/);
   assert.match(routes,/statement\/email/);
   assert.match(wallet,/calculateFee\("email_statement",0\)/);
-  assert.match(wallet,/idempotencyKey:`email-statement:\$\{userId\}:\$\{idempotencyKey\}`/);
+  // Scoped per user, per destination, per request. The destination joined the
+  // key when the confirmation screen became able to send a statement somewhere
+  // other than the account address: without it, correcting a mistyped address
+  // and confirming again hits the duplicate guard and the statement never
+  // reaches the address the customer actually wanted.
+  assert.match(wallet,/idempotencyKey:`email-statement:\$\{userId\}:\$\{destination\}:\$\{idempotencyKey\}`/);
   assert.match(wallet,/db:client/);
   assert.match(wallet,/client\.query\("BEGIN"\)/);
   assert.match(wallet,/client\.query\("COMMIT"\)/);

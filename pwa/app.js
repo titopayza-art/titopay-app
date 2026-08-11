@@ -8774,13 +8774,22 @@ async function openEmailStatementConfirmation() {
     </div>
     <section class="receipt-card">
       <dl>
-        ${receiptRow("Email address",preview.recipient||state.user?.email||"Not available")}
         ${receiptRow("Statement period",preview.period||statementPeriodLabel())}
         ${receiptRow("Wallet movements",String(preview.transactionCount||0))}
         ${receiptRow("Email statement fee",money(preview.fee??EMAIL_STATEMENT_FEE))}
       </dl>
     </section>
-    <p class="field-hint">The ${money(EMAIL_STATEMENT_FEE)} fee is charged only when your statement email is successfully requested. Other email notifications remain free.</p>
+    <div class="field statement-email-field">
+      <label for="statement-recipient">Send it to</label>
+      <input id="statement-recipient" type="email" inputmode="email" autocomplete="email"
+        spellcheck="false" autocapitalize="off" maxlength="254"
+        data-statement-recipient
+        value="${esc(preview.recipient||state.user?.email||"")}"
+        placeholder="name@example.com"
+        aria-describedby="statement-recipient-hint">
+      <small id="statement-recipient-hint" class="field-hint">Your own address is filled in. Change it to send the statement to someone else — your accountant, for example.</small>
+    </div>
+    <p class="field-hint">The ${money(EMAIL_STATEMENT_FEE)} fee is charged only when your statement email is successfully requested. Other email notifications remain free. Wherever you send it, the destination is recorded on the charge in your Activity.</p>
     <div class="auth-actions">
       <button class="btn secondary" type="button" data-close>Cancel</button>
       <button class="btn primary" type="button" data-action="confirm-email-statement" data-wallet-id="${esc(wallet.id)}" data-statement-from="${esc(state.transactionFilters.from||"")}" data-statement-to="${esc(state.transactionFilters.to||"")}" data-idempotency-key="${esc(idempotencyKey)}">${icon("mail")} Confirm and email for ${esc(money(preview.fee??EMAIL_STATEMENT_FEE))}</button>
@@ -8798,12 +8807,29 @@ async function confirmEmailStatement(button) {
   // The idempotency key is unchanged across retries by design: pressing Confirm
   // again after a failure that actually went through returns the original
   // request and does not charge a second fee.
+  // Where it goes. Prefilled with the account address, and editable — a
+  // customer sending a statement to a bookkeeper had to forward it themselves.
+  // Checked here so a typo is caught before the fee is charged rather than
+  // after; the server validates it again and is the authority.
+  const field=document.querySelector("[data-statement-recipient]");
+  const recipient=String(field?.value||"").trim();
+  if(!recipient){
+    button.disabled=false;
+    field?.focus();
+    throw new Error("Enter the email address the statement should go to.");
+  }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(recipient)){
+    button.disabled=false;
+    field?.focus();
+    field?.select?.();
+    throw new Error("That email address does not look right. Check it and try again.");
+  }
   let result;
   try {
     result=await api(`/v1/wallets/${encodeURIComponent(walletId)}/statement/email`,{
       method:"POST",
       headers:{"Idempotency-Key":button.dataset.idempotencyKey},
-      body:{from:button.dataset.statementFrom||null,to:button.dataset.statementTo||null,idempotencyKey:button.dataset.idempotencyKey}
+      body:{from:button.dataset.statementFrom||null,to:button.dataset.statementTo||null,idempotencyKey:button.dataset.idempotencyKey,recipient}
     });
   } catch (error) {
     button.disabled=false;

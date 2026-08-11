@@ -108,7 +108,7 @@ router.post("/:id/statement/email", async (req,res,next)=>{
   try {
     const walletId=requireUuid(req.params.id,"Wallet ID");
     const idempotencyKey=req.headers["idempotency-key"]||req.body.idempotencyKey;
-    const result=await emailWalletStatement(req.auth.userId,walletId,{from:req.body.from,to:req.body.to,idempotencyKey},{ipAddress:req.ip,userAgent:req.get("user-agent")});
+    const result=await emailWalletStatement(req.auth.userId,walletId,{from:req.body.from,to:req.body.to,idempotencyKey,recipient:req.body.recipient},{ipAddress:req.ip,userAgent:req.get("user-agent")});
     res.status(202).json({ok:true,...result});
   } catch(error){next(error);}
 });
