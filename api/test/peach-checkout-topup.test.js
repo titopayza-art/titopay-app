@@ -120,6 +120,52 @@ test("Card top-up service codes are refused by the wallet-debit transaction path
       `${code} must be routed to the card top-up flow`
     );
   }
+  // The refusal must live on the wallet-debit path only. assertServiceLaunched
+  // also serves the fee preview, and blocking it there stopped the customer
+  // before they could ever be shown the top-up fee.
+  const launched = source.slice(
+    source.indexOf("async function assertServiceLaunched"),
+    source.indexOf("async function assertLiveTransactionSupported")
+  );
+  assert.ok(launched.length > 200, "assertServiceLaunched must still exist");
+  assert.doesNotMatch(launched, /CARD_TOPUP_SERVICES\.has/);
+  const live = source.slice(source.indexOf("async function assertLiveTransactionSupported"));
+  assert.match(live.slice(0, 800), /CARD_TOPUP_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,240}USE_CARD_TOPUP_FLOW/);
+});
+
+test("The fee preview quotes a card top-up instead of refusing it", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "services", "transaction-service.js"), "utf8");
+  const preview = source.slice(source.indexOf("async function feePreview"), source.indexOf("async function resolveRecipientWallet"));
+  // The preview is a read-only price calculation; it must not carry the
+  // wallet-debit refusal, or the top-up form cannot reach the review screen.
+  assert.doesNotMatch(preview, /USE_CARD_TOPUP_FLOW/);
+});
+
+test("A card top-up charges the card the total the customer confirmed", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "services", "peach-checkout-service.js"), "utf8");
+  const create = source.slice(source.indexOf("async function createTopupCheckout"), source.indexOf("async function settleTopupTransaction"));
+  // Fee comes from the same approved pricing rule the preview quoted.
+  assert.match(create, /calculateFee\(SERVICE_CODE, amount\)/);
+  assert.match(create, /chargeTotal = roundMoney\(amount \+ fee\)/);
+  // Peach is charged the total, not the bare amount.
+  assert.match(create, /amount: Number\(chargeTotal\.toFixed\(2\)\)/);
+  // The transaction row records amount / fee / total separately.
+  assert.match(create, /amount, fee, total, status/);
+  // The wallet is still credited only the amount, never the fee.
+  const settle = source.slice(source.indexOf("async function settleTopupTransaction"));
+  assert.match(settle.slice(0, 3000), /amount: Number\(row\.amount\)/);
+  assert.match(settle.slice(0, 3000), /expectedCharge = Number\(row\.total \?\? row\.amount\)/);
+});
+
+test("A stale review screen cannot send a customer to Peach for the wrong total", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "services", "peach-checkout-service.js"), "utf8");
+  const create = source.slice(source.indexOf("async function createTopupCheckout"), source.indexOf("async function settleTopupTransaction"));
+  assert.match(create, /TOPUP_QUOTE_STALE/);
+  // The quote can only refuse. It is never used to set the amount charged, so a
+  // tampered client cannot raise or lower what Peach is asked for.
+  assert.doesNotMatch(create, /chargeTotal\s*=\s*[^;]*quotedTotal/);
+  // And it is checked before anything is written or Peach is called.
+  assert.ok(create.indexOf("TOPUP_QUOTE_STALE") < create.indexOf("INSERT INTO transactions"));
 });
 
 test("Withdraw and payout are gated by the Peach payout capability", () => {
@@ -132,23 +178,27 @@ test("Withdraw and payout are gated by the Peach payout capability", () => {
       `${code} must be routed to the Peach payout capability`
     );
   }
-  // The gate consults the payout capability, then still refuses until
-  // withdrawal processing itself is switched on.
+  // The gate consults the payout capability at the fee preview, so an
+  // unconfigured, disabled or unverified payout provider is reported as itself
+  // before the customer is shown a fee.
   assert.match(source, /PEACH_PAYOUT_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,400}payoutAvailability\(\)/);
-  assert.match(source, /PAYOUT_PROCESSING_ENABLED/);
-  assert.match(source, /PAYOUT_PROCESSING_NOT_ENABLED/);
+  assert.match(source, /assertPayoutAvailable/);
 });
 
-test("A connected payout provider does not open withdrawals on its own", () => {
+test("A withdrawal cannot be created through the wallet-debit endpoint", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "services", "transaction-service.js"), "utf8");
-  const gate = source.slice(source.indexOf("if (PEACH_PAYOUT_SERVICES.has(normalizedServiceCode))"));
-  const block = gate.slice(0, gate.indexOf("\n  if (CARD_TOPUP_SERVICES"));
-  // The processing flag is checked AFTER availability, so a connected provider
-  // still cannot walk a customer to a Confirm that cannot settle.
-  assert.ok(block.indexOf("payoutAvailability") < block.indexOf("PAYOUT_PROCESSING_ENABLED"));
-  assert.match(block, /No wallet debit was made/);
-  // Default is off unless explicitly enabled by environment.
-  assert.match(source, /PEACH_PAYOUT_PROCESSING_ENABLED[\s\S]{0,80}=== "true"/);
+  // The fee preview must succeed — the customer has to see the withdrawal fee.
+  const launched = source.slice(
+    source.indexOf("async function assertServiceLaunched"),
+    source.indexOf("async function assertLiveTransactionSupported")
+  );
+  assert.doesNotMatch(launched, /USE_WITHDRAWAL_FLOW/);
+  // createTransaction only debits; a withdrawal also has to submit a payout and
+  // be reversible, so it is refused here and runs its own lifecycle instead.
+  const live = source.slice(source.indexOf("async function assertLiveTransactionSupported"));
+  assert.match(live.slice(0, 1400), /PEACH_PAYOUT_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,240}USE_WITHDRAWAL_FLOW/);
+  assert.match(live.slice(0, 1400), /No wallet debit was made/);
+  assert.match(live.slice(0, 1400), /\/v1\/payouts\/withdrawals/);
 });
 
 test("The fee preview blocks unlaunched services before a customer sees a fee", () => {
@@ -161,17 +211,79 @@ test("The fee preview blocks unlaunched services before a customer sees a fee", 
 
 test("A deliberate 503 reaches the customer instead of the generic error", () => {
   const { AppError } = require("../src/lib/errors");
+  const { errorHandler } = require("../src/middleware/error-handler");
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "middleware", "error-handler.js"), "utf8");
   assert.match(source, /clientSafe/);
   assert.match(source, /status >= 500 && !clientSafe/);
-  // Provider-state codes are the ones allowed through.
+  // The machine-readable code is still restricted to provider-state errors.
   assert.match(source, /\[502, 503, 504\]\.includes\(error\.statusCode\)/);
   assert.ok(new AppError(503, "x") instanceof Error);
+
+  // Asserted as behaviour rather than source shape, because the rule widened:
+  // an authored message now survives on any 5xx, not only 502/503/504. It had
+  // to — "TitoPay revenue wallet is not configured" was being replaced by
+  // "Unable to complete the request. Please try again." on the Email Statement
+  // screen, which named nothing and invited a retry that could not work.
+  const say = (error) => {
+    const sent = {};
+    const res = { status(code) { sent.status = code; return this; }, json(body) { sent.body = body; return this; } };
+    const originalError = console.error;
+    console.error = () => {};
+    try { errorHandler(error, { requestId: "r" }, res); } finally { console.error = originalError; }
+    return sent.body.error;
+  };
+  assert.equal(say(new AppError(503, "Card top-up is not configured yet")), "Card top-up is not configured yet");
+  assert.equal(say(new AppError(500, "TitoPay revenue wallet is not configured")),
+    "TitoPay revenue wallet is not configured");
+  assert.equal(say(new AppError(500, "relation \"x\" does not exist — sql")),
+    "Unable to complete the request. Please try again.");
+  assert.equal(say(new Error("ECONNREFUSED password=hunter2")),
+    "Unable to complete the request. Please try again.");
 });
 
-test("Error details are never returned for a 5xx", () => {
+test("A 5xx returns a safe code at most, never the provider's details", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "middleware", "error-handler.js"), "utf8");
-  assert.match(source, /status < 500 && details \? \{ details \} : \{\}/);
+  // A deliberate 502/503/504 needs a machine-readable code so the app can tell
+  // "rejected, money returned" from "unconfirmed, money held". Only that one
+  // token survives — the details object itself never does.
+  assert.match(source, /status < 500 && details[\s\S]{0,20}\?\s*\{ details \}/);
+  // codeSafe, not clientSafe: the sentence and the machine-readable code are
+  // now separate decisions. The code is still provider-state only.
+  assert.match(source, /codeSafe && safeErrorCode\(details\)/);
+  assert.match(source, /details: \{ code: safeErrorCode\(details\) \}/);
+
+  // And the token is constrained to something this codebase authored.
+  const { errorHandler } = require("../src/middleware/error-handler");
+  const { AppError } = require("../src/lib/errors");
+  const capture = () => {
+    const sent = {};
+    const res = { status(code) { sent.status = code; return this; }, json(body) { sent.body = body; return this; } };
+    return { res, sent };
+  };
+
+  const safe = capture();
+  errorHandler(new AppError(502, "held", { code: "PAYOUT_SUBMISSION_UNCERTAIN", providerBody: "<html>secret</html>" }), { requestId: "r" }, safe.res);
+  assert.deepEqual(safe.sent.body.details, { code: "PAYOUT_SUBMISSION_UNCERTAIN" });
+  assert.ok(!JSON.stringify(safe.sent.body).includes("secret"), "provider text must never ride out on a 5xx");
+
+  // Provider prose in the code position is dropped rather than forwarded.
+  const unsafe = capture();
+  errorHandler(new AppError(502, "held", { code: "Invalid client ID or secret." }), { requestId: "r" }, unsafe.res);
+  assert.equal(unsafe.sent.body.details, undefined);
+
+  // A 500 still carries no code — that signal is only meaningful for provider
+  // state. Its authored sentence does now reach the reader, which is the point
+  // of the change: the server knowing what is wrong and refusing to say so
+  // helped nobody.
+  const generic = capture();
+  errorHandler(new AppError(500, "boom", { code: "SOMETHING" }), { requestId: "r" }, generic.res);
+  assert.equal(generic.sent.body.details, undefined, "no machine-readable code on a plain 500");
+  assert.equal(generic.sent.body.error, "boom");
+
+  // And a 500 whose text is technical is still replaced.
+  const technical = capture();
+  errorHandler(new AppError(500, "pricing rule not found"), { requestId: "r" }, technical.res);
+  assert.equal(technical.sent.body.error, "Unable to complete the request. Please try again.");
 });
 
 /* ------------------------------------------------------------- webhook shape */
