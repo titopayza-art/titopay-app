@@ -35,6 +35,25 @@ const LIVE_QR_WALLET_SERVICES = new Set([
   "customer_qr_payment"
 ]);
 
+// Services where TitoPay sells something itself and the schedule fee IS the
+// whole price. There is no principal, and no third party to receive one.
+//
+// Every other service here moves money to somebody: `amount` is what the
+// recipient gets and the fee is TitoPay's cut on top. A Business Document PDF
+// has no recipient, so the customer app filled the required `amount` in with
+// the price — and the server then charged the schedule fee ON TOP of it.
+// /v1/transactions/fee-preview returned amount 2.50 + fee 2.50 = total 5.00 for
+// a PDF advertised at R2.50, and the 2.50 "principal" had nowhere to go:
+// "TitoPay Revenue Wallet" matches no username, email or wallet number, so
+// resolveRecipientWallet returned null and only the fee was ever credited.
+//
+// For these codes the client does not supply an amount at all and cannot name
+// its own price: the amount is 0, the fee comes from the pricing schedule, and
+// the total is the fee. Debit the fee, credit the fee to revenue, balanced.
+const FEE_ONLY_SERVICES = new Set([
+  "business_document_pdf"
+]);
+
 const REQUEST_ONLY_SERVICES = new Set([
   "payment_request",
   "request_money",
@@ -226,10 +245,27 @@ async function feePreview(payload) {
   const serviceCode = payload.service || payload.serviceCode;
   if (!serviceCode) throw new AppError(400, "service is required");
   const normalizedServiceCode = normalizeServiceCode(serviceCode);
-  const amount = Number(payload.amount);
-  if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "amount must be greater than zero");
+  const feeOnly = FEE_ONLY_SERVICES.has(normalizedServiceCode);
+  // A fee-only service has no principal, so it does not ask for one and does
+  // not accept one. Anything the caller sends is discarded before pricing.
+  const amount = feeOnly ? 0 : Number(payload.amount);
+  if (!feeOnly && (!Number.isFinite(amount) || amount <= 0)) {
+    throw new AppError(400, "amount must be greater than zero");
+  }
   await assertServiceLaunched(normalizedServiceCode);
   const fee = await calculateFee(normalizedServiceCode, amount);
+  if (feeOnly) {
+    return {
+      amount: 0,
+      fee: fee.fee,
+      total: fee.fee,
+      recipient: null,
+      transactionType: normalizedServiceCode,
+      serviceCode: normalizedServiceCode,
+      serviceName: fee.serviceName,
+      recipientStatus: null
+    };
+  }
   let recipientStatus = null;
   const recipientChecks = recipientsForVerification(payload, normalizedServiceCode);
   if (REGISTERED_RECIPIENT_SERVICES.has(normalizedServiceCode) && recipientChecks.length) {
@@ -282,9 +318,12 @@ async function createTransaction(actor, payload) {
   if (actor.profileLocked) throw new AppError(423, "Profile is locked. Financial transactions are disabled.");
   const serviceCode = payload.service || payload.serviceCode;
   const normalizedServiceCode = normalizeServiceCode(serviceCode);
-  const amount = roundMoney(payload.amount);
+  const feeOnly = FEE_ONLY_SERVICES.has(normalizedServiceCode);
+  const amount = feeOnly ? 0 : roundMoney(payload.amount);
   if (!serviceCode) throw new AppError(400, "service is required");
-  if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "amount must be greater than zero");
+  if (!feeOnly && (!Number.isFinite(amount) || amount <= 0)) {
+    throw new AppError(400, "amount must be greater than zero");
+  }
   await assertLiveTransactionSupported(normalizedServiceCode, payload);
   const idempotencyKey = String(payload.idempotencyKey || payload.metadata?.clientIdempotencyKey || "").trim().slice(0, 120);
 
@@ -317,12 +356,21 @@ async function createTransaction(actor, payload) {
     actor
   });
   const wallet = await getPrimaryWalletForUser(actor.userId);
-  const recipientWallet = await resolveRecipientWallet(payload.recipient);
+  // A fee-only service has no third party, so no recipient is resolved and no
+  // recipient is credited. Without this, a caller could name any wallet as the
+  // "recipient" of a purchase from TitoPay.
+  const recipientWallet = feeOnly ? null : await resolveRecipientWallet(payload.recipient);
   const revenueWallet = preview.fee > 0 ? await getRevenueWallet() : null;
   const txId = uuidv4();
   const reference = txReference();
-  const netAmount = roundMoney(payload.merchantReceivesFee ? amount - preview.fee : amount);
-  const debitTotal = payload.merchantReceivesFee ? amount : preview.total;
+  // preview.amount, not the request body. For every service except the
+  // fee-only ones these are the same number — calculateFee returns the amount
+  // it was given — so this changes nothing anywhere else. For a fee-only
+  // service it is what stops the customer being charged twice: the preview
+  // says amount 0, fee 2.50, total 2.50, and the debit follows the preview.
+  const chargedAmount = roundMoney(preview.amount);
+  const netAmount = roundMoney(payload.merchantReceivesFee ? chargedAmount - preview.fee : chargedAmount);
+  const debitTotal = payload.merchantReceivesFee ? chargedAmount : preview.total;
 
   if (Number(wallet.available_balance) < debitTotal) throw new AppError(400, "Insufficient balance");
 
@@ -383,7 +431,7 @@ async function createTransaction(actor, payload) {
         actor.userId,
         wallet.id,
         normalizedServiceCode,
-        amount,
+        chargedAmount,
         preview.fee,
         debitTotal,
         reference,
@@ -427,7 +475,7 @@ async function createTransaction(actor, payload) {
       );
     }
     if (recipientWallet?.user_id) {
-      await recordBeneficiaryPayment(actor.userId, recipientWallet.user_id, amount, client);
+      await recordBeneficiaryPayment(actor.userId, recipientWallet.user_id, chargedAmount, client);
     }
     await client.query("COMMIT");
   } catch (error) {
@@ -445,7 +493,7 @@ async function createTransaction(actor, payload) {
     entityId: txId,
     ipAddress: actor.ipAddress,
     userAgent: actor.userAgent,
-    metadata: { serviceCode: normalizedServiceCode, amount, fee: preview.fee, recipient: payload.recipient || null }
+    metadata: { serviceCode: normalizedServiceCode, amount: chargedAmount, fee: preview.fee, recipient: payload.recipient || null }
   });
   try {
     const { rows: accountRows } = await pool.query("SELECT email,full_name FROM users WHERE id=$1", [actor.userId]);
@@ -455,7 +503,7 @@ async function createTransaction(actor, payload) {
         : /top.?up/.test(normalizedServiceCode) ? "wallet_top_up_receipt"
           : /transfer|send/.test(normalizedServiceCode) ? "money_transfer_receipt" : "payment_receipt";
       await queueEmail({ recipient:account.email, templateKey, userId:actor.userId,
-        variables:{fullName:account.full_name,email:account.email,amount:amount.toFixed(2),currency:"ZAR",transactionReference:reference},
+        variables:{fullName:account.full_name,email:account.email,amount:chargedAmount.toFixed(2),currency:"ZAR",transactionReference:reference},
         idempotencyKey:`transaction-receipt:${txId}`, metadata:{transactionId:txId,serviceCode:normalizedServiceCode} });
     }
   } catch (error) {
@@ -464,7 +512,7 @@ async function createTransaction(actor, payload) {
   return {
     transactionId: txId,
     reference,
-    amount,
+    amount: chargedAmount,
     fee: preview.fee,
     total: debitTotal,
     netAmount,

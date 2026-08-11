@@ -8306,17 +8306,27 @@ async function confirmBusinessDocumentPdfDownload() {
     showToast("No saved business document found.", "error");
     return;
   }
+  // No amount and no recipient. This is a purchase from TitoPay, not a payment
+  // to somebody, and the price belongs to the pricing schedule — the app used to
+  // send DOCUMENT_PDF_FEE as the `amount`, which the server then charged its own
+  // 2.50 fee on top of, so a PDF advertised at R2.50 came to R5.00.
+  //
+  // The idempotency key matters here as much as anywhere else that takes money:
+  // without it a double tap, or a network that re-delivers a POST it already
+  // delivered, is a second charge.
+  // Derived from the document, not from the clock: the same PDF is one purchase
+  // however many times Confirm is pressed, which is what makes a retry safe.
+  const idempotencyKey = `document-pdf-${String(document.id || document.number || "unknown").replace(/[^a-z0-9]+/gi, "-").slice(0, 60)}`;
   const result = await api("/v1/transactions", {
     method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
     body: {
       serviceCode: "business_document_pdf",
-      amount: DOCUMENT_PDF_FEE,
-      recipient: "TitoPay Revenue Wallet",
+      idempotencyKey,
       metadata: {
         documentId: document.id,
         documentNumber: document.number,
-        documentKind: document.kind,
-        pdfFee: DOCUMENT_PDF_FEE
+        documentKind: document.kind
       }
     }
   });
