@@ -109,6 +109,79 @@ test("every hash resolves to a route the shell can actually render", () => {
   assert.equal(normalizeRoute("#profile "), "profile", "a trailing space is a typo, not a dead route");
 });
 
+test("a provider-backed request is given the provider's timeout, not the default", () => {
+  // Airtime, data, electricity, vouchers and bill payments all POST to
+  // /v1/transactions and all wait on Flash. They were on the 15-second default
+  // while top-up and withdrawal had 45, so the app gave up while the provider
+  // was still working — leaving the one outcome that is worst to explain:
+  // money possibly taken, nothing on screen to say so.
+  const paths = source.match(/^const PROVIDER_BACKED_PATHS = \[([\s\S]*?)^\];/m);
+  const defaults = source.match(/^const DEFAULT_REQUEST_TIMEOUT_MS = (\d+);/m);
+  const provider = source.match(/^const PROVIDER_REQUEST_TIMEOUT_MS = (\d+);/m);
+  assert.ok(paths && defaults && provider, "the timeout configuration must exist");
+  assert.ok(Number(provider[1]) > Number(defaults[1]), "the provider timeout must be the longer one");
+
+  const fn = source.match(/function requestTimeoutFor\(path\) \{[\s\S]*?\n\}/);
+  // eslint-disable-next-line no-new-func
+  const requestTimeoutFor = new Function(
+    "PROVIDER_BACKED_PATHS", "PROVIDER_REQUEST_TIMEOUT_MS", "DEFAULT_REQUEST_TIMEOUT_MS",
+    `${fn[0]}; return requestTimeoutFor;`
+    // eslint-disable-next-line no-eval
+  )(eval(`[${paths[1]}]`), Number(provider[1]), Number(defaults[1]));
+
+  for (const path of ["/v1/transactions", "/v1/payments/topup", "/v1/payouts/withdrawals"]) {
+    assert.equal(requestTimeoutFor(path), Number(provider[1]), `${path} must get the provider timeout`);
+  }
+  assert.equal(requestTimeoutFor("/v1/wallets"), Number(defaults[1]),
+    "an ordinary read must not wait as long as a provider call");
+});
+
+test("a failed statement request gives its button back", () => {
+  // It used to disable the button and never re-enable it, so any failure left a
+  // dead Confirm and the only way to retry was to close and reopen the sheet.
+  const fn = source.match(/async function confirmEmailStatement\(button\)[\s\S]*?\n\}/);
+  assert.ok(fn, "confirmEmailStatement must exist");
+  assert.match(fn[0], /catch \(error\) \{\s*button\.disabled=false;\s*throw error;/,
+    "a failure must re-enable the button and still surface the error");
+  assert.ok(fn[0].indexOf("button.disabled=true") < fn[0].indexOf("catch (error)"),
+    "the guard is only useful if the button was disabled first");
+  // The key must NOT be regenerated on retry — that would turn a retry after a
+  // request that actually succeeded into a second fee.
+  assert.doesNotMatch(fn[0], /createClientTransactionKey/,
+    "a retry must reuse the original idempotency key");
+});
+
+test("signing out clears what the app stored about the person", () => {
+  // The in-app notification store is keyed per user and holds several kilobytes
+  // of payment history in localStorage. It survived sign-out, on a handset that
+  // may be shared or handed on.
+  const fn = source.match(/function clearPersonalDeviceData\(\) \{[\s\S]*?\n\}/);
+  assert.ok(fn, "clearPersonalDeviceData must exist");
+  assert.match(source, /localStorage\.removeItem\(AUTH_KEY\);[\s\S]{0,120}clearPersonalDeviceData\(\);/,
+    "it must run as part of signing out");
+
+  const store = {
+    "titopay_in_app_notifications_v1:personal:abc": "history",
+    "titopay_profile_photo_v1:abc": "photo",
+    "titopay_receipts_v1:personal:abc": "receipts",
+    "titopay_business_documents_v1": "invoices",
+    "titopay_install_dismissed_v1": "device preference",
+    "titopay_known_users_v1": "device preference"
+  };
+  const localStorageStub = {
+    removeItem(key) { delete store[key]; },
+    getItem(key) { return store[key] ?? null; }
+  };
+  // eslint-disable-next-line no-new-func
+  new Function("localStorage", "Object", "PROFILE_PHOTO_PREFIX", "TITOPAY_RECEIPTS_KEY", "BUSINESS_DOCUMENTS_KEY",
+    `${fn[0]}; clearPersonalDeviceData();`)(
+    localStorageStub, { keys: () => Object.keys(store) },
+    "titopay_profile_photo_v1", "titopay_receipts_v1", "titopay_business_documents_v1");
+
+  assert.deepEqual(Object.keys(store).sort(), ["titopay_install_dismissed_v1", "titopay_known_users_v1"],
+    "personal data goes; device preferences stay");
+});
+
 test("the whole app is still there", () => {
   const declared = (source.match(/^(?:async )?function [A-Za-z0-9_$]+/gm) || []).length;
   assert.ok(declared > 850, `expected the full app, found ${declared} top-level functions`);

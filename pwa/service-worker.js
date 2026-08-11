@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v301-clear-fee-breakdown";
+const CACHE_NAME = "titopay-pwa-v302-clear-fee-breakdown";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.min.css?v=298",
-  "./app.min.js?v=301",
+  "./app.min.js?v=302",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
@@ -18,7 +18,27 @@ const APP_SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
+  // cache.addAll is atomic: one 404 anywhere in APP_SHELL rejects the whole
+  // install, the worker never activates, and the app silently loses offline
+  // support with nothing on screen to say so. Several entries carry their own
+  // ?v= number and one is a directory that depends on the host serving an
+  // index, so a single stale line was enough to do it.
+  //
+  // Each file is fetched on its own instead. A miss costs that one file from
+  // the offline shell; it no longer costs the entire service worker.
+  event.waitUntil(caches.open(CACHE_NAME).then(async (cache) => {
+    const missing = [];
+    await Promise.all(APP_SHELL.map(async (url) => {
+      try {
+        const response = await fetch(new Request(url, { cache: "reload" }));
+        if (response && response.ok) await cache.put(url, response);
+        else missing.push(`${url} (${response && response.status})`);
+      } catch (error) {
+        missing.push(`${url} (${error && error.message})`);
+      }
+    }));
+    if (missing.length) console.warn("[sw] not precached:", missing.join(", "));
+  }));
   self.skipWaiting();
 });
 

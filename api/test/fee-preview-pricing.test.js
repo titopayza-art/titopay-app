@@ -179,23 +179,52 @@ test("service codes are normalised, so one price cannot hide behind two spelling
   assert.equal(normalizeServiceCode(" send_money "), normalizeServiceCode("send_money"));
 });
 
-// NOT YET TRUE. Recorded rather than asserted, so the suite stays honest.
-//
-// updatePricingRule performs no range validation — an admin sending
-// flatFee: -5 writes -5 straight to pricing_rules — and calculateFee does not
-// clamp, so the fee comes out negative. The customer is then debited LESS than
-// the amount while the recipient is credited the full amount, and the revenue
-// wallet is "credited" a negative number, which debits it. TitoPay funds the
-// difference on every such transaction.
-//
-// It needs an admin-side range check and a floor in calculateFee. Both are
-// changes to pricing logic and are not being made under a test-coverage task.
-test("no fee is ever negative, and no total is ever less than the amount",
-  { todo: "calculateFee does not clamp, and updatePricingRule does not validate — reported, not fixed" },
-  async () => {
-    await withRule(rule({ flat_fee: -5, percentage_fee: -1 }), async () => {
-      const fee = await calculateFee("send_money", 100);
-      assert.ok(fee.fee >= 0, `a negative schedule produced fee ${fee.fee}`);
-      assert.ok(fee.total >= fee.amount, `total ${fee.total} is less than amount ${fee.amount}`);
-    });
+test("no fee is ever negative, and no total is ever less than the amount", async () => {
+  // A negative fee debits the customer LESS than the amount while the recipient
+  // is credited the full amount, and "credits" the revenue wallet a negative
+  // number — which debits it. TitoPay funds the difference. Guarded in two
+  // places: updatePricingRule refuses to store one, and calculateFee floors it
+  // anyway, because a bad row can also arrive from a migration or a seed.
+  await withRule(rule({ flat_fee: -5, percentage_fee: -1 }), async () => {
+    const fee = await calculateFee("send_money", 100);
+    assert.equal(fee.fee, 0, "a negative schedule prices at zero, never below");
+    assert.ok(fee.total >= fee.amount, `total ${fee.total} is less than amount ${fee.amount}`);
   });
+  await withRule(rule({ flat_fee: Number.NaN }), async () => {
+    const fee = await calculateFee("send_money", 100);
+    assert.ok(Number.isFinite(fee.fee), `a NaN schedule produced ${fee.fee}`);
+    assert.equal(fee.total, 100);
+  });
+});
+
+test("a pricing rule with a negative or impossible value is refused", async () => {
+  const { updatePricingRule } = require("../src/services/pricing-service");
+  const actor = { userType: "admin", userId: "33333333-3333-4333-8333-333333333333" };
+  const originalQuery = pool.query;
+  let wrote = false;
+  pool.query = async (sql) => {
+    const q = String(sql).replace(/\s+/g, " ").trim();
+    if (/^UPDATE pricing_rules/i.test(q)) { wrote = true; return { rows: [{ id: "r1", service_code: "send_money" }] }; }
+    return { rows: [] };
+  };
+  try {
+    for (const payload of [
+      { flatFee: -5 },
+      { percentageFee: -1 },
+      { minimum_fee: -0.01 },
+      { maximum_fee: -1 },
+      { vatPercentage: -15 },
+      { percentageFee: 101 },
+      { minimum_fee: 50, maximum_fee: 10 }
+    ]) {
+      await assert.rejects(
+        updatePricingRule("r1", payload, actor),
+        (error) => error.statusCode === 400,
+        `${JSON.stringify(payload)} must be refused`
+      );
+    }
+    assert.equal(wrote, false, "nothing invalid may reach the database");
+  } finally {
+    pool.query = originalQuery;
+  }
+});

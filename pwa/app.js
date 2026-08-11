@@ -3502,9 +3502,34 @@ function clearAuth() {
   state.transactionFilters = { search: "", from: "", to: "", direction: "all" };
   localStorage.removeItem(AUTH_KEY);
   sessionStorage.removeItem(SESSION_KEY);
+  clearPersonalDeviceData();
   clearTimeout(state.sessionTimer);
   clearTimeout(state.sessionWarningTimer);
   state.sessionWarningShown = false;
+}
+// Signing out has to leave the device clean. The in-app notification store is
+// keyed per user and per account type and held in localStorage — several
+// kilobytes of somebody's payment history on a shared or handed-on phone,
+// still there after they signed out. Same for the saved profile photo and the
+// cached receipts.
+//
+// Deliberately narrow: it removes keys this app wrote for a person, and leaves
+// device preferences (install prompt dismissal, alert choices) alone, because
+// those belong to the handset rather than to the account.
+function clearPersonalDeviceData() {
+  const personalPrefixes = [
+    "titopay_in_app_notifications_v1",
+    PROFILE_PHOTO_PREFIX,
+    TITOPAY_RECEIPTS_KEY,
+    BUSINESS_DOCUMENTS_KEY
+  ].filter(Boolean);
+  try {
+    Object.keys(localStorage)
+      .filter((key) => personalPrefixes.some((prefix) => key === prefix || key.startsWith(`${prefix}:`)))
+      .forEach((key) => localStorage.removeItem(key));
+  } catch (error) {
+    // A full or blocked storage quota must never stop somebody signing out.
+  }
 }
 function serviceSearchTokens(service = {}) {
   return [
@@ -5824,7 +5849,11 @@ function transactionCostPanel(context) {
   const preview = context.preview || {};
   const amount = Number(preview.amount ?? context.amount ?? 0);
   const fee = Number(preview.fee ?? 0);
-  const total = Number(preview.total ?? amount + fee);
+  // No fallback arithmetic. The comment above says every number here comes
+  // from the fee preview, and `?? amount + fee` quietly made that untrue: if
+  // the server ever omitted a total, the screen showed a float sum that could
+  // disagree with the debit. If the server did not say, the screen does not say.
+  const total = Number.isFinite(Number(preview.total)) ? Number(preview.total) : null;
   const net = Number(preview.recipientAmount ?? preview.netAmount ?? amount);
   const wording = transactionCostWording(context.data?.serviceCode, net, amount);
   // A recipient-facing service still deserves the "and they get X" line; a
@@ -5835,7 +5864,7 @@ function transactionCostPanel(context) {
     <section class="cost-breakdown" aria-label="What this transaction costs">
       <div class="cb-row"><span class="cb-label">${esc(wording.amountLabel)}</span><span class="cb-value">${esc(money(amount))}</span></div>
       <div class="cb-row"><span class="cb-label">${esc(wording.feeLabel)}</span><span class="cb-value">${fee > 0 ? esc(money(fee)) : "No fee"}</span></div>
-      <div class="cb-row cb-total"><span class="cb-label">${esc(wording.totalLabel)}</span><span class="cb-value">${esc(money(total))}</span></div>
+      <div class="cb-row cb-total"><span class="cb-label">${esc(wording.totalLabel)}</span><span class="cb-value">${total === null ? "—" : esc(money(total))}</span></div>
       ${outcome ? `<p class="cb-outcome">${icon("check-circle")} <span>${esc(outcome)}</span></p>` : ""}
     </section>`;
 }
@@ -8762,11 +8791,24 @@ async function confirmEmailStatement(button) {
   const walletId=String(button.dataset.walletId||"");
   if(!walletId)throw new Error("Your TitoPay wallet is not available. Refresh and try again.");
   button.disabled=true;
-  const result=await api(`/v1/wallets/${encodeURIComponent(walletId)}/statement/email`,{
-    method:"POST",
-    headers:{"Idempotency-Key":button.dataset.idempotencyKey},
-    body:{from:button.dataset.statementFrom||null,to:button.dataset.statementTo||null,idempotencyKey:button.dataset.idempotencyKey}
-  });
+  // The button has to come back on failure. It used to disable itself and stay
+  // that way, so a customer who hit any error — a slow network, a server fault —
+  // was left looking at a dead Confirm and had to close and reopen the sheet.
+  //
+  // The idempotency key is unchanged across retries by design: pressing Confirm
+  // again after a failure that actually went through returns the original
+  // request and does not charge a second fee.
+  let result;
+  try {
+    result=await api(`/v1/wallets/${encodeURIComponent(walletId)}/statement/email`,{
+      method:"POST",
+      headers:{"Idempotency-Key":button.dataset.idempotencyKey},
+      body:{from:button.dataset.statementFrom||null,to:button.dataset.statementTo||null,idempotencyKey:button.dataset.idempotencyKey}
+    });
+  } catch (error) {
+    button.disabled=false;
+    throw error;
+  }
   closeModal();
   await loadAccount();
   render();
@@ -19066,7 +19108,13 @@ const PROVIDER_BACKED_PATHS = [
   /^\/v1\/payments\/topup(\?|$)/,
   /^\/v1\/payments\/topup\/[^/]+$/,
   /^\/v1\/payouts\/withdrawals(\?|$)/,
-  /^\/v1\/payouts\/withdrawals\/[^/]+$/
+  /^\/v1\/payouts\/withdrawals\/[^/]+$/,
+  // Airtime, data, electricity, vouchers and bill payments all POST here and
+  // all wait on Flash; a transfer waits on nothing but is harmless to include.
+  // These were on the 15-second default, so the app gave up while the provider
+  // was still working and the customer was left with the one outcome that is
+  // worst to explain: money possibly gone, nothing on screen to say so.
+  /^\/v1\/transactions(\?|$)/
 ];
 // Three rows. Two rows left ~200px of height to absorb on a 6.9" screen, and
 // stretching six cards to swallow it made them tall and empty. A third row of

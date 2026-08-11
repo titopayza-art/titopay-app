@@ -344,6 +344,13 @@ async function calculateFee(serviceCode, amount) {
   if (Number(rule.minimum_fee) > 0) fee = Math.max(fee, Number(rule.minimum_fee));
   if (Number(rule.maximum_fee) > 0) fee = Math.min(fee, Number(rule.maximum_fee));
   if (normalizedServiceCode === "qr_payment") fee = Math.max(fee, 0.50);
+  // A fee is never negative. A negative rule reaching here would debit LESS
+  // than the amount while the recipient is credited the full amount, and would
+  // "credit" the revenue wallet a negative number — which debits it. TitoPay
+  // would fund the difference on every such transaction. The admin side now
+  // refuses to store one; this is the second line, because a bad row can also
+  // arrive from a migration, a seed or a direct database edit.
+  if (!Number.isFinite(fee) || fee < 0) fee = 0;
   fee = roundMoney(fee);
   return {
     serviceCode: rule.service_code,
@@ -367,6 +374,29 @@ async function updatePricingRule(id, payload, actor) {
   if (payload.vatPercentage !== undefined) normalizedPayload.vat_percentage = payload.vatPercentage;
   if (payload.enabled !== undefined) normalizedPayload.active = payload.enabled;
   if (payload.effectiveDate !== undefined) normalizedPayload.effective_date = payload.effectiveDate;
+  // Nothing on a pricing rule may be negative or nonsense. Without this an
+  // admin sending flatFee: -5 wrote -5 straight to pricing_rules.
+  for (const [field, label, ceiling] of [
+    ["flat_fee", "Flat fee", 1000000],
+    ["percentage_fee", "Percentage fee", 100],
+    ["minimum_fee", "Minimum fee", 1000000],
+    ["maximum_fee", "Maximum fee", 1000000],
+    ["vat_percentage", "VAT percentage", 100]
+  ]) {
+    if (normalizedPayload[field] === undefined || normalizedPayload[field] === null) continue;
+    const value = Number(normalizedPayload[field]);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new AppError(400, `${label} must be zero or more`);
+    }
+    if (value > ceiling) throw new AppError(400, `${label} is above the allowed maximum of ${ceiling}`);
+  }
+  {
+    const minimumFee = Number(normalizedPayload.minimum_fee || 0);
+    const maximumFee = Number(normalizedPayload.maximum_fee || 0);
+    if (maximumFee > 0 && minimumFee > maximumFee) {
+      throw new AppError(400, "Minimum fee cannot be greater than maximum fee");
+    }
+  }
   if (normalizedPayload.flat_fee !== undefined || normalizedPayload.percentage_fee !== undefined) {
     const flatFee = Number(normalizedPayload.flat_fee || 0);
     const percentageFee = Number(normalizedPayload.percentage_fee || 0);
