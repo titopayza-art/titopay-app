@@ -197,15 +197,37 @@ test("Every blocked-payout message states that no wallet debit was made", () => 
 });
 
 test("A payout entry is built from the documented fields only", () => {
+  // payoutId and payoutMethod are exactly what peach-withdrawal-service sends:
+  // a uuidv4() and "realtime-eft". This test used to pass "po_1" and "EFT",
+  // which buildPayoutEntry accepted before it was tightened to Peach's
+  // published createPayoutRequest schema and which no caller has ever sent.
   const entry = payout.buildPayoutEntry({
     currency: "ZAR", amount: 100, accountNumber: "1234567890", branchCode: "250655",
-    reference: "TP-WD-1", bankName: "FNB", accountHolder: "A Customer", payoutMethod: "EFT",
-    merchantReference: "TP-WD-1", payoutId: "po_1"
+    reference: "TP-WD-1", bankName: "FNB", accountHolder: "A Customer",
+    payoutMethod: "realtime-eft", merchantReference: "TP-WD-1",
+    payoutId: "3f2a1c8e-5b74-4d19-9a30-6e8c2f7b410d"
   });
   assert.deepEqual(Object.keys(entry).sort(), [
     "accountHolder", "accountNumber", "amount", "bankName", "branchCode", "currency",
     "merchantReference", "payoutId", "payoutMethod", "reference"
   ].sort());
+});
+
+test("A payout is refused when it does not match the documented schema", () => {
+  // The tightening this test was behind, pinned so it cannot be loosened back.
+  const valid = {
+    currency: "ZAR", amount: 100, accountNumber: "1234567890", branchCode: "250655",
+    reference: "TP-WD-1", bankName: "FNB", accountHolder: "A Customer",
+    payoutMethod: "realtime-eft", payoutId: "3f2a1c8e-5b74-4d19-9a30-6e8c2f7b410d"
+  };
+  assert.throws(() => payout.buildPayoutEntry({ ...valid, payoutId: "po_1" }),
+    /payoutId must be a lowercase v4 UUID/);
+  assert.throws(() => payout.buildPayoutEntry({ ...valid, payoutMethod: "EFT" }),
+    /payoutMethod must be one of realtime-eft/);
+  assert.throws(() => payout.buildPayoutEntry({ ...valid, branchCode: "25065" }),
+    /branchCode must be exactly 6 digits/);
+  assert.throws(() => payout.buildPayoutEntry({ ...valid, bankName: "Not A Bank" }),
+    /bankName must be one of the banks Peach supports/);
 });
 
 test("An incomplete payout is refused before it reaches Peach", () => {

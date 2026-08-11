@@ -6,6 +6,7 @@ const { config } = require("./config/env");
 const routes = require("./routes");
 const hrRoutes = require("./routes/hr.routes");
 const providerWebhookRoutes = require("./routes/provider-webhook.routes");
+const payoutWebhookRoutes = require("./routes/payout-webhook.routes");
 const paymentReturnRoutes = require("./routes/payment-return.routes");
 const emailWebhookRoutes = require("./routes/email-webhook.routes");
 const { requestIdMiddleware } = require("./middleware/request-id");
@@ -122,6 +123,10 @@ app.use(generalLimiter);
 // Mount it before the versioned route stack so it can never fall through to a
 // router-level JWT middleware. Every other API route keeps its existing auth.
 app.use("/v1/webhooks/provider", providerWebhookRoutes);
+// Peach Payouts status notifications. Public by necessity and unsigned by
+// Peach's own specification, so it decides nothing — TitoPay re-queries Peach
+// before any money moves.
+app.use("/v1/webhooks/peach-payouts", payoutWebhookRoutes);
 // Peach Checkout POSTs the customer's browser here after payment. Public by
 // necessity — it is a redirect target, and it never decides a payment outcome.
 app.use("/v1/payments/topup/return", paymentReturnRoutes);

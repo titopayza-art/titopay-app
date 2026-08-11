@@ -11,6 +11,7 @@ const path = require("node:path");
 const email = require("../src/services/email-centre-service");
 
 const root = path.join(__dirname, "..");
+const { pwaFile } = require("./pwa-path");
 
 test("Email Centre seeds every required transactional template", () => {
   // 24 customer and transactional templates, plus 6 for HR work communications.
@@ -61,7 +62,7 @@ test("wallet unlock automatically uses the saved authentication preference with 
   const service = fs.readFileSync(path.join(root, "src/services/email-otp-service.js"), "utf8");
   const preference = fs.readFileSync(path.join(root, "src/services/authentication-preference-service.js"), "utf8");
   const routes = fs.readFileSync(path.join(root, "src/routes/security.routes.js"), "utf8");
-  const app = fs.readFileSync(path.join(root, "../app/app.js"), "utf8");
+  const app = fs.readFileSync(pwaFile("app.js"), "utf8");
   assert.match(service, /wallet_unlock/);
   assert.match(routes, /wallet-lock\/unlock\/options/);
   assert.match(preference, /emailOtp\.createChallenge/);
@@ -89,7 +90,7 @@ test("Email Statement uses the existing Email Centre template and safe statement
 });
 
 test("customer-facing statement copy does not expose internal Email Centre details", () => {
-  const app=fs.readFileSync(path.join(root,"../app/app.js"),"utf8");
+  const app=fs.readFileSync(pwaFile("app.js"),"utf8");
   const template=email.DEFAULT_TEMPLATES.find(([key])=>key==="email_statement");
   assert.ok(template);
   assert.doesNotMatch(app,/Email Centre queue/i);
@@ -226,8 +227,8 @@ test("customer password changes add free Email OTP without replacing SMS recover
 });
 
 test("PWA offers authenticated password changes by SMS or free Email OTP", () => {
-  const app=fs.readFileSync(path.join(root,"../app/app.js"),"utf8");
-  const styles=fs.readFileSync(path.join(root,"../app/styles.css"),"utf8");
+  const app=fs.readFileSync(pwaFile("app.js"),"utf8");
+  const styles=fs.readFileSync(pwaFile("styles.css"),"utf8");
   assert.match(app,/api\("\/v1\/auth\/me\/password-change\/options"\)/);
   assert.match(app,/api\("\/v1\/auth\/me\/password-change\/request"/);
   assert.match(app,/name="otpChannel" value="sms"/);
@@ -242,7 +243,7 @@ test("PWA offers authenticated password changes by SMS or free Email OTP", () =>
 });
 
 test("PWA notification clearing persists across server and transaction refreshes", () => {
-  const app=fs.readFileSync(path.join(root,"../app/app.js"),"utf8");
+  const app=fs.readFileSync(pwaFile("app.js"),"utf8");
   assert.match(app,/function notificationClearedAtKey\(\)/);
   assert.match(app,/localStorage\.setItem\(notificationClearedAtKey\(\), String\(Date\.now\(\)\)\)/);
   assert.match(app,/Array\.isArray\(stored\) \? stored : defaultInAppNotifications\(\)/);
@@ -338,7 +339,7 @@ test("Welcome Email lifecycle and template changes use existing delivery and aud
 });
 
 test("App reports asynchronous Welcome Email status without changing the registration route", () => {
-  const app=fs.readFileSync(path.join(root,"../app/app.js"),"utf8");
+  const app=fs.readFileSync(pwaFile("app.js"),"utf8");
   assert.match(app,/api\("\/v1\/auth\/register"/);
   assert.match(app,/registration\.user\?\.welcomeEmailQueued/);
   assert.match(app,/Your welcome email is on its way\./);
@@ -362,8 +363,8 @@ test("routine customer login alerts remain in-app while unrecognised-device emai
 
 test("production email-verification links have a working token-safe PWA landing page", () => {
   const service=fs.readFileSync(path.join(root,"src/services/email-centre-service.js"),"utf8");
-  const page=fs.readFileSync(path.join(root,"../app/verify-email/index.html"),"utf8");
-  const handler=fs.readFileSync(path.join(root,"../app/verify-email/verify-email.js"),"utf8");
+  const page=fs.readFileSync(pwaFile("verify-email/index.html"),"utf8");
+  const handler=fs.readFileSync(pwaFile("verify-email/verify-email.js"),"utf8");
   assert.match(service,/\/verify-email\?token=/);
   assert.match(page,/verify-email\.js\?v=227/);
   assert.match(handler,/\/v1\/auth\/email\/verify/);
@@ -390,7 +391,7 @@ test("Email Statement wallet operations are authenticated, priced, atomic and id
 });
 
 test("Activity provides a confirmed Email Statement action with visible R0.10 pricing", () => {
-  const app=fs.readFileSync(path.join(root,"../app/app.js"),"utf8");
+  const app=fs.readFileSync(pwaFile("app.js"),"utf8");
   assert.match(app,/data-action="email-statement"/);
   // The price is rendered from the constant rather than typed into the button,
   // so the assertion checks both halves: that the button shows the fee, and
@@ -406,7 +407,7 @@ test("Activity provides a confirmed Email Statement action with visible R0.10 pr
 });
 
 test("Personal and Business PDF statements use the current logo and fit amount values", () => {
-  const app=fs.readFileSync(path.join(root,"../app/app.js"),"utf8");
+  const app=fs.readFileSync(pwaFile("app.js"),"utf8");
   assert.match(app,/const profileType = state\.accountType === "business" \? "Business profile" : "Personal profile"/);
   assert.match(app,/text\(52, 768, "Tito", 27, "F2", "0\.03 0\.08 0\.22"\)/);
   assert.match(app,/text\(97, 768, "Pay", 27, "F2", "0\.18 0\.54 0\.95"\)/);
@@ -450,7 +451,7 @@ test("critical emails remain protected while optional transaction and support em
 });
 
 test("PWA Notification Centre exposes account-wide Email preferences and protected critical notices", () => {
-  const app=fs.readFileSync(path.join(root,"../app/app.js"),"utf8");
+  const app=fs.readFileSync(pwaFile("app.js"),"utf8");
   assert.match(app,/data-action="preview-email-notifications"/);
   assert.match(app,/Email notification preferences/);
   assert.match(app,/Transaction receipts/);
@@ -461,8 +462,8 @@ test("PWA Notification Centre exposes account-wide Email preferences and protect
 });
 
 test("PWA renames only the customer tickets tile to Event Tickets", () => {
-  const app=fs.readFileSync(path.join(root,"../app/app.js"),"utf8");
-  const catalogue=JSON.parse(fs.readFileSync(path.join(root,"../app/services-default.json"),"utf8"));
+  const app=fs.readFileSync(pwaFile("app.js"),"utf8");
+  const catalogue=JSON.parse(fs.readFileSync(pwaFile("services-default.json"),"utf8"));
   const tickets=catalogue.items.find((item)=>item.service_code==="tickets");
   assert.equal(tickets.service_name,"Event Tickets");
   assert.equal(tickets.action,"tickets");

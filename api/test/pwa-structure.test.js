@@ -14,8 +14,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
+const { pwaFile } = require("./pwa-path");
 
-const appPath = path.join(__dirname, "../../app/app.js");
+const appPath = pwaFile("app.js");
 const source = fs.readFileSync(appPath, "utf8");
 const lines = source.split("\n");
 
@@ -78,7 +79,7 @@ test("the whole app is still there", () => {
 });
 
 test("the shipped bundle is rebuilt from this source", () => {
-  const min = fs.readFileSync(path.join(__dirname, "../../app/app.min.js"), "utf8");
+  const min = fs.readFileSync(pwaFile("app.min.js"), "utf8");
   // Terser does not mangle top-level names, so every entry point the tests and
   // the markup rely on must still be reachable by name.
   for (const name of ["api", "render", "boot", "primaryWallet", "statementPdf", "transactionPostedToWallet", "statementPostedAmount"]) {
@@ -89,8 +90,8 @@ test("the shipped bundle is rebuilt from this source", () => {
 });
 
 test("the service worker and the page agree on the bundle version", () => {
-  const html = fs.readFileSync(path.join(__dirname, "../../app/index.html"), "utf8");
-  const worker = fs.readFileSync(path.join(__dirname, "../../app/service-worker.js"), "utf8");
+  const html = fs.readFileSync(pwaFile("index.html"), "utf8");
+  const worker = fs.readFileSync(pwaFile("service-worker.js"), "utf8");
   const pageVersion = (html.match(/app\.min\.js\?v=(\d+)/) || [])[1];
   const workerVersion = (worker.match(/app\.min\.js\?v=(\d+)/) || [])[1];
   assert.ok(pageVersion, "index.html must cache-bust app.min.js");

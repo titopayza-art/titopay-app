@@ -13,9 +13,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
+const { pwaFile } = require("./pwa-path");
 const vm = require("vm");
 
-const appSource = fs.readFileSync(path.join(__dirname, "../../app/app.js"), "utf8");
+const appSource = fs.readFileSync(pwaFile("app.js"), "utf8");
 const apiSource = (...parts) => fs.readFileSync(path.join(__dirname, "..", "src", ...parts), "utf8");
 
 // Pull the real statement functions out of the PWA bundle and run them, so

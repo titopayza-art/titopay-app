@@ -1,9 +1,9 @@
 TitoPay deployment build — 2026-08-10 11:59 UTC
-Branch: claude/peach-payments-403-fix-6sv7cy @ b1d408b
+Branch: claude/peach-payments-403-fix-6sv7cy @ 81c5037
 PWA bundle: v298 (titopay-pwa-v298-clear-fee-breakdown)
 Admin console: admin-console-v76
 API: scale changes 1-2, cluster fix, Marketing & Sales, three-seat approval
-Migrations to run (in this order):
+Migrations: run "npm run db:apply-migrations" from the API directory. It applies:
   20260810_rate_limit_counters.up.sql
   20260810_marketing_command_centre.up.sql
   20260810_senior_marketing_approval.up.sql

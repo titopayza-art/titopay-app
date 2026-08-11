@@ -390,27 +390,160 @@ function assertPayoutAvailable(availability) {
 
 /* -------------------------------------------------------------- payout API */
 
+/* ------------------------------------------------ documented payout schema */
+
+// createPayoutRequest, exactly as published. Every constraint below is quoted
+// from the reference; nothing here is inferred.
+// https://developer.peachpayments.com/reference/createpayoutrequest
+//
+//   amount        number, MINOR units (cents), 1000 .. 500000000
+//   accountNumber string, max 50
+//   branchCode    string, ^[0-9]{6}$
+//   reference     string, ^(?! )[A-Za-z0-9 ]{1,20}(?<! )$
+//   bankName      enum, see SUPPORTED_BANKS
+//   accountHolder string, 2..50, ^[a-zA-Z0-9]([ .-](?![ .-])|[a-zA-Z0-9]){0,48}[a-zA-Z0-9]$
+//   payoutMethod  enum, "realtime-eft"
+//   currency      enum, "ZAR"
+//   payoutId      optional lowercase UUIDv4 — supplied by TitoPay so a payout
+//                 always carries our own identifier
+const SUPPORTED_BANKS = [
+  "STANDARD BANK", "NEDBANK", "FNB", "OLD MUTUAL BANK", "ACCESS BANK", "AFRICAN BANK",
+  "UBANK LTD", "BIDVEST BANK", "BIDVEST BANK ALLIANCES", "CAPITEC BANK", "ABSA",
+  "HBZ BANK LIMITED", "FINBOND MUTUAL BANK", "INVESTEC BANK LIMITED", "FINBOND EPE",
+  "DISCOVERY BANK", "TYMEBANK", "SASFIN BANK", "STANDARD CHARTERED BANK SA",
+  "ALBARAKA BANK", "CAPITEC BUSINESS", "AFRICAN BANK BUSINESS", "BANK ZERO MUTUAL BANK",
+  "YWBN MUTUAL BANK"
+];
+
+const PAYOUT_METHODS = ["realtime-eft"];
+const MIN_PAYOUT_CENTS = 1000;
+const MAX_PAYOUT_CENTS = 500000000;
+const PAYOUT_REFERENCE_PATTERN = /^(?! )[A-Za-z0-9 ]{1,20}(?<! )$/;
+const ACCOUNT_HOLDER_PATTERN = /^[a-zA-Z0-9]([ .-](?![ .-])|[a-zA-Z0-9]){0,48}[a-zA-Z0-9]$/;
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+// Peach statuses, verbatim. `pending` and `processing` are not outcomes.
+const PAYOUT_TERMINAL_STATUSES = new Set(["successful", "failed", "cancelled", "reversed"]);
+const PAYOUT_STATUSES = new Set(["pending", "processing", ...PAYOUT_TERMINAL_STATUSES]);
+
+function normalizeBankName(value) {
+  const text = trimmed(value).toUpperCase().replace(/\s+/g, " ");
+  return SUPPORTED_BANKS.includes(text) ? text : "";
+}
+
+// Peach's reference alphabet is [A-Za-z0-9 ] only, so a TitoPay reference such
+// as "TP-WD-MSJ0-1A2B" cannot be sent as-is. Strip to the allowed alphabet
+// rather than dropping the reference, so the payout still carries something an
+// operator can match back to the transaction.
+function toPayoutReference(value, fallback = "TitoPay") {
+  const cleaned = trimmed(value).replace(/[^A-Za-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 20).trim();
+  return cleaned || fallback;
+}
+
+function toAccountHolder(value) {
+  const cleaned = trimmed(value)
+    .replace(/[^a-zA-Z0-9 .-]+/g, " ")
+    .replace(/([ .-])(?=[ .-])/g, "")
+    .replace(/^[ .-]+|[ .-]+$/g, "")
+    .slice(0, 50)
+    .replace(/^[ .-]+|[ .-]+$/g, "");
+  return ACCOUNT_HOLDER_PATTERN.test(cleaned) ? cleaned : "";
+}
+
+// Rands in, cents out. Peach rejects fractional cents, and a rounding slip here
+// is a real over- or under-payment, so this is deliberately explicit.
+function toMinorUnits(amountInRands) {
+  const rands = Number(amountInRands);
+  if (!Number.isFinite(rands)) return NaN;
+  return Math.round(rands * 100);
+}
+
+function fromMinorUnits(cents) {
+  const value = Number(cents);
+  return Number.isFinite(value) ? Math.round(value) / 100 : NaN;
+}
+
 // Documented request shape only — no invented fields.
 // POST {payouts}/merchants/{merchantId}/payouts
 //   { payouts: [{ payoutId, currency, amount, accountNumber, branchCode,
 //                 reference, bankName, accountHolder, merchantReference, payoutMethod }] }
+//
+// `amount` is given to this function in RANDS, the unit TitoPay stores, and is
+// converted to the cents Peach documents. Callers never do the conversion.
 function buildPayoutEntry(request = {}) {
-  const required = ["currency", "amount", "accountNumber", "branchCode", "reference", "bankName", "accountHolder", "payoutMethod"];
+  const problems = [];
+
+  const payoutId = trimmed(request.payoutId).toLowerCase();
+  if (payoutId && !UUID_V4_PATTERN.test(payoutId)) problems.push("payoutId must be a lowercase v4 UUID");
+
+  const currency = (trimmed(request.currency).toUpperCase() || "ZAR");
+  if (currency !== "ZAR") problems.push("currency must be ZAR");
+
+  const amount = toMinorUnits(request.amount);
+  if (!Number.isFinite(amount) || amount <= 0) problems.push("amount must be greater than zero");
+  else if (amount < MIN_PAYOUT_CENTS) problems.push(`the smallest payout is R${(MIN_PAYOUT_CENTS / 100).toFixed(2)}`);
+  else if (amount > MAX_PAYOUT_CENTS) problems.push(`the largest payout is R${(MAX_PAYOUT_CENTS / 100).toFixed(2)}`);
+
+  const accountNumber = trimmed(request.accountNumber).replace(/\s+/g, "");
+  if (!accountNumber) problems.push("accountNumber is required");
+  else if (accountNumber.length > 50) problems.push("accountNumber is too long");
+
+  const branchCode = trimmed(request.branchCode).replace(/\s+/g, "");
+  if (!/^[0-9]{6}$/.test(branchCode)) problems.push("branchCode must be exactly 6 digits");
+
+  const reference = toPayoutReference(request.reference);
+  if (!PAYOUT_REFERENCE_PATTERN.test(reference)) problems.push("reference must be 1-20 letters, digits or spaces");
+
+  const bankName = normalizeBankName(request.bankName);
+  if (!bankName) problems.push("bankName must be one of the banks Peach supports");
+
+  const accountHolder = toAccountHolder(request.accountHolder);
+  if (!accountHolder || accountHolder.length < 2) problems.push("accountHolder must be 2-50 letters, digits, spaces, dots or hyphens");
+
+  const payoutMethod = trimmed(request.payoutMethod) || PAYOUT_METHODS[0];
+  if (!PAYOUT_METHODS.includes(payoutMethod)) problems.push(`payoutMethod must be one of ${PAYOUT_METHODS.join(", ")}`);
+
+  const merchantReference = request.merchantReference === undefined || request.merchantReference === null
+    ? undefined
+    : toPayoutReference(request.merchantReference, "");
+
+  if (problems.length) {
+    // Bank details are never echoed back — only which field is wrong.
+    throw new AppError(400, `Payout details are incomplete: ${problems.join("; ")}`, {
+      code: "PAYOUT_DETAILS_INCOMPLETE",
+      problems
+    });
+  }
+
   const entry = {
-    payoutId: trimmed(request.payoutId) || undefined,
-    currency: trimmed(request.currency).toUpperCase() || "ZAR",
-    amount: Number(request.amount),
-    accountNumber: trimmed(request.accountNumber),
-    branchCode: trimmed(request.branchCode),
-    reference: trimmed(request.reference),
-    bankName: trimmed(request.bankName),
-    accountHolder: trimmed(request.accountHolder),
-    merchantReference: trimmed(request.merchantReference) || undefined,
-    payoutMethod: trimmed(request.payoutMethod)
+    payoutId: payoutId || undefined,
+    currency,
+    amount,
+    accountNumber,
+    branchCode,
+    reference,
+    bankName,
+    accountHolder,
+    merchantReference: merchantReference || undefined,
+    payoutMethod
   };
-  const missing = required.filter((field) => entry[field] === undefined || entry[field] === "" || (field === "amount" && !(Number.isFinite(entry.amount) && entry.amount > 0)));
-  if (missing.length) throw new AppError(400, `Payout details are incomplete: ${missing.join(", ")}`, { code: "PAYOUT_DETAILS_INCOMPLETE", missingFields: missing });
   return Object.fromEntries(Object.entries(entry).filter(([, value]) => value !== undefined));
+}
+
+// Pull our payout out of a Peach create/status response by the payoutId TitoPay
+// generated. Peach echoes the whole request back, so the entry is always there.
+function findPayoutInResponse(payload = {}, payoutId) {
+  const list = Array.isArray(payload.payouts) ? payload.payouts : [];
+  const wanted = trimmed(payoutId).toLowerCase();
+  const match = list.find((item) => trimmed(item?.payoutId).toLowerCase() === wanted);
+  return match || (list.length === 1 ? list[0] : null);
+}
+
+// Peach's own vocabulary, normalised but never reinterpreted. An unrecognised
+// status is treated as still-in-flight, never as an outcome.
+function normalizePayoutStatus(value) {
+  const status = trimmed(value).toLowerCase();
+  return PAYOUT_STATUSES.has(status) ? status : "";
 }
 
 async function createPayoutRequest(requests, { storedHealthStatus } = {}) {
@@ -437,16 +570,28 @@ module.exports = {
   AUTH_SERVICE_URLS,
   PAYOUT_SERVICE_URLS,
   OAUTH_TOKEN_PATH,
+  SUPPORTED_BANKS,
+  PAYOUT_METHODS,
+  PAYOUT_TERMINAL_STATUSES,
+  MIN_PAYOUT_CENTS,
+  MAX_PAYOUT_CENTS,
   assertPayoutAvailable,
   buildPayoutEntry,
   clearPayoutTokenCache,
   createPayoutRequest,
+  findPayoutInResponse,
+  fromMinorUnits,
   missingPayoutFields,
+  normalizeBankName,
   normalizeEnvironment,
+  normalizePayoutStatus,
   payoutAvailability,
   storedPayoutHealthStatus,
   payoutBaseUrl,
   queryPayoutRequest,
   requestPayoutAccessToken,
-  testPayoutConnection
+  testPayoutConnection,
+  toAccountHolder,
+  toMinorUnits,
+  toPayoutReference
 };
