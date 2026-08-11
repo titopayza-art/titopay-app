@@ -182,6 +182,38 @@ test("signing out clears what the app stored about the person", () => {
     "personal data goes; device preferences stay");
 });
 
+test("phone contacts are only offered where the browser can actually open them", () => {
+  // The Contact Picker API is Chromium-on-Android only. Safari does not
+  // implement it, and every browser on iOS is required to use WebKit, so Chrome
+  // on an iPhone does not have it either. It is not a setting anyone can turn on.
+  //
+  // The button used to be rendered everywhere and answered a tap with an error,
+  // which reads as something broken rather than something absent.
+  const mount = source.match(/function enhanceContactPickerControls\(root = document\)[\s\S]*?\n\}/);
+  assert.ok(mount, "enhanceContactPickerControls must exist");
+  assert.match(mount[0], /if \(contactPickerSupported\(\)\) \{[\s\S]{0,600}?contact-picker-btn/,
+    "the contacts button must be created only when the API is present");
+  assert.match(mount[0], /if \(!tools\.childElementCount\) return;/,
+    "an empty toolbar must not be inserted");
+  // Verify TitoPay user is unrelated to contacts and must survive on every device.
+  assert.match(mount[0], /recipient-verify-btn/);
+
+  // The capability check itself, run for real against both shapes.
+  const fn = source.match(/function contactPickerSupported\(\) \{[\s\S]*?\n\}/);
+  // eslint-disable-next-line no-new-func
+  const supported = new Function("window", "navigator", `${fn[0]}; return contactPickerSupported;`);
+  assert.equal(supported({ isSecureContext: true }, {})(), false, "no API means no button");
+  assert.equal(supported({ isSecureContext: false }, { contacts: { select() {} } })(), false,
+    "an insecure context means no button");
+  assert.equal(supported({ isSecureContext: true }, { contacts: { select() {} } })(), true);
+
+  // And the message, for the case where support disappears between render and
+  // tap, must not blame the customer's connection — they are already on HTTPS.
+  assert.match(source, /This browser cannot open your phone contacts/);
+  assert.doesNotMatch(source, /Phone contacts are available on supported HTTPS mobile browsers/,
+    "the old wording implied an HTTPS problem the customer did not have");
+});
+
 test("the whole app is still there", () => {
   const declared = (source.match(/^(?:async )?function [A-Za-z0-9_$]+/gm) || []).length;
   assert.ok(declared > 850, `expected the full app, found ${declared} top-level functions`);

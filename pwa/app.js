@@ -7144,7 +7144,7 @@ async function pickPhoneContact(button) {
     return;
   }
   if (!contactPickerSupported()) {
-    showToast("Phone contacts are available on supported HTTPS mobile browsers. You can still enter a cellphone, username or email.", "error");
+    showToast("This browser cannot open your phone contacts. Type the cellphone number, @username or email instead.", "error");
     field.focus();
     return;
   }
@@ -7179,16 +7179,27 @@ function enhanceContactPickerControls(root = document) {
     if (!contactPickerEligible(field) || field.dataset.contactPickerEnhanced === "true") return;
     field.dataset.contactPickerEnhanced = "true";
     if (!field.id) field.id = `contact-recipient-${Date.now()}-${index}`;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "contact-picker-btn";
-    button.dataset.action = "pick-contact";
-    button.dataset.targetId = field.id;
-    button.setAttribute("aria-label", "Choose from phone contacts");
-    button.innerHTML = `${icon("contacts")} <span>Phone contacts</span>`;
     const tools = document.createElement("div");
     tools.className = "recipient-tools";
-    tools.appendChild(button);
+    // Phone contacts only exist where the browser implements the Contact Picker
+    // API, which today means Chromium on Android. Safari does not implement it,
+    // and every browser on iOS is required to use WebKit — so Chrome on an
+    // iPhone will not have it either. It is not a setting anyone can turn on.
+    //
+    // The button used to be offered everywhere and answered a tap with an
+    // error, which reads as something broken rather than something absent.
+    // Offering it only where it works is the honest version; the field below
+    // takes a typed number, username or email exactly as before.
+    if (contactPickerSupported()) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "contact-picker-btn";
+      button.dataset.action = "pick-contact";
+      button.dataset.targetId = field.id;
+      button.setAttribute("aria-label", "Choose from phone contacts");
+      button.innerHTML = `${icon("contacts")} <span>Phone contacts</span>`;
+      tools.appendChild(button);
+    }
     const userDestination = field.dataset.noUserVerify !== "true";
     if (userDestination) {
       const verifyButton = document.createElement("button");
@@ -7200,6 +7211,9 @@ function enhanceContactPickerControls(root = document) {
       verifyButton.innerHTML = `${icon("shield")} <span>Verify TitoPay user</span>`;
       tools.appendChild(verifyButton);
     }
+    // Neither control applies on some fields, and an empty toolbar still
+    // occupies space and reads as something that failed to load.
+    if (!tools.childElementCount) return;
     field.insertAdjacentElement("afterend", tools);
     if (!userDestination) return;
     const hint = document.createElement("div");
