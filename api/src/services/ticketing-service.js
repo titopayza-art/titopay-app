@@ -435,20 +435,41 @@ async function getBusinessEligibility(userId) {
   const row = rows[0];
   if (!row) throw new AppError(404, "TitoPay account not found");
 
-  const blockers = [];
-  if (row.account_type !== "business") blockers.push("Only TitoPay Business accounts can create events.");
-  if (row.user_status !== "active" || BLOCKED_USER_STATUSES.has(row.user_status)) blockers.push("Business account must be active and unrestricted.");
-  if (row.profile_locked) blockers.push("Business profile is locked. Contact TitoPay Support.");
-  if (!VERIFIED_STATUSES.has(String(row.fica_status || "").toLowerCase())) blockers.push("Full business FICA verification is required before creating events.");
-  if (!row.merchant_uuid) blockers.push("Business merchant profile is required before creating events.");
-  if (row.merchant_uuid && row.merchant_status !== "active") blockers.push("Business merchant profile must be active.");
-  if (row.merchant_uuid && !VERIFIED_STATUSES.has(String(row.merchant_verification_status || "").toLowerCase())) blockers.push("Business verification must be fully approved.");
-  if (!row.business_name || !row.merchant_id) blockers.push("Business registration details must be completed.");
-  if (!row.wallet_id || row.wallet_status !== "active") blockers.push("Active business wallet is required.");
+  // Two kinds of requirement, and the split is the whole point of free events.
+  //
+  // STRUCTURAL requirements describe who the organiser is — a real, active,
+  // registered business. They apply to every event, because even a free seminar
+  // is published under a business's name and must be traceable to one.
+  //
+  // PAYMENT requirements — FICA, approved verification, an active wallet — gate
+  // the ability to RECEIVE MONEY. A free event receives none, so it does not
+  // need them. They are enforced the moment an event carries a paid ticket, and
+  // again at submission, so a free draft cannot become a paid one without them.
+  const structuralBlockers = [];
+  if (row.account_type !== "business") structuralBlockers.push("Only TitoPay Business accounts can create events.");
+  if (row.user_status !== "active" || BLOCKED_USER_STATUSES.has(row.user_status)) structuralBlockers.push("Business account must be active and unrestricted.");
+  if (row.profile_locked) structuralBlockers.push("Business profile is locked. Contact TitoPay Support.");
+  if (!row.merchant_uuid) structuralBlockers.push("Business merchant profile is required before creating events.");
+  if (row.merchant_uuid && row.merchant_status !== "active") structuralBlockers.push("Business merchant profile must be active.");
+  if (!row.business_name || !row.merchant_id) structuralBlockers.push("Business registration details must be completed.");
+
+  const paymentBlockers = [];
+  if (!VERIFIED_STATUSES.has(String(row.fica_status || "").toLowerCase())) paymentBlockers.push("Full business FICA verification is required before selling paid tickets.");
+  if (row.merchant_uuid && !VERIFIED_STATUSES.has(String(row.merchant_verification_status || "").toLowerCase())) paymentBlockers.push("Business verification must be fully approved before selling paid tickets.");
+  if (!row.wallet_id || row.wallet_status !== "active") paymentBlockers.push("An active business wallet is required to receive ticket payments.");
+
+  // `blockers` and `eligible` keep their original meaning — fully ready to sell
+  // paid tickets — so existing callers and the eligibility endpoint the PWA
+  // already reads do not change behaviour.
+  const blockers = [...structuralBlockers, ...paymentBlockers];
 
   return {
     eligible: blockers.length === 0,
     blockers,
+    structuralBlockers,
+    paymentBlockers,
+    // Can this business create and run a FREE event right now?
+    canCreateFreeEvents: structuralBlockers.length === 0,
     action: blockers.some((item) => /FICA|verification/i.test(item)) ? "complete_fica" : "contact_support",
     business: {
       userId: row.id,
@@ -467,6 +488,28 @@ async function getBusinessEligibility(userId) {
       walletStatus: row.wallet_status
     }
   };
+}
+
+// Does this set of ticket types charge anyone anything?
+function ticketTypesIncludePaid(ticketTypes = []) {
+  return (Array.isArray(ticketTypes) ? ticketTypes : [])
+    .some((item) => Number(item.price ?? item.price_amount ?? 0) > 0);
+}
+
+// The single gate every event-writing path calls. Structural blockers stop any
+// event; payment blockers stop only an event that carries a paid ticket. Called
+// at create, edit and submit, so the check re-runs whenever the ticket mix could
+// have changed — a free draft that gains a paid tier is caught here, not waved
+// through because it started free.
+function assertTicketingEligibility(eligibility, ticketTypes, verbPhrase) {
+  if (eligibility.structuralBlockers.length) {
+    throw new AppError(403, `Business verification is required before ${verbPhrase}`,
+      { ...eligibility, blockers: eligibility.structuralBlockers });
+  }
+  if (ticketTypesIncludePaid(ticketTypes) && eligibility.paymentBlockers.length) {
+    throw new AppError(403, "Full business FICA verification is required before selling paid tickets",
+      { ...eligibility, blockers: eligibility.paymentBlockers, action: "complete_fica" });
+  }
 }
 
 async function uniqueSlug(base, eventId = null) {
@@ -715,8 +758,9 @@ async function replaceDocuments(eventId, documents) {
 async function createEventDraft(userId, payload, meta = {}) {
   await ensureTicketingSchema();
   const eligibility = await getBusinessEligibility(userId);
-  if (!eligibility.eligible) throw new AppError(403, "Full business verification is required before creating ticketed events", eligibility);
   const data = eventPayload(payload, eligibility);
+  // Free events need only the structural checks; paid ones need FICA too.
+  assertTicketingEligibility(eligibility, data.ticketTypes, "creating events");
   const eventId = randomUUID();
   const slug = await uniqueSlug(data.eventName);
   const { rows } = await pool.query(
@@ -773,8 +817,9 @@ async function updateEventDraft(userId, eventId, payload, meta = {}) {
     throw new AppError(409, "This event can no longer be edited in the PWA");
   }
   const eligibility = await getBusinessEligibility(userId);
-  if (!eligibility.eligible) throw new AppError(403, "Full business verification is required before editing ticketed events", eligibility);
   const data = eventPayload({ ...existing, ...payload, eventName: payload.eventName || payload.event_name || existing.event_name }, eligibility);
+  // Re-checked on every edit: adding a paid tier to a free draft trips FICA here.
+  assertTicketingEligibility(eligibility, data.ticketTypes, "editing events");
   const slug = payload.eventName || payload.event_name ? await uniqueSlug(data.eventName, eventId) : existing.slug;
   const { rows } = await pool.query(
     `UPDATE events
@@ -828,7 +873,6 @@ async function updateEventDraft(userId, eventId, payload, meta = {}) {
 async function submitEvent(userId, eventId, meta = {}) {
   await ensureTicketingSchema();
   const eligibility = await getBusinessEligibility(userId);
-  if (!eligibility.eligible) throw new AppError(403, "Full business verification is required before submitting ticketed events", eligibility);
   const { rows } = await pool.query("SELECT * FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1", [eventId, userId]);
   const event = rows[0];
   if (!event) throw new AppError(404, "Event not found");
@@ -836,6 +880,10 @@ async function submitEvent(userId, eventId, meta = {}) {
     throw new AppError(409, "This event has already been submitted for review");
   }
   const ticketTypes = await getTicketTypes(eventId);
+  // The authoritative gate: submission is where a paid event leaves the
+  // business's hands for review, so the FICA requirement for paid tickets is
+  // enforced against the tickets actually stored, not a client-supplied payload.
+  assertTicketingEligibility(eligibility, ticketTypes, "submitting events");
   validateEventSubmission(event, ticketTypes);
   const { rows: updated } = await pool.query(
     `UPDATE events SET status='submitted', submitted_at=NOW(), rejection_reason=NULL, suspended_reason=NULL, updated_at=NOW()
@@ -1058,8 +1106,13 @@ async function ticketPurchasePreview(slug, payload = {}) {
   if (quantity > Number(row.max_purchase_quantity || 10)) throw new AppError(400, `Maximum purchase is ${row.max_purchase_quantity} ticket(s)`);
   if (available < quantity) throw new AppError(409, "Not enough tickets available");
   const subtotal = money(Number(row.price || 0) * quantity);
-  const buyerFee = (await calculateFee("ticket_buyer_service_fee", subtotal)).fee;
-  const businessCommission = (await calculateFee("ticket_business_commission", subtotal)).fee;
+  // A free ticket is free all the way through. The buyer service fee is a flat
+  // R10, so without this a "free" ticket would still charge the buyer R10 and
+  // demand they hold a balance — which is not a free ticket. No subtotal means
+  // no fee, no commission, and nothing to move.
+  const isFree = subtotal <= 0;
+  const buyerFee = isFree ? 0 : (await calculateFee("ticket_buyer_service_fee", subtotal)).fee;
+  const businessCommission = isFree ? 0 : (await calculateFee("ticket_business_commission", subtotal)).fee;
   return {
     eventId: row.id,
     eventName: row.event_name,
@@ -1194,9 +1247,16 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
 
     const buyerWallet = await loadWalletForUpdate(client, actor.userId);
     if (!buyerWallet) throw new AppError(404, "Buyer wallet not found");
-    if (Number(buyerWallet.available_balance || 0) < preview.total) throw new AppError(400, "Insufficient balance");
+    // A free ticket has total 0, so this correctly asks nothing of the buyer's
+    // balance; the guard only bites when there is something to pay.
+    if (preview.total > 0 && Number(buyerWallet.available_balance || 0) < preview.total) {
+      throw new AppError(400, "Insufficient balance");
+    }
+    // The business wallet is only needed when there is money to settle into it.
+    // A free event never credits the business, so a missing wallet must not stop
+    // a free ticket being issued.
     const businessWallet = await loadWalletForUpdate(client, locked.business_user_id, "business") || await loadWalletForUpdate(client, locked.business_user_id);
-    if (!businessWallet) throw new AppError(404, "Event business wallet not found");
+    if (preview.businessNet > 0 && !businessWallet) throw new AppError(404, "Event business wallet not found");
     const revenueWallet = await loadRevenueWalletForUpdate(client);
 
     await client.query(
@@ -1223,22 +1283,28 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
         JSON.stringify({ eventId: preview.eventId, ticketTypeId: preview.ticketTypeId, orderId, orderReference, businessNet: preview.businessNet })
       ]
     );
-    await applyWalletMovement(client, {
-      walletId: buyerWallet.id,
-      transactionId: txId,
-      entryType: "debit",
-      amount: preview.total,
-      reference,
-      metadata: { serviceCode: "ticket_purchase", orderId, eventId: preview.eventId }
-    });
-    await applyWalletMovement(client, {
-      walletId: businessWallet.id,
-      transactionId: txId,
-      entryType: "credit",
-      amount: preview.businessNet,
-      reference,
-      metadata: { serviceCode: "ticket_purchase", orderId, eventId: preview.eventId, settlement: "instant_wallet_credit" }
-    });
+    // applyWalletMovement refuses a zero amount by design, so every movement
+    // below is guarded — a free ticket moves no money and simply skips them.
+    if (preview.total > 0) {
+      await applyWalletMovement(client, {
+        walletId: buyerWallet.id,
+        transactionId: txId,
+        entryType: "debit",
+        amount: preview.total,
+        reference,
+        metadata: { serviceCode: "ticket_purchase", orderId, eventId: preview.eventId }
+      });
+    }
+    if (businessWallet && preview.businessNet > 0) {
+      await applyWalletMovement(client, {
+        walletId: businessWallet.id,
+        transactionId: txId,
+        entryType: "credit",
+        amount: preview.businessNet,
+        reference,
+        metadata: { serviceCode: "ticket_purchase", orderId, eventId: preview.eventId, settlement: "instant_wallet_credit" }
+      });
+    }
     if (preview.buyerFee + preview.businessCommission > 0) {
       await applyWalletMovement(client, {
         walletId: revenueWallet.id,
@@ -1520,6 +1586,10 @@ async function requestTicketRefund(actor, orderId, payload = {}, meta = {}) {
   const order = rows[0];
   if (!order) throw new AppError(404, "Ticket order not found");
   if (order.status !== "paid") throw new AppError(409, "This order is not eligible for refund request");
+  // A free ticket cost nothing, so there is nothing to refund. This also keeps
+  // the refund money path — which charges a R0.50 processing fee — off orders
+  // that never moved money.
+  if (money(order.total || 0) <= 0) throw new AppError(409, "This ticket was free, so there is nothing to refund. You can release your spot by not attending.");
   const { rows: existing } = await pool.query("SELECT * FROM ticket_refunds WHERE order_id = $1 AND status IN ('requested','under_review') LIMIT 1", [orderId]);
   if (existing[0]) return existing[0];
   const refundId = randomUUID();
@@ -1815,6 +1885,10 @@ module.exports = {
   // "may this person act on this event?".
   canManageEventTicketing,
   getBusinessEligibility,
+  // Exported so the free-vs-paid gate can be tested as the pure decision it is,
+  // without standing up a database.
+  ticketTypesIncludePaid,
+  assertTicketingEligibility,
   createEventDraft,
   updateEventDraft,
   submitEvent,
