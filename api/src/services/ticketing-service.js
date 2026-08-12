@@ -2020,16 +2020,35 @@ async function scanTicket(actor, payload = {}, meta = {}) {
 
 async function lookupVerifiedCustomer(identifier) {
   const value = cleanText(identifier, 180).toLowerCase();
+  const cleaned = value.replace(/^@/, "");
   const digits = value.replace(/\D/g, "");
+  // Two matching bugs lived here. (1) When the identifier had no digits (an
+  // @username or email), the digits clause compared against the EMPTY string —
+  // which matched any user with no phone on file, and LIMIT 1 with no ordering
+  // could then return a complete stranger. The clause now only applies to a
+  // real phone-shaped value. (2) A person's business and personal accounts
+  // often share a phone or email; with no ordering, the BUSINESS account could
+  // be picked for a door-staff role meant for the person. An exact @username
+  // wins outright (usernames are unique), then the personal account is
+  // preferred.
+  const params = [cleaned];
+  let digitsClause = "FALSE";
+  if (digits.length >= 6) {
+    params.push(digits);
+    digitsClause = `REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g') = $2`;
+  }
   const { rows } = await pool.query(
-    `SELECT id, full_name, username, email, phone, fica_status, status
+    `SELECT id, account_type, full_name, username, email, phone, fica_status, status
      FROM users
      WHERE LOWER(username) = $1
         OR LOWER(email) = $1
         OR LOWER(phone) = $1
-        OR REGEXP_REPLACE(COALESCE(phone, ''), '\\D', '', 'g') = $2
+        OR ${digitsClause}
+     ORDER BY (LOWER(username) = $1) DESC,
+              (account_type = 'personal') DESC,
+              created_at ASC
      LIMIT 1`,
-    [value.replace(/^@/, ""), digits]
+    params
   );
   const user = rows[0];
   if (!user) throw new AppError(404, "TitoPay user not found. Check the @username, phone or email.");
@@ -2093,6 +2112,31 @@ async function addEventStaff(actor, eventId, payload = {}, meta = {}) {
     ...meta
   });
   return { ...rows[0], user };
+}
+
+// Owner-only, like adding: taking someone off the door is the organiser's
+// call. The row is kept (status 'removed') so the audit trail stays whole; a
+// re-add simply reactivates it.
+async function removeEventStaff(actor, eventId, staffUserId, meta = {}) {
+  await ensureTicketingSchema();
+  const { rows: eventRows } = await pool.query("SELECT id FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1", [eventId, actor.userId]);
+  if (!eventRows[0]) throw new AppError(404, "Event not found");
+  const { rows } = await pool.query(
+    `UPDATE event_staff SET status = 'removed', updated_at = NOW()
+      WHERE event_id = $1 AND user_id = $2 AND status = 'active'
+      RETURNING *`,
+    [eventId, staffUserId]
+  );
+  if (!rows[0]) throw new AppError(404, "That person is not on this event's staff");
+  await eventAudit({
+    eventId,
+    actorType: "customer",
+    actorId: actor.userId,
+    action: "event_staff_removed",
+    metadata: { staffUserId },
+    ...meta
+  });
+  return rows[0];
 }
 
 async function listEventStaff(actor, eventId) {
@@ -2766,6 +2810,7 @@ module.exports = {
   // scan, for the organiser and for any staff assigned the scan permission.
   eventAttendance,
   addEventStaff,
+  removeEventStaff,
   listEventStaff,
   listStaffScanEvents,
   requestTicketRefund,

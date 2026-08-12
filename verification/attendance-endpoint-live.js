@@ -139,12 +139,37 @@ async function attendanceAsRoute(userId, eventId) {
     assert.equal(strangerEvents.length, 0, "a stranger sees no staff events");
     ok("staff/events lists the assignment for the scanner and nothing for a stranger");
 
+    // 3c. Lookup safety: an @username (no digits) must resolve to exactly that
+    //     user. The old lookup's digits clause compared against the EMPTY
+    //     string for such identifiers, which could match a random account with
+    //     no phone on file — the add then landed on a stranger, the organiser
+    //     saw nothing, and the intended scanner never got the event.
+    const decoyId = randomUUID();
+    await pool.query(
+      `INSERT INTO users (id, account_type, full_name, username, email, phone, password_hash, status, profile_locked, fica_status)
+       VALUES ($1,'personal','${TAG} Decoy','${TAG}_decoy','${TAG}_decoy@example.invalid',NULL,'x','active',FALSE,'pending')`,
+      [decoyId]);
+    const byUsername = await ticketing.addEventStaff({ userId: ids.businessUser }, draft.id, { identifier: `@${TAG}_scan`, role: "scanner", permissions: ["scan"] });
+    assert.equal(byUsername.user.id, ids.scannerUser, "an @username resolves to exactly that user, never a phoneless stranger");
+    const byEmail = await ticketing.addEventStaff({ userId: ids.businessUser }, draft.id, { identifier: `${TAG}_scan@example.invalid`, role: "scanner", permissions: ["scan"] });
+    assert.equal(byEmail.user.id, ids.scannerUser, "an email resolves to exactly that user too");
+    await pool.query("DELETE FROM users WHERE id = $1", [decoyId]);
+    ok("staff lookup resolves @usernames and emails exactly — never a phoneless stranger");
+
     // 4. Scan one ticket; the count the endpoint returns moves to 1 of 2.
     const code = (await pool.query("SELECT ticket_code FROM tickets WHERE event_id = $1 ORDER BY created_at LIMIT 1", [draft.id])).rows[0].ticket_code;
     await ticketing.scanTicket({ userId: ids.scannerUser }, { ticketCode: code });
     const afterScan = await attendanceAsRoute(ids.businessUser, draft.id);
     assert.deepEqual(afterScan.attendance, { scanned: 1, total: 2 }, `after one scan it is 1 of 2, got ${JSON.stringify(afterScan.attendance)}`);
     ok("after a scanner scans one ticket, the endpoint reports 1 of 2");
+
+    // 5. Removing the scanner takes the event away from them again: their staff
+    //    list empties and the attendance read is refused.
+    await ticketing.removeEventStaff({ userId: ids.businessUser }, draft.id, ids.scannerUser);
+    assert.equal((await ticketing.listStaffScanEvents(ids.scannerUser)).length, 0, "a removed scanner sees no staff events");
+    const removedRead = await attendanceAsRoute(ids.scannerUser, draft.id);
+    assert.equal(removedRead.status, 403, "a removed scanner can no longer read the count");
+    ok("removing a scanner revokes their access immediately");
 
     console.log("\n" + "=".repeat(78));
     console.log(`  ALL ${passed} CHECKS PASSED — attendance endpoint gates on scan permission and counts correctly.`);

@@ -24,6 +24,7 @@ const {
   scanTicket,
   eventAttendance,
   addEventStaff,
+  removeEventStaff,
   listEventStaff,
   listStaffScanEvents,
   requestTicketRefund,
@@ -344,6 +345,16 @@ router.get("/business/events/:id/attendance", requireAuth, async (req, res, next
       throw new AppError(403, "You are not allowed to scan this event");
     }
     res.json({ ok: true, attendance: await eventAttendance(eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/business/events/:id/staff/:userId/remove", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    const staffUserId = requireUuid(req.params.userId, "Staff user ID");
+    res.json({ ok: true, removed: await removeEventStaff(req.auth, eventId, staffUserId, meta(req)) });
   } catch (error) {
     next(error);
   }

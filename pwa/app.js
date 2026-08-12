@@ -2098,7 +2098,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "ticket-email") await submitTicketEmailForm(data, form);
     if (form.dataset.form === "vendor-tag-charge") await submitVendorTagCharge(data, form);
     if (form.dataset.form === "ticketing-purchase") await submitTicketingPurchase(data);
-    if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data);
+    if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data, form);
     if (form.dataset.form === "business-staff") await submitBusinessStaff(data);
     if (form.dataset.form === "ticketing-scan") await submitTicketingScan(data);
     if (form.dataset.form === "event-change-request") await submitEventChangeRequest(data, form);
@@ -2766,6 +2766,8 @@ function onChange(event) {
   if (eventPosterInput) prepareEventPosterPreview(eventPosterInput);
   const scanEventPick = event.target.closest("select[data-scan-event]");
   if (scanEventPick) refreshScanAttendance(scanEventPick.value);
+  const staffEventPick = event.target.closest("select[data-staff-event-pick]");
+  if (staffEventPick) refreshEventStaffList(staffEventPick.value);
   const changeRequestType = event.target.closest("select[data-change-request-type]");
   if (changeRequestType) syncChangeRequestFields(changeRequestType);
   const tierNameInput = event.target.closest("input[data-tier-name]");
@@ -2943,6 +2945,11 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "ticketing-staff-manage") {
     await openBusinessTicketingDashboard({ refresh: true });
+    return;
+  }
+  if (String(action || "").startsWith("staff-remove:")) {
+    const parts = action.split(":");
+    await removeTicketingStaff(parts[1], parts[2]);
     return;
   }
   if (action === "ticket-scan-camera") {
@@ -15355,9 +15362,10 @@ async function openTicketingStaffScanner(options = {}) {
     </div>
   `);
   // Seed the count for the first event so the door sees a number before the
-  // first scan. Failures here are silent — the scanner still works, the card
-  // just stays as dashes until a scan fills it in.
+  // first scan, and (for the organiser) show who is already on the staff of
+  // the first event. Failures here are silent — the scanner still works.
   await refreshScanAttendance(scannable[0].id);
+  if (isBusiness && ownApproved.length) await refreshEventStaffList(ownApproved[0].id);
 }
 
 // Fetch and paint the running attendance for one event into the scanner's
@@ -15448,15 +15456,53 @@ function ticketingStaffForm(events = []) {
       <h3>Staff permissions</h3>
       <form class="form-grid" data-form="ticketing-staff">
         <label>Approved event
-          <select name="eventId">${approved.map((event) => `<option value="${esc(event.id)}">${esc(event.eventName)}</option>`).join("")}</select>
+          <select name="eventId" data-staff-event-pick>${approved.map((event) => `<option value="${esc(event.id)}">${esc(event.eventName)}</option>`).join("")}</select>
         </label>
-        <label>Verified TitoPay user
+        <label>TitoPay user
           <input name="identifier" placeholder="@username, phone or email" required>
         </label>
+        <p class="field-hint">Best match wins: use their exact <strong>@username</strong> when a person has both a personal and a business account. Any active TitoPay account can scan — no FICA needed for door staff.</p>
         <button class="btn secondary" type="submit">${icon("contacts")} Add scanner</button>
       </form>
+      <div data-staff-list><p class="muted">Loading current staff…</p></div>
     </section>
   `;
+}
+// The staff already on the selected event, so the organiser can SEE that an
+// add worked (and exactly which account it landed on), and take someone off
+// the door again.
+async function refreshEventStaffList(eventId) {
+  const host = document.querySelector("[data-staff-list]");
+  if (!host || !eventId) return;
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/staff`);
+    const staff = (result.items || []).filter((member) => member.status === "active");
+    if (!staff.length) {
+      host.innerHTML = `<p class="muted">No staff on this event yet. Add someone above — they scan from their own TitoPay account.</p>`;
+      return;
+    }
+    host.innerHTML = `
+      <div class="settings-list">
+        ${staff.map((member) => `
+          <article class="settings-row">
+            <span class="icon-bubble">${icon("contacts")}</span>
+            <div>
+              <strong>${esc(member.full_name || "TitoPay user")}</strong>
+              <small>${member.username ? `@${esc(member.username)} · ` : ""}${esc(member.role || "scanner")}</small>
+            </div>
+            <button class="btn ghost mini" type="button" data-action="staff-remove:${esc(eventId)}:${esc(member.user_id)}">${icon("x")} Remove</button>
+          </article>
+        `).join("")}
+      </div>`;
+  } catch (error) {
+    host.innerHTML = `<p class="muted">${esc(friendlyFormError(error, "ticketing"))}</p>`;
+  }
+}
+async function removeTicketingStaff(eventId, staffUserId) {
+  if (!window.confirm("Remove this person from the event staff? They will no longer be able to scan tickets.")) return;
+  await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/staff/${encodeURIComponent(staffUserId)}/remove`, { method: "POST", body: {} });
+  showToast("Removed from event staff.");
+  await refreshEventStaffList(eventId);
 }
 function ticketingScannerForm(events = []) {
   const approved = events.filter((event) => event.status === "approved");
@@ -15901,13 +15947,19 @@ async function submitEventChangeRequest(data, form) {
   showToast("Your change request was sent to TitoPay for review.");
   await openBusinessTicketingDashboard({ refresh: true });
 }
-async function submitTicketingStaff(data) {
-  await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/staff`, {
+async function submitTicketingStaff(data, form) {
+  const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/staff`, {
     method: "POST",
     body: { identifier: data.identifier, role: "scanner", permissions: ["scan"] }
   });
-  showToast("Event scanner added.");
-  await openTicketingStaffScanner({ refresh: true });
+  // Name exactly who was added, so a lookup that landed on an unexpected
+  // account is visible immediately instead of silently wrong.
+  const added = result.staff?.user || {};
+  const who = [added.full_name, added.username ? `@${added.username}` : ""].filter(Boolean).join(" ") || "Scanner";
+  showToast(`${who} added as a scanner. They scan from their own TitoPay account.`);
+  const input = form?.querySelector('input[name="identifier"]');
+  if (input) input.value = "";
+  await refreshEventStaffList(data.eventId);
 }
 async function submitTicketingScan(data) {
   await validateScannedTicket(data.ticketCode, { fromCamera: false });
