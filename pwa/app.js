@@ -12729,7 +12729,7 @@ async function openBusinessStaffModal() {
       ${members.length ? members.map(businessStaffRow).join("") : `<p class="muted">No staff members yet. Add your first cashier, manager or assistant above.</p>`}
       <p class="muted staff-storage-note">${serverMode
         ? "Synced with your TitoPay business account."
-        : "Saved on this device for now. Staff sign-ins switch on automatically once TitoPay staff access goes live — your register will sync without re-typing."}</p>
+        : "Saved on this device for now — it is your own record, and the people listed are not notified. Staff sign-ins switch on automatically once TitoPay staff access goes live; your register will sync without re-typing. Event ticket scanners you add under Ticketing ARE notified in the app and by email."}</p>
       <p class="muted">Event ticket scanners are managed separately under Ticketing.</p>
     </section>
   `);
@@ -16341,7 +16341,7 @@ async function submitTicketingTagIssue(data) {
     host.innerHTML = `
       <section class="event-tag-issued">
         <strong>${issued.length} blank ${issued.length === 1 ? "tag" : "tags"} issued</strong>
-        <p class="muted">Write each credential to its tag now. They are shown once and cannot be read back — TitoPay stores only a one-way hash of them.</p>
+        <p class="muted">Write each code to its tag now — this is the only time they are shown. For your attendees' safety TitoPay does not keep a readable copy, so a code that is not written down now is gone and that tag must be reissued.</p>
         <ol class="event-tag-token-list">
           ${issued.map((tag) => `<li><span>${esc(tag.tagLabel)}</span><code>${esc(tag.token)}</code></li>`).join("")}
         </ol>

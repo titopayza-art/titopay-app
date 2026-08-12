@@ -1,33 +1,31 @@
-TitoPay deployment build — 2026-08-12 UTC
+TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v328 (titopay-pwa-v328)
+PWA bundle: v329 (titopay-pwa-v329)
 Admin console: admin-console-v80
 
-This build — gifted tickets can be added to the recipient's account:
+This build — staff are told what they were added to do:
 
-  - My Tickets gains "Been gifted a ticket?": enter the ticket code from
-    the gifted ticket's email, PDF or stub (a pasted ticket-QR payload
-    works too). The ticket moves into the recipient's account under their
-    name — it shows in My Tickets with its scannable QR, the gate admits
-    it as before, and the event wristband (Event Tag) becomes theirs to
-    link, exactly like a ticket they bought.
-  - Safety, because a code alone moves ownership:
-      * the previous holder is notified IN THE APP and BY EMAIL the moment
-        the ticket moves — a gift expects the message, a stolen code turns
-        it into the alarm that gets support to reverse it;
-      * code guessing is throttled hard (8 misses an hour per account,
-        durable across restarts via the audit log);
-      * used (scanned) tickets, invalid tickets and tickets at suspended
-        or cancelled events refuse the claim;
-      * a ticket with a live wristband already linked refuses until the
-        giver unlinks it — a tag never silently ends up on someone else's
-        entry;
-      * every attempt, hit or miss, is on the event audit trail.
-  - New endpoint POST /v1/ticketing/tickets/claim. No schema changes.
+  - Adding an event ticket scanner now notifies the person immediately:
+    an in-app alert AND an email naming the event, what they can do
+    (scan tickets at the gate, watch attendance — no money movement, no
+    FICA needed) and exactly where to find it (Event Tickets > Scan
+    entry on their own profile). Removing them sends an in-app alert so
+    the scanner disappearing is never a mystery.
+  - The Staff register under Business tools is unchanged in behaviour
+    (device-local preview) but now says plainly that people on it are
+    NOT notified — and that event scanners added under Ticketing are.
+  - The Event Tag issue panel wording is now plain language: write each
+    code to its tag now, this is the only time they are shown; TitoPay
+    keeps no readable copy, so an unwritten code means reissuing that
+    tag. (Same behaviour as before — only the explanation changed. This
+    panel is only ever shown to the organiser issuing tags, not to the
+    public.)
+  - Also in api.zip from earlier today: Event Tag references are now 10
+    plain digits, unique per event (new tags only).
 
-Proven live: verification/ticket-claim-live.js (8/8) — the move, gate
-re-admission, giver notifications, wristband rights following the ticket,
-used/wristbanded refusals and the guessing throttle. Full suite 459/459.
+Verified live against a real database: staff add -> one in-app alert +
+one email with the event name; staff remove -> one in-app alert.
+Full API suite 459/459.
 
 Migrations to run: none.
 

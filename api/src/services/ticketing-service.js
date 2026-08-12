@@ -2246,6 +2246,56 @@ async function addEventStaff(actor, eventId, payload = {}, meta = {}) {
     metadata: { staffUserId: user.id, permissions },
     ...meta
   });
+  // Tell the person what they were added to do and where to find it. A staff
+  // member who has to be phoned and talked to the right screen was the whole
+  // complaint; the alert and the email walk them there. Best-effort — a mail
+  // hiccup must not fail the add.
+  const staffBody = `${event.event_name}: you can now scan tickets at the door. Open Event Tickets on your TitoPay profile — the "Scan entry" button for this event is ready.`;
+  try {
+    await createNotification({
+      user: { id: user.id, user_type: "customer" },
+      channel: "in_app",
+      notificationType: "event_staff_added",
+      title: "You are a ticket scanner",
+      body: staffBody,
+      provider: "in_app",
+      metadata: { eventId, clientNotificationId: `event-staff-added-${rows[0].id}-${rows[0].updated_at?.toISOString?.() || ""}` }
+    });
+  } catch (error) {
+    console.error("[event-staff] add notification failed", { eventId, staffUserId: user.id, message: error.message });
+  }
+  if (user.email) {
+    try {
+      const emailCentre = require("./email-centre-service");
+      await emailCentre.queueRawEmail({
+        recipient: user.email,
+        subject: `You are a ticket scanner for ${event.event_name}`,
+        textBody: [
+          `Hi ${user.full_name || "there"},`,
+          "",
+          `${event.event_name} has added you as a ticket scanner${event.event_date ? ` (event date: ${String(event.event_date).slice(0, 10)})` : ""}.`,
+          "",
+          "What you can do: scan attendees' ticket QR codes at the gate and watch the live attendance count. You cannot move any money and you do not need FICA for this.",
+          "",
+          "Where to find it: open the TitoPay app on your own account, go to Event Tickets on your profile, and tap \"Scan entry\" for this event. The camera scanner and code entry are both there.",
+          "",
+          "If you were not expecting this, you can ignore it — being staff gives you no access to the organiser's account."
+        ].join("\n"),
+        htmlBody: [
+          `<p>Hi ${emailCentre.escapeHtml(user.full_name || "there")},</p>`,
+          `<p><strong>${emailCentre.escapeHtml(event.event_name)}</strong> has added you as a <strong>ticket scanner</strong>${event.event_date ? ` (event date: ${emailCentre.escapeHtml(String(event.event_date).slice(0, 10))})` : ""}.</p>`,
+          "<p><strong>What you can do:</strong> scan attendees' ticket QR codes at the gate and watch the live attendance count. You cannot move any money and you do not need FICA for this.</p>",
+          "<p><strong>Where to find it:</strong> open the TitoPay app on your own account, go to <strong>Event Tickets</strong> on your profile, and tap <strong>Scan entry</strong> for this event. The camera scanner and code entry are both there.</p>",
+          "<p>If you were not expecting this, you can ignore it — being staff gives you no access to the organiser's account.</p>"
+        ].join("\n"),
+        userId: user.id,
+        idempotencyKey: `event-staff-added:${rows[0].id}:${rows[0].updated_at?.toISOString?.() || Date.now()}`,
+        metadata: { eventId, staffUserId: user.id }
+      });
+    } catch (error) {
+      console.error("[event-staff] add email failed", { eventId, staffUserId: user.id, message: error.message });
+    }
+  }
   return { ...rows[0], user };
 }
 
@@ -2254,7 +2304,7 @@ async function addEventStaff(actor, eventId, payload = {}, meta = {}) {
 // re-add simply reactivates it.
 async function removeEventStaff(actor, eventId, staffUserId, meta = {}) {
   await ensureTicketingSchema();
-  const { rows: eventRows } = await pool.query("SELECT id FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1", [eventId, actor.userId]);
+  const { rows: eventRows } = await pool.query("SELECT id, event_name FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1", [eventId, actor.userId]);
   if (!eventRows[0]) throw new AppError(404, "Event not found");
   const { rows } = await pool.query(
     `UPDATE event_staff SET status = 'removed', updated_at = NOW()
@@ -2271,6 +2321,21 @@ async function removeEventStaff(actor, eventId, staffUserId, meta = {}) {
     metadata: { staffUserId },
     ...meta
   });
+  // The person is told, so the scanner disappearing from their app is never
+  // a mystery. In-app only — removal does not need an email.
+  try {
+    await createNotification({
+      user: { id: staffUserId, user_type: "customer" },
+      channel: "in_app",
+      notificationType: "event_staff_removed",
+      title: "Scanner access removed",
+      body: `${eventRows[0].event_name}: you are no longer a ticket scanner for this event.`,
+      provider: "in_app",
+      metadata: { eventId, clientNotificationId: `event-staff-removed-${rows[0].id}-${rows[0].updated_at?.toISOString?.() || ""}` }
+    });
+  } catch (error) {
+    console.error("[event-staff] removal notification failed", { eventId, staffUserId, message: error.message });
+  }
   return rows[0];
 }
 
