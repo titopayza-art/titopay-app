@@ -28,6 +28,14 @@ const { pool } = require("../api/src/db/pool");
 const notif = require("../api/src/services/notification-service");
 const outbox = [];
 notif.deliverEmail = async (args) => { outbox.push(args); return { id: `stub-${outbox.length}` }; };
+// The self-service ticket email now goes through the Email Centre QUEUE first
+// (a database insert delivered by the standalone worker), so that path is
+// stubbed into the same outbox — same shape, same assertions.
+const emailCentre = require("../api/src/services/email-centre-service");
+emailCentre.queueRawEmail = async (args) => {
+  outbox.push({ to: args.recipient, subject: args.subject, body: args.textBody, metadata: args.metadata });
+  return { id: `queued-${outbox.length}`, skipped: false };
+};
 const ticketing = require("../api/src/services/ticketing-service");
 
 const TAG = "freetixlive";

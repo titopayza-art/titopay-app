@@ -1549,14 +1549,38 @@ async function emailTicketToRecipient(actor, ticketCode, destination, meta = {})
     "Keep this code private — anyone who has it can enter."
   ].filter((line) => line !== null && line !== undefined).join("\n");
 
-  // A mail-provider hiccup must come back as a clear, retryable message — not a
-  // generic 500 that reads as "something is broken with my ticket". The ticket
-  // itself is untouched either way.
+  // The send goes through the Email Centre QUEUE, not a live SMTP connection
+  // inside this request. A slow or broken mail server used to hold this request
+  // hostage until the connection gave up — which the app could only report as
+  // "services are not reachable". Queueing is a single database insert: the
+  // response is instant, the standalone email worker delivers with retries, and
+  // the attempt is visible in Admin → Email Centre. Direct delivery remains as
+  // the fallback if the queue itself is unavailable.
+  let queued = false;
   try {
-    await deliverEmail({ to, subject, body, metadata: { ticketCode: ticket.ticket_code, purpose: "ticket_self_service_email" } });
+    const emailCentre = require("./email-centre-service");
+    const result = await emailCentre.queueRawEmail({
+      recipient: to,
+      subject,
+      textBody: body,
+      htmlBody: `<p>${emailCentre.escapeHtml(body).replace(/\n/g, "<br>")}</p>`,
+      userId: actor.userId,
+      idempotencyKey: `ticket-email:${ticket.ticket_code}:${createHash("sha256").update(`${to}:${Date.now()}`).digest("hex").slice(0, 24)}`,
+      metadata: { ticketCode: ticket.ticket_code, purpose: "ticket_self_service_email" }
+    });
+    queued = Boolean(result && !result.skipped);
   } catch (error) {
-    console.error("[ticket-email-send-failed]", { ticketCode: ticket.ticket_code, message: error.message });
-    throw new AppError(502, "TitoPay could not send the email right now. Your ticket is unaffected — please try again in a few minutes.");
+    console.error("[ticket-email-queue-failed]", { ticketCode: ticket.ticket_code, message: error.message });
+  }
+  if (!queued) {
+    // A mail hiccup must come back as a clear, retryable message — not a generic
+    // 500 that reads as "something is broken with my ticket".
+    try {
+      await deliverEmail({ to, subject, body, metadata: { ticketCode: ticket.ticket_code, purpose: "ticket_self_service_email" } });
+    } catch (error) {
+      console.error("[ticket-email-send-failed]", { ticketCode: ticket.ticket_code, message: error.message });
+      throw new AppError(502, "TitoPay could not send the email right now. Your ticket is unaffected — please try again in a few minutes.");
+    }
   }
   await eventAudit({
     eventId: ticket.event_id,
