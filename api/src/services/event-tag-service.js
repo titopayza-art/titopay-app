@@ -647,6 +647,51 @@ async function chargeEventTag(terminal, payload = {}, idempotencyKey, requestId)
   }
 }
 
+// The SAME tap, initiated from the TitoPay app on a vendor's own phone instead
+// of an admin-registered POS terminal. A vendor reads the wristband with the
+// phone's NFC (or types the tag code), and the app charges it.
+//
+// This deliberately does NOT touch chargeEventTag or its terminal auth. It
+// resolves the vendor's merchant from their authenticated session and hands
+// chargeEventTag a terminal-shaped object carrying that merchant. Every control
+// downstream is unchanged and still runs: the tag must belong to an approved,
+// cashless-enabled event; this merchant must be an ACTIVE, AUTHORISED vendor for
+// that exact event (so a business cannot charge tags at an event it was not
+// added to); both wallets lock; the balance is checked; the charge is
+// idempotent and audited. The only thing that changes is who is trusted to
+// start it — a signed terminal, or a signed-in vendor the event owner added.
+async function chargeEventTagAsVendor(actor, payload = {}, idempotencyKey, requestId) {
+  await ensureSchema();
+  if (!actor || !actor.userId) throw new AppError(401, "Authentication required");
+
+  // Only a business with a live merchant profile can take a payment. A personal
+  // account has no merchant row and stops here.
+  const { rows } = await pool.query(
+    `SELECT m.id, m.merchant_id AS merchant_code, m.business_name, m.status AS merchant_status,
+            u.status AS user_status, u.profile_locked
+       FROM users u
+       JOIN merchants m ON m.user_id = u.id
+      WHERE u.id = $1
+      LIMIT 1`,
+    [actor.userId]
+  );
+  const vendor = rows[0];
+  if (!vendor) throw new AppError(403, "A registered business merchant profile is required to charge Event Tags");
+  if (vendor.user_status !== "active" || vendor.profile_locked) throw new AppError(403, "Your account cannot take payments right now");
+  if (vendor.merchant_status !== "active") throw new AppError(403, "Your merchant profile is not active");
+
+  // A terminal-shaped object so the proven charge path runs unchanged. The id is
+  // namespaced so its idempotency scope can never collide with a hardware
+  // terminal's, and terminal_id is only a human label in the audit metadata.
+  const vendorTerminal = {
+    id: `vendor-app:${vendor.id}`,
+    merchant_id: vendor.id,
+    terminal_id: `app:${vendor.merchant_code}`,
+    business_name: vendor.business_name
+  };
+  return chargeEventTag(vendorTerminal, payload, idempotencyKey, requestId);
+}
+
 /* ========================================================================
    Reading
    ======================================================================== */
@@ -830,6 +875,7 @@ module.exports = {
   setTagStatus,
   replaceTag,
   chargeEventTag,
+  chargeEventTagAsVendor,
   listEventTags,
   listMyEventTags,
   reportMyTagLost,

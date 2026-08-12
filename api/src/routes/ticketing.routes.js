@@ -108,6 +108,23 @@ router.post("/tickets/:code/email", requireAuth, publicContactLimiter, async (re
   }
 });
 
+// Vendor in-app SoftPOS: charge a patron's Event Tag by tapping their wristband
+// with the phone (or entering its code). Authenticated as the vendor's own
+// session — the service resolves their merchant and reuses the proven terminal
+// charge path, which still enforces that this merchant is an authorised, active
+// vendor for the tag's event. Not on the sensitive limiter: a busy stall taps
+// many times a minute, and idempotency plus vendor authorisation are the real
+// controls, exactly as they are on the hardware-terminal path.
+router.post("/vendor/tag-charge", requireAuth, async (req, res, next) => {
+  try {
+    const idempotencyKey = String(req.get("idempotency-key") || req.body?.idempotencyKey || "").trim();
+    const charge = await eventTags.chargeEventTagAsVendor(req.auth, req.body || {}, idempotencyKey, req.requestId);
+    res.status(charge.idempotentReplay ? 200 : 201).json({ ok: true, charge });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/scanner/validate", requireAuth, async (req, res, next) => {
   try {
     res.json({ ok: true, result: await scanTicket(req.auth, req.body, meta(req)) });

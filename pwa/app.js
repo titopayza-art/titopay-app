@@ -2096,6 +2096,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "pwa-review") await submitPwaReview(data);
     if (form.dataset.form === "ticketing-event") await submitTicketingEventForm(data);
     if (form.dataset.form === "ticket-email") await submitTicketEmailForm(data, form);
+    if (form.dataset.form === "vendor-tag-charge") await submitVendorTagCharge(data, form);
     if (form.dataset.form === "ticketing-purchase") await submitTicketingPurchase(data);
     if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data);
     if (form.dataset.form === "business-staff") await submitBusinessStaff(data);
@@ -3301,6 +3302,12 @@ async function handleAction(action, actionElement = null) {
   }
   if (String(action || "").startsWith("ticket-email:")) {
     openTicketEmailModal(action.split(":").slice(1).join(":"));
+  }
+  if (action === "vendor-tag-charge") {
+    openVendorTagChargeModal();
+  }
+  if (action === "vendor-tag-scan") {
+    await startVendorTagScan();
   }
   if (action === "stockvel-create") {
     openStockvelCreateWizard();
@@ -14750,6 +14757,115 @@ function stopEventTagScan() {
   state.eventTagReader = null;
 }
 
+/* ==========================================================================
+   VENDOR TAP-TO-CHARGE (in-app SoftPOS for Event Tags)
+
+   A vendor takes payment by tapping a patron's wristband on their own phone.
+   The wristband carries a secret token that only NFC (or a paste) can supply —
+   a short printed label is not enough — so this is NFC-first, with a manual
+   token field where NFC is unavailable (every browser on iPhone, and any
+   phone whose browser has no Web NFC). The charge is authenticated by the
+   vendor's own session; the server checks they are an authorised vendor for
+   the tag's event before moving anything.
+   ========================================================================== */
+function openVendorTagChargeModal() {
+  if (state.accountType !== "business") {
+    openInfoModal("Tap to Charge", "Switch to your Business profile to take Event Tag payments.");
+    return;
+  }
+  state.vendorTagCharge = { amount: "", token: "", scanning: false, result: null };
+  renderVendorTagChargeModal();
+}
+function renderVendorTagChargeModal() {
+  const s = state.vendorTagCharge || {};
+  const canNfc = nfcAvailable();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Event Tag · Tap to Charge</p><h2>Charge a wristband</h2><p class="lead">Enter the amount, then tap the patron's wristband on this phone.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="vendor-tag-charge">
+      <label>Amount<input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" value="${esc(s.amount || "")}" placeholder="0.00" required></label>
+      ${s.token
+        ? `<section class="vas-notice" role="status">
+             <p class="vas-notice-head">Wristband ready</p>
+             <p class="vas-notice-body">A wristband was read. Confirm the amount and charge. No money moves until you tap Charge.</p>
+           </section>
+           <input type="hidden" name="token" value="${esc(s.token)}">`
+        : canNfc
+          ? `<button class="btn secondary" type="button" data-action="vendor-tag-scan">${icon("scan")} ${s.scanning ? "Hold the wristband to the phone…" : "Tap wristband"}</button>
+             <p class="field-hint">Hold the patron's wristband or card against the back of this phone.</p>`
+          : `<label>Wristband code<input name="token" placeholder="Paste the tag code" autocomplete="off"></label>
+             <p class="field-hint">This phone can't read NFC in the browser. On an Android phone in Chrome you can tap the wristband instead of typing the code.</p>`}
+      <button class="btn primary" type="submit">${icon("wallet")} Charge</button>
+      <p class="tag-link-note">${icon("shield")} No money is stored on the tag. The tap charges the patron's own TitoPay Wallet, and you must be an authorised vendor for the event.</p>
+    </form>
+    ${s.result ? `
+      <section class="vas-notice" role="status">
+        <p class="vas-notice-head">Approved — ${esc(money(s.result.amount))}</p>
+        <p class="vas-notice-body">Paid to your wallet. Reference ${esc(s.result.reference)}${s.result.event?.name ? ` · ${esc(s.result.event.name)}` : ""}. Charge the next wristband when ready.</p>
+      </section>` : ""}
+  `);
+}
+async function startVendorTagScan() {
+  if (!nfcAvailable()) {
+    showToast("This phone cannot read NFC in the browser. Paste the code instead.", "error");
+    return;
+  }
+  const s = state.vendorTagCharge || (state.vendorTagCharge = {});
+  s.scanning = true;
+  renderVendorTagChargeModal();
+  try {
+    const reader = new window.NDEFReader();
+    state.eventTagReader = reader;
+    await reader.scan();
+    reader.onreading = (event) => {
+      const token = credentialFromNdef(event.message);
+      if (!token) { showToast("That tag is not a TitoPay Event Tag.", "error"); return; }
+      s.token = token;
+      s.scanning = false;
+      stopEventTagScan();
+      renderVendorTagChargeModal();
+    };
+    reader.onreadingerror = () => showToast("The wristband could not be read. Try again.", "error");
+  } catch (error) {
+    s.scanning = false;
+    renderVendorTagChargeModal();
+    showToast(/NotAllowed/i.test(String(error && error.name))
+      ? "TitoPay needs permission to use NFC on this phone."
+      : "NFC could not be started. Paste the code instead.", "error");
+  }
+}
+async function submitVendorTagCharge(data, form) {
+  const s = state.vendorTagCharge || (state.vendorTagCharge = {});
+  const amount = Number(data.amount);
+  const token = String(data.token || s.token || "").trim();
+  if (!Number.isFinite(amount) || amount <= 0) { showToast("Enter an amount greater than R0.", "error"); return; }
+  if (!token) { showToast("Tap or paste the patron's wristband first.", "error"); return; }
+  s.amount = String(data.amount || "");
+  const button = form?.querySelector("button[type=submit]");
+  setButtonBusy(button, true);
+  const idempotencyKey = createClientTransactionKey("event-tag-charge");
+  try {
+    const response = await api("/v1/ticketing/vendor/tag-charge", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: { tagToken: token, amount, idempotencyKey }
+    });
+    // The token is not kept a moment longer than the charge needs it.
+    s.token = "";
+    s.amount = "";
+    s.result = response.charge || response;
+    stopEventTagScan();
+    renderVendorTagChargeModal();
+    showToast(`Charged ${money(s.result.amount || amount)}.`);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
 async function confirmEventTagLink(trigger) {
   const link = state.eventTagLink || {};
   if (!link.token) return;
@@ -14883,6 +14999,7 @@ async function openBusinessTicketingDashboard(options = {}) {
       </div>
       <div class="auth-actions">
         <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create Event</button>
+        <button class="btn secondary" type="button" data-action="vendor-tag-charge">${icon("wallet")} Tap to Charge</button>
         <button class="btn secondary" type="button" data-action="ticketing-refresh">${icon("refresh")} Refresh</button>
       </div>
       ${options.staffFocus ? ticketingStaffForm(events) : ""}
