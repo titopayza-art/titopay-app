@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v78";
+  return "admin-console-v79";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -2990,6 +2990,7 @@ async function renderSupport() {
   const activeChats = Number(counts.active ?? conversations.filter((row) => ["AGENT_ACTIVE", "REOPENED"].includes(row.status)).length);
   const profilePending = profileChanges.filter((row) => ["pending", "in_review"].includes(row.status)).length;
 
+  PAGE_EXPORTS.supportTicketThreads = Object.fromEntries(tickets.map((row) => [row.id, Array.isArray(row.replies) ? row.replies : []]));
   PAGE_EXPORTS.support = tickets.concat(conversations.map((row) => ({
     type: "chat",
     id: row.id,
@@ -3033,10 +3034,18 @@ async function renderSupport() {
     tickets: () => renderRows(tickets, [
       { label: "Request", render: (row) => `<strong>${escapeHtml(row.subject)}</strong><br><small>${escapeHtml(row.category || "-")} · ${escapeHtml(new Date(row.created_at || Date.now()).toLocaleDateString("en-ZA"))}</small>` },
       { label: "Customer", render: (row) => `${escapeHtml(row.full_name || "-")}<br><small>${escapeHtml(row.username || "-")}</small>` },
-      { label: "Details", render: (row) => `<small>${escapeHtml(String(row.message || "").slice(0, 120))}${String(row.message || "").length > 120 ? "..." : ""}</small>` },
+      { label: "Details", render: (row) => {
+        const replies = Array.isArray(row.replies) ? row.replies : [];
+        const last = replies[replies.length - 1];
+        const lastLine = last
+          ? `<br><small><strong>${escapeHtml(last.authorType === "admin" ? (last.authorLabel || "Customer Care") : "Customer")}:</strong> ${escapeHtml(String(last.message || "").slice(0, 90))}${String(last.message || "").length > 90 ? "..." : ""} · ${replies.length} repl${replies.length === 1 ? "y" : "ies"}</small>`
+          : "";
+        return `<small>${escapeHtml(String(row.message || "").slice(0, 120))}${String(row.message || "").length > 120 ? "..." : ""}</small>${lastLine}`;
+      } },
       { label: "Assigned", render: (row) => escapeHtml(row.assigned_to || "Unassigned") },
       { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status)}</span>` },
     ], (row) => `
+      <button data-support-reply="${row.id}">Reply</button>
       <button data-support-status="in_progress" data-support-id="${row.id}">Take over</button>
       <button data-support-status="resolved" data-support-id="${row.id}">Resolve</button>
     `),
@@ -7138,6 +7147,28 @@ document.addEventListener("click", async (event) => {
       await renderCompanyDocuments();
     } catch (error) {
       showToast(adminErrorMessage(error.message || "Unable to acknowledge document."));
+    }
+  }
+  const supportReply = event.target.closest("[data-support-reply]");
+  if (supportReply) {
+    const thread = (PAGE_EXPORTS.supportTicketThreads || {})[supportReply.dataset.supportReply] || [];
+    const history = thread.length
+      ? `\n\nConversation so far:\n${thread.map((reply) => `${reply.authorType === "admin" ? (reply.authorLabel || "Customer Care") : "Customer"}: ${String(reply.message || "").slice(0, 200)}`).join("\n")}`
+      : "";
+    const message = window.prompt(`Reply to the customer. They will see it in the app and receive it by email.${history}`, "");
+    if (message && message.trim().length >= 2) {
+      try {
+        await apiFetch(`/admin/support/tickets/${supportReply.dataset.supportReply}/reply`, {
+          method: "POST",
+          body: JSON.stringify({ message: message.trim() }),
+        });
+        showToast("Reply sent — the customer sees it in the app and by email.");
+        await renderSupport();
+      } catch (error) {
+        showToast(adminErrorMessage(error.message));
+      }
+    } else if (message !== null) {
+      showToast("Reply not sent — write at least 2 characters.");
     }
   }
   const supportStatus = event.target.closest("[data-support-status]");

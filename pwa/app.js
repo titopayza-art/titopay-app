@@ -1616,7 +1616,51 @@ function openSupportModal() {
       <div class="field"><label>Message</label><textarea name="message" minlength="10" required placeholder="Describe the issue"></textarea></div>
       <button class="btn primary" type="submit">${icon("send")} Submit support request</button>
     </form>
+    <section data-support-history>
+      <p class="field-hint">Loading your support requests…</p>
+    </section>
   `);
+  refreshMySupportRequests();
+}
+async function refreshMySupportRequests() {
+  const host = document.querySelector("[data-support-history]");
+  if (!host) return;
+  try {
+    const data = await api("/v1/support/tickets");
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      host.innerHTML = `<p class="field-hint">No support requests yet. Anything you submit appears here, together with Customer Care replies.</p>`;
+      return;
+    }
+    host.innerHTML = `<h3 style="margin:16px 0 8px">My support requests</h3>` + items.map(renderSupportTicketThread).join("");
+  } catch (error) {
+    host.innerHTML = `<p class="field-hint">Sign in to see your support requests and Customer Care replies here.</p>`;
+  }
+}
+function renderSupportTicketThread(ticket) {
+  const replies = Array.isArray(ticket.replies) ? ticket.replies : [];
+  const status = String(ticket.status || "open").replace(/_/g, " ");
+  const thread = replies.map((reply) => `
+      <p style="margin:6px 0"><strong>${reply.authorType === "admin" ? esc(reply.authorLabel || "Customer Care") : "You"}:</strong> ${esc(reply.message)}<br><small class="field-hint">${esc(formatDate(reply.createdAt))}</small></p>`).join("");
+  return `
+    <section class="integration-note" data-support-ticket-card="${esc(ticket.id)}">
+      <p style="margin:0"><strong>${esc(ticket.ticket_ref || "Support request")}</strong> · ${esc(ticket.category || "General")} <span class="chip">${esc(status)}</span></p>
+      <p class="field-hint" style="margin:2px 0 8px">${esc(formatDate(ticket.created_at))}</p>
+      <p style="margin:0 0 6px">${esc(String(ticket.message || "").slice(0, 400))}</p>
+      ${thread || `<p class="field-hint" style="margin:6px 0">Customer Care has not replied yet. You will get an in-app alert and an email as soon as they do.</p>`}
+      <form class="form-grid" data-form="support-ticket-reply" style="margin-top:8px">
+        <input type="hidden" name="ticketId" value="${esc(ticket.id)}">
+        <div class="field"><label>Reply</label><textarea name="message" minlength="2" required placeholder="Write a reply to Customer Care"></textarea></div>
+        <button class="btn secondary" type="submit">${icon("send")} Send reply</button>
+      </form>
+    </section>`;
+}
+async function submitSupportTicketReply(data) {
+  const message = String(data.message || "").trim();
+  if (message.length < 2) throw new Error("Write at least 2 characters.");
+  await api(`/v1/support/tickets/${data.ticketId}/replies`, { method: "POST", body: { message } });
+  showToast("Reply sent to Customer Care.");
+  await refreshMySupportRequests();
 }
 function openPwaReviewModal() {
   openModal(`
@@ -2117,6 +2161,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "enterprise-batch") await submitEnterpriseBatch(data);
     if (form.dataset.form === "public-contact") await submitPublicContact(data, form);
     if (form.dataset.form === "support") await submitSupportRequest(data);
+    if (form.dataset.form === "support-ticket-reply") await submitSupportTicketReply(data);
     if (form.dataset.form === "chatbot") await submitChatbotMessage(data);
     if (form.dataset.form === "titopay-chat-lookup") await submitTitoPayChatLookup(data);
     if (form.dataset.form === "titopay-chat-message") await submitTitoPayChatMessage(form, formData);
@@ -3496,19 +3541,30 @@ async function handleAction(action, actionElement = null) {
 }
 async function submitSupportRequest(data) {
   if (!data.message || data.message.length < 10) throw new Error("Enter at least 10 characters for support.");
+  let ticketRef = "";
   try {
-    await api("/v1/support/tickets", {
+    const result = await api("/v1/support/tickets", {
       method: "POST",
       body: { category: data.category, message: data.message }
     });
+    ticketRef = result.ticketRef || "";
   } catch (error) {
     // Support API may be deployed after the customer PWA; keep the user-facing request captured locally.
     const tickets = readJson("titopay_support_requests") || [];
     tickets.push({ category: data.category, message: data.message, createdAt: new Date().toISOString() });
     localStorage.setItem("titopay_support_requests", JSON.stringify(tickets));
   }
-  closeModal();
-  showToast("Support request submitted.");
+  const history = document.querySelector("[data-support-history]");
+  if (history) {
+    // Contact TitoPay screen: keep it open so the new request appears in the
+    // list below, where Customer Care replies will also land.
+    const form = document.querySelector('form[data-form="support"]');
+    if (form) form.reset();
+    await refreshMySupportRequests();
+  } else {
+    closeModal();
+  }
+  showToast(ticketRef ? `Support request submitted. Reference ${ticketRef} — a receipt email is on its way.` : "Support request submitted.");
 }
 async function submitSupportRating(rating) {
   const button = document.querySelector(`[data-support-rating="${String(rating)}"]`);

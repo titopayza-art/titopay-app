@@ -33,6 +33,10 @@ const { testCheckoutAuthentication } = require("../services/peach-checkout-auth-
 const { testPayoutConnection } = require("../services/peach-payout-service");
 const { testFlashConnection, FLASH_SERVICE_URLS } = require("../services/flash-service");
 const { shouldSendCustomerEmail } = require("../services/customer-notification-preference-service");
+const {
+  listTicketsForAdmin: listSupportTicketsForAdmin,
+  addAdminReply: addSupportTicketAdminReply
+} = require("../services/support-ticket-reply-service");
 const { ensureAuthenticationPreferenceSchema } = require("../services/authentication-preference-service");
 const { getChatPresenceSnapshot } = require("../realtime/chat-hub");
 const {
@@ -2394,14 +2398,28 @@ router.post("/wallets/:id/:action", requireSuperAdmin, async (req, res, next) =>
 
 router.get("/support/tickets", requireAdminPermission("support"), async (_req, res, next) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT st.*, u.full_name, u.username
-       FROM support_tickets st
-       LEFT JOIN users u ON u.id = st.user_id
-       ORDER BY st.created_at DESC
-       LIMIT 250`
-    );
+    const rows = await listSupportTicketsForAdmin();
     res.json({ ok: true, items: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/support/tickets/:id/reply", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const ticketId = requireUuid(req.params.id, "Ticket ID");
+    const result = await addSupportTicketAdminReply(req.auth, ticketId, req.body || {});
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "support_ticket_reply_sent",
+      entityType: "support_ticket",
+      entityId: ticketId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { replyId: result.reply.id }
+    });
+    res.status(201).json({ ok: true, item: result.ticket, reply: result.reply });
   } catch (error) {
     next(error);
   }

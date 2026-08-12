@@ -925,6 +925,19 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Written replies on a support ticket (staff and customer). The runtime also
+-- creates this on first use, so existing databases need no manual migration.
+CREATE TABLE IF NOT EXISTS support_ticket_replies (
+  id UUID PRIMARY KEY,
+  ticket_id UUID NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+  author_type TEXT NOT NULL CHECK (author_type IN ('admin', 'customer')),
+  author_id UUID,
+  author_label TEXT,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_support_ticket_replies_ticket ON support_ticket_replies (ticket_id, created_at);
+
 ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS ticket_ref TEXT;
 -- Older TitoPay databases predate the timestamp/assignment columns below.
 -- They must exist before the ticket-reference backfill and support actions run.

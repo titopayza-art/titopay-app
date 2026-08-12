@@ -1,30 +1,28 @@
 TitoPay deployment build — 2026-08-12 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v324 (titopay-pwa-v324)
-Admin console: admin-console-v78
+PWA bundle: v325 (titopay-pwa-v325)
+Admin console: admin-console-v79
 
-Latest addition — organiser change requests:
-  - Approved event rows gain a "Request change" control (postpone / cancel /
-    update details / other); a pending request shows on the row.
-  - Preview ticket button now only shows for approved events (it 404'd before).
-  - Admin console: new Change Request Queue + a Cancel action on events.
+This build — the support conversation loop:
+  - Contact TitoPay submissions already landed on the Admin Portal queue and
+    already sent the customer a receipt email. What was missing was the reply.
+  - Admin Portal (Support > Tickets): every ticket now has a Reply button.
+    The reply is stored on the ticket, the ticket moves to in_progress under
+    the agent's name, and the customer gets BOTH an in-app alert and an email
+    carrying the reply text. Email only — never SMS.
+  - App (Support > Contact TitoPay): a "My support requests" list now sits
+    under the form showing each request with its reference, status and the
+    full conversation. Customers can reply in the thread; a follow-up on a
+    resolved ticket reopens it for the team.
+  - New table support_ticket_replies — created automatically at runtime on
+    first use (also in schema.sql for fresh installs). No manual migration.
 
+Proven live (verification/support-reply-live.js, 8/8):
+  queue visibility, staff reply -> in_progress + in-app alert + queued email,
+  thread visible to the owner only, stranger reply refused, follow-up reopens,
+  public website tickets reply safely with no phantom email.
 
-This build:
-  - Free ticket purchase no longer requires the platform revenue wallet
-    (a free ticket charges no fee, so it never touches the fee-collection
-    wallet). Fixes "buying the tickets refuses" for free events.
-  - Ticketing and Ticketing Staff are now two distinct screens:
-      Ticketing        — organiser hub: create/manage events, sell, tags, sales.
-      Ticketing Staff  — door scanner: pick the event, scan tickets, watch the
-                         running attendance count. No management clutter.
-  - New read-only endpoint GET /v1/ticketing/business/events/:id/attendance,
-    gated by the same "scan" permission the scanner uses, so the door sees the
-    count before the first scan (organiser and assigned scanners alike).
-
-Migrations to run: none new in this build.
-
-Operational check (important): confirm the single platform revenue wallet
-exists in production, or PAID ticketing and top-up fees cannot be recorded:
-  node scripts/ensure-revenue-wallet.js            (report only)
-  node scripts/ensure-revenue-wallet.js --create   (provision if missing)
+Operational reminders (unchanged):
+  node scripts/ensure-revenue-wallet.js --create   (once, on production)
+  npm install after extracting api.zip (node-forge dependency)
+  Email Centre SMTP + titopay-email-worker must be running for mail delivery.

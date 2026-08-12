@@ -1,6 +1,16 @@
 TitoPay Admin
-Build: admin-console-v78
-Date: 2026-08-11
+Build: admin-console-v79
+Date: 2026-08-12
+
+v79 - Written replies on support tickets.
+
+  - Support > Tickets: every ticket row now has a Reply button. The reply is
+    saved on the ticket, the customer gets an in-app alert and an email with
+    the reply text, and the ticket moves to in_progress under your name.
+  - The Details column shows the latest reply and a running reply count, so
+    the queue reads as a conversation, not a status board.
+  - Customer follow-ups from the app reopen resolved tickets and appear in
+    the same thread.
 
 v77 - Starter templates in the Marketing Centre.
 
@@ -486,5 +496,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v78; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v79; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.
