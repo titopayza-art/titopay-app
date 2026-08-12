@@ -1642,20 +1642,46 @@ async function refreshMySupportRequests() {
 }
 function renderSupportTicketThread(ticket) {
   const replies = Array.isArray(ticket.replies) ? ticket.replies : [];
-  const status = String(ticket.status || "open").replace(/_/g, " ");
+  const rawStatus = String(ticket.status || "open");
+  const status = rawStatus.replace(/_/g, " ");
+  const finished = ["resolved", "closed"].includes(rawStatus);
+  const chipStyle = rawStatus === "resolved"
+    ? "background:#e7f6ec;color:#0b7a3b"
+    : rawStatus === "closed" ? "background:#eceff4;color:#5b6472" : "background:#e8efff;color:#2f5cff";
   const thread = replies.map((reply) => `
       <p style="margin:6px 0"><strong>${reply.authorType === "admin" ? esc(reply.authorLabel || "Customer Care") : "You"}:</strong> ${esc(reply.message)}<br><small class="field-hint">${esc(formatDate(reply.createdAt))}</small></p>`).join("");
-  return `
-    <section class="integration-note" data-support-ticket-card="${esc(ticket.id)}">
-      <p style="margin:0"><strong>${esc(ticket.ticket_ref || "Support request")}</strong> · ${esc(ticket.category || "General")} <span class="chip">${esc(status)}</span></p>
-      <p class="field-hint" style="margin:2px 0 8px">${esc(formatDate(ticket.created_at))}</p>
-      <p style="margin:0 0 6px">${esc(String(ticket.message || "").slice(0, 400))}</p>
-      ${thread || `<p class="field-hint" style="margin:6px 0">Customer Care has not replied yet. You will get an in-app alert and an email as soon as they do.</p>`}
+  const replyForm = `
       <form class="form-grid" data-form="support-ticket-reply" style="margin-top:8px">
         <input type="hidden" name="ticketId" value="${esc(ticket.id)}">
-        <div class="field"><label>Reply</label><textarea name="message" minlength="2" required placeholder="Write a reply to Customer Care"></textarea></div>
-        <button class="btn secondary" type="submit">${icon("send")} Send reply</button>
-      </form>
+        <div class="field"><label>Reply</label><textarea name="message" minlength="2" required placeholder="${finished ? "Replying reopens this request for the team" : "Write a reply to Customer Care"}"></textarea></div>
+        <button class="btn secondary" type="submit">${icon("send")} ${finished ? "Reopen with a reply" : "Send reply"}</button>
+      </form>`;
+  const header = `
+      <p style="margin:0"><strong>${esc(ticket.ticket_ref || "Support request")}</strong> · ${esc(ticket.category || "General")} <span class="chip" style="${chipStyle}">${esc(status)}</span></p>
+      <p class="field-hint" style="margin:2px 0 8px">${esc(formatDate(ticket.created_at))}</p>`;
+  if (finished) {
+    // Finished requests fold away cleanly: one quiet line, the conversation
+    // behind a tap, and a Remove control to clear it off the list for good.
+    return `
+    <section class="integration-note" data-support-ticket-card="${esc(ticket.id)}" style="opacity:0.92">
+      ${header}
+      <details>
+        <summary style="cursor:pointer;color:#2f5cff"><small>View the conversation${replies.length ? ` (${replies.length} repl${replies.length === 1 ? "y" : "ies"})` : ""} or reopen</small></summary>
+        <p style="margin:8px 0 6px">${esc(String(ticket.message || "").slice(0, 400))}</p>
+        ${thread}
+        ${replyForm}
+      </details>
+      <div class="auth-actions" style="margin-top:8px">
+        <button class="chip" type="button" data-support-remove="${esc(ticket.id)}">${icon("x")} Remove from my list</button>
+      </div>
+    </section>`;
+  }
+  return `
+    <section class="integration-note" data-support-ticket-card="${esc(ticket.id)}">
+      ${header}
+      <p style="margin:0 0 6px">${esc(String(ticket.message || "").slice(0, 400))}</p>
+      ${thread || `<p class="field-hint" style="margin:6px 0">Customer Care has not replied yet. You will get an in-app alert and an email as soon as they do.</p>`}
+      ${replyForm}
     </section>`;
 }
 async function submitSupportTicketReply(data) {
@@ -2337,6 +2363,14 @@ async function onClick(event) {
     state.businessSales.channel = salesChannel.dataset.salesChannel;
     const content = document.querySelector("[data-sales-content]");
     if (content && state.businessSales.ledger) content.innerHTML = renderSalesLedgerView(state.businessSales.ledger);
+    return;
+  }
+  const supportRemove = event.target.closest("[data-support-remove]");
+  if (supportRemove) {
+    if (!window.confirm("Remove this request from your list? Customer Care keeps the record, but it disappears here.")) return;
+    api(`/v1/support/tickets/${encodeURIComponent(supportRemove.dataset.supportRemove)}`, { method: "DELETE" })
+      .then(() => { showToast("Request removed from your list."); return refreshMySupportRequests(); })
+      .catch((error) => showToast(friendlyFormError(error, "support"), "error"));
     return;
   }
   const stockAction = event.target.closest("[data-product-restock], [data-product-stocktake], [data-product-price], [data-product-history], [data-product-archive]");

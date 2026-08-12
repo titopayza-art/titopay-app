@@ -1,9 +1,18 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v332 (titopay-pwa-v332)
+PWA bundle: v333 (titopay-pwa-v333)
 Admin console: admin-console-v81
 
-This build — approved FICA details appear on statements:
+This build:
+  - Support: resolved and closed requests render cleanly — a quiet card
+    with a coloured status chip, the conversation folded behind a tap
+    ("Reopen with a reply" still works), and a "Remove from my list"
+    control. Removal hides the request from the customer's list only;
+    the Admin Portal keeps the full record for audit. Only resolved or
+    closed requests can be removed; open ones refuse with a clear reason.
+    New endpoint DELETE /v1/support/tickets/:id (owner, finished only).
+
+Previous build — approved FICA details appear on statements:
 
   - Once (and only once) a FICA review is APPROVED, statements carry the
     verified identity:

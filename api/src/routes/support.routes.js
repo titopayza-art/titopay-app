@@ -16,7 +16,7 @@ const {
   markRead,
   sendMessage
 } = require("../services/support-chat-service");
-const { listMyTickets, addCustomerReply } = require("../services/support-ticket-reply-service");
+const { listMyTickets, addCustomerReply, hideMyTicket } = require("../services/support-ticket-reply-service");
 
 const router = express.Router();
 
@@ -175,6 +175,26 @@ router.get("/tickets", async (req, res, next) => {
     requireCustomer(req);
     const items = await listMyTickets(req.auth.userId);
     res.json({ ok: true, items });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/tickets/:id", async (req, res, next) => {
+  try {
+    requireCustomer(req);
+    const result = await hideMyTicket(req.auth, req.params.id);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "support_ticket_hidden_by_customer",
+      entityType: "support_ticket",
+      entityId: req.params.id,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: {}
+    });
+    res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }

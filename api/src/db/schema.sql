@@ -998,6 +998,9 @@ CREATE TABLE IF NOT EXISTS support_ticket_replies (
 CREATE INDEX IF NOT EXISTS idx_support_ticket_replies_ticket ON support_ticket_replies (ticket_id, created_at);
 
 ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS ticket_ref TEXT;
+-- A customer may clear finished requests from their own list; the row stays
+-- for the support team's audit trail.
+ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS hidden_by_customer BOOLEAN NOT NULL DEFAULT FALSE;
 -- Older TitoPay databases predate the timestamp/assignment columns below.
 -- They must exist before the ticket-reference backfill and support actions run.
 ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS assigned_to TEXT;

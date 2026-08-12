@@ -30,6 +30,11 @@ function ensureSupportReplySchema() {
       await pool.query(
         "CREATE INDEX IF NOT EXISTS idx_support_ticket_replies_ticket ON support_ticket_replies (ticket_id, created_at)"
       );
+      // A customer may clear finished requests from their own list; the row
+      // itself stays for the support team's audit trail.
+      await pool.query(
+        "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS hidden_by_customer BOOLEAN NOT NULL DEFAULT FALSE"
+      );
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -57,12 +62,26 @@ async function listMyTickets(userId) {
     `SELECT st.id, st.ticket_ref, st.category, st.subject, st.message, st.status,
             st.created_at, st.updated_at, ${REPLIES_JSON}
      FROM support_tickets st
-     WHERE st.user_id = $1
+     WHERE st.user_id = $1 AND COALESCE(st.hidden_by_customer, FALSE) = FALSE
      ORDER BY st.updated_at DESC
      LIMIT 100`,
     [userId]
   );
   return rows;
+}
+
+// Remove a finished request from the customer's own list. Only resolved or
+// closed tickets can go — an open conversation stays visible until the team
+// finishes with it — and the row survives for the audit trail.
+async function hideMyTicket(auth, ticketId) {
+  await ensureSupportReplySchema();
+  const ticket = await loadTicket(ticketId);
+  if (!ticket.user_id || ticket.user_id !== auth.userId) throw new AppError(404, "Support ticket not found");
+  if (!["resolved", "closed"].includes(String(ticket.status))) {
+    throw new AppError(409, "Only resolved or closed requests can be removed. This one is still open with Customer Care.");
+  }
+  await pool.query("UPDATE support_tickets SET hidden_by_customer = TRUE, updated_at = NOW() WHERE id = $1", [ticketId]);
+  return { removed: true, ticketRef: ticket.ticket_ref };
 }
 
 async function listTicketsForAdmin() {
@@ -204,6 +223,7 @@ async function addCustomerReply(auth, ticketId, payload = {}) {
 module.exports = {
   ensureSupportReplySchema,
   listMyTickets,
+  hideMyTicket,
   listTicketsForAdmin,
   addAdminReply,
   addCustomerReply
