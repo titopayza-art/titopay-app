@@ -1,14 +1,19 @@
-const CACHE_NAME = "titopay-pwa-v305-clear-fee-breakdown";
+const CACHE_NAME = "titopay-pwa-v306-verify-email-stylesheet";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=305",
-  "./app.min.js?v=305",
+  "./styles.min.css?v=306",
+  "./app.min.js?v=306",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
   "./offline.html",
   "./verify-email/",
+  // The verification page's styling used to be an inline <style> block, which
+  // needed no entry here. It is a file now because the document root sends
+  // style-src 'self' and refuses inline blocks. Without this line the page is
+  // in the offline shell with no stylesheet to go with it.
+  "./verify-email/verify-email.css?v=227",
   "./verify-email/verify-email.js?v=227",
   "./assets/titopay-logo.png",
   "./assets/icon-192.png?v=165",
