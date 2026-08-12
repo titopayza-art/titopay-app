@@ -2945,6 +2945,10 @@ async function handleAction(action, actionElement = null) {
     await openBusinessTicketingDashboard({ refresh: true });
     return;
   }
+  if (action === "ticket-scan-camera") {
+    await startTicketQrScanner(actionElement);
+    return;
+  }
   if (action === "public-event-back") {
     // A shared event link can be the very first page this browser opens, so
     // "back" must always lead somewhere: in-app history when there is any,
@@ -11265,7 +11269,17 @@ async function startQrScanner() {
   }
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    // Prefer the rear camera; a device without one (a laptop, a front-only
+    // tablet) answers NotFoundError, so fall back to whatever camera exists.
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    } catch (cameraError) {
+      if (cameraError && (cameraError.name === "NotFoundError" || cameraError.name === "OverconstrainedError")) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      } else {
+        throw cameraError;
+      }
+    }
     const video = document.createElement("video");
     video.playsInline = true;
     video.muted = true;
@@ -15294,6 +15308,8 @@ async function openTicketingStaffScanner(options = {}) {
         </label>
         <button class="btn primary" type="submit">${icon("scan")} Validate ticket</button>
       </form>
+      <button class="btn secondary" type="button" data-action="ticket-scan-camera">${icon("scan")} Scan ticket QR with camera</button>
+      <div data-ticket-camera class="empty-state hidden"></div>
       <div data-scan-result></div>
     </section>
     ${ticketingStaffForm(approved)}
@@ -15858,7 +15874,13 @@ async function submitTicketingStaff(data) {
   await openTicketingStaffScanner({ refresh: true });
 }
 async function submitTicketingScan(data) {
-  const response = await api("/v1/ticketing/scanner/validate", { method: "POST", body: { ticketCode: data.ticketCode } });
+  await validateScannedTicket(data.ticketCode, { fromCamera: false });
+}
+// The shared validation core: the typed 10-digit code and the camera's scanned
+// QR payload both land here. The server accepts either form (and refuses a
+// payment QR by name), so the raw value is sent as-is.
+async function validateScannedTicket(rawValue, { fromCamera = false } = {}) {
+  const response = await api("/v1/ticketing/scanner/validate", { method: "POST", body: { ticketCode: rawValue } });
   const r = response.result || {};
   showToast(r.message, r.valid ? "" : "error");
   const host = document.querySelector("[data-scan-result]");
@@ -15877,9 +15899,123 @@ async function submitTicketingScan(data) {
   // in step with the count the scan just returned (authoritative for the event
   // the ticket belongs to).
   if (r.attendance) paintScanAttendance(r.attendance);
-  // Clear the field so the next code can be scanned straight away.
-  const input = document.querySelector('form[data-form="ticketing-scan"] input[name="ticketCode"]');
-  if (input) { input.value = ""; input.focus(); }
+  if (!fromCamera) {
+    // Clear the field so the next code can be typed straight away.
+    const input = document.querySelector('form[data-form="ticketing-scan"] input[name="ticketCode"]');
+    if (input) { input.value = ""; input.focus(); }
+  }
+  return r;
+}
+// Continuous camera scanning at the door: hold each attendee's ticket QR up to
+// the camera and the result (and running attendance count) appears after every
+// scan — no typing. Uses the same on-device detection as QR Pay (BarcodeDetector
+// with the jsQR fallback); the video never leaves the phone. The same code is
+// ignored for a few seconds after being read so one held-up ticket does not
+// validate repeatedly, and a scanned PAYMENT QR is refused by name.
+async function startTicketQrScanner(button) {
+  const host = document.querySelector("[data-ticket-camera]");
+  if (!host) return;
+  // Second tap while running = stop.
+  if (host.dataset.active === "1") {
+    host.dataset.stopRequested = "1";
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    host.classList.remove("hidden");
+    host.innerHTML = `${icon("shield")}<strong>Camera unavailable</strong><p>This browser does not expose camera scanning. Type the ticket code instead.</p>`;
+    return;
+  }
+  host.classList.remove("hidden");
+  host.innerHTML = `${icon("scan")}<strong>Starting camera</strong><p>Allow camera access, then hold each ticket QR in view. Scanning happens on your device — the video is never uploaded.</p>`;
+  if (button) button.innerHTML = `${icon("x")} Stop camera`;
+  let stream;
+  const finish = (message) => {
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+    delete host.dataset.active;
+    delete host.dataset.stopRequested;
+    if (document.body.contains(host)) {
+      host.innerHTML = message ? `${icon("scan")}<strong>Camera off</strong><p>${esc(message)}</p>` : "";
+      if (!message) host.classList.add("hidden");
+    }
+    if (button && document.body.contains(button)) button.innerHTML = `${icon("scan")} Scan ticket QR with camera`;
+  };
+  try {
+    // Prefer the rear camera; a device without one (a laptop, a front-only
+    // tablet) answers NotFoundError, so fall back to whatever camera exists.
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    } catch (cameraError) {
+      if (cameraError && (cameraError.name === "NotFoundError" || cameraError.name === "OverconstrainedError")) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      } else {
+        throw cameraError;
+      }
+    }
+    host.dataset.active = "1";
+    const video = document.createElement("video");
+    video.playsInline = true;
+    video.muted = true;
+    video.srcObject = stream;
+    host.innerHTML = "";
+    host.appendChild(video);
+    await video.play();
+
+    let detector = null;
+    let canvas = null;
+    let context = null;
+    if ("BarcodeDetector" in window) {
+      detector = new BarcodeDetector({ formats: ["qr_code"] });
+    } else if (await ensureJsQrLoaded()) {
+      canvas = document.createElement("canvas");
+      context = canvas.getContext("2d", { willReadFrequently: true });
+    } else {
+      finish("QR detection is not available in this browser. Type the ticket code instead.");
+      return;
+    }
+
+    // The door keeps the camera up: each successful read extends the session.
+    let deadline = Date.now() + 120000;
+    let lastValue = "";
+    let lastAt = 0;
+    while (Date.now() < deadline && document.body.contains(video) && host.dataset.stopRequested !== "1") {
+      const value = detector ? await detectQrWithBarcodeDetector(detector, video) : detectQrWithJsQr(video, canvas, context);
+      if (value) {
+        const now = Date.now();
+        if (value === lastValue && now - lastAt < 6000) {
+          // The same ticket is still in front of the lens — already handled.
+          await new Promise((resolve) => setTimeout(resolve, 350));
+          continue;
+        }
+        const scanned = classifyScannedQr(value);
+        if (scanned.kind === "payment") {
+          // A plain 10-digit code is fine (it classifies as a typed value); an
+          // actual PAYMENT payload is refused by name — server enforces too.
+          if (!/^\d{6,10}$/.test(String(scanned.qrId || ""))) {
+            const resultHost = document.querySelector("[data-scan-result]");
+            if (resultHost) resultHost.innerHTML = `<section class="vas-notice" role="status"><p class="vas-notice-head">Not a ticket</p><p class="vas-notice-body">That is a TitoPay payment QR, not an event ticket. Ask the attendee for their ticket QR or code.</p></section>`;
+            lastValue = value; lastAt = now;
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+            continue;
+          }
+        }
+        lastValue = value;
+        lastAt = now;
+        try {
+          await validateScannedTicket(value, { fromCamera: true });
+        } catch (error) {
+          showToast(friendlyFormError(error, "ticketing"), "error");
+        }
+        deadline = Date.now() + 120000;
+        // A short pause so the door sees the result before the next read.
+        await new Promise((resolve) => setTimeout(resolve, 1400));
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, detector ? 300 : 160));
+    }
+    finish(host.dataset.stopRequested === "1" ? "" : "Camera paused after inactivity. Tap to scan again.");
+  } catch (error) {
+    finish(error && /denied|permission/i.test(String(error.message)) ? "Camera permission was declined. Allow camera access or type the ticket code." : (error.message || "Camera could not start. Type the ticket code instead."));
+  }
 }
 function attachProfilePhotoCropEvents(cropper) {
   if (!cropper || cropper.dataset.cropEventsReady === "true") return;
