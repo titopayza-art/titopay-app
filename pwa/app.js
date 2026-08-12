@@ -3553,6 +3553,12 @@ async function handleAction(action, actionElement = null) {
   if (action === "titopay-chat") {
     openTitoPayChatModal();
   }
+  if (action === "chat-blue-toggle") {
+    toggleChatBlueBackground();
+    const pressed = document.querySelectorAll('[data-action="chat-blue-toggle"]');
+    pressed.forEach((button) => button.setAttribute("aria-pressed", String(chatBlueBackgroundOn())));
+    return;
+  }
   if (action === "open-stockvel-chat") {
     openStockvelChatModal(actionElement?.dataset?.stockvelChatId || state.stockvel?.detail?.id);
   }
@@ -18118,6 +18124,20 @@ async function sendTitoPayChatInvite(channel) {
   }
   showToast("TitoPay invitation ready.");
 }
+// The optional blue chat canvas: one tap on Theme, remembered on this
+// device, applied to both TitoPay Chat and the Assistant.
+function chatBlueBackgroundOn() {
+  return localStorage.getItem("titopay_chat_blue_v1") === "1";
+}
+function applyChatBlueBackground() {
+  const on = chatBlueBackgroundOn();
+  document.querySelectorAll(".titopay-chat-window, .chat-thread").forEach((element) => element.classList.toggle("chat-blue-on", on));
+}
+function toggleChatBlueBackground() {
+  localStorage.setItem("titopay_chat_blue_v1", chatBlueBackgroundOn() ? "0" : "1");
+  applyChatBlueBackground();
+  showToast(chatBlueBackgroundOn() ? "Blue chat background on." : "Blue chat background off.");
+}
 function openTitoPayChatThread(threadId) {
   const thread = titoPayChatThreads().find((item) => item.id === threadId);
   if (!thread) {
@@ -18137,6 +18157,7 @@ function openTitoPayChatThread(threadId) {
         ${customerCareThread ? `<button class="chat-action-btn primary" type="button" data-action="chatbot" aria-label="Contact Customer Care">${icon("phone")}<span>Call</span></button>` : ""}
         <button class="chat-action-btn" type="button" data-action="chat-mute" aria-label="${thread.muted ? "Unmute conversation" : "Mute conversation"}">${icon("bell")}<span>${thread.muted ? "Unmute" : "Mute"}</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-clear-thread" aria-label="Clear this chat from this device">${icon("refresh")}<span>Clear</span></button>
+        <button class="chat-action-btn" type="button" data-action="chat-blue-toggle" aria-pressed="${chatBlueBackgroundOn()}" aria-label="Toggle the blue chat background">${icon("chat")}<span>Theme</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-report" aria-label="Report conversation">${icon("shield")}<span>Report</span></button>
         <button class="chat-action-btn" type="button" data-action="chat-block" aria-pressed="${blocked}" aria-label="${blocked ? "Unblock conversation" : "Block conversation"}">${icon("ban")}<span>${blocked ? "Unblock" : "Block"}</span></button>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
@@ -18159,6 +18180,7 @@ function openTitoPayChatThread(threadId) {
   // columns and scattered the thread sideways. The modal surface gets its
   // own name.
   if (card) card.classList.add("titopay-chat-thread-modal");
+  applyChatBlueBackground();
   const windowEl = document.querySelector(".titopay-chat-window");
   if (windowEl) windowEl.scrollTop = windowEl.scrollHeight;
   restoreChatDraft(threadId);
@@ -19198,6 +19220,7 @@ function openChatbotModal() {
     <div class="modal-head chatbot-head">
       <div><p class="eyebrow">TitoPay Assistant</p><h2>${business ? "Business support" : "Personal support"}</h2><p class="lead">Ask a question, choose a quick topic, or request Customer Care.</p></div>
       <div class="chatbot-head-actions">
+        <button class="icon-btn" type="button" data-action="chat-blue-toggle" aria-pressed="${chatBlueBackgroundOn()}" aria-label="Toggle the blue chat background">${icon("chat")}</button>
         <button class="icon-btn" type="button" data-action="support-refresh" aria-label="Refresh conversation">${icon("refresh")}</button>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
@@ -19227,6 +19250,7 @@ function openChatbotModal() {
     backdrop.classList.add("chatbot-modal-backdrop");
     card.classList.add("chatbot-fullscreen-modal");
   }
+  applyChatBlueBackground();
   // A fresh socket for the live path, plus polling as the guaranteed fallback
   // and an immediate hydrate so an already-open conversation is current.
   connectTitoPayChatSocket({ force: true });

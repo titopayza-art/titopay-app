@@ -5,7 +5,7 @@
   --navy: #061a3d;
   --text: #10203f;
   --muted: #62708a;
-  --soft: #f7f9fd;
+  --soft: #eef4fe;
   --soft-blue: #eaf1ff;
   --card: #ffffff;
   --line: #dfe7f5;
@@ -12848,3 +12848,7 @@ form[data-form="ticketing-event"] label select{width:100%}
    scanner's video treatment. */
 [data-ticket-camera]:not(.hidden){min-height:300px;display:grid;place-items:center;align-content:center;gap:8px;overflow:hidden;padding:12px;border-radius:20px}
 [data-ticket-camera] video{width:100%;height:276px;display:block;object-fit:cover;border-radius:14px;background:#0b1220}
+
+/* Rounded media always clips (a scaled photo used to poke square corners past the radius), and the opt-in blue chat canvas. */
+.avatar, .profile-avatar, .chat-contact-avatar { overflow: hidden; }
+.chat-blue-on { background: linear-gradient(180deg, #dfeaff 0%, #eef4ff 100%) !important; border-radius: var(--radius-control, 16px); }

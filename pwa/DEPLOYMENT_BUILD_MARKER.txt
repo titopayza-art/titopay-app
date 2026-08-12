@@ -1,9 +1,20 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v335 (titopay-pwa-v335)
+PWA bundle: v336 (titopay-pwa-v336)
 Admin console: admin-console-v81
 
-This build — the stokvel goes live, and the tour fills the screen:
+This build — the soft-blue look, chat theme choice, rounded photos:
+  - The app's ground is now the soft blue everywhere it used to be plain
+    white (one design token changed: --soft #f7f9fd -> #eef4fe, plus the
+    matching body gradient). Cards, sheets and inputs are untouched, so
+    every screen keeps its exact layout — including the Security Centre.
+  - TitoPay Chat and the Assistant gain a Theme button (chat header /
+    next to refresh): one tap gives the conversation a calm blue canvas,
+    remembered on the device, off by default.
+  - Profile photos clip to their rounded corners properly — a scaled
+    photo used to poke square corners past the radius.
+
+Previous build — the stokvel goes live, and the tour fills the screen:
 
   STOKVEL (the "Group management is not live yet" panel is gone):
   - The /v1/stockvels server now exists for the contract the app has been
