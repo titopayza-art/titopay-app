@@ -88,6 +88,8 @@ async function cleanup() {
   await pool.query("DELETE FROM users WHERE id = ANY($1)", [[ids.businessUser, ids.buyerUser]]);
 }
 
+// A small but valid JPEG data URL, standing in for an uploaded poster.
+const posterDataUrl = `data:image/jpeg;base64,${"/9j/4AAQSkZJRgABAQ".repeat(20)}`;
 const freeEvent = {
   eventName: `${TAG} Fintech Conference`,
   category: "conference",
@@ -95,7 +97,12 @@ const freeEvent = {
   eventDate: "2027-01-15", startTime: "09:00", endTime: "17:00",
   venueName: "Sandton Convention Centre", fullVenueAddress: "161 Maude St", city: "Johannesburg", province: "Gauteng",
   termsConditions: "Standard terms.", refundPolicy: { summary: "No refunds needed — free event." },
-  ticketTypes: [{ ticketName: "Free Seat", price: 0, quantityAvailable: 100 }]
+  eventBannerUrl: posterDataUrl,
+  // Two tiers, the General + VIP shape the form now offers, both free.
+  ticketTypes: [
+    { ticketName: "General", price: 0, quantityAvailable: 100 },
+    { ticketName: "VIP", price: 0, quantityAvailable: 20 }
+  ]
 };
 
 (async () => {
@@ -112,8 +119,12 @@ const freeEvent = {
     assert.ok(draft.id, "free draft should be created");
     // No merchant profile, so the event has a null merchant_id and takes its
     // organiser name from the account. Both must be true and neither may break.
-    const draftRow = (await pool.query("SELECT merchant_id, business_details FROM events WHERE id = $1", [draft.id])).rows[0];
+    const draftRow = (await pool.query("SELECT merchant_id, business_details, event_banner_url FROM events WHERE id = $1", [draft.id])).rows[0];
     assert.equal(draftRow.merchant_id, null, "a free event with no merchant profile stores a null merchant_id");
+    // The poster and both ticket tiers must persist on the draft.
+    assert.ok(String(draftRow.event_banner_url || "").startsWith("data:image/"), "the uploaded poster is stored on the event");
+    const tierNames = (await pool.query("SELECT ticket_name FROM event_ticket_types WHERE event_id = $1 ORDER BY sort_order", [draft.id])).rows.map((r) => r.ticket_name);
+    assert.deepEqual(tierNames, ["General", "VIP"], `both ticket tiers should persist, got ${JSON.stringify(tierNames)}`);
     assert.match(JSON.stringify(draftRow.business_details || {}), /Seminars Ltd/, "the organiser name falls back to the account name");
     ok("business with NO merchant profile created a free event draft (the screenshot case)");
 

@@ -12813,3 +12813,8 @@ button,
   width: 18px;
   height: 18px;
 }
+
+/* Event draft form: poster preview + ticket tier grouping */
+.event-poster-thumb{max-width:200px;border-radius:14px;display:block;margin-bottom:10px;border:1px solid #dbe6f5}
+.ticket-tier-row{border:1px solid #dbe6f5;border-radius:16px;padding:14px 14px 4px;margin-bottom:12px;background:#f8faff}
+.ticket-tier-row .btn.ghost{margin-top:2px}

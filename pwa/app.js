@@ -2094,7 +2094,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "profile-photo") await submitProfilePhoto(form);
     if (form.dataset.form === "profile-details") await submitProfileDetails(data);
     if (form.dataset.form === "pwa-review") await submitPwaReview(data);
-    if (form.dataset.form === "ticketing-event") await submitTicketingEventForm(data);
+    if (form.dataset.form === "ticketing-event") await submitTicketingEventForm(data, form);
     if (form.dataset.form === "ticket-email") await submitTicketEmailForm(data, form);
     if (form.dataset.form === "vendor-tag-charge") await submitVendorTagCharge(data, form);
     if (form.dataset.form === "ticketing-purchase") await submitTicketingPurchase(data);
@@ -2761,6 +2761,8 @@ function onChange(event) {
   if (occasion) toggleCustomOccasion(occasion);
   const profilePhotoInput = event.target.closest("input[data-profile-photo-input]");
   if (profilePhotoInput) prepareProfilePhotoCrop(profilePhotoInput);
+  const eventPosterInput = event.target.closest("input[data-event-poster-input]");
+  if (eventPosterInput) prepareEventPosterPreview(eventPosterInput);
   const enterpriseCsvInput = event.target.closest("input[data-enterprise-csv-input]");
   if (enterpriseCsvInput) loadEnterpriseCsvFile(enterpriseCsvInput.files && enterpriseCsvInput.files[0]);
   const receiptFilter = event.target.closest("[data-receipt-filter]");
@@ -2893,6 +2895,26 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "ticketing-create-event") {
     openTicketingEventForm();
+    return;
+  }
+  if (action === "add-ticket-tier") {
+    addTicketTierRow();
+    return;
+  }
+  if (action === "remove-ticket-tier") {
+    removeTicketTierRow(actionElement);
+    return;
+  }
+  if (action === "remove-event-poster") {
+    clearEventPoster();
+    return;
+  }
+  if (action === "preview-event-map") {
+    previewEventOnMap();
+    return;
+  }
+  if (action === "event-form-back") {
+    await openBusinessTicketingDashboard({ refresh: true });
     return;
   }
   if (action === "ticketing-refresh") {
@@ -15203,41 +15225,181 @@ async function submitTicketingTagAssign(data) {
   showToast(`Tag ${result.tag?.tagLabel || ""} is active for this attendee.`);
 }
 
+// The event poster is recommended at portrait 1080 x 1350 (4:5), but any image
+// is accepted and simply scaled to fit. Kept well under the 768 KB request
+// limit so it can travel inside the draft-save call as a data URL.
+async function resizeEventPoster(file) {
+  const maxEdge = 1400;
+  const source = await readFileAsDataUrl(file);
+  if (typeof document === "undefined") return source;
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const w = image.naturalWidth || image.width;
+      const h = image.naturalHeight || image.height;
+      const scale = Math.min(1, maxEdge / Math.max(w, h));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      const context = canvas.getContext("2d");
+      if (!context) { resolve(source); return; }
+      context.fillStyle = "#0b1f4d";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      // Step the quality down until it fits comfortably inside the body limit.
+      let quality = 0.85;
+      let out = canvas.toDataURL("image/jpeg", quality);
+      while (out.length > 600 * 1024 && quality > 0.4) {
+        quality -= 0.1;
+        out = canvas.toDataURL("image/jpeg", quality);
+      }
+      resolve(out);
+    };
+    image.onerror = () => resolve(source);
+    image.src = source;
+  });
+}
+// One ticket tier row. Add and remove act on these directly in the DOM, so
+// nothing the organiser has already typed elsewhere is lost to a re-render.
+function ticketTierRowHtml(tier = {}) {
+  return `<div class="form-grid ticket-tier-row" data-ticket-tier>
+      <label>Ticket type<input data-tier-name value="${esc(tier.name || "")}" placeholder="General, VIP, Early Bird"></label>
+      <label>Price<input data-tier-price type="number" min="0" step="0.01" inputmode="decimal" value="${esc(tier.price != null ? String(tier.price) : "0")}"></label>
+      <label>Quantity<input data-tier-qty type="number" min="1" inputmode="numeric" value="${esc(tier.qty != null ? String(tier.qty) : "")}" placeholder="e.g. 100"></label>
+      <button class="btn ghost" type="button" data-action="remove-ticket-tier">${icon("x")} Remove this ticket type</button>
+    </div>`;
+}
+function addTicketTierRow(tier = {}) {
+  const host = document.querySelector("[data-ticket-tiers]");
+  if (!host) return;
+  const wrap = document.createElement("div");
+  wrap.innerHTML = ticketTierRowHtml(tier).trim();
+  const row = wrap.firstElementChild;
+  host.appendChild(row);
+  const nameInput = row.querySelector("[data-tier-name]");
+  if (nameInput) nameInput.focus();
+}
+function removeTicketTierRow(button) {
+  const rows = [...document.querySelectorAll("[data-ticket-tier]")];
+  if (rows.length <= 1) {
+    showToast("Keep at least one ticket type. Set the price to 0 for a free event.", "error");
+    return;
+  }
+  button.closest("[data-ticket-tier]")?.remove();
+}
+async function prepareEventPosterPreview(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (!String(file.type || "").startsWith("image/")) { showToast("Choose an image file (JPG, PNG or WebP).", "error"); input.value = ""; return; }
+  if (file.size > 15 * 1024 * 1024) { showToast("Choose an image under 15MB.", "error"); input.value = ""; return; }
+  try {
+    const dataUrl = await resizeEventPoster(file);
+    state.eventDraftForm = state.eventDraftForm || {};
+    state.eventDraftForm.poster = dataUrl;
+    const host = document.querySelector("[data-event-poster-preview]");
+    if (host) {
+      host.innerHTML = `
+        <img class="event-poster-thumb" src="${esc(dataUrl)}" alt="Event poster preview">
+        <button class="btn ghost" type="button" data-action="remove-event-poster">${icon("x")} Remove poster</button>`;
+    }
+    showToast("Poster added to the draft.");
+  } catch (error) {
+    showToast("That image could not be used. Try another.", "error");
+  }
+}
+function clearEventPoster() {
+  if (state.eventDraftForm) state.eventDraftForm.poster = "";
+  const host = document.querySelector("[data-event-poster-preview]");
+  if (host) host.innerHTML = "";
+  const input = document.querySelector("[data-event-poster-input]");
+  if (input) input.value = "";
+}
+// Web NFC-free location: open the typed address on the device's own map app.
+// An embedded, interactive map needs an external map provider, which the app's
+// content policy does not allow, so this hands the address to a real map instead.
+function previewEventOnMap() {
+  const parts = ["fullVenueAddress", "venueName", "city", "province"]
+    .map((name) => (document.querySelector(`[name="${name}"]`)?.value || "").trim())
+    .filter(Boolean);
+  const query = parts.join(", ");
+  if (!query) { showToast("Enter the venue address first, then preview it on the map.", "error"); return; }
+  window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`, "_blank", "noopener");
+}
 function openTicketingEventForm() {
+  state.eventDraftForm = { poster: "" };
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Ticketing</p><h2>Create event draft</h2><p class="lead">Save the draft first, then submit it for TitoPay approval.</p></div>
+      <div><p class="eyebrow">Ticketing</p><h2>Create event draft</h2><p class="lead">Only the event name is needed to save a draft. Fill the rest before you submit for approval.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="ticketing-event">
+      <section class="section-head compact"><h2>Event details</h2></section>
       <label>Event name<input name="eventName" required></label>
-      <label>Category<input name="category" placeholder="Conference, concert, workshop" required></label>
-      <label>Description<textarea name="description" rows="3" required></textarea></label>
-      <label>Event date<input name="eventDate" type="date" required></label>
-      <label>Start time<input name="startTime" type="time" required></label>
-      <label>End time<input name="endTime" type="time" required></label>
-      <label>Venue name<input name="venueName" required></label>
-      <label>Full venue address<textarea name="fullVenueAddress" rows="2" required></textarea></label>
-      <label>City<input name="city" required></label>
-      <label>Province<input name="province" required></label>
-      <label>Contact email<input name="contactEmail" type="email"></label>
-      <label>Contact number<input name="contactNumber" inputmode="tel"></label>
-      <label>Ticket name<input name="ticketName" value="General Admission" required></label>
-      <label>Ticket price<input name="ticketPrice" type="number" min="0" step="0.01" value="0" required></label>
-      <p class="field-hint">Enter <strong>0</strong> for a free event — free seminars and conferences need no FICA verification. Any price above 0 makes this a paid event, which requires FICA before you can submit it.</p>
-      <label>Ticket quantity<input name="ticketQuantity" type="number" min="1" required></label>
-      <label>Terms and conditions<textarea name="termsConditions" rows="3" required></textarea></label>
-      <label>Refund policy<textarea name="refundPolicySummary" rows="3" required></textarea></label>
-      <button class="btn primary" type="submit">${icon("ticket")} Save draft</button>
+      <label>Category<input name="category" placeholder="Conference, concert, workshop"></label>
+      <label>Description<textarea name="description" rows="3" placeholder="Tell attendees what to expect."></textarea></label>
+
+      <section class="section-head compact"><h2>When</h2></section>
+      <label>Event date<input name="eventDate" type="date"></label>
+      <label>Start time<input name="startTime" type="time"></label>
+      <label>End time<input name="endTime" type="time"></label>
+
+      <section class="section-head compact"><h2>Where</h2></section>
+      <label>Venue name<input name="venueName"></label>
+      <label>Full venue address<textarea name="fullVenueAddress" rows="2"></textarea></label>
+      <label>City<input name="city"></label>
+      <label>Province<input name="province"></label>
+      <button class="btn secondary" type="button" data-action="preview-event-map">${icon("scan")} Preview location on map</button>
+      <p class="field-hint">Enter the address, then drop a pin — it opens the venue on your maps app so you can confirm it is right.</p>
+
+      <section class="section-head compact"><h2>Event poster</h2></section>
+      <div data-event-poster-preview></div>
+      <label>Upload poster<input type="file" accept="image/*" data-event-poster-input></label>
+      <p class="field-hint">Recommended: portrait <strong>1080 × 1350 px</strong> (4:5). JPG, PNG or WebP. Anything you upload is scaled to fit; optional for a draft.</p>
+
+      <section class="section-head compact"><h2>Tickets</h2></section>
+      <p class="field-hint">Add a type for each price — for example <strong>General</strong> and <strong>VIP</strong>. Set a price of <strong>0</strong> for a free event (no FICA needed); any price above 0 makes it a paid event that needs FICA before you submit.</p>
+      <div data-ticket-tiers>
+        ${ticketTierRowHtml({ name: "General", price: 0, qty: 100 })}
+        ${ticketTierRowHtml({ name: "VIP", price: 0, qty: 20 })}
+      </div>
+      <button class="btn secondary" type="button" data-action="add-ticket-tier">${icon("ticket")} Add another ticket type</button>
+
+      <section class="section-head compact"><h2>Policies</h2></section>
+      <label>Terms and conditions<textarea name="termsConditions" rows="3"></textarea></label>
+      <label>Refund policy<textarea name="refundPolicySummary" rows="3"></textarea></label>
+
+      <div class="auth-actions">
+        <button class="btn primary" type="submit">${icon("ticket")} Save draft</button>
+        <button class="btn secondary" type="button" data-action="event-form-back">${icon("arrow-left")} Back</button>
+      </div>
     </form>
   `);
 }
-async function submitTicketingEventForm(data) {
+// Read the ticket tiers straight from the DOM so add/remove is honoured, drop
+// any blank rows, and keep only what the organiser actually entered.
+function collectTicketTiers() {
+  return [...document.querySelectorAll("[data-ticket-tier]")].map((row) => {
+    const name = (row.querySelector("[data-tier-name]")?.value || "").trim();
+    const price = Number(row.querySelector("[data-tier-price]")?.value || 0);
+    const qty = Number(row.querySelector("[data-tier-qty]")?.value || 0);
+    return { name, price, qty };
+  }).filter((tier) => tier.name || tier.qty > 0);
+}
+async function submitTicketingEventForm(data, form) {
+  const tiers = collectTicketTiers();
+  const ticketTypes = tiers.map((tier) => ({
+    ticketName: tier.name || "General Admission",
+    price: Number.isFinite(tier.price) && tier.price > 0 ? tier.price : 0,
+    quantityAvailable: Number.isFinite(tier.qty) && tier.qty > 0 ? tier.qty : 0,
+    minPurchaseQuantity: 1,
+    maxPurchaseQuantity: 10,
+    refundsAllowed: true
+  }));
   const payload = {
     eventName: data.eventName,
     category: data.category,
     description: data.description,
-    eventDate: data.eventDate,
+    eventDate: data.eventDate || null,
     startTime: data.startTime,
     endTime: data.endTime,
     venueName: data.venueName,
@@ -15248,19 +15410,22 @@ async function submitTicketingEventForm(data) {
     contactNumber: data.contactNumber,
     termsConditions: data.termsConditions,
     refundPolicy: { summary: data.refundPolicySummary },
-    ticketTypes: [{
-      ticketName: data.ticketName,
-      price: Number(data.ticketPrice || 0),
-      quantityAvailable: Number(data.ticketQuantity || 0),
-      minPurchaseQuantity: 1,
-      maxPurchaseQuantity: 10,
-      refundsAllowed: true
-    }]
+    eventBannerUrl: state.eventDraftForm?.poster || "",
+    ticketTypes: ticketTypes.length ? ticketTypes : undefined
   };
-  const result = await api("/v1/ticketing/business/events", { method: "POST", body: payload });
-  showToast("Event draft saved. Submit it when ready.");
-  await openBusinessTicketingDashboard({ refresh: true });
-  return result;
+  const button = form?.querySelector("button[type=submit]");
+  setButtonBusy(button, true);
+  try {
+    const result = await api("/v1/ticketing/business/events", { method: "POST", body: payload });
+    state.eventDraftForm = { poster: "" };
+    showToast("Event draft saved. Submit it when ready.");
+    await openBusinessTicketingDashboard({ refresh: true });
+    return result;
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 async function submitTicketingEvent(eventId) {
   await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/submit`, { method: "POST", body: {} });

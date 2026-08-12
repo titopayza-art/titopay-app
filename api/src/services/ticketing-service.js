@@ -517,6 +517,24 @@ function assertTicketingEligibility(eligibility, ticketTypes, verbPhrase) {
   }
 }
 
+// The event poster. Two shapes are accepted: an uploaded image, which arrives
+// as a base64 data URL exactly like profile photos do and is stored the same
+// way, and a plain http(s) URL, which is the historical behaviour and stays
+// working. A data URL is size-checked here as a backstop — the client resizes
+// first — because it lands in the events row and the JSON body limit is 768 KB.
+function cleanEventBanner(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(raw)) {
+    if (Buffer.byteLength(raw, "utf8") > 700 * 1024) {
+      throw new AppError(413, "Event poster is too large. Choose a smaller image.");
+    }
+    return raw;
+  }
+  if (/^https?:\/\//i.test(raw)) return raw.slice(0, 800);
+  return "";
+}
+
 async function uniqueSlug(base, eventId = null) {
   let candidate = slugify(base);
   const suffix = createHash("sha1").update(`${base}:${Date.now()}:${Math.random()}`).digest("hex").slice(0, 6);
@@ -590,7 +608,7 @@ function eventPayload(payload = {}, eligibility) {
     }),
     contactEmail: cleanEmail(payload.contactEmail || payload.contact_email || eligibility?.business?.email),
     contactNumber: cleanPhone(payload.contactNumber || payload.contact_number || eligibility?.business?.phone),
-    eventBannerUrl: cleanText(payload.eventBannerUrl || payload.event_banner_url, 800),
+    eventBannerUrl: cleanEventBanner(payload.eventBannerUrl || payload.event_banner_url),
     eventImages: Array.isArray(eventImages) ? eventImages.slice(0, 10) : [],
     ageRestriction: cleanText(payload.ageRestriction || payload.age_restriction, 120),
     capacity: payload.capacity === undefined || payload.capacity === "" ? null : Math.max(0, Number.parseInt(payload.capacity, 10) || 0),
@@ -1968,6 +1986,9 @@ module.exports = {
   // without standing up a database.
   ticketTypesIncludePaid,
   assertTicketingEligibility,
+  // Exported so the poster validator can be tested directly — the format regex
+  // and the size ceiling both matter, since the value lands in the events row.
+  cleanEventBanner,
   createEventDraft,
   updateEventDraft,
   submitEvent,
