@@ -330,6 +330,10 @@ CREATE TABLE IF NOT EXISTS event_change_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_event_change_requests_event ON event_change_requests (event_id, status);
 CREATE INDEX IF NOT EXISTS idx_event_change_requests_status ON event_change_requests (status, created_at DESC);
+-- One OPEN request per event, enforced by the database so a concurrent
+-- double-submit cannot slip past the application-level check.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_event_change_requests_open
+  ON event_change_requests (event_id) WHERE status IN ('requested','under_review');
 
 CREATE TABLE IF NOT EXISTS event_audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

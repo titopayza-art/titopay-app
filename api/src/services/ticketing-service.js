@@ -206,6 +206,10 @@ async function ensureTicketingSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_event_change_requests_event ON event_change_requests (event_id, status);
     CREATE INDEX IF NOT EXISTS idx_event_change_requests_status ON event_change_requests (status, created_at DESC);
+    -- One OPEN request per event, enforced by the database so a concurrent
+    -- double-submit cannot slip past the application-level check.
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_event_change_requests_open
+      ON event_change_requests (event_id) WHERE status IN ('requested','under_review');
 
     CREATE TABLE IF NOT EXISTS event_audit_logs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1097,6 +1101,13 @@ async function cancelEventCascade(eventId, { reason = "", actorId = null, actorT
   const cancelReason = cleanText(reason || "Event cancelled.", 1000);
   try {
     await client.query("BEGIN");
+    // Serialize concurrent cancels of the same event. Without this, two
+    // near-simultaneous cancels could both evaluate the refund dedup below on
+    // pre-commit snapshots and open a duplicate refund request for the same
+    // order (the duplicate could never move money twice — the order-status
+    // guard in processTicketRefund blocks that — but it is a mess admin then
+    // has to clean up). Transaction-scoped, keyed on the event.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`event-cancel:${eventId}`]);
     // Invalidate every still-valid ticket for the event. Scanned tickets are
     // left as-is (they represent a real entry that happened).
     await client.query(
@@ -2032,6 +2043,9 @@ async function processTicketRefund(refundId, payload = {}, actor, meta = {}) {
       }
       const subtotalNum = money(order.subtotal || 0);
       const refundAmount = money(Math.min(Number(refund.amount || subtotalNum || 0), subtotalNum));
+      // A zero-value refund has nothing to move; refuse it plainly here rather
+      // than letting the buyer credit below throw a generic wallet error.
+      if (refundAmount <= 0) throw new AppError(409, "This order carries no refundable amount");
       // Reverse the ORIGINAL sale split instead of debiting the business the
       // whole subtotal. At purchase the business was credited business_net and
       // the platform kept business_commission (business_net + commission =
@@ -2041,7 +2055,10 @@ async function processTicketRefund(refundId, payload = {}, actor, meta = {}) {
       // cancelled event's buyers. Prorate so a partial refund reverses
       // proportionally too.
       const ratio = subtotalNum > 0 ? refundAmount / subtotalNum : 0;
-      const businessPortion = money(Number(order.business_net || 0) * ratio);
+      // Clamped to refundAmount to defend the business_net <= subtotal
+      // invariant: on a corrupt row the business could otherwise be debited
+      // more than the buyer is credited.
+      const businessPortion = Math.min(money(Number(order.business_net || 0) * ratio), refundAmount);
       // Whatever the business share does not cover is the platform's commission,
       // reversed from the revenue wallet where it was banked.
       const commissionPortion = money(refundAmount - businessPortion);
@@ -2319,12 +2336,20 @@ async function requestEventChange(actor, eventId, payload = {}, meta = {}) {
   );
   if (open[0]) throw new AppError(409, "You already have a pending change request for this event. Please wait for TitoPay to review it.");
   const id = randomUUID();
-  const { rows: inserted } = await pool.query(
-    `INSERT INTO event_change_requests (id, event_id, requested_by, request_type, requested_changes, reason, status)
-     VALUES ($1,$2,$3,$4,$5::JSONB,$6,'requested')
-     RETURNING *`,
-    [id, eventId, actor.userId, requestType, JSON.stringify(requestedChanges), reason]
-  );
+  let inserted;
+  try {
+    ({ rows: inserted } = await pool.query(
+      `INSERT INTO event_change_requests (id, event_id, requested_by, request_type, requested_changes, reason, status)
+       VALUES ($1,$2,$3,$4,$5::JSONB,$6,'requested')
+       RETURNING *`,
+      [id, eventId, actor.userId, requestType, JSON.stringify(requestedChanges), reason]
+    ));
+  } catch (error) {
+    // The partial unique index turns a concurrent double-submit into a clean
+    // duplicate error rather than two open requests.
+    if (error.code === "23505") throw new AppError(409, "You already have a pending change request for this event. Please wait for TitoPay to review it.");
+    throw error;
+  }
   await eventAudit({
     eventId,
     actorType: "customer",

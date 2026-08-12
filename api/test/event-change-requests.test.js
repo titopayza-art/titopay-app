@@ -82,9 +82,12 @@ test("a cancelled or suspended event refuses entry at the door", () => {
 
 test("a refund reverses the commission instead of overcharging the business", () => {
   const fn = SOURCE.match(/async function processTicketRefund\([\s\S]*?\n\}/)[0];
-  // The business is debited its net share, not the whole subtotal.
-  assert.match(fn, /const businessPortion = money\(Number\(order\.business_net \|\| 0\) \* ratio\)/,
-    "the business is debited its recorded net share");
+  // The business is debited its net share, not the whole subtotal — clamped to
+  // the refund amount so corrupt data can never over-debit it.
+  assert.match(fn, /const businessPortion = Math\.min\(money\(Number\(order\.business_net \|\| 0\) \* ratio\), refundAmount\)/,
+    "the business is debited its recorded net share, clamped to the refund amount");
+  assert.match(fn, /if \(refundAmount <= 0\) throw new AppError\(409/,
+    "a zero-value refund is refused plainly, not via a generic wallet error");
   assert.match(fn, /const commissionPortion = money\(refundAmount - businessPortion\)/,
     "the commission portion is the remainder");
   assert.match(fn, /const businessDebitTotal = money\(businessPortion \+ refundProcessingFee\)/,
