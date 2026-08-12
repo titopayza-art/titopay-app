@@ -1,46 +1,32 @@
 TitoPay deployment build — 2026-08-12 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v326 (titopay-pwa-v326)
+PWA bundle: v327 (titopay-pwa-v327)
 Admin console: admin-console-v80
 
-This build — four changes:
+This build — products and stock for business accounts:
 
-1. Email statement: pick the period in the sheet itself. Presets (this
-   month, last month, last 3 months, this year, all activity) plus custom
-   from/to dates; the movement count and fee preview refresh live and the
-   statement email carries exactly the chosen window.
+  - Sales → new Stock tab: add the products you sell (name, price, category,
+    optional opening stock). Giving an opening stock switches on tracking.
+    Per product: Restock, Stock take (counted quantity becomes the truth,
+    the variance is recorded), Price change, History (the append-only
+    movement trail: opening, sales, restocks, adjustments, counts) and
+    Archive (off the till, history kept). Low-stock and oversold badges.
+  - Receive Money on a business account is now "Make a sale": your products
+    appear as tap-to-add buttons. Tapping builds the basket, the total and
+    label fill in automatically, and generating the payment QR records the
+    sale — tracked stock counts down on the server, priced server-side.
+    Overselling is refused unless the till explicitly confirms (then the
+    count goes negative until the next stock take corrects it).
+  - New API endpoints under /v1/business/products/* (business accounts
+    only; ownership enforced on every movement).
 
-2. Business "Sales" suite — a new tile on business accounts (also under
-   Profile > Business tools). Three views, all reconciled to the wallet
-   ledger itself:
-     Report      — period picker (today .. last month + custom), headline
-                   total with growth vs the previous equivalent period,
-                   per-day bar chart, sales count / average / biggest sale,
-                   busiest hour (SAST), channel breakdown with share bars.
-                   Top-ups are shown separately and NEVER counted as sales.
-     Sales data  — day-by-day money-in list, searchable, channel filter
-                   chips, per-day totals, payer names on each row.
-     Staff       — door performance: every ticket scan credited to the
-                   staff member who scanned it, share bars, per-event door
-                   coverage. Also reachable from Staff > "Staff performance
-                   report".
-   New API endpoints under /v1/business/sales/* (business accounts only).
+Proven live: verification/business-products-live.js (8/8) — create/track,
+duplicate refusal, server-priced basket sale with stock deduction, oversell
+guard + explicit override, stock-take variance, restock, archive-with-
+history, cross-account refusal. Full API suite 459/459.
 
-3. Admin Ticketing: sales analytics + marketing. Platform-wide gross,
-   platform revenue, tickets sold/scanned metrics; a 30-day paid-orders
-   trend; per-event sales table with an Advertise column — Copy link
-   (public event page) and WhatsApp / Facebook / X share links prefilled
-   with the buy-tickets URL.
-
-4. Admin sign-in footer now reads "Version 1.0" instead of the internal
-   console build string (the build stays on hover for support).
-
-Proven live: verification/business-sales-live.js (6/6) — ledger
-classification, sales-vs-top-up separation, cent-exact per-day/channel
-aggregates, growth vs previous window, staff scan attribution, personal
-accounts refused. Full API suite 459/459.
-
-Migrations to run: none — no new tables in this build.
+Migrations to run: none — the new tables create themselves on first use
+(also in schema.sql for fresh installs).
 
 Operational reminders (unchanged):
   node scripts/ensure-revenue-wallet.js --create   (once, on production)

@@ -1426,12 +1426,14 @@ function termChipLabel(days) {
   return `${days} days`;
 }
 function openReceiveModal() {
+  const isBusiness = state.accountType === "business";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Receive Money</p><h2>Generate TitoPay QR</h2><p class="lead">Create a secure QR code for receiving payments.</p></div>
+      <div><p class="eyebrow">Receive Money</p><h2>${isBusiness ? "Make a sale" : "Generate TitoPay QR"}</h2><p class="lead">${isBusiness ? "Tap products to build the sale, or enter an amount — then take payment by QR." : "Create a secure QR code for receiving payments."}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="receive">
+      ${isBusiness ? `<input type="hidden" name="basketSale" value="1"><div class="field" data-sale-products><p class="field-hint">Loading your products…</p></div>` : ""}
       <div class="field">
         <label for="receive-qr-label">QR label</label>
         <input id="receive-qr-label" name="label" value="${esc(defaultQrLabel())}" maxlength="48">
@@ -1442,9 +1444,10 @@ function openReceiveModal() {
         <div class="input-affix currency-affix" data-prefix="R"><input id="receive-qr-amount" name="amount" inputmode="decimal"></div>
         <small class="field-hint">Leave empty to let the payer enter the amount.</small>
       </div>
-      <button class="btn primary" type="submit">${icon("qr")} Generate receive QR</button>
+      <button class="btn primary" type="submit">${icon("qr")} ${isBusiness ? "Take payment — generate QR" : "Generate receive QR"}</button>
     </form>
   `);
+  if (isBusiness) refreshReceiveProducts();
 }
 function openTipModal() {
   openModal(`
@@ -2162,6 +2165,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "public-contact") await submitPublicContact(data, form);
     if (form.dataset.form === "support") await submitSupportRequest(data);
     if (form.dataset.form === "support-ticket-reply") await submitSupportTicketReply(data);
+    if (form.dataset.form === "business-product") await submitBusinessProduct(data);
     if (form.dataset.form === "chatbot") await submitChatbotMessage(data);
     if (form.dataset.form === "titopay-chat-lookup") await submitTitoPayChatLookup(data);
     if (form.dataset.form === "titopay-chat-message") await submitTitoPayChatMessage(form, formData);
@@ -2313,6 +2317,8 @@ async function onClick(event) {
       button.classList.toggle("primary", button.dataset.salesTab === state.businessSales.tab);
       button.classList.toggle("secondary", button.dataset.salesTab !== state.businessSales.tab);
     });
+    const salesPeriodsHost = document.querySelector("[data-sales-periods]");
+    if (salesPeriodsHost) salesPeriodsHost.hidden = state.businessSales.tab === "stock";
     refreshBusinessSales();
     return;
   }
@@ -2329,6 +2335,31 @@ async function onClick(event) {
     state.businessSales.channel = salesChannel.dataset.salesChannel;
     const content = document.querySelector("[data-sales-content]");
     if (content && state.businessSales.ledger) content.innerHTML = renderSalesLedgerView(state.businessSales.ledger);
+    return;
+  }
+  const stockAction = event.target.closest("[data-product-restock], [data-product-stocktake], [data-product-price], [data-product-history], [data-product-archive]");
+  if (stockAction) {
+    handleStockAction(stockAction);
+    return;
+  }
+  const saleAdd = event.target.closest("[data-sale-add]");
+  if (saleAdd) {
+    state.saleBasket = state.saleBasket || {};
+    state.saleBasket[saleAdd.dataset.saleAdd] = Number(state.saleBasket[saleAdd.dataset.saleAdd] || 0) + 1;
+    syncSaleBasketToForm();
+    return;
+  }
+  const saleMinus = event.target.closest("[data-sale-minus]");
+  if (saleMinus) {
+    state.saleBasket = state.saleBasket || {};
+    state.saleBasket[saleMinus.dataset.saleMinus] = Math.max(0, Number(state.saleBasket[saleMinus.dataset.saleMinus] || 0) - 1);
+    syncSaleBasketToForm();
+    return;
+  }
+  const saleClear = event.target.closest("[data-sale-clear]");
+  if (saleClear) {
+    state.saleBasket = {};
+    syncSaleBasketToForm();
     return;
   }
   const statementPeriod = event.target.closest("[data-statement-period]");
@@ -11595,6 +11626,9 @@ function renderMerchantQrWaitingScreen() {
   setMerchantPosModalClass();
 }
 async function generateQr(data) {
+  // A basket built from the product picker is a sale being made at the till:
+  // record it (counting tracked stock down) before the payment QR appears.
+  if (data.basketSale === "1") await recordSaleBasket();
   const body = {
     label: data.label || "TitoPay payment",
     codeType: data.amount ? "dynamic" : "static",
@@ -12229,8 +12263,9 @@ function openBusinessSalesModal(tab) {
       <button class="btn ${active("report")}" type="button" data-sales-tab="report">${icon("chart")} Report</button>
       <button class="btn ${active("data")}" type="button" data-sales-tab="data">${icon("list")} Sales data</button>
       <button class="btn ${active("staff")}" type="button" data-sales-tab="staff">${icon("user")} Staff</button>
+      <button class="btn ${active("stock")}" type="button" data-sales-tab="stock">${icon("wallet")} Stock</button>
     </div>
-    <div data-sales-periods>${salesPeriodChipsHtml()}</div>
+    <div data-sales-periods ${state.businessSales.tab === "stock" ? "hidden" : ""}>${salesPeriodChipsHtml()}</div>
     <section data-sales-content><p class="field-hint">Loading your sales…</p></section>
   `);
   refreshBusinessSales();
@@ -12246,7 +12281,11 @@ async function refreshBusinessSales() {
   const query = params.toString() ? `?${params.toString()}` : "";
   try {
     const tab = state.businessSales.tab;
-    if (tab === "data") {
+    if (tab === "stock") {
+      const result = await api("/v1/business/products");
+      state.businessProducts = result.items || [];
+      host.innerHTML = renderSalesStockView(state.businessProducts);
+    } else if (tab === "data") {
       const result = await api(`/v1/business/sales/ledger${query}`);
       state.businessSales.ledger = result;
       host.innerHTML = renderSalesLedgerView(result);
@@ -12415,6 +12454,194 @@ function renderSalesStaffView(report) {
       <section class="activity-list">
         ${events.map((row) => settingsRow(row.name, `${row.scanned} of ${row.issued} tickets scanned${row.eventDate ? ` · ${friendlyDate(row.eventDate)}` : ""}`, "ticket")).join("")}
       </section>` : ""}`;
+}
+/* ---- Products & stock: the catalogue behind "make a sale" ---------------- */
+function renderSalesStockView(products) {
+  const active = products.filter((product) => product.status === "active");
+  const groups = [];
+  for (const product of active) {
+    const last = groups[groups.length - 1];
+    if (last && last.category === product.category) last.items.push(product);
+    else groups.push({ category: product.category, items: [product] });
+  }
+  const stockBadge = (product) => {
+    if (!product.trackStock) return `<span class="chip">not counted</span>`;
+    const quantity = Number(product.stockQuantity);
+    if (quantity < 0) return `<span class="chip" style="background:#fdeaea;color:#b3261e">oversold ${quantity}</span>`;
+    if (product.lowStock) return `<span class="chip" style="background:#fdf3e2;color:#8a5b00">${quantity} left — low</span>`;
+    return `<span class="chip" style="background:#e7f6ec;color:#0b7a3b">${quantity} in stock</span>`;
+  };
+  const productRow = (product) => `
+    <div class="settings-row" data-stock-product-row="${esc(product.id)}">
+      <span class="icon-bubble" aria-hidden="true">${esc(String(product.name).trim().charAt(0).toUpperCase() || "?")}</span>
+      <div style="flex:1;min-width:0">
+        <strong>${esc(product.name)}</strong> ${stockBadge(product)}
+        <small style="display:block;color:#5b6472">${esc(money(product.price))}</small>
+        <div class="auth-actions" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+          <button class="chip" type="button" data-product-restock="${esc(product.id)}">Restock</button>
+          <button class="chip" type="button" data-product-stocktake="${esc(product.id)}">Stock take</button>
+          <button class="chip" type="button" data-product-price="${esc(product.id)}">Price</button>
+          <button class="chip" type="button" data-product-history="${esc(product.id)}">History</button>
+          <button class="chip" type="button" data-product-archive="${esc(product.id)}">Archive</button>
+        </div>
+        <div data-product-history-host="${esc(product.id)}"></div>
+      </div>
+    </div>`;
+  return `
+    <form class="form-grid" data-form="business-product" style="margin-top:12px">
+      <div class="field"><label>Product name</label><input name="name" maxlength="120" required placeholder="e.g. 1/4 chicken plate"></div>
+      <div class="field-row">
+        <div class="field"><label>Price</label><div class="input-affix currency-affix" data-prefix="R"><input name="price" inputmode="decimal" required placeholder="55.00"></div></div>
+        <div class="field"><label>Category</label><input name="category" maxlength="60" placeholder="Plates" list="stock-category-options"><datalist id="stock-category-options">${[...new Set(active.map((product) => product.category))].map((category) => `<option>${esc(category)}</option>`).join("")}</datalist></div>
+      </div>
+      <div class="field"><label>Opening stock <span class="field-optional">optional</span></label><input name="openingStock" inputmode="numeric" placeholder="Leave empty if you do not count this item">
+        <small class="field-hint">Give a number to switch on stock tracking — sales made from the till then count it down, and stock takes correct it.</small></div>
+      <button class="btn primary" type="submit">${icon("send")} Add product</button>
+    </form>
+    ${groups.length ? groups.map((group) => `
+      <h3 style="margin:14px 0 6px">${esc(group.category)}</h3>
+      <section class="activity-list">${group.items.map(productRow).join("")}</section>`).join("")
+      : `<p class="field-hint" style="margin-top:14px">No products yet. Add what you sell above — each product becomes a one-tap button when you make a sale.</p>`}
+    <p class="field-hint" style="margin-top:12px">Your products appear under <strong>Receive Money</strong> as tap-to-add buttons. Selling from there deducts tracked stock automatically; a stock take sets the real count whenever the shelf and the number disagree.</p>`;
+}
+async function submitBusinessProduct(data) {
+  await api("/v1/business/products", {
+    method: "POST",
+    body: { name: data.name, price: data.price, category: data.category || "General", openingStock: data.openingStock === "" ? null : data.openingStock }
+  });
+  showToast(`${data.name} added to your products.`);
+  state.receiveProductsLoaded = false;
+  await refreshBusinessSales();
+}
+async function handleStockAction(target) {
+  const restockId = target.dataset.productRestock;
+  const stocktakeId = target.dataset.productStocktake;
+  const priceId = target.dataset.productPrice;
+  const historyId = target.dataset.productHistory;
+  const archiveId = target.dataset.productArchive;
+  const products = state.businessProducts || [];
+  const product = products.find((item) => item.id === (restockId || stocktakeId || priceId || historyId || archiveId));
+  if (!product) return;
+  try {
+    if (restockId) {
+      const input = window.prompt(`How many units of "${product.name}" arrived?`, "");
+      if (input === null || input.trim() === "") return;
+      await api(`/v1/business/products/${product.id}/stock`, { method: "POST", body: { type: "restock", quantity: input.trim() } });
+      showToast("Stock added.");
+    } else if (stocktakeId) {
+      const input = window.prompt(`Stock take for "${product.name}": how many units are actually on the shelf right now?`, "");
+      if (input === null || input.trim() === "") return;
+      await api(`/v1/business/products/${product.id}/stock`, { method: "POST", body: { type: "stock_take", countedQuantity: input.trim(), note: "Stock take from the app" } });
+      showToast("Counted quantity saved — the variance is on the product history.");
+    } else if (priceId) {
+      const input = window.prompt(`New price for "${product.name}" (currently ${money(product.price)}):`, String(product.price));
+      if (input === null || input.trim() === "") return;
+      await api(`/v1/business/products/${product.id}`, { method: "PUT", body: { price: input.trim() } });
+      showToast("Price updated.");
+    } else if (archiveId) {
+      if (!window.confirm(`Archive "${product.name}"? It disappears from make-a-sale but its history stays.`)) return;
+      await api(`/v1/business/products/${product.id}`, { method: "PUT", body: { status: "archived" } });
+      showToast("Product archived.");
+    } else if (historyId) {
+      const host = document.querySelector(`[data-product-history-host="${product.id}"]`);
+      if (!host) return;
+      if (host.innerHTML) { host.innerHTML = ""; return; }
+      const result = await api(`/v1/business/products/${product.id}/movements`);
+      const labels = { opening: "Opening stock", sale: "Sold", restock: "Restocked", adjustment: "Adjusted", stock_take: "Stock take" };
+      host.innerHTML = (result.items || []).length
+        ? `<div style="margin-top:6px">${result.items.map((movement) => `<small style="display:block;color:#5b6472">${esc(friendlyDate(movement.createdAt))} · ${esc(labels[movement.type] || movement.type)} ${movement.quantityChange > 0 ? "+" : ""}${movement.quantityChange} → ${movement.quantityAfter}${movement.note ? ` · ${esc(movement.note)}` : ""}</small>`).join("")}</div>`
+        : `<small style="display:block;margin-top:6px;color:#5b6472">No movements yet.</small>`;
+      return;
+    }
+    state.receiveProductsLoaded = false;
+    await refreshBusinessSales();
+  } catch (error) {
+    showToast(friendlyFormError(error, "stock"), "error");
+  }
+}
+/* ---- Make a sale: tap products into the charge --------------------------- */
+async function refreshReceiveProducts() {
+  const host = document.querySelector("[data-sale-products]");
+  if (!host) return;
+  try {
+    const result = await api("/v1/business/products");
+    state.businessProducts = (result.items || []).filter((product) => product.status === "active");
+    state.receiveProductsLoaded = true;
+    state.saleBasket = {};
+    host.innerHTML = renderReceiveProductPicker();
+  } catch (error) {
+    host.innerHTML = "";
+  }
+}
+function renderReceiveProductPicker() {
+  const products = state.businessProducts || [];
+  if (!products.length) {
+    return `<p class="field-hint">Add your products under <strong>Sales → Stock</strong> and they appear here as one-tap buttons.</p>`;
+  }
+  const basket = state.saleBasket || {};
+  const lines = products.filter((product) => Number(basket[product.id] || 0) > 0);
+  const total = lines.reduce((sum, product) => sum + Number(product.price) * Number(basket[product.id]), 0);
+  return `
+    <span class="field-label">Sell from your products</span>
+    <div class="suggestion-row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px">
+      ${products.map((product) => {
+        const quantity = Number(basket[product.id] || 0);
+        return `<button type="button" class="chip" style="${quantity ? "background:#2f5cff;color:#fff" : ""}" data-sale-add="${esc(product.id)}">${esc(product.name)} · ${esc(money(product.price))}${quantity ? ` ×${quantity}` : ""}</button>`;
+      }).join("")}
+    </div>
+    ${lines.length ? `
+      <section class="integration-note">
+        ${lines.map((product) => `
+          <div style="display:flex;align-items:center;gap:8px;margin:2px 0">
+            <button type="button" class="chip" data-sale-minus="${esc(product.id)}" aria-label="Remove one ${esc(product.name)}">−</button>
+            <span style="flex:1"><strong>${esc(product.name)}</strong> ×${Number(basket[product.id])}</span>
+            <strong>${esc(money(Number(product.price) * Number(basket[product.id])))}</strong>
+          </div>`).join("")}
+        <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f4;padding-top:6px">
+          <strong>Sale total</strong><strong>${esc(money(total))}</strong>
+        </div>
+        <div class="auth-actions" style="margin-top:6px">
+          <button type="button" class="chip" data-sale-clear>Clear sale</button>
+        </div>
+        <small class="field-hint">The total fills the amount below. Generating the QR records the sale and counts tracked stock down.</small>
+      </section>` : ""}`;
+}
+function syncSaleBasketToForm() {
+  const host = document.querySelector("[data-sale-products]");
+  if (!host) return;
+  host.innerHTML = renderReceiveProductPicker();
+  const products = state.businessProducts || [];
+  const basket = state.saleBasket || {};
+  const lines = products.filter((product) => Number(basket[product.id] || 0) > 0);
+  const total = lines.reduce((sum, product) => sum + Number(product.price) * Number(basket[product.id]), 0);
+  const amountField = document.getElementById("receive-qr-amount");
+  const labelField = document.getElementById("receive-qr-label");
+  if (amountField) amountField.value = lines.length ? total.toFixed(2) : "";
+  if (labelField && lines.length) {
+    const first = `${lines[0].name}${Number(basket[lines[0].id]) > 1 ? ` ×${basket[lines[0].id]}` : ""}`;
+    labelField.value = (lines.length > 1 ? `${first} +${lines.length - 1} more` : first).slice(0, 48);
+  }
+}
+async function recordSaleBasket() {
+  const basket = state.saleBasket || {};
+  const items = Object.entries(basket)
+    .filter(([, quantity]) => Number(quantity) > 0)
+    .map(([productId, quantity]) => ({ productId, quantity: Number(quantity) }));
+  if (!items.length) return;
+  try {
+    const result = await api("/v1/business/products/record-sale", { method: "POST", body: { items } });
+    state.saleBasket = {};
+    showToast(`Sale recorded — ${esc(money(result.sale.total))}. Tracked stock counted down.`);
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (/in stock/i.test(message) && window.confirm(`${message}\n\nSell anyway? The count goes negative until your next stock take.`)) {
+      const result = await api("/v1/business/products/record-sale", { method: "POST", body: { items, allowNegative: true } });
+      state.saleBasket = {};
+      showToast(`Sale recorded — ${esc(money(result.sale.total))}. Stock is oversold; fix it with a stock take.`);
+      return;
+    }
+    throw error;
+  }
 }
 
 // The catalogue has no enterprise-distribution row, so an approved

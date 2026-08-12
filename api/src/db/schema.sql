@@ -925,6 +925,36 @@ CREATE TABLE IF NOT EXISTS support_tickets (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Business product catalogue and stock trail. The runtime also creates these
+-- on first use, so existing databases need no manual migration.
+CREATE TABLE IF NOT EXISTS business_products (
+  id UUID PRIMARY KEY,
+  business_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'General',
+  price NUMERIC(18,2) NOT NULL DEFAULT 0,
+  track_stock BOOLEAN NOT NULL DEFAULT FALSE,
+  stock_quantity NUMERIC(18,2) NOT NULL DEFAULT 0,
+  low_stock_threshold NUMERIC(18,2) NOT NULL DEFAULT 5,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_business_products_name
+  ON business_products (business_user_id, LOWER(name)) WHERE status = 'active';
+CREATE TABLE IF NOT EXISTS business_stock_movements (
+  id UUID PRIMARY KEY,
+  product_id UUID NOT NULL REFERENCES business_products(id) ON DELETE CASCADE,
+  business_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  movement_type TEXT NOT NULL CHECK (movement_type IN ('opening', 'sale', 'restock', 'adjustment', 'stock_take')),
+  quantity_change NUMERIC(18,2) NOT NULL,
+  quantity_after NUMERIC(18,2) NOT NULL,
+  note TEXT,
+  reference TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_business_stock_movements_product ON business_stock_movements (product_id, created_at DESC);
+
 -- Written replies on a support ticket (staff and customer). The runtime also
 -- creates this on first use, so existing databases need no manual migration.
 CREATE TABLE IF NOT EXISTS support_ticket_replies (
