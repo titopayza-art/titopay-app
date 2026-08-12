@@ -45,6 +45,21 @@ router.post("/fica", async (req, res, next) => {
       ["identity_document", "proof_of_address", "business_registration", "bank_confirmation", "other"],
       "Document type"
     );
+    // What a complete FICA pack is depends on who is submitting: a business
+    // must include its CIPC company registration documents alongside the
+    // responsible person's identity; a personal profile needs only identity and
+    // address. Enforced here so a client cannot skip it. (A submission whose
+    // PRIMARY document is the business registration itself is naturally exempt.)
+    const submitter = await getMe(req.auth.userId, "customer");
+    const metadata = req.body.metadata && typeof req.body.metadata === "object" ? req.body.metadata : {};
+    const companyRegistration = metadata.companyRegistration && typeof metadata.companyRegistration === "object" ? metadata.companyRegistration : null;
+    if (
+      String(submitter.accountType || "").toLowerCase() === "business" &&
+      documentType !== "business_registration" &&
+      !(companyRegistration && String(companyRegistration.name || "").trim())
+    ) {
+      throw new AppError(400, "CIPC company registration documents are required for business FICA verification");
+    }
     const reviewId = randomUUID();
     await pool.query("BEGIN");
     try {
@@ -57,7 +72,7 @@ router.post("/fica", async (req, res, next) => {
           req.auth.userId,
           JSON.stringify({
             documentType,
-            metadata: req.body.metadata || {}
+            metadata
           }),
           documentReference
         ]

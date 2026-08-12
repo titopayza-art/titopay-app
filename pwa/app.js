@@ -15256,13 +15256,13 @@ function ticketingEventRow(event) {
         ` : ""}
       ` : `<p class="ticket-event-note">No ticket types added yet.</p>`}
       ${event.pendingChangeRequest ? `
-        <p class="ticket-event-note ticket-change-pending">${icon("timer")} Change request pending review: <strong>${esc(changeRequestLabel(event.pendingChangeRequest.requestType))}</strong></p>
+        <p class="ticket-event-note ticket-change-pending">${icon("refresh")} Change request pending review: <strong>${esc(changeRequestLabel(event.pendingChangeRequest.requestType))}</strong></p>
       ` : ""}
       <div class="ticket-event-actions">
         ${canSubmit ? `<button class="btn secondary mini" type="button" data-action="ticketing-submit:${esc(event.id)}">Submit for approval</button>` : ""}
         ${event.status === "approved" && event.slug ? `<button class="btn ghost mini" type="button" data-action="ticketing-open-event:${esc(event.slug)}">${icon("eye")} Preview ticket</button>` : ""}
         ${event.marketingLink ? `<a class="btn ghost mini" href="${esc(event.marketingLink)}" target="_blank" rel="noopener">${icon("share")} Public page</a>` : ""}
-        ${["approved", "suspended"].includes(event.status) && !event.pendingChangeRequest ? `<button class="btn ghost mini" type="button" data-action="ticketing-request-change:${esc(event.id)}">${icon("settings")} Request change</button>` : ""}
+        ${["approved", "suspended"].includes(event.status) && !event.pendingChangeRequest ? `<button class="btn ghost mini" type="button" data-action="ticketing-request-change:${esc(event.id)}">${icon("feedback")} Request change</button>` : ""}
       </div>
     </article>
   `;
@@ -15683,7 +15683,7 @@ function openEventChangeRequestModal(eventId) {
       </label>
 
       <div class="auth-actions">
-        <button class="btn primary" type="submit">${icon("settings")} Send request</button>
+        <button class="btn primary" type="submit">${icon("send")} Send request</button>
         <button class="btn ghost" type="button" data-action="event-form-back">${icon("arrow-left")} Back</button>
       </div>
     </form>
@@ -19595,12 +19595,16 @@ function openFicaVerificationModal() {
       ${settingsRow("Review process", "Most reviews are completed once documents are checked.", "list")}
     </section>
     <form class="form-grid" data-form="fica-upload">
-      <div class="field"><label>Document type</label><select name="documentType" required>
+      <div class="field"><label>Document type</label><select name="identityKind" required>
         ${["South African ID", "Passport", "Permanent Resident Permit", "Refugee Documentation", "Asylum Documentation"].map((item) => `<option>${esc(item)}</option>`).join("")}
       </select></div>
       <div class="field"><label>${isBusiness ? "Responsible person photo" : "Profile photo"}</label><input name="profilePhoto" type="file" accept="image/*"></div>
       <div class="field"><label>ID or passport upload</label><input name="document" type="file" accept=".pdf,image/*" required></div>
       <div class="field"><label>Proof of address</label><input name="proofOfAddress" type="file" accept=".pdf,image/*"></div>
+      ${isBusiness ? `
+        <div class="field"><label>CIPC company registration documents</label><input name="companyRegistration" type="file" accept=".pdf,image/*" required>
+        <p class="field-hint">Your CIPC registration certificate (e.g. COR14.3 / CK documents). Required for business verification.</p></div>
+      ` : ""}
       <button class="btn primary" type="submit">${icon("upload")} Submit verification</button>
     </form>
   `);
@@ -19661,17 +19665,31 @@ async function submitFica(form) {
   const data = new FormData(form);
   const file = data.get("document");
   if (!file || !file.name) throw new Error("Choose a document to upload.");
+  const isBusiness = state.accountType === "business";
   const profilePhoto = data.get("profilePhoto");
   const proofOfAddress = data.get("proofOfAddress");
+  const companyRegistration = data.get("companyRegistration");
+  if (isBusiness && (!companyRegistration || !companyRegistration.name)) {
+    throw new Error("Upload your CIPC company registration documents to verify your business.");
+  }
   const result = await api("/v1/kyc/fica", {
     method: "POST",
     body: {
-      documentType: data.get("documentType"),
+      // The API accepts document CATEGORIES (identity_document, business_registration,
+      // ...). The select's human label ("South African ID") used to be sent here
+      // verbatim, which failed the server's enum check — so every submission,
+      // personal and business alike, was refused with "Document type is invalid".
+      // The chosen kind now travels in metadata where the reviewer reads it.
+      documentType: "identity_document",
       documentReference: file.name,
       metadata: {
+        identityKind: data.get("identityKind"),
         identityDocument: { name: file.name, size: file.size, type: file.type },
         profilePhoto: profilePhoto && profilePhoto.name ? { name: profilePhoto.name, size: profilePhoto.size, type: profilePhoto.type } : null,
-        proofOfAddress: proofOfAddress && proofOfAddress.name ? { name: proofOfAddress.name, size: proofOfAddress.size, type: proofOfAddress.type } : null
+        proofOfAddress: proofOfAddress && proofOfAddress.name ? { name: proofOfAddress.name, size: proofOfAddress.size, type: proofOfAddress.type } : null,
+        companyRegistration: isBusiness && companyRegistration && companyRegistration.name
+          ? { name: companyRegistration.name, size: companyRegistration.size, type: companyRegistration.type }
+          : null
       }
     }
   });
