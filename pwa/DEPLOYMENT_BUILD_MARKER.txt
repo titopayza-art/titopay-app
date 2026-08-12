@@ -1,41 +1,26 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v330 (titopay-pwa-v330)
-Admin console: admin-console-v80
+PWA bundle: v331 (titopay-pwa-v331)
+Admin console: admin-console-v81
 
-This build — Staff is real, for day-to-day operations:
+This build — FICA collects typed identifiers, not only uploads:
 
-  BUSINESS SIDE (Business tools > Staff — the Preview badge disappears):
-  - The register is server truth: synced to the business account across
-    devices (endpoints /v1/business/staff the app was already wired for).
-  - Adding a person with their TitoPay @username / email / phone links
-    their account and notifies them in the app AND by email, naming the
-    role and explaining exactly what they can and cannot do. Removing
-    notifies too. A contact with no TitoPay match is still saved on the
-    register, honestly labelled: not notified, cannot sell yet.
-  - Fixed on the way: the register's own Remove button had been broken by
-    the ticketing staff-remove handler swallowing its action.
+  - Personal: the FICA screen now asks for the ID number (13-digit SA ID,
+    checked against the ID checksum so a typo is caught immediately) or
+    the passport/permit number — the label follows the chosen document
+    type — plus the residential address, all BEFORE the uploads.
+  - Business: the responsible person's ID/passport number, the CIPC
+    company registration number (e.g. 2020/123456/07) and the business
+    address, alongside the existing CIPC document upload requirement.
+  - The server validates and stores the typed values on the review, and
+    the Admin Compliance Queue now renders them legibly (document kind +
+    number, company registration, address, file names) so the reviewer
+    checks the documents AGAINST the declared details.
 
-  STAFF SIDE (personal profile > My Workplaces — new):
-  - Staff see every business that added them, with their role.
-  - "Take a sale": tap the business's products (or type an amount), show
-    the payment QR. The QR is minted with the BUSINESS's identity, so the
-    customer's payment lands in the business wallet directly — staff never
-    hold a cent. Basket priced server-side; tracked stock counts down;
-    oversell asks for explicit confirmation.
-  - Every till sale is logged under the staff member's name and appears in
-    the business's Sales > Staff report (till sales + amounts alongside
-    door scans).
+Full API suite 459/459 (FICA tests extended to the new contract: missing
+typed ID number is refused; typed values land on the review row).
 
-Proven live (verification/business-staff-live.js, 9/9): add -> linked +
-alert + email; workplace visible; basket sale priced R60 with stock
-10 -> 8; the QR provably belongs to the business; the performance report
-credits the cashier; typed-amount sales; strangers refused; removal turns
-selling off and is announced; unlinked entries honestly labelled.
-Full API suite 459/459.
-
-Migrations to run: none — new tables create themselves on first use
-(also in schema.sql for fresh installs).
+Migrations to run: none.
 
 Operational reminders (unchanged):
   node scripts/ensure-revenue-wallet.js --create   (once, on production)

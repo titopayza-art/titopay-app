@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v80";
+  return "admin-console-v81";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -2608,7 +2608,22 @@ async function renderCompliance() {
       { label: "Account", render: (row) => `<span class="chip blue">${escapeHtml(row.account_type)}</span>` },
       { label: "Review", key: "review_type" },
       { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status)}</span>` },
-      { label: "Notes", key: "notes" },
+      { label: "Declared details", render: (row) => {
+        // The submission's typed identifiers, rendered legibly so the
+        // reviewer verifies the documents AGAINST them instead of reading
+        // a raw JSON blob.
+        let parsed = null;
+        try { parsed = typeof row.notes === "string" ? JSON.parse(row.notes) : row.notes; } catch (error) { parsed = null; }
+        const detailMeta = parsed?.metadata || {};
+        if (!parsed) return `<small>${escapeHtml(String(row.notes || "-").slice(0, 120))}</small>`;
+        const parts = [];
+        if (detailMeta.identityKind) parts.push(`<strong>${escapeHtml(detailMeta.identityKind)}</strong>${detailMeta.idNumber ? `: ${escapeHtml(detailMeta.idNumber)}` : ""}`);
+        if (detailMeta.companyRegistrationNumber) parts.push(`Company reg: <strong>${escapeHtml(detailMeta.companyRegistrationNumber)}</strong>`);
+        if (detailMeta.address) parts.push(`Address: ${escapeHtml(String(detailMeta.address).slice(0, 90))}`);
+        const files = [detailMeta.identityDocument?.name, detailMeta.proofOfAddress?.name, detailMeta.companyRegistration?.name].filter(Boolean);
+        if (files.length) parts.push(`Files: ${escapeHtml(files.join(", ").slice(0, 90))}`);
+        return parts.length ? `<small>${parts.join("<br>")}</small>` : `<small>${escapeHtml(parsed.documentType || "-")}</small>`;
+      } },
     ], (row) => `
       <button data-review-status="approved" data-review-id="${row.id}">Approve</button>
       <button data-review-status="rejected" data-review-id="${row.id}">Reject</button>

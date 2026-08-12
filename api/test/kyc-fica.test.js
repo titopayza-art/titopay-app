@@ -89,12 +89,22 @@ test("a PERSONAL account can submit FICA, and the old broken payload stays refus
     });
     assert.equal(broken.status, 400, "the human label is not a document category");
 
-    // The fixed payload: category + kind in metadata.
+    // Missing the typed ID number and address: refused with a clear reason.
+    const noNumber = await post(baseUrl, personal.token, {
+      documentType: "identity_document",
+      documentReference: "id.pdf",
+      metadata: { identityKind: "South African ID", identityDocument: { name: "id.pdf", size: 1234, type: "application/pdf" } }
+    });
+    assert.equal(noNumber.status, 400, "an identity submission without the typed ID number is refused");
+
+    // The fixed payload: category + kind + typed identifiers in metadata.
     const response = await post(baseUrl, personal.token, {
       documentType: "identity_document",
       documentReference: "id.pdf",
       metadata: {
         identityKind: "South African ID",
+        idNumber: "8001015009087",
+        address: "12 Test Street, Johannesburg, 2000",
         identityDocument: { name: "id.pdf", size: 1234, type: "application/pdf" },
         proofOfAddress: { name: "address.pdf", size: 2222, type: "application/pdf" },
         companyRegistration: null
@@ -109,6 +119,8 @@ test("a PERSONAL account can submit FICA, and the old broken payload stays refus
     const notes = JSON.parse(rows[0].notes);
     assert.equal(notes.documentType, "identity_document");
     assert.equal(notes.metadata.identityKind, "South African ID", "the chosen kind is preserved for the reviewer");
+    assert.equal(notes.metadata.idNumber, "8001015009087", "the typed ID number is on the review");
+    assert.equal(notes.metadata.address, "12 Test Street, Johannesburg, 2000", "the typed address is on the review");
   });
 });
 
@@ -118,7 +130,7 @@ test("a BUSINESS account is refused without CIPC documents, and succeeds with th
     const missing = await post(baseUrl, business.token, {
       documentType: "identity_document",
       documentReference: "director-id.pdf",
-      metadata: { identityKind: "Passport", identityDocument: { name: "director-id.pdf", size: 999, type: "application/pdf" } }
+      metadata: { identityKind: "Passport", idNumber: "AB1234567", address: "1 Factory Road, Pretoria, 0001", companyRegistrationNumber: "2020/123456/07", identityDocument: { name: "director-id.pdf", size: 999, type: "application/pdf" } }
     });
     assert.equal(missing.status, 400);
     const missingBody = await missing.json();
@@ -131,6 +143,9 @@ test("a BUSINESS account is refused without CIPC documents, and succeeds with th
       documentReference: "director-id.pdf",
       metadata: {
         identityKind: "Passport",
+        idNumber: "AB1234567",
+        address: "1 Factory Road, Pretoria, 0001",
+        companyRegistrationNumber: "2020/123456/07",
         identityDocument: { name: "director-id.pdf", size: 999, type: "application/pdf" },
         proofOfAddress: { name: "premises.pdf", size: 500, type: "application/pdf" },
         companyRegistration: { name: "cipc-cor14.3.pdf", size: 4321, type: "application/pdf" }
@@ -143,6 +158,8 @@ test("a BUSINESS account is refused without CIPC documents, and succeeds with th
     const notes = JSON.parse(rows[0].notes);
     assert.equal(notes.metadata.companyRegistration.name, "cipc-cor14.3.pdf",
       "the CIPC document is recorded on the review for the compliance team");
+    assert.equal(notes.metadata.companyRegistrationNumber, "2020/123456/07",
+      "the typed registration number is on the review");
     const { rows: userRows } = await pool.query("SELECT fica_status FROM users WHERE id = $1", [business.id]);
     assert.equal(userRows[0].fica_status, "submitted", "the business account moves to submitted");
   });

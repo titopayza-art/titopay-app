@@ -53,12 +53,40 @@ router.post("/fica", async (req, res, next) => {
     const submitter = await getMe(req.auth.userId, "customer");
     const metadata = req.body.metadata && typeof req.body.metadata === "object" ? req.body.metadata : {};
     const companyRegistration = metadata.companyRegistration && typeof metadata.companyRegistration === "object" ? metadata.companyRegistration : null;
+    const isBusinessSubmitter = String(submitter.accountType || "").toLowerCase() === "business";
     if (
-      String(submitter.accountType || "").toLowerCase() === "business" &&
+      isBusinessSubmitter &&
       documentType !== "business_registration" &&
       !(companyRegistration && String(companyRegistration.name || "").trim())
     ) {
       throw new AppError(400, "CIPC company registration documents are required for business FICA verification");
+    }
+    // The typed identifiers the reviewer verifies the documents AGAINST.
+    // Uploads alone made every review a squint at a photo; the number and
+    // address are now first-class fields on the submission.
+    if (documentType === "identity_document") {
+      const identityKind = String(metadata.identityKind || "South African ID");
+      const idNumber = String(metadata.idNumber || "").replace(/\s+/g, "");
+      if (/south african id/i.test(identityKind)) {
+        if (!/^\d{13}$/.test(idNumber)) {
+          throw new AppError(400, "Enter the 13-digit South African ID number exactly as on the document");
+        }
+      } else if (!/^[A-Za-z0-9-]{5,20}$/.test(idNumber)) {
+        throw new AppError(400, "Enter the passport or permit number (5 to 20 letters and digits)");
+      }
+      metadata.idNumber = idNumber;
+      const address = String(metadata.address || "").trim();
+      if (address.length < 10 || address.length > 400) {
+        throw new AppError(400, `Enter the ${isBusinessSubmitter ? "business" : "residential"} address (at least 10 characters)`);
+      }
+      metadata.address = address;
+      if (isBusinessSubmitter) {
+        const registrationNumber = String(metadata.companyRegistrationNumber || "").trim();
+        if (!/^[0-9A-Za-z/\- ]{5,30}$/.test(registrationNumber)) {
+          throw new AppError(400, "Enter the company registration number as issued by CIPC (e.g. 2020/123456/07)");
+        }
+        metadata.companyRegistrationNumber = registrationNumber;
+      }
     }
     const reviewId = randomUUID();
     await pool.query("BEGIN");

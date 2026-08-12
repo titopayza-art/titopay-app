@@ -1,6 +1,17 @@
 TitoPay Admin
-Build: admin-console-v80
-Date: 2026-08-12
+Build: admin-console-v81
+Date: 2026-08-13
+
+v81 - The Compliance Queue shows declared FICA details, not raw JSON.
+
+  - FICA submissions now arrive with typed identifiers (ID / passport /
+    permit number, address, and for businesses the CIPC registration
+    number). The queue's Notes column renders them legibly — document
+    kind and number, company registration, address, and the uploaded
+    file names — so the reviewer verifies the documents AGAINST the
+    declared values instead of reading a JSON blob.
+  - Requires the API package of the same date, which validates and
+    stores the typed fields.
 
 v80 - Ticket sales analytics and event marketing on the Ticketing page,
 and the sign-in footer reads Version 1.0.
@@ -511,5 +522,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v80; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v81; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

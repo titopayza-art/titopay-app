@@ -2750,6 +2750,10 @@ function onInput(event) {
     refreshEmailStatementPreview();
     return;
   }
+  if (event.target.closest("[data-fica-kind]")) {
+    syncFicaNumberField();
+    return;
+  }
   const salesCustomRange = event.target.closest("[data-sales-custom-from], [data-sales-custom-to]");
   if (salesCustomRange) {
     state.businessSales.customFrom = String(document.querySelector("[data-sales-custom-from]")?.value || "");
@@ -20864,9 +20868,18 @@ function openFicaVerificationModal() {
       ${settingsRow("Review process", "Most reviews are completed once documents are checked.", "list")}
     </section>
     <form class="form-grid" data-form="fica-upload">
-      <div class="field"><label>Document type</label><select name="identityKind" required>
+      <div class="field"><label>Document type</label><select name="identityKind" required data-fica-kind>
         ${["South African ID", "Passport", "Permanent Resident Permit", "Refugee Documentation", "Asylum Documentation"].map((item) => `<option>${esc(item)}</option>`).join("")}
       </select></div>
+      <div class="field"><label data-fica-number-label>ID number</label>
+        <input name="idNumber" inputmode="numeric" autocomplete="off" maxlength="20" required placeholder="13-digit South African ID number" data-fica-number>
+        <small class="field-hint">Typed here so the reviewer verifies your documents against it — no squinting at photos.</small></div>
+      ${isBusiness ? `
+      <div class="field"><label>Company registration number</label>
+        <input name="companyRegistrationNumber" autocomplete="off" maxlength="30" required placeholder="e.g. 2020/123456/07">
+        <small class="field-hint">As issued by CIPC. The ID number above is the responsible person's.</small></div>` : ""}
+      <div class="field"><label>${isBusiness ? "Business address" : "Residential address"}</label>
+        <textarea name="address" minlength="10" maxlength="400" required placeholder="Street, suburb, city, postal code"></textarea></div>
       <div class="field"><label>${isBusiness ? "Responsible person photo" : "Profile photo"}</label><input name="profilePhoto" type="file" accept="image/*"></div>
       <div class="field"><label>ID or passport upload</label><input name="document" type="file" accept=".pdf,image/*" required></div>
       <div class="field"><label>Proof of address</label><input name="proofOfAddress" type="file" accept=".pdf,image/*"></div>
@@ -20877,6 +20890,7 @@ function openFicaVerificationModal() {
       <button class="btn primary" type="submit">${icon("upload")} Submit verification</button>
     </form>
   `);
+  syncFicaNumberField();
 }
 async function verifyAuthenticationPreferenceUpdate(data) {
   const method = String(data.preferenceMethod || "").toUpperCase();
@@ -20930,6 +20944,33 @@ async function verifyWalletUnlock(data) {
   render();
   showToast("Wallet unlocked.");
 }
+// The 13-digit South African ID carries a Luhn check digit, so an obvious
+// typo is caught before the review queue ever sees it.
+function saIdNumberLooksValid(idNumber) {
+  const digits = String(idNumber || "").replace(/\s+/g, "");
+  if (!/^\d{13}$/.test(digits)) return false;
+  let sum = 0;
+  for (let index = 0; index < 13; index += 1) {
+    let digit = Number(digits[12 - index]);
+    if (index % 2 === 1) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}
+function syncFicaNumberField() {
+  const kind = String(document.querySelector("[data-fica-kind]")?.value || "South African ID");
+  const label = document.querySelector("[data-fica-number-label]");
+  const input = document.querySelector("[data-fica-number]");
+  const isSaId = /south african id/i.test(kind);
+  if (label) label.textContent = isSaId ? "ID number" : `${kind} number`;
+  if (input) {
+    input.placeholder = isSaId ? "13-digit South African ID number" : `Number exactly as on the ${kind.toLowerCase()}`;
+    input.inputMode = isSaId ? "numeric" : "text";
+  }
+}
 async function submitFica(form) {
   const data = new FormData(form);
   const file = data.get("document");
@@ -20940,6 +20981,19 @@ async function submitFica(form) {
   const companyRegistration = data.get("companyRegistration");
   if (isBusiness && (!companyRegistration || !companyRegistration.name)) {
     throw new Error("Upload your CIPC company registration documents to verify your business.");
+  }
+  const identityKind = String(data.get("identityKind") || "South African ID");
+  const idNumber = String(data.get("idNumber") || "").replace(/\s+/g, "");
+  if (/south african id/i.test(identityKind)) {
+    if (!saIdNumberLooksValid(idNumber)) throw new Error("That South African ID number does not look right — check the 13 digits.");
+  } else if (!/^[A-Za-z0-9-]{5,20}$/.test(idNumber)) {
+    throw new Error(`Enter the ${identityKind.toLowerCase()} number (5 to 20 letters and digits).`);
+  }
+  const address = String(data.get("address") || "").trim();
+  if (address.length < 10) throw new Error(`Enter the ${isBusiness ? "business" : "residential"} address (at least 10 characters).`);
+  const companyRegistrationNumber = String(data.get("companyRegistrationNumber") || "").trim();
+  if (isBusiness && companyRegistrationNumber.length < 5) {
+    throw new Error("Enter the company registration number as issued by CIPC (e.g. 2020/123456/07).");
   }
   const result = await api("/v1/kyc/fica", {
     method: "POST",
@@ -20953,6 +21007,9 @@ async function submitFica(form) {
       documentReference: file.name,
       metadata: {
         identityKind: data.get("identityKind"),
+        idNumber,
+        address,
+        companyRegistrationNumber: isBusiness ? companyRegistrationNumber : undefined,
         identityDocument: { name: file.name, size: file.size, type: file.type },
         profilePhoto: profilePhoto && profilePhoto.name ? { name: profilePhoto.name, size: profilePhoto.size, type: profilePhoto.type } : null,
         proofOfAddress: proofOfAddress && proofOfAddress.name ? { name: proofOfAddress.name, size: proofOfAddress.size, type: proofOfAddress.type } : null,
