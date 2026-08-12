@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v310-vendor-softpos";
+const CACHE_NAME = "titopay-pwa-v311-tap-charge-back";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=310",
-  "./app.min.js?v=310",
+  "./styles.min.css?v=311",
+  "./app.min.js?v=311",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

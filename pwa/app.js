@@ -3309,6 +3309,10 @@ async function handleAction(action, actionElement = null) {
   if (action === "vendor-tag-scan") {
     await startVendorTagScan();
   }
+  if (action === "vendor-tag-back") {
+    stopEventTagScan();
+    await openBusinessTicketingDashboard({ refresh: true });
+  }
   if (action === "stockvel-create") {
     openStockvelCreateWizard();
   }
@@ -14797,7 +14801,10 @@ function renderVendorTagChargeModal() {
              <p class="field-hint">Hold the patron's wristband or card against the back of this phone.</p>`
           : `<label>Wristband code<input name="token" placeholder="Paste the tag code" autocomplete="off"></label>
              <p class="field-hint">This phone can't read NFC in the browser. On an Android phone in Chrome you can tap the wristband instead of typing the code.</p>`}
-      <button class="btn primary" type="submit">${icon("wallet")} Charge</button>
+      <div class="auth-actions">
+        <button class="btn primary" type="submit">${icon("wallet")} Charge</button>
+        <button class="btn secondary" type="button" data-action="vendor-tag-back">${icon("arrow-left")} Back</button>
+      </div>
       <p class="tag-link-note">${icon("shield")} No money is stored on the tag. The tap charges the patron's own TitoPay Wallet, and you must be an authorised vendor for the event.</p>
     </form>
     ${s.result ? `
