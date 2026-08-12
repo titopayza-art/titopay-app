@@ -2306,6 +2306,31 @@ async function onClick(event) {
     removeBillSplitParticipant(splitRemove);
     return;
   }
+  const salesTab = event.target.closest("[data-sales-tab]");
+  if (salesTab) {
+    state.businessSales.tab = salesTab.dataset.salesTab;
+    document.querySelectorAll("[data-sales-tab]").forEach((button) => {
+      button.classList.toggle("primary", button.dataset.salesTab === state.businessSales.tab);
+      button.classList.toggle("secondary", button.dataset.salesTab !== state.businessSales.tab);
+    });
+    refreshBusinessSales();
+    return;
+  }
+  const salesPeriod = event.target.closest("[data-sales-period]");
+  if (salesPeriod) {
+    state.businessSales.period = salesPeriod.dataset.salesPeriod;
+    const periodsHost = document.querySelector("[data-sales-periods]");
+    if (periodsHost) periodsHost.innerHTML = salesPeriodChipsHtml();
+    if (state.businessSales.period !== "custom" || (state.businessSales.customFrom && state.businessSales.customTo)) refreshBusinessSales();
+    return;
+  }
+  const salesChannel = event.target.closest("[data-sales-channel]");
+  if (salesChannel) {
+    state.businessSales.channel = salesChannel.dataset.salesChannel;
+    const content = document.querySelector("[data-sales-content]");
+    if (content && state.businessSales.ledger) content.innerHTML = renderSalesLedgerView(state.businessSales.ledger);
+    return;
+  }
   const statementPeriod = event.target.closest("[data-statement-period]");
   if (statementPeriod) {
     applyStatementPeriod(statementPeriod.dataset.statementPeriod);
@@ -2667,6 +2692,32 @@ function onInput(event) {
     applyStatementCustomRange();
     return;
   }
+  const emailStatementRange = event.target.closest("[data-email-statement-period], [data-email-statement-from], [data-email-statement-to]");
+  if (emailStatementRange) {
+    refreshEmailStatementPreview();
+    return;
+  }
+  const salesCustomRange = event.target.closest("[data-sales-custom-from], [data-sales-custom-to]");
+  if (salesCustomRange) {
+    state.businessSales.customFrom = String(document.querySelector("[data-sales-custom-from]")?.value || "");
+    state.businessSales.customTo = String(document.querySelector("[data-sales-custom-to]")?.value || "");
+    if (state.businessSales.customFrom && state.businessSales.customTo) refreshBusinessSales();
+    return;
+  }
+  const salesSearch = event.target.closest("[data-sales-search]");
+  if (salesSearch) {
+    state.businessSales.search = salesSearch.value;
+    const content = document.querySelector("[data-sales-content]");
+    if (content && state.businessSales.ledger) {
+      content.innerHTML = renderSalesLedgerView(state.businessSales.ledger);
+      const refocus = document.querySelector("[data-sales-search]");
+      if (refocus) {
+        refocus.focus();
+        refocus.setSelectionRange(refocus.value.length, refocus.value.length);
+      }
+    }
+    return;
+  }
   const learnSearch = event.target.closest("[data-learn-search]");
   if (learnSearch) {
     state.learn.search = learnSearch.value;
@@ -3015,6 +3066,12 @@ async function handleAction(action, actionElement = null) {
     if (window.history.length > 1) window.history.back();
     else window.location.assign("/");
     return;
+  }
+  if (action === "business-sales") {
+    openBusinessSalesModal();
+  }
+  if (action === "business-sales-staff") {
+    openBusinessSalesModal("staff");
   }
   if (action === "enterprise-distribution") {
     await openEnterpriseDistributionDashboard();
@@ -5205,6 +5262,7 @@ function profileView() {
       ${profileFeature("Share TitoPay", "Invite friends, family or customers by WhatsApp, SMS or any sharing app.", "share", "share-titopay")}
       ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
       ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
+      ${isBusiness ? profileFeature("Sales", "Sales reports, day-by-day data and staff performance.", "chart", "business-sales") : ""}
       ${isBusiness ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
     </section>
     <section class="section-head compact"><h2>Help & learning</h2></section>
@@ -8920,6 +8978,7 @@ async function openEmailStatementConfirmation() {
   const result=await api(`/v1/wallets/${encodeURIComponent(wallet.id)}/statement/email/preview${query?`?${query}`:""}`);
   const preview=result.preview||{};
   const idempotencyKey=createClientTransactionKey("email-statement");
+  const hasFilters=Boolean(state.transactionFilters.from||state.transactionFilters.to);
   openModal(`
     <div class="modal-head">
       <div>
@@ -8929,7 +8988,22 @@ async function openEmailStatementConfirmation() {
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <section class="receipt-card">
+    <div class="field">
+      <label for="email-statement-period">Statement period</label>
+      <select id="email-statement-period" data-email-statement-period>
+        <option value="all">All available wallet activity</option>
+        <option value="this-month">This month</option>
+        <option value="last-month">Last month</option>
+        <option value="three-months">Last 3 months</option>
+        <option value="this-year">This year</option>
+        <option value="custom" ${hasFilters?"selected":""}>Custom dates…</option>
+      </select>
+    </div>
+    <div class="field-row" data-email-statement-custom ${hasFilters?"":"hidden"}>
+      <div class="field"><label for="email-statement-from">From</label><input id="email-statement-from" type="date" data-email-statement-from value="${esc(state.transactionFilters.from||"")}"></div>
+      <div class="field"><label for="email-statement-to">To</label><input id="email-statement-to" type="date" data-email-statement-to value="${esc(state.transactionFilters.to||"")}"></div>
+    </div>
+    <section class="receipt-card" data-email-statement-preview>
       <dl>
         ${receiptRow("Statement period",preview.period||statementPeriodLabel())}
         ${receiptRow("Wallet movements",String(preview.transactionCount||0))}
@@ -8952,6 +9026,43 @@ async function openEmailStatementConfirmation() {
       <button class="btn primary" type="button" data-action="confirm-email-statement" data-wallet-id="${esc(wallet.id)}" data-statement-from="${esc(state.transactionFilters.from||"")}" data-statement-to="${esc(state.transactionFilters.to||"")}" data-idempotency-key="${esc(idempotencyKey)}">${icon("mail")} Confirm and email for ${esc(money(preview.fee??EMAIL_STATEMENT_FEE))}</button>
     </div>
   `);
+}
+function emailStatementSelectedRange() {
+  const select=document.querySelector("[data-email-statement-period]");
+  const id=select?select.value:"all";
+  const custom=document.querySelector("[data-email-statement-custom]");
+  if(custom)custom.hidden=id!=="custom";
+  if(id==="custom"){
+    return {
+      from:String(document.querySelector("[data-email-statement-from]")?.value||""),
+      to:String(document.querySelector("[data-email-statement-to]")?.value||"")
+    };
+  }
+  if(id==="all")return {from:"",to:""};
+  return statementPeriodRange(id);
+}
+async function refreshEmailStatementPreview() {
+  const confirm=document.querySelector('[data-action="confirm-email-statement"]');
+  if(!confirm)return;
+  const {from,to}=emailStatementSelectedRange();
+  confirm.dataset.statementFrom=from;
+  confirm.dataset.statementTo=to;
+  const host=document.querySelector("[data-email-statement-preview]");
+  if(host)host.style.opacity="0.6";
+  try {
+    const params=new URLSearchParams();
+    if(from)params.set("from",from);
+    if(to)params.set("to",to);
+    const query=params.toString();
+    const result=await api(`/v1/wallets/${encodeURIComponent(confirm.dataset.walletId)}/statement/email/preview${query?`?${query}`:""}`);
+    const preview=result.preview||{};
+    const fallbackLabel=(from||to)?`${from?friendlyDate(from):"Start"} to ${to?friendlyDate(to):"today"}`:"All available wallet activity";
+    if(host)host.innerHTML=`<dl>${receiptRow("Statement period",preview.period||fallbackLabel)}${receiptRow("Wallet movements",String(preview.transactionCount||0))}${receiptRow("Email statement fee",money(preview.fee??EMAIL_STATEMENT_FEE))}</dl>`;
+  } catch(error) {
+    showToast(friendlyFormError(error,"statement"),"error");
+  } finally {
+    if(host)host.style.opacity="";
+  }
 }
 async function confirmEmailStatement(button) {
   const walletId=String(button.dataset.walletId||"");
@@ -12051,6 +12162,261 @@ function openSalesHistoryModal() {
    17. BUSINESS, ENTERPRISE AND BULK DISTRIBUTION
    ========================================================================== */
 
+/* ---- Business Sales suite -------------------------------------------------
+   Three views over the money that actually landed in the business wallet:
+   Report (totals, growth, chart, channels, busiest hour), Sales data (the
+   day-by-day list, searchable and filterable) and Staff (door performance
+   across the business's events). Everything reconciles to the wallet ledger
+   because it IS the wallet ledger, classified by what caused each credit. */
+function businessSalesTileService() {
+  return {
+    id: "business-sales",
+    label: "Sales",
+    icon: "chart",
+    service_icon: "chart",
+    action: "business-sales",
+    type: "businessSales",
+    status: "active",
+    description: "Sales reports, day-by-day data and staff performance."
+  };
+}
+function businessSalesTileVisible() {
+  return state.accountType === "business";
+}
+function salesPeriodRange(key, today = new Date()) {
+  const day = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (key === "today") return { from: isoDate(day), to: isoDate(day) };
+  if (key === "yesterday") {
+    const yesterday = new Date(day.getTime() - 86400000);
+    return { from: isoDate(yesterday), to: isoDate(yesterday) };
+  }
+  if (key === "week" || key === "last-week") {
+    const monday = new Date(day.getTime() - ((day.getDay() + 6) % 7) * 86400000);
+    if (key === "week") return { from: isoDate(monday), to: isoDate(day) };
+    return { from: isoDate(new Date(monday.getTime() - 7 * 86400000)), to: isoDate(new Date(monday.getTime() - 86400000)) };
+  }
+  if (key === "month") return { from: isoDate(new Date(day.getFullYear(), day.getMonth(), 1)), to: isoDate(day) };
+  if (key === "last-month") return { from: isoDate(new Date(day.getFullYear(), day.getMonth() - 1, 1)), to: isoDate(new Date(day.getFullYear(), day.getMonth(), 0)) };
+  return { from: "", to: "" };
+}
+function salesSelectedRange() {
+  const sales = state.businessSales || {};
+  if (sales.period === "custom") return { from: sales.customFrom || "", to: sales.customTo || "" };
+  return salesPeriodRange(sales.period || "week");
+}
+function salesPeriodChipsHtml() {
+  const sales = state.businessSales || {};
+  const periods = [["today", "Today"], ["yesterday", "Yesterday"], ["week", "This week"], ["last-week", "Last week"], ["month", "This month"], ["last-month", "Last month"], ["custom", "Custom"]];
+  const chips = periods.map(([key, label]) => `<button type="button" class="chip" style="${sales.period === key ? "background:#2f5cff;color:#fff" : ""}" data-sales-period="${key}">${label}</button>`).join("");
+  const custom = sales.period === "custom" ? `
+    <div class="field-row" style="margin-top:8px">
+      <div class="field"><label>From</label><input type="date" data-sales-custom-from value="${esc(sales.customFrom || "")}"></div>
+      <div class="field"><label>To</label><input type="date" data-sales-custom-to value="${esc(sales.customTo || "")}"></div>
+    </div>` : "";
+  return `<div class="suggestion-row" style="flex-wrap:wrap;gap:6px">${chips}</div>${custom}`;
+}
+function openBusinessSalesModal(tab) {
+  state.businessSales = state.businessSales || { tab: "report", period: "week", channel: "all", search: "" };
+  if (tab) state.businessSales.tab = tab;
+  state.currentModalAction = "business-sales";
+  const active = (key) => (state.businessSales.tab === key ? "primary" : "secondary");
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Business</p><h2>Sales</h2><p class="lead">Money that reached your wallet, reconciled to the cent. Reports, day-by-day data and door staff performance.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="auth-actions" role="tablist" aria-label="Sales views">
+      <button class="btn ${active("report")}" type="button" data-sales-tab="report">${icon("chart")} Report</button>
+      <button class="btn ${active("data")}" type="button" data-sales-tab="data">${icon("list")} Sales data</button>
+      <button class="btn ${active("staff")}" type="button" data-sales-tab="staff">${icon("user")} Staff</button>
+    </div>
+    <div data-sales-periods>${salesPeriodChipsHtml()}</div>
+    <section data-sales-content><p class="field-hint">Loading your sales…</p></section>
+  `);
+  refreshBusinessSales();
+}
+async function refreshBusinessSales() {
+  const host = document.querySelector("[data-sales-content]");
+  if (!host) return;
+  host.innerHTML = `<p class="field-hint">Loading your sales…</p>`;
+  const { from, to } = salesSelectedRange();
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  try {
+    const tab = state.businessSales.tab;
+    if (tab === "data") {
+      const result = await api(`/v1/business/sales/ledger${query}`);
+      state.businessSales.ledger = result;
+      host.innerHTML = renderSalesLedgerView(result);
+    } else if (tab === "staff") {
+      const result = await api(`/v1/business/sales/staff-performance${query}`);
+      host.innerHTML = renderSalesStaffView(result.report || {});
+    } else {
+      const result = await api(`/v1/business/sales/summary${query}`);
+      state.businessSales.summary = result.summary || {};
+      host.innerHTML = renderSalesReportView(state.businessSales.summary);
+      drawSalesReportChart();
+    }
+  } catch (error) {
+    host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "sales"))}</p>`;
+  }
+}
+function salesAmountLabel(item) {
+  return `${item.isSale ? "+" : "+"}${money(item.amount)}`;
+}
+function renderSalesLedgerView(result) {
+  const sales = state.businessSales;
+  const channels = [["all", "All"], ["qr", "QR"], ["tickets", "Tickets"], ["tag", "Event Tag"], ["transfer", "Payments"], ["in", "Other in"]];
+  const searchTerm = String(sales.search || "").trim().toLowerCase();
+  let items = (result.items || []);
+  if (sales.channel === "in") items = items.filter((item) => !item.isSale);
+  else if (sales.channel !== "all") items = items.filter((item) => item.channel === sales.channel);
+  if (searchTerm) items = items.filter((item) => `${item.reference} ${item.payerName} ${item.payerUsername} ${item.channelLabel}`.toLowerCase().includes(searchTerm));
+  const groups = [];
+  for (const item of items) {
+    const label = friendlyDate(item.createdAt);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.items.push(item);
+    else groups.push({ label, items: [item] });
+  }
+  const dayBlock = (group) => {
+    const dayTotal = group.items.filter((item) => item.isSale).reduce((sum, item) => sum + item.amount, 0);
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin:14px 2px 6px">
+        <strong>${esc(group.label)}</strong><span class="field-hint">${money(dayTotal)} in sales</span>
+      </div>
+      <section class="activity-list">
+        ${group.items.map((item) => `
+          <div class="settings-row">
+            <span class="icon-bubble" aria-hidden="true">${icon(item.channel === "tickets" ? "ticket" : item.channel === "qr" ? "qr" : item.channel === "tag" ? "tag" : "wallet")}</span>
+            <div style="flex:1;min-width:0">
+              <strong>${esc(item.channelLabel)}</strong>
+              <small style="display:block;color:var(--muted,#5b6472)">${esc(new Date(item.createdAt).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }))} · ${esc(item.payerName || item.payerUsername ? `${item.payerName}${item.payerUsername ? ` @${item.payerUsername}` : ""}` : item.reference || "Received")}</small>
+            </div>
+            <strong style="${item.isSale ? "color:#0b7a3b" : "color:#5b6472"}">${esc(salesAmountLabel(item))}</strong>
+          </div>`).join("")}
+      </section>`;
+  };
+  return `
+    <div class="field" style="margin-top:10px"><input type="search" data-sales-search placeholder="Search by payer, reference or channel" value="${esc(sales.search || "")}"></div>
+    <div class="suggestion-row" style="flex-wrap:wrap;gap:6px">${channels.map(([key, label]) => `<button type="button" class="chip" style="${sales.channel === key ? "background:#2f5cff;color:#fff" : ""}" data-sales-channel="${key}">${label}</button>`).join("")}</div>
+    <section class="integration-note" style="display:flex;justify-content:space-between;gap:12px">
+      <span><strong>${money(result.totals?.sales || 0)}</strong><br><small>${result.totals?.salesCount || 0} sales in this period</small></span>
+      <span style="text-align:right"><strong>${money(result.totals?.otherIn || 0)}</strong><br><small>other money in (top-ups etc.)</small></span>
+    </section>
+    ${groups.length ? groups.map(dayBlock).join("") : `<p class="field-hint" style="margin-top:14px">Nothing in this period${searchTerm ? " matches your search" : ""}. Money you receive lands here the moment it reaches your wallet.</p>`}`;
+}
+function renderSalesReportView(summary) {
+  const { from, to } = salesSelectedRange();
+  const changeChip = summary.changePercent === null || summary.changePercent === undefined
+    ? `<span class="chip">First period with data</span>`
+    : `<span class="chip" style="${summary.changePercent >= 0 ? "background:#e7f6ec;color:#0b7a3b" : "background:#fdeaea;color:#b3261e"}">${summary.changePercent >= 0 ? "▲" : "▼"} ${Math.abs(summary.changePercent).toFixed(1)}% vs previous period</span>`;
+  const perChannel = Object.entries(summary.perChannel || {}).sort((a, b) => b[1].total - a[1].total);
+  const channelMax = Math.max(1, ...perChannel.map(([, value]) => value.total));
+  const hours = summary.perHour || [];
+  const busiestHour = hours.length ? hours.indexOf(Math.max(...hours)) : -1;
+  return `
+    <section style="margin-top:12px">
+      <p class="field-hint" style="margin:0 0 2px">${from || to ? `${from ? friendlyDate(from) : "Start"} — ${to ? friendlyDate(to) : "today"}` : "All time"}</p>
+      <p style="font-size:34px;font-weight:800;margin:0;letter-spacing:-0.5px">${money(summary.total || 0)}</p>
+      <div style="margin:6px 0 2px">${changeChip}</div>
+    </section>
+    <canvas data-sales-chart style="width:100%;height:180px;margin:10px 0 4px" aria-label="Sales per day"></canvas>
+    <section class="activity-list">
+      ${settingsRow("Sales", `${summary.count || 0} sales · average ${money(summary.average || 0)}`, "list")}
+      ${summary.biggest ? settingsRow("Biggest sale", `${money(summary.biggest.amount)} · ${summary.biggest.channelLabel}`, "wallet") : ""}
+      ${busiestHour >= 0 && hours[busiestHour] > 0 ? settingsRow("Busiest hour", `${String(busiestHour).padStart(2, "0")}:00–${String((busiestHour + 1) % 24).padStart(2, "0")}:00 · ${money(hours[busiestHour])}`, "refresh") : ""}
+      ${Number(summary.otherIn || 0) > 0 ? settingsRow("Other money in", `${money(summary.otherIn)} (top-ups, distributions — not counted as sales)`, "wallet") : ""}
+    </section>
+    ${perChannel.length ? `
+      <h3 style="margin:14px 0 6px">Where the sales came from</h3>
+      ${perChannel.map(([, value]) => `
+        <div style="margin:0 0 8px">
+          <div style="display:flex;justify-content:space-between"><small><strong>${esc(value.label)}</strong> · ${value.count}</small><small><strong>${money(value.total)}</strong></small></div>
+          <div style="height:8px;border-radius:4px;background:#e8edf7;overflow:hidden"><div style="height:100%;width:${Math.max(3, Math.round((value.total / channelMax) * 100))}%;background:#2f5cff;border-radius:4px"></div></div>
+        </div>`).join("")}` : `<p class="field-hint">No sales in this period yet. Sales made with QR payments, tickets, Event Tag and direct payments all report here automatically.</p>`}`;
+}
+function drawSalesReportChart() {
+  const canvas = document.querySelector("[data-sales-chart]");
+  const summary = state.businessSales?.summary;
+  if (!canvas || !summary) return;
+  const perDay = summary.perDay || {};
+  const { from, to } = salesSelectedRange();
+  let days = Object.keys(perDay).sort();
+  if (from && to) {
+    days = [];
+    for (let cursor = new Date(`${from}T00:00:00`); cursor <= new Date(`${to}T00:00:00`); cursor = new Date(cursor.getTime() + 86400000)) {
+      days.push(isoDate(cursor));
+    }
+  }
+  if (days.length > 62) days = days.slice(-62);
+  if (!days.length) { canvas.hidden = true; return; }
+  canvas.hidden = false;
+  const ratio = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth || 320;
+  const height = 180;
+  canvas.width = width * ratio;
+  canvas.height = height * ratio;
+  const context = canvas.getContext("2d");
+  context.scale(ratio, ratio);
+  const top = 10, bottom = 24, left = 6, right = 6;
+  const plotHeight = height - top - bottom;
+  const max = Math.max(1, ...days.map((day) => perDay[day]?.total || 0));
+  context.strokeStyle = "#e8edf7";
+  context.lineWidth = 1;
+  for (let line = 0; line <= 3; line += 1) {
+    const y = top + (plotHeight / 3) * line;
+    context.beginPath(); context.moveTo(left, y); context.lineTo(width - right, y); context.stroke();
+  }
+  const slot = (width - left - right) / days.length;
+  const barWidth = Math.max(3, Math.min(26, slot * 0.66));
+  context.fillStyle = "#2f5cff";
+  days.forEach((day, index) => {
+    const value = perDay[day]?.total || 0;
+    const barHeight = value > 0 ? Math.max(3, (value / max) * plotHeight) : 2;
+    const x = left + slot * index + (slot - barWidth) / 2;
+    const y = top + plotHeight - barHeight;
+    context.fillStyle = value > 0 ? "#2f5cff" : "#dbe3f2";
+    if (context.roundRect) { context.beginPath(); context.roundRect(x, y, barWidth, barHeight, 3); context.fill(); }
+    else context.fillRect(x, y, barWidth, barHeight);
+  });
+  context.fillStyle = "#5b6472";
+  context.font = "10px system-ui, sans-serif";
+  context.textAlign = "center";
+  const labelEvery = Math.max(1, Math.ceil(days.length / 8));
+  days.forEach((day, index) => {
+    if (index % labelEvery !== 0 && index !== days.length - 1) return;
+    context.fillText(day.slice(8), left + slot * index + slot / 2, height - 8);
+  });
+}
+function renderSalesStaffView(report) {
+  const members = report.members || [];
+  const events = report.events || [];
+  const memberCard = (member) => `
+    <div class="settings-row">
+      <span class="icon-bubble" aria-hidden="true">${esc(String(member.fullName || "?").trim().charAt(0).toUpperCase() || "?")}</span>
+      <div style="flex:1;min-width:0">
+        <strong>${esc(member.fullName || "Staff member")}</strong>
+        <small style="display:block;color:#5b6472">${member.username ? `@${esc(member.username)} · ` : ""}${member.eventsAssigned ? `${member.eventsAssigned} event${member.eventsAssigned === 1 ? "" : "s"}` : "door scans only"}${member.lastScanAt ? ` · last scan ${esc(friendlyDate(member.lastScanAt))}` : ""}</small>
+        <div style="height:6px;border-radius:3px;background:#e8edf7;overflow:hidden;margin-top:5px"><div style="height:100%;width:${Math.max(2, Math.round(member.sharePercent))}%;background:#2f5cff;border-radius:3px"></div></div>
+      </div>
+      <strong style="margin-left:8px">${member.scans}</strong>
+    </div>`;
+  return `
+    <section class="integration-note" style="margin-top:12px">
+      <strong>${report.totalScans || 0} tickets scanned in</strong>
+      <p class="field-hint" style="margin:2px 0 0">Door performance across your events for this period. Each scan is credited to the staff member whose phone scanned the ticket.</p>
+    </section>
+    ${members.length ? `<section class="activity-list">${members.map(memberCard).join("")}</section>` : `<p class="field-hint">No staff activity yet. Add door staff under Ticketing → your event → Staff; every ticket they scan is credited to them here.</p>`}
+    ${events.length ? `
+      <h3 style="margin:14px 0 6px">Door coverage by event</h3>
+      <section class="activity-list">
+        ${events.map((row) => settingsRow(row.name, `${row.scanned} of ${row.issued} tickets scanned${row.eventDate ? ` · ${friendlyDate(row.eventDate)}` : ""}`, "ticket")).join("")}
+      </section>` : ""}`;
+}
+
 // The catalogue has no enterprise-distribution row, so an approved
 // organisation had no tile in Services and could only reach Bulk Distribution
 // through the profile. The tile is synthesised client-side, gated on the
@@ -12109,6 +12475,9 @@ async function openBusinessStaffModal() {
         <p class="lead">Keep a register of the people who work in your business — cashiers, managers and assistants.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="auth-actions">
+      <button class="btn secondary" type="button" data-action="business-sales-staff">${icon("chart")} Staff performance report</button>
     </div>
     <form class="form-grid" data-form="business-staff">
       <div class="field">
@@ -16310,6 +16679,9 @@ function quickServiceCandidates() {
   if (enterpriseDistributionTileVisible() && !services.some((service) => String(service.action || service.id) === "enterprise-distribution")) {
     services.push(enterpriseDistributionTileService());
   }
+  if (businessSalesTileVisible() && !services.some((service) => String(service.action || service.id) === "business-sales")) {
+    services.push(businessSalesTileService());
+  }
   const unique = new Map();
   services.forEach((service) => {
     const id = String(service.id || service.serviceCode || "");
@@ -18752,7 +19124,8 @@ function commercialServiceIcon(item = {}) {
     tickets: "ticket",
     ticketing: "ticketing",
     "business-ticketing-staff": "staff-badge",
-    "enterprise-distribution": "bulk-distribution"
+    "enterprise-distribution": "bulk-distribution",
+    "business-sales": "chart"
   };
   return byAction[key] || normalizeIconName(item.service_icon || item.serviceIcon || key);
 }
@@ -18764,6 +19137,7 @@ function serviceTypeFromAction(action, status) {
   if (action === "ticketing" || action === "business-ticketing-staff") return "ticketing";
   if (action === "business-staff") return "businessStaff";
   if (action === "enterprise-distribution") return "enterpriseDistribution";
+  if (action === "business-sales") return "businessSales";
   if (action === "learn") return "learn";
   if (action === "stockvel") return "stockvel";
   if (action === "tip") return "tip";
@@ -18971,6 +19345,7 @@ function serviceById(id) {
   const found = state.services.find((service) => service.id === id || service.action === id);
   if (found) return found;
   if (id === "enterprise-distribution" && enterpriseDistributionTileVisible()) return enterpriseDistributionTileService();
+  if (id === "business-sales" && businessSalesTileVisible()) return businessSalesTileService();
   return undefined;
 }
 function servicesView() {
@@ -18986,6 +19361,9 @@ function servicesView() {
   const active = hideDuplicateAirtimeDataTiles(activeServices().filter(shouldShowServiceTile));
   if (enterpriseDistributionTileVisible() && !active.some((service) => String(service.action || service.id) === "enterprise-distribution")) {
     active.push(enterpriseDistributionTileService());
+  }
+  if (businessSalesTileVisible() && !active.some((service) => String(service.action || service.id) === "business-sales")) {
+    active.push(businessSalesTileService());
   }
   const soon = hideDuplicateAirtimeDataTiles(comingSoonServices().filter(shouldShowServiceTile));
   const searchTile = state.auth?.accessToken
@@ -19076,6 +19454,7 @@ function handleService(id) {
   }
   if (service.type === "businessStaff" || service.action === "business-staff") return openBusinessStaffModal();
   if (service.type === "enterpriseDistribution" || service.action === "enterprise-distribution") return openEnterpriseDistributionDashboard();
+  if (service.type === "businessSales" || service.action === "business-sales") return openBusinessSalesModal();
   if (service.action === "top-up") return openTopUpModal(service);
   if (service.action === "withdraw") return openWithdrawModal(service);
   if (["airtime", "airtime-data", "airtime-and-data", "data", "electricity", "voucher"].includes(service.action)) {
@@ -20443,7 +20822,7 @@ const MODAL_STACK_ACTIONS = new Set([
   // page, the scanner and a ticket's email screen always offers a way back.
   "ticketing-refresh", "ticketing-staff-open", "ticketing-staff-manage",
   "ticketing-create-event", "vendor-tag-charge", "ticketing-browse-public",
-  "my-tickets"
+  "my-tickets", "business-sales", "business-sales-staff"
 ]);
 // Parametrised modal actions ("action:value") that join the same back trail.
 // Matched on the prefix before the colon; the full string is what replays.

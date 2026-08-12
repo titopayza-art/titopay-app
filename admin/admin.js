@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v79";
+  return "admin-console-v80";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -4451,14 +4451,16 @@ async function openEventTagPanel(eventId) {
   host.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 async function renderTicketing() {
-  const [result, refundResult, changeResult] = await Promise.all([
+  const [result, refundResult, changeResult, analyticsResult] = await Promise.all([
     apiFetch("/admin/ticketing/events"),
     apiFetch("/admin/ticketing/refunds").catch(() => ({ items: [] })),
     apiFetch("/admin/ticketing/change-requests").catch(() => ({ items: [] })),
+    apiFetch("/admin/ticketing/analytics").catch(() => ({ analytics: null })),
   ]);
   const rows = result.items || [];
   const refunds = refundResult.items || [];
   const changeRequests = changeResult.items || [];
+  const analytics = analyticsResult.analytics || null;
   const openChanges = changeRequests.filter((item) => ["requested", "under_review"].includes(item.status));
   PAGE_EXPORTS.ticketing = rows;
   PAGE_EXPORTS.ticketingRefunds = refunds;
@@ -4468,6 +4470,33 @@ async function renderTicketing() {
     return acc;
   }, {});
   const CHANGE_LABELS = { postpone: "Postpone", cancel: "Cancel event", update_details: "Update details", other: "Other" };
+  const totals = analytics?.totals || {};
+  const trend = analytics?.trend || [];
+  const maxTrendGross = Math.max(1, ...trend.map((item) => Number(item.gross || 0)));
+  const trendStrip = trend.length ? `
+    <div style="display:flex;align-items:flex-end;gap:2px;height:46px;margin:6px 0 2px">
+      ${trend.map((item) => `<span title="${escapeHtml(item.day)}: ${item.orders} orders, R${Number(item.gross).toFixed(2)}" style="flex:1;min-width:3px;background:#2f5cff;border-radius:2px 2px 0 0;height:${Math.max(6, Math.round((Number(item.gross) / maxTrendGross) * 46))}px"></span>`).join("")}
+    </div>
+    <small>Paid ticket orders per day, last 30 days. Tallest day: R${maxTrendGross.toFixed(2)}.</small>` : "<small>No paid ticket orders in the last 30 days.</small>";
+  const advertCell = (row) => {
+    if (!row.publicUrl) return "<small>No public link yet</small>";
+    const copy = `${escapeHtml(row.name)} — get your tickets on TitoPay: ${row.publicUrl}`;
+    return `
+      <button data-copy-advert="${escapeHtml(row.publicUrl)}">Copy link</button>
+      <a href="https://wa.me/?text=${encodeURIComponent(copy)}" target="_blank" rel="noopener">WhatsApp</a>
+      <a href="https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(row.publicUrl)}" target="_blank" rel="noopener">Facebook</a>
+      <a href="https://twitter.com/intent/tweet?text=${encodeURIComponent(copy)}" target="_blank" rel="noopener">X</a>`;
+  };
+  const analyticsCard = analytics ? `
+    ${tableCard("Ticket Sales & Marketing", `
+      <div style="padding:4px 2px 10px">${trendStrip}</div>
+      ${renderRows(analytics.events || [], [
+        { label: "Event", render: (row) => `<strong>${escapeHtml(row.name || "-")}</strong><br><small>${escapeHtml(row.organiserName || "-")} · ${escapeHtml(String(row.eventDate || "-").slice(0, 10))} · ${escapeHtml(row.city || row.venueName || "-")}</small>` },
+        { label: "Sales", render: (row) => `<strong>R${Number(row.gross || 0).toFixed(2)}</strong><br><small>${row.orders} orders · ${row.ticketsSold} tickets · net R${Number(row.businessNet || 0).toFixed(2)} to organiser</small>` },
+        { label: "Door", render: (row) => `${row.scanned} scanned<br><small>of ${row.ticketsSold} sold</small>` },
+        { label: "Status", render: (row) => `<span class="chip ${row.status === "approved" ? "green" : row.status === "cancelled" || row.status === "suspended" ? "red" : "blue"}">${escapeHtml(String(row.status || "-").replaceAll("_", " "))}</span>` },
+      ], advertCell)}
+    `, "Gross is paid orders including fees. The advert link is the public event page anyone can buy from — copy it or push it straight to socials.")}` : "";
   document.getElementById("page-content").innerHTML = `
     ${renderMetrics([
       ["Events", rows.length],
@@ -4475,8 +4504,12 @@ async function renderTicketing() {
       ["Approved", counts.approved || 0],
       ["Refunds", refunds.filter((item) => item.status === "requested").length],
       ["Change Requests", openChanges.length],
+      ["Gross ticket sales", `R${Number(totals.gross || 0).toFixed(2)}`],
+      ["Platform revenue", `R${Number(totals.platformRevenue || 0).toFixed(2)}`],
+      ["Tickets sold / scanned", `${totals.ticketsIssued || 0} / ${totals.ticketsScanned || 0}`],
     ])}
     <div id="ticketing-detail-host"></div>
+    ${analyticsCard}
     ${tableCard("Change Request Queue", renderRows(changeRequests, [
       { label: "Event", render: (row) => `<strong>${escapeHtml(row.eventName || "-")}</strong><br><small>${escapeHtml(row.requesterName || "organiser")}</small>` },
       { label: "Request", render: (row) => `${escapeHtml(CHANGE_LABELS[row.requestType] || row.requestType || "-")}${row.requestType === "postpone" && row.requestedChanges && row.requestedChanges.eventDate ? `<br><small>New date: ${escapeHtml(String(row.requestedChanges.eventDate))}</small>` : ""}` },
@@ -7147,6 +7180,15 @@ document.addEventListener("click", async (event) => {
       await renderCompanyDocuments();
     } catch (error) {
       showToast(adminErrorMessage(error.message || "Unable to acknowledge document."));
+    }
+  }
+  const copyAdvert = event.target.closest("[data-copy-advert]");
+  if (copyAdvert) {
+    try {
+      await navigator.clipboard.writeText(copyAdvert.dataset.copyAdvert);
+      showToast("Advert link copied — paste it anywhere.");
+    } catch (error) {
+      window.prompt("Copy the advert link:", copyAdvert.dataset.copyAdvert);
     }
   }
   const supportReply = event.target.closest("[data-support-reply]");

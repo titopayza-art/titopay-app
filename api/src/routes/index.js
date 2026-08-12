@@ -24,6 +24,7 @@ const chatRoutes = require("./chat.routes");
 const supportRoutes = require("./support.routes");
 const hrRoutes = require("./hr.routes");
 const ticketingRoutes = require("./ticketing.routes");
+const businessSalesRoutes = require("./business-sales.routes");
 const enterpriseDistributionRoutes = require("./enterprise-distribution.routes");
 const posRoutes = require("../pos/routes");
 const emailCentreRoutes = require("./email-centre.routes");
@@ -124,6 +125,7 @@ function mountVersionedRoutes(prefix) {
   router.use(`${prefix}/chatbot`, chatbotRoutes);
   router.use(`${prefix}/support`, supportRoutes);
   router.use(`${prefix}/ticketing`, ticketingRoutes);
+  router.use(`${prefix}/business/sales`, businessSalesRoutes);
   router.use(`${prefix}/enterprise-distribution`, enterpriseDistributionRoutes);
   router.use(`${prefix}/pos`, posRoutes);
   router.use(`${prefix}`, lookupRoutes);

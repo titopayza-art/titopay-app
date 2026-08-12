@@ -2776,8 +2776,100 @@ async function createTicketSettlement(eventId, actor, meta = {}) {
   return rows[0];
 }
 
+// Admin ticketing analytics: the sales picture across every event on the
+// platform, plus the public advert link per event so the team can push an
+// event onto socials straight from the console.
+async function adminTicketingAnalytics() {
+  await ensureTicketingSchema();
+  const appOrigin = process.env.APP_ORIGIN || "https://app.titopay.co.za";
+  const [{ rows: statusRows }, { rows: orderTotals }, { rows: ticketTotals }, { rows: refundTotals }, { rows: trendRows }, { rows: eventRows }] = await Promise.all([
+    pool.query("SELECT status, COUNT(*)::int AS count FROM events GROUP BY status"),
+    pool.query(
+      `SELECT COUNT(*)::int AS orders,
+              COALESCE(SUM(total), 0) AS gross,
+              COALESCE(SUM(buyer_fee + business_commission), 0) AS platform_revenue,
+              COALESCE(SUM(business_net), 0) AS to_organisers
+       FROM ticket_orders
+       WHERE status = 'paid'`
+    ),
+    pool.query(
+      `SELECT COUNT(*)::int AS issued,
+              COUNT(*) FILTER (WHERE status = 'scanned')::int AS scanned
+       FROM tickets`
+    ),
+    pool.query(
+      `SELECT COUNT(*)::int AS refunds, COALESCE(SUM(amount), 0) AS refunded
+       FROM ticket_refunds
+       WHERE status = 'approved'`
+    ),
+    pool.query(
+      `SELECT TO_CHAR(created_at::DATE, 'YYYY-MM-DD') AS day,
+              COUNT(*)::int AS orders,
+              COALESCE(SUM(total), 0) AS gross
+       FROM ticket_orders
+       WHERE status = 'paid' AND created_at >= NOW() - INTERVAL '30 days'
+       GROUP BY created_at::DATE
+       ORDER BY day ASC`
+    ),
+    pool.query(
+      `SELECT e.id, e.event_name AS name, e.slug, e.status, e.event_date, e.venue_name, e.city,
+              u.full_name AS organiser_name, u.username AS organiser_username,
+              COALESCE(o.orders, 0)::int AS orders,
+              COALESCE(o.tickets_sold, 0)::int AS tickets_sold,
+              COALESCE(o.gross, 0) AS gross,
+              COALESCE(o.business_net, 0) AS business_net,
+              COALESCE(t.scanned, 0)::int AS scanned
+       FROM events e
+       JOIN users u ON u.id = e.business_user_id
+       LEFT JOIN (
+         SELECT event_id, COUNT(*)::int AS orders, COALESCE(SUM(quantity), 0)::int AS tickets_sold,
+                COALESCE(SUM(total), 0) AS gross, COALESCE(SUM(business_net), 0) AS business_net
+         FROM ticket_orders WHERE status = 'paid' GROUP BY event_id
+       ) o ON o.event_id = e.id
+       LEFT JOIN (
+         SELECT event_id, COUNT(*)::int AS scanned FROM tickets WHERE status = 'scanned' GROUP BY event_id
+       ) t ON t.event_id = e.id
+       WHERE e.status IN ('approved', 'suspended', 'completed', 'cancelled')
+       ORDER BY COALESCE(o.gross, 0) DESC, e.event_date DESC NULLS LAST
+       LIMIT 25`
+    )
+  ]);
+  return {
+    statusCounts: Object.fromEntries(statusRows.map((row) => [row.status, row.count])),
+    totals: {
+      orders: orderTotals[0].orders,
+      gross: money(orderTotals[0].gross),
+      platformRevenue: money(orderTotals[0].platform_revenue),
+      toOrganisers: money(orderTotals[0].to_organisers),
+      ticketsIssued: ticketTotals[0].issued,
+      ticketsScanned: ticketTotals[0].scanned,
+      refunds: refundTotals[0].refunds,
+      refunded: money(refundTotals[0].refunded)
+    },
+    trend: trendRows.map((row) => ({ day: row.day, orders: row.orders, gross: money(row.gross) })),
+    events: eventRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      status: row.status,
+      eventDate: row.event_date,
+      venueName: row.venue_name,
+      city: row.city,
+      organiserName: row.organiser_name,
+      organiserUsername: row.organiser_username,
+      orders: row.orders,
+      ticketsSold: row.tickets_sold,
+      gross: money(row.gross),
+      businessNet: money(row.business_net),
+      scanned: row.scanned,
+      publicUrl: row.slug ? `${appOrigin}/events/${row.slug}` : ""
+    }))
+  };
+}
+
 module.exports = {
   ensureTicketingSchema,
+  adminTicketingAnalytics,
   // Exported so the Event Tag routes can gate on exactly the same staff rules
   // the scanner already uses, rather than growing a second answer to
   // "may this person act on this event?".

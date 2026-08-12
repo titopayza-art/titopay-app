@@ -1,26 +1,46 @@
 TitoPay deployment build — 2026-08-12 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v325 (titopay-pwa-v325)
-Admin console: admin-console-v79
+PWA bundle: v326 (titopay-pwa-v326)
+Admin console: admin-console-v80
 
-This build — the support conversation loop:
-  - Contact TitoPay submissions already landed on the Admin Portal queue and
-    already sent the customer a receipt email. What was missing was the reply.
-  - Admin Portal (Support > Tickets): every ticket now has a Reply button.
-    The reply is stored on the ticket, the ticket moves to in_progress under
-    the agent's name, and the customer gets BOTH an in-app alert and an email
-    carrying the reply text. Email only — never SMS.
-  - App (Support > Contact TitoPay): a "My support requests" list now sits
-    under the form showing each request with its reference, status and the
-    full conversation. Customers can reply in the thread; a follow-up on a
-    resolved ticket reopens it for the team.
-  - New table support_ticket_replies — created automatically at runtime on
-    first use (also in schema.sql for fresh installs). No manual migration.
+This build — four changes:
 
-Proven live (verification/support-reply-live.js, 8/8):
-  queue visibility, staff reply -> in_progress + in-app alert + queued email,
-  thread visible to the owner only, stranger reply refused, follow-up reopens,
-  public website tickets reply safely with no phantom email.
+1. Email statement: pick the period in the sheet itself. Presets (this
+   month, last month, last 3 months, this year, all activity) plus custom
+   from/to dates; the movement count and fee preview refresh live and the
+   statement email carries exactly the chosen window.
+
+2. Business "Sales" suite — a new tile on business accounts (also under
+   Profile > Business tools). Three views, all reconciled to the wallet
+   ledger itself:
+     Report      — period picker (today .. last month + custom), headline
+                   total with growth vs the previous equivalent period,
+                   per-day bar chart, sales count / average / biggest sale,
+                   busiest hour (SAST), channel breakdown with share bars.
+                   Top-ups are shown separately and NEVER counted as sales.
+     Sales data  — day-by-day money-in list, searchable, channel filter
+                   chips, per-day totals, payer names on each row.
+     Staff       — door performance: every ticket scan credited to the
+                   staff member who scanned it, share bars, per-event door
+                   coverage. Also reachable from Staff > "Staff performance
+                   report".
+   New API endpoints under /v1/business/sales/* (business accounts only).
+
+3. Admin Ticketing: sales analytics + marketing. Platform-wide gross,
+   platform revenue, tickets sold/scanned metrics; a 30-day paid-orders
+   trend; per-event sales table with an Advertise column — Copy link
+   (public event page) and WhatsApp / Facebook / X share links prefilled
+   with the buy-tickets URL.
+
+4. Admin sign-in footer now reads "Version 1.0" instead of the internal
+   console build string (the build stays on hover for support).
+
+Proven live: verification/business-sales-live.js (6/6) — ledger
+classification, sales-vs-top-up separation, cent-exact per-day/channel
+aggregates, growth vs previous window, staff scan attribution, personal
+accounts refused. Full API suite 459/459.
+
+Migrations to run: none — no new tables in this build.
 
 Operational reminders (unchanged):
   node scripts/ensure-revenue-wallet.js --create   (once, on production)

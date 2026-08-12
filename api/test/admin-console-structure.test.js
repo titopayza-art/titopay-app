@@ -84,8 +84,12 @@ test("every function still lives at the top level", () => {
 
 test("the Admin Portal still calls only the TitoPay API", () => {
   // Structure work must not quietly introduce a direct third-party call.
+  // The three social hosts are the ONE deliberate exception: the ticketing
+  // marketing panel renders share links (WhatsApp / Facebook / X) that open
+  // in a new tab when an admin clicks them. They are navigation targets, not
+  // fetch destinations — the console never loads assets or sends data there.
   const hosts = [...source.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)].map((m) => m[1].toLowerCase());
-  const allowed = /titopay\.co\.za$|^127\.0\.0\.1$|^localhost$|^www\.w3\.org$/;
+  const allowed = /titopay\.co\.za$|^127\.0\.0\.1$|^localhost$|^www\.w3\.org$|^wa\.me$|^www\.facebook\.com$|^twitter\.com$/;
   const foreign = [...new Set(hosts)].filter((host) => !allowed.test(host));
   assert.deepEqual(foreign, [], `unexpected host(s) referenced from the Admin Portal: ${foreign.join(", ")}`);
 });

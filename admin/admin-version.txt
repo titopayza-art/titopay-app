@@ -1,6 +1,21 @@
 TitoPay Admin
-Build: admin-console-v79
+Build: admin-console-v80
 Date: 2026-08-12
+
+v80 - Ticket sales analytics and event marketing on the Ticketing page,
+and the sign-in footer reads Version 1.0.
+
+  - New metrics on Ticketing: gross ticket sales, platform revenue, and
+    tickets sold / scanned across the whole platform.
+  - New "Ticket Sales & Marketing" panel: a 30-day paid-orders trend strip,
+    then every sellable event with its orders, tickets, gross, organiser net
+    and door scans - and an Advertise column: Copy link puts the public
+    event page on the clipboard, and WhatsApp / Facebook / X links open a
+    share prefilled with the event name and its buy-tickets link. Those
+    are navigation-only links; the console still talks to no host but the
+    TitoPay API.
+  - The sign-in footer now shows "Version 1.0" (the internal build string
+    stays available on hover for support).
 
 v79 - Written replies on support tickets.
 
@@ -496,5 +511,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v79; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v80; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

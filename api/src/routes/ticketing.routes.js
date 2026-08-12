@@ -17,6 +17,7 @@ const {
   listAdminEvents,
   getAdminEvent,
   adminTransitionEvent,
+  adminTicketingAnalytics,
   ticketPurchasePreview,
   purchaseTickets,
   emailTicketToRecipient,
@@ -365,6 +366,14 @@ router.get("/business/events/:id/report", requireAuth, async (req, res, next) =>
     const eventId = requireUuid(req.params.id, "Event ID");
     const event = await getBusinessEvent(req.auth.userId, eventId);
     res.json({ ok: true, event, report: await eventSalesReport(eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/admin/analytics", requireAuth, requireAdminPermission("ticketing"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, analytics: await adminTicketingAnalytics() });
   } catch (error) {
     next(error);
   }
