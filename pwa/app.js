@@ -19401,22 +19401,40 @@ function howItWorksSteps() {
       body: "Home shows your balance, wallet ID and your quick services. Tap the eye icon any time to hide your balance from people nearby.",
       hint: "Home tab"
     },
-    isBusiness ? {
-      icon: "sale",
-      title: "Get paid by customers",
-      body: "Make a sale from your dashboard, or print your Payment QR poster — customers scan and pay straight into your wallet.",
-      hint: "Services › Make a Sale"
-    } : {
-      icon: "send",
-      title: "Send money in seconds",
-      body: "Send to any TitoPay user with their @username, cellphone number or email. Beneficiaries are verified before they can be saved, and fees always show before you confirm.",
-      hint: "Services › Send Money"
-    },
     {
       icon: "qr",
       title: "Pay with QR",
       body: "Scan any TitoPay QR to pay, or show your own code to get paid. The amount always shows before money moves.",
       hint: "QR tab"
+    },
+    isBusiness ? {
+      icon: "sale",
+      title: "Make a sale",
+      body: "Tap your products into the sale or type an amount, then show the payment QR — customers pay straight into your wallet, and tracked stock counts itself down.",
+      hint: "Services › Receive Money"
+    } : {
+      icon: "send",
+      title: "Send money in seconds",
+      body: "Send to any TitoPay user with their @username, cellphone number or email. Fees always show before you confirm.",
+      hint: "Services › Send Money"
+    },
+    {
+      icon: "chat",
+      title: "TitoPay Chat",
+      body: "Chat with other TitoPay users right inside the app — settle up, split costs and keep the conversation and the money in one place.",
+      hint: "Services › TitoPay Chat"
+    },
+    {
+      icon: "chatbot",
+      title: "Help, day or night",
+      body: "The TitoPay Assistant answers instantly — fees, how-tos, what a status means. If it cannot solve it, it hands you to Customer Care with your question attached.",
+      hint: "Help button, top of Home"
+    },
+    {
+      icon: "mail",
+      title: "Real people when you need them",
+      body: "Send a support request and watch the conversation under My support requests — Customer Care replies land in the app and in your email.",
+      hint: "Profile › Support"
     },
     {
       icon: "grid",
@@ -19427,37 +19445,62 @@ function howItWorksSteps() {
     {
       icon: "ticket",
       title: "Event tickets",
-      body: "Buy tickets in the app, download them as a PDF, or add them to Apple Wallet or Google Wallet on your phone.",
+      body: "Buy tickets, show the QR at the gate, add them to Apple or Google Wallet — and if someone gifts you a ticket, add it to your account with its code.",
       hint: "Services › Event Tickets"
+    },
+    isBusiness ? {
+      icon: "chart",
+      title: "Sales, stock and staff",
+      body: "The Sales tile reports every rand to the cent, your products and stock live under Stock, and staff you add can sell for you from their own phones.",
+      hint: "Services › Sales"
+    } : {
+      icon: "staff-badge",
+      title: "Work for a business",
+      body: "Added as staff by a business? It appears under My Workplaces — take sales for them from your phone, with every payment going straight to their wallet.",
+      hint: "Profile › My Workplaces"
+    },
+    {
+      icon: "user",
+      title: "Saved beneficiaries",
+      body: "Save the people and businesses you pay often. Every beneficiary is verified before saving, so money never leaves for a guessed number.",
+      hint: "Profile › Saved Beneficiaries"
     },
     {
       icon: "list",
       title: "Track every rand",
-      body: "Every transaction lands in Activity. Search and filter your history, export CSV or PDF, or email yourself a statement.",
+      body: "Every transaction lands in Activity. Filter any period, export CSV or PDF, or email a statement — FICA-verified details included once you are approved.",
       hint: "Activity tab"
     },
     {
       icon: "shield",
       title: "Stay secure",
-      body: "Lock your wallet instantly from Profile if something feels wrong, and never share your PIN, password or verification codes — TitoPay will never ask for them.",
+      body: "Complete FICA, lock your wallet instantly if something feels wrong, and never share your PIN, password or verification codes — TitoPay will never ask for them.",
       hint: "Profile › Security & Verification"
     }
   ];
 }
 function openHowItWorksModal() {
   const steps = howItWorksSteps();
+  // The tour lives on the TitoPay navy — a deliberate change of scene from
+  // the rest of the app, so it reads as a moment, not another form.
   openModal(`
-    <div class="modal-head">
-      <div><p class="eyebrow">Guided Tour</p><h2>How TitoPay works</h2><p class="lead">${steps.length} quick steps through the app's key features.</p></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
-    <div class="guide" data-guide data-guide-step="0">
-      <div class="guide-progress" aria-hidden="true">${steps.map(() => "<span></span>").join("")}</div>
-      <article class="guide-step" data-guide-body></article>
-      <p class="guide-count muted" data-guide-count aria-live="polite"></p>
-      <div class="guide-nav">
-        <button class="btn secondary" type="button" data-action="guide-back" data-guide-back>${icon("arrow-left")} Back</button>
-        <button class="btn primary" type="button" data-action="guide-next" data-guide-next>Next</button>
+    <div class="guide" data-guide data-guide-step="0" style="background:linear-gradient(165deg,#0B1F3F 0%,#123061 78%,#16408a 100%);margin:calc(clamp(20px, 4vw, 26px) * -1);border-radius:var(--radius, 22px);padding:24px 22px 20px;color:#fff;position:relative;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;position:relative;z-index:1">
+        <div>
+          <p class="eyebrow" style="color:#8fb3ff;margin:0">Guided Tour</p>
+          <h2 style="color:#fff;margin:2px 0 2px">How TitoPay works</h2>
+          <p style="color:rgba(255,255,255,0.66);margin:0;font-size:13px">${steps.length} quick steps through the app.</p>
+        </div>
+        <button class="icon-btn" data-close aria-label="Close" style="background:rgba(255,255,255,0.12);color:#fff;border:none">${icon("x")}</button>
+      </div>
+      <div class="guide-progress" aria-hidden="true" style="display:flex;gap:5px;justify-content:center;margin:18px 0 4px;position:relative;z-index:1">
+        ${steps.map(() => `<span style="width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.22);transition:background 0.2s,transform 0.2s"></span>`).join("")}
+      </div>
+      <article class="guide-step" data-guide-body style="background:transparent;border:none;box-shadow:none;text-align:center;padding:8px 4px 4px;min-height:250px;position:relative;z-index:1"></article>
+      <p class="guide-count" data-guide-count aria-live="polite" style="text-align:center;color:rgba(255,255,255,0.55);margin:2px 0 10px;font-size:12px"></p>
+      <div class="guide-nav" style="display:flex;gap:10px;position:relative;z-index:1">
+        <button class="btn" type="button" data-action="guide-back" data-guide-back style="flex:1;background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.35)">${icon("arrow-left")} Back</button>
+        <button class="btn" type="button" data-action="guide-next" data-guide-next style="flex:1.4;background:#2f6bff;color:#fff;border:none">Next</button>
       </div>
     </div>
   `);
@@ -19471,19 +19514,27 @@ function paintHowItWorksStep() {
   const step = steps[index];
   const body = container.querySelector("[data-guide-body]");
   body.innerHTML = `
-    <span class="icon-bubble">${icon(step.icon)}</span>
-    <h3>${esc(step.title)}</h3>
-    <p>${esc(step.body)}</p>
-    <span class="guide-hint">${icon("check-circle")} Find it: ${esc(step.hint)}</span>
+    <span aria-hidden="true" style="position:absolute;top:-8px;right:2px;font-size:88px;font-weight:800;color:rgba(255,255,255,0.06);line-height:1;user-select:none">${String(index + 1).padStart(2, "0")}</span>
+    <span class="icon-bubble" style="width:64px;height:64px;margin:6px auto 14px;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 30% 25%,rgba(143,179,255,0.45),rgba(47,107,255,0.18));color:#cfe0ff;border-radius:20px;box-shadow:0 0 0 1px rgba(143,179,255,0.25), 0 8px 24px rgba(0,0,0,0.35)">${icon(step.icon)}</span>
+    <h3 style="color:#fff;margin:0 0 8px;font-size:21px;letter-spacing:-0.3px">${esc(step.title)}</h3>
+    <p style="color:rgba(255,255,255,0.78);margin:0 auto 16px;max-width:34ch;font-size:14.5px;line-height:1.55">${esc(step.body)}</p>
+    <span class="guide-hint" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.10);color:#bcd3ff;border:1px solid rgba(143,179,255,0.28);border-radius:999px;padding:7px 14px;font-size:12.5px">${icon("check-circle")} Find it: ${esc(step.hint)}</span>
   `;
   if (!prefersReducedMotion()) {
     body.classList.remove("guide-anim");
     void body.offsetWidth;
     body.classList.add("guide-anim");
   }
-  container.querySelectorAll(".guide-progress span").forEach((dot, dotIndex) => dot.classList.toggle("active", dotIndex <= index));
+  container.querySelectorAll(".guide-progress span").forEach((dot, dotIndex) => {
+    const active = dotIndex === index;
+    const seen = dotIndex < index;
+    dot.style.background = active ? "#8fb3ff" : seen ? "rgba(143,179,255,0.55)" : "rgba(255,255,255,0.22)";
+    dot.style.transform = active ? "scale(1.35)" : "scale(1)";
+  });
   container.querySelector("[data-guide-count]").textContent = `Step ${index + 1} of ${steps.length}`;
-  container.querySelector("[data-guide-back]").disabled = index === 0;
+  const back = container.querySelector("[data-guide-back]");
+  back.disabled = index === 0;
+  back.style.opacity = index === 0 ? "0.4" : "1";
   container.querySelector("[data-guide-next]").innerHTML = index === steps.length - 1 ? `${icon("check-circle")} Done` : "Next";
 }
 function stepHowItWorksGuide(delta) {

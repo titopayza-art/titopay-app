@@ -1,9 +1,18 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v333 (titopay-pwa-v333)
+PWA bundle: v334 (titopay-pwa-v334)
 Admin console: admin-console-v81
 
 This build:
+  - Guided tour redesigned: 12 steps on the TitoPay navy (deep-blue
+    gradient canvas, glowing icon, ghost step numeral, pill hints, light
+    progress dots). New steps cover TitoPay Chat, the help chatbot,
+    support with replies, gifted tickets, My Workplaces (or Sales/Stock/
+    Staff on business accounts) and saved beneficiaries.
+  - CSP: style-src now allows inline styles (script-src stays 'self').
+    Inline styling used across recent screens (status chips, share bars,
+    the tour's navy canvas) was being silently stripped by the old
+    policy; scripts remain locked down exactly as before.
   - Support: resolved and closed requests render cleanly — a quiet card
     with a coloured status chip, the conversation folded behind a tap
     ("Reopen with a reply" still works), and a "Remove from my list"
