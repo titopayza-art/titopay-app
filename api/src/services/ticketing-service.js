@@ -1375,7 +1375,12 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
     // a free ticket being issued.
     const businessWallet = await loadWalletForUpdate(client, locked.business_user_id, "business") || await loadWalletForUpdate(client, locked.business_user_id);
     if (preview.businessNet > 0 && !businessWallet) throw new AppError(404, "Event business wallet not found");
-    const revenueWallet = await loadRevenueWalletForUpdate(client);
+    // The revenue wallet only collects platform fees. A free ticket charges no
+    // fee, so it must never be required — loading it unconditionally made every
+    // purchase (free included) 500 on an environment where no revenue wallet is
+    // configured. Load it only when there is a fee to bank.
+    const hasFees = money(preview.buyerFee + preview.businessCommission) > 0;
+    const revenueWallet = hasFees ? await loadRevenueWalletForUpdate(client) : null;
 
     await client.query(
       `UPDATE event_ticket_types
@@ -1423,7 +1428,7 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
         metadata: { serviceCode: "ticket_purchase", orderId, eventId: preview.eventId, settlement: "instant_wallet_credit" }
       });
     }
-    if (preview.buyerFee + preview.businessCommission > 0) {
+    if (hasFees && revenueWallet) {
       await applyWalletMovement(client, {
         walletId: revenueWallet.id,
         transactionId: txId,

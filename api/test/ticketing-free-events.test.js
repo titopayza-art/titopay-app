@@ -171,6 +171,25 @@ test("a free ticket is charged nothing, and moves no money", () => {
     "a missing business wallet must only stop a paid ticket, never a free one");
 });
 
+test("a free purchase never requires the platform revenue wallet", () => {
+  // The reported bug: purchaseTickets loaded the revenue wallet unconditionally
+  // and threw a 500 ("revenue wallet is not configured") when it was absent — so
+  // EVERY purchase, free ones included, failed on an environment with no revenue
+  // wallet set up. The revenue wallet only banks platform fees, so it must be
+  // loaded only when there is a fee to bank. The running proof is
+  // verification/free-ticketing-live.js with the revenue wallet hidden.
+  assert.doesNotMatch(SOURCE, /const revenueWallet = await loadRevenueWalletForUpdate\(client\);/,
+    "the revenue wallet must NOT be loaded unconditionally in a purchase");
+  assert.match(SOURCE, /const hasFees = money\(preview\.buyerFee \+ preview\.businessCommission\) > 0;/,
+    "a purchase must decide up front whether any fee is owed");
+  assert.match(SOURCE, /const revenueWallet = hasFees \? await loadRevenueWalletForUpdate\(client\) : null;/,
+    "the revenue wallet must be loaded only when a fee is actually owed");
+  // The dereference and the null-guard must share the same condition, so a
+  // free ticket can never reach revenueWallet.id.
+  assert.match(SOURCE, /if \(hasFees && revenueWallet\) \{\s*\n\s*await applyWalletMovement\(client, \{\s*\n\s*walletId: revenueWallet\.id/,
+    "the revenue movement must be guarded by the same hasFees check that loaded the wallet");
+});
+
 test("a free order cannot be pushed through the refund money path", () => {
   // Refund charges a R0.50 processing fee; letting a free order into that path
   // would debit a business to 'refund' money it never received.
