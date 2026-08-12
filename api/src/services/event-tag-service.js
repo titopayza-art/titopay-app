@@ -76,8 +76,12 @@ function mintTagToken() {
 
 // What staff read off a wristband to identify it by eye. Random, and unrelated
 // to the credential, so seeing a label tells you nothing about the token.
+// The tag reference staff read out and write on a wristband: 10 plain digits,
+// the same shape as a ticket code, so nobody at a gate has to dictate hex.
+// It is a sight label only — the security of a tag lives in the ETAG_
+// credential (never stored, only hashed), not in this reference.
 function mintTagLabel() {
-  return `T${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+  return String(crypto.randomInt(0, 10 ** 10)).padStart(10, "0");
 }
 
 // Deliberately the same rule the POS lane already applies — parsed from the
@@ -146,14 +150,24 @@ async function issueTags(actor, eventId, count = 1) {
   try {
     await client.query("BEGIN");
     const event = await assertCashlessEvent(client, eventId);
+    // No two tags at one event may share a reference — staff identify a
+    // physical tag by this number alone.
+    const { rows: labelRows } = await client.query(
+      "SELECT tag_label FROM event_tags WHERE event_id = $1",
+      [event.id]
+    );
+    const takenLabels = new Set(labelRows.map((row) => row.tag_label));
     const issued = [];
     for (let index = 0; index < quantity; index += 1) {
       const token = mintTagToken();
       const id = uuidv4();
+      let label = mintTagLabel();
+      while (takenLabels.has(label)) label = mintTagLabel();
+      takenLabels.add(label);
       const { rows } = await client.query(
         `INSERT INTO event_tags (id, event_id, token_hash, tag_label, status)
          VALUES ($1,$2,$3,$4,'UNASSIGNED') RETURNING *`,
-        [id, event.id, sha256(token), mintTagLabel()]
+        [id, event.id, sha256(token), label]
       );
       await recordTagEvent(client, { tagId: id, eventId: event.id, action: "issued", nextStatus: "UNASSIGNED", actor });
       issued.push({ ...publicTag(rows[0]), token });
