@@ -238,4 +238,12 @@ test("the service worker and the page agree on the bundle version", () => {
   assert.ok(pageVersion, "index.html must cache-bust app.min.js");
   assert.equal(pageVersion, workerVersion, "a stale service worker would serve the previous bundle");
   assert.match(worker, new RegExp(`titopay-pwa-v${pageVersion}`), "the cache name must carry the same version");
+
+  // The stylesheet is versioned too, and the worker precaches it by exact URL
+  // (query string included), so a drift here means an offline first-load
+  // cache-misses the stylesheet and renders unstyled.
+  const pageStyles = (html.match(/styles\.min\.css\?v=(\d+)/) || [])[1];
+  const workerStyles = (worker.match(/styles\.min\.css\?v=(\d+)/) || [])[1];
+  assert.ok(pageStyles, "index.html must cache-bust styles.min.css");
+  assert.equal(pageStyles, workerStyles, "the service worker must precache the same styles version the page requests");
 });

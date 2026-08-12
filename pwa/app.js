@@ -14082,13 +14082,36 @@ function publicTicketingEventView(event = {}) {
 // other money flow in TitoPay shows what is about to happen and waits for a
 // second, deliberate confirmation. This brings ticketing into line: the request
 // itself is unchanged, it just no longer fires until the buyer has seen it.
-function openTicketingPurchaseReview(data) {
+async function openTicketingPurchaseReview(data) {
   const event = state.publicEvent || {};
   const tickets = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
   const chosen = tickets.find((ticket) => String(ticket.id) === String(data.ticketTypeId)) || tickets[0] || {};
   const quantity = Math.max(1, Number(data.quantity || 1));
   const unit = Number(chosen.price) || 0;
-  const total = unit * quantity;
+  // The total shown here MUST be the one that will actually be charged. The
+  // buyer service fee is a flat amount set on the server that the client cannot
+  // compute, so this asks the server for the authoritative price. Charging a
+  // total the buyer never saw is exactly what turned a paid purchase into a
+  // surprise debit — or a false "insufficient balance" when the buyer held only
+  // the price shown. A free ticket comes back at R0.
+  let subtotal = money(unit * quantity);
+  let buyerFee = 0;
+  let total = subtotal;
+  try {
+    const previewResult = await api(`/v1/ticketing/public/events/${encodeURIComponent(data.eventSlug)}/purchase-preview`, {
+      method: "POST",
+      body: { ticketTypeId: data.ticketTypeId, quantity }
+    });
+    const preview = previewResult.preview || previewResult || {};
+    subtotal = Number(preview.subtotal ?? subtotal);
+    buyerFee = Number(preview.buyerFee ?? 0);
+    total = Number(preview.total ?? (subtotal + buyerFee));
+  } catch (error) {
+    // Fall back to the client estimate so the flow still works; the server
+    // re-checks the true total at purchase, so a stale estimate can never
+    // overcharge — it would be refused, not silently charged more.
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
   state.pendingTicketPurchase = { data, quantity, unit, total, ticketName: chosen.ticketName || "Ticket", eventName: event.eventName || "TitoPay event" };
   openModal(`
     <div class="modal-head">
@@ -14104,9 +14127,11 @@ function openTicketingPurchaseReview(data) {
       ${settingsRow("Ticket", state.pendingTicketPurchase.ticketName, "ticket")}
       ${settingsRow("Quantity", String(quantity), "list")}
       ${settingsRow("Price each", money(unit), "wallet")}
+      ${settingsRow("Subtotal", money(subtotal), "wallet")}
+      ${buyerFee > 0 ? settingsRow("Service fee", money(buyerFee), "wallet") : ""}
       ${settingsRow("Total to pay", money(total), "wallet")}
     </section>
-    <p class="field-hint">Paid from your TitoPay wallet. Tickets are issued by the organiser once payment succeeds.</p>
+    <p class="field-hint">${buyerFee > 0 ? "Includes a flat TitoPay service fee. " : ""}Paid from your TitoPay wallet. Tickets are issued by the organiser once payment succeeds.</p>
     <div class="auth-actions">
       <button class="btn secondary" type="button" data-action="cancel-ticket-purchase">Cancel</button>
       <button class="btn primary" type="button" data-action="confirm-ticket-purchase">${icon("ticket")} Pay ${esc(money(total))}</button>
@@ -14114,7 +14139,7 @@ function openTicketingPurchaseReview(data) {
   `);
 }
 async function submitTicketingPurchase(data) {
-  openTicketingPurchaseReview(data);
+  await openTicketingPurchaseReview(data);
 }
 async function confirmTicketingPurchase() {
   const context = state.pendingTicketPurchase;
