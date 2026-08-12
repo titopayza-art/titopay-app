@@ -32,7 +32,7 @@ The customer app is served from `app.min.js`, not `app.js`. Both are in the
 archive and both must land. If you extract selectively and take only `app.js`,
 customers get the previous build and nothing appears to have changed.
 
-The bundle in this release is **v299**, and `index.html`, `service-worker.js`
+The bundle in this release is **v306**, and `index.html`, `service-worker.js`
 and the service worker's cache name all agree on that number. That is what makes
 a returning customer pick up the new code instead of the copy their browser
 cached. If you ever hand-edit one of those three, change all three.
