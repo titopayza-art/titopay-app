@@ -162,6 +162,50 @@ async function cleanup() {
     assert.equal(await balance(ids.attendeeWallet), attBeforeOver, "an over-balance charge moves no money");
     ok("a charge above the patron's balance was refused (400), no money moved");
 
+    // 4b. Authorising a vendor by what the organiser actually HAS. The form
+    //     used to demand the internal merchant UUID — unusable. The outsider
+    //     is now authorised by their WALLET NUMBER and can charge immediately.
+    const ownerActor = { userId: ids.owner, userType: "customer" };
+    const outsiderWalletNumber = (await pool.query("SELECT wallet_number FROM wallets WHERE id = $1", [ids.otherWallet])).rows[0].wallet_number;
+    const byWallet = await eventTags.addEventVendor(ownerActor, ids.event, outsiderWalletNumber);
+    assert.equal(byWallet.merchantId, ids.otherMerchant, "a wallet number resolves to the vendor's merchant profile");
+    const outsiderCharge = await eventTags.chargeEventTagAsVendor(outsiderActor, { tagToken, amount: 5 }, `tap-${randomUUID()}`, "req-4b");
+    assert.equal(outsiderCharge.outcome, "APPROVED", "the newly authorised vendor charges successfully");
+    ok("a vendor authorised by WALLET NUMBER can charge — no merchant UUID needed");
+
+    // 4c. Revoking blocks the vendor's next tap immediately; re-authorising by
+    //     @username reactivates the very same vendor row.
+    const vendors = await eventTags.listEventVendors(ids.event);
+    const outsiderRow = vendors.find((vendor) => vendor.merchantId === ids.otherMerchant);
+    await eventTags.suspendEventVendor(ownerActor, ids.event, outsiderRow.vendorId);
+    let suspendedRefused = false;
+    try { await eventTags.chargeEventTagAsVendor(outsiderActor, { tagToken, amount: 5 }, `tap-${randomUUID()}`, "req-4c"); }
+    catch (error) { suspendedRefused = error.statusCode === 403; }
+    assert.ok(suspendedRefused, "a revoked vendor is refused with 403");
+    const outsiderUsername = (await pool.query("SELECT username FROM users WHERE id = $1", [ids.otherUser])).rows[0].username;
+    const reAdd = await eventTags.addEventVendor(ownerActor, ids.event, `@${outsiderUsername}`);
+    assert.equal(reAdd.merchantId, ids.otherMerchant, "re-authorising by @username reactivates the same vendor");
+    assert.equal(reAdd.status, "active");
+    ok("revoking a vendor blocks their charges instantly; @username re-authorises them");
+
+    // 4d. Bad input answers clearly. A personal account with no merchant
+    //     profile is named as such; garbage is a clean 404, never a DB error.
+    const personalId = randomUUID();
+    await pool.query(
+      `INSERT INTO users (id, account_type, full_name, username, email, phone, password_hash, status, profile_locked, fica_status)
+       VALUES ($1,'personal','${TAG} Person','${TAG}_pers','${TAG}_pers@example.invalid',NULL,'x','active',FALSE,'pending')`,
+      [personalId]);
+    let noMerchant = false;
+    try { await eventTags.addEventVendor(ownerActor, ids.event, `${TAG}_pers`); }
+    catch (error) { noMerchant = error.statusCode === 409 && /no business merchant profile/i.test(error.message); }
+    assert.ok(noMerchant, "a personal account without a merchant profile gets a clear 409");
+    let unknownInput = false;
+    try { await eventTags.addEventVendor(ownerActor, ids.event, "definitely-not-a-vendor"); }
+    catch (error) { unknownInput = error.statusCode === 404; }
+    assert.ok(unknownInput, "an unknown identifier is a clean 404, not a database error");
+    await pool.query("DELETE FROM users WHERE id = $1", [personalId]);
+    ok("bad vendor input answers clearly: no-merchant 409, unknown 404");
+
     // 5. A blocked wristband cannot be charged.
     await pool.query("UPDATE event_tags SET status = 'BLOCKED' WHERE id = $1", [ids.tagId]);
     let blocked = false;

@@ -2108,7 +2108,7 @@ async function onSubmit(event) {
       acceptEventTagCredential(typed);
     }
     if (form.dataset.form === "ticketing-cashless") await submitTicketingCashless(data);
-    if (form.dataset.form === "ticketing-vendor") await submitTicketingVendor(data);
+    if (form.dataset.form === "ticketing-vendor") await submitTicketingVendor(data, form);
     if (form.dataset.form === "ticketing-tag-issue") await submitTicketingTagIssue(data);
     if (form.dataset.form === "ticketing-tag-assign") await submitTicketingTagAssign(data);
     if (form.dataset.form === "enterprise-distribution-application") await submitEnterpriseDistributionApplication(data);
@@ -2768,6 +2768,8 @@ function onChange(event) {
   if (scanEventPick) refreshScanAttendance(scanEventPick.value);
   const staffEventPick = event.target.closest("select[data-staff-event-pick]");
   if (staffEventPick) refreshEventStaffList(staffEventPick.value);
+  const vendorEventPick = event.target.closest("select[data-vendor-event-pick]");
+  if (vendorEventPick) refreshEventVendorList(vendorEventPick.value);
   const changeRequestType = event.target.closest("select[data-change-request-type]");
   if (changeRequestType) syncChangeRequestFields(changeRequestType);
   const tierNameInput = event.target.closest("input[data-tier-name]");
@@ -2945,6 +2947,11 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "ticketing-staff-manage") {
     await openBusinessTicketingDashboard({ refresh: true });
+    return;
+  }
+  if (String(action || "").startsWith("vendor-revoke:")) {
+    const parts = action.split(":");
+    await revokeTicketingVendor(parts[1], parts[2]);
     return;
   }
   if (String(action || "").startsWith("staff-remove:")) {
@@ -15257,6 +15264,11 @@ async function openBusinessTicketingDashboard(options = {}) {
       </section>
     `}
   `);
+  // The Event Tags panel shows who may already take tag payments at the first
+  // listed event; switching events reloads it. Best-effort — the dashboard
+  // works without it.
+  const vendorPick = document.querySelector("select[data-vendor-event-pick]");
+  if (vendorPick && vendorPick.value) refreshEventVendorList(vendorPick.value);
 }
 
 /* ---- Ticketing Staff: the door-scanner view -------------------------------
@@ -15551,10 +15563,12 @@ function ticketingEventTagsPanel(events = []) {
       </form>
 
       <form class="form-grid" data-form="ticketing-vendor">
-        <label>Event<select name="eventId">${options}</select></label>
-        <label>Vendor merchant ID<input name="merchantId" placeholder="Merchant UUID from the vendor's TitoPay Business profile" required></label>
+        <label>Event<select name="eventId" data-vendor-event-pick>${options}</select></label>
+        <label>Vendor business<input name="merchantId" placeholder="@username, wallet ID, phone or merchant code" required autocomplete="off"></label>
+        <p class="field-hint">Enter anything that identifies the vendor's TitoPay Business — their @username, business wallet ID, phone, email or merchant code. They must have a registered TitoPay Business account; patrons then pay them by tapping their Event Tag.</p>
         <button class="btn secondary" type="submit">${icon("contacts")} Authorise vendor</button>
       </form>
+      <div data-vendor-list><p class="muted">Loading authorised vendors…</p></div>
 
       <form class="form-grid" data-form="ticketing-tag-issue">
         <label>Event<select name="eventId">${options}</select></label>
@@ -15582,12 +15596,53 @@ async function submitTicketingCashless(data) {
   await openBusinessTicketingDashboard({ refresh: true });
 }
 
-async function submitTicketingVendor(data) {
+async function submitTicketingVendor(data, form) {
   const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/vendors`, {
     method: "POST",
     body: { merchantId: data.merchantId }
   });
-  showToast(`${result.vendor?.businessName || "Vendor"} can now take Event Tag payments.`);
+  showToast(`${result.vendor?.businessName || "Vendor"} can now take Event Tag payments at this event.`);
+  const input = form?.querySelector('input[name="merchantId"]');
+  if (input) input.value = "";
+  await refreshEventVendorList(data.eventId);
+}
+// Who may already take tag payments at the selected event — visible, with the
+// organiser's own revoke. Suspended vendors stay listed (re-authorising the
+// same business reactivates them).
+async function refreshEventVendorList(eventId) {
+  const host = document.querySelector("[data-vendor-list]");
+  if (!host || !eventId) return;
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/vendors`);
+    const vendors = result.items || [];
+    if (!vendors.length) {
+      host.innerHTML = `<p class="muted">No vendors authorised for this event yet.</p>`;
+      return;
+    }
+    host.innerHTML = `
+      <div class="settings-list">
+        ${vendors.map((vendor) => `
+          <article class="settings-row">
+            <span class="icon-bubble">${icon("store")}</span>
+            <div>
+              <strong>${esc(vendor.businessName || "Vendor")}</strong>
+              <small>${esc(vendor.merchantCode || "")}${vendor.status !== "active" ? " · suspended" : ""}</small>
+            </div>
+            ${vendor.status === "active"
+              ? `<button class="btn ghost mini" type="button" data-action="vendor-revoke:${esc(eventId)}:${esc(vendor.vendorId)}">${icon("x")} Revoke</button>`
+              : ""}
+          </article>
+        `).join("")}
+      </div>`;
+  } catch (error) {
+    host.innerHTML = `<p class="muted">${esc(friendlyFormError(error, "ticketing"))}</p>`;
+  }
+}
+async function revokeTicketingVendor(eventId, vendorId) {
+  if (!window.confirm("Revoke this vendor? Their terminals stop taking Event Tag payments at this event immediately.")) return;
+  await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/vendors/${encodeURIComponent(vendorId)}/revoke`, { method: "POST", body: {} });
+  showToast("Vendor revoked for this event.");
+  await refreshEventVendorList(eventId);
 }
 
 // The credentials come back exactly once. They are shown here for writing to

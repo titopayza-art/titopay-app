@@ -454,8 +454,20 @@ router.get("/business/events/:id/vendors", requireAuth, async (req, res, next) =
 router.post("/business/events/:id/vendors", requireAuth, async (req, res, next) => {
   try {
     const eventId = await requireEventOwner(req);
-    const merchantId = requireUuid(req.body?.merchantId, "Merchant ID");
-    res.status(201).json({ ok: true, vendor: await eventTags.addEventVendor(req.auth, eventId, merchantId) });
+    // Whatever the organiser has for the vendor: @username, wallet ID, phone,
+    // email, merchant code — or the raw merchant UUID. Resolved in the service.
+    const identifier = String(req.body?.merchantId || req.body?.identifier || "").trim();
+    res.status(201).json({ ok: true, vendor: await eventTags.addEventVendor(req.auth, eventId, identifier) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/business/events/:id/vendors/:vendorId/revoke", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    const vendorRowId = requireUuid(req.params.vendorId, "Vendor ID");
+    res.json({ ok: true, vendor: await eventTags.suspendEventVendor(req.auth, eventId, vendorRowId) });
   } catch (error) {
     next(error);
   }

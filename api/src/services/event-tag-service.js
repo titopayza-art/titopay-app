@@ -800,22 +800,91 @@ async function eventTagAnalytics(eventId) {
    Vendors
    ======================================================================== */
 
-async function addEventVendor(actor, eventId, merchantId) {
+// Find the vendor's merchant profile from whatever the organiser actually
+// HAS: the vendor's @username, wallet ID, phone, email, human merchant code —
+// or the raw merchant UUID for completeness. The old form demanded the UUID
+// alone, which no business owner has ever seen, so the feature was effectively
+// unusable from the app.
+async function resolveVendorMerchant(identifier) {
+  const value = String(identifier || "").trim();
+  if (!value) throw new AppError(400, "Enter the vendor's @username, wallet ID, phone, email or merchant code.");
+  const lower = value.toLowerCase().replace(/^@/, "");
+  const digits = value.replace(/\D/g, "");
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+    const { rows } = await pool.query("SELECT id, business_name, status FROM merchants WHERE id = $1 LIMIT 1", [value]);
+    if (rows[0]) return rows[0];
+  }
+  const { rows: byCode } = await pool.query("SELECT id, business_name, status FROM merchants WHERE LOWER(merchant_id) = $1 LIMIT 1", [lower]);
+  if (byCode[0]) return byCode[0];
+  if (digits.length >= 6) {
+    const { rows: byWallet } = await pool.query(
+      `SELECT m.id, m.business_name, m.status
+         FROM wallets w
+         JOIN merchants m ON m.user_id = w.user_id
+        WHERE w.wallet_number = $1
+        LIMIT 1`,
+      [digits]
+    );
+    if (byWallet[0]) return byWallet[0];
+  }
+  const params = [lower];
+  let digitsClause = "FALSE";
+  if (digits.length >= 6) {
+    params.push(digits);
+    digitsClause = `REGEXP_REPLACE(COALESCE(u.phone, ''), '\\D', '', 'g') = $2`;
+  }
+  const { rows: byUser } = await pool.query(
+    `SELECT m.id, m.business_name, m.status
+       FROM users u
+       LEFT JOIN merchants m ON m.user_id = u.id
+      WHERE LOWER(u.username) = $1 OR LOWER(u.email) = $1 OR LOWER(u.phone) = $1 OR ${digitsClause}
+      ORDER BY (LOWER(u.username) = $1) DESC, (m.id IS NOT NULL) DESC
+      LIMIT 1`,
+    params
+  );
+  const hit = byUser[0];
+  if (!hit) throw new AppError(404, "No TitoPay account or merchant matches that. Check the vendor's @username, wallet ID, phone or merchant code.");
+  if (!hit.id) throw new AppError(409, "That TitoPay account has no business merchant profile yet. The vendor needs a registered TitoPay Business account before they can take payments.");
+  return hit;
+}
+
+async function addEventVendor(actor, eventId, identifier) {
   await ensureSchema();
-  const { rows: merchants } = await pool.query("SELECT id, business_name, status FROM merchants WHERE id = $1 LIMIT 1", [merchantId]);
-  if (!merchants[0]) throw new AppError(404, "Merchant not found");
+  const merchant = await resolveVendorMerchant(identifier);
+  if (merchant.status && merchant.status !== "active") {
+    throw new AppError(409, `${merchant.business_name || "This vendor"}'s merchant profile is not active, so it cannot take event payments.`);
+  }
   const { rows } = await pool.query(
     `INSERT INTO event_vendors (id, event_id, merchant_id, created_by)
      VALUES ($1,$2,$3,$4)
      ON CONFLICT (event_id, merchant_id) DO UPDATE SET status = 'active', updated_at = NOW()
      RETURNING *`,
-    [uuidv4(), eventId, merchantId, actor.userId]
+    [uuidv4(), eventId, merchant.id, actor.userId]
   );
   await writeAuditLog({
     actorType: actor.userType, actorId: actor.userId, action: "event_vendor_added",
-    entityType: "event", entityId: eventId, metadata: { merchantId }
+    entityType: "event", entityId: eventId, metadata: { merchantId: merchant.id }
   }).catch(() => {});
-  return { vendorId: rows[0].id, eventId, merchantId, businessName: merchants[0].business_name, status: rows[0].status };
+  return { vendorId: rows[0].id, eventId, merchantId: merchant.id, businessName: merchant.business_name, status: rows[0].status };
+}
+
+// Owner-side revocation: the vendor stays on the list as 'suspended' (the
+// charge path refuses non-active vendors immediately), and re-authorising
+// through addEventVendor reactivates the same row.
+async function suspendEventVendor(actor, eventId, vendorRowId) {
+  await ensureSchema();
+  const { rows } = await pool.query(
+    `UPDATE event_vendors SET status = 'suspended', updated_at = NOW()
+      WHERE id = $1 AND event_id = $2
+      RETURNING *`,
+    [vendorRowId, eventId]
+  );
+  if (!rows[0]) throw new AppError(404, "That vendor is not on this event");
+  await writeAuditLog({
+    actorType: actor.userType, actorId: actor.userId, action: "event_vendor_suspended",
+    entityType: "event", entityId: eventId, metadata: { vendorRowId }
+  }).catch(() => {});
+  return rows[0];
 }
 
 async function listEventVendors(eventId) {
@@ -881,6 +950,7 @@ module.exports = {
   reportMyTagLost,
   eventTagAnalytics,
   addEventVendor,
+  suspendEventVendor,
   listEventVendors,
   setEventCashless,
   tagAuditTrail,
