@@ -33,6 +33,7 @@ const {
   listMyEventChangeRequests,
   eventSalesReport,
   listMyTickets,
+  claimTicketByCode,
   canManageEventTicketing
 } = require("../services/ticketing-service");
 const eventTags = require("../services/event-tag-service");
@@ -119,6 +120,18 @@ router.post("/orders/:id/refund", requireAuth, async (req, res, next) => {
 router.get("/tickets", requireAuth, async (req, res, next) => {
   try {
     res.json({ ok: true, items: await listMyTickets(req.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Claim a gifted ticket by its printed code. Throttled per user inside the
+// service; the previous owner is notified in the app and by email so a code
+// used without their blessing gets caught, not buried.
+router.post("/tickets/claim", requireAuth, async (req, res, next) => {
+  try {
+    const ticket = await claimTicketByCode(req.auth, req.body?.code, meta(req));
+    res.status(200).json({ ok: true, ticket });
   } catch (error) {
     next(error);
   }

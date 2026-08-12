@@ -1887,6 +1887,141 @@ async function canManageEventTicketing(userId, eventId, permission = "scan") {
 // can render a name, a date and a venue without a second request.
 //
 // Read-only. It creates nothing, refunds nothing and changes no state.
+// Claim a gifted ticket by its code: the ticket moves into the claimant's
+// account, so it shows in My Tickets, scans at the gate under their name and
+// can take an event wristband (Event Tag) like any ticket they bought.
+//
+// The code alone transfers ownership, so two guards make theft impractical:
+// a hard per-user attempt throttle (codes are 10 random digits — a guesser
+// gets nowhere at 8 tries an hour), and the previous owner is told the
+// moment their ticket moves, in the app and by email.
+const TICKET_CLAIM_MAX_FAILURES_PER_HOUR = 8;
+
+async function claimTicketByCode(actor, rawCode, meta = {}) {
+  await ensureTicketingSchema();
+  const code = String(rawCode || "").replace(/\s+/g, "");
+  if (!/^\d{6,10}$/.test(code)) {
+    throw new AppError(400, "Enter the ticket code — the 6 to 10 digit number printed on the ticket.");
+  }
+
+  const { rows: throttleRows } = await pool.query(
+    `SELECT COUNT(*)::int AS failures
+     FROM event_audit_logs
+     WHERE actor_id = $1 AND action = 'ticket_claim_failed' AND created_at > NOW() - INTERVAL '1 hour'`,
+    [actor.userId]
+  );
+  if (throttleRows[0].failures >= TICKET_CLAIM_MAX_FAILURES_PER_HOUR) {
+    throw new AppError(429, "Too many ticket codes tried. Wait an hour and check the code on the ticket email or PDF.");
+  }
+
+  const { rows } = await pool.query(
+    `SELECT t.*, e.event_name, e.status AS event_status, u.full_name AS owner_name, u.email AS owner_email
+     FROM tickets t
+     JOIN events e ON e.id = t.event_id
+     JOIN users u ON u.id = t.owner_user_id
+     WHERE t.ticket_code = $1
+     LIMIT 1`,
+    [code]
+  );
+  const ticket = rows[0];
+
+  const failClaim = async (message, statusCode = 404) => {
+    await eventAudit({
+      eventId: ticket?.event_id || null,
+      actorType: "customer",
+      actorId: actor.userId,
+      action: "ticket_claim_failed",
+      metadata: { code, reason: message },
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent
+    }).catch(() => {});
+    throw new AppError(statusCode, message);
+  };
+
+  if (!ticket) return failClaim("No ticket found with that code. Check the code on the ticket email or PDF.");
+  if (ticket.owner_user_id === actor.userId) throw new AppError(409, "That ticket is already in your account — it is in My Tickets.");
+  if (ticket.status === "scanned") return failClaim("That ticket has already been scanned in at the gate, so it cannot be added.", 409);
+  if (ticket.status !== "valid") return failClaim("That ticket is no longer valid, so it cannot be added.", 409);
+  if (["cancelled", "suspended"].includes(ticket.event_status)) {
+    return failClaim("That event is not accepting entries at the moment, so the ticket cannot be added.", 409);
+  }
+  // A wristband already linked to this ticket belongs to the current holder.
+  // Moving the ticket underneath it would leave a live tag on someone else's
+  // entry — the giver must unlink (or the organiser reassign) first.
+  const { rows: tagRows } = await pool.query(
+    "SELECT 1 FROM event_tags WHERE ticket_id = $1 AND status IN ('ASSIGNED','ACTIVE') LIMIT 1",
+    [ticket.id]
+  ).catch(() => ({ rows: [] }));
+  if (tagRows[0]) {
+    return failClaim("That ticket already has an event wristband linked to it. Ask the person who gifted it to unlink their wristband first, then add the ticket again.", 409);
+  }
+
+  const { rows: claimantRows } = await pool.query("SELECT full_name, email, phone FROM users WHERE id = $1", [actor.userId]);
+  const claimant = claimantRows[0] || {};
+  await pool.query(
+    `UPDATE tickets
+     SET owner_user_id = $2, attendee_name = $3, attendee_email = $4, attendee_phone = $5, updated_at = NOW()
+     WHERE id = $1`,
+    [ticket.id, actor.userId, claimant.full_name || ticket.attendee_name, claimant.email || null, claimant.phone || null]
+  );
+  await eventAudit({
+    eventId: ticket.event_id,
+    actorType: "customer",
+    actorId: actor.userId,
+    action: "ticket_claimed",
+    metadata: { ticketId: ticket.id, ticketCode: code, previousOwnerId: ticket.owner_user_id },
+    ipAddress: meta.ipAddress,
+    userAgent: meta.userAgent
+  }).catch(() => {});
+
+  // Tell the previous owner. A real gift expects this message; a stolen code
+  // turns it into the alarm that gets the transfer reversed by support.
+  try {
+    await createNotification({
+      user: { id: ticket.owner_user_id, user_type: "customer" },
+      channel: "in_app",
+      notificationType: "ticket_transferred",
+      title: "A ticket left your account",
+      body: `Ticket ${code} for ${ticket.event_name} was added to another TitoPay account. If you gifted it, all is well. If not, contact TitoPay support immediately.`,
+      provider: "in_app",
+      metadata: { ticketId: ticket.id, ticketCode: code, clientNotificationId: `ticket-claim-${ticket.id}` }
+    });
+  } catch (error) {
+    console.error("[ticket-claim] owner notification failed", { ticketId: ticket.id, message: error.message });
+  }
+  if (ticket.owner_email) {
+    try {
+      const emailCentre = require("./email-centre-service");
+      await emailCentre.queueRawEmail({
+        recipient: ticket.owner_email,
+        subject: `Your ticket ${code} was added to another account`,
+        textBody: [
+          `Hi ${ticket.owner_name || "there"},`,
+          "",
+          `Ticket ${code} for ${ticket.event_name} has just been added to another TitoPay account using its ticket code.`,
+          "",
+          "If you gifted or passed this ticket on, no action is needed — the new holder now has it in their My Tickets, and entry will be under their name.",
+          "If you did NOT give this ticket to anyone, contact TitoPay support immediately from the app (Support > Contact TitoPay) so the transfer can be reversed."
+        ].join("\n"),
+        htmlBody: [
+          `<p>Hi ${emailCentre.escapeHtml(ticket.owner_name || "there")},</p>`,
+          `<p>Ticket <strong>${emailCentre.escapeHtml(code)}</strong> for <strong>${emailCentre.escapeHtml(ticket.event_name)}</strong> has just been added to another TitoPay account using its ticket code.</p>`,
+          "<p>If you gifted or passed this ticket on, no action is needed — the new holder now has it in their My Tickets, and entry will be under their name.</p>",
+          "<p>If you did <strong>not</strong> give this ticket to anyone, contact TitoPay support immediately from the app (<strong>Support &gt; Contact TitoPay</strong>) so the transfer can be reversed.</p>"
+        ].join("\n"),
+        userId: ticket.owner_user_id,
+        idempotencyKey: `ticket-claim-owner-alert:${ticket.id}`,
+        metadata: { ticketId: ticket.id }
+      });
+    } catch (error) {
+      console.error("[ticket-claim] owner email failed", { ticketId: ticket.id, message: error.message });
+    }
+  }
+
+  const mine = await listMyTickets(actor.userId);
+  return mine.find((item) => item.ticketCode === code) || { ticketCode: code, claimed: true };
+}
+
 async function listMyTickets(userId) {
   await ensureTicketingSchema();
   const { rows } = await pool.query(
@@ -2897,6 +3032,7 @@ module.exports = {
   emailTicketToRecipient,
   listMyTicketOrders,
   listMyTickets,
+  claimTicketByCode,
   scanTicket,
   // Exported so a door-scanner view can show the running count before the first
   // scan, for the organiser and for any staff assigned the scan permission.

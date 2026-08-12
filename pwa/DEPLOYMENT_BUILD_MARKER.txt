@@ -1,32 +1,35 @@
 TitoPay deployment build — 2026-08-12 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v327 (titopay-pwa-v327)
+PWA bundle: v328 (titopay-pwa-v328)
 Admin console: admin-console-v80
 
-This build — products and stock for business accounts:
+This build — gifted tickets can be added to the recipient's account:
 
-  - Sales → new Stock tab: add the products you sell (name, price, category,
-    optional opening stock). Giving an opening stock switches on tracking.
-    Per product: Restock, Stock take (counted quantity becomes the truth,
-    the variance is recorded), Price change, History (the append-only
-    movement trail: opening, sales, restocks, adjustments, counts) and
-    Archive (off the till, history kept). Low-stock and oversold badges.
-  - Receive Money on a business account is now "Make a sale": your products
-    appear as tap-to-add buttons. Tapping builds the basket, the total and
-    label fill in automatically, and generating the payment QR records the
-    sale — tracked stock counts down on the server, priced server-side.
-    Overselling is refused unless the till explicitly confirms (then the
-    count goes negative until the next stock take corrects it).
-  - New API endpoints under /v1/business/products/* (business accounts
-    only; ownership enforced on every movement).
+  - My Tickets gains "Been gifted a ticket?": enter the ticket code from
+    the gifted ticket's email, PDF or stub (a pasted ticket-QR payload
+    works too). The ticket moves into the recipient's account under their
+    name — it shows in My Tickets with its scannable QR, the gate admits
+    it as before, and the event wristband (Event Tag) becomes theirs to
+    link, exactly like a ticket they bought.
+  - Safety, because a code alone moves ownership:
+      * the previous holder is notified IN THE APP and BY EMAIL the moment
+        the ticket moves — a gift expects the message, a stolen code turns
+        it into the alarm that gets support to reverse it;
+      * code guessing is throttled hard (8 misses an hour per account,
+        durable across restarts via the audit log);
+      * used (scanned) tickets, invalid tickets and tickets at suspended
+        or cancelled events refuse the claim;
+      * a ticket with a live wristband already linked refuses until the
+        giver unlinks it — a tag never silently ends up on someone else's
+        entry;
+      * every attempt, hit or miss, is on the event audit trail.
+  - New endpoint POST /v1/ticketing/tickets/claim. No schema changes.
 
-Proven live: verification/business-products-live.js (8/8) — create/track,
-duplicate refusal, server-priced basket sale with stock deduction, oversell
-guard + explicit override, stock-take variance, restock, archive-with-
-history, cross-account refusal. Full API suite 459/459.
+Proven live: verification/ticket-claim-live.js (8/8) — the move, gate
+re-admission, giver notifications, wristband rights following the ticket,
+used/wristbanded refusals and the guessing throttle. Full suite 459/459.
 
-Migrations to run: none — the new tables create themselves on first use
-(also in schema.sql for fresh installs).
+Migrations to run: none.
 
 Operational reminders (unchanged):
   node scripts/ensure-revenue-wallet.js --create   (once, on production)

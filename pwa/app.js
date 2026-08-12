@@ -2166,6 +2166,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "support") await submitSupportRequest(data);
     if (form.dataset.form === "support-ticket-reply") await submitSupportTicketReply(data);
     if (form.dataset.form === "business-product") await submitBusinessProduct(data);
+    if (form.dataset.form === "ticket-claim") await submitTicketClaim(data);
     if (form.dataset.form === "chatbot") await submitChatbotMessage(data);
     if (form.dataset.form === "titopay-chat-lookup") await submitTitoPayChatLookup(data);
     if (form.dataset.form === "titopay-chat-message") await submitTitoPayChatMessage(form, formData);
@@ -15344,7 +15345,36 @@ async function openMyTicketsModal() {
         <div><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span></div>
       </div>`).join("")}
     </section>
+    <section class="integration-note" style="margin-top:12px">
+      <strong>Been gifted a ticket?</strong>
+      <p class="field-hint" style="margin:2px 0 8px">Enter its ticket code — the number on the ticket email, PDF or stub. The ticket moves into your account under your name, its QR scans at the gate for you, and you can link your event wristband here as usual. The person who gifted it is notified.</p>
+      <form class="form-grid" data-form="ticket-claim">
+        <div class="field">
+          <label for="ticket-claim-code">Ticket code</label>
+          <input id="ticket-claim-code" name="code" inputmode="numeric" autocomplete="off" maxlength="600" required placeholder="e.g. 0123456789">
+        </div>
+        <button class="btn secondary" type="submit">${icon("ticket")} Add ticket to my account</button>
+      </form>
+    </section>
   `);
+  await refreshMyTickets();
+}
+async function submitTicketClaim(data) {
+  let code = String(data.code || "").trim();
+  // A pasted ticket QR payload works too — pull the code out of it.
+  if (code.includes("{")) {
+    try {
+      const payload = JSON.parse(code);
+      if (payload && payload.type === "titopay_ticket" && payload.ticketCode) code = String(payload.ticketCode);
+    } catch (error) { /* fall through to the digit check below */ }
+  }
+  code = code.replace(/\s+/g, "");
+  if (!/^\d{6,10}$/.test(code)) throw new Error("Enter the 6 to 10 digit ticket code printed on the ticket.");
+  const result = await api("/v1/ticketing/tickets/claim", { method: "POST", body: { code } });
+  const eventName = result.ticket?.eventName || "";
+  showToast(eventName ? `Ticket added — ${eventName} is now in My Tickets.` : "Ticket added to your account.");
+  const form = document.querySelector('form[data-form="ticket-claim"]');
+  if (form) form.reset();
   await refreshMyTickets();
 }
 async function refreshMyTickets() {
