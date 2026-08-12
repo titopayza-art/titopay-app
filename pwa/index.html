@@ -2,6 +2,12 @@
 <html lang="en-ZA">
   <head>
     <meta charset="utf-8">
+    <!-- Every asset below is referenced relatively (./app.min.js). When the app
+         is opened at a deep link such as /events/<slug> those would resolve
+         against /events/ and 404. This pins them to the site root so a shared
+         event page loads the app instead of a blank shell. Same-origin, so the
+         CSP base-uri 'self' allows it. -->
+    <base href="/">
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
     <meta name="theme-color" content="#0a4dff">
     <meta name="mobile-web-app-capable" content="yes">
@@ -16,8 +22,8 @@
     <link rel="icon" type="image/png" href="./assets/favicon.png?v=165">
     <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=165">
     <link rel="preload" href="./assets/titopay-logo.png" as="image" fetchpriority="high">
-    <link rel="stylesheet" href="./styles.min.css?v=313">
-    <script src="./app.min.js?v=313" defer></script>
+    <link rel="stylesheet" href="./styles.min.css?v=314">
+    <script src="./app.min.js?v=314" defer></script>
     <script src="./notification-routing-fix.js?v=1" defer></script>
   </head>
   <body>

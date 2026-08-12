@@ -55,6 +55,23 @@
   RewriteRule ^\.ht                   - [F,L]
   RewriteRule ^(app\.js|styles\.css)$ - [F,L]
   RewriteRule \.md$                   - [F,L]
+
+  # SINGLE-PAGE-APP FALLBACK.
+  #
+  # The app is one index.html with client-side routing, and it already knows how
+  # to open a shared event from /events/<slug> (it reads the path on boot). But
+  # the server never gave it the chance: a request for /events/<slug> matched no
+  # file, so Apache answered its own bare 404 — which is exactly what the
+  # "Public page" link produced. Admin and HR have carried this fallback since
+  # they shipped; the PWA was the one document root without it.
+  #
+  # Anything that IS a real file or directory (index.html, app.min.js, the
+  # assets, verify-email/, service-worker.js) is served as-is; only paths that
+  # resolve to nothing fall through to the app shell, so nothing that works today
+  # changes. The block rules above run first, so .ht/app.js/*.md still 403.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L]
 </IfModule>
 
 <IfModule mod_headers.c>
