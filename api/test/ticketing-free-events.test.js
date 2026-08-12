@@ -31,19 +31,25 @@ const {
 const SOURCE = fs.readFileSync(
   path.join(__dirname, "..", "src", "services", "ticketing-service.js"), "utf8");
 
-// A business that has done everything EXCEPT verify — the exact case the feature
-// is about. Structurally sound, not yet FICA-approved, no active wallet.
+// A business that has done everything EXCEPT the money-readiness steps — no
+// merchant profile, no completed registration, not FICA-approved, no active
+// wallet. This is the exact account in the "why can't I set up a free event?"
+// screenshot, and it must be able to run a FREE event.
 const UNVERIFIED = {
   structuralBlockers: [],
   paymentBlockers: [
+    "A registered business merchant profile is required before selling paid tickets.",
+    "Business registration details must be completed before selling paid tickets.",
     "Full business FICA verification is required before selling paid tickets.",
     "An active business wallet is required to receive ticket payments."
   ]
 };
 
-// A business not yet set up at all — cannot run any event, free or paid.
+// A genuinely structural block — this is not a business account at all, so it
+// cannot run any event, free or paid. Merchant profile and registration are NO
+// LONGER structural: they gate paid tickets, not event creation.
 const INCOMPLETE = {
-  structuralBlockers: ["Business merchant profile is required before creating events."],
+  structuralBlockers: ["Only TitoPay Business accounts can create events."],
   paymentBlockers: ["Full business FICA verification is required before selling paid tickets."]
 };
 
@@ -77,7 +83,8 @@ test("an unverified business CANNOT set up a paid event", () => {
   assert.match(error.message, /FICA/i, "the message must name the actual requirement");
   assert.equal(error.details.action, "complete_fica");
   // Only the payment blockers are surfaced — the structural ones are already met.
-  assert.ok(error.details.blockers.every((b) => /FICA|wallet|verification/i.test(b)));
+  assert.ok(error.details.blockers.every((b) => /FICA|wallet|verification|merchant|registration/i.test(b)),
+    "every surfaced blocker for a paid event is a money-readiness one");
 });
 
 test("the paid-ticket gate holds at every entry point", () => {
@@ -115,6 +122,35 @@ test("eligibility reports whether free events are possible, separately from paid
     "both blocker lists must be returned, not just the combined one");
   assert.match(SOURCE, /const blockers = \[\.\.\.structuralBlockers, \.\.\.paymentBlockers\]/,
     "the combined blockers/eligible must keep their original meaning for existing callers");
+});
+
+test("merchant profile and business registration gate PAID tickets, not free events", () => {
+  // The reported bug: these two checks sat in the structural list and blocked a
+  // business from setting up a free event. They must live with the payment
+  // blockers, or the free-event path is broken again.
+  const eligibilityFn = SOURCE.match(/const structuralBlockers = \[\][\s\S]*?const blockers = /);
+  assert.ok(eligibilityFn, "the eligibility block must be found");
+  const block = eligibilityFn[0];
+  const structuralPart = block.slice(0, block.indexOf("const paymentBlockers"));
+  const paymentPart = block.slice(block.indexOf("const paymentBlockers"));
+
+  // Structural must NOT mention merchant profile or registration any more.
+  assert.doesNotMatch(structuralPart, /merchant profile/i,
+    "merchant profile must not be a structural (all-events) requirement");
+  assert.doesNotMatch(structuralPart, /registration details/i,
+    "business registration must not be a structural requirement");
+
+  // They must be present in the payment (paid-only) group.
+  assert.match(paymentPart, /merchant_uuid\) paymentBlockers\.push/,
+    "the merchant-profile check must be a payment blocker");
+  assert.match(paymentPart, /business_name \|\| !row\.merchant_id\) paymentBlockers\.push/,
+    "the registration check must be a payment blocker");
+
+  // Structural is only the three account-level checks — that is what a free
+  // event needs, and all it needs.
+  assert.match(structuralPart, /account_type !== "business"/);
+  assert.match(structuralPart, /user_status !== "active"/);
+  assert.match(structuralPart, /profile_locked/);
 });
 
 test("a free ticket is charged nothing, and moves no money", () => {

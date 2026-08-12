@@ -437,23 +437,28 @@ async function getBusinessEligibility(userId) {
 
   // Two kinds of requirement, and the split is the whole point of free events.
   //
-  // STRUCTURAL requirements describe who the organiser is — a real, active,
-  // registered business. They apply to every event, because even a free seminar
-  // is published under a business's name and must be traceable to one.
+  // STRUCTURAL requirements are the bare minimum to be a real, usable business
+  // account: it IS a business, it is active and unrestricted, and it is not
+  // locked. Nothing more. A free seminar or conference can be created on this
+  // alone — no merchant profile, no completed business registration, no FICA.
   //
-  // PAYMENT requirements — FICA, approved verification, an active wallet — gate
-  // the ability to RECEIVE MONEY. A free event receives none, so it does not
-  // need them. They are enforced the moment an event carries a paid ticket, and
-  // again at submission, so a free draft cannot become a paid one without them.
+  // PAYMENT requirements gate the ability to RECEIVE MONEY: a registered merchant
+  // profile, completed registration details, approved verification, FICA and an
+  // active wallet. A free event receives nothing, so it needs none of them. They
+  // come back the moment an event carries a paid ticket, enforced at create,
+  // edit AND submit, so a free draft cannot quietly become a paid one. The
+  // merchant-profile and registration checks used to sit in the structural list,
+  // which is what blocked a business from setting up a free event — they belong
+  // here with the rest of the money-readiness checks.
   const structuralBlockers = [];
   if (row.account_type !== "business") structuralBlockers.push("Only TitoPay Business accounts can create events.");
   if (row.user_status !== "active" || BLOCKED_USER_STATUSES.has(row.user_status)) structuralBlockers.push("Business account must be active and unrestricted.");
   if (row.profile_locked) structuralBlockers.push("Business profile is locked. Contact TitoPay Support.");
-  if (!row.merchant_uuid) structuralBlockers.push("Business merchant profile is required before creating events.");
-  if (row.merchant_uuid && row.merchant_status !== "active") structuralBlockers.push("Business merchant profile must be active.");
-  if (!row.business_name || !row.merchant_id) structuralBlockers.push("Business registration details must be completed.");
 
   const paymentBlockers = [];
+  if (!row.merchant_uuid) paymentBlockers.push("A registered business merchant profile is required before selling paid tickets.");
+  if (row.merchant_uuid && row.merchant_status !== "active") paymentBlockers.push("Business merchant profile must be active before selling paid tickets.");
+  if (!row.business_name || !row.merchant_id) paymentBlockers.push("Business registration details must be completed before selling paid tickets.");
   if (!VERIFIED_STATUSES.has(String(row.fica_status || "").toLowerCase())) paymentBlockers.push("Full business FICA verification is required before selling paid tickets.");
   if (row.merchant_uuid && !VERIFIED_STATUSES.has(String(row.merchant_verification_status || "").toLowerCase())) paymentBlockers.push("Business verification must be fully approved before selling paid tickets.");
   if (!row.wallet_id || row.wallet_status !== "active") paymentBlockers.push("An active business wallet is required to receive ticket payments.");
@@ -578,7 +583,9 @@ function eventPayload(payload = {}, eligibility) {
     eventMode: ["physical", "online", "hybrid"].includes(String(payload.eventMode || payload.event_mode || "physical")) ? String(payload.eventMode || payload.event_mode || "physical") : "physical",
     organiserDetails: toJson(payload.organiserDetails || payload.organiser_details, {}),
     businessDetails: toJson(payload.businessDetails || payload.business_details, {
-      businessName: eligibility?.business?.businessName,
+      // A free event may have no merchant profile yet, so fall back to the
+      // account's own name rather than leaving the organiser blank.
+      businessName: eligibility?.business?.businessName || eligibility?.business?.fullName,
       merchantCode: eligibility?.business?.merchantCode
     }),
     contactEmail: cleanEmail(payload.contactEmail || payload.contact_email || eligibility?.business?.email),

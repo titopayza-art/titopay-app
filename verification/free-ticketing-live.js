@@ -40,18 +40,16 @@ async function balance(walletId) {
 
 async function seed() {
   await ticketing.ensureTicketingSchema();
-  // An UNVERIFIED business: active and registered, but fica_status pending and
-  // no approved merchant verification. Exactly the account the feature is for.
+  // The exact account in the "why can't I set up a free event?" screenshot: an
+  // active business with NO merchant profile and NO completed registration, and
+  // fica_status pending. It must still be able to create and run a free event.
   await pool.query(
     `INSERT INTO users (id, account_type, full_name, username, email, phone, password_hash, status, profile_locked, fica_status)
      VALUES ($1,'business','${TAG} Seminars Ltd','${TAG}_biz','${TAG}_biz@example.invalid','27110000001','x','active',FALSE,'pending')`,
     [ids.businessUser]
   );
-  await pool.query(
-    `INSERT INTO merchants (id, user_id, business_name, merchant_id, status, verification_status)
-     VALUES ($1,$2,'${TAG} Seminars Ltd','${TAG}${Date.now().toString().slice(-6)}','active','pending')`,
-    [ids.merchant, ids.businessUser]
-  );
+  // Deliberately NO merchants row is created for this business — that is the
+  // condition the screenshot showed being blocked.
   // A business wallet exists from registration, but this business is NOT FICA
   // verified — the wallet's existence must not be mistaken for permission.
   await pool.query(
@@ -112,7 +110,12 @@ const freeEvent = {
     // 1. An unverified business creates a FREE event draft.
     const draft = await ticketing.createEventDraft(ids.businessUser, freeEvent);
     assert.ok(draft.id, "free draft should be created");
-    ok("unverified business created a free event draft");
+    // No merchant profile, so the event has a null merchant_id and takes its
+    // organiser name from the account. Both must be true and neither may break.
+    const draftRow = (await pool.query("SELECT merchant_id, business_details FROM events WHERE id = $1", [draft.id])).rows[0];
+    assert.equal(draftRow.merchant_id, null, "a free event with no merchant profile stores a null merchant_id");
+    assert.match(JSON.stringify(draftRow.business_details || {}), /Seminars Ltd/, "the organiser name falls back to the account name");
+    ok("business with NO merchant profile created a free event draft (the screenshot case)");
 
     // 2. The same business is REFUSED a paid ticket.
     let paidRefused = false;
