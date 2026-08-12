@@ -1,6 +1,6 @@
 TitoPay deployment build — 2026-08-12 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v321 (titopay-pwa-v321)
+PWA bundle: v322 (titopay-pwa-v322)
 Admin console: admin-console-v78
 
 Latest addition — organiser change requests:

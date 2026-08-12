@@ -54,10 +54,13 @@ async function seed() {
     `INSERT INTO users (id, account_type, full_name, username, email, phone, password_hash, status, profile_locked, fica_status)
      VALUES ($1,'business','${TAG} Stranger','${TAG}_str','${TAG}_str@example.invalid','27110000103','x','active',FALSE,'pending')`,
     [ids.strangerUser]);
-  // A verified user who will be assigned as a scanner.
+  // A PERSONAL user who will be assigned as a scanner — deliberately with FICA
+  // still PENDING, which is the normal state of a helper's account. Scanning
+  // moves no money, so this must be allowed (it used to be refused, which is
+  // why organisers "couldn't add staff").
   await pool.query(
     `INSERT INTO users (id, account_type, full_name, username, email, phone, password_hash, status, profile_locked, fica_status)
-     VALUES ($1,'personal','${TAG} Scanner','${TAG}_scan','${TAG}_scan@example.invalid','27110000104','x','active',FALSE,'approved')`,
+     VALUES ($1,'personal','${TAG} Scanner','${TAG}_scan','${TAG}_scan@example.invalid','27110000104','x','active',FALSE,'pending')`,
     [ids.scannerUser]);
 }
 
@@ -116,12 +119,25 @@ async function attendanceAsRoute(userId, eventId) {
     assert.equal(asStranger.attendance, undefined, "a refused caller gets no count");
     ok("an unrelated business is refused (403), and sees no numbers");
 
-    // 3. Assign a scanner; they can now read it.
+    // 3. Assign a scanner with FICA still PENDING — this is the exact case the
+    //    organiser hit ("can't add staff"): a door role needs an active
+    //    account, not FICA.
     await ticketing.addEventStaff({ userId: ids.businessUser }, draft.id, { identifier: `${TAG}_scan`, role: "scanner", permissions: ["scan"] });
     const asScanner = await attendanceAsRoute(ids.scannerUser, draft.id);
     assert.equal(asScanner.status, 200, "an assigned scanner is allowed");
     assert.deepEqual(asScanner.attendance, { scanned: 0, total: 2 });
-    ok("an assigned scanner can read the count");
+    ok("a PENDING-FICA personal user was added as staff and can read the count");
+
+    // 3b. The assignment is what unlocks the personal scanner: the staff list
+    //     endpoint returns exactly the assigned event for the scanner, and
+    //     nothing at all for a stranger.
+    const scannerEvents = await ticketing.listStaffScanEvents(ids.scannerUser);
+    assert.equal(scannerEvents.length, 1, "the scanner sees exactly the event they were assigned to");
+    assert.equal(scannerEvents[0].id, draft.id);
+    assert.match(scannerEvents[0].eventName, /Free Meetup/);
+    const strangerEvents = await ticketing.listStaffScanEvents(ids.strangerUser);
+    assert.equal(strangerEvents.length, 0, "a stranger sees no staff events");
+    ok("staff/events lists the assignment for the scanner and nothing for a stranger");
 
     // 4. Scan one ticket; the count the endpoint returns moves to 1 of 2.
     const code = (await pool.query("SELECT ticket_code FROM tickets WHERE event_id = $1 ORDER BY created_at LIMIT 1", [draft.id])).rows[0].ticket_code;

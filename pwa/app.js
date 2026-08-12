@@ -13932,6 +13932,7 @@ async function openPersonalTicketsDashboard() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <button class="btn secondary" type="button" data-action="my-tickets">${icon("ticket")} My Tickets</button>
+    <div data-staff-scan-entry></div>
     <section class="ticket-list" data-ticket-list aria-live="polite">
       ${[0, 1, 2].map(() => `<div class="ticket-card is-loading" aria-hidden="true">
         <span class="skeleton skeleton-circle"></span>
@@ -13939,6 +13940,21 @@ async function openPersonalTicketsDashboard() {
       </div>`).join("")}
     </section>
   `);
+  // If an organiser has added this person as event staff, the door scanner is
+  // theirs too — surfaced here so a personal account can find it without any
+  // business tile. Best-effort: no assignments (or an older API) shows nothing.
+  if (state.auth?.accessToken) {
+    api("/v1/ticketing/staff/events")
+      .then((result) => {
+        const assigned = Array.isArray(result.items) ? result.items : [];
+        state.ticketing.staffEvents = assigned;
+        const host = document.querySelector("[data-staff-scan-entry]");
+        if (host && assigned.length) {
+          host.innerHTML = `<button class="btn primary" type="button" data-action="ticketing-staff-open">${icon("scan")} Scan entry — you are staff for ${assigned.length === 1 ? esc(assigned[0].eventName || "an event") : `${assigned.length} events`}</button>`;
+        }
+      })
+      .catch(() => null);
+  }
   await refreshPublicTickets();
 }
 async function refreshPublicTickets() {
@@ -15243,22 +15259,33 @@ async function openBusinessTicketingDashboard(options = {}) {
    ticket. It deliberately carries none of the create/sell/tags management —
    that is what kept the two tiles looking like the same screen. */
 async function openTicketingStaffScanner(options = {}) {
-  if (state.accountType !== "business") {
-    openInfoModal("Ticketing Staff", "Switch to Business to scan entry for your events.");
-    return;
-  }
+  // The scanner is for whoever works the door: the ORGANISER's business
+  // account sees its own approved events (plus any it was assigned to), and a
+  // PERSONAL account sees exactly the events an organiser added it to as
+  // staff — that assignment is what unlocks the feature.
+  const isBusiness = state.accountType === "business";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Ticketing Staff</p><h2>Scan entry</h2><p class="lead">Loading your approved events.</p></div>
+      <div><p class="eyebrow">Ticketing Staff</p><h2>Scan entry</h2><p class="lead">Loading your events.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="settings-list" aria-busy="true">
       ${[0, 1].map(() => `<article class="ticket-event is-loading"><span class="skeleton skeleton-line" aria-hidden="true"></span><span class="skeleton skeleton-line short" aria-hidden="true"></span></article>`).join("")}
     </section>
   `);
-  let eventsResult = null;
+  let ownApproved = [];
+  let staffEvents = [];
   try {
-    eventsResult = await api("/v1/ticketing/business/events");
+    const [ownResult, staffResult] = await Promise.all([
+      isBusiness ? api("/v1/ticketing/business/events") : Promise.resolve({ items: [] }),
+      // Best-effort: an older API without this route must not break the
+      // organiser's scanner.
+      api("/v1/ticketing/staff/events").catch(() => ({ items: [] }))
+    ]);
+    if (isBusiness) state.ticketing.events = ownResult.items || [];
+    ownApproved = (ownResult.items || []).filter((event) => event.status === "approved");
+    staffEvents = staffResult.items || [];
+    state.ticketing.staffEvents = staffEvents;
   } catch (error) {
     openModal(`
       <div class="modal-head">
@@ -15272,19 +15299,28 @@ async function openTicketingStaffScanner(options = {}) {
     `);
     return;
   }
-  state.ticketing.events = eventsResult.items || [];
-  const approved = state.ticketing.events.filter((event) => event.status === "approved");
-  if (!approved.length) {
+  // Everything this person may scan: their own approved events plus the ones
+  // they were assigned to (de-duplicated — an organiser is often both).
+  const scannable = [...ownApproved];
+  for (const assigned of staffEvents) {
+    if (!scannable.some((event) => event.id === assigned.id)) scannable.push(assigned);
+  }
+  if (!scannable.length) {
     openModal(`
       <div class="modal-head">
-        <div><p class="eyebrow">Ticketing Staff</p><h2>No events to scan yet</h2><p class="lead">Door scanning opens as soon as an event is approved.</p></div>
+        <div><p class="eyebrow">Ticketing Staff</p><h2>No events to scan yet</h2><p class="lead">${isBusiness ? "Door scanning opens as soon as an event is approved." : "Door scanning unlocks when an organiser adds you to their event staff."}</p></div>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
       <section class="empty-state compact-state">
         ${icon("scan")}
-        <strong>Nothing approved yet</strong>
-        <p>Create and submit an event under <strong>Ticketing</strong>. Once it is approved it appears here for you and your scanners.</p>
-        <button class="btn primary" type="button" data-action="ticketing-staff-manage">${icon("ticket")} Go to Ticketing</button>
+        ${isBusiness ? `
+          <strong>Nothing approved yet</strong>
+          <p>Create and submit an event under <strong>Ticketing</strong>. Once it is approved it appears here for you and your scanners.</p>
+          <button class="btn primary" type="button" data-action="ticketing-staff-manage">${icon("ticket")} Go to Ticketing</button>
+        ` : `
+          <strong>You are not on an event's staff yet</strong>
+          <p>Ask the event organiser to add your @username, phone or email under <strong>Ticketing Staff → Staff permissions</strong> on their business account. The moment they do, their event appears here and you can scan tickets at the door.</p>
+        `}
       </section>
     `);
     return;
@@ -15296,7 +15332,7 @@ async function openTicketingStaffScanner(options = {}) {
     </div>
     <section class="panel inner-panel">
       <label class="scan-event-pick">Event
-        <select data-scan-event>${approved.map((event, index) => `<option value="${esc(event.id)}"${index === 0 ? " selected" : ""}>${esc(event.eventName || "Untitled event")}</option>`).join("")}</select>
+        <select data-scan-event>${scannable.map((event, index) => `<option value="${esc(event.id)}"${index === 0 ? " selected" : ""}>${esc(event.eventName || "Untitled event")}</option>`).join("")}</select>
       </label>
       <div class="scan-attendance" data-attendance-card aria-live="polite">
         <span class="scan-attendance-figure"><strong>—</strong> of <strong>—</strong></span>
@@ -15312,7 +15348,7 @@ async function openTicketingStaffScanner(options = {}) {
       <div data-ticket-camera class="empty-state hidden"></div>
       <div data-scan-result></div>
     </section>
-    ${ticketingStaffForm(approved)}
+    ${isBusiness ? ticketingStaffForm(ownApproved) : ""}
     <div class="auth-actions">
       <button class="btn secondary" type="button" data-action="ticketing-staff-open">${icon("refresh")} Refresh</button>
       <button class="btn ghost" type="button" data-close>${icon("arrow-left")} Back</button>
@@ -15321,7 +15357,7 @@ async function openTicketingStaffScanner(options = {}) {
   // Seed the count for the first event so the door sees a number before the
   // first scan. Failures here are silent — the scanner still works, the card
   // just stays as dashes until a scan fills it in.
-  await refreshScanAttendance(approved[0].id);
+  await refreshScanAttendance(scannable[0].id);
 }
 
 // Fetch and paint the running attendance for one event into the scanner's

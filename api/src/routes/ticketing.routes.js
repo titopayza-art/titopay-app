@@ -25,6 +25,7 @@ const {
   eventAttendance,
   addEventStaff,
   listEventStaff,
+  listStaffScanEvents,
   requestTicketRefund,
   requestEventChange,
   listMyEventChangeRequests,
@@ -298,6 +299,17 @@ router.get("/business/events/:id/change-requests", requireAuth, async (req, res,
 router.get("/business/change-requests", requireAuth, async (req, res, next) => {
   try {
     res.json({ ok: true, items: await listMyEventChangeRequests(req.auth) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The approved events the CALLER may scan because an organiser added them as
+// staff. Works for any account type — this is what gives a personal account
+// the door scanner, for exactly the events they were assigned to.
+router.get("/staff/events", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listStaffScanEvents(req.auth.userId) });
   } catch (error) {
     next(error);
   }

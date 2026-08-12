@@ -2032,11 +2032,41 @@ async function lookupVerifiedCustomer(identifier) {
     [value.replace(/^@/, ""), digits]
   );
   const user = rows[0];
-  if (!user) throw new AppError(404, "TitoPay user not found");
-  if (user.status !== "active" || !VERIFIED_STATUSES.has(String(user.fica_status || "").toLowerCase())) {
-    throw new AppError(403, "Only active verified TitoPay users can be added as event staff");
+  if (!user) throw new AppError(404, "TitoPay user not found. Check the @username, phone or email.");
+  // Scanning tickets moves no money, so staff need an ACTIVE account — not
+  // FICA. Requiring FICA here blocked organisers from adding perfectly normal
+  // helpers (most personal accounts are pending review), for a door role with
+  // no financial reach. FICA continues to gate the things that move money.
+  if (user.status !== "active") {
+    throw new AppError(403, "This TitoPay account is not active, so it cannot be added as event staff.");
   }
   return user;
+}
+
+// The approved events THIS user may scan because an organiser added them as
+// staff. This is what puts the door scanner on a personal account: assigned
+// staff see exactly the events they were given, and nothing else.
+async function listStaffScanEvents(userId) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `SELECT e.id, e.event_name, e.status, e.event_date, e.venue_name, e.city
+       FROM event_staff s
+       JOIN events e ON e.id = s.event_id
+      WHERE s.user_id = $1
+        AND s.status = 'active'
+        AND (s.permissions ? 'scan' OR s.role IN ('owner','manager'))
+        AND e.status = 'approved'
+      ORDER BY e.event_date ASC NULLS LAST`,
+    [userId]
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    eventName: row.event_name,
+    status: row.status,
+    eventDate: row.event_date,
+    venueName: row.venue_name,
+    city: row.city
+  }));
 }
 
 async function addEventStaff(actor, eventId, payload = {}, meta = {}) {
@@ -2737,6 +2767,7 @@ module.exports = {
   eventAttendance,
   addEventStaff,
   listEventStaff,
+  listStaffScanEvents,
   requestTicketRefund,
   listTicketRefunds,
   processTicketRefund,
