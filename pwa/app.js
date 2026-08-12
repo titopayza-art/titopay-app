@@ -2095,6 +2095,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "profile-details") await submitProfileDetails(data);
     if (form.dataset.form === "pwa-review") await submitPwaReview(data);
     if (form.dataset.form === "ticketing-event") await submitTicketingEventForm(data);
+    if (form.dataset.form === "ticket-email") await submitTicketEmailForm(data, form);
     if (form.dataset.form === "ticketing-purchase") await submitTicketingPurchase(data);
     if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data);
     if (form.dataset.form === "business-staff") await submitBusinessStaff(data);
@@ -3297,6 +3298,9 @@ async function handleAction(action, actionElement = null) {
   }
   if (String(action || "").startsWith("ticket-download:")) {
     await downloadTicket(action.split(":").slice(1).join(":"), actionElement);
+  }
+  if (String(action || "").startsWith("ticket-email:")) {
+    openTicketEmailModal(action.split(":").slice(1).join(":"));
   }
   if (action === "stockvel-create") {
     openStockvelCreateWizard();
@@ -14200,7 +14204,8 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
         </div>
       </div>
       <div class="ticket-stub-actions">
-        ${code ? `<button class="btn secondary ticket-download-btn" type="button" data-action="ticket-download:${esc(code)}">${icon("download")} Download ticket</button>` : ""}
+        ${code ? `<button class="btn secondary ticket-download-btn" type="button" data-action="ticket-download:${esc(code)}">${icon("download")} Download PDF</button>` : ""}
+        ${code ? `<button class="btn secondary ticket-email-btn" type="button" data-action="ticket-email:${esc(code)}">${icon("mail")} Email ticket</button>` : ""}
         ${ticketWalletControl(ticket)}
       </div>
       <footer class="ticket-stub-foot">Present this ticket at the entrance. Do not share the code publicly.</footer>
@@ -14223,6 +14228,44 @@ function ticketIssuedFileUrl(ticket = {}) {
     || ticket.ticketFileUrl || ticket.ticket_file_url
     || ""
   );
+}
+// Send a ticket to your own inbox or to someone else's — a friend you bought it
+// for, or a second address of your own. The recipient defaults to the account
+// email; the field lets it go anywhere.
+function openTicketEmailModal(code) {
+  const ownEmail = state.user?.email || state.user?.emailAddress || "";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Send ticket</p><h2>Email this ticket</h2><p class="lead">Send it to yourself or to someone else.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="ticket-email" data-ticket-code="${esc(code)}">
+      <label>Send to<input name="email" type="email" inputmode="email" autocomplete="email" placeholder="name@example.com" value="${esc(ownEmail)}" required></label>
+      <p class="field-hint">Leave your own address to email it to yourself, or enter someone else's. Whoever receives it can enter with the ticket code, so only send it to people you trust with this ticket.</p>
+      <div class="auth-actions">
+        <button class="btn primary" type="submit">${icon("mail")} Send ticket</button>
+        <button class="btn ghost" type="button" data-close>Cancel</button>
+      </div>
+    </form>
+  `);
+}
+async function submitTicketEmailForm(data, form) {
+  const code = form?.dataset?.ticketCode || "";
+  if (!code) { showToast("Open the ticket again before emailing it.", "error"); return; }
+  const button = form?.querySelector("button[type=submit]");
+  setButtonBusy(button, true);
+  try {
+    const result = await api(`/v1/ticketing/tickets/${encodeURIComponent(code)}/email`, {
+      method: "POST",
+      body: { email: (data.email || "").trim() }
+    });
+    closeModal();
+    showToast(`Ticket sent to ${result.sentTo || "your email"}.`);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 async function downloadTicket(code, button) {
   const entry = renderedTickets.get(code);

@@ -1,6 +1,9 @@
 const express = require("express");
 const { requireAuth } = require("../middleware/auth");
 const { requireAdminPermission } = require("../middleware/rbac");
+// Emailing a ticket sends real mail, so it carries the same tight limiter as the
+// other public-facing send endpoints: a handful per window, per caller.
+const { publicContactLimiter } = require("../middleware/rate-limits");
 const { requireUuid } = require("../lib/validation");
 const {
   getBusinessEligibility,
@@ -16,6 +19,7 @@ const {
   adminTransitionEvent,
   ticketPurchasePreview,
   purchaseTickets,
+  emailTicketToRecipient,
   listMyTicketOrders,
   scanTicket,
   addEventStaff,
@@ -88,6 +92,17 @@ router.post("/orders/:id/refund", requireAuth, async (req, res, next) => {
 router.get("/tickets", requireAuth, async (req, res, next) => {
   try {
     res.json({ ok: true, items: await listMyTickets(req.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Email a ticket you own to yourself or to someone else. Ownership is enforced
+// in the service; the limiter stops the endpoint being used to send mail in bulk.
+router.post("/tickets/:code/email", requireAuth, publicContactLimiter, async (req, res, next) => {
+  try {
+    const result = await emailTicketToRecipient(req.auth, req.params.code, req.body?.email || req.body?.destination || "", meta(req));
+    res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }

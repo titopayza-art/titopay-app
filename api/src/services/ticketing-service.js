@@ -1218,6 +1218,78 @@ async function deliverTicketOrder(orderId) {
   await pool.query("UPDATE tickets SET delivery_status = $2, updated_at = NOW() WHERE order_id = $1", [orderId, status]);
 }
 
+// Email a ticket the caller OWNS to themselves or to someone else — a friend
+// they bought it for, or their own second address. Ownership is enforced by
+// owner_user_id, so a caller can only ever send a ticket that is theirs; the
+// destination is validated but otherwise free, which is the whole point.
+async function emailTicketToRecipient(actor, ticketCode, destination, meta = {}) {
+  await ensureTicketingSchema();
+  const code = cleanText(ticketCode, 40);
+  if (!code) throw new AppError(400, "Ticket code is required");
+
+  const { rows } = await pool.query(
+    `SELECT t.ticket_code, t.qr_payload, t.attendee_name,
+            o.order_reference,
+            tt.ticket_name,
+            e.id AS event_id, e.event_name, e.slug, e.event_date, e.start_time, e.venue_name, e.city, e.province,
+            u.email AS owner_email, u.full_name AS owner_name
+       FROM tickets t
+       JOIN ticket_orders o ON o.id = t.order_id
+       JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
+       JOIN events e ON e.id = t.event_id
+       JOIN users u ON u.id = t.owner_user_id
+      WHERE t.ticket_code = $1 AND t.owner_user_id = $2
+      LIMIT 1`,
+    [code, actor.userId]
+  );
+  const ticket = rows[0];
+  // Not found OR not owned both answer the same way, so this never confirms a
+  // ticket code exists to someone who does not hold it.
+  if (!ticket) throw new AppError(404, "Ticket not found");
+
+  // Default to the account's own email; accept an override for sending to
+  // someone else. An invalid override is rejected rather than silently sent to
+  // the owner, so the caller is never surprised about where it went.
+  const requested = cleanEmail(destination);
+  if (destination && !requested) throw new AppError(400, "Enter a valid email address");
+  if (requested && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(requested)) throw new AppError(400, "Enter a valid email address");
+  const to = requested || cleanEmail(ticket.owner_email);
+  if (!to) throw new AppError(400, "No email address on file. Enter one to send this ticket to.");
+
+  const when = ticket.event_date
+    ? `${new Date(ticket.event_date).toLocaleDateString("en-ZA", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}${ticket.start_time ? ` at ${ticket.start_time}` : ""}`
+    : "Date to be confirmed";
+  const where = [ticket.venue_name, ticket.city, ticket.province].filter(Boolean).join(", ") || "Venue to be confirmed";
+  const eventUrl = `https://app.titopay.co.za/events/${ticket.slug}`;
+  const subject = `Your ticket for ${ticket.event_name}`;
+  const body = [
+    `Here is your TitoPay ticket for ${ticket.event_name}.`,
+    "",
+    `Ticket: ${ticket.ticket_name || "General admission"}`,
+    `When: ${when}`,
+    `Where: ${where}`,
+    `Ticket code: ${ticket.ticket_code}`,
+    ticket.order_reference ? `Order: ${ticket.order_reference}` : "",
+    "",
+    "Show the ticket code (or its QR in the TitoPay app) at the entrance.",
+    `Event details: ${eventUrl}`,
+    "",
+    "Keep this code private — anyone who has it can enter."
+  ].filter((line) => line !== null && line !== undefined).join("\n");
+
+  await deliverEmail({ to, subject, body, metadata: { ticketCode: ticket.ticket_code, purpose: "ticket_self_service_email" } });
+  await eventAudit({
+    eventId: ticket.event_id,
+    actorType: "customer",
+    actorId: actor.userId,
+    action: "ticket_emailed",
+    metadata: { ticketCode: ticket.ticket_code, sentToSelf: to === cleanEmail(ticket.owner_email) },
+    ...meta
+  });
+  // Never echo the address back in full — enough to confirm, not to leak.
+  return { ok: true, sentTo: to.replace(/^(.).*(@.*)$/, "$1***$2") };
+}
+
 async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
   if (actor.profileLocked) throw new AppError(423, "Profile is locked. Ticket purchases are disabled.");
   await ensureTicketingSchema();
@@ -1901,6 +1973,7 @@ module.exports = {
   adminTransitionEvent,
   ticketPurchasePreview,
   purchaseTickets,
+  emailTicketToRecipient,
   listMyTicketOrders,
   listMyTickets,
   scanTicket,
