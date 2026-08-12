@@ -139,10 +139,18 @@ const freeEvent = {
     ok("the same business was refused a PAID event (FICA required)");
 
     // 3. Submit the free event, still unverified.
+    outbox.length = 0;
     await ticketing.submitEvent(ids.businessUser, draft.id);
     const submitted = (await pool.query("SELECT status FROM events WHERE id = $1", [draft.id])).rows[0].status;
     assert.equal(submitted, "submitted", "free event should submit without FICA");
     ok("unverified business submitted the free event for review");
+
+    // Submitting sends a confirmation email to the organiser.
+    const submissionEmail = outbox.find((e) => e.metadata?.purpose === "event_submission_confirmation");
+    assert.ok(submissionEmail, "submitting an event should send a confirmation email");
+    assert.match(submissionEmail.subject, /received your event/i, "the email confirms the submission");
+    assert.match(submissionEmail.to, /example\.invalid/, "it goes to the organiser");
+    ok("submitting the event sent a confirmation email to the organiser");
 
     // Move the event live so tickets can be claimed. Done via SQL because
     // adminTransitionEvent needs a real admin_users FK, and admin approval is
@@ -174,6 +182,19 @@ const freeEvent = {
     const issued = ticketCount || (await pool.query("SELECT COUNT(*)::int AS c FROM tickets WHERE event_id = $1", [draft.id])).rows[0].c;
     assert.equal(issued, 2, `two valid tickets should exist, found ${issued}`);
     ok(`${issued} valid tickets were issued for a R0 order`);
+
+    // Scanner + running attendance count. The organiser scans one of the two
+    // tickets; the count reflects it, and a second scan of the same code is
+    // refused rather than double-counted.
+    const scanCode = (await pool.query("SELECT ticket_code FROM tickets WHERE event_id = $1 ORDER BY created_at LIMIT 1", [draft.id])).rows[0].ticket_code;
+    const scan = await ticketing.scanTicket({ userId: ids.businessUser }, { ticketCode: scanCode });
+    assert.equal(scan.valid, true, "the organiser can scan a valid ticket");
+    assert.deepEqual(scan.attendance, { scanned: 1, total: 2 }, `attendance should be 1 of 2, got ${JSON.stringify(scan.attendance)}`);
+    const rescan = await ticketing.scanTicket({ userId: ids.businessUser }, { ticketCode: scanCode });
+    assert.equal(rescan.valid, false, "a second scan of the same ticket is refused");
+    assert.equal(rescan.status, "already_scanned");
+    assert.deepEqual(rescan.attendance, { scanned: 1, total: 2 }, "a refused re-scan does not inflate the count");
+    ok(`scanner works: ${scan.attendance.scanned} of ${scan.attendance.total} scanned in, double-scan refused`);
 
     // 6. No revenue was recorded for the free sale.
     const revenue = (await pool.query("SELECT COALESCE(SUM(fee_collected),0)::numeric AS f FROM revenue_ledger r JOIN transactions t ON t.id = r.transaction_id WHERE t.user_id = $1", [ids.buyerUser])).rows[0].f;

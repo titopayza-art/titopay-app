@@ -14550,7 +14550,10 @@ function renderMyTickets() {
         ${icon("ticket")}
         <strong>No tickets yet</strong>
         <p>Tickets you buy from TitoPay events appear here, ready to show at the entrance.</p>
-        <button class="btn secondary" type="button" data-action="ticketing-browse-public">${icon("ticket")} Browse events</button>
+        <div class="auth-actions">
+          <button class="btn secondary" type="button" data-action="ticketing-browse-public">${icon("ticket")} Browse events</button>
+          <button class="btn ghost" type="button" data-close>${icon("arrow-left")} Back</button>
+        </div>
       </section>`;
     return;
   }
@@ -15115,12 +15118,14 @@ function ticketingScannerForm(events = []) {
   return `
     <section class="panel inner-panel">
       <h3>Entry scanner</h3>
+      <p class="muted">Scan or type each ticket code at the door. The running count shows how many have come in.</p>
       <form class="form-grid" data-form="ticketing-scan">
         <label>Ticket code
           <input name="ticketCode" inputmode="numeric" maxlength="10" placeholder="10 digit ticket code" required>
         </label>
         <button class="btn primary" type="submit">${icon("scan")} Validate ticket</button>
       </form>
+      <div data-scan-result></div>
     </section>
   `;
 }
@@ -15441,8 +15446,24 @@ async function submitTicketingStaff(data) {
   await openBusinessTicketingDashboard({ staffFocus: true, refresh: true });
 }
 async function submitTicketingScan(data) {
-  const result = await api("/v1/ticketing/scanner/validate", { method: "POST", body: { ticketCode: data.ticketCode } });
-  showToast(result.result.message, result.result.valid ? "" : "error");
+  const response = await api("/v1/ticketing/scanner/validate", { method: "POST", body: { ticketCode: data.ticketCode } });
+  const r = response.result || {};
+  showToast(r.message, r.valid ? "" : "error");
+  const host = document.querySelector("[data-scan-result]");
+  if (host) {
+    const att = r.attendance || {};
+    const countLine = att.total != null ? `<strong class="scan-count">${att.scanned} of ${att.total} scanned in</strong>` : "";
+    const head = r.valid ? "Entry approved" : (r.status === "already_scanned" ? "Already scanned" : "Not valid for entry");
+    host.innerHTML = `
+      <section class="vas-notice" role="status">
+        <p class="vas-notice-head">${esc(head)}</p>
+        <p class="vas-notice-body">${esc(r.message || "")}</p>
+        ${countLine}
+      </section>`;
+  }
+  // Clear the field so the next code can be scanned straight away.
+  const input = document.querySelector('form[data-form="ticketing-scan"] input[name="ticketCode"]');
+  if (input) { input.value = ""; input.focus(); }
 }
 function attachProfilePhotoCropEvents(cropper) {
   if (!cropper || cropper.dataset.cropEventsReady === "true") return;

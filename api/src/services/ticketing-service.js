@@ -917,6 +917,27 @@ async function submitEvent(userId, eventId, meta = {}) {
     [eventId]
   );
   await eventAudit({ eventId, actorType: "customer", actorId: userId, action: "event_submitted", metadata: { status: "submitted" }, ...meta });
+  // Confirm the submission by email. Non-blocking on purpose — a mail hiccup
+  // must never fail a submission that has already been recorded.
+  const organiserEmail = cleanEmail(event.contact_email || eligibility.business?.email || "");
+  if (organiserEmail) {
+    deliverEmail({
+      to: organiserEmail,
+      subject: `We've received your event: ${event.event_name}`,
+      body: [
+        `Hi${eligibility.business?.fullName ? ` ${eligibility.business.fullName}` : ""},`,
+        "",
+        `Your event "${event.event_name}" has been submitted to TitoPay for approval.`,
+        "",
+        "Our team reviews new events before they go live. You'll get another email once it is approved, or if we need any more information.",
+        "",
+        "You can track its status any time under Business Ticketing in the TitoPay app.",
+        "",
+        "— TitoPay"
+      ].join("\n"),
+      metadata: { eventId, purpose: "event_submission_confirmation" }
+    }).catch((error) => console.error("[event-submission-email-failed]", { eventId, message: error.message }));
+  }
   return publicEvent(updated[0], ticketTypes, await getDocuments(eventId));
 }
 
@@ -1574,6 +1595,18 @@ async function listMyTickets(userId) {
   }));
 }
 
+// How many tickets have been scanned in, out of how many were issued, for one
+// event. Read after every scan so the door sees a live count.
+async function eventAttendance(eventId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE status = 'scanned')::int AS scanned,
+            COUNT(*)::int AS total
+       FROM tickets WHERE event_id = $1`,
+    [eventId]
+  );
+  return { scanned: rows[0]?.scanned || 0, total: rows[0]?.total || 0 };
+}
+
 async function scanTicket(actor, payload = {}, meta = {}) {
   await ensureTicketingSchema();
   const ticketCode = cleanText(payload.ticketCode || payload.ticket_code || payload.code, 40);
@@ -1593,10 +1626,10 @@ async function scanTicket(actor, payload = {}, meta = {}) {
     throw new AppError(403, "You are not allowed to scan tickets for this event");
   }
   if (ticket.status === "scanned") {
-    return { valid: false, status: "already_scanned", ticket: ticketResponse(ticket), message: "Ticket has already been scanned" };
+    return { valid: false, status: "already_scanned", ticket: ticketResponse(ticket), attendance: await eventAttendance(ticket.event_id), message: "Ticket has already been scanned" };
   }
   if (ticket.status !== "valid") {
-    return { valid: false, status: ticket.status, ticket: ticketResponse(ticket), message: "Ticket is not valid for entry" };
+    return { valid: false, status: ticket.status, ticket: ticketResponse(ticket), attendance: await eventAttendance(ticket.event_id), message: "Ticket is not valid for entry" };
   }
   const { rows: updated } = await pool.query(
     `UPDATE tickets
@@ -1613,7 +1646,9 @@ async function scanTicket(actor, payload = {}, meta = {}) {
     metadata: { ticketId: ticket.id, ticketCode },
     ...meta
   });
-  return { valid: true, status: "scanned", ticket: ticketResponse(updated[0]), message: "Ticket valid. Entry approved." };
+  // A running attendance count so the person on the door sees how many have come
+  // in, right after each scan.
+  return { valid: true, status: "scanned", ticket: ticketResponse(updated[0]), attendance: await eventAttendance(ticket.event_id), message: "Ticket valid. Entry approved." };
 }
 
 async function lookupVerifiedCustomer(identifier) {

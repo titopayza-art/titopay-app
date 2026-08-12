@@ -12818,3 +12818,11 @@ button,
 .event-poster-thumb{max-width:200px;border-radius:14px;display:block;margin-bottom:10px;border:1px solid #dbe6f5}
 .ticket-tier-row{border:1px solid #dbe6f5;border-radius:16px;padding:14px 14px 4px;margin-bottom:12px;background:#f8faff}
 .ticket-tier-row .btn.ghost{margin-top:2px}
+
+/* Event draft form: stack each label above its input so the label never
+   overlaps a multi-line control like Description. */
+form[data-form="ticketing-event"] label{display:grid;gap:6px;font-weight:600;font-size:.86rem;color:var(--navy)}
+form[data-form="ticketing-event"] label input,
+form[data-form="ticketing-event"] label textarea,
+form[data-form="ticketing-event"] label select{width:100%}
+.scan-count{display:block;margin-top:6px;color:#14633c;font-weight:800}
