@@ -206,6 +206,26 @@ async function cleanup() {
     await pool.query("DELETE FROM users WHERE id = $1", [personalId]);
     ok("bad vendor input answers clearly: no-merchant 409, unknown 404");
 
+    // 4e. THE COMPLIANCE LINE: a vendor RECEIVES money, so FICA is required —
+    //     refused at authorisation (naming the reason to the organiser), and
+    //     refused again at the tap if verification lapses after authorisation.
+    const pendingUser = randomUUID(); const pendingMerchant = randomUUID(); const pendingWallet = randomUUID();
+    await business(pendingUser, pendingMerchant, pendingWallet, `${TAG} Unverified`);
+    await pool.query("UPDATE users SET fica_status = 'pending' WHERE id = $1", [pendingUser]);
+    let ficaRefused = false;
+    try { await eventTags.addEventVendor(ownerActor, ids.event, `@${(await pool.query("SELECT username FROM users WHERE id=$1",[pendingUser])).rows[0].username}`); }
+    catch (error) { ficaRefused = error.statusCode === 409 && /FICA/i.test(error.message); }
+    assert.ok(ficaRefused, "an unverified business cannot be authorised as a vendor — the organiser is told it is FICA");
+    // Defense in depth: an AUTHORISED vendor whose FICA lapses is stopped at the tap.
+    await pool.query("UPDATE users SET fica_status = 'pending' WHERE id = $1", [ids.otherUser]);
+    let lapsedRefused = false;
+    try { await eventTags.chargeEventTagAsVendor(outsiderActor, { tagToken, amount: 5 }, `tap-${randomUUID()}`, "req-4e"); }
+    catch (error) { lapsedRefused = error.statusCode === 403 && /FICA/i.test(error.message); }
+    assert.ok(lapsedRefused, "a vendor whose FICA lapsed after authorisation is refused at the tap");
+    await pool.query("UPDATE users SET fica_status = 'approved' WHERE id = $1", [ids.otherUser]);
+    await pool.query("DELETE FROM users WHERE id = $1", [pendingUser]);
+    ok("FICA gates vendor money at BOTH ends: cannot authorise unverified, cannot charge after lapse");
+
     // 5. A blocked wristband cannot be charged.
     await pool.query("UPDATE event_tags SET status = 'BLOCKED' WHERE id = $1", [ids.tagId]);
     let blocked = false;

@@ -668,7 +668,7 @@ async function chargeEventTagAsVendor(actor, payload = {}, idempotencyKey, reque
   // account has no merchant row and stops here.
   const { rows } = await pool.query(
     `SELECT m.id, m.merchant_id AS merchant_code, m.business_name, m.status AS merchant_status,
-            u.status AS user_status, u.profile_locked
+            u.status AS user_status, u.profile_locked, u.fica_status
        FROM users u
        JOIN merchants m ON m.user_id = u.id
       WHERE u.id = $1
@@ -679,6 +679,11 @@ async function chargeEventTagAsVendor(actor, payload = {}, idempotencyKey, reque
   if (!vendor) throw new AppError(403, "A registered business merchant profile is required to charge Event Tags");
   if (vendor.user_status !== "active" || vendor.profile_locked) throw new AppError(403, "Your account cannot take payments right now");
   if (vendor.merchant_status !== "active") throw new AppError(403, "Your merchant profile is not active");
+  // Receiving money requires FICA, everywhere on TitoPay. Authorisation is also
+  // gated, but a vendor verified then un-verified must stop HERE, at the tap.
+  if (!VERIFIED_FICA.has(String(vendor.fica_status || "").toLowerCase())) {
+    throw new AppError(403, "Your business must complete FICA verification before it can receive payments.");
+  }
 
   // A terminal-shaped object so the proven charge path runs unchanged. The id is
   // namespaced so its idempotency scope can never collide with a hardware
@@ -848,11 +853,24 @@ async function resolveVendorMerchant(identifier) {
   return hit;
 }
 
+// The FICA vocabulary the rest of the platform treats as "verified".
+const VERIFIED_FICA = new Set(["verified", "approved", "complete", "completed", "fully_verified"]);
+
 async function addEventVendor(actor, eventId, identifier) {
   await ensureSchema();
   const merchant = await resolveVendorMerchant(identifier);
   if (merchant.status && merchant.status !== "active") {
     throw new AppError(409, `${merchant.business_name || "This vendor"}'s merchant profile is not active, so it cannot take event payments.`);
+  }
+  // A vendor RECEIVES money on every tap, and no business receives money on
+  // TitoPay without FICA — the same rule that gates paid ticketing. Refusing at
+  // authorisation time tells the organiser now, not the vendor at the till.
+  const { rows: ficaRows } = await pool.query(
+    "SELECT u.fica_status FROM merchants m JOIN users u ON u.id = m.user_id WHERE m.id = $1 LIMIT 1",
+    [merchant.id]
+  );
+  if (!VERIFIED_FICA.has(String(ficaRows[0]?.fica_status || "").toLowerCase())) {
+    throw new AppError(409, `${merchant.business_name || "This vendor"} has not completed business FICA verification, so it cannot receive payments yet. They must complete FICA in their TitoPay Business profile first.`);
   }
   const { rows } = await pool.query(
     `INSERT INTO event_vendors (id, event_id, merchant_id, created_by)
