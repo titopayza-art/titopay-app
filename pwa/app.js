@@ -14806,6 +14806,15 @@ async function openBusinessTicketingDashboard(options = {}) {
   // took the whole modal down with it.
   const eligibility = state.ticketing.eligibility || { eligible: false, blockers: [] };
   const blockers = Array.isArray(eligibility.blockers) ? eligibility.blockers : [];
+  // A free event (seminar, conference) needs only the structural checks; paid
+  // tickets still need FICA. canCreateFreeEvents comes from the API; the
+  // fallbacks keep an older payload working — if the split is absent, behave
+  // exactly as before (full eligibility gates everything).
+  const canCreateFree = eligibility.canCreateFreeEvents ?? eligibility.eligible;
+  const paymentBlockers = Array.isArray(eligibility.paymentBlockers) ? eligibility.paymentBlockers : [];
+  const structuralBlockers = Array.isArray(eligibility.structuralBlockers) && eligibility.structuralBlockers.length
+    ? eligibility.structuralBlockers
+    : blockers;
   const events = state.ticketing.events;
   const counts = events.reduce((acc, event) => {
     acc[event.status] = (acc[event.status] || 0) + 1;
@@ -14816,7 +14825,14 @@ async function openBusinessTicketingDashboard(options = {}) {
       <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Create events, submit for approval, sell tickets and scan entry from TitoPay.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    ${eligibility.eligible ? `
+    ${canCreateFree ? `
+      ${paymentBlockers.length ? `
+        <section class="vas-notice" role="status">
+          <p class="vas-notice-head">Free events are ready to go</p>
+          <p class="vas-notice-body">Set up free seminars, conferences and community events now — no FICA verification needed. To sell <em>paid</em> tickets, complete FICA first and paid ticketing unlocks automatically.</p>
+          <button class="btn secondary" type="button" data-action="fica-verification">${icon("shield")} Complete FICA to sell paid tickets</button>
+        </section>
+      ` : ""}
       <div class="dashboard-grid compact">
         ${metricCard("Draft", counts.draft || 0)}
         ${metricCard("Pending", (counts.submitted || 0) + (counts.under_review || 0))}
@@ -14836,7 +14852,7 @@ async function openBusinessTicketingDashboard(options = {}) {
       <section class="empty-state compact-state">
         ${icon("shield")}
         <strong>Business verification required</strong>
-        <p>${blockers.length ? blockers.map(esc).join(" ") : "Complete business verification in Profile to create and sell tickets."}</p>
+        <p>${structuralBlockers.length ? structuralBlockers.map(esc).join(" ") : "Complete business setup in Profile to create events."}</p>
         <button class="btn primary" type="button" data-route="profile">${icon("shield")} Open Profile</button>
       </section>
     `}
@@ -15040,7 +15056,8 @@ function openTicketingEventForm() {
       <label>Contact email<input name="contactEmail" type="email"></label>
       <label>Contact number<input name="contactNumber" inputmode="tel"></label>
       <label>Ticket name<input name="ticketName" value="General Admission" required></label>
-      <label>Ticket price<input name="ticketPrice" type="number" min="0" step="0.01" required></label>
+      <label>Ticket price<input name="ticketPrice" type="number" min="0" step="0.01" value="0" required></label>
+      <p class="field-hint">Enter <strong>0</strong> for a free event — free seminars and conferences need no FICA verification. Any price above 0 makes this a paid event, which requires FICA before you can submit it.</p>
       <label>Ticket quantity<input name="ticketQuantity" type="number" min="1" required></label>
       <label>Terms and conditions<textarea name="termsConditions" rows="3" required></textarea></label>
       <label>Refund policy<textarea name="refundPolicySummary" rows="3" required></textarea></label>
