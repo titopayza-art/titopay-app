@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v77";
+  return "admin-console-v78";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -4367,6 +4367,9 @@ function renderTicketingEventActions(row = {}) {
     actions.push(["approve", "Approve"], ["request_information", "Request Info"], ["reject", "Reject"]);
   }
   if (row.status === "approved") actions.push(["suspend", "Suspend"]);
+  // A hard cancel of a live or suspended event. The backend supported this all
+  // along; it just had no button. Cancelling notifies holders and opens refunds.
+  if (["approved", "suspended"].includes(row.status)) actions.push(["cancel", "Cancel"]);
   if (row.status === "suspended") actions.push(["reinstate", "Reinstate"]);
   actions.push(["report", "Report"]);
   if (row.status === "approved") actions.push(["settlement", "Settle"]);
@@ -4439,26 +4442,41 @@ async function openEventTagPanel(eventId) {
   host.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 async function renderTicketing() {
-  const [result, refundResult] = await Promise.all([
+  const [result, refundResult, changeResult] = await Promise.all([
     apiFetch("/admin/ticketing/events"),
     apiFetch("/admin/ticketing/refunds").catch(() => ({ items: [] })),
+    apiFetch("/admin/ticketing/change-requests").catch(() => ({ items: [] })),
   ]);
   const rows = result.items || [];
   const refunds = refundResult.items || [];
+  const changeRequests = changeResult.items || [];
+  const openChanges = changeRequests.filter((item) => ["requested", "under_review"].includes(item.status));
   PAGE_EXPORTS.ticketing = rows;
   PAGE_EXPORTS.ticketingRefunds = refunds;
+  PAGE_EXPORTS.ticketingChangeRequests = changeRequests;
   const counts = rows.reduce((acc, item) => {
     acc[item.status] = (acc[item.status] || 0) + 1;
     return acc;
   }, {});
+  const CHANGE_LABELS = { postpone: "Postpone", cancel: "Cancel event", update_details: "Update details", other: "Other" };
   document.getElementById("page-content").innerHTML = `
     ${renderMetrics([
       ["Events", rows.length],
-      ["Pending Review", (counts.submitted || 0) + (counts.under_review || 0)],
+      ["Pending Review", (counts.submitted || 0) + (counts.under_review || 0) + (counts.additional_information_required || 0)],
       ["Approved", counts.approved || 0],
       ["Refunds", refunds.filter((item) => item.status === "requested").length],
+      ["Change Requests", openChanges.length],
     ])}
     <div id="ticketing-detail-host"></div>
+    ${tableCard("Change Request Queue", renderRows(changeRequests, [
+      { label: "Event", render: (row) => `<strong>${escapeHtml(row.eventName || "-")}</strong><br><small>${escapeHtml(row.requesterName || "organiser")}</small>` },
+      { label: "Request", render: (row) => `${escapeHtml(CHANGE_LABELS[row.requestType] || row.requestType || "-")}${row.requestType === "postpone" && row.requestedChanges && row.requestedChanges.eventDate ? `<br><small>New date: ${escapeHtml(String(row.requestedChanges.eventDate))}</small>` : ""}` },
+      { label: "Reason", render: (row) => `<small>${escapeHtml(row.reason || "-")}</small>` },
+      { label: "Status", render: (row) => `<span class="chip ${row.status === "applied" || row.status === "approved" ? "green" : row.status === "rejected" ? "red" : "blue"}">${escapeHtml(String(row.status || "-").replaceAll("_", " "))}</span>` },
+    ], (row) => ["requested", "under_review"].includes(row.status) ? `
+      <button data-change-request-action="approve" data-change-request-id="${escapeHtml(row.id)}">Approve &amp; apply</button>
+      <button data-change-request-action="decline" data-change-request-id="${escapeHtml(row.id)}">Decline</button>
+    ` : ""), "Approving a postpone moves the date; approving a cancel notifies holders and opens refunds; details updates never touch ticket types.")}
     ${tableCard("Event Approval Queue", renderRows(rows, [
       { label: "Event", render: (row) => `<strong>${escapeHtml(row.eventName || "-")}</strong><br><small>${escapeHtml(row.businessName || row.businessOwnerName || "Verified business")}</small>` },
       { label: "Date", render: (row) => escapeHtml(String(row.eventDate || "-").slice(0, 10)) },
@@ -6619,7 +6637,8 @@ document.addEventListener("click", async (event) => {
         await renderTicketing();
         return;
       }
-      const noteActions = new Set(["reject", "request_information", "suspend"]);
+      if (action === "cancel" && !window.confirm("Cancel this event? Ticket holders will be notified and every paid order will be refunded. This cannot be undone.")) return;
+      const noteActions = new Set(["reject", "request_information", "suspend", "cancel"]);
       const note = noteActions.has(action) ? window.prompt("Add a note for this event action:") : "";
       if (noteActions.has(action) && !note) return;
       await apiFetch(`/admin/ticketing/events/${eventId}/action`, {
@@ -6679,6 +6698,25 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({ action, note })
       });
       showToast(`Refund ${action} completed`);
+      await renderTicketing();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+    return;
+  }
+  const changeRequestAction = event.target.closest("[data-change-request-action]");
+  if (changeRequestAction) {
+    const action = changeRequestAction.dataset.changeRequestAction;
+    const requestId = changeRequestAction.dataset.changeRequestId;
+    const note = action === "decline" ? window.prompt("Reason for declining this change request:") : "";
+    if (action === "decline" && !note) return;
+    if (action === "approve" && !window.confirm("Approve and apply this change request? A cancel notifies holders and opens refunds; a postpone moves the date.")) return;
+    try {
+      await apiFetch(`/admin/ticketing/change-requests/${requestId}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action, note })
+      });
+      showToast(`Change request ${action === "decline" ? "declined" : "applied"}`);
       await renderTicketing();
     } catch (error) {
       showToast(adminErrorMessage(error.message));

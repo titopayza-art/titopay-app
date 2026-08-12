@@ -2101,6 +2101,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data);
     if (form.dataset.form === "business-staff") await submitBusinessStaff(data);
     if (form.dataset.form === "ticketing-scan") await submitTicketingScan(data);
+    if (form.dataset.form === "event-change-request") await submitEventChangeRequest(data, form);
     if (form.dataset.form === "event-tag-link-manual") {
       const typed = String(data.token || "").trim();
       if (!/^ETAG_[A-Za-z0-9_-]{20,}$/.test(typed)) throw new Error("That does not look like a TitoPay Event Tag code.");
@@ -2765,6 +2766,8 @@ function onChange(event) {
   if (eventPosterInput) prepareEventPosterPreview(eventPosterInput);
   const scanEventPick = event.target.closest("select[data-scan-event]");
   if (scanEventPick) refreshScanAttendance(scanEventPick.value);
+  const changeRequestType = event.target.closest("select[data-change-request-type]");
+  if (changeRequestType) syncChangeRequestFields(changeRequestType);
   const enterpriseCsvInput = event.target.closest("input[data-enterprise-csv-input]");
   if (enterpriseCsvInput) loadEnterpriseCsvFile(enterpriseCsvInput.files && enterpriseCsvInput.files[0]);
   const receiptFilter = event.target.closest("[data-receipt-filter]");
@@ -2885,6 +2888,10 @@ async function handleAction(action, actionElement = null) {
   }
   if (String(action || "").startsWith("ticketing-submit:")) {
     await submitTicketingEvent(action.split(":")[1]);
+    return;
+  }
+  if (String(action || "").startsWith("ticketing-request-change:")) {
+    openEventChangeRequestModal(action.split(":").slice(1).join(":"));
     return;
   }
   if (action === "confirm-ticket-purchase") {
@@ -14979,10 +14986,13 @@ async function openBusinessTicketingDashboard(options = {}) {
   `);
   let eligibilityResult = null;
   let eventsResult = null;
+  let changeRequestsResult = null;
   try {
-    [eligibilityResult, eventsResult] = await Promise.all([
+    [eligibilityResult, eventsResult, changeRequestsResult] = await Promise.all([
       api("/v1/ticketing/eligibility"),
-      api("/v1/ticketing/business/events")
+      api("/v1/ticketing/business/events"),
+      // Best-effort: a change-request read must never take the dashboard down.
+      api("/v1/ticketing/business/change-requests").catch(() => ({ items: [] }))
     ]);
   } catch (error) {
     openModal(`
@@ -15003,6 +15013,13 @@ async function openBusinessTicketingDashboard(options = {}) {
   }
   state.ticketing.eligibility = eligibilityResult.eligibility || null;
   state.ticketing.events = eventsResult.items || [];
+  // Annotate each event with any OPEN change request so its row can show the
+  // pending state and hide the "Request change" button while one is in review.
+  const pendingByEvent = {};
+  for (const req of ((changeRequestsResult && changeRequestsResult.items) || [])) {
+    if (["requested", "under_review"].includes(req.status) && !pendingByEvent[req.eventId]) pendingByEvent[req.eventId] = req;
+  }
+  for (const event of state.ticketing.events) event.pendingChangeRequest = pendingByEvent[event.id] || null;
   // A missing eligibility payload previously threw on eligibility.eligible and
   // took the whole modal down with it.
   const eligibility = state.ticketing.eligibility || { eligible: false, blockers: [] };
@@ -15213,13 +15230,26 @@ function ticketingEventRow(event) {
           <p class="ticket-event-note">${remaining ? `${remaining} still available` : "Sold out"}</p>
         ` : ""}
       ` : `<p class="ticket-event-note">No ticket types added yet.</p>`}
+      ${event.pendingChangeRequest ? `
+        <p class="ticket-event-note ticket-change-pending">${icon("timer")} Change request pending review: <strong>${esc(changeRequestLabel(event.pendingChangeRequest.requestType))}</strong></p>
+      ` : ""}
       <div class="ticket-event-actions">
         ${canSubmit ? `<button class="btn secondary mini" type="button" data-action="ticketing-submit:${esc(event.id)}">Submit for approval</button>` : ""}
-        ${event.slug ? `<button class="btn ghost mini" type="button" data-action="ticketing-open-event:${esc(event.slug)}">${icon("eye")} Preview ticket</button>` : ""}
+        ${event.status === "approved" && event.slug ? `<button class="btn ghost mini" type="button" data-action="ticketing-open-event:${esc(event.slug)}">${icon("eye")} Preview ticket</button>` : ""}
         ${event.marketingLink ? `<a class="btn ghost mini" href="${esc(event.marketingLink)}" target="_blank" rel="noopener">${icon("share")} Public page</a>` : ""}
+        ${["approved", "suspended"].includes(event.status) && !event.pendingChangeRequest ? `<button class="btn ghost mini" type="button" data-action="ticketing-request-change:${esc(event.id)}">${icon("settings")} Request change</button>` : ""}
       </div>
     </article>
   `;
+}
+// Human labels for the change-request types the organiser can raise.
+function changeRequestLabel(type) {
+  return {
+    postpone: "Postpone (new date)",
+    cancel: "Cancel event",
+    update_details: "Update details",
+    other: "Other request"
+  }[type] || type;
 }
 function ticketingStaffForm(events = []) {
   const approved = events.filter((event) => event.status === "approved");
@@ -15562,6 +15592,117 @@ async function submitTicketingEventForm(data, form) {
 async function submitTicketingEvent(eventId) {
   await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/submit`, { method: "POST", body: {} });
   showToast("Event submitted for approval.");
+  await openBusinessTicketingDashboard({ refresh: true });
+}
+
+/* ---- Organiser change requests --------------------------------------------
+   An approved event is frozen to the organiser, so instead of editing it they
+   ask TitoPay to postpone it, cancel it, update its details or handle some
+   other change. Admin reviews and applies. The modal shows only the fields the
+   chosen kind of request needs. */
+function openEventChangeRequestModal(eventId) {
+  const event = (state.ticketing.events || []).find((item) => item.id === eventId);
+  if (!event) { showToast("That event could not be found. Try refreshing.", "error"); return; }
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Ticketing</p><h2>Request a change</h2><p class="lead">Ask TitoPay to change "<strong>${esc(event.eventName || "your event")}</strong>". Our team reviews every request before it takes effect.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="event-change-request" data-event-id="${esc(event.id)}">
+      <label>What would you like to change?
+        <select name="requestType" data-change-request-type>
+          <option value="postpone">Postpone — set a new date</option>
+          <option value="update_details">Update event details</option>
+          <option value="cancel">Cancel the event</option>
+          <option value="other">Something else</option>
+        </select>
+      </label>
+
+      <div data-cr-group="postpone">
+        <label>New event date
+          <input type="date" name="eventDate">
+        </label>
+        <label>New start time (optional)
+          <input type="time" name="startTime">
+        </label>
+        <label>New end time (optional)
+          <input type="time" name="endTime">
+        </label>
+      </div>
+
+      <div data-cr-group="update_details" hidden>
+        <p class="muted">Fill in only what needs to change. Ticket types and prices can't be changed here — cancel and re-create if a price must change.</p>
+        <label>Description
+          <textarea name="description" rows="3" placeholder="Updated event description"></textarea>
+        </label>
+        <label>Venue name
+          <input name="venueName" placeholder="Updated venue name">
+        </label>
+        <label>Venue address
+          <input name="fullVenueAddress" placeholder="Updated address">
+        </label>
+        <label>City
+          <input name="city" placeholder="City">
+        </label>
+        <label>Province
+          <input name="province" placeholder="Province">
+        </label>
+      </div>
+
+      <div data-cr-group="cancel" hidden>
+        <p class="vas-notice-body">Cancelling notifies ticket holders and starts a refund for every paid order. This can't be undone once approved.</p>
+      </div>
+
+      <label>Reason / note<span data-cr-reason-required hidden> (required)</span>
+        <textarea name="reason" rows="3" placeholder="Tell TitoPay why you need this change"></textarea>
+      </label>
+
+      <div class="auth-actions">
+        <button class="btn primary" type="submit">${icon("settings")} Send request</button>
+        <button class="btn ghost" type="button" data-action="event-form-back">${icon("arrow-left")} Back</button>
+      </div>
+    </form>
+  `);
+  const select = document.querySelector("select[data-change-request-type]");
+  if (select) syncChangeRequestFields(select);
+}
+
+// Show only the fields the chosen request type needs, and flag when a reason is
+// required (cancel and other).
+function syncChangeRequestFields(select) {
+  const form = select.closest("form");
+  if (!form) return;
+  const type = select.value;
+  form.querySelectorAll("[data-cr-group]").forEach((group) => {
+    group.hidden = group.dataset.crGroup !== type;
+  });
+  const reasonRequired = form.querySelector("[data-cr-reason-required]");
+  if (reasonRequired) reasonRequired.hidden = !(type === "cancel" || type === "other");
+}
+
+async function submitEventChangeRequest(data, form) {
+  const eventId = form.dataset.eventId;
+  const requestType = data.requestType || "other";
+  const reason = String(data.reason || "").trim();
+  const requestedChanges = {};
+  if (requestType === "postpone") {
+    if (!data.eventDate) throw new Error("Choose a new date to postpone the event to.");
+    requestedChanges.eventDate = data.eventDate;
+    if (data.startTime) requestedChanges.startTime = data.startTime;
+    if (data.endTime) requestedChanges.endTime = data.endTime;
+  } else if (requestType === "update_details") {
+    for (const key of ["description", "venueName", "fullVenueAddress", "city", "province"]) {
+      if (String(data[key] || "").trim()) requestedChanges[key] = String(data[key]).trim();
+    }
+    if (!Object.keys(requestedChanges).length) throw new Error("Add at least one detail to change.");
+  } else if ((requestType === "cancel" || requestType === "other") && !reason) {
+    throw new Error(requestType === "cancel" ? "Please tell us why you need to cancel." : "Please describe the change you need.");
+  }
+  await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/change-request`, {
+    method: "POST",
+    body: { requestType, requestedChanges, reason }
+  });
+  showToast("Your change request was sent to TitoPay for review.");
   await openBusinessTicketingDashboard({ refresh: true });
 }
 async function submitTicketingStaff(data) {

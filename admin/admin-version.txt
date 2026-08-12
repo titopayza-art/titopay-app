@@ -1,5 +1,5 @@
 TitoPay Admin
-Build: admin-console-v77
+Build: admin-console-v78
 Date: 2026-08-11
 
 v77 - Starter templates in the Marketing Centre.
@@ -486,5 +486,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v77; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v78; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

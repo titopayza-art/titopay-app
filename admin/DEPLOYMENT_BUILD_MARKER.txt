@@ -1,1 +1,11 @@
-TitoPay Admin build: admin-console-v75-20260808
+TitoPay Admin build: admin-console-v78-20260812
+
+This build:
+  - Ticketing module: new "Change Request Queue" — approve/apply or decline
+    organiser postpone/cancel/update/other requests. Approving a postpone moves
+    the date; approving a cancel notifies holders and opens refunds; a details
+    update never touches ticket types.
+  - Ticketing module: "Cancel" action added to approved/suspended events (the
+    backend already supported it; the button was missing). Cancel confirms and
+    captures a reason.
+  - "Pending Review" metric now includes events awaiting organiser information.

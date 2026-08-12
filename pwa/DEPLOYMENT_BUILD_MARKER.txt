@@ -1,7 +1,14 @@
 TitoPay deployment build — 2026-08-12 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v315 (titopay-pwa-v315)
-Admin console: admin-console-v76
+PWA bundle: v316 (titopay-pwa-v316)
+Admin console: admin-console-v78
+
+Latest addition — organiser change requests:
+  - Approved event rows gain a "Request change" control (postpone / cancel /
+    update details / other); a pending request shows on the row.
+  - Preview ticket button now only shows for approved events (it 404'd before).
+  - Admin console: new Change Request Queue + a Cancel action on events.
+
 
 This build:
   - Free ticket purchase no longer requires the platform revenue wallet

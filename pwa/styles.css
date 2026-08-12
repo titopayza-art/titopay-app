@@ -12839,3 +12839,7 @@ form[data-form="ticketing-event"] label select{width:100%}
 .scan-attendance-figure{font-size:1.5rem;color:var(--navy);font-weight:700}
 .scan-attendance-figure strong{color:#14633c;font-weight:800}
 .scan-attendance-label{color:#5b6b83;font-weight:600;font-size:.9rem}
+
+/* Organiser change-request: pending badge on an event row. */
+.ticket-change-pending{color:#8a5a00;font-weight:700;display:flex;align-items:center;gap:6px}
+.ticket-change-pending svg{width:16px;height:16px;flex:0 0 auto}
