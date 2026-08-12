@@ -52,6 +52,8 @@ const {
   adminTransitionEvent,
   listTicketRefunds,
   processTicketRefund,
+  listEventChangeRequests,
+  processEventChangeRequest,
   eventSalesReport,
   createTicketSettlement
 } = require("../services/ticketing-service");
@@ -3683,6 +3685,26 @@ router.post("/ticketing/refunds/:id/action", requireAdminPermission("ticketing")
   try {
     const refundId = requireUuid(req.params.id, "Refund ID");
     res.json({ ok: true, refund: await processTicketRefund(refundId, req.body, req.auth, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Organiser change-request review queue. GET lists requests (optionally by
+// status); the action endpoint approves (applying the effect — postpone/update
+// narrowly, cancel through the safe refund-request cascade) or declines.
+router.get("/ticketing/change-requests", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listEventChangeRequests({ status: req.query.status, limit: req.query.limit }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/ticketing/change-requests/:id/action", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    const requestId = requireUuid(req.params.id, "Change request ID");
+    res.json({ ok: true, changeRequest: await processEventChangeRequest(requestId, req.body, req.auth, meta(req)) });
   } catch (error) {
     next(error);
   }

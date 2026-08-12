@@ -309,6 +309,28 @@ CREATE TABLE IF NOT EXISTS event_approvals (
 );
 CREATE INDEX IF NOT EXISTS idx_event_approvals_event ON event_approvals (event_id, created_at DESC);
 
+-- Organiser change requests against an approved event (postpone/cancel/update/
+-- other), reviewed and applied by admin. Kept identical to the copy in
+-- ticketing-service.ensureTicketingSchema so both provisioning paths agree.
+CREATE TABLE IF NOT EXISTS event_change_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  request_type TEXT NOT NULL,
+  requested_changes JSONB NOT NULL DEFAULT '{}'::JSONB,
+  reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'requested',
+  admin_id UUID REFERENCES admin_users(id) ON DELETE SET NULL,
+  decision_note TEXT,
+  processed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT event_change_requests_type_check CHECK (request_type IN ('postpone','cancel','update_details','other')),
+  CONSTRAINT event_change_requests_status_check CHECK (status IN ('requested','under_review','approved','rejected','applied'))
+);
+CREATE INDEX IF NOT EXISTS idx_event_change_requests_event ON event_change_requests (event_id, status);
+CREATE INDEX IF NOT EXISTS idx_event_change_requests_status ON event_change_requests (status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS event_audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id UUID REFERENCES events(id) ON DELETE CASCADE,

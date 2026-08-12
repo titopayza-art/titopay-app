@@ -26,6 +26,8 @@ const {
   addEventStaff,
   listEventStaff,
   requestTicketRefund,
+  requestEventChange,
+  listMyEventChangeRequests,
   eventSalesReport,
   listMyTickets,
   canManageEventTicketing
@@ -181,6 +183,36 @@ router.post("/business/events/:id/submit", requireAuth, async (req, res, next) =
   try {
     const eventId = requireUuid(req.params.id, "Event ID");
     res.json({ ok: true, event: await submitEvent(req.auth.userId, eventId, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Organiser change requests against an already-approved event: postpone,
+// cancel, update details or other. The organiser asks; a TitoPay admin reviews
+// and applies (see admin.routes.js). Owner-scoped by business_user_id inside
+// the service, so a caller can only touch their own event.
+router.post("/business/events/:id/change-request", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.status(201).json({ ok: true, changeRequest: await requestEventChange(req.auth, eventId, req.body, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/business/events/:id/change-requests", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, items: await listMyEventChangeRequests(req.auth, eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/business/change-requests", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listMyEventChangeRequests(req.auth) });
   } catch (error) {
     next(error);
   }

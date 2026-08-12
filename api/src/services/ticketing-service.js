@@ -182,6 +182,31 @@ async function ensureTicketingSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_event_approvals_event ON event_approvals (event_id, created_at DESC);
 
+    -- Organiser-initiated requests against an APPROVED event: postpone (new
+    -- date), cancel, update details, or a free-text "other". An organiser cannot
+    -- silently change a live event that has sold tickets, so these are reviewed
+    -- by admin, who applies the effect on approval. The named CHECK constraints
+    -- are deliberate: the status vocabulary is likely to grow, and a named
+    -- constraint can be widened by a later migration deterministically.
+    CREATE TABLE IF NOT EXISTS event_change_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      request_type TEXT NOT NULL,
+      requested_changes JSONB NOT NULL DEFAULT '{}'::JSONB,
+      reason TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'requested',
+      admin_id UUID REFERENCES admin_users(id) ON DELETE SET NULL,
+      decision_note TEXT,
+      processed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT event_change_requests_type_check CHECK (request_type IN ('postpone','cancel','update_details','other')),
+      CONSTRAINT event_change_requests_status_check CHECK (status IN ('requested','under_review','approved','rejected','applied'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_event_change_requests_event ON event_change_requests (event_id, status);
+    CREATE INDEX IF NOT EXISTS idx_event_change_requests_status ON event_change_requests (status, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS event_audit_logs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       event_id UUID REFERENCES events(id) ON DELETE CASCADE,
@@ -1041,6 +1066,150 @@ function adminActionStatus(action) {
   return { action: normalized, status: map[normalized] };
 }
 
+// Which statuses each admin action may act FROM. Previously any action was
+// accepted from any status, so an admin could approve a never-submitted draft
+// (skipping submission validation), reject a live event, or reinstate a
+// cancelled one. The change-request applier reuses this transition, so a loose
+// state machine would let an organiser-triggered action land on a nonsensical
+// state. draft is the organiser's private state; rejected is resolved by the
+// organiser resubmitting; cancelled/completed are terminal.
+const EVENT_ACTION_ALLOWED_FROM = {
+  under_review: ["submitted", "under_review", "additional_information_required"],
+  request_information: ["submitted", "under_review"],
+  approve: ["submitted", "under_review", "additional_information_required"],
+  reject: ["submitted", "under_review", "additional_information_required"],
+  suspend: ["approved"],
+  cancel: ["submitted", "under_review", "additional_information_required", "approved", "suspended"],
+  reinstate: ["suspended"]
+};
+
+// Cancel a live event's tickets WITHOUT moving money. Buyers holding paid
+// tickets must not be silently stranded: their tickets are invalidated (so they
+// stop scanning in — see the scanTicket guard) and a refund REQUEST is opened
+// for each paid order, which admin then settles through the existing, guarded
+// processTicketRefund money path. Deliberately no wallet movement here: mass
+// auto-refund could find a drained business wallet mid-cancel and leave the
+// event half-refunded, which is exactly the "money mishandled" failure we must
+// avoid. Idempotent — re-running invalidates nothing already invalidated and
+// opens no duplicate refund request. Returns the buyers to notify.
+async function cancelEventCascade(eventId, { reason = "", actorId = null, actorType = "admin" } = {}) {
+  const client = await pool.connect();
+  const cancelReason = cleanText(reason || "Event cancelled.", 1000);
+  try {
+    await client.query("BEGIN");
+    // Invalidate every still-valid ticket for the event. Scanned tickets are
+    // left as-is (they represent a real entry that happened).
+    await client.query(
+      "UPDATE tickets SET status = 'cancelled', updated_at = NOW() WHERE event_id = $1 AND status = 'valid'",
+      [eventId]
+    );
+    // Open a refund request for each paid order that actually moved money and
+    // does not already have one open or settled. A free order moved no money, so
+    // it gets no refund request.
+    const { rows: refundTargets } = await client.query(
+      `SELECT o.id AS order_id, o.buyer_user_id, o.subtotal, o.total,
+              u.email, u.phone, u.full_name
+         FROM ticket_orders o
+         JOIN users u ON u.id = o.buyer_user_id
+        WHERE o.event_id = $1
+          AND o.status = 'paid'
+          AND o.total > 0
+          AND NOT EXISTS (
+            SELECT 1 FROM ticket_refunds r
+             WHERE r.order_id = o.id
+               AND r.status IN ('requested','under_review','approved')
+          )
+        FOR UPDATE OF o`,
+      [eventId]
+    );
+    for (const target of refundTargets) {
+      await client.query(
+        `INSERT INTO ticket_refunds (id, order_id, event_id, requested_by, status, reason, amount)
+         VALUES ($1,$2,$3,$4,'requested',$5,$6)`,
+        [randomUUID(), target.order_id, eventId, target.buyer_user_id || null,
+         `Event cancelled: ${cancelReason}`, money(target.subtotal || 0)]
+      );
+    }
+    // Everyone who holds a ticket for the event should hear it was cancelled,
+    // paid or free. De-duplicated by buyer.
+    const { rows: holders } = await client.query(
+      `SELECT DISTINCT o.buyer_user_id, u.email, u.phone, u.full_name,
+              BOOL_OR(o.total > 0) AS paid
+         FROM ticket_orders o
+         JOIN users u ON u.id = o.buyer_user_id
+        WHERE o.event_id = $1 AND o.status = 'paid'
+        GROUP BY o.buyer_user_id, u.email, u.phone, u.full_name`,
+      [eventId]
+    );
+    await client.query("COMMIT");
+    return { refundRequestsCreated: refundTargets.length, holders };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// Tell the organiser what happened to their event. Non-blocking: a mail or
+// notification hiccup must never fail a state change that is already recorded.
+async function notifyOrganiserOfEvent(event, { title, body, purpose, metadata = {} }) {
+  try {
+    const { rows } = await pool.query(
+      "SELECT id, full_name, email, phone FROM users WHERE id = $1 LIMIT 1",
+      [event.business_user_id]
+    );
+    const organiser = rows[0];
+    const email = cleanEmail(event.contact_email || organiser?.email || "");
+    if (organiser) {
+      await createNotification({
+        user: { id: organiser.id, user_type: "customer" },
+        channel: "in_app",
+        notificationType: "event_status",
+        title,
+        body,
+        provider: "in_app",
+        metadata: { eventId: event.id, purpose, ...metadata }
+      }).catch(() => null);
+    }
+    if (email) {
+      await deliverEmail({ to: email, subject: title, body, metadata: { eventId: event.id, purpose, ...metadata } });
+    }
+  } catch (error) {
+    console.error("[event-organiser-notify-failed]", { eventId: event.id, purpose, message: error.message });
+  }
+}
+
+// Tell a ticket holder their event changed (cancelled or postponed).
+// Non-blocking, best effort per buyer.
+async function notifyTicketHolder(buyer, { title, body, purpose, eventId }) {
+  try {
+    if (buyer.buyer_user_id) {
+      await createNotification({
+        user: { id: buyer.buyer_user_id, user_type: "customer" },
+        channel: "in_app",
+        notificationType: "event_update",
+        title,
+        body,
+        provider: "in_app",
+        metadata: { eventId, purpose }
+      }).catch(() => null);
+    }
+    const email = cleanEmail(buyer.email || "");
+    if (email) await deliverEmail({ to: email, subject: title, body, metadata: { eventId, purpose } });
+  } catch (error) {
+    console.error("[ticket-holder-notify-failed]", { eventId, purpose, message: error.message });
+  }
+}
+
+const EVENT_STATUS_MESSAGE = {
+  approved: (name) => ({ title: `Your event is approved: ${name}`, body: `Good news — "${name}" has been approved and is now live on TitoPay. You can share your public event page and start selling or issuing tickets.` }),
+  rejected: (name, note) => ({ title: `Update on your event: ${name}`, body: `Your event "${name}" was not approved.${note ? ` Reason: ${note}` : ""} You can make changes and submit it again from Business Ticketing in the TitoPay app.` }),
+  additional_information_required: (name, note) => ({ title: `More information needed: ${name}`, body: `TitoPay needs a bit more information before "${name}" can go live.${note ? ` ${note}` : ""} Please update the event in Business Ticketing and submit it again.` }),
+  suspended: (name, note) => ({ title: `Your event has been suspended: ${name}`, body: `"${name}" has been temporarily suspended and is not selling tickets.${note ? ` Reason: ${note}` : ""} Please contact TitoPay support if you have questions.` }),
+  cancelled: (name, note) => ({ title: `Your event has been cancelled: ${name}`, body: `"${name}" has been cancelled.${note ? ` ${note}` : ""} Ticket holders are being notified and paid orders are being refunded.` })
+};
+
 async function adminTransitionEvent(eventId, payload, actor, meta = {}) {
   await ensureTicketingSchema();
   const { action, status } = adminActionStatus(payload.action);
@@ -1049,11 +1218,19 @@ async function adminTransitionEvent(eventId, payload, actor, meta = {}) {
   const event = rows[0];
   if (!event) throw new AppError(404, "Event not found");
   const previousStatus = event.status;
+  // Enforce the state machine: an action is only valid from certain statuses.
+  const allowedFrom = EVENT_ACTION_ALLOWED_FROM[action] || [];
+  if (!allowedFrom.includes(previousStatus)) {
+    throw new AppError(409, `Cannot ${action.replace(/_/g, " ")} an event that is ${previousStatus.replace(/_/g, " ")}.`);
+  }
   const sets = ["status = $2", "updated_at = NOW()"];
   const params = [eventId, status];
   if (status === "approved") {
     params.push(actor.userId);
     sets.push(`approved_at = NOW()`, `approved_by = $${params.length}`);
+    // A re-approval (after a rejection or a suspension→reinstate) must not carry
+    // the old rejection/suspension text on a now-live event.
+    sets.push("rejection_reason = NULL", "suspended_reason = NULL");
   }
   if (status === "rejected") {
     params.push(note || "Event rejected by TitoPay Admin.");
@@ -1069,14 +1246,34 @@ async function adminTransitionEvent(eventId, payload, actor, meta = {}) {
      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [randomUUID(), eventId, actor.userId || null, action, note, previousStatus, status]
   );
+  // A cancel must not be a bare status flip: invalidate tickets and open refund
+  // requests so buyers are made whole and cannot use a dead ticket.
+  let cascade = null;
+  if (status === "cancelled") {
+    cascade = await cancelEventCascade(eventId, { reason: note, actorId: actor.userId, actorType: "admin" });
+    for (const holder of cascade.holders) {
+      await notifyTicketHolder(holder, {
+        title: `Event cancelled: ${event.event_name}`,
+        body: `"${event.event_name}" has been cancelled.${holder.paid ? " A refund for your paid tickets is being processed." : ""}`,
+        purpose: "event_cancelled",
+        eventId
+      });
+    }
+  }
   await eventAudit({
     eventId,
     actorType: "admin",
     actorId: actor.userId,
     action: `event_${action}`,
-    metadata: { previousStatus, newStatus: status, note },
+    metadata: { previousStatus, newStatus: status, note, ...(cascade ? { refundRequestsCreated: cascade.refundRequestsCreated } : {}) },
     ...meta
   });
+  // Keep the promise the submission email made: tell the organiser the outcome.
+  const messageFor = EVENT_STATUS_MESSAGE[status];
+  if (messageFor) {
+    const { title, body } = messageFor(event.event_name, note);
+    await notifyOrganiserOfEvent(updated[0], { title, body, purpose: `event_${status}` });
+  }
   return getAdminEvent(updated[0].id);
 }
 
@@ -1617,7 +1814,7 @@ async function scanTicket(actor, payload = {}, meta = {}) {
   const ticketCode = cleanText(payload.ticketCode || payload.ticket_code || payload.code, 40);
   if (!ticketCode) throw new AppError(400, "Ticket code is required");
   const { rows } = await pool.query(
-    `SELECT t.*, e.event_name, e.business_user_id, tt.ticket_name
+    `SELECT t.*, e.event_name, e.business_user_id, e.status AS event_status, tt.ticket_name
      FROM tickets t
      JOIN events e ON e.id = t.event_id
      JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
@@ -1629,6 +1826,16 @@ async function scanTicket(actor, payload = {}, meta = {}) {
   if (!ticket) throw new AppError(404, "Ticket not found");
   if (!(await canManageEventTicketing(actor.userId, ticket.event_id, "scan"))) {
     throw new AppError(403, "You are not allowed to scan tickets for this event");
+  }
+  // A ticket for an event that is no longer live must not admit entry, even if
+  // the ticket row itself was never individually updated. A cancelled event
+  // invalidates its tickets, but a suspended event keeps them valid pending
+  // reinstatement, so guard on the event status directly.
+  if (ticket.event_status === "cancelled") {
+    return { valid: false, status: "event_cancelled", ticket: ticketResponse(ticket), attendance: await eventAttendance(ticket.event_id), message: "This event has been cancelled. Entry refused." };
+  }
+  if (ticket.event_status === "suspended") {
+    return { valid: false, status: "event_suspended", ticket: ticketResponse(ticket), attendance: await eventAttendance(ticket.event_id), message: "This event is suspended. Entry is on hold." };
   }
   if (ticket.status === "scanned") {
     return { valid: false, status: "already_scanned", ticket: ticketResponse(ticket), attendance: await eventAttendance(ticket.event_id), message: "Ticket has already been scanned" };
@@ -1823,15 +2030,36 @@ async function processTicketRefund(refundId, payload = {}, actor, meta = {}) {
       if (Number(scannedRows[0]?.scanned || 0) > 0) {
         throw new AppError(409, "Scanned tickets cannot be refunded");
       }
-      const refundAmount = money(Math.min(Number(refund.amount || order.subtotal || 0), Number(order.subtotal || 0)));
+      const subtotalNum = money(order.subtotal || 0);
+      const refundAmount = money(Math.min(Number(refund.amount || subtotalNum || 0), subtotalNum));
+      // Reverse the ORIGINAL sale split instead of debiting the business the
+      // whole subtotal. At purchase the business was credited business_net and
+      // the platform kept business_commission (business_net + commission =
+      // subtotal). A refund must claw each side back in the same proportion, or
+      // the business pays back money it never received (the commission) and can
+      // be left unable to refund at all — which is exactly what strands a
+      // cancelled event's buyers. Prorate so a partial refund reverses
+      // proportionally too.
+      const ratio = subtotalNum > 0 ? refundAmount / subtotalNum : 0;
+      const businessPortion = money(Number(order.business_net || 0) * ratio);
+      // Whatever the business share does not cover is the platform's commission,
+      // reversed from the revenue wallet where it was banked.
+      const commissionPortion = money(refundAmount - businessPortion);
       const refundFeePreview = await calculateFee("ticket_refund_processing", refundAmount);
       const refundProcessingFee = money(refundFeePreview.fee || 0);
-      const businessDebitTotal = money(refundAmount + refundProcessingFee);
+      // The business is only ever debited its own net share plus the refund fee.
+      const businessDebitTotal = money(businessPortion + refundProcessingFee);
       const buyerWallet = await loadWalletForUpdate(client, order.buyer_user_id);
       const businessWallet = await loadWalletForUpdate(client, order.business_user_id, "business") || await loadWalletForUpdate(client, order.business_user_id);
-      const revenueWallet = refundProcessingFee > 0 ? await loadRevenueWalletForUpdate(client) : null;
+      // The revenue wallet both funds the commission reversal and receives the
+      // refund fee. A paid order can only have been sold with a revenue wallet
+      // configured, so it exists whenever there is a commission to reverse.
+      const revenueWallet = (commissionPortion > 0 || refundProcessingFee > 0) ? await loadRevenueWalletForUpdate(client) : null;
       if (!buyerWallet || !businessWallet) throw new AppError(404, "Refund wallet not found");
       if (Number(businessWallet.available_balance || 0) < businessDebitTotal) throw new AppError(400, "Business wallet has insufficient available balance for refund");
+      if (commissionPortion > 0 && (!revenueWallet || Number(revenueWallet.available_balance || 0) < commissionPortion)) {
+        throw new AppError(400, "Platform revenue wallet cannot cover the commission reversal for this refund");
+      }
       await client.query(
         `INSERT INTO transactions
           (id, user_id, wallet_id, merchant_id, service_code, amount, fee, total, status, direction, reference, recipient_reference, metadata)
@@ -1846,17 +2074,38 @@ async function processTicketRefund(refundId, payload = {}, actor, meta = {}) {
           businessDebitTotal,
           reference,
           order.order_reference,
-          JSON.stringify({ refundId, orderId: order.id, eventId: order.event_id, reason: refund.reason, refundProcessingFee })
+          JSON.stringify({ refundId, orderId: order.id, eventId: order.event_id, reason: refund.reason, refundProcessingFee, businessPortion, commissionPortion })
         ]
       );
-      await applyWalletMovement(client, {
-        walletId: businessWallet.id,
-        transactionId: refundTxId,
-        entryType: "debit",
-        amount: refundAmount,
-        reference,
-        metadata: { serviceCode: "ticket_refund", refundId, orderId: order.id }
-      });
+      // Business gives back only its net share of the sale.
+      if (businessPortion > 0) {
+        await applyWalletMovement(client, {
+          walletId: businessWallet.id,
+          transactionId: refundTxId,
+          entryType: "debit",
+          amount: businessPortion,
+          reference,
+          metadata: { serviceCode: "ticket_refund", refundId, orderId: order.id }
+        });
+      }
+      // Platform reverses the commission it collected on the now-refunded sale,
+      // and records the reversal as negative revenue so reports stay accurate.
+      if (commissionPortion > 0 && revenueWallet) {
+        await applyWalletMovement(client, {
+          walletId: revenueWallet.id,
+          transactionId: refundTxId,
+          entryType: "debit",
+          amount: commissionPortion,
+          reference,
+          metadata: { serviceCode: "ticket_refund", source: "commission_reversal", refundId, orderId: order.id }
+        });
+        await client.query(
+          `INSERT INTO revenue_ledger (id, transaction_id, service_code, fee_collected, revenue_wallet_id)
+           VALUES ($1,$2,'ticket_business_commission',$3,$4)`,
+          [randomUUID(), refundTxId, -commissionPortion, revenueWallet.id]
+        );
+      }
+      // Buyer gets the full subtotal back, funded by the two debits above.
       await applyWalletMovement(client, {
         walletId: buyerWallet.id,
         transactionId: refundTxId,
@@ -1927,6 +2176,275 @@ async function processTicketRefund(refundId, payload = {}, actor, meta = {}) {
     ...meta
   });
   return refund;
+}
+
+/* ==========================================================================
+   ORGANISER CHANGE REQUESTS
+   An approved event is frozen to the organiser — they cannot silently edit,
+   postpone or pull an event that may already have sold tickets. Instead they
+   ask, and admin (who already holds the suspend/cancel/edit powers) reviews and
+   applies. Postpone and detail edits never touch ticket types or move money; a
+   cancel goes through cancelEventCascade, which opens refund requests rather
+   than moving money inline.
+   ========================================================================== */
+
+const CHANGE_REQUEST_TYPES = new Set(["postpone", "cancel", "update_details", "other"]);
+const CHANGE_REQUEST_OPEN = ["requested", "under_review"];
+// The statuses an organiser may raise a change request from — a live-ish event
+// that is out of their own hands. draft/submitted/etc. are still editable or
+// in review, so a change request there is meaningless.
+const CHANGE_REQUEST_ALLOWED_EVENT_STATUS = new Set(["approved", "suspended"]);
+
+// camelCase request field -> [db column, kind]. Only these may be changed
+// through a change request; ticket types, prices, status and ownership are
+// never touched here.
+const EVENT_DETAIL_COLUMNS = {
+  eventDate: ["event_date", "date"],
+  startTime: ["start_time", "text"],
+  endTime: ["end_time", "text"],
+  description: ["description", "text"],
+  venueName: ["venue_name", "text"],
+  fullVenueAddress: ["full_venue_address", "text"],
+  city: ["city", "text"],
+  province: ["province", "text"],
+  termsConditions: ["terms_conditions", "text"],
+  entryRules: ["entry_rules", "text"],
+  additionalInstructions: ["additional_instructions", "text"],
+  parkingInformation: ["parking_information", "text"],
+  accessibilityInformation: ["accessibility_information", "text"],
+  ageRestriction: ["age_restriction", "text"],
+  contactEmail: ["contact_email", "text"],
+  contactNumber: ["contact_number", "text"],
+  eventBannerUrl: ["event_banner_url", "banner"]
+};
+const EVENT_DATE_KEYS = new Set(["eventDate", "startTime", "endTime"]);
+
+function cleanEventDate(value) {
+  const text = cleanText(value, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new AppError(400, "A valid event date (YYYY-MM-DD) is required.");
+  return text;
+}
+
+// Build a narrow UPDATE from a whitelisted change set. dateOnly restricts it to
+// the date/time columns (used by a postpone). Returns null when nothing valid
+// was supplied.
+function buildEventDetailUpdate(changes = {}, { dateOnly = false } = {}) {
+  const sets = [];
+  const params = [];
+  for (const [key, raw] of Object.entries(changes || {})) {
+    const spec = EVENT_DETAIL_COLUMNS[key];
+    if (!spec) continue;
+    if (dateOnly && !EVENT_DATE_KEYS.has(key)) continue;
+    const [column, kind] = spec;
+    let value;
+    if (kind === "date") value = cleanEventDate(raw);
+    else if (kind === "banner") value = cleanEventBanner(raw);
+    else value = cleanText(raw, 4000);
+    params.push(value);
+    sets.push(`${column} = $${params.length + 1}`);
+  }
+  if (!sets.length) return null;
+  return { sets, params };
+}
+
+async function applyEventDetailUpdate(eventId, changes, { dateOnly = false } = {}) {
+  const built = buildEventDetailUpdate(changes, { dateOnly });
+  if (!built) throw new AppError(400, dateOnly ? "A new event date is required to postpone." : "No valid changes were provided.");
+  const params = [eventId, ...built.params];
+  const { rows } = await pool.query(
+    `UPDATE events SET ${built.sets.join(", ")}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    params
+  );
+  return rows[0];
+}
+
+function changeRequestResponse(row = {}) {
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    requestType: row.request_type,
+    requestedChanges: row.requested_changes || {},
+    reason: row.reason || "",
+    status: row.status,
+    decisionNote: row.decision_note || "",
+    processedAt: row.processed_at,
+    createdAt: row.created_at,
+    eventName: row.event_name,
+    requesterName: row.requester_name
+  };
+}
+
+async function requestEventChange(actor, eventId, payload = {}, meta = {}) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    "SELECT * FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1",
+    [eventId, actor.userId]
+  );
+  const event = rows[0];
+  if (!event) throw new AppError(404, "Event not found");
+  if (!CHANGE_REQUEST_ALLOWED_EVENT_STATUS.has(event.status)) {
+    throw new AppError(409, "Change requests are only for events that are already approved. Draft and in-review events can still be edited directly.");
+  }
+  const requestType = String(payload.requestType || payload.type || "").trim().toLowerCase();
+  if (!CHANGE_REQUEST_TYPES.has(requestType)) throw new AppError(400, "Choose what you would like to change: postpone, cancel, update details or other.");
+  const reason = cleanText(payload.reason || payload.note || "", 2000);
+  // Validate and normalise the proposed changes up front so a request never
+  // stores something that cannot be applied.
+  let requestedChanges = {};
+  if (requestType === "postpone") {
+    const changes = payload.requestedChanges || payload.changes || {};
+    requestedChanges = { eventDate: cleanEventDate(changes.eventDate || changes.event_date) };
+    if (changes.startTime || changes.start_time) requestedChanges.startTime = cleanText(changes.startTime || changes.start_time, 20);
+    if (changes.endTime || changes.end_time) requestedChanges.endTime = cleanText(changes.endTime || changes.end_time, 20);
+  } else if (requestType === "update_details") {
+    const changes = payload.requestedChanges || payload.changes || {};
+    const built = buildEventDetailUpdate(changes);
+    if (!built) throw new AppError(400, "Add at least one detail to change (for example the description or venue).");
+    // Re-store only the recognised keys, normalised.
+    for (const key of Object.keys(EVENT_DETAIL_COLUMNS)) {
+      if (changes[key] !== undefined) {
+        requestedChanges[key] = EVENT_DETAIL_COLUMNS[key][1] === "banner"
+          ? cleanEventBanner(changes[key])
+          : EVENT_DETAIL_COLUMNS[key][1] === "date" ? cleanEventDate(changes[key]) : cleanText(changes[key], 4000);
+      }
+    }
+  } else if ((requestType === "cancel" || requestType === "other") && !reason) {
+    throw new AppError(400, requestType === "cancel" ? "Please tell us why you need to cancel." : "Please describe the change you need.");
+  }
+  // One open request per event at a time keeps the admin queue and the organiser
+  // view unambiguous.
+  const { rows: open } = await pool.query(
+    `SELECT * FROM event_change_requests WHERE event_id = $1 AND status = ANY($2) ORDER BY created_at DESC LIMIT 1`,
+    [eventId, CHANGE_REQUEST_OPEN]
+  );
+  if (open[0]) throw new AppError(409, "You already have a pending change request for this event. Please wait for TitoPay to review it.");
+  const id = randomUUID();
+  const { rows: inserted } = await pool.query(
+    `INSERT INTO event_change_requests (id, event_id, requested_by, request_type, requested_changes, reason, status)
+     VALUES ($1,$2,$3,$4,$5::JSONB,$6,'requested')
+     RETURNING *`,
+    [id, eventId, actor.userId, requestType, JSON.stringify(requestedChanges), reason]
+  );
+  await eventAudit({
+    eventId,
+    actorType: "customer",
+    actorId: actor.userId,
+    action: "event_change_requested",
+    metadata: { requestId: id, requestType },
+    ...meta
+  });
+  return changeRequestResponse(inserted[0]);
+}
+
+async function listMyEventChangeRequests(actor, eventId = null) {
+  await ensureTicketingSchema();
+  const params = [actor.userId];
+  let where = "e.business_user_id = $1";
+  if (eventId) { params.push(eventId); where += ` AND c.event_id = $${params.length}`; }
+  const { rows } = await pool.query(
+    `SELECT c.*, e.event_name
+       FROM event_change_requests c
+       JOIN events e ON e.id = c.event_id
+      WHERE ${where}
+      ORDER BY c.created_at DESC
+      LIMIT 100`,
+    params
+  );
+  return rows.map(changeRequestResponse);
+}
+
+async function listEventChangeRequests({ status = "", limit = 100 } = {}) {
+  await ensureTicketingSchema();
+  const params = [];
+  let where = "";
+  if (status) { params.push(cleanText(status, 40)); where = "WHERE c.status = $1"; }
+  params.push(Math.min(300, Math.max(1, Number(limit) || 100)));
+  const { rows } = await pool.query(
+    `SELECT c.*, e.event_name, e.status AS event_status, u.full_name AS requester_name, u.phone AS requester_phone
+       FROM event_change_requests c
+       JOIN events e ON e.id = c.event_id
+       LEFT JOIN users u ON u.id = c.requested_by
+       ${where}
+      ORDER BY c.created_at DESC
+      LIMIT $${params.length}`,
+    params
+  );
+  return rows.map((row) => ({ ...changeRequestResponse(row), eventStatus: row.event_status, requesterPhone: row.requester_phone }));
+}
+
+async function processEventChangeRequest(requestId, payload = {}, actor, meta = {}) {
+  await ensureTicketingSchema();
+  const decision = String(payload.action || "").trim().toLowerCase();
+  if (!["approve", "reject", "decline"].includes(decision)) throw new AppError(400, "Choose approve or decline.");
+  const decisionNote = cleanText(payload.note || payload.reason || "", 2000);
+  const { rows } = await pool.query(
+    `SELECT * FROM event_change_requests WHERE id = $1 AND status = ANY($2) LIMIT 1`,
+    [requestId, CHANGE_REQUEST_OPEN]
+  );
+  const request = rows[0];
+  if (!request) throw new AppError(404, "Change request not found or already actioned");
+  const { rows: eventRows } = await pool.query("SELECT * FROM events WHERE id = $1 LIMIT 1", [request.event_id]);
+  const event = eventRows[0];
+  if (!event) throw new AppError(404, "Event not found");
+
+  if (decision === "reject" || decision === "decline") {
+    const { rows: updated } = await pool.query(
+      `UPDATE event_change_requests SET status='rejected', admin_id=$2, decision_note=$3, processed_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [requestId, actor.userId || null, decisionNote]
+    );
+    await eventAudit({ eventId: request.event_id, actorType: "admin", actorId: actor.userId, action: "event_change_declined", metadata: { requestId, requestType: request.request_type }, ...meta });
+    await notifyOrganiserOfEvent(event, {
+      title: `Change request declined: ${event.event_name}`,
+      body: `Your request to ${request.request_type.replace(/_/g, " ")} "${event.event_name}" was not approved.${decisionNote ? ` ${decisionNote}` : ""} Please contact TitoPay support if you have questions.`,
+      purpose: "event_change_declined"
+    });
+    return changeRequestResponse(updated[0]);
+  }
+
+  // Approve: apply the effect. Money-touching effects (cancel) go through the
+  // guarded cascade; postpone/update are narrow, ticket-type-safe edits.
+  const changes = request.requested_changes || {};
+  let finalStatus = "applied";
+  if (request.request_type === "postpone") {
+    const updatedEvent = await applyEventDetailUpdate(request.event_id, changes, { dateOnly: true });
+    // Tell ticket holders the event moved, and to what date.
+    const { rows: holders } = await pool.query(
+      `SELECT DISTINCT o.buyer_user_id, u.email FROM ticket_orders o JOIN users u ON u.id = o.buyer_user_id WHERE o.event_id = $1 AND o.status = 'paid'`,
+      [request.event_id]
+    );
+    for (const holder of holders) {
+      await notifyTicketHolder(holder, {
+        title: `Event postponed: ${event.event_name}`,
+        body: `"${event.event_name}" has a new date: ${changes.eventDate}. Your existing tickets remain valid.`,
+        purpose: "event_postponed",
+        eventId: request.event_id
+      });
+    }
+    void updatedEvent;
+  } else if (request.request_type === "update_details") {
+    await applyEventDetailUpdate(request.event_id, changes, { dateOnly: false });
+  } else if (request.request_type === "cancel") {
+    // Reuse the admin cancel transition so the event status, approvals row,
+    // audit, ticket invalidation, refund requests and holder notifications all
+    // happen exactly as an admin-initiated cancel would.
+    await adminTransitionEvent(request.event_id, { action: "cancel", note: request.reason || decisionNote || "Cancelled at organiser request." }, actor, meta);
+  } else {
+    // "other" carries no automatic effect — admin has read it and will act
+    // manually. Record it as approved rather than applied.
+    finalStatus = "approved";
+  }
+
+  const { rows: updated } = await pool.query(
+    `UPDATE event_change_requests SET status=$2, admin_id=$3, decision_note=$4, processed_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING *`,
+    [requestId, finalStatus, actor.userId || null, decisionNote]
+  );
+  await eventAudit({ eventId: request.event_id, actorType: "admin", actorId: actor.userId, action: "event_change_applied", metadata: { requestId, requestType: request.request_type, finalStatus }, ...meta });
+  await notifyOrganiserOfEvent(event, {
+    title: `Change request approved: ${event.event_name}`,
+    body: `Your request to ${request.request_type.replace(/_/g, " ")} "${event.event_name}" has been approved${request.request_type === "cancel" ? " and the event has been cancelled" : request.request_type === "postpone" ? ` and the new date is ${changes.eventDate}` : ""}.`,
+    purpose: "event_change_approved"
+  });
+  return changeRequestResponse(updated[0]);
 }
 
 async function eventSalesReport(eventId) {
@@ -2053,6 +2571,11 @@ module.exports = {
   requestTicketRefund,
   listTicketRefunds,
   processTicketRefund,
+  // Organiser change requests: the organiser asks, admin reviews and applies.
+  requestEventChange,
+  listMyEventChangeRequests,
+  listEventChangeRequests,
+  processEventChangeRequest,
   eventSalesReport,
   createTicketSettlement
 };
