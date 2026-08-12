@@ -1,33 +1,41 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v329 (titopay-pwa-v329)
+PWA bundle: v330 (titopay-pwa-v330)
 Admin console: admin-console-v80
 
-This build — staff are told what they were added to do:
+This build — Staff is real, for day-to-day operations:
 
-  - Adding an event ticket scanner now notifies the person immediately:
-    an in-app alert AND an email naming the event, what they can do
-    (scan tickets at the gate, watch attendance — no money movement, no
-    FICA needed) and exactly where to find it (Event Tickets > Scan
-    entry on their own profile). Removing them sends an in-app alert so
-    the scanner disappearing is never a mystery.
-  - The Staff register under Business tools is unchanged in behaviour
-    (device-local preview) but now says plainly that people on it are
-    NOT notified — and that event scanners added under Ticketing are.
-  - The Event Tag issue panel wording is now plain language: write each
-    code to its tag now, this is the only time they are shown; TitoPay
-    keeps no readable copy, so an unwritten code means reissuing that
-    tag. (Same behaviour as before — only the explanation changed. This
-    panel is only ever shown to the organiser issuing tags, not to the
-    public.)
-  - Also in api.zip from earlier today: Event Tag references are now 10
-    plain digits, unique per event (new tags only).
+  BUSINESS SIDE (Business tools > Staff — the Preview badge disappears):
+  - The register is server truth: synced to the business account across
+    devices (endpoints /v1/business/staff the app was already wired for).
+  - Adding a person with their TitoPay @username / email / phone links
+    their account and notifies them in the app AND by email, naming the
+    role and explaining exactly what they can and cannot do. Removing
+    notifies too. A contact with no TitoPay match is still saved on the
+    register, honestly labelled: not notified, cannot sell yet.
+  - Fixed on the way: the register's own Remove button had been broken by
+    the ticketing staff-remove handler swallowing its action.
 
-Verified live against a real database: staff add -> one in-app alert +
-one email with the event name; staff remove -> one in-app alert.
+  STAFF SIDE (personal profile > My Workplaces — new):
+  - Staff see every business that added them, with their role.
+  - "Take a sale": tap the business's products (or type an amount), show
+    the payment QR. The QR is minted with the BUSINESS's identity, so the
+    customer's payment lands in the business wallet directly — staff never
+    hold a cent. Basket priced server-side; tracked stock counts down;
+    oversell asks for explicit confirmation.
+  - Every till sale is logged under the staff member's name and appears in
+    the business's Sales > Staff report (till sales + amounts alongside
+    door scans).
+
+Proven live (verification/business-staff-live.js, 9/9): add -> linked +
+alert + email; workplace visible; basket sale priced R60 with stock
+10 -> 8; the QR provably belongs to the business; the performance report
+credits the cashier; typed-amount sales; strangers refused; removal turns
+selling off and is announced; unlinked entries honestly labelled.
 Full API suite 459/459.
 
-Migrations to run: none.
+Migrations to run: none — new tables create themselves on first use
+(also in schema.sql for fresh installs).
 
 Operational reminders (unchanged):
   node scripts/ensure-revenue-wallet.js --create   (once, on production)

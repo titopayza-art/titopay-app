@@ -2167,6 +2167,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "support-ticket-reply") await submitSupportTicketReply(data);
     if (form.dataset.form === "business-product") await submitBusinessProduct(data);
     if (form.dataset.form === "ticket-claim") await submitTicketClaim(data);
+    if (form.dataset.form === "staff-sale") await submitStaffSale(data);
     if (form.dataset.form === "chatbot") await submitChatbotMessage(data);
     if (form.dataset.form === "titopay-chat-lookup") await submitTitoPayChatLookup(data);
     if (form.dataset.form === "titopay-chat-message") await submitTitoPayChatMessage(form, formData);
@@ -2361,6 +2362,26 @@ async function onClick(event) {
   if (saleClear) {
     state.saleBasket = {};
     syncSaleBasketToForm();
+    return;
+  }
+  const workSaleAdd = event.target.closest("[data-wsale-add]");
+  if (workSaleAdd && state.workSale) {
+    state.workSale.basket[workSaleAdd.dataset.wsaleAdd] = Number(state.workSale.basket[workSaleAdd.dataset.wsaleAdd] || 0) + 1;
+    renderStaffSellPicker();
+    return;
+  }
+  const workSaleMinus = event.target.closest("[data-wsale-minus]");
+  if (workSaleMinus && state.workSale) {
+    state.workSale.basket[workSaleMinus.dataset.wsaleMinus] = Math.max(0, Number(state.workSale.basket[workSaleMinus.dataset.wsaleMinus] || 0) - 1);
+    renderStaffSellPicker();
+    return;
+  }
+  const workSaleClear = event.target.closest("[data-wsale-clear]");
+  if (workSaleClear && state.workSale) {
+    state.workSale.basket = {};
+    const amountField = document.getElementById("wsale-amount");
+    if (amountField) amountField.value = "";
+    renderStaffSellPicker();
     return;
   }
   const statementPeriod = event.target.closest("[data-statement-period]");
@@ -3082,7 +3103,10 @@ async function handleAction(action, actionElement = null) {
     await revokeTicketingVendor(parts[1], parts[2]);
     return;
   }
-  if (String(action || "").startsWith("staff-remove:")) {
+  if (String(action || "").startsWith("staff-remove:") && action.split(":").length === 3) {
+    // Three segments = ticketing staff (staff-remove:eventId:userId). The
+    // two-segment business-register removal falls through to its own handler
+    // below — this guard used to swallow it and call the wrong API.
     const parts = action.split(":");
     await removeTicketingStaff(parts[1], parts[2]);
     return;
@@ -3101,6 +3125,13 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "business-sales") {
     openBusinessSalesModal();
+  }
+  if (action === "my-workplaces") {
+    await openMyWorkplacesModal();
+  }
+  if (String(action || "").startsWith("staff-sell:")) {
+    await openStaffSellModal(action.slice("staff-sell:".length));
+    return;
   }
   if (action === "business-sales-staff") {
     openBusinessSalesModal("staff");
@@ -5280,6 +5311,7 @@ function profileView() {
     <section class="section-head compact"><h2>Account</h2></section>
     <section class="profile-feature-grid">
       ${profileFeature("TitoPay Chat", isBusiness ? "Chat with customers before payments." : "Chat with TitoPay users before payments.", "chat", "titopay-chat", true)}
+      ${isBusiness ? "" : profileFeature("My Workplaces", "Businesses that added you as staff — take sales for them from your phone.", "staff-badge", "my-workplaces")}
       ${profileFeature("Saved Beneficiaries", isBusiness ? "Manage customers, suppliers, employees and payout recipients." : "Manage favourite and recent payment recipients.", "user", "saved-beneficiaries")}
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
       ${profileFeature("Proof of Account", "Download an official stamped letter confirming your TitoPay account.", "document-invoice", "proof-of-account")}
@@ -12439,10 +12471,10 @@ function renderSalesStaffView(report) {
       <span class="icon-bubble" aria-hidden="true">${esc(String(member.fullName || "?").trim().charAt(0).toUpperCase() || "?")}</span>
       <div style="flex:1;min-width:0">
         <strong>${esc(member.fullName || "Staff member")}</strong>
-        <small style="display:block;color:#5b6472">${member.username ? `@${esc(member.username)} · ` : ""}${member.eventsAssigned ? `${member.eventsAssigned} event${member.eventsAssigned === 1 ? "" : "s"}` : "door scans only"}${member.lastScanAt ? ` · last scan ${esc(friendlyDate(member.lastScanAt))}` : ""}</small>
+        <small style="display:block;color:#5b6472">${member.username ? `@${esc(member.username)} · ` : ""}${member.salesCount ? `${member.salesCount} till sale${member.salesCount === 1 ? "" : "s"} · ${esc(money(member.salesTotal || 0))}` : member.eventsAssigned ? `${member.eventsAssigned} event${member.eventsAssigned === 1 ? "" : "s"}` : "no till sales yet"}${member.lastScanAt ? ` · last scan ${esc(friendlyDate(member.lastScanAt))}` : ""}</small>
         <div style="height:6px;border-radius:3px;background:#e8edf7;overflow:hidden;margin-top:5px"><div style="height:100%;width:${Math.max(2, Math.round(member.sharePercent))}%;background:#2f5cff;border-radius:3px"></div></div>
       </div>
-      <strong style="margin-left:8px">${member.scans}</strong>
+      <strong style="margin-left:8px" title="tickets scanned">${member.scans}</strong>
     </div>`;
   return `
     <section class="integration-note" style="margin-top:12px">
@@ -12671,6 +12703,140 @@ function readLocalBusinessStaff() {
 function writeLocalBusinessStaff(members) {
   writeJson(BUSINESS_STAFF_KEY, members);
 }
+/* ---- My Workplaces: the staff member's side of the register -------------
+   A personal account added to a business's staff sees the business here and
+   can take a sale for it: tap the business's products (or type an amount),
+   show the payment QR — minted with the BUSINESS's identity, so the money
+   lands in the business wallet and never passes through the staff member. */
+async function openMyWorkplacesModal() {
+  state.currentModalAction = "my-workplaces";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Work</p><h2>My Workplaces</h2><p class="lead">Businesses that added you as staff. Take sales for them from your own phone — every payment goes straight to the business wallet.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section data-workplaces-list><p class="field-hint">Checking where you work…</p></section>
+  `);
+  const host = document.querySelector("[data-workplaces-list]");
+  try {
+    const result = await api("/v1/staff-workspace/workplaces");
+    const items = result.items || [];
+    state.myWorkplaces = items;
+    if (!host) return;
+    if (!items.length) {
+      host.innerHTML = `<section class="empty-state compact-state">${icon("staff-badge")}<strong>No workplaces yet</strong><p>When a business adds you to their staff with your TitoPay details, it appears here and you can start selling for them straight away.</p></section>`;
+      return;
+    }
+    host.innerHTML = items.map((workplace) => `
+      <div class="settings-row">
+        <span class="icon-bubble" aria-hidden="true">${esc(String(workplace.businessName || "?").trim().charAt(0).toUpperCase() || "?")}</span>
+        <div style="flex:1;min-width:0">
+          <strong>${esc(workplace.businessName || "Business")}</strong>
+          <small style="display:block;color:#5b6472">${esc(workplace.role || "Staff")} · since ${esc(friendlyDate(workplace.since))}</small>
+        </div>
+        <button class="btn secondary" type="button" data-action="staff-sell:${esc(workplace.businessUserId)}">${icon("qr")} Take a sale</button>
+      </div>`).join("");
+  } catch (error) {
+    if (host) host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "staff"))}</p>`;
+  }
+}
+async function openStaffSellModal(businessUserId) {
+  const workplace = (state.myWorkplaces || []).find((item) => item.businessUserId === businessUserId);
+  const businessName = workplace?.businessName || "the business";
+  state.currentModalAction = `staff-sell:${businessUserId}`;
+  state.workSale = { businessUserId, businessName, basket: {}, products: [] };
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Take a sale</p><h2>${esc(businessName)}</h2><p class="lead">Tap products or enter an amount, then show the payment QR. The customer pays ${esc(businessName)} directly — you never hold the money.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div data-wsale-picker><p class="field-hint">Loading the products…</p></div>
+    <form class="form-grid" data-form="staff-sale">
+      <input type="hidden" name="businessUserId" value="${esc(businessUserId)}">
+      <div class="field">
+        <label for="wsale-amount">Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="wsale-amount" name="amount" inputmode="decimal" placeholder="Filled by the products above, or type it"></div>
+      </div>
+      <button class="btn primary" type="submit">${icon("qr")} Show payment QR</button>
+    </form>
+    <div data-wsale-result></div>
+  `);
+  try {
+    const result = await api(`/v1/staff-workspace/workplaces/${encodeURIComponent(businessUserId)}/products`);
+    state.workSale.products = (result.items || []).filter((product) => product.status === "active");
+  } catch (error) {
+    state.workSale.products = [];
+  }
+  renderStaffSellPicker();
+}
+function renderStaffSellPicker() {
+  const host = document.querySelector("[data-wsale-picker]");
+  const sale = state.workSale;
+  if (!host || !sale) return;
+  if (!sale.products.length) {
+    host.innerHTML = `<p class="field-hint">${esc(sale.businessName)} has no products loaded — type the amount below instead.</p>`;
+    return;
+  }
+  const lines = sale.products.filter((product) => Number(sale.basket[product.id] || 0) > 0);
+  const total = lines.reduce((sum, product) => sum + Number(product.price) * Number(sale.basket[product.id]), 0);
+  host.innerHTML = `
+    <span class="field-label">Products</span>
+    <div class="suggestion-row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px">
+      ${sale.products.map((product) => {
+        const quantity = Number(sale.basket[product.id] || 0);
+        return `<button type="button" class="chip" style="${quantity ? "background:#2f5cff;color:#fff" : ""}" data-wsale-add="${esc(product.id)}">${esc(product.name)} · ${esc(money(product.price))}${quantity ? ` ×${quantity}` : ""}</button>`;
+      }).join("")}
+    </div>
+    ${lines.length ? `
+      <section class="integration-note">
+        ${lines.map((product) => `
+          <div style="display:flex;align-items:center;gap:8px;margin:2px 0">
+            <button type="button" class="chip" data-wsale-minus="${esc(product.id)}" aria-label="Remove one ${esc(product.name)}">−</button>
+            <span style="flex:1"><strong>${esc(product.name)}</strong> ×${Number(sale.basket[product.id])}</span>
+            <strong>${esc(money(Number(product.price) * Number(sale.basket[product.id])))}</strong>
+          </div>`).join("")}
+        <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f4;padding-top:6px">
+          <strong>Sale total</strong><strong>${esc(money(total))}</strong>
+        </div>
+        <div class="auth-actions" style="margin-top:6px"><button type="button" class="chip" data-wsale-clear>Clear</button></div>
+      </section>` : ""}`;
+  const amountField = document.getElementById("wsale-amount");
+  if (amountField) amountField.value = lines.length ? total.toFixed(2) : amountField.value;
+}
+async function submitStaffSale(data) {
+  const sale = state.workSale;
+  if (!sale) throw new Error("Open a workplace first.");
+  const items = Object.entries(sale.basket || {})
+    .filter(([, quantity]) => Number(quantity) > 0)
+    .map(([productId, quantity]) => ({ productId, quantity: Number(quantity) }));
+  const body = items.length ? { items } : { amount: data.amount };
+  if (!items.length && !(Number(data.amount) > 0)) throw new Error("Tap products or enter the sale amount.");
+  let result;
+  try {
+    result = await api(`/v1/staff-workspace/workplaces/${encodeURIComponent(sale.businessUserId)}/sale`, { method: "POST", body });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (/in stock/i.test(message) && window.confirm(`${message}\n\nSell anyway? The count goes negative until the next stock take.`)) {
+      result = await api(`/v1/staff-workspace/workplaces/${encodeURIComponent(sale.businessUserId)}/sale`, { method: "POST", body: { ...body, allowNegative: true } });
+    } else {
+      throw error;
+    }
+  }
+  const saleResult = result.sale || {};
+  sale.basket = {};
+  const host = document.querySelector("[data-wsale-result]");
+  if (host) {
+    host.innerHTML = `
+      <section class="integration-note" style="text-align:center">
+        <strong>Ask the customer to scan and pay ${esc(money(saleResult.total))}</strong>
+        ${saleResult.qr?.imageDataUrl ? `<img src="${esc(saleResult.qr.imageDataUrl)}" alt="Payment QR for ${esc(money(saleResult.total))}" style="width:min(260px,80%);margin:10px auto;display:block">` : ""}
+        <p class="field-hint" style="margin:4px 0 0">Pays ${esc(saleResult.businessName || sale.businessName)} directly · ref ${esc(saleResult.reference || "")} · recorded under your name.</p>
+      </section>`;
+    host.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  renderStaffSellPicker();
+  showToast(`Sale of ${money(saleResult.total)} recorded for ${sale.businessName}.`);
+}
 function businessStaffRow(member) {
   const initial = String(member.fullName || "?").trim().charAt(0).toUpperCase() || "?";
   return `
@@ -12699,8 +12865,10 @@ async function openBusinessStaffModal() {
     <div class="modal-head">
       <div>
         <p class="eyebrow">Business tools</p>
-        <h2>Staff <span class="staff-preview-chip">Preview</span></h2>
-        <p class="lead">Keep a register of the people who work in your business — cashiers, managers and assistants.</p>
+        <h2>Staff ${serverMode ? "" : `<span class="staff-preview-chip">Preview</span>`}</h2>
+        <p class="lead">${serverMode
+          ? "The people who work in your business. Anyone you add with their TitoPay details is notified and can sell for you from their own phone — payments go straight to your wallet."
+          : "Keep a register of the people who work in your business — cashiers, managers and assistants."}</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -12728,7 +12896,7 @@ async function openBusinessStaffModal() {
       <h3>Staff register <span class="staff-count">${members.length}</span></h3>
       ${members.length ? members.map(businessStaffRow).join("") : `<p class="muted">No staff members yet. Add your first cashier, manager or assistant above.</p>`}
       <p class="muted staff-storage-note">${serverMode
-        ? "Synced with your TitoPay business account."
+        ? "Synced with your TitoPay business account across all your devices. Staff added with a TitoPay @username, email or phone are notified in the app and by email, see your business under My Workplaces on their own profile, and can take sales that pay your wallet directly — they never hold your money. Their sales appear under Sales → Staff."
         : "Saved on this device for now — it is your own record, and the people listed are not notified. Staff sign-ins switch on automatically once TitoPay staff access goes live; your register will sync without re-typing. Event ticket scanners you add under Ticketing ARE notified in the app and by email."}</p>
       <p class="muted">Event ticket scanners are managed separately under Ticketing.</p>
     </section>
@@ -12748,9 +12916,12 @@ async function submitBusinessStaff(data) {
     addedAt: new Date().toISOString()
   };
   try {
-    await api("/v1/business/staff", { method: "POST", body: { fullName, role, contact } });
-    showToast("Staff member added.");
+    const result = await api("/v1/business/staff", { method: "POST", body: { fullName, role, contact } });
+    showToast(result.message || "Staff member added.");
   } catch (error) {
+    // A validation refusal from the server is an answer, not an outage —
+    // show it. Only an unreachable server falls back to the device register.
+    if ([400, 403, 409].includes(Number(error?.status))) throw error;
     writeLocalBusinessStaff([...readLocalBusinessStaff(), member]);
     showToast("Staff member saved on this device.");
   }
@@ -21079,12 +21250,12 @@ const MODAL_STACK_ACTIONS = new Set([
   // page, the scanner and a ticket's email screen always offers a way back.
   "ticketing-refresh", "ticketing-staff-open", "ticketing-staff-manage",
   "ticketing-create-event", "vendor-tag-charge", "ticketing-browse-public",
-  "my-tickets", "business-sales", "business-sales-staff"
+  "my-tickets", "business-sales", "business-sales-staff", "my-workplaces"
 ]);
 // Parametrised modal actions ("action:value") that join the same back trail.
 // Matched on the prefix before the colon; the full string is what replays.
 const MODAL_STACK_ACTION_PREFIXES = new Set([
-  "ticketing-open-event", "ticket-email", "ticketing-request-change"
+  "ticketing-open-event", "ticket-email", "ticketing-request-change", "staff-sell"
 ]);
 // Ticket tier names offered when setting up an event. Suggestions only — the
 // field stays free text, so organisers can name a tier anything. Complimentary

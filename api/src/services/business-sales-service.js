@@ -201,6 +201,10 @@ async function staffPerformance(userId, { from, to } = {}) {
   );
   const scansByUser = Object.fromEntries(scanRows.map((row) => [row.scanned_by, row]));
   const totalScans = scanRows.reduce((sum, row) => sum + Number(row.scans), 0);
+  // Till sales taken by staff through My Workplaces, in the same window.
+  const { staffSalesTotals } = require("./business-staff-service");
+  const tillSales = await staffSalesTotals(userId, { from, to }).catch(() => []);
+  const tillByUser = Object.fromEntries(tillSales.map((row) => [row.staffUserId, row]));
 
   const members = staffRows.map((row) => ({
     userId: row.user_id,
@@ -209,12 +213,31 @@ async function staffPerformance(userId, { from, to } = {}) {
     eventsAssigned: Number(row.events_assigned),
     scans: Number(scansByUser[row.user_id]?.scans || 0),
     lastScanAt: scansByUser[row.user_id]?.last_scan_at || null,
-    sharePercent: totalScans ? money((Number(scansByUser[row.user_id]?.scans || 0) / totalScans) * 100) : 0
+    sharePercent: totalScans ? money((Number(scansByUser[row.user_id]?.scans || 0) / totalScans) * 100) : 0,
+    salesCount: Number(tillByUser[row.user_id]?.salesCount || 0),
+    salesTotal: money(tillByUser[row.user_id]?.salesTotal || 0)
   }));
+  // Sellers who are not event scanners still belong on the report.
+  const memberIds = new Set(members.map((member) => member.userId));
+  for (const seller of tillSales) {
+    if (memberIds.has(seller.staffUserId)) continue;
+    memberIds.add(seller.staffUserId);
+    members.push({
+      userId: seller.staffUserId,
+      fullName: seller.staffName,
+      username: "",
+      eventsAssigned: 0,
+      scans: 0,
+      lastScanAt: null,
+      sharePercent: 0,
+      salesCount: seller.salesCount,
+      salesTotal: seller.salesTotal
+    });
+  }
   // Scans by people who are not on the staff list any more (or the owner).
-  const staffIds = new Set(staffRows.map((row) => row.user_id));
   for (const row of scanRows) {
-    if (staffIds.has(row.scanned_by)) continue;
+    if (memberIds.has(row.scanned_by)) continue;
+    memberIds.add(row.scanned_by);
     const { rows: userRows } = await pool.query("SELECT full_name, username FROM users WHERE id = $1", [row.scanned_by]);
     members.push({
       userId: row.scanned_by,
@@ -223,10 +246,21 @@ async function staffPerformance(userId, { from, to } = {}) {
       eventsAssigned: 0,
       scans: Number(row.scans),
       lastScanAt: row.last_scan_at,
-      sharePercent: totalScans ? money((Number(row.scans) / totalScans) * 100) : 0
+      sharePercent: totalScans ? money((Number(row.scans) / totalScans) * 100) : 0,
+      salesCount: Number(tillByUser[row.scanned_by]?.salesCount || 0),
+      salesTotal: money(tillByUser[row.scanned_by]?.salesTotal || 0)
     });
   }
-  members.sort((a, b) => b.scans - a.scans || a.fullName.localeCompare(b.fullName));
+  // A till-seller who also scanned may have entered via the till loop with
+  // zero scans; give every member their scan numbers from the same source.
+  for (const member of members) {
+    if (!member.scans && scansByUser[member.userId]) {
+      member.scans = Number(scansByUser[member.userId].scans);
+      member.lastScanAt = scansByUser[member.userId].last_scan_at;
+      member.sharePercent = totalScans ? money((member.scans / totalScans) * 100) : 0;
+    }
+  }
+  members.sort((a, b) => (b.scans + b.salesCount) - (a.scans + a.salesCount) || b.salesTotal - a.salesTotal || a.fullName.localeCompare(b.fullName));
 
   // Per-event door coverage, so the report says which events were scanned in.
   const eventValues = [userId];

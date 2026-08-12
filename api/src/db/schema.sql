@@ -955,6 +955,35 @@ CREATE TABLE IF NOT EXISTS business_stock_movements (
 );
 CREATE INDEX IF NOT EXISTS idx_business_stock_movements_product ON business_stock_movements (product_id, created_at DESC);
 
+-- Business staff register and staff till sales. The runtime also creates
+-- these on first use, so existing databases need no manual migration.
+CREATE TABLE IF NOT EXISTS business_staff (
+  id UUID PRIMARY KEY,
+  business_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  staff_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  full_name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'Other',
+  contact TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_business_staff_member
+  ON business_staff (business_user_id, staff_user_id)
+  WHERE staff_user_id IS NOT NULL AND status = 'active';
+CREATE TABLE IF NOT EXISTS business_staff_sales (
+  id UUID PRIMARY KEY,
+  business_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  staff_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  staff_name TEXT NOT NULL,
+  amount NUMERIC(18,2) NOT NULL,
+  reference TEXT NOT NULL,
+  qr_id UUID,
+  items JSONB NOT NULL DEFAULT '[]'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_business_staff_sales_business ON business_staff_sales (business_user_id, created_at DESC);
+
 -- Written replies on a support ticket (staff and customer). The runtime also
 -- creates this on first use, so existing databases need no manual migration.
 CREATE TABLE IF NOT EXISTS support_ticket_replies (

@@ -236,6 +236,9 @@ async function shareQr(actor, payload = {}) {
 
 module.exports = {
   createQr,
+  // Exported for staff selling: a QR minted with the BUSINESS's userId pays
+  // the business wallet no matter whose phone displays it.
+  persistQr,
   getMerchantQrs,
   getQrHistory,
   payQr,
