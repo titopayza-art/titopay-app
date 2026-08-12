@@ -2763,6 +2763,8 @@ function onChange(event) {
   if (profilePhotoInput) prepareProfilePhotoCrop(profilePhotoInput);
   const eventPosterInput = event.target.closest("input[data-event-poster-input]");
   if (eventPosterInput) prepareEventPosterPreview(eventPosterInput);
+  const scanEventPick = event.target.closest("select[data-scan-event]");
+  if (scanEventPick) refreshScanAttendance(scanEventPick.value);
   const enterpriseCsvInput = event.target.closest("input[data-enterprise-csv-input]");
   if (enterpriseCsvInput) loadEnterpriseCsvFile(enterpriseCsvInput.files && enterpriseCsvInput.files[0]);
   const receiptFilter = event.target.closest("[data-receipt-filter]");
@@ -2918,6 +2920,14 @@ async function handleAction(action, actionElement = null) {
     return;
   }
   if (action === "ticketing-refresh") {
+    await openBusinessTicketingDashboard({ refresh: true });
+    return;
+  }
+  if (action === "ticketing-staff-open") {
+    await openTicketingStaffScanner({ refresh: true });
+    return;
+  }
+  if (action === "ticketing-staff-manage") {
     await openBusinessTicketingDashboard({ refresh: true });
     return;
   }
@@ -15013,7 +15023,7 @@ async function openBusinessTicketingDashboard(options = {}) {
   }, {});
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Create events, submit for approval, sell tickets and scan entry from TitoPay.</p></div>
+      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Set up and manage your events: create, submit for approval, sell tickets and track sales. Scanning entry is under <strong>Ticketing Staff</strong>.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${canCreateFree ? `
@@ -15034,8 +15044,15 @@ async function openBusinessTicketingDashboard(options = {}) {
         <button class="btn secondary" type="button" data-action="vendor-tag-charge">${icon("wallet")} Tap to Charge</button>
         <button class="btn secondary" type="button" data-action="ticketing-refresh">${icon("refresh")} Refresh</button>
       </div>
-      ${options.staffFocus ? ticketingStaffForm(events) : ""}
-      ${ticketingScannerForm(events)}
+      ${events.some((event) => event.status === "approved") ? `
+        <section class="panel inner-panel ticketing-crosslink">
+          <div>
+            <h3>Working the door?</h3>
+            <p class="muted">Scan tickets and watch the live attendance count in the dedicated staff scanner.</p>
+          </div>
+          <button class="btn secondary" type="button" data-action="ticketing-staff-open">${icon("scan")} Open Ticketing Staff</button>
+        </section>
+      ` : ""}
       ${ticketingEventTagsPanel(events)}
       <section class="settings-list">
         ${events.length ? events.map((event) => ticketingEventRow(event)).join("") : `<p class="muted">No ticketing events yet. Create your first draft when your event details are ready.</p>`}
@@ -15050,6 +15067,116 @@ async function openBusinessTicketingDashboard(options = {}) {
     `}
   `);
 }
+
+/* ---- Ticketing Staff: the door-scanner view -------------------------------
+   The "Ticketing" tile is the organiser's management hub. This is the separate
+   "Ticketing Staff" tile: a focused scanner for whoever is working the door.
+   Pick the approved event, watch the running attendance count, and scan each
+   ticket. It deliberately carries none of the create/sell/tags management —
+   that is what kept the two tiles looking like the same screen. */
+async function openTicketingStaffScanner(options = {}) {
+  if (state.accountType !== "business") {
+    openInfoModal("Ticketing Staff", "Switch to Business to scan entry for your events.");
+    return;
+  }
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Ticketing Staff</p><h2>Scan entry</h2><p class="lead">Loading your approved events.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="settings-list" aria-busy="true">
+      ${[0, 1].map(() => `<article class="ticket-event is-loading"><span class="skeleton skeleton-line" aria-hidden="true"></span><span class="skeleton skeleton-line short" aria-hidden="true"></span></article>`).join("")}
+    </section>
+  `);
+  let eventsResult = null;
+  try {
+    eventsResult = await api("/v1/ticketing/business/events");
+  } catch (error) {
+    openModal(`
+      <div class="modal-head">
+        <div><p class="eyebrow">Ticketing Staff</p><h2>Events could not be loaded</h2><p class="lead">${esc(friendlyFormError(error, "ticketing"))}</p></div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <div class="auth-actions">
+        <button class="btn primary" type="button" data-action="ticketing-staff-open">${icon("refresh")} Try again</button>
+        <button class="btn ghost" type="button" data-close>${icon("arrow-left")} Back</button>
+      </div>
+    `);
+    return;
+  }
+  state.ticketing.events = eventsResult.items || [];
+  const approved = state.ticketing.events.filter((event) => event.status === "approved");
+  if (!approved.length) {
+    openModal(`
+      <div class="modal-head">
+        <div><p class="eyebrow">Ticketing Staff</p><h2>No events to scan yet</h2><p class="lead">Door scanning opens as soon as an event is approved.</p></div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <section class="empty-state compact-state">
+        ${icon("scan")}
+        <strong>Nothing approved yet</strong>
+        <p>Create and submit an event under <strong>Ticketing</strong>. Once it is approved it appears here for you and your scanners.</p>
+        <button class="btn primary" type="button" data-action="ticketing-staff-manage">${icon("ticket")} Go to Ticketing</button>
+      </section>
+    `);
+    return;
+  }
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Ticketing Staff</p><h2>Scan entry</h2><p class="lead">Choose the event, then scan or type each ticket code at the door. The count updates as people come in.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="panel inner-panel">
+      <label class="scan-event-pick">Event
+        <select data-scan-event>${approved.map((event, index) => `<option value="${esc(event.id)}"${index === 0 ? " selected" : ""}>${esc(event.eventName || "Untitled event")}</option>`).join("")}</select>
+      </label>
+      <div class="scan-attendance" data-attendance-card aria-live="polite">
+        <span class="scan-attendance-figure"><strong>—</strong> of <strong>—</strong></span>
+        <span class="scan-attendance-label">scanned in</span>
+      </div>
+      <form class="form-grid" data-form="ticketing-scan">
+        <label>Ticket code
+          <input name="ticketCode" inputmode="numeric" maxlength="10" placeholder="10 digit ticket code" required autocomplete="off">
+        </label>
+        <button class="btn primary" type="submit">${icon("scan")} Validate ticket</button>
+      </form>
+      <div data-scan-result></div>
+    </section>
+    ${ticketingStaffForm(approved)}
+    <div class="auth-actions">
+      <button class="btn secondary" type="button" data-action="ticketing-staff-open">${icon("refresh")} Refresh</button>
+      <button class="btn ghost" type="button" data-close>${icon("arrow-left")} Back</button>
+    </div>
+  `);
+  // Seed the count for the first event so the door sees a number before the
+  // first scan. Failures here are silent — the scanner still works, the card
+  // just stays as dashes until a scan fills it in.
+  await refreshScanAttendance(approved[0].id);
+}
+
+// Fetch and paint the running attendance for one event into the scanner's
+// count card. Used on open, on event change, and after each scan.
+async function refreshScanAttendance(eventId) {
+  const card = document.querySelector("[data-attendance-card]");
+  if (!card || !eventId) return;
+  try {
+    const response = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/attendance`);
+    paintScanAttendance(response.attendance || {});
+  } catch (_error) {
+    // Leave whatever the card already shows; the scan path still updates it.
+  }
+}
+
+function paintScanAttendance(att) {
+  const card = document.querySelector("[data-attendance-card]");
+  if (!card) return;
+  const scanned = att.scanned != null ? att.scanned : "—";
+  const total = att.total != null ? att.total : "—";
+  card.innerHTML = `
+    <span class="scan-attendance-figure"><strong>${esc(String(scanned))}</strong> of <strong>${esc(String(total))}</strong></span>
+    <span class="scan-attendance-label">scanned in</span>`;
+}
+
 // Everything here is read from what the events endpoint returns. Where a count
 // is absent it is left out rather than shown as zero, because "0 sold" and "we
 // were not told" are different facts to an organiser.
@@ -15443,7 +15570,7 @@ async function submitTicketingStaff(data) {
     body: { identifier: data.identifier, role: "scanner", permissions: ["scan"] }
   });
   showToast("Event scanner added.");
-  await openBusinessTicketingDashboard({ staffFocus: true, refresh: true });
+  await openTicketingStaffScanner({ refresh: true });
 }
 async function submitTicketingScan(data) {
   const response = await api("/v1/ticketing/scanner/validate", { method: "POST", body: { ticketCode: data.ticketCode } });
@@ -15461,6 +15588,10 @@ async function submitTicketingScan(data) {
         ${countLine}
       </section>`;
   }
+  // The staff scanner shows a standing attendance card above the form; keep it
+  // in step with the count the scan just returned (authoritative for the event
+  // the ticket belongs to).
+  if (r.attendance) paintScanAttendance(r.attendance);
   // Clear the field so the next code can be scanned straight away.
   const input = document.querySelector('form[data-form="ticketing-scan"] input[name="ticketCode"]');
   if (input) { input.value = ""; input.focus(); }
@@ -18309,8 +18440,11 @@ function handleService(id) {
   if (service.type === "receive") return state.accountType === "business" ? openMerchantSaleModal() : openReceiveModal();
   if (service.type === "qrPay") return openQrPayModal();
   if (service.type === "tickets" || service.action === "tickets") return openPersonalTicketsDashboard();
-  if (service.type === "ticketing" || service.action === "ticketing" || service.action === "business-ticketing-staff") {
-    return openBusinessTicketingDashboard({ staffFocus: service.action === "business-ticketing-staff" });
+  if (service.action === "business-ticketing-staff") {
+    return openTicketingStaffScanner();
+  }
+  if (service.type === "ticketing" || service.action === "ticketing") {
+    return openBusinessTicketingDashboard();
   }
   if (service.type === "businessStaff" || service.action === "business-staff") return openBusinessStaffModal();
   if (service.type === "enterpriseDistribution" || service.action === "enterprise-distribution") return openEnterpriseDistributionDashboard();

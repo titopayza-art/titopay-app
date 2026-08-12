@@ -12826,3 +12826,16 @@ form[data-form="ticketing-event"] label input,
 form[data-form="ticketing-event"] label textarea,
 form[data-form="ticketing-event"] label select{width:100%}
 .scan-count{display:block;margin-top:6px;color:#14633c;font-weight:800}
+
+/* Ticketing Staff scanner, and the cross-link to it from the organiser hub.
+   The two tiles are deliberately different screens now: Ticketing manages the
+   event, Ticketing Staff scans the door. */
+.ticketing-crosslink{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.ticketing-crosslink h3{margin:0 0 2px}
+.ticketing-crosslink .btn{flex:0 0 auto}
+.scan-event-pick{display:grid;gap:6px;font-weight:600;font-size:.86rem;color:var(--navy);margin-bottom:12px}
+.scan-event-pick select{width:100%}
+.scan-attendance{display:flex;align-items:baseline;gap:8px;padding:14px 16px;border-radius:16px;background:#eef6ff;border:1px solid #dbe6f5;margin-bottom:12px}
+.scan-attendance-figure{font-size:1.5rem;color:var(--navy);font-weight:700}
+.scan-attendance-figure strong{color:#14633c;font-weight:800}
+.scan-attendance-label{color:#5b6b83;font-weight:600;font-size:.9rem}

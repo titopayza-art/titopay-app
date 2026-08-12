@@ -2045,6 +2045,9 @@ module.exports = {
   listMyTicketOrders,
   listMyTickets,
   scanTicket,
+  // Exported so a door-scanner view can show the running count before the first
+  // scan, for the organiser and for any staff assigned the scan permission.
+  eventAttendance,
   addEventStaff,
   listEventStaff,
   requestTicketRefund,

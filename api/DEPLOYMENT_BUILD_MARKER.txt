@@ -1,9 +1,21 @@
-TitoPay deployment build — 2026-08-10 11:59 UTC
-Branch: claude/peach-payments-403-fix-6sv7cy @ 81c5037
-PWA bundle: v298 (titopay-pwa-v298-clear-fee-breakdown)
+TitoPay deployment build — 2026-08-12 UTC
+Branch: claude/peach-payments-403-fix-6sv7cy
+PWA bundle: v315 (titopay-pwa-v315)
 Admin console: admin-console-v76
-API: scale changes 1-2, cluster fix, Marketing & Sales, three-seat approval
-Migrations: run "npm run db:apply-migrations" from the API directory. It applies:
-  20260810_rate_limit_counters.up.sql
-  20260810_marketing_command_centre.up.sql
-  20260810_senior_marketing_approval.up.sql
+
+API changes in this build:
+  - ticketing-service: purchaseTickets loads the platform revenue wallet only
+    when a fee is actually owed (fee > 0 ? load : null), matching every other
+    money path. A free ticket now moves no money and never requires the
+    revenue wallet, so a free purchase can no longer 500 on an environment
+    where the revenue wallet is not provisioned.
+  - ticketing routes: new read-only GET
+    /v1/ticketing/business/events/:id/attendance, gated by the "scan"
+    permission (organiser or assigned scanner), returns { scanned, total }.
+
+Migrations to run: none new in this build.
+
+Operational check (important): confirm the single platform revenue wallet
+exists, or PAID ticketing and top-up fees cannot be recorded as revenue:
+  node scripts/ensure-revenue-wallet.js            (report only)
+  node scripts/ensure-revenue-wallet.js --create   (provision if missing)

@@ -22,6 +22,7 @@ const {
   emailTicketToRecipient,
   listMyTicketOrders,
   scanTicket,
+  eventAttendance,
   addEventStaff,
   listEventStaff,
   requestTicketRefund,
@@ -198,6 +199,22 @@ router.post("/business/events/:id/staff", requireAuth, async (req, res, next) =>
   try {
     const eventId = requireUuid(req.params.id, "Event ID");
     res.status(201).json({ ok: true, staff: await addEventStaff(req.auth, eventId, req.body, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The running attendance count for one event, for the door-scanner view. Gated
+// by the same "scan" permission the scanner itself uses, so an assigned staff
+// member — not only the organiser — can open the scanner and see the count
+// before the first ticket is scanned. Read-only.
+router.get("/business/events/:id/attendance", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    if (!(await canManageEventTicketing(req.auth.userId, eventId, "scan"))) {
+      throw new AppError(403, "You are not allowed to scan this event");
+    }
+    res.json({ ok: true, attendance: await eventAttendance(eventId) });
   } catch (error) {
     next(error);
   }
