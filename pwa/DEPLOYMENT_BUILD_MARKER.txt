@@ -1,9 +1,13 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v337 (titopay-pwa-v337)
+PWA bundle: v338 (titopay-pwa-v338)
 Admin console: admin-console-v81
 
 This build:
+  - Tour layout uses the whole screen: header at the top, the step card
+    stretches to fill the middle with larger type (27px titles, 16.5px
+    body, bigger icon and hint pill), Back/Next pinned at the bottom.
+    The stray floating close bubble is gone - one close button remains.
   - Guided tour: the dark navy canvas is removed. The tour keeps its 12
     steps, full-screen layout, step card, ghost numeral and progress dots
     on the app's own light ground.

@@ -19683,7 +19683,7 @@ function openHowItWorksModal() {
       <div class="guide-progress" aria-hidden="true" style="display:flex;gap:5px;justify-content:center;margin:18px 0 4px">
         ${steps.map(() => `<span style="width:7px;height:7px;border-radius:50%;background:#c9d7f2;transition:background 0.2s,transform 0.2s"></span>`).join("")}
       </div>
-      <article class="guide-step" data-guide-body style="text-align:center;padding:8px 4px 4px;min-height:250px;position:relative"></article>
+      <article class="guide-step" data-guide-body style="text-align:center;padding:8px 4px 4px;position:relative;flex:1;display:flex;flex-direction:column;justify-content:center"></article>
       <p class="guide-count muted" data-guide-count aria-live="polite" style="text-align:center;margin:2px 0 10px;font-size:12px"></p>
       <div class="guide-nav" style="display:flex;gap:10px">
         <button class="btn secondary" type="button" data-action="guide-back" data-guide-back style="flex:1">${icon("arrow-left")} Back</button>
@@ -19705,7 +19705,6 @@ function openHowItWorksModal() {
       guide.style.minHeight = "100dvh";
       guide.style.display = "flex";
       guide.style.flexDirection = "column";
-      guide.style.justifyContent = "center";
     }
   }
   paintHowItWorksStep();
@@ -19718,11 +19717,11 @@ function paintHowItWorksStep() {
   const step = steps[index];
   const body = container.querySelector("[data-guide-body]");
   body.innerHTML = `
-    <span aria-hidden="true" style="position:absolute;top:-8px;right:2px;font-size:88px;font-weight:800;color:rgba(16,32,63,0.05);line-height:1;user-select:none">${String(index + 1).padStart(2, "0")}</span>
-    <span class="icon-bubble" style="width:64px;height:64px;margin:6px auto 14px;display:flex;align-items:center;justify-content:center">${icon(step.icon)}</span>
-    <h3 style="margin:0 0 8px;font-size:21px;letter-spacing:-0.3px">${esc(step.title)}</h3>
-    <p style="margin:0 auto 16px;max-width:34ch;font-size:14.5px;line-height:1.55;color:var(--muted)">${esc(step.body)}</p>
-    <span class="guide-hint">${icon("check-circle")} Find it: ${esc(step.hint)}</span>
+    <span aria-hidden="true" style="position:absolute;top:4px;right:2px;font-size:110px;font-weight:800;color:rgba(16,32,63,0.05);line-height:1;user-select:none">${String(index + 1).padStart(2, "0")}</span>
+    <span class="icon-bubble" style="width:84px;height:84px;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;transform:scale(1.25)">${icon(step.icon)}</span>
+    <h3 style="margin:0 0 12px;font-size:27px;letter-spacing:-0.4px">${esc(step.title)}</h3>
+    <p style="margin:0 auto 22px;max-width:36ch;font-size:16.5px;line-height:1.6;color:var(--muted)">${esc(step.body)}</p>
+    <span class="guide-hint" style="font-size:14px;padding:10px 16px">${icon("check-circle")} Find it: ${esc(step.hint)}</span>
   `;
   if (!prefersReducedMotion()) {
     body.classList.remove("guide-anim");
@@ -21624,7 +21623,7 @@ const MODAL_STACK_ACTIONS = new Set([
   "why-trust-titopay", "notifications", "preview-sms-notifications",
   "preview-email-notifications", "authentication-preference", "change-password",
   "fica-verification", "profile-verification", "saved-beneficiaries",
-  "proof-of-account", "how-titopay-works", "app-search", "support",
+  "proof-of-account", "app-search", "support",
   "pwa-review", "account-activity", "share-titopay",
   // Ticketing joins the back trail so moving between the dashboards, an event
   // page, the scanner and a ticket's email screen always offers a way back.
