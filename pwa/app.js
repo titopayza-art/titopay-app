@@ -2768,6 +2768,12 @@ function onChange(event) {
   if (scanEventPick) refreshScanAttendance(scanEventPick.value);
   const changeRequestType = event.target.closest("select[data-change-request-type]");
   if (changeRequestType) syncChangeRequestFields(changeRequestType);
+  const tierNameInput = event.target.closest("input[data-tier-name]");
+  if (tierNameInput && /^complimentary$/i.test(String(tierNameInput.value || "").trim())) {
+    // Complimentary means free — zero the price the moment it is chosen.
+    const tierPrice = tierNameInput.closest("[data-ticket-tier]")?.querySelector("[data-tier-price]");
+    if (tierPrice) tierPrice.value = "0";
+  }
   const enterpriseCsvInput = event.target.closest("input[data-enterprise-csv-input]");
   if (enterpriseCsvInput) loadEnterpriseCsvFile(enterpriseCsvInput.files && enterpriseCsvInput.files[0]);
   const receiptFilter = event.target.closest("[data-receipt-filter]");
@@ -11284,7 +11290,19 @@ async function startQrScanner() {
     while (Date.now() < deadline && document.body.contains(video)) {
       const value = detector ? await detectQrWithBarcodeDetector(detector, video) : detectQrWithJsQr(video, canvas, context);
       if (value) {
-        input.value = extractQrId(value);
+        // Tickets and payment QRs are different instruments. A scanned event
+        // ticket is named for what it is and never lands in the payment field,
+        // so it cannot be charged by mistake (the server refuses it too).
+        const scanned = classifyScannedQr(value);
+        if (scanned.kind === "ticket") {
+          output.innerHTML = `${icon("ticket")}<strong>That is an event ticket</strong><p>This QR admits its holder at the event entrance — it cannot be paid. To pay someone, scan their TitoPay payment QR.</p>`;
+          break;
+        }
+        if (scanned.kind === "unknown") {
+          output.innerHTML = `${icon("shield")}<strong>Not a TitoPay payment QR</strong><p>Scan a TitoPay QR code, or enter the QR ID manually.</p>`;
+          break;
+        }
+        input.value = scanned.qrId;
         output.innerHTML = `${icon("shield")}<strong>QR captured</strong><p>Review the QR ID and amount, then pay.</p>`;
         break;
       }
@@ -11333,6 +11351,22 @@ function extractQrId(value) {
   } catch (error) {
     return value;
   }
+}
+// What did the camera actually capture? A TitoPay payment QR carries a JSON
+// payload with the code's id; an event ticket carries a JSON payload marked
+// type "titopay_ticket"; a typed or linked value carries the id itself. The
+// two instruments must never resolve into one another.
+function classifyScannedQr(value) {
+  const raw = String(value || "").trim();
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.type === "titopay_ticket") return { kind: "ticket" };
+      if (parsed && parsed.id && (parsed.codeType || parsed.userId)) return { kind: "payment", qrId: String(parsed.id) };
+    } catch (error) { /* not JSON after all — fall through */ }
+    return { kind: "unknown" };
+  }
+  return { kind: "payment", qrId: extractQrId(raw) };
 }
 function renderMerchantQrWaitingScreen() {
   const sale = state.merchantSale || defaultMerchantSaleState();
@@ -14394,10 +14428,6 @@ async function renderTicketCanvas({ ticket = {}, order = {}, event = {} }) {
   canvas.height = H;
   const g = canvas.getContext("2d");
   const centerX = W / 2;
-  const margin = 190;
-  const colW = W - margin * 2;
-  g.fillStyle = "#ffffff";
-  g.fillRect(0, 0, W, H);
   g.textAlign = "center";
   g.textBaseline = "alphabetic";
 
@@ -14407,96 +14437,158 @@ async function renderTicketCanvas({ ticket = {}, order = {}, event = {} }) {
     posterLoadImage(qrSource)
   ]);
 
-  let y = 230;
+  // The page is a soft ground and the ticket is drawn as a real TICKET on it:
+  // a white card with a navy header band, a perforated tear line with punched
+  // notches, the QR framed in the body, and the code writ large on the stub --
+  // not a plain page of rows.
+  const PAGE_BG = "#eef2fa";
+  g.fillStyle = PAGE_BG;
+  g.fillRect(0, 0, W, H);
+
+  let y = 210;
   if (logo) {
-    const logoW = 760;
+    const logoW = 620;
     const logoH = logoW * (logo.naturalHeight / logo.naturalWidth);
     g.drawImage(logo, centerX - logoW / 2, y - logoH / 2, logoW, logoH);
-    y += logoH / 2 + 40;
   } else {
     g.fillStyle = POSTER_INK.navy;
-    g.font = posterFont(800, 110);
-    g.fillText("TitoPay", centerX, y + 36);
-    y += 90;
+    g.font = posterFont(800, 100);
+    g.fillText("TitoPay", centerX, y + 34);
   }
 
-  y += 84;
-  g.fillStyle = POSTER_INK.blue;
-  g.font = posterFont(800, 46);
-  g.fillText("TITOPAY TICKET".split("").join(" "), centerX, y);
+  // The card.
+  const cardX = 150;
+  const cardW = W - cardX * 2;
+  const cardY = 400;
+  const cardH = 1760;
+  const cardR = 48;
+  g.save();
+  g.shadowColor = "rgba(6, 26, 61, 0.18)";
+  g.shadowBlur = 40;
+  g.shadowOffsetY = 14;
+  g.fillStyle = "#ffffff";
+  posterRoundRectPath(g, cardX, cardY, cardW, cardH, cardR);
+  g.fill();
+  g.restore();
+  g.strokeStyle = POSTER_INK.line;
+  g.lineWidth = 3;
+  posterRoundRectPath(g, cardX, cardY, cardW, cardH, cardR);
+  g.stroke();
 
-  y += 106;
+  // Navy header band (rounded on top, square below -- clipped to the card).
+  const bandH = 420;
+  g.save();
+  posterRoundRectPath(g, cardX, cardY, cardW, cardH, cardR);
+  g.clip();
   g.fillStyle = POSTER_INK.navy;
+  g.fillRect(cardX, cardY, cardW, bandH);
+  g.restore();
+
+  y = cardY + 108;
+  g.fillStyle = "#8fb1ff";
+  g.font = posterFont(800, 40);
+  g.fillText("TITOPAY TICKET".split("").join(" "), centerX, y);
+
+  y += 96;
+  g.fillStyle = "#ffffff";
   const eventName = ticket.eventName || event.eventName || order.eventName || "TitoPay event";
-  posterFitText(g, eventName, 800, 92, colW, 44);
+  posterFitText(g, eventName, 800, 88, cardW - 160, 44);
   g.fillText(eventName, centerX, y);
 
   const eventDate = ticket.eventDate || event.eventDate || order.eventDate || "";
   const venue = [ticket.venueName || event.venueName || order.venueName || "", ticket.city || event.city || ""].filter(Boolean).join(", ");
-  y += 78;
-  g.fillStyle = POSTER_INK.muted;
-  g.font = posterFont(600, 46);
+  y += 72;
+  g.fillStyle = "#c7d6f5";
+  g.font = posterFont(600, 42);
   g.fillText(eventDate ? formatDate(eventDate) : "Date to be confirmed", centerX, y);
   if (venue) {
-    y += 62;
-    posterFitText(g, venue, 600, 46, colW, 28);
+    y += 58;
+    posterFitText(g, venue, 600, 42, cardW - 200, 26);
     g.fillText(venue, centerX, y);
   }
 
-  y += 84;
-  g.strokeStyle = POSTER_INK.line;
-  g.lineWidth = 4;
-  g.beginPath();
-  g.moveTo(margin, y);
-  g.lineTo(W - margin, y);
-  g.stroke();
-
+  // Body details.
+  const bodyLeft = cardX + 96;
+  const bodyRight = cardX + cardW - 96;
   const rows = [
     ["Ticket", ticket.ticketTypeName || ticket.ticket_type_name || ticket.typeName || ticket.name || ""],
     ["Holder", ticket.holderName || ticket.holder_name || order.buyerName || order.buyer_name || ""],
     ["Seat", ticket.seat || ticket.seatNumber || ticket.seat_number || ""],
-    ["Ticket code", ticketCodeOf(ticket)],
     ["Order", order.orderReference || order.order_reference || ""]
   ].filter(([, value]) => String(value || "").trim());
-
-  y += 74;
+  y = cardY + bandH + 88;
   rows.forEach(([label, value]) => {
     g.textAlign = "left";
     g.fillStyle = POSTER_INK.muted;
-    g.font = posterFont(600, 42);
-    g.fillText(label, margin, y);
+    g.font = posterFont(600, 40);
+    g.fillText(label, bodyLeft, y);
     g.textAlign = "right";
     g.fillStyle = POSTER_INK.navy;
-    posterFitText(g, String(value), 800, 46, colW - 420, 26);
-    g.fillText(String(value), W - margin, y);
-    y += 74;
+    posterFitText(g, String(value), 800, 44, cardW - 560, 26);
+    g.fillText(String(value), bodyRight, y);
+    y += 70;
   });
   g.textAlign = "center";
 
-  const qrBox = 760;
-  y += 40;
-  g.strokeStyle = POSTER_INK.navy;
-  g.lineWidth = 6;
-  posterRoundRectPath(g, centerX - qrBox / 2, y, qrBox, qrBox, 44);
+  // The QR, framed.
+  const qrBox = 560;
+  const qrY = cardY + bandH + 88 + rows.length * 70 + 8;
+  g.strokeStyle = POSTER_INK.line;
+  g.lineWidth = 5;
+  posterRoundRectPath(g, centerX - qrBox / 2, qrY, qrBox, qrBox, 36);
   g.stroke();
   if (qrImage) {
-    const pad = 48;
+    const pad = 34;
     g.imageSmoothingEnabled = false;
-    g.drawImage(qrImage, centerX - qrBox / 2 + pad, y + pad, qrBox - pad * 2, qrBox - pad * 2);
+    g.drawImage(qrImage, centerX - qrBox / 2 + pad, qrY + pad, qrBox - pad * 2, qrBox - pad * 2);
     g.imageSmoothingEnabled = true;
   } else {
     g.fillStyle = POSTER_INK.navy;
-    g.font = posterFont(700, 44);
-    g.fillText("Entry code issued by the organiser", centerX, y + qrBox / 2 - 16);
+    g.font = posterFont(700, 38);
+    g.fillText("Entry code issued by the organiser", centerX, qrY + qrBox / 2 - 12);
     g.fillStyle = POSTER_INK.muted;
-    g.font = posterFont(600, 38);
-    g.fillText("Show the ticket code above at the entrance", centerX, y + qrBox / 2 + 48);
+    g.font = posterFont(600, 32);
+    g.fillText("Show the ticket code below at the entrance", centerX, qrY + qrBox / 2 + 42);
   }
-
   g.fillStyle = POSTER_INK.muted;
-  g.font = posterFont(600, 38);
-  g.fillText("Present this ticket at the entrance.", centerX, H - 220);
-  g.fillText("Do not share the code publicly.", centerX, H - 168);
+  g.font = posterFont(600, 32);
+  g.fillText("Scan at the entrance", centerX, qrY + qrBox + 56);
+
+  // Perforated tear line with punched notches -- the stub below carries the code.
+  const perfY = cardY + cardH - 400;
+  const notchR = 42;
+  g.fillStyle = PAGE_BG;
+  g.beginPath(); g.arc(cardX, perfY, notchR, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(cardX + cardW, perfY, notchR, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = POSTER_INK.line;
+  g.lineWidth = 3;
+  g.beginPath(); g.arc(cardX, perfY, notchR, 0, Math.PI * 2); g.stroke();
+  g.beginPath(); g.arc(cardX + cardW, perfY, notchR, 0, Math.PI * 2); g.stroke();
+  g.strokeStyle = "#b9c6e2";
+  g.lineWidth = 4;
+  g.setLineDash([18, 22]);
+  g.beginPath();
+  g.moveTo(cardX + notchR + 26, perfY);
+  g.lineTo(cardX + cardW - notchR - 26, perfY);
+  g.stroke();
+  g.setLineDash([]);
+
+  // The stub.
+  const code = ticketCodeOf(ticket);
+  y = perfY + 96;
+  g.fillStyle = POSTER_INK.muted;
+  g.font = posterFont(700, 34);
+  g.fillText("T I C K E T   C O D E", centerX, y);
+  y += 92;
+  g.fillStyle = POSTER_INK.navy;
+  g.font = posterFont(800, 96);
+  g.fillText(code ? code.split("").join(" ") : "\u2014 \u2014 \u2014 \u2014", centerX, y);
+  y += 84;
+  g.fillStyle = POSTER_INK.muted;
+  g.font = posterFont(600, 34);
+  g.fillText("Present this ticket at the entrance. Do not share the code publicly.", centerX, y);
+
+  // Page footer, on the ground below the card.
   g.fillStyle = POSTER_INK.navy;
   g.font = posterFont(700, 34);
   g.fillText(BRAND_TAGLINE, centerX, H - 96);
@@ -15470,7 +15562,7 @@ async function resizeEventPoster(file) {
 // nothing the organiser has already typed elsewhere is lost to a re-render.
 function ticketTierRowHtml(tier = {}) {
   return `<div class="form-grid ticket-tier-row" data-ticket-tier>
-      <label>Ticket type<input data-tier-name value="${esc(tier.name || "")}" placeholder="General, VIP, Early Bird"></label>
+      <label>Ticket type<input data-tier-name list="ticket-tier-options" value="${esc(tier.name || "")}" placeholder="General, VIP, VVIP, Complimentary…"></label>
       <label>Price<input data-tier-price type="number" min="0" step="0.01" inputmode="decimal" value="${esc(tier.price != null ? String(tier.price) : "0")}"></label>
       <label>Quantity<input data-tier-qty type="number" min="1" inputmode="numeric" value="${esc(tier.qty != null ? String(tier.qty) : "")}" placeholder="e.g. 100"></label>
       <button class="btn ghost" type="button" data-action="remove-ticket-tier">${icon("x")} Remove this ticket type</button>
@@ -15564,7 +15656,10 @@ function openTicketingEventForm() {
       <p class="field-hint">Recommended: portrait <strong>1080 × 1350 px</strong> (4:5). JPG, PNG or WebP. Anything you upload is scaled to fit; optional for a draft.</p>
 
       <section class="section-head compact"><h2>Tickets</h2></section>
-      <p class="field-hint">Add a type for each price — for example <strong>General</strong> and <strong>VIP</strong>. Set a price of <strong>0</strong> for a free event (no FICA needed); any price above 0 makes it a paid event that needs FICA before you submit.</p>
+      <p class="field-hint">Add a type for each price — pick from <strong>General, VIP, VVIP, Complimentary, Package, Gate Pass</strong> or type your own name. Set a price of <strong>0</strong> for a free event (no FICA needed); any price above 0 makes it a paid event that needs FICA before you submit. Complimentary tickets are always R0.</p>
+      <datalist id="ticket-tier-options">
+        ${TICKET_TIER_OPTIONS.map((option) => `<option value="${esc(option)}"></option>`).join("")}
+      </datalist>
       <div data-ticket-tiers>
         ${ticketTierRowHtml({ name: "General", price: 0, qty: 100 })}
         ${ticketTierRowHtml({ name: "VIP", price: 0, qty: 20 })}
@@ -15587,7 +15682,11 @@ function openTicketingEventForm() {
 function collectTicketTiers() {
   return [...document.querySelectorAll("[data-ticket-tier]")].map((row) => {
     const name = (row.querySelector("[data-tier-name]")?.value || "").trim();
-    const price = Number(row.querySelector("[data-tier-price]")?.value || 0);
+    let price = Number(row.querySelector("[data-tier-price]")?.value || 0);
+    // A complimentary ticket is free by definition — whatever ended up in the
+    // price box, it goes to the server as R0 so it can never require FICA or
+    // charge a guest.
+    if (/^complimentary$/i.test(name)) price = 0;
     const qty = Number(row.querySelector("[data-tier-qty]")?.value || 0);
     return { name, price, qty };
   }).filter((tier) => tier.name || tier.qty > 0);
@@ -20016,6 +20115,10 @@ const MODAL_STACK_ACTIONS = new Set([
 const MODAL_STACK_ACTION_PREFIXES = new Set([
   "ticketing-open-event", "ticket-email", "ticketing-request-change"
 ]);
+// Ticket tier names offered when setting up an event. Suggestions only — the
+// field stays free text, so organisers can name a tier anything. Complimentary
+// is always R0 (enforced when the tiers are collected).
+const TICKET_TIER_OPTIONS = ["General", "VIP", "VVIP", "Complimentary", "Package", "Gate Pass", "Early Bird"];
 // A wallet pass has to be signed with a key only the server can hold -- Apple's
 // Pass Type ID certificate, or the Google service account that signs the save
 // JWT -- so the client never builds one. It links to the pass the ticket record

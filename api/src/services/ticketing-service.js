@@ -1870,7 +1870,24 @@ async function eventAttendance(eventId) {
 
 async function scanTicket(actor, payload = {}, meta = {}) {
   await ensureTicketingSchema();
-  const ticketCode = cleanText(payload.ticketCode || payload.ticket_code || payload.code, 40);
+  // A camera scan of the ticket's QR hands over its full JSON payload; the
+  // typed path hands over the 10-digit code. Accept both — and refuse a TitoPay
+  // PAYMENT QR by name. Tickets and payment QRs are separate instruments: a
+  // payment QR must never admit anyone through a gate, and a ticket must never
+  // be payable (payQr enforces the other direction).
+  let rawCode = String(payload.ticketCode || payload.ticket_code || payload.code || "").trim();
+  if (rawCode.startsWith("{")) {
+    let parsed = null;
+    try { parsed = JSON.parse(rawCode); } catch { parsed = null; }
+    if (parsed && parsed.type === "titopay_ticket" && parsed.ticketCode) {
+      rawCode = String(parsed.ticketCode).trim();
+    } else if (parsed && (parsed.codeType || parsed.userId)) {
+      throw new AppError(400, "This is a TitoPay payment QR, not an event ticket. It cannot admit anyone — ask the attendee for their ticket QR or code.");
+    } else {
+      rawCode = "";
+    }
+  }
+  const ticketCode = cleanText(rawCode, 40);
   if (!ticketCode) throw new AppError(400, "Ticket code is required");
   const { rows } = await pool.query(
     `SELECT t.*, e.event_name, e.business_user_id, e.status AS event_status, tt.ticket_name

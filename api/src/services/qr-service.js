@@ -89,7 +89,24 @@ async function getQrHistory(userId) {
   return rows;
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function payQr(actor, payload) {
+  // A camera scan hands over the QR's full JSON payload; a typed entry hands
+  // over the UUID. Accept both — and refuse a TitoPay EVENT TICKET by name.
+  // Tickets and payment QRs are separate instruments: a ticket must never be
+  // payable, and a payment QR must never admit anyone through a gate. Anything
+  // else that is not a UUID answers a clean 404 instead of a database error.
+  let qrId = String(payload.qrId || "").trim();
+  if (qrId.startsWith("{")) {
+    let parsed = null;
+    try { parsed = JSON.parse(qrId); } catch { parsed = null; }
+    if (parsed && parsed.type === "titopay_ticket") {
+      throw new AppError(400, "This is a TitoPay event ticket, not a payment QR. Nothing can be paid with it — present it at the event entrance instead.");
+    }
+    qrId = parsed && parsed.id ? String(parsed.id).trim() : "";
+  }
+  if (!UUID_PATTERN.test(qrId)) throw new AppError(404, "QR code not found");
   const { rows } = await pool.query(
     `SELECT q.*, u.username, m.id AS merchant_row_id
      FROM qr_codes q
@@ -97,7 +114,7 @@ async function payQr(actor, payload) {
      LEFT JOIN merchants m ON m.user_id = q.user_id
      WHERE q.id = $1
      LIMIT 1`,
-    [payload.qrId]
+    [qrId]
   );
   const qr = rows[0];
   if (!qr) throw new AppError(404, "QR code not found");
@@ -135,11 +152,11 @@ async function payQr(actor, payload) {
     entityId: tx.transactionId,
     ipAddress: actor.ipAddress,
     userAgent: actor.userAgent,
-    metadata: { qrId: payload.qrId, amount }
+    metadata: { qrId, amount }
   });
   return {
     transactionId: tx.transactionId,
-    qrId: payload.qrId,
+    qrId,
     amount,
     fee: tx.fee,
     total: tx.total,
