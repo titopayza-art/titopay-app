@@ -955,6 +955,65 @@ CREATE TABLE IF NOT EXISTS business_stock_movements (
 );
 CREATE INDEX IF NOT EXISTS idx_business_stock_movements_product ON business_stock_movements (product_id, created_at DESC);
 
+-- Stokvel groups, members, chat, meetings and recorded withdrawals. The
+-- runtime also creates these on first use, so existing databases need no
+-- manual migration. Contributions are NOT stored here: the group balance is
+-- read from the transactions the wallet already recorded.
+CREATE TABLE IF NOT EXISTS stockvel_groups (
+  id UUID PRIMARY KEY,
+  owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  cadence TEXT NOT NULL DEFAULT 'monthly',
+  contribution_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  goal_amount NUMERIC(18,2),
+  member_limit INTEGER,
+  invite_code TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft','active','closed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS stockvel_members (
+  id UUID PRIMARY KEY,
+  group_id UUID NOT NULL REFERENCES stockvel_groups(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('chair','organiser','member')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','removed','left')),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (group_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS stockvel_withdrawals (
+  id UUID PRIMARY KEY,
+  group_id UUID NOT NULL REFERENCES stockvel_groups(id) ON DELETE CASCADE,
+  requested_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount NUMERIC(18,2) NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'requested' CHECK (status IN ('requested','approved','declined')),
+  decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS stockvel_messages (
+  id UUID PRIMARY KEY,
+  group_id UUID NOT NULL REFERENCES stockvel_groups(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message TEXT NOT NULL,
+  is_decision BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_stockvel_messages_group ON stockvel_messages (group_id, created_at);
+CREATE TABLE IF NOT EXISTS stockvel_meetings (
+  id UUID PRIMARY KEY,
+  group_id UUID NOT NULL REFERENCES stockvel_groups(id) ON DELETE CASCADE,
+  opened_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  closed_at TIMESTAMPTZ,
+  title TEXT NOT NULL DEFAULT 'Stokvel meeting',
+  minutes TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed'))
+);
+
 -- Business staff register and staff till sales. The runtime also creates
 -- these on first use, so existing databases need no manual migration.
 CREATE TABLE IF NOT EXISTS business_staff (

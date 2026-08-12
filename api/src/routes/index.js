@@ -27,6 +27,7 @@ const ticketingRoutes = require("./ticketing.routes");
 const businessSalesRoutes = require("./business-sales.routes");
 const businessProductsRoutes = require("./business-products.routes");
 const businessStaffRoutes = require("./business-staff.routes");
+const stockvelRoutes = require("./stockvel.routes");
 const enterpriseDistributionRoutes = require("./enterprise-distribution.routes");
 const posRoutes = require("../pos/routes");
 const emailCentreRoutes = require("./email-centre.routes");
@@ -131,6 +132,7 @@ function mountVersionedRoutes(prefix) {
   router.use(`${prefix}/business/products`, businessProductsRoutes);
   router.use(`${prefix}/business/staff`, businessStaffRoutes.ownerRouter);
   router.use(`${prefix}/staff-workspace`, businessStaffRoutes.staffRouter);
+  router.use(`${prefix}/stockvels`, stockvelRoutes);
   router.use(`${prefix}/enterprise-distribution`, enterpriseDistributionRoutes);
   router.use(`${prefix}/pos`, posRoutes);
   router.use(`${prefix}`, lookupRoutes);

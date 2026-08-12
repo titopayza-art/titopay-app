@@ -1,45 +1,42 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v334 (titopay-pwa-v334)
+PWA bundle: v335 (titopay-pwa-v335)
 Admin console: admin-console-v81
 
-This build:
-  - Guided tour redesigned: 12 steps on the TitoPay navy (deep-blue
-    gradient canvas, glowing icon, ghost step numeral, pill hints, light
-    progress dots). New steps cover TitoPay Chat, the help chatbot,
-    support with replies, gifted tickets, My Workplaces (or Sales/Stock/
-    Staff on business accounts) and saved beneficiaries.
-  - CSP: style-src now allows inline styles (script-src stays 'self').
-    Inline styling used across recent screens (status chips, share bars,
-    the tour's navy canvas) was being silently stripped by the old
-    policy; scripts remain locked down exactly as before.
-  - Support: resolved and closed requests render cleanly — a quiet card
-    with a coloured status chip, the conversation folded behind a tap
-    ("Reopen with a reply" still works), and a "Remove from my list"
-    control. Removal hides the request from the customer's list only;
-    the Admin Portal keeps the full record for audit. Only resolved or
-    closed requests can be removed; open ones refuse with a clear reason.
-    New endpoint DELETE /v1/support/tickets/:id (owner, finished only).
+This build — the stokvel goes live, and the tour fills the screen:
 
-Previous build — approved FICA details appear on statements:
+  STOKVEL (the "Group management is not live yet" panel is gone):
+  - The /v1/stockvels server now exists for the contract the app has been
+    calling: groups list and detail, join with an invite code (SV + 8
+    digits), member promote/demote/remove/leave, recorded withdrawals
+    with dual control (over-balance refused; nobody approves their own),
+    close/delete guarded while the group still holds members' money.
+  - The group balance is read from the SAME transactions the wallet
+    recorded — never a parallel tally that can drift.
+  - Drafts: "Save draft" at any step of the create wizard; drafts appear
+    on the hub, refuse joiners, and activate with one tap when ready.
+  - Group chat for members (members-only both directions). Organisers can
+    open a MEETING: everything said goes into the record, organisers tap
+    a message to pin it as a DECISION, and ending the meeting compiles
+    the MINUTES immediately — attendance, pinned decisions, contributions
+    made during the meeting, closing balance — saved in the group and
+    emailed to every member. Deterministic on purpose: minutes say what
+    happened, never a guess.
+  - Creating a stokvel (existing wizard, unchanged money flow) now also
+    persists the group with its invite code the moment creation succeeds.
 
-  - Once (and only once) a FICA review is APPROVED, statements carry the
-    verified identity:
-      PDF statement (Activity > Download PDF statement): the account
-      details block shows the verified ID number (or, for a business, the
-      CIPC registration number) in a compressed right-hand column, and the
-      FICA-verified address replaces the profile address.
-      Email statement: a "FICA-VERIFIED ACCOUNT HOLDER" block at the top —
-      name, ID/passport number, CIPC registration for businesses, and
-      address — above the movement lines.
-  - Gating proven live: an approved review yields the details; flipping
-    the same review back to pending yields nothing. A pending or rejected
-    submission never decorates a document.
-  - New endpoint GET /v1/kyc/fica/verified-details (own account only).
+  GUIDED TOUR: now truly full screen — the navy canvas fills the display
+  with the card vertically centred; the white sheet below is gone.
+  Verified with real browser screenshots.
 
-Full API suite 459/459.
+Proven live (verification/stockvel-live.js, 8/8): draft -> refuse joiners
+-> activate -> join by code; balance reconciles to real transactions;
+withdrawal guards; members-only chat; minutes with decision, contribution
+and balance; minutes emailed to every member; meetings close exactly
+once; only organisers run meetings. Full API suite 459/459.
 
-Migrations to run: none.
+Migrations to run: none — tables create themselves on first use (also in
+schema.sql for fresh installs).
 
 Operational reminders (unchanged):
   node scripts/ensure-revenue-wallet.js --create   (once, on production)

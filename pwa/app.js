@@ -2194,6 +2194,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "business-product") await submitBusinessProduct(data);
     if (form.dataset.form === "ticket-claim") await submitTicketClaim(data);
     if (form.dataset.form === "staff-sale") await submitStaffSale(data);
+    if (form.dataset.form === "stockvel-chat") await submitStockvelChat(data);
     if (form.dataset.form === "chatbot") await submitChatbotMessage(data);
     if (form.dataset.form === "titopay-chat-lookup") await submitTitoPayChatLookup(data);
     if (form.dataset.form === "titopay-chat-message") await submitTitoPayChatMessage(form, formData);
@@ -2363,6 +2364,43 @@ async function onClick(event) {
     state.businessSales.channel = salesChannel.dataset.salesChannel;
     const content = document.querySelector("[data-sales-content]");
     if (content && state.businessSales.ledger) content.innerHTML = renderSalesLedgerView(state.businessSales.ledger);
+    return;
+  }
+  const stockvelActivate = event.target.closest("[data-stockvel-activate]");
+  if (stockvelActivate) {
+    api(`${STOCKVEL_PATH}/${encodeURIComponent(stockvelActivate.dataset.stockvelActivate)}`, { method: "PUT", body: { status: "active" } })
+      .then(async () => {
+        showToast("Group activated — share the invite code so members can join.");
+        await loadStockvelGroups({ force: true }).catch(() => {});
+        await loadStockvelDetail(stockvelActivate.dataset.stockvelActivate).catch(() => {});
+        paintStockvel();
+      })
+      .catch((error) => showToast(friendlyFormError(error, "stockvel"), "error"));
+    return;
+  }
+  const svMeetingOpen = event.target.closest("[data-sv-meeting-open]");
+  if (svMeetingOpen && state.stockvelChat) {
+    const title = window.prompt("Meeting title (optional):", `Meeting ${new Date().toLocaleDateString("en-ZA")}`);
+    if (title === null) return;
+    api(`${STOCKVEL_PATH}/${encodeURIComponent(state.stockvelChat.groupId)}/meetings`, { method: "POST", body: { title: title.trim() || undefined } })
+      .then(() => { showToast("Meeting opened — the conversation from now goes into the minutes."); return refreshStockvelGroupChat(); })
+      .catch((error) => showToast(friendlyFormError(error, "stockvel"), "error"));
+    return;
+  }
+  const svMeetingClose = event.target.closest("[data-sv-meeting-close]");
+  if (svMeetingClose && state.stockvelChat) {
+    if (!window.confirm("End the meeting? The minutes are compiled immediately and emailed to every member.")) return;
+    api(`${STOCKVEL_PATH}/${encodeURIComponent(state.stockvelChat.groupId)}/meetings/${encodeURIComponent(svMeetingClose.dataset.svMeetingClose)}/close`, { method: "POST" })
+      .then(() => { showToast("Meeting closed — minutes compiled and emailed to the group."); return refreshStockvelGroupChat(); })
+      .catch((error) => showToast(friendlyFormError(error, "stockvel"), "error"));
+    return;
+  }
+  const svDecision = event.target.closest("[data-sv-decision]");
+  if (svDecision && state.stockvelChat?.canManage) {
+    if (!window.confirm("Pin this message as a group decision? Decisions lead the minutes.")) return;
+    api(`${STOCKVEL_PATH}/${encodeURIComponent(state.stockvelChat.groupId)}/messages/${encodeURIComponent(svDecision.dataset.svDecision)}/decision`, { method: "POST", body: { isDecision: true } })
+      .then(() => refreshStockvelGroupChat())
+      .catch((error) => showToast(friendlyFormError(error, "stockvel"), "error"));
     return;
   }
   const supportRemove = event.target.closest("[data-support-remove]");
@@ -3516,7 +3554,11 @@ async function handleAction(action, actionElement = null) {
     openTitoPayChatModal();
   }
   if (action === "open-stockvel-chat") {
-    openStockvelChatModal();
+    openStockvelChatModal(actionElement?.dataset?.stockvelChatId || state.stockvel?.detail?.id);
+  }
+  if (action === "stockvel-save-draft") {
+    await saveStockvelDraft();
+    return;
   }
   if (action === "ticketing-browse-public") {
     await openPersonalTicketsDashboard();
@@ -6368,6 +6410,26 @@ async function confirmReviewedTransaction() {
       saveBusinessDocumentDraft(document);
       openBusinessDocumentSavedModal(document, context.preview);
       return;
+    }
+    // A newly created stokvel is persisted as a real group the moment its
+    // creation transaction succeeds — members, chat, meetings and drafts all
+    // hang off this record.
+    if (String(data.serviceCode) === "stockvel" && data.stockvelType && !data.stockvelGroupId) {
+      api(STOCKVEL_PATH, {
+        method: "POST",
+        body: {
+          name: data.recipient,
+          description: data.description || "",
+          cadence: data.cadence,
+          contributionAmount: data.amount,
+          goalAmount: data.stockvelSavingsGoal || null,
+          memberLimit: data.memberLimit || null,
+          status: "active"
+        }
+      }).then((created) => {
+        loadStockvelGroups({ force: true }).catch(() => {});
+        if (created.group?.invite_code) showToast(`Group live — share invite code ${created.group.invite_code} so members can join.`);
+      }).catch(() => {});
     }
     // A contribution the client saw succeed is a real event, so it is recorded in
     // the notification centre. Group events TitoPay never observed are not.
@@ -13896,6 +13958,7 @@ function openStockvelCreateWizard() {
 
       <div class="sv-actions">
         <button class="btn ghost" type="button" data-stockvel-back hidden>${icon("arrow-left")} Back</button>
+        <button class="btn ghost" type="button" data-action="stockvel-save-draft">${icon("statement")} Save draft</button>
         <button class="btn primary" type="button" data-stockvel-next>Continue</button>
         <button class="btn primary" type="submit" data-stockvel-submit hidden>${icon("stockvel")} Review and create</button>
       </div>
@@ -14121,10 +14184,11 @@ function renderStockvelOverview(group, store) {
       </section>` : ""}
     ${!stats && !nextDue && !recent.length ? stockvelSectionUnavailable(store, "Group figures") : ""}
     <div class="tx-detail-actions">
+      ${String(group.status || "").toLowerCase() === "draft" && group.canManage ? `<button class="btn primary" type="button" data-stockvel-activate="${esc(group.id)}">${icon("check-circle")} Activate group</button>` : ""}
       ${group.myOutstanding != null && group.myOutstanding > 0 ? `<button class="btn primary" type="button" data-stockvel-contribute="${esc(group.id)}">${icon("wallet")} Contribute ${esc(money(group.myOutstanding))}</button>` : ""}
       <button class="btn secondary" type="button" data-stockvel-add-members="${esc(group.id)}">${icon("send")} Invite members</button>
       <button class="btn secondary" type="button" data-stockvel-withdraw="${esc(group.id)}">${icon("withdraw")} Request withdrawal</button>
-      <button class="btn secondary" type="button" data-action="open-stockvel-chat">${icon("chat")} Group chat</button>
+      <button class="btn secondary" type="button" data-action="open-stockvel-chat" data-stockvel-chat-id="${esc(group.id)}">${icon("chat")} Group chat</button>
       <button class="btn secondary" type="button" data-stockvel-statement="${esc(group.id)}">${icon("statement")} Statement</button>
     </div>`;
 }
@@ -14798,18 +14862,119 @@ function openStockvelInviteModal(id) {
       )}
   `);
 }
-function openStockvelChatModal() {
-  const thread = getOrCreateTitoPayChatThread(
-    { id: "stockvel-group", name: "Stokvel Group", username: "stockvel-group", accountType: "group" },
-    {
-      id: "stockvel-group-chat",
-      mode: "stockvel_group",
-      title: "Stokvel group chat",
-      subtitle: "Contribution reminders, payout order and member updates",
-      welcome: "Stokvel group chat is ready. Use this space for contribution reminders, payout order updates and member coordination."
+/* ---- Group chat and meetings: members talk, organisers pin decisions,
+   and closing a meeting compiles the minutes and emails them to everyone. */
+function openStockvelChatModal(groupId) {
+  const group = state.stockvel?.detail?.id === groupId ? state.stockvel.detail : (state.stockvel?.detail || (state.stockvel?.groups || []).find((item) => item.id === groupId));
+  const id = groupId || group?.id;
+  if (!id) { showToast("Open the group first.", "error"); return; }
+  state.stockvelChat = { groupId: id, groupName: group?.name || "Savings group", canManage: Boolean(group?.canManage), meetings: [] };
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(state.stockvelChat.groupName)}</p><h2>Group chat</h2><p class="lead">Talk as a group. Organisers pin decisions; closing a meeting turns the conversation into minutes for everyone.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div data-sv-meeting-bar></div>
+    <section class="activity-list" data-sv-chat style="max-height:44vh;overflow-y:auto"><p class="field-hint">Loading the conversation…</p></section>
+    <form class="form-grid" data-form="stockvel-chat" style="margin-top:8px">
+      <input type="hidden" name="groupId" value="${esc(id)}">
+      <div class="field"><textarea name="message" minlength="1" maxlength="1000" required placeholder="Message the group" rows="2"></textarea></div>
+      <button class="btn primary" type="submit">${icon("send")} Send to the group</button>
+    </form>
+    <div data-sv-minutes style="margin-top:10px"></div>
+  `);
+  refreshStockvelGroupChat();
+}
+async function refreshStockvelGroupChat() {
+  const chat = state.stockvelChat;
+  if (!chat) return;
+  const host = document.querySelector("[data-sv-chat]");
+  const meetingBar = document.querySelector("[data-sv-meeting-bar]");
+  const minutesHost = document.querySelector("[data-sv-minutes]");
+  try {
+    const [messagesResult, detailResult] = await Promise.all([
+      api(`${STOCKVEL_PATH}/${encodeURIComponent(chat.groupId)}/messages`),
+      api(`${STOCKVEL_PATH}/${encodeURIComponent(chat.groupId)}`).catch(() => null)
+    ]);
+    const meetings = detailResult?.group?.meetings || [];
+    chat.meetings = meetings;
+    chat.canManage = detailResult?.group ? Boolean(detailResult.group.can_manage) : chat.canManage;
+    const openMeeting = meetings.find((meeting) => meeting.status === "open");
+    if (meetingBar) {
+      meetingBar.innerHTML = openMeeting
+        ? `<section class="integration-note" style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:#e8efff">
+             <span><strong>Meeting in session</strong><br><small>${esc(openMeeting.title)} · everything said now goes into the minutes${chat.canManage ? " — tap a message to pin it as a decision" : ""}</small></span>
+             ${chat.canManage ? `<button class="btn secondary" type="button" data-sv-meeting-close="${esc(openMeeting.id)}">End & compile minutes</button>` : ""}
+           </section>`
+        : chat.canManage
+          ? `<div class="auth-actions" style="margin-bottom:8px"><button class="btn secondary" type="button" data-sv-meeting-open>${icon("check-circle")} Open a meeting</button></div>`
+          : "";
     }
-  );
-  openTitoPayChatThread(thread.id);
+    if (host) {
+      const items = messagesResult.items || [];
+      const myId = state.user?.id;
+      host.innerHTML = items.length ? items.map((message) => `
+        <div style="margin:7px 0;display:flex;flex-direction:column;align-items:${message.userId === myId ? "flex-end" : "flex-start"}" ${chat.canManage ? `data-sv-decision="${esc(message.id)}" role="button" tabindex="0" title="Tap to pin as a decision"` : ""}>
+          <div style="max-width:85%;background:${message.isDecision ? "#fdf3e2" : message.userId === myId ? "#2f5cff" : "#eef2fa"};color:${message.isDecision ? "#8a5b00" : message.userId === myId ? "#fff" : "#0b1f3f"};border-radius:14px;padding:8px 12px">
+            ${message.isDecision ? `<small style="display:block;font-weight:700">📌 DECISION</small>` : ""}
+            <small style="display:block;opacity:0.75">${esc(message.name || message.username || "Member")}</small>
+            ${esc(message.message)}
+          </div>
+          <small class="field-hint" style="margin-top:2px">${esc(new Date(message.createdAt).toLocaleString("en-ZA", { dateStyle: "short", timeStyle: "short" }))}</small>
+        </div>`).join("")
+        : `<p class="field-hint">No messages yet. Whatever the group says here stays visible to every member.</p>`;
+      host.scrollTop = host.scrollHeight;
+    }
+    if (minutesHost) {
+      const closed = meetings.filter((meeting) => meeting.status === "closed" && meeting.minutes);
+      minutesHost.innerHTML = closed.length ? `
+        <p class="field-hint" style="margin:0 0 4px"><strong>Minutes</strong> — compiled when each meeting closed, and emailed to every member.</p>
+        ${closed.map((meeting) => `
+          <details class="integration-note" style="margin:6px 0">
+            <summary style="cursor:pointer"><strong>${esc(meeting.title)}</strong> · ${esc(new Date(meeting.closed_at).toLocaleDateString("en-ZA"))}</summary>
+            <pre style="white-space:pre-wrap;font-family:inherit;font-size:12.5px;margin:8px 0 0">${esc(meeting.minutes)}</pre>
+          </details>`).join("")}` : "";
+    }
+  } catch (error) {
+    if (host) host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "stockvel"))}</p>`;
+  }
+}
+// Save the wizard as a draft at any step: whatever is filled in survives on
+// the server, appears on the hub with a draft chip, and activates later.
+async function saveStockvelDraft() {
+  const form = document.querySelector("[data-stockvel-wizard]");
+  if (!form) return;
+  const data = new FormData(form);
+  const name = String(data.get("recipient") || "").trim();
+  if (name.length < 2) { showToast("Give the group a name first — everything else can wait.", "error"); return; }
+  try {
+    await api(STOCKVEL_PATH, {
+      method: "POST",
+      body: {
+        name,
+        description: String(data.get("description") || ""),
+        cadence: String(data.get("cadence") || "monthly"),
+        contributionAmount: String(data.get("amount") || "0"),
+        goalAmount: String(data.get("stockvelSavingsGoal") || "") || null,
+        memberLimit: String(data.get("memberLimit") || "") || null,
+        status: "draft"
+      }
+    });
+    closeModal();
+    await loadStockvelGroups({ force: true }).catch(() => {});
+    openStockvelModal();
+    showToast(`"${name}" saved as a draft — activate it when the group is ready.`);
+  } catch (error) {
+    showToast(friendlyFormError(error, "stockvel"), "error");
+  }
+}
+async function submitStockvelChat(data) {
+  const message = String(data.message || "").trim();
+  if (!message) throw new Error("Write a message first.");
+  await api(`${STOCKVEL_PATH}/${encodeURIComponent(data.groupId)}/messages`, { method: "POST", body: { message } });
+  const form = document.querySelector('form[data-form="stockvel-chat"]');
+  if (form) form.reset();
+  await refreshStockvelGroupChat();
 }
 
 /* ==========================================================================
@@ -19504,6 +19669,25 @@ function openHowItWorksModal() {
       </div>
     </div>
   `);
+  // The tour owns the whole screen — no white sheet peeking underneath.
+  const tourCard = document.querySelector(".modal-backdrop .modal-card");
+  if (tourCard) {
+    tourCard.style.minHeight = "100dvh";
+    tourCard.style.maxWidth = "none";
+    tourCard.style.width = "100%";
+    tourCard.style.margin = "0";
+    tourCard.style.borderRadius = "0";
+    tourCard.style.background = "#0B1F3F";
+    const guide = tourCard.querySelector("[data-guide]");
+    if (guide) {
+      guide.style.margin = "0";
+      guide.style.borderRadius = "0";
+      guide.style.minHeight = "100dvh";
+      guide.style.display = "flex";
+      guide.style.flexDirection = "column";
+      guide.style.justifyContent = "center";
+    }
+  }
   paintHowItWorksStep();
 }
 function paintHowItWorksStep() {
