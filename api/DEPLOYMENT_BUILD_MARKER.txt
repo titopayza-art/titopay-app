@@ -19,3 +19,7 @@ Operational check (important): confirm the single platform revenue wallet
 exists, or PAID ticketing and top-up fees cannot be recorded as revenue:
   node scripts/ensure-revenue-wallet.js            (report only)
   node scripts/ensure-revenue-wallet.js --create   (provision if missing)
+
+Wallet passes (new): Apple Wallet .pkpass signing + Google Wallet save links,
+fully built and configuration-gated — see WALLET_PASSES_SETUP.md. Adds the
+node-forge dependency: run `npm install` once after extracting this api.zip.

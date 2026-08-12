@@ -33,7 +33,28 @@ const {
   canManageEventTicketing
 } = require("../services/ticketing-service");
 const eventTags = require("../services/event-tag-service");
+const walletPasses = require("../services/wallet-pass-service");
+const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
+
+// The ticket row with everything a wallet pass needs, owner-scoped: a caller
+// can only ever mint a pass for a ticket that is theirs.
+async function ticketForPass(userId, code) {
+  const { rows } = await pool.query(
+    `SELECT t.ticket_code, t.qr_payload, t.attendee_name, t.status,
+            o.order_reference, tt.ticket_name,
+            e.event_name, e.event_date, e.venue_name, e.city
+       FROM tickets t
+       JOIN ticket_orders o ON o.id = t.order_id
+       JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
+       JOIN events e ON e.id = t.event_id
+      WHERE t.ticket_code = $1 AND t.owner_user_id = $2
+      LIMIT 1`,
+    [code, userId]
+  );
+  if (!rows[0]) throw new AppError(404, "Ticket not found");
+  return rows[0];
+}
 
 const router = express.Router();
 
@@ -102,6 +123,70 @@ router.get("/tickets", requireAuth, async (req, res, next) => {
 
 // Email a ticket you own to yourself or to someone else. Ownership is enforced
 // in the service; the limiter stops the endpoint being used to send mail in bulk.
+// Wallet passes. A pass is a SIGNED object — Apple's Pass Type ID certificate
+// or Google's service-account key — so these switch on when the credentials are
+// configured (see WALLET_PASSES_SETUP.md) and answer an honest 404 until then;
+// the app then shows its "no pass yet, QR still valid" fallback.
+router.get("/tickets/:code/apple-wallet", requireAuth, async (req, res, next) => {
+  try {
+    const code = String(req.params.code || "").trim();
+    await ticketForPass(req.auth.userId, code);
+    if (!walletPasses.appleWalletConfigured()) {
+      throw new AppError(404, "Apple Wallet passes are not enabled yet. The ticket QR remains valid for entry.");
+    }
+    res.json({ ok: true, ticket: { appleWalletUrl: walletPasses.applePassDownloadUrl(code) } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/tickets/:code/google-wallet", requireAuth, async (req, res, next) => {
+  try {
+    const code = String(req.params.code || "").trim();
+    const ticket = await ticketForPass(req.auth.userId, code);
+    if (!walletPasses.googleWalletConfigured()) {
+      throw new AppError(404, "Google Wallet passes are not enabled yet. The ticket QR remains valid for entry.");
+    }
+    res.json({ ok: true, ticket: { googleWalletUrl: walletPasses.buildGoogleSaveUrl(ticket) } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The .pkpass itself. Safari downloads this by plain navigation, which cannot
+// carry the Bearer header, so it is gated by the short-lived HMAC token the
+// authenticated endpoint above minted — not open to the world, and useless
+// once the token expires.
+router.get("/tickets/:code/pass.pkpass", async (req, res, next) => {
+  try {
+    const code = String(req.params.code || "").trim();
+    if (!walletPasses.appleWalletConfigured()) throw new AppError(404, "Apple Wallet passes are not enabled");
+    if (!walletPasses.verifyPassToken(code, String(req.query.token || ""))) {
+      throw new AppError(403, "This pass link has expired. Open the ticket in TitoPay and tap Add to Apple Wallet again.");
+    }
+    const { rows } = await pool.query(
+      `SELECT t.ticket_code, t.qr_payload, t.attendee_name,
+              o.order_reference, tt.ticket_name,
+              e.event_name, e.event_date, e.venue_name, e.city
+         FROM tickets t
+         JOIN ticket_orders o ON o.id = t.order_id
+         JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
+         JOIN events e ON e.id = t.event_id
+        WHERE t.ticket_code = $1
+        LIMIT 1`,
+      [code]
+    );
+    if (!rows[0]) throw new AppError(404, "Ticket not found");
+    const pkpass = walletPasses.buildApplePkpass(rows[0]);
+    res.setHeader("Content-Type", "application/vnd.apple.pkpass");
+    res.setHeader("Content-Disposition", `attachment; filename="titopay-ticket-${code}.pkpass"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(pkpass);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/tickets/:code/email", requireAuth, publicContactLimiter, async (req, res, next) => {
   try {
     const result = await emailTicketToRecipient(req.auth, req.params.code, req.body?.email || req.body?.destination || "", meta(req));
