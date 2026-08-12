@@ -1,9 +1,14 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v336 (titopay-pwa-v336)
+PWA bundle: v337 (titopay-pwa-v337)
 Admin console: admin-console-v81
 
-This build — the soft-blue look, chat theme choice, rounded photos:
+This build:
+  - Guided tour: the dark navy canvas is removed. The tour keeps its 12
+    steps, full-screen layout, step card, ghost numeral and progress dots
+    on the app's own light ground.
+
+Previous build — the soft-blue look, chat theme choice, rounded photos:
   - The app's ground is now the soft blue everywhere it used to be plain
     white (one design token changed: --soft #f7f9fd -> #eef4fe, plus the
     matching body gradient). Cards, sheets and inputs are untouched, so
