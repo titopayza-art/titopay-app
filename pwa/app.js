@@ -2805,7 +2805,8 @@ async function handleAction(action, actionElement = null) {
     }
     return;
   }
-  if (!state.modalBackNavigating && MODAL_STACK_ACTIONS.has(action)) {
+  const stackKey = String(action || "").split(":")[0];
+  if (!state.modalBackNavigating && (MODAL_STACK_ACTIONS.has(action) || MODAL_STACK_ACTION_PREFIXES.has(stackKey))) {
     if (document.querySelector(".modal-backdrop") && state.currentModalAction && state.currentModalAction !== action) {
       state.modalActionStack.push(state.currentModalAction);
       if (state.modalActionStack.length > 12) state.modalActionStack.shift();
@@ -2936,6 +2937,14 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "ticketing-staff-manage") {
     await openBusinessTicketingDashboard({ refresh: true });
+    return;
+  }
+  if (action === "public-event-back") {
+    // A shared event link can be the very first page this browser opens, so
+    // "back" must always lead somewhere: in-app history when there is any,
+    // otherwise the TitoPay home.
+    if (window.history.length > 1) window.history.back();
+    else window.location.assign("/");
     return;
   }
   if (action === "enterprise-distribution") {
@@ -9158,11 +9167,17 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null }) {
     }
   }
 
-  fill(392, 108, 151, 58, "0.95 0.97 1.00");
-  stroke(392, 108, 151, 58, "0.82 0.88 0.98");
-  centerText(467, 146, "OFFICIAL TITOPAY STATEMENT", 7.5, "F2", "0.12 0.32 0.62");
-  centerText(467, 133, compactStatementReference(referenceNo, 22), 6.4, "F1", "0.06 0.10 0.20");
-  centerText(467, 121, issuedDate, 6.2, "F1", "0.42 0.46 0.55");
+  // The official stamp lives in the fixed band between the header and the
+  // ACCOUNT DETAILS card, where nothing else ever draws. It used to sit near
+  // the page foot at a fixed position, and a statement with enough activity
+  // (posted rows + the unsuccessful-attempts list grow DOWNWARD into that
+  // corner) printed straight over it. Same stamp, same size — personal and
+  // business statements share this layout.
+  fill(392, 680, 151, 44, "0.95 0.97 1.00");
+  stroke(392, 680, 151, 44, "0.82 0.88 0.98");
+  centerText(467, 712, "OFFICIAL TITOPAY STATEMENT", 7.5, "F2", "0.12 0.32 0.62");
+  centerText(467, 700, compactStatementReference(referenceNo, 22), 6.4, "F1", "0.06 0.10 0.20");
+  centerText(467, 688, issuedDate, 6.2, "F1", "0.42 0.46 0.55");
 
   line(52, 86, 543, 86);
   text(52, 56, "Smart Payments. Simplified.", 7, "F1", "0.42 0.46 0.55");
@@ -14031,6 +14046,7 @@ function publicTicketingEventView(event = {}) {
   return `
     <main class="screen auth-screen">
       <header class="topbar">
+        <button class="icon-btn" data-action="public-event-back" aria-label="Go back">${icon("arrow-left")}</button>
         <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
         <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
       </header>
@@ -14489,6 +14505,10 @@ async function renderTicketCanvas({ ticket = {}, order = {}, event = {} }) {
 function openTicketConfirmation(result = {}, order = {}) {
   const tickets = ticketRecordsFromResult(result, order);
   const event = result.event || order.event || {};
+  // The confirmation is transient (it cannot be replayed), so anything opened
+  // from it — Email ticket, a wallet pass — backs out to My Tickets, where the
+  // same ticket lives permanently.
+  state.currentModalAction = "my-tickets";
   openModal(`
     <div class="modal-head">
       <div>
@@ -18605,11 +18625,19 @@ function handleService(id) {
   }
   if (service.type === "receive") return state.accountType === "business" ? openMerchantSaleModal() : openReceiveModal();
   if (service.type === "qrPay") return openQrPayModal();
-  if (service.type === "tickets" || service.action === "tickets") return openPersonalTicketsDashboard();
+  // Seeding the current modal action here lets every screen opened FROM these
+  // dashboards carry the automatic back arrow — the tiles bypass handleAction,
+  // so without this the back trail started empty.
+  if (service.type === "tickets" || service.action === "tickets") {
+    state.currentModalAction = "my-tickets";
+    return openPersonalTicketsDashboard();
+  }
   if (service.action === "business-ticketing-staff") {
+    state.currentModalAction = "ticketing-staff-open";
     return openTicketingStaffScanner();
   }
   if (service.type === "ticketing" || service.action === "ticketing") {
+    state.currentModalAction = "ticketing-refresh";
     return openBusinessTicketingDashboard();
   }
   if (service.type === "businessStaff" || service.action === "business-staff") return openBusinessStaffModal();
@@ -19976,7 +20004,17 @@ const MODAL_STACK_ACTIONS = new Set([
   "preview-email-notifications", "authentication-preference", "change-password",
   "fica-verification", "profile-verification", "saved-beneficiaries",
   "proof-of-account", "how-titopay-works", "app-search", "support",
-  "pwa-review", "account-activity", "share-titopay"
+  "pwa-review", "account-activity", "share-titopay",
+  // Ticketing joins the back trail so moving between the dashboards, an event
+  // page, the scanner and a ticket's email screen always offers a way back.
+  "ticketing-refresh", "ticketing-staff-open", "ticketing-staff-manage",
+  "ticketing-create-event", "vendor-tag-charge", "ticketing-browse-public",
+  "my-tickets"
+]);
+// Parametrised modal actions ("action:value") that join the same back trail.
+// Matched on the prefix before the colon; the full string is what replays.
+const MODAL_STACK_ACTION_PREFIXES = new Set([
+  "ticketing-open-event", "ticket-email", "ticketing-request-change"
 ]);
 // A wallet pass has to be signed with a key only the server can hold -- Apple's
 // Pass Type ID certificate, or the Google service account that signs the save

@@ -474,5 +474,8 @@ test("PWA renames only the customer tickets tile to Event Tickets", () => {
   assert.equal(tickets.action,"tickets");
   assert.match(app,/serviceCode === "tickets" \|\| action === "tickets"/);
   assert.match(app,/\? "Event Tickets"/);
-  assert.match(app,/if \(service\.type === "tickets" \|\| service\.action === "tickets"\) return openPersonalTicketsDashboard\(\)/);
+  // The tile now also seeds the modal back trail before opening, so the
+  // dispatch is a block rather than a one-liner — the destination is what
+  // matters here.
+  assert.match(app,/if \(service\.type === "tickets" \|\| service\.action === "tickets"\) \{\s*\n\s*state\.currentModalAction = "my-tickets";\s*\n\s*return openPersonalTicketsDashboard\(\);/);
 });

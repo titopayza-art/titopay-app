@@ -1,4 +1,5 @@
 const { randomUUID, createHash } = require("crypto");
+const QRCode = require("qrcode");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { writeAuditLog } = require("./audit-service");
@@ -1319,6 +1320,23 @@ function ticketOrderResponse(order = {}, tickets = []) {
   };
 }
 
+// Render the ticket's stored QR payload as a scannable image, the same way the
+// payment QRs are drawn (same library, JSON payload). The PWA's ticket stub and
+// its PDF both already look for qrImageDataUrl — this is what finally fills the
+// "Entry code is issued by the organiser" placeholder with a real code. A QR
+// failure must never break a ticket response, so it degrades to the placeholder.
+async function ticketQrDataUrl(row = {}) {
+  const payload = row.qr_payload && typeof row.qr_payload === "object" && Object.keys(row.qr_payload).length
+    ? row.qr_payload
+    : { type: "titopay_ticket", ticketCode: row.ticket_code };
+  try {
+    return await QRCode.toDataURL(JSON.stringify(payload), { margin: 1, width: 480 });
+  } catch (error) {
+    console.error("[ticket-qr-failed]", { ticketCode: row.ticket_code, message: error.message });
+    return "";
+  }
+}
+
 function ticketResponse(row = {}) {
   return {
     id: row.id,
@@ -1531,7 +1549,15 @@ async function emailTicketToRecipient(actor, ticketCode, destination, meta = {})
     "Keep this code private — anyone who has it can enter."
   ].filter((line) => line !== null && line !== undefined).join("\n");
 
-  await deliverEmail({ to, subject, body, metadata: { ticketCode: ticket.ticket_code, purpose: "ticket_self_service_email" } });
+  // A mail-provider hiccup must come back as a clear, retryable message — not a
+  // generic 500 that reads as "something is broken with my ticket". The ticket
+  // itself is untouched either way.
+  try {
+    await deliverEmail({ to, subject, body, metadata: { ticketCode: ticket.ticket_code, purpose: "ticket_self_service_email" } });
+  } catch (error) {
+    console.error("[ticket-email-send-failed]", { ticketCode: ticket.ticket_code, message: error.message });
+    throw new AppError(502, "TitoPay could not send the email right now. Your ticket is unaffected — please try again in a few minutes.");
+  }
   await eventAudit({
     eventId: ticket.event_id,
     actorType: "customer",
@@ -1554,6 +1580,9 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
   const reference = `TICKET-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
   const orderReference = await uniqueNumericCode("ticket_orders", "order_reference", 10);
   const ticketRows = [];
+  // Hoisted: the confirmation response after the transaction reads the event's
+  // name/date/venue from this locked row.
+  let locked;
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
@@ -1566,7 +1595,7 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
        FOR UPDATE OF tt`,
       [preview.eventId, preview.ticketTypeId]
     );
-    const locked = rows[0];
+    locked = rows[0];
     if (!locked) throw new AppError(404, "Event ticket type is not available");
     const available = Number(locked.quantity_available || 0) - Number(locked.quantity_reserved || 0) - Number(locked.quantity_sold || 0);
     if (available < preview.quantity) throw new AppError(409, "Not enough tickets available");
@@ -1717,7 +1746,20 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
   });
   deliverTicketOrder(orderId).catch((error) => console.error("[ticket-delivery-failed]", { orderId, message: error.message }));
   const { rows: orderRows } = await pool.query("SELECT * FROM ticket_orders WHERE id = $1", [orderId]);
-  return ticketOrderResponse(orderRows[0], ticketRows);
+  const response = ticketOrderResponse(orderRows[0], ticketRows);
+  // The confirmation screen renders these tickets immediately, so each carries
+  // its scannable QR and the event's real name/date/venue — without them the
+  // stub showed "TitoPay event / Date to be confirmed" for a fully-detailed
+  // event, and an empty entry-code box.
+  for (let index = 0; index < response.tickets.length; index += 1) {
+    response.tickets[index].qrImageDataUrl = await ticketQrDataUrl(ticketRows[index]);
+    response.tickets[index].eventName = locked.event_name;
+    response.tickets[index].eventDate = locked.event_date;
+    response.tickets[index].venueName = locked.venue_name;
+    response.tickets[index].city = locked.city;
+  }
+  response.eventName = locked.event_name;
+  return response;
 }
 
 async function listMyTicketOrders(userId) {
@@ -1782,8 +1824,14 @@ async function listMyTickets(userId) {
       LIMIT 200`,
     [userId]
   );
-  return rows.map((row) => ({
+  // Each ticket carries its scannable QR image (drawn from the payload signed
+  // at purchase), so the stub and the PDF show a real entry code. Sequential on
+  // purpose: the encoder is a few ms per code and this endpoint caps at 200.
+  const qrImages = [];
+  for (const row of rows) qrImages.push(await ticketQrDataUrl(row));
+  return rows.map((row, index) => ({
     ...ticketResponse(row),
+    qrImageDataUrl: qrImages[index],
     ticketTypeName: row.ticket_name,
     eventName: row.event_name,
     eventDate: row.event_date,

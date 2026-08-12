@@ -183,6 +183,16 @@ const freeEvent = {
     assert.equal(issued, 2, `two valid tickets should exist, found ${issued}`);
     ok(`${issued} valid tickets were issued for a R0 order`);
 
+    // Every issued ticket carries a real scannable QR image and the event's
+    // actual name — the confirmation screen must never show an empty entry-code
+    // box or "TitoPay event" for a fully-described event.
+    assert.ok(Array.isArray(order.tickets) && order.tickets.length === 2, "the purchase response returns the tickets");
+    for (const issuedTicket of order.tickets) {
+      assert.match(String(issuedTicket.qrImageDataUrl || ""), /^data:image\/png/, "each ticket carries a QR image data URL");
+      assert.match(String(issuedTicket.eventName || ""), /Fintech Conference/, "each ticket names the real event");
+    }
+    ok("purchase response tickets carry a scannable QR image and the real event name");
+
     // Scanner + running attendance count. The organiser scans one of the two
     // tickets; the count reflects it, and a second scan of the same code is
     // refused rather than double-counted.
