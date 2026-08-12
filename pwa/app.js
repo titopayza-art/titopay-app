@@ -18512,26 +18512,79 @@ function clearNotifications() {
   render();
   showToast("Notification inbox cleared.");
 }
+// iOS only exposes the Notification API to a PWA that has been ADDED TO THE
+// HOME SCREEN (16.4+). In a normal Safari tab, window.Notification does not
+// exist, so the old code dead-ended on "not supported in this browser" — true,
+// but useless, because it never said the one thing that would fix it.
+function isAppleMobile() {
+  const ua = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/.test(ua)
+    || (navigator.platform === "MacIntel" && Number(navigator.maxTouchPoints) > 1);
+}
+
+// requestPermission is a Promise on modern browsers and a callback on older
+// Safari. Awaiting the callback form yields undefined and looks like a refusal,
+// so this normalises both to the resolved permission string.
+function requestNotificationPermissionCompat() {
+  return new Promise((resolve) => {
+    try {
+      const result = Notification.requestPermission((perm) => resolve(perm));
+      if (result && typeof result.then === "function") {
+        result.then(resolve).catch(() => resolve(Notification.permission));
+      }
+    } catch (error) {
+      resolve(Notification.permission);
+    }
+  });
+}
+
+// After enabling, whichever surface is open must show the new state. render()
+// only repaints the main screen, not the modal on top of it, so the Security
+// Centre still read "Enable" until it was closed and reopened.
+function refreshOpenSecuritySurface() {
+  const modal = document.querySelector(".modal-card");
+  if (!modal) return;
+  const text = modal.textContent || "";
+  if (/Your account protection/.test(text)) openSecurityCentreModal();
+  else if (/Notification Centre|Notification inbox/.test(text)) openNotificationsModal({ refresh: false });
+}
+
 async function enableBrowserNotifications() {
   if (!("Notification" in window)) {
+    if (isAppleMobile() && !isPwaInstalled()) {
+      // Actionable, not a dead end: this is exactly recoverable, and only on iOS.
+      openInfoModal(
+        "Turn on device alerts",
+        "On iPhone and iPad, device alerts work once TitoPay is added to your Home Screen. Tap the Share button in Safari, choose \"Add to Home Screen\", then open TitoPay from the new icon and turn on device alerts here. Your in-app alerts stay active either way."
+      );
+      return;
+    }
     showToast("Device notifications are not supported in this browser. In-app notifications will still appear in TitoPay.", "error");
     return;
   }
-  const permission = await Notification.requestPermission();
+  const permission = await requestNotificationPermissionCompat();
   if (permission !== "granted") {
-    showToast("Device alerts were not enabled. In-app notifications are still available.", "error");
+    showToast(permission === "denied"
+      ? "Device alerts are blocked in your browser settings. Allow notifications for TitoPay there, then try again. In-app alerts stay active."
+      : "Device alerts were not enabled. In-app notifications are still available.", "error");
+    refreshOpenSecuritySurface();
     return;
   }
   addInAppNotification({
     title: "Device alerts enabled",
     body: "TitoPay can now show device alerts while in-app notifications remain your main inbox."
   });
-  try {
-    new Notification("TitoPay notifications enabled", {
-      body: "In-app notifications remain active. SMS stays reserved for critical alerts."
-    });
-  } catch (error) {}
+  // Confirm through the service worker, NOT the `new Notification()` constructor.
+  // The constructor is unsupported on iOS and throws even in an installed PWA,
+  // so the old confirmation silently never appeared there; showNotification via
+  // the service worker is the path iOS actually honours.
+  await showTitoPayDeviceNotification({
+    id: "device-alerts-enabled",
+    title: "TitoPay notifications enabled",
+    body: "In-app notifications remain active. SMS stays reserved for critical alerts."
+  }).catch(() => {});
   showToast("Device alerts enabled.");
+  refreshOpenSecuritySurface();
   render();
 }
 function ficaDisplayStatus(value) {
