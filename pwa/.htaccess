@@ -41,6 +41,17 @@
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
+
+  # Without this the HSTS header above is inert on a first visit: a browser
+  # arriving over plain HTTP never receives it, so it never learns to upgrade.
+  # admin/.htaccess has carried these two lines in production for as long as it
+  # has existed, which is what rules out the failure people fear here — a
+  # Cloudflare "Flexible SSL" origin, where the edge always speaks HTTP to us
+  # and this rule would loop forever. It does not loop for admin, and admin sits
+  # behind the same edge.
+  RewriteCond %{HTTPS} !=on
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
   RewriteRule ^\.ht                   - [F,L]
   RewriteRule ^(app\.js|styles\.css)$ - [F,L]
   RewriteRule \.md$                   - [F,L]
@@ -71,13 +82,15 @@
   Header always set Referrer-Policy "no-referrer"
   Header always set Cross-Origin-Opener-Policy "same-origin"
 
-  # HSTS WITHOUT includeSubDomains, deliberately.
+  # HSTS WITHOUT includeSubDomains.
   #
-  # A browser caches this for a year and there is no way to reach out and undo
-  # it. includeSubDomains would extend that promise to every host under the
-  # domain, including any this repository does not know about, and one of those
-  # answering on plain HTTP would be unreachable for its customers for twelve
-  # months. This origin is the thing being protected; it is the thing declared.
+  # The first version of this comment justified the omission by saying
+  # includeSubDomains could strand the other portals. That was wrong: app, hr,
+  # admin and api are SIBLING hosts under titopay.co.za, so a declaration from
+  # this one never reaches them. The honest reason is narrower — this origin can
+  # only speak for itself, a browser caches the promise for a year, and there is
+  # no way to withdraw it early. Declaring only what is being served here is the
+  # conservative choice, not the only defensible one.
   Header always set Strict-Transport-Security "max-age=31536000"
 
   # The service worker is the update mechanism itself — never cache it anywhere.
