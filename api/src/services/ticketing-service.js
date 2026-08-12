@@ -5,7 +5,8 @@ const { AppError } = require("../lib/errors");
 const { writeAuditLog } = require("./audit-service");
 const { ensureDefaultPricingRule, calculateFee } = require("./pricing-service");
 const { applyWalletMovement } = require("./wallet-service");
-const { deliverSms, deliverEmail, createNotification, markNotification } = require("./notification-service");
+// Ticketing communicates by EMAIL (and in-app), never SMS.
+const { deliverEmail, createNotification, markNotification } = require("./notification-service");
 
 const VERIFIED_STATUSES = new Set(["verified", "approved", "complete", "completed", "fully_verified"]);
 const BLOCKED_USER_STATUSES = new Set(["suspended", "frozen", "restricted", "under_review", "closed", "inactive"]);
@@ -1427,9 +1428,16 @@ async function loadRevenueWalletForUpdate(client) {
   return rows[0];
 }
 
+// Every purchase automatically emails the buyer a confirmation carrying the
+// order and every ticket code. EMAIL ONLY, by design — no SMS — and through
+// the Email Centre queue (a database insert delivered by the standalone worker
+// with retries, visible in Admin → Email Centre), never a live mail connection
+// inside the purchase flow. Idempotent per order, so a retry cannot send the
+// confirmation twice.
 async function deliverTicketOrder(orderId) {
   const { rows } = await pool.query(
-    `SELECT o.*, e.event_name, e.slug, u.id AS buyer_id, u.full_name, u.email, u.phone
+    `SELECT o.*, e.event_name, e.slug, e.event_date, e.start_time, e.venue_name, e.city,
+            u.id AS buyer_id, u.full_name, u.email
      FROM ticket_orders o
      JOIN events e ON e.id = o.event_id
      JOIN users u ON u.id = o.buyer_user_id
@@ -1439,53 +1447,100 @@ async function deliverTicketOrder(orderId) {
   );
   const order = rows[0];
   if (!order) return;
-  const { rows: tickets } = await pool.query("SELECT * FROM tickets WHERE order_id = $1 ORDER BY created_at ASC", [orderId]);
-  const title = "Your TitoPay event tickets";
-  const ticketCodes = tickets.map((ticket) => ticket.ticket_code).join(", ");
+  const { rows: tickets } = await pool.query(
+    `SELECT t.*, tt.ticket_name
+       FROM tickets t
+       JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
+      WHERE t.order_id = $1
+      ORDER BY t.created_at ASC`,
+    [orderId]
+  );
+
+  const to = cleanEmail(order.email);
+  if (!to) {
+    // No email on file: the tickets still live in the app under My Tickets; the
+    // failed delivery status makes the gap visible instead of silent.
+    await pool.query("UPDATE ticket_orders SET delivery_status = 'failed', updated_at = NOW() WHERE id = $1", [orderId]);
+    await pool.query("UPDATE tickets SET delivery_status = 'failed', updated_at = NOW() WHERE order_id = $1", [orderId]);
+    return;
+  }
+
+  const when = order.event_date
+    ? `${new Date(order.event_date).toLocaleDateString("en-ZA", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}${order.start_time ? ` at ${order.start_time}` : ""}`
+    : "Date to be confirmed";
+  const where = [order.venue_name, order.city].filter(Boolean).join(", ") || "Venue to be confirmed";
   const eventUrl = `https://app.titopay.co.za/events/${order.slug}`;
-  const body = `Your TitoPay tickets for ${order.event_name} are confirmed. Order ${order.order_reference}. Ticket code(s): ${ticketCodes}. View event: ${eventUrl}`;
-  let smsOk = false;
-  let emailOk = false;
+  const subject = `Your ticket${tickets.length > 1 ? "s" : ""} for ${order.event_name}`;
+  const ticketLines = tickets.map((ticket, index) =>
+    `  ${index + 1}. ${ticket.ticket_name || "General admission"} — ticket code ${ticket.ticket_code}`);
+  const textBody = [
+    `Hi${order.full_name ? ` ${order.full_name}` : ""},`,
+    "",
+    `Your purchase is confirmed. Here ${tickets.length > 1 ? "are your tickets" : "is your ticket"} for ${order.event_name}.`,
+    "",
+    `Order: ${order.order_reference}`,
+    `When: ${when}`,
+    `Where: ${where}`,
+    `Total paid: R ${money(order.total).toFixed(2)}`,
+    "",
+    `Your ticket${tickets.length > 1 ? "s" : ""}:`,
+    ...ticketLines,
+    "",
+    "Each code (and its QR in the TitoPay app) admits one person at the entrance.",
+    "Keep the codes private — anyone who has one can enter.",
+    "",
+    "Open TitoPay → My Tickets to show the QR at the door, download a PDF, or add the ticket to your phone's wallet.",
+    `Event details: ${eventUrl}`
+  ].join("\n");
+  const ticketCodes = tickets.map((ticket) => ticket.ticket_code).join(", ");
 
-  if (order.phone) {
-    const notificationId = await createNotification({
-      user: { id: order.buyer_id, user_type: "customer" },
-      channel: "sms",
-      notificationType: "ticket_delivery",
-      title,
-      body,
-      provider: "sms",
-      metadata: { orderId, ticketCodes }
+  const notificationId = await createNotification({
+    user: { id: order.buyer_id, user_type: "customer" },
+    channel: "email",
+    notificationType: "ticket_delivery",
+    title: subject,
+    body: textBody,
+    provider: "email",
+    metadata: { orderId, ticketCodes }
+  });
+
+  let delivered = false;
+  try {
+    const emailCentre = require("./email-centre-service");
+    const htmlTickets = tickets.map((ticket) =>
+      `<p style="margin:6px 0">${emailCentre.escapeHtml(ticket.ticket_name || "General admission")} — ticket code <strong style="font-size:18px;letter-spacing:2px">${emailCentre.escapeHtml(ticket.ticket_code)}</strong></p>`).join("");
+    const result = await emailCentre.queueRawEmail({
+      recipient: to,
+      subject,
+      textBody,
+      htmlBody: [
+        `<p>Hi${order.full_name ? ` ${emailCentre.escapeHtml(order.full_name)}` : ""},</p>`,
+        `<p>Your purchase is confirmed. Here ${tickets.length > 1 ? "are your tickets" : "is your ticket"} for <strong>${emailCentre.escapeHtml(order.event_name)}</strong>.</p>`,
+        `<p>Order <strong>${emailCentre.escapeHtml(order.order_reference)}</strong><br>When: ${emailCentre.escapeHtml(when)}<br>Where: ${emailCentre.escapeHtml(where)}<br>Total paid: <strong>R ${money(order.total).toFixed(2)}</strong></p>`,
+        htmlTickets,
+        `<p>Each code (and its QR in the TitoPay app) admits one person at the entrance. Keep the codes private — anyone who has one can enter.</p>`,
+        `<p>Open TitoPay → My Tickets to show the QR at the door, download a PDF, or add the ticket to your phone's wallet.</p>`
+      ].join(""),
+      userId: order.buyer_user_id,
+      idempotencyKey: `ticket-order-delivery:${orderId}`,
+      metadata: { orderId, ticketCodes, purpose: "ticket_order_delivery" }
     });
+    delivered = Boolean(result && !result.skipped);
+    if (delivered) await markNotification(notificationId, "sent", result.id || null, { queued: true });
+  } catch (error) {
+    console.error("[ticket-order-email-queue-failed]", { orderId, message: error.message });
+  }
+  if (!delivered) {
     try {
-      const result = await deliverSms({ to: order.phone, body, metadata: { orderId, purpose: "ticket_delivery" } });
+      const result = await deliverEmail({ to, subject, body: textBody, metadata: { orderId, purpose: "ticket_order_delivery" } });
       await markNotification(notificationId, "sent", result.id || result.messageId || null, { providerResponse: result });
-      smsOk = true;
+      delivered = true;
     } catch (error) {
       await markNotification(notificationId, "failed", null, { error: error.message });
     }
   }
 
-  if (order.email) {
-    const notificationId = await createNotification({
-      user: { id: order.buyer_id, user_type: "customer" },
-      channel: "email",
-      notificationType: "ticket_delivery",
-      title,
-      body,
-      provider: "email",
-      metadata: { orderId, ticketCodes }
-    });
-    try {
-      const result = await deliverEmail({ to: order.email, subject: title, body, metadata: { orderId, purpose: "ticket_delivery" } });
-      await markNotification(notificationId, "sent", result.id || result.messageId || null, { providerResponse: result });
-      emailOk = true;
-    } catch (error) {
-      await markNotification(notificationId, "failed", null, { error: error.message });
-    }
-  }
-
-  const status = smsOk || emailOk ? "sent" : "failed";
+  const status = delivered ? "sent" : "failed";
   await pool.query("UPDATE ticket_orders SET delivery_status = $2, updated_at = NOW() WHERE id = $1", [orderId, status]);
   await pool.query("UPDATE tickets SET delivery_status = $2, updated_at = NOW() WHERE order_id = $1", [orderId, status]);
 }

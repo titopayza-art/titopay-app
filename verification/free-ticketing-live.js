@@ -201,6 +201,25 @@ const freeEvent = {
     }
     ok("purchase response tickets carry a scannable QR image and the real event name");
 
+    // The purchase AUTOMATICALLY emails the buyer their confirmation and every
+    // ticket code — email only, never SMS. Delivery is fire-and-forget, so give
+    // it a moment to land in the stubbed outbox.
+    const codes = (await pool.query("SELECT ticket_code FROM tickets WHERE event_id = $1 ORDER BY created_at", [draft.id])).rows.map((r) => r.ticket_code);
+    let orderEmail = null;
+    for (let attempt = 0; attempt < 20 && !orderEmail; attempt += 1) {
+      orderEmail = outbox.find((e) => e.metadata?.purpose === "ticket_order_delivery");
+      if (!orderEmail) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(orderEmail, "the buyer automatically receives a purchase email");
+    assert.equal(orderEmail.to, `${TAG}_buyer@example.invalid`, "it goes to the buyer");
+    assert.match(orderEmail.subject, /Fintech Conference/, "the subject names the event");
+    for (const code of codes) {
+      assert.match(orderEmail.body, new RegExp(code), `ticket code ${code} is in the purchase email`);
+    }
+    assert.match(orderEmail.body, /Total paid: R 0\.00/, "the purchase email states what was paid");
+    assert.equal(outbox.filter((e) => e.channel === "sms").length, 0, "NO SMS is ever sent for tickets");
+    ok(`purchase auto-emailed the buyer with ${codes.length} ticket codes (email only, no SMS)`);
+
     // Scanner + running attendance count. The organiser scans one of the two
     // tickets; the count reflects it, and a second scan of the same code is
     // refused rather than double-counted.

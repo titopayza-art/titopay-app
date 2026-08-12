@@ -70,3 +70,19 @@ test("the ticket code and event are in the email body", () => {
   assert.match(fn, /Ticket code: \$\{ticket\.ticket_code\}/);
   assert.match(fn, /subject = `Your ticket for \$\{ticket\.event_name\}`/);
 });
+
+test("a purchase automatically emails the confirmation — email only, never SMS", () => {
+  // The user requirement is explicit: buyers get their purchase and tickets by
+  // email automatically, not by SMS. The delivery function must queue through
+  // the Email Centre (no live mail connection in the purchase flow), carry
+  // every ticket code, be idempotent per order, and contain no SMS path at all.
+  const fn = SERVICE.match(/async function deliverTicketOrder[\s\S]*?\n\}/)[0];
+  assert.match(fn, /queueRawEmail/, "the confirmation goes through the Email Centre queue");
+  assert.match(fn, /idempotencyKey: `ticket-order-delivery:\$\{orderId\}`/,
+    "one confirmation per order — a retry can never send it twice");
+  assert.match(fn, /ticket code/, "the email spells out each ticket code");
+  assert.doesNotMatch(fn, /deliverSms/, "no SMS is sent for ticket delivery");
+  assert.doesNotMatch(SERVICE, /deliverSms/, "ticketing must not send SMS anywhere");
+  assert.match(fn, /purchase is confirmed/i, "the email confirms the purchase itself");
+  assert.match(fn, /Total paid/, "the email states the amount paid");
+});
