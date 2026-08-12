@@ -36,6 +36,19 @@ router.get("/fica", async (req, res, next) => {
   }
 });
 
+// The identity details an approved FICA review verified, for the account
+// holder's own statements. Empty until approval — a pending submission
+// never decorates a document.
+router.get("/fica/verified-details", async (req, res, next) => {
+  try {
+    requireCustomer(req);
+    const { approvedFicaDetails } = require("../services/wallet-service");
+    res.json({ ok: true, details: await approvedFicaDetails(pool, req.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/fica", async (req, res, next) => {
   try {
     requireCustomer(req);

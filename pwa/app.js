@@ -9218,8 +9218,22 @@ async function downloadTransactionsPdf() {
   const statementNo = `TPS-${dateStamp(now)}-${leftPad(String(Math.floor(Math.random() * 999999)), 6, "0")}`;
   const referenceNo = `TP-${dateStamp(now)}-${leftPad(String(state.transactions.length + 1), 6, "0")}`;
   const logo = await loadStatementLogoJpeg();
-  const pdf = statementPdf({ items, now, statementNo, referenceNo, logo });
+  const fica = await loadVerifiedFicaDetails();
+  const pdf = statementPdf({ items, now, statementNo, referenceNo, logo, fica });
   downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${statementNo}.pdf`);
+}
+// The identity an APPROVED FICA review verified — fetched once and cached.
+// Absent (null) until approval, so a pending profile's statement looks
+// exactly as it always did.
+async function loadVerifiedFicaDetails() {
+  if (state.ficaDetails !== undefined) return state.ficaDetails;
+  try {
+    const result = await api("/v1/kyc/fica/verified-details");
+    state.ficaDetails = result.details || null;
+  } catch (error) {
+    state.ficaDetails = null;
+  }
+  return state.ficaDetails;
 }
 function statementAccountName(user = state.user || {}) {
   if (state.accountType === "business") {
@@ -9282,13 +9296,14 @@ function loadStatementLogoJpeg() {
   });
   return statementLogoJpegPromise;
 }
-function statementPdf({ items, now, statementNo, referenceNo, logo = null }) {
+function statementPdf({ items, now, statementNo, referenceNo, logo = null, fica = null }) {
   const user = state.user || {};
   const wallet = primaryWallet() || {};
   const profileType = state.accountType === "business" ? "Business profile" : "Personal profile";
   const accountName = statementAccountName(user);
   const contact = statementContactLine(user);
-  const address = statementAddressLine(user);
+  // A FICA-verified address outranks whatever the profile fields hold.
+  const address = (fica && fica.address) || statementAddressLine(user);
   const accountNameLines = splitStatementText(accountName, 34, 2);
   const contactLines = splitStatementText(contact, 42, 1);
   const addressLines = splitStatementText(address, 42, 1);
@@ -9354,12 +9369,32 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null }) {
   contactLines.forEach((lineValue, index) => text(66, 581 - index * 10, lineValue, 8.2, "F1", "0.06 0.10 0.20"));
   text(66, 566, "ADDRESS", 7.5, "F1", "0.38 0.43 0.52");
   addressLines.forEach((lineValue, index) => text(66, 554 - index * 10, lineValue, 7.6, "F1", "0.06 0.10 0.20"));
-  text(322, 633, "FICA STATUS", 7.5, "F1", "0.38 0.43 0.52");
-  text(322, 620, ficaStatus, 9.2, "F2");
-  text(322, 594, "WALLET ID", 7.5, "F1", "0.38 0.43 0.52");
-  text(322, 581, compactStatementReference(displayWalletId(wallet), 24), 8.4, "F2");
-  text(322, 560, "STATEMENT NO", 7.5, "F1", "0.38 0.43 0.52");
-  text(322, 547, compactStatementReference(statementNo, 24), 8.1, "F2");
+  if (fica && (fica.idNumber || fica.companyRegistrationNumber)) {
+    // Four compressed rows: the verified number joins the statement, which
+    // is what makes it acceptable at a bank or with a landlord.
+    const isBusinessStatement = state.accountType === "business";
+    const verifiedLabel = isBusinessStatement && fica.companyRegistrationNumber
+      ? "CIPC REGISTRATION"
+      : /south african id/i.test(fica.identityKind || "") ? "SA ID NUMBER (VERIFIED)" : `${String(fica.identityKind || "ID").toUpperCase()} (VERIFIED)`;
+    const verifiedValue = isBusinessStatement && fica.companyRegistrationNumber
+      ? fica.companyRegistrationNumber
+      : fica.idNumber;
+    text(322, 633, "FICA STATUS", 7.5, "F1", "0.38 0.43 0.52");
+    text(322, 621, ficaStatus, 9.2, "F2");
+    text(322, 608, verifiedLabel, 7.5, "F1", "0.38 0.43 0.52");
+    text(322, 596, compactStatementReference(verifiedValue, 24), 8.4, "F2");
+    text(322, 583, "WALLET ID", 7.5, "F1", "0.38 0.43 0.52");
+    text(322, 571, compactStatementReference(displayWalletId(wallet), 24), 8.4, "F2");
+    text(322, 558, "STATEMENT NO", 7.5, "F1", "0.38 0.43 0.52");
+    text(322, 546, compactStatementReference(statementNo, 24), 8.1, "F2");
+  } else {
+    text(322, 633, "FICA STATUS", 7.5, "F1", "0.38 0.43 0.52");
+    text(322, 620, ficaStatus, 9.2, "F2");
+    text(322, 594, "WALLET ID", 7.5, "F1", "0.38 0.43 0.52");
+    text(322, 581, compactStatementReference(displayWalletId(wallet), 24), 8.4, "F2");
+    text(322, 560, "STATEMENT NO", 7.5, "F1", "0.38 0.43 0.52");
+    text(322, 547, compactStatementReference(statementNo, 24), 8.1, "F2");
+  }
 
   text(52, 518, "PERIOD SUMMARY", 10, "F2", "0.12 0.32 0.62");
   fill(52, 463, 150, 44, "0.92 0.99 0.96");

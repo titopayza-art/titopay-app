@@ -124,10 +124,54 @@ async function loadEmailStatementData(db, userId, walletId, range = {}, { lockWa
   );
   const totalCount=Number(rows[0]?.total_count||0);
   const totals={moneyIn:Number(rows[0]?.money_in_total||0),moneyOut:Number(rows[0]?.money_out_total||0)};
-  return {account,rows,totalCount,from,to,period:statementPeriod(from,to),totals};
+  const fica=await approvedFicaDetails(db,userId);
+  return {account,rows,totalCount,from,to,period:statementPeriod(from,to),totals,fica};
+}
+
+// The identity details an APPROVED FICA review verified — ID/passport
+// number, address, and for businesses the CIPC registration number. Only an
+// approved review on an approved account counts; a pending or rejected
+// submission never decorates a statement.
+async function approvedFicaDetails(db, userId) {
+  try {
+    const { rows } = await db.query(
+      `SELECT cr.notes
+       FROM kyc_reviews cr
+       JOIN users u ON u.id = cr.user_id
+       WHERE cr.user_id = $1 AND cr.review_type = 'FICA' AND cr.status = 'approved'
+         AND u.fica_status = 'approved'
+       ORDER BY cr.created_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+    if (!rows[0]) return null;
+    const notes = typeof rows[0].notes === "string" ? JSON.parse(rows[0].notes) : rows[0].notes;
+    const metadata = notes?.metadata || {};
+    if (!metadata.idNumber && !metadata.address && !metadata.companyRegistrationNumber) return null;
+    return {
+      identityKind: String(metadata.identityKind || "Identity document"),
+      idNumber: String(metadata.idNumber || ""),
+      address: String(metadata.address || ""),
+      companyRegistrationNumber: String(metadata.companyRegistrationNumber || "")
+    };
+  } catch (error) {
+    // A malformed legacy review must never break a statement.
+    return null;
+  }
 }
 
 function renderStatementLines(statement) {
+  // An approved FICA review puts the verified identity at the top of the
+  // statement — this is what makes it usable at a bank or with a landlord.
+  const verified=[];
+  if(statement.fica){
+    verified.push("FICA-VERIFIED ACCOUNT HOLDER");
+    verified.push(`Name: ${statement.account.full_name||"-"}`);
+    if(statement.fica.idNumber)verified.push(`${statement.fica.identityKind}: ${statement.fica.idNumber}`);
+    if(statement.fica.companyRegistrationNumber)verified.push(`Company registration (CIPC): ${statement.fica.companyRegistrationNumber}`);
+    if(statement.fica.address)verified.push(`Address: ${statement.fica.address}`);
+    verified.push("");
+  }
   const header="DATE | TYPE | AMOUNT | BALANCE | REFERENCE";
   const lines=statement.rows.map((row)=>{
     const direction=["credit","release"].includes(row.entry_type)?"+":"-";
@@ -136,7 +180,7 @@ function renderStatementLines(statement) {
   });
   if(!lines.length)lines.push("No wallet movements were recorded for this period.");
   if(statement.totalCount>statement.rows.length)lines.push(`Showing the latest ${statement.rows.length} of ${statement.totalCount} wallet movements.`);
-  return [header,...lines].join("\n");
+  return [...verified,header,...lines].join("\n");
 }
 
 // Where a statement is delivered.
@@ -364,6 +408,7 @@ module.exports = {
   listWalletsForUser,
   listWalletStatement,
   previewEmailStatement,
+  approvedFicaDetails,
   emailWalletStatement,
   applyWalletMovement,
   listAllWallets

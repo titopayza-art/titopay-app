@@ -1,24 +1,25 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v331 (titopay-pwa-v331)
+PWA bundle: v332 (titopay-pwa-v332)
 Admin console: admin-console-v81
 
-This build — FICA collects typed identifiers, not only uploads:
+This build — approved FICA details appear on statements:
 
-  - Personal: the FICA screen now asks for the ID number (13-digit SA ID,
-    checked against the ID checksum so a typo is caught immediately) or
-    the passport/permit number — the label follows the chosen document
-    type — plus the residential address, all BEFORE the uploads.
-  - Business: the responsible person's ID/passport number, the CIPC
-    company registration number (e.g. 2020/123456/07) and the business
-    address, alongside the existing CIPC document upload requirement.
-  - The server validates and stores the typed values on the review, and
-    the Admin Compliance Queue now renders them legibly (document kind +
-    number, company registration, address, file names) so the reviewer
-    checks the documents AGAINST the declared details.
+  - Once (and only once) a FICA review is APPROVED, statements carry the
+    verified identity:
+      PDF statement (Activity > Download PDF statement): the account
+      details block shows the verified ID number (or, for a business, the
+      CIPC registration number) in a compressed right-hand column, and the
+      FICA-verified address replaces the profile address.
+      Email statement: a "FICA-VERIFIED ACCOUNT HOLDER" block at the top —
+      name, ID/passport number, CIPC registration for businesses, and
+      address — above the movement lines.
+  - Gating proven live: an approved review yields the details; flipping
+    the same review back to pending yields nothing. A pending or rejected
+    submission never decorates a document.
+  - New endpoint GET /v1/kyc/fica/verified-details (own account only).
 
-Full API suite 459/459 (FICA tests extended to the new contract: missing
-typed ID number is refused; typed values land on the review row).
+Full API suite 459/459.
 
 Migrations to run: none.
 
