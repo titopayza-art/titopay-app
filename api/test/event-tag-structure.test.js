@@ -70,7 +70,9 @@ test("only the hash of a credential is stored, never the credential", () => {
   assert.match(schema, /token_hash TEXT NOT NULL UNIQUE/);
   assert.ok(!/\btoken TEXT\b/.test(schema), "the credential itself is never a column");
   // The one place a token is produced, and the one place it is written.
-  assert.match(serviceSource, /crypto\.randomBytes\(32\)\.toString\("base64url"\)/);
+  // 16 bytes = 128 bits: unguessable for a payment credential, and half the
+  // former string length for writing to a physical tag.
+  assert.match(serviceSource, /crypto\.randomBytes\(16\)\.toString\("base64url"\)/);
   assert.match(serviceSource, /VALUES \(\$1,\$2,\$3,\$4,'UNASSIGNED'\)/);
   assert.match(serviceSource, /sha256\(token\)/);
 });

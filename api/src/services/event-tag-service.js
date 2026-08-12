@@ -70,18 +70,22 @@ function sha256(value) {
 
 // Opaque, unpredictable, and carrying nothing about the holder. 32 random bytes
 // is 256 bits of entropy, so enumeration is not a threat model that applies.
+// 16 random bytes -> 22 base64url characters. 128 bits is far beyond
+// guessable (the credential authorises payments, so it can never be a short
+// number), while the string is half its former length for writing to tags.
+// Old longer credentials keep working — verification hashes whatever the
+// tag presents.
 function mintTagToken() {
-  return `${TAG_PREFIX}_${crypto.randomBytes(32).toString("base64url")}`;
+  return `${TAG_PREFIX}_${crypto.randomBytes(16).toString("base64url")}`;
 }
 
 // What staff read off a wristband to identify it by eye. Random, and unrelated
 // to the credential, so seeing a label tells you nothing about the token.
-// The tag reference staff read out and write on a wristband: 10 plain digits,
-// the same shape as a ticket code, so nobody at a gate has to dictate hex.
-// It is a sight label only — the security of a tag lives in the ETAG_
-// credential (never stored, only hashed), not in this reference.
+// The tag reference staff read out and write on a wristband: TP + 8 digits,
+// 10 characters in all. It is a sight label only — the security of a tag
+// lives in the ETAG_ credential (never stored, only hashed), not here.
 function mintTagLabel() {
-  return String(crypto.randomInt(0, 10 ** 10)).padStart(10, "0");
+  return `TP${String(crypto.randomInt(0, 10 ** 8)).padStart(8, "0")}`;
 }
 
 // Deliberately the same rule the POS lane already applies — parsed from the
