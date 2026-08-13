@@ -13041,3 +13041,13 @@ form[data-form="ticketing-event"] label select{width:100%}
   gap: 6px;
   flex: 0 0 auto;
 }
+
+/* A row that carries a person and a control: the name may wrap, the button may
+   not. Without this the flex row squeezes "Remove" into "Remov / e", which is
+   the kind of detail that decides whether an app feels finished. */
+.tk-line > span:first-child { min-width: 0; }
+.tk-line .btn,
+.tk-line button { flex: 0 0 auto; white-space: nowrap; }
+.tk-line { align-items: center; }
+/* The manager list reads as rows of people, so give each one room to breathe. */
+.tk-card .auth-actions .btn { white-space: nowrap; }

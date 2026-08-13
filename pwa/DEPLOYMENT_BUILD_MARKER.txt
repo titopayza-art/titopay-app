@@ -1,9 +1,16 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v354 (titopay-pwa-v354)
+PWA bundle: v355 (titopay-pwa-v355)
 Admin console: admin-console-v81
 
-This build — you can now SEE which version your phone is running:
+This build — the co-parent rows stop breaking their own buttons:
+
+  In the "Who manages this wallet" list, the flex row squeezed the
+  control until "Remove" wrapped into "Remov / e", and "Add a co-parent"
+  broke across two lines. The name may wrap; the button may not. Both now
+  hold one line, at every width.
+
+Also in this build — you can now SEE which version your phone is running:
 
   Profile, at the bottom beside Refresh and Sign out: "TitoPay app v354 ·
   Check for updates". The number is read off the bundle the browser
