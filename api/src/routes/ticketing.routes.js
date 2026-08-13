@@ -36,6 +36,7 @@ const {
   claimTicketByCode,
   canManageEventTicketing
 } = require("../services/ticketing-service");
+const campaigns = require("../services/event-campaign-service");
 const eventTags = require("../services/event-tag-service");
 const walletPasses = require("../services/wallet-pass-service");
 const { pool } = require("../db/pool");
@@ -379,6 +380,46 @@ router.get("/business/events/:id/report", requireAuth, async (req, res, next) =>
     const eventId = requireUuid(req.params.id, "Event ID");
     const event = await getBusinessEvent(req.auth.userId, eventId);
     res.json({ ok: true, event, report: await eventSalesReport(eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ---- Campaign Tools -------------------------------------------------------
+   An organiser reaching their own patrons about their own event. The audience
+   is derived server-side from ticket buyers, so there is no endpoint here that
+   accepts a list of strangers to message. */
+router.get("/business/events/:id/campaigns", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, campaigns: await campaigns.campaignOverview(req.auth.userId, eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/business/events/:id/campaigns/email-pack", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.status(201).json({ ok: true, ...await campaigns.buyEmailPack(req.auth.userId, eventId, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/business/events/:id/campaigns", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.status(201).json({ ok: true, result: await campaigns.sendCampaign(req.auth.userId, eventId, req.body, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// A patron stopping event marketing, for every organiser at once.
+router.post("/campaigns/opt-out", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...await campaigns.optOut(req.auth.userId) });
   } catch (error) {
     next(error);
   }

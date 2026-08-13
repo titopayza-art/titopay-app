@@ -99,14 +99,15 @@ test("Business Ticketing stays a hub of short doors, not one long sheet", () => 
     "the ticketing hub's doors are declared in TICKETING_SECTIONS");
   const sections = (APP.match(/const TICKETING_SECTIONS = \[[\s\S]*?\n\];/) || [""])[0];
   const keys = [...sections.matchAll(/key:\s*"([a-z]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(keys, ["events", "sales", "vendors", "tags"]);
+  assert.deepEqual(keys, ["events", "sales", "vendors", "tags", "campaigns"]);
   assert.ok(keys.length <= 5, "a hub with more than five doors is a menu, not a simplification");
 
   // Each door renders from data the hub already loaded — a door that fetches
   // for itself is how the jumping came back last time.
   assert.equal((APP.match(/async function loadBusinessTicketingData\(\)/g) || []).length, 1,
     "one shared read for the hub and every door under it");
-  for (const renderer of ["ticketingEventsSection", "ticketingSalesSection", "ticketingVendorsSection", "ticketingTagsSection"]) {
+  for (const renderer of ["ticketingEventsSection", "ticketingSalesSection", "ticketingVendorsSection",
+                          "ticketingTagsSection", "ticketingCampaignsSection"]) {
     assert.doesNotMatch(functionBody(renderer), /\bawait api\(/,
       `${renderer} must render from the hub's data, not fetch its own`);
   }

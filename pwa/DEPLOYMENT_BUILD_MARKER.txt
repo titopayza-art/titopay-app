@@ -490,3 +490,24 @@ v374
   The public ticket rows also moved from a class with almost no styling onto
   activity-item, the three-column grid the rest of the app uses. That list had
   never matched anything else in TitoPay.
+
+v375
+  Campaign Tools, the fifth door on the Business Ticketing hub. An organiser
+  can reach the people who have bought tickets to their events, by email and
+  by SMS.
+
+  Email  R1 500.00 once per event. Buy the pack, then send as many email
+         campaigns for that event as you like.
+  SMS    R0.60 per SMS actually sent. Not per recipient chosen, not per
+         attempt: per message the provider accepted. A failed message is free,
+         and a campaign where everything failed costs nothing at all.
+
+  Both prices are seeded into the Pricing Engine as pricing rules, so the
+  admin console can change them without a deploy, and the screen and the
+  wallet always read the same number.
+
+  The audience is derived on the server and can never be uploaded: an
+  organiser reaches only people who have bought a ticket from them. That is
+  the difference between marketing to your own customers, which POPIA section
+  69 permits with an opt-out, and spam. Every message carries a way out, and
+  an opt-out is permanent and binds every organiser on the platform.

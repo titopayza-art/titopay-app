@@ -19,10 +19,11 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 2;
+const API_BUILD = 3;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  3: "Campaign Tools: R1500 email pack per event, R0.60 per SMS sent.",
   2: "Ticket phases and pre-sales enforced; registration events; organiser social links.",
   1: "Ticketing analytics on the console's path; Service Builder API storage; " +
      "raw emails can never render blank; TitoKids invite rewritten; build number added."

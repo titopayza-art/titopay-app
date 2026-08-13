@@ -2305,6 +2305,8 @@ async function onSubmit(event) {
     if (form.dataset.form === "ticket-email") await submitTicketEmailForm(data, form);
     if (form.dataset.form === "vendor-tag-charge") await submitVendorTagCharge(data, form);
     if (form.dataset.form === "ticketing-purchase") await submitTicketingPurchase(data);
+    if (form.dataset.form === "campaign-email") await submitCampaign("email", data, form);
+    if (form.dataset.form === "campaign-sms") await submitCampaign("sms", data, form);
     if (form.dataset.form === "ticketing-staff") await submitTicketingStaff(data, form);
     if (form.dataset.form === "business-staff") await submitBusinessStaff(data);
     if (form.dataset.form === "ticketing-scan") await submitTicketingScan(data);
@@ -3351,6 +3353,14 @@ async function handleAction(action, actionElement = null) {
     // Ticking this makes the event free. Say so on the price boxes rather
     // than leaving numbers on screen that the server is going to ignore.
     applyRegistrationMode(actionElement.checked);
+    return;
+  }
+  if (action === "campaign-load") {
+    await loadCampaignPanel(actionElement);
+    return;
+  }
+  if (action === "campaign-buy-email-pack") {
+    await buyCampaignEmailPack(actionElement);
     return;
   }
   if (action === "add-ticket-tier") {
@@ -17361,6 +17371,7 @@ function openTicketingSection(key) {
   const body = key === "events" ? ticketingEventsSection(events)
     : key === "sales" ? ticketingSalesSection(events)
     : key === "vendors" ? ticketingVendorsSection(approved)
+    : key === "campaigns" ? ticketingCampaignsSection(approved)
     : ticketingTagsSection(approved);
   openModal(`
     <div class="modal-head">
@@ -17485,6 +17496,169 @@ function ticketingVendorsSection(approved) {
    attendees pay from their own TitoPay wallets, so the organiser holds no
    float and owes no refunds when the event ends. That is the whole reason the
    tag is a credential rather than a purse. */
+/* CAMPAIGN TOOLS
+   Renders from the hub's data like every other door, then loads the audience
+   and price for the chosen event on demand. The organiser never types a
+   recipient list: TitoPay works out who their patrons are, which is what keeps
+   this on the right side of POPIA section 69. */
+function ticketingCampaignsSection(approved) {
+  if (!approved.length) {
+    return `<section class="empty-state compact-state">${icon("send")}<strong>No approved event yet</strong><p>Campaign Tools open as soon as one of your events is approved, so you always have something to invite people to.</p></section>`;
+  }
+  const options = approved.map((event) =>
+    `<option value="${esc(event.id)}">${esc(event.eventName)}</option>`).join("");
+  return `
+    <p class="muted">Let your target audience know, loud and clear, about your event. Our email and SMS campaign tools increase ticket sales by helping you attract the right people in the right volumes.</p>
+    <section class="panel-card">
+      <h3>What it costs</h3>
+      <div class="campaign-prices">
+        <article>
+          <p class="eyebrow">Email</p>
+          <strong>${money(1500)}</strong>
+          <small>Once per event. Then send as many email campaigns for that event as you like.</small>
+        </article>
+        <article>
+          <p class="eyebrow">SMS</p>
+          <strong>${money(0.6)}</strong>
+          <small>Per SMS sent. You are charged for what actually goes out, never for a message that fails.</small>
+        </article>
+      </div>
+    </section>
+    <label>Event
+      <select data-campaign-event>${options}</select>
+    </label>
+    <button class="btn secondary" type="button" data-action="campaign-load">${icon("refresh")} Show my audience and prices</button>
+    <div data-campaign-panel></div>`;
+}
+function campaignPanelHtml(overview = {}) {
+  const pricing = overview.pricing || {};
+  const audience = overview.audience || {};
+  const campaigns = overview.campaigns || [];
+  const noPatrons = !audience.email && !audience.sms;
+  return `
+    <section class="panel-card">
+      <h3>Your audience</h3>
+      <p class="muted">Everyone who has bought a ticket to one of your events, minus anyone who has opted out. TitoPay works this out for you, so there is no list to upload and nobody is contacted who has not bought from you.</p>
+      <div class="settings-list">
+        ${settingsRow("Reachable by email", `${audience.email || 0} ${audience.email === 1 ? "patron" : "patrons"}`, "mail")}
+        ${settingsRow("Reachable by SMS", `${audience.sms || 0} ${audience.sms === 1 ? "patron" : "patrons"}`, "phone")}
+        ${settingsRow("Cost to SMS all of them", money(audience.smsCost || 0), "wallet")}
+      </div>
+      ${noPatrons ? `<p class="field-hint">Nobody has bought a ticket from you yet, so there is no one to reach. Come back once you have sold your first tickets, and do not buy the email pack before then.</p>` : ""}
+    </section>
+
+    <section class="panel-card">
+      <h3>Email campaign</h3>
+      ${pricing.emailPackOwned
+        ? `<p class="field-hint">Paid for. Email campaigns for this event are unlimited.</p>`
+        : `<p class="field-hint">${money(pricing.emailPackPrice || 1500)} once for this event, then send as many as you like. Charged from your TitoPay wallet.</p>
+           <button class="btn secondary" type="button" data-action="campaign-buy-email-pack">${icon("wallet")} Unlock email campaigns for ${money(pricing.emailPackPrice || 1500)}</button>`}
+      ${pricing.emailPackOwned ? `
+        <form class="form-grid" data-form="campaign-email">
+          <label>Subject<input name="subject" maxlength="150" required placeholder="Tickets are selling fast"></label>
+          <label>Message<textarea name="message" rows="4" maxlength="5000" required placeholder="Tell your patrons what is happening, when, and why they should come."></textarea></label>
+          <button class="btn primary" type="submit">${icon("send")} Send to ${audience.email || 0} by email</button>
+        </form>` : ""}
+    </section>
+
+    <section class="panel-card">
+      <h3>SMS campaign</h3>
+      <p class="field-hint">${money(0.6)} per SMS sent. Reaching all ${audience.sms || 0} costs <strong>${money(audience.smsCost || 0)}</strong>. You will see the exact figure again before anything is charged.</p>
+      <form class="form-grid" data-form="campaign-sms">
+        <label>Message<textarea name="message" rows="3" maxlength="320" required placeholder="Doors open 20:00. Grab your ticket on TitoPay before they go."></textarea></label>
+        <p class="field-hint">Keep it short. An opt-out line is added for you, because the law requires one.</p>
+        <button class="btn primary" type="submit">${icon("send")} Send to ${audience.sms || 0} by SMS</button>
+      </form>
+    </section>
+
+    ${campaigns.length ? `
+      <section class="panel-card">
+        <h3>What you have sent</h3>
+        <div class="settings-list">
+          ${campaigns.map((item) => settingsRow(
+            `${item.channel === "sms" ? "SMS" : "Email"}${item.subject ? `: ${item.subject}` : ""}`,
+            `${item.sentCount} sent${item.failedCount ? `, ${item.failedCount} failed` : ""} · ${money(item.amountCharged)} · ${friendlyDate(item.createdAt)}`,
+            item.channel === "sms" ? "phone" : "mail")).join("")}
+        </div>
+      </section>` : ""}`;
+}
+function selectedCampaignEventId() {
+  return document.querySelector("[data-campaign-event]")?.value || "";
+}
+async function loadCampaignPanel(button) {
+  const eventId = selectedCampaignEventId();
+  const host = document.querySelector("[data-campaign-panel]");
+  if (!eventId || !host) return;
+  setButtonBusy(button, true);
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/campaigns`);
+    state.campaignOverview = result.campaigns || null;
+    host.innerHTML = campaignPanelHtml(state.campaignOverview || {});
+  } catch (error) {
+    host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "ticketing"))}</p>`;
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+async function buyCampaignEmailPack(button) {
+  const eventId = selectedCampaignEventId();
+  const overview = state.campaignOverview || {};
+  if (!eventId) return;
+  const price = money(overview.pricing?.emailPackPrice || 1500);
+  // Money leaving a wallet always asks first, in the app's own voice.
+  const go = await askToConfirm({
+    title: "Unlock email campaigns",
+    body: `${price} will be taken from your TitoPay wallet now. After that you can send unlimited email campaigns for ${overview.eventName || "this event"}, to ${overview.audience?.email || 0} patrons.`,
+    confirmLabel: `Pay ${price}`
+  });
+  if (!go) return;
+  setButtonBusy(button, true);
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/campaigns/email-pack`, { method: "POST", body: {} });
+    showToast(result.message || "Email campaigns unlocked.");
+    await loadCampaignPanel(null);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+async function submitCampaign(channel, data, form) {
+  const eventId = selectedCampaignEventId();
+  const overview = state.campaignOverview || {};
+  if (!eventId) return;
+  const reach = channel === "sms" ? (overview.audience?.sms || 0) : (overview.audience?.email || 0);
+  if (!reach) {
+    showToast("There is nobody to reach on this channel yet.", "error");
+    return;
+  }
+  // The SMS cost is real money, so it is shown and confirmed. Email is already
+  // paid for by the pack, so it only confirms the reach.
+  const cost = channel === "sms" ? money(reach * 0.6) : null;
+  const go = await askToConfirm({
+    title: channel === "sms" ? "Send this SMS campaign" : "Send this email campaign",
+    body: channel === "sms"
+      ? `This goes to ${reach} patrons and costs up to ${cost}, at ${money(0.6)} per SMS. You are only charged for messages that actually send.`
+      : `This goes to ${reach} patrons. Your email pack for this event is already paid for, so there is nothing more to pay.`,
+    confirmLabel: channel === "sms" ? `Send and pay up to ${cost}` : `Send to ${reach}`
+  });
+  if (!go) return;
+  const button = form?.querySelector("button[type=submit]");
+  setButtonBusy(button, true);
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/campaigns`, {
+      method: "POST",
+      body: { channel, subject: data.subject || "", message: data.message }
+    });
+    showToast(result.result?.message || "Campaign sent.");
+    form?.reset();
+    await loadCampaignPanel(null);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
 function ticketingTagsSection(approved) {
   if (!approved.length) {
     return `<section class="empty-state compact-state">${icon("shield")}<strong>No approved event yet</strong><p>Event Tags open as soon as one of your events is approved.</p></section>`;
@@ -23029,7 +23203,8 @@ const TICKETING_SECTIONS = [
   { key: "events", label: "My Events", icon: "ticket", hint: "Create events, submit for approval, track each one." },
   { key: "sales", label: "Sales", icon: "chart", hint: "Tickets sold and money taken, per event and per tier." },
   { key: "vendors", label: "Vendors & Door", icon: "contacts", hint: "Who may take Event Tag payments, and who scans at the door." },
-  { key: "tags", label: "Event Tags", icon: "shield", hint: "Cashless on or off, issue blank tags, assign one to a ticket." }
+  { key: "tags", label: "Event Tags", icon: "shield", hint: "Cashless on or off, issue blank tags, assign one to a ticket." },
+  { key: "campaigns", label: "Campaign Tools", icon: "send", hint: "Email and SMS your patrons about your event." }
 ];
 // The Business Ticketing hub's doors. Lives here rather than beside the hub
 // because a const between the function sections is not hoisted, and the file's
