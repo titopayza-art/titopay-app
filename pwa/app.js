@@ -6223,7 +6223,7 @@ function profileView() {
     <section class="profile-actions panel">
       <button class="btn secondary" data-action="refresh">${icon("refresh")} Refresh profile</button>
       <button class="btn secondary" data-action="logout">${icon("lock")} Sign out</button>
-      <p class="field-hint" style="margin:6px 0 0;text-align:center">TitoPay App <span title="Build ${esc(appBundleVersion() || "unknown")}">v${esc(TITOPAY_APP_VERSION)}</span> · <button class="link-btn" type="button" data-action="check-for-updates">Check for updates</button></p>
+      <p class="field-hint" style="margin:6px 0 0;text-align:center">TitoPay App v${esc(TITOPAY_APP_VERSION)} · <button class="link-btn" type="button" data-action="check-for-updates">Check for updates</button></p>
     </section>
   `;
 }
@@ -6244,17 +6244,6 @@ function profileSummaryRow(label, value, iconName, copyValue = "") {
 // reads the version off the bundle the browser actually loaded — not a
 // constant somebody has to remember to bump — so what is on screen is the
 // truth about what is running.
-function appBundleVersion() {
-  try {
-    const script = Array.from(document.querySelectorAll("script[src]"))
-      .map((tag) => String(tag.getAttribute("src") || ""))
-      .find((src) => src.includes("app.min.js") || src.includes("app.js"));
-    const match = script && script.match(/[?&]v=([0-9]+)/);
-    return match ? `v${match[1]}` : "";
-  } catch (error) {
-    return "";
-  }
-}
 async function checkForAppUpdate() {
   if (!("serviceWorker" in navigator)) {
     showToast("This browser cannot check for updates. Close the app fully and open it again.");
@@ -6274,8 +6263,8 @@ async function checkForAppUpdate() {
       setTimeout(() => location.reload(), 700);
       return;
     }
-    // Just the version. The build number stays on the tooltip of the Profile
-    // version line for support - a customer reading a toast does not need it.
+    // Just the public version. The internal bundle number is never shown to
+    // customers anywhere; support reads it from /health or the page source.
     showToast(`You are on the latest TitoPay App v${TITOPAY_APP_VERSION}.`);
   } catch (error) {
     showToast("Could not check for updates just now.", "error");

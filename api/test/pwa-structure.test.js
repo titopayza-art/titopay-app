@@ -230,6 +230,16 @@ test("the shipped bundle is rebuilt from this source", () => {
   assert.ok(sourceFns.size > 850);
 });
 
+test("the public app version is v1.0; internal bundle numbers never display", () => {
+  // Customers see "TitoPay App v1.0" and nothing else. The cache-busting
+  // bundle number (?v=NNN) is engineering plumbing: it must not appear in
+  // any rendered text or tooltip, not even on the Profile version line.
+  assert.match(source, /const TITOPAY_APP_VERSION = "1\.0"/);
+  assert.match(source, /TitoPay App v\$\{esc\(TITOPAY_APP_VERSION\)\}/);
+  assert.doesNotMatch(source, /title="Build \$\{/, "no bundle-number tooltip");
+  assert.doesNotMatch(source, /appBundleVersion/, "the bundle-number reader is gone from the UI");
+});
+
 test("the account statement paginates instead of overprinting its footer", () => {
   // A busy month used to cram every row onto page 1: eight settled rows,
   // six attempts, and the rest drawn over the footer band. Rows now flow to
