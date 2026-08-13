@@ -1,9 +1,24 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v357 (titopay-pwa-v357)
+PWA bundle: v358 (titopay-pwa-v358)
 Admin console: admin-console-v81
 
-This build — the app says its VERSION, not its build number:
+This build — the bottom bar covers the footer:
+
+  It used to float as a rounded pill with the app's ground showing
+  through down both sides and along the bottom — three edges of stray
+  background under the one element that should read as the bottom of the
+  screen. It now spans the full width and sits flush on the bottom edge,
+  keeping rounded top corners, and takes the home-indicator inset into
+  its own padding so nothing sits under the indicator.
+
+  The raised Accept Pay button is unchanged. On a wide screen the bar
+  runs the full width of the app column with the buttons centred, so it
+  reads as a footer rather than a stretched pill. Measured in a browser
+  at phone and tablet width: the bar matches its column exactly and its
+  bottom edge is the screen's bottom edge.
+
+Also in this build — the app says its VERSION, not its build number:
 
   Profile read "TitoPay app v355". It now reads "TitoPay App 1.0". The
   build number changes several times a week and means nothing to anybody

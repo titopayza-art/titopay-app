@@ -13051,3 +13051,36 @@ form[data-form="ticketing-event"] label select{width:100%}
 .tk-line { align-items: center; }
 /* The manager list reads as rows of people, so give each one room to breathe. */
 .tk-card .auth-actions .btn { white-space: nowrap; }
+
+/* THE NAV COVERS THE FOOTER.
+   It used to float as a rounded pill with a gap down both sides and along the
+   bottom, so the app's ground showed through underneath it — three edges of
+   stray background under the one element that should feel like the bottom of
+   the screen. It now spans the full width and sits flush on the bottom edge,
+   keeping its rounded top corners and taking the home-indicator inset into its
+   own padding so nothing is ever under the indicator. On a wide screen the bar
+   still runs edge to edge, while the buttons stay centred on a phone-width
+   column, so it reads as a footer rather than a stretched pill. */
+.bottom-nav {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  max-width: none;
+  transform: none;
+  border-radius: 22px 22px 0 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  padding-block: 10px calc(10px + var(--safe-bottom));
+  padding-inline: max(12px, var(--safe-left), calc((100% - 560px) / 2)) max(12px, var(--safe-right), calc((100% - 560px) / 2));
+  box-shadow: 0 -8px 28px rgba(6, 26, 61, 0.10);
+}
+
+@media (min-width: 760px) {
+  .bottom-nav {
+    width: auto;
+    max-width: none;
+    padding-inline: max(24px, calc((100% - 620px) / 2)) max(24px, calc((100% - 620px) / 2));
+  }
+}
