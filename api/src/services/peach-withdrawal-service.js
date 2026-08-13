@@ -377,7 +377,7 @@ async function handleSubmissionFailure(row, error) {
     // Deliberately a 502 so the customer is told the truth: it is in flight.
     throw new AppError(
       502,
-      "TitoPay could not confirm this withdrawal with the payout provider. The amount is held against this withdrawal and it will finish or be returned automatically — do not try again. Check Activity for the outcome.",
+      "TitoPay could not confirm this withdrawal with the payout provider. The amount is held against this withdrawal and it will finish or be returned automatically. Do not try again. Check Activity for the outcome.",
       { code: "PAYOUT_SUBMISSION_UNCERTAIN", reference: rows[0]?.reference || row.reference }
     );
   }

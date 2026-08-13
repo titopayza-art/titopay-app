@@ -227,7 +227,7 @@ async function roi(rangeInput) {
       roiPercent: spend > 0 ? Math.round(((direct - spend) / spend) * 1000) / 10 : null,
       // Say so rather than printing a confident 0%: a campaign with revenue and
       // no recorded cost has an ROI nobody can compute.
-      note: spend === 0 && direct > 0 ? "No cost recorded — ROI cannot be calculated" : null
+      note: spend === 0 && direct > 0 ? "No cost recorded, so ROI cannot be calculated" : null
     };
   });
 }

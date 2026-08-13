@@ -127,7 +127,7 @@ async function listStaff(businessUserId) {
 }
 
 async function notifyStaffAdded(business, staffUser, role) {
-  const body = `${business.full_name || "A business"} added you to their staff as ${role}. Open My Workplaces on your TitoPay profile — you can make sales for the business from your own phone, and every payment goes straight to the business wallet.`;
+  const body = `${business.full_name || "A business"} added you to their staff as ${role}. Open My Workplaces on your TitoPay profile. You can make sales for the business from your own phone, and every payment goes straight to the business wallet.`;
   try {
     await createNotification({
       user: { id: staffUser.id, user_type: "customer" },
@@ -152,7 +152,7 @@ async function notifyStaffAdded(business, staffUser, role) {
           "",
           `${business.full_name || "A TitoPay business"} has added you to their staff register as ${role}.`,
           "",
-          "What you can do: open My Workplaces on your own TitoPay profile and make sales for the business — tap their products, show the payment QR, and the customer's payment goes straight into the business wallet. Sales you take are credited to your name on the business's performance report.",
+          "What you can do: open My Workplaces on your own TitoPay profile and make sales for the business: tap their products, show the payment QR, and the customer's payment goes straight into the business wallet. Sales you take are credited to your name on the business's performance report.",
           "",
           "What you cannot do: you never hold the business's money and you get no access to the business account itself.",
           "",
@@ -161,7 +161,7 @@ async function notifyStaffAdded(business, staffUser, role) {
         htmlBody: [
           `<p>Hi ${emailCentre.escapeHtml(staffUser.full_name || "there")},</p>`,
           `<p><strong>${emailCentre.escapeHtml(business.full_name || "A TitoPay business")}</strong> has added you to their staff register as <strong>${emailCentre.escapeHtml(role)}</strong>.</p>`,
-          "<p><strong>What you can do:</strong> open <strong>My Workplaces</strong> on your own TitoPay profile and make sales for the business — tap their products, show the payment QR, and the customer's payment goes straight into the business wallet. Sales you take are credited to your name on the business's performance report.</p>",
+          "<p><strong>What you can do:</strong> open <strong>My Workplaces</strong> on your own TitoPay profile and make sales for the business: tap their products, show the payment QR, and the customer's payment goes straight into the business wallet. Sales you take are credited to your name on the business's performance report.</p>",
           "<p><strong>What you cannot do:</strong> you never hold the business's money and you get no access to the business account itself.</p>",
           "<p>If you were not expecting this, you can ignore it, or ask the business to remove you.</p>"
         ].join("\n"),
@@ -183,7 +183,7 @@ async function addStaff(businessUserId, payload = {}) {
   const contact = boundedText(payload.contact, "Contact", { min: 3, max: 120 });
   const staffUser = await resolveStaffUser(contact);
   if (staffUser && staffUser.id === businessUserId) {
-    throw new AppError(400, "That contact is this business account itself — add the person's own TitoPay details.");
+    throw new AppError(400, "That contact is this business account itself. Add the person's own TitoPay details.");
   }
   const id = uuidv4();
   let row;
@@ -211,7 +211,7 @@ async function addStaff(businessUserId, payload = {}) {
     member: shapeMember({ ...row, staff_username: staffUser?.username || "" }),
     linked: Boolean(staffUser),
     message: staffUser
-      ? `${fullName} was added and notified — they can now sell for you from My Workplaces on their own phone.`
+      ? `${fullName} was added and notified. They can now sell for you from My Workplaces on their own phone.`
       : `${fullName} was saved on the register. No TitoPay account matches "${contact}" yet, so they were not notified and cannot sell until they join TitoPay and you add them again.`
   };
 }
@@ -242,7 +242,7 @@ async function relinkStaff(businessUserId, memberId, payload = {}) {
 
   const staffUser = await resolveStaffUser(contact);
   if (staffUser && staffUser.id === businessUserId) {
-    throw new AppError(400, "That contact is this business account itself — use the person's own TitoPay details.");
+    throw new AppError(400, "That contact is this business account itself. Use the person's own TitoPay details.");
   }
   if (!staffUser) {
     // Save the corrected contact even when it still does not match, so the
@@ -250,7 +250,7 @@ async function relinkStaff(businessUserId, memberId, payload = {}) {
     if (contact !== member.contact) {
       await pool.query("UPDATE business_staff SET contact = $1, updated_at = NOW() WHERE id = $2", [contact, memberId]);
     }
-    throw new AppError(404, `No active TitoPay account matches "${contact}". Check the spelling with them, or ask them to sign up first — the exact @username is the most reliable.`);
+    throw new AppError(404, `No active TitoPay account matches "${contact}". Check the spelling with them, or ask them to sign up first. Their exact @username is the most reliable.`);
   }
   if (member.staff_user_id === staffUser.id) {
     return { member: shapeMember({ ...member, contact, staff_username: staffUser.username }), linked: true, message: `${member.full_name} is already linked to @${staffUser.username}.` };
@@ -274,7 +274,7 @@ async function relinkStaff(businessUserId, memberId, payload = {}) {
   return {
     member: shapeMember({ ...rows[0], staff_username: staffUser.username }),
     linked: true,
-    message: `${rows[0].full_name} is linked to @${staffUser.username} and has been notified — My Workplaces now shows your business on their phone.`
+    message: `${rows[0].full_name} is linked to @${staffUser.username} and has been notified. My Workplaces now shows your business on their phone.`
   };
 }
 
@@ -372,7 +372,7 @@ async function staffSale(staffUserId, businessUserId, payload = {}) {
     if (!(total > 0) || total > 100000) throw new AppError(400, "Enter a sale amount between R0.01 and R100,000");
     reference = `SALE-${Date.now()}-BY-${(staffRows[0]?.username || "staff").slice(0, 24)}`;
   }
-  const label = boundedText(payload.label || `${membership.business_name} — served by ${staffName}`, "Label", { min: 1, max: 48 });
+  const label = boundedText(payload.label || `${membership.business_name} · served by ${staffName}`, "Label", { min: 1, max: 48 });
   const qr = await persistQr({
     userId: businessUserId,
     codeType: "dynamic",

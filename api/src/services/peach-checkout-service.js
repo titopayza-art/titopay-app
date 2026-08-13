@@ -280,7 +280,7 @@ async function createTopupCheckout(actor, payload = {}) {
   if (quotedTotal !== null && Number.isFinite(quotedTotal) && Math.abs(quotedTotal - chargeTotal) > 0.005) {
     throw new AppError(
       409,
-      "The top-up fee changed since this screen was opened. Nothing was charged — please start the top up again to see the current total.",
+      "The top-up fee changed since this screen was opened. Nothing was charged. Please start the top up again to see the current total.",
       { code: "TOPUP_QUOTE_STALE" }
     );
   }

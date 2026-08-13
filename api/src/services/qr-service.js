@@ -102,7 +102,7 @@ async function payQr(actor, payload) {
     let parsed = null;
     try { parsed = JSON.parse(qrId); } catch { parsed = null; }
     if (parsed && parsed.type === "titopay_ticket") {
-      throw new AppError(400, "This is a TitoPay event ticket, not a payment QR. Nothing can be paid with it — present it at the event entrance instead.");
+      throw new AppError(400, "This is a TitoPay event ticket, not a payment QR. Nothing can be paid with it. Present it at the event entrance instead.");
     }
     qrId = parsed && parsed.id ? String(parsed.id).trim() : "";
   }

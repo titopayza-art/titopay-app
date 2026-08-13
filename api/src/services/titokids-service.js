@@ -269,7 +269,7 @@ async function addChild(parentUserId, payload = {}) {
     const { resolveStaffUser } = require("./business-staff-service");
     childUser = await resolveStaffUser(payload.childIdentifier);
     if (!childUser) throw new AppError(404, `No TitoPay account matches "${String(payload.childIdentifier).trim()}". Leave it blank to add the child without a linked account.`);
-    if (childUser.id === parentUserId) throw new AppError(400, "That is your own account — enter the child's TitoPay details.");
+    if (childUser.id === parentUserId) throw new AppError(400, "That is your own account. Enter the child's TitoPay details.");
     const { rows: existing } = await pool.query(
       "SELECT 1 FROM titokids_children WHERE parent_user_id = $1 AND child_user_id = $2 AND status = 'active'",
       [parentUserId, childUser.id]
@@ -396,7 +396,7 @@ async function fundChild(parentUserId, childId, payload = {}, options = {}) {
     const parentWallet = parentWallets[0];
     if (!parentWallet) throw new AppError(404, "Your TitoPay wallet is not available");
     if (money(parentWallet.available_balance) < amount) {
-      throw new AppError(409, `Not enough in your wallet — you have R${money(parentWallet.available_balance).toFixed(2)} available.`);
+      throw new AppError(409, `Not enough in your wallet. You have R${money(parentWallet.available_balance).toFixed(2)} available.`);
     }
     const transactionId = uuidv4();
     const reference = `TKID-${Date.now().toString(36).toUpperCase()}`;
@@ -436,7 +436,7 @@ async function fundChild(parentUserId, childId, payload = {}, options = {}) {
         user: { id: child.child_user_id, user_type: "customer" },
         channel: "in_app", notificationType: "titokids_funded", provider: "in_app",
         title: goal ? `R${amount.toFixed(2)} toward ${goal.name}` : `You received R${amount.toFixed(2)}`,
-        body: goal ? `Money was added toward your "${goal.name}" goal.` : `Money was added to your TitoKids wallet${note ? ` — "${note}"` : ""}.`,
+        body: goal ? `Money was added toward your "${goal.name}" goal.` : `Money was added to your TitoKids wallet${note ? ` · "${note}"` : ""}.`,
         metadata: { childId, clientNotificationId: `titokids-fund-${transactionId}` }
       }).catch(() => {});
     }
@@ -482,7 +482,7 @@ async function payForChild(parentUserId, childId, payload = {}) {
     }
     const { rows: childWallets } = await client.query("SELECT * FROM wallets WHERE id = $1 FOR UPDATE", [child.wallet_id]);
     if (money(childWallets[0].available_balance) < amount) {
-      throw new AppError(409, `The child's wallet holds R${money(childWallets[0].available_balance).toFixed(2)} — add money first.`);
+      throw new AppError(409, `The child's wallet holds R${money(childWallets[0].available_balance).toFixed(2)}. Add money first.`);
     }
     const { rows: recipientWallets } = await client.query(
       `SELECT * FROM wallets WHERE user_id = $1 AND kind IN ('personal','business') AND status = 'active' ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
@@ -688,11 +688,11 @@ async function inviteGuardian(ownerUserId, childId, payload = {}) {
   const { resolveStaffUser } = require("./business-staff-service");
   const person = await resolveStaffUser(contact);
   if (!person) {
-    throw new AppError(404, `No active TitoPay account matches "${contact}". Their exact @username is the most reliable — they need a TitoPay account before they can help manage ${child.full_name}'s wallet.`);
+    throw new AppError(404, `No active TitoPay account matches "${contact}". Their exact @username is the most reliable, and they need a TitoPay account before they can help manage ${child.full_name}'s wallet.`);
   }
   if (person.id === ownerUserId) throw new AppError(400, "You already manage this wallet.");
   if (child.child_user_id && person.id === child.child_user_id) {
-    throw new AppError(400, `${child.full_name} cannot be a manager of their own wallet — that would put the limits in their hands.`);
+    throw new AppError(400, `${child.full_name} cannot be a manager of their own wallet, because that would put the limits in their hands.`);
   }
   const { rows: existing } = await pool.query(
     "SELECT * FROM titokids_guardians WHERE child_id = $1 AND user_id = $2 AND status IN ('invited','active') LIMIT 1",
@@ -701,7 +701,7 @@ async function inviteGuardian(ownerUserId, childId, payload = {}) {
   if (existing[0]) {
     throw new AppError(409, existing[0].status === "active"
       ? `@${person.username} already helps manage ${child.full_name}'s wallet.`
-      : `@${person.username} has already been invited — they still need to accept.`);
+      : `@${person.username} has already been invited. They still need to accept.`);
   }
   const id = uuidv4();
   await pool.query(
@@ -714,7 +714,7 @@ async function inviteGuardian(ownerUserId, childId, payload = {}) {
     user: { id: person.id, user_type: "customer" },
     channel: "in_app", notificationType: "titokids_guardian_invite", provider: "in_app",
     title: `${inviterName} asked you to help manage ${child.full_name}'s money`,
-    body: `Accept in TitoKids and you can add money from your own wallet, pay for needs, set limits and answer ${child.full_name}'s requests. You will never be able to spend ${inviterName}'s money — funding always comes from your own wallet.`,
+    body: `Accept in TitoKids and you can add money from your own wallet, pay for needs, set limits and answer ${child.full_name}'s requests. You will never be able to spend ${inviterName}'s money, because funding always comes from your own wallet.`,
     metadata: { childId, guardianId: id, clientNotificationId: `titokids-guardian-invite-${id}` }
   }).catch(() => {});
   if (person.email) {
@@ -745,7 +745,7 @@ async function inviteGuardian(ownerUserId, childId, payload = {}) {
   }
   return {
     guardian: { id, userId: person.id, fullName: person.full_name, username: person.username, relationship, status: "invited" },
-    message: `${person.full_name || `@${person.username}`} was invited — they help manage ${child.full_name}'s wallet as soon as they accept.`
+    message: `${person.full_name || `@${person.username}`} was invited. They help manage ${child.full_name}'s wallet as soon as they accept.`
   };
 }
 
@@ -865,7 +865,7 @@ async function createRequest(childUserId, childId, payload = {}) {
   const note = payload.note ? boundedText(payload.note, "Note", { min: 1, max: 200 }) : "";
   const { rows: open } = await pool.query(
     "SELECT COUNT(*)::int AS count FROM titokids_requests WHERE child_id = $1 AND status = 'requested'", [childId]);
-  if (open[0].count >= 5) throw new AppError(429, "You already have 5 requests waiting — give your parent a moment to answer.");
+  if (open[0].count >= 5) throw new AppError(429, "You already have 5 requests waiting. Give your parent a moment to answer.");
   const id = uuidv4();
   await pool.query(
     `INSERT INTO titokids_requests (id, child_id, requested_by, amount, category, note)
@@ -877,7 +877,7 @@ async function createRequest(childUserId, childId, payload = {}) {
       user: { id: approverId, user_type: "customer" },
       channel: "in_app", notificationType: "titokids_request", provider: "in_app",
       title: "TitoKids approval needed",
-      body: `${child.full_name} is asking for R${amount.toFixed(2)} (${CATEGORY_LABELS[category]})${note ? ` — "${note}"` : ""}.`,
+      body: `${child.full_name} is asking for R${amount.toFixed(2)} (${CATEGORY_LABELS[category]})${note ? ` · "${note}"` : ""}.`,
       metadata: { childId, requestId: id, clientNotificationId: `titokids-request-${id}-${approverId}` }
     }).catch(() => {});
   }
@@ -938,7 +938,7 @@ async function decideRequest(parentUserId, requestId, approve) {
       user: { id: request.child_user_id, user_type: "customer" },
       channel: "in_app", notificationType: "titokids_request_decided", provider: "in_app",
       title: approve ? `Your R${money(request.amount).toFixed(2)} request was approved` : "Your request was declined",
-      body: approve ? "The money is in your TitoKids wallet." : `Your request for R${money(request.amount).toFixed(2)} was declined${request.note ? ` — "${request.note}"` : ""}.`,
+      body: approve ? "The money is in your TitoKids wallet." : `Your request for R${money(request.amount).toFixed(2)} was declined${request.note ? ` · "${request.note}"` : ""}.`,
       metadata: { requestId, clientNotificationId: `titokids-decided-${requestId}` }
     }).catch(() => {});
   }

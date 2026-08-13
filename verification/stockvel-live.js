@@ -144,7 +144,7 @@ async function cleanup() {
     await contribute(ids.member, 50);
     const closed = await svc.closeMeeting(ids.chair, groupId, meeting.id);
     assert.equal(closed.status, "closed");
-    assert.match(closed.minutes, /MINUTES — Year-end planning/);
+    assert.match(closed.minutes, /MINUTES: Year-end planning/);
     assert.match(closed.minutes, /DECISIONS AGREED/);
     assert.match(closed.minutes, /increase to R250 from March/i, "the pinned decision leads the minutes");
     assert.match(closed.minutes, new RegExp(`${TAG} Member: R50.00`), "the contribution during the meeting is minuted");

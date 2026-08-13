@@ -1,9 +1,21 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v370 (titopay-pwa-v370)
+PWA bundle: v371 (titopay-pwa-v371)
 Admin console: admin-console-v81
 
-This build — the tour opens with who we are, then what the buttons do:
+This build — the writing stops leaning on dashes:
+
+  Every " — " used as a lazy connector is gone from the words customers
+  read: 101 rewrites across the app and 50 more across the server's
+  notifications, emails and error messages. Each one was rewritten by
+  hand with the join the sentence actually needed (a full stop, a comma,
+  a colon, or brackets), never a mechanical swap, so the grammar holds.
+
+  Deliberately kept: the "—" shown where a value is missing (a blank tag
+  column, an attendance count still loading) and the "— TitoPay"
+  sign-off at the bottom of letters, which is how a person signs.
+
+Also in this build — the tour opens with who we are, then what the buttons do:
 
   Three new pages lead the guided tour, before the twelve app steps
   (fifteen in total, and the header, dots and step counter all follow

@@ -1448,7 +1448,7 @@ function openReceiveModal() {
   const isBusiness = state.accountType === "business";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Receive Money</p><h2>${isBusiness ? "Make a sale" : "Generate TitoPay QR"}</h2><p class="lead">${isBusiness ? "Tap products to build the sale, or enter an amount — then take payment by QR." : "Create a secure QR code for receiving payments."}</p></div>
+      <div><p class="eyebrow">Receive Money</p><h2>${isBusiness ? "Make a sale" : "Generate TitoPay QR"}</h2><p class="lead">${isBusiness ? "Tap products to build the sale, or enter an amount, then take payment by QR." : "Create a secure QR code for receiving payments."}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="receive">
@@ -1463,7 +1463,7 @@ function openReceiveModal() {
         <div class="input-affix currency-affix" data-prefix="R"><input id="receive-qr-amount" name="amount" inputmode="decimal"></div>
         <small class="field-hint">Leave empty to let the payer enter the amount.</small>
       </div>
-      <button class="btn primary" type="submit">${icon("qr")} ${isBusiness ? "Take payment — generate QR" : "Generate receive QR"}</button>
+      <button class="btn primary" type="submit">${icon("qr")} ${isBusiness ? "Generate payment QR" : "Generate receive QR"}</button>
     </form>
   `);
   if (isBusiness) refreshReceiveProducts();
@@ -1471,7 +1471,7 @@ function openReceiveModal() {
 function openTipModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Tip</p><h2>Send a Tip</h2><p class="lead">Show appreciation for great service — send a tip to anyone on TitoPay instantly from your wallet.</p></div>
+      <div><p class="eyebrow">Tip</p><h2>Send a Tip</h2><p class="lead">Show appreciation for great service. Send a tip to anyone on TitoPay instantly from your wallet.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${balanceContextRow("Wallet")}
@@ -1551,7 +1551,7 @@ function openReportFraudModal() {
   const locked = isWalletLocked();
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Report Fraud</p><h2>Act fast, then tell us</h2><p class="lead">If something looks wrong on your account, protect it first — then report it.</p></div>
+      <div><p class="eyebrow">Report Fraud</p><h2>Act fast, then tell us</h2><p class="lead">If something looks wrong on your account, protect it first, then report it.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="fraud-first-aid" role="note" aria-label="Immediate protection steps">
@@ -2213,10 +2213,10 @@ function friendlyFormError(error, formName = "") {
   // likely reached TitoPay, so the customer must be told to CHECK rather than to
   // retry — retrying is how a payment gets made twice.
   if (error?.fromSessionRefresh) {
-    return `${rawMessage || "Your TitoPay session could not be renewed."} Sign out and sign in again — your wallet and money are unaffected.${suffix}`;
+    return `${rawMessage || "Your TitoPay session could not be renewed."} Sign out and sign in again. Your wallet and money are unaffected.${suffix}`;
   }
   if (error?.timedOut || status === 408) {
-    return `${rawMessage || "TitoPay is taking longer than usual to answer."} Check Activity before trying again — if it appears there, it went through.${suffix}`;
+    return `${rawMessage || "TitoPay is taking longer than usual to answer."} Check Activity before trying again. If it appears there, it went through.${suffix}`;
   }
   if (status === 429) {
     if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
@@ -2510,7 +2510,7 @@ async function onClick(event) {
   if (stockvelActivate) {
     api(`${STOCKVEL_PATH}/${encodeURIComponent(stockvelActivate.dataset.stockvelActivate)}`, { method: "PUT", body: { status: "active" } })
       .then(async () => {
-        showToast("Group activated — share the invite code so members can join.");
+        showToast("Group activated. Share the invite code so members can join.");
         await loadStockvelGroups({ force: true }).catch(() => {});
         await loadStockvelDetail(stockvelActivate.dataset.stockvelActivate).catch(() => {});
         paintStockvel();
@@ -2527,7 +2527,7 @@ async function onClick(event) {
     });
     if (title === null) return;
     api(`${STOCKVEL_PATH}/${encodeURIComponent(state.stockvelChat.groupId)}/meetings`, { method: "POST", body: { title: title.trim() || undefined } })
-      .then(() => { showToast("Meeting opened — the conversation from now goes into the minutes."); return refreshStockvelGroupChat(); })
+      .then(() => { showToast("Meeting opened. Everything said from now goes into the minutes."); return refreshStockvelGroupChat(); })
       .catch((error) => showToast(friendlyFormError(error, "stockvel"), "error"));
     return;
   }
@@ -2539,7 +2539,7 @@ async function onClick(event) {
       confirmLabel: "End and send minutes"
     })) return;
     api(`${STOCKVEL_PATH}/${encodeURIComponent(state.stockvelChat.groupId)}/meetings/${encodeURIComponent(svMeetingClose.dataset.svMeetingClose)}/close`, { method: "POST" })
-      .then(() => { showToast("Meeting closed — minutes compiled and emailed to the group."); return refreshStockvelGroupChat(); })
+      .then(() => { showToast("Meeting closed. Minutes compiled and emailed to the group."); return refreshStockvelGroupChat(); })
       .catch((error) => showToast(friendlyFormError(error, "stockvel"), "error"));
     return;
   }
@@ -2560,7 +2560,7 @@ async function onClick(event) {
     const approve = Boolean(tkApprove.dataset.tkApprove);
     const requestId = tkApprove.dataset.tkApprove || tkApprove.dataset.tkDecline;
     api(`/v1/tito-kids/approvals/${encodeURIComponent(requestId)}/${approve ? "approve" : "decline"}`, { method: "POST" })
-      .then(() => { showToast(approve ? "Approved — the money is in their wallet." : "Declined."); return refreshTitoKidsHome(); })
+      .then(() => { showToast(approve ? "Approved. The money is in their wallet." : "Declined."); return refreshTitoKidsHome(); })
       .catch((error) => showToast(friendlyFormError(error, "titokids"), "error"));
     return;
   }
@@ -3159,7 +3159,7 @@ function onChange(event) {
       // says so here rather than letting someone reach the review screen and
       // then be turned away — and it must never imply money can be transferred.
       hint.textContent = fundingMethod.value === "eft_bank_transfer"
-        ? "EFT top ups are not available yet — TitoPay cannot match bank transfers to your wallet automatically. Choose Card to top up now."
+        ? "EFT top ups are not available yet, because TitoPay cannot match bank transfers to your wallet automatically. Choose Card to top up now."
         : "Paid by card through Peach Payments. Your wallet is credited once the payment is confirmed.";
     }
   }
@@ -4013,7 +4013,7 @@ async function submitSupportRequest(data) {
   } else {
     closeModal();
   }
-  showToast(ticketRef ? `Support request submitted. Reference ${ticketRef} — a receipt email is on its way.` : "Support request submitted.");
+  showToast(ticketRef ? `Support request submitted. Reference ${ticketRef}. A receipt email is on its way.` : "Support request submitted.");
 }
 async function submitSupportRating(rating) {
   const button = document.querySelector(`[data-support-rating="${String(rating)}"]`);
@@ -5295,7 +5295,7 @@ function openSecurityCentreModal() {
       <div class="security-score-ring" data-score="${pct}" role="img" aria-label="Security score ${pct} percent"><strong>${pct}%</strong></div>
       <div>
         <h3>${active} of ${signals.length} protections active</h3>
-        <p>Your score reflects the protections active on this account right now — nothing is simulated.</p>
+        <p>Your score reflects the protections active on this account right now. Nothing is simulated.</p>
       </div>
     </section>
     <section class="score-checklist" aria-label="Protection checklist">
@@ -5374,7 +5374,7 @@ function openBiometricInfoModal() {
     <section class="activity-list">
       ${settingsRow("This device", available ? "Fingerprint or face unlock is available on this device." : "Fingerprint or face unlock was not detected on this device or browser.", available ? "check-circle" : "phone")}
       ${settingsRow("Your TitoPay sign-in", "Access is protected by your PIN or password, with a one-time code required for password changes and recovery.", "shield")}
-      ${settingsRow("Protecting the app itself", "Your device's screen lock — PIN, fingerprint or face — protects TitoPay whenever your phone locks. Browsers and password managers can also require biometrics before filling your saved TitoPay password.", "lock")}
+      ${settingsRow("Protecting the app itself", "Your device's screen lock (PIN, fingerprint or face) protects TitoPay whenever your phone locks. Browsers and password managers can also require biometrics before filling your saved TitoPay password.", "lock")}
       ${settingsRow("Your biometric data", "Fingerprints and face data stay on your device. They are never sent to or stored by TitoPay.", "eye-off")}
     </section>
     <button class="btn primary" type="button" data-close>Got it</button>
@@ -5405,7 +5405,7 @@ function openSecurityTipsModal() {
     </div>
     ${securityTipCard("Protect your account")}
     <section class="activity-list">
-      ${settingsRow("Never share codes", "TitoPay will never ask for your PIN, password or OTP — not by phone, SMS, email or WhatsApp.", "lock")}
+      ${settingsRow("Never share codes", "TitoPay will never ask for your PIN, password or OTP, not by phone, SMS, email or WhatsApp.", "lock")}
       ${settingsRow("Check before you pay", "Read the verified recipient name and the fee preview before you press Confirm.", "check-circle")}
       ${settingsRow("Keep contact details current", "Your registered cellphone and email are how you recover access.", "mail")}
       ${settingsRow("Lock your wallet fast", "If something feels wrong, stop everything leaving from the Security Centre. Other people can still pay you.", "shield")}
@@ -5679,7 +5679,7 @@ function profileView() {
     <section class="section-head compact"><h2>Account</h2></section>
     <section class="profile-feature-grid">
       ${profileFeature("TitoPay Chat", isBusiness ? "Chat with customers before payments." : "Chat with TitoPay users before payments.", "chat", "titopay-chat", true)}
-      ${isBusiness ? "" : profileFeature("My Workplaces", "Businesses that added you as staff — take sales for them from your phone.", "staff-badge", "my-workplaces")}
+      ${isBusiness ? "" : profileFeature("My Workplaces", "Businesses that added you as staff. Take sales for them from your phone.", "staff-badge", "my-workplaces")}
       ${profileFeature("Saved Beneficiaries", isBusiness ? "Manage customers, suppliers, employees and payout recipients." : "Manage favourite and recent payment recipients.", "user", "saved-beneficiaries")}
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
       ${profileFeature("Proof of Account", "Download an official stamped letter confirming your TitoPay account.", "document-invoice", "proof-of-account")}
@@ -5687,7 +5687,7 @@ function profileView() {
     </section>
     <section class="section-head compact"><h2>Security</h2></section>
     <section class="profile-feature-grid">
-      ${profileFeature("Security Centre", locked ? "Your wallet is locked. Unlock it and manage all protections here." : "Score, devices, wallet lock, PIN changes and privacy — all in one place.", "shield", "security-centre", true)}
+      ${profileFeature("Security Centre", locked ? "Your wallet is locked. Unlock it and manage all protections here." : "Score, devices, wallet lock, PIN changes and privacy, all in one place.", "shield", "security-centre", true)}
     </section>
     <section class="section-head compact"><h2>${isBusiness ? "Grow your business" : "Share & tools"}</h2></section>
     <section class="profile-feature-grid">
@@ -5752,7 +5752,7 @@ async function checkForAppUpdate() {
     await registration.update();
     // A worker that installed and is waiting means a newer build is ready.
     if (registration.waiting || registration.installing) {
-      showToast("A new version is ready — reloading.");
+      showToast("A new version is ready. Reloading now.");
       setTimeout(() => location.reload(), 700);
       return;
     }
@@ -6273,7 +6273,7 @@ function openTransactionDetailModal(key) {
     ["Direction", direction === "credit" ? "Money in" : "Money out", direction === "credit" ? "download" : "upload"],
     ["Wallet movement", settled
       ? `${direction === "credit" ? "+" : "-"}${money(statementPostedAmount(item))}`
-      : "None — your balance was not affected", settled ? "wallet" : "shield"]
+      : "None. Your balance was not affected", settled ? "wallet" : "shield"]
   ];
   if (hasFee) rows.push(["Fee", money(Number(feeRaw)), "shield"]);
   if (dateObj && !Number.isNaN(dateObj.getTime())) {
@@ -6670,7 +6670,7 @@ function openTransactionFailureModal(message, error = null) {
     </div>
     <section class="failure-panel" aria-label="Transaction failure details">
       <p class="failure-message">${esc(safeMessage)}</p>
-      <p class="failure-guidance">Nothing was charged and your wallet is unchanged. Check Activity before trying again — if the transaction appears there, it was received by TitoPay and you should not submit it a second time.</p>
+      <p class="failure-guidance">Nothing was charged and your wallet is unchanged. Check Activity before trying again. If the transaction appears there, it was received by TitoPay and you should not submit it a second time.</p>
     </section>
     <div class="tx-detail-actions">
       <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} Check Activity</button>
@@ -6757,7 +6757,7 @@ async function confirmReviewedTransaction() {
         }
       }).then((created) => {
         loadStockvelGroups({ force: true }).catch(() => {});
-        if (created.group?.invite_code) showToast(`Group live — share invite code ${created.group.invite_code} so members can join.`);
+        if (created.group?.invite_code) showToast(`Group live. Share invite code ${created.group.invite_code} so members can join.`);
       }).catch(() => {});
     }
     // A contribution the client saw succeed is a real event, so it is recorded in
@@ -6802,7 +6802,7 @@ function isWalletLocked() {
   return Boolean(state.user && (state.user.profileLocked || state.user.profile_locked));
 }
 async function lockWallet() {
-  const confirmed = confirm("Lock your TitoPay wallet now?\n\nNothing will be able to leave your wallet — no payments, transfers, purchases, QR payments, withdrawals or top ups. Other people can still pay you, and the money will be waiting when you unlock with an OTP.");
+  const confirmed = confirm("Lock your TitoPay wallet now?\n\nNothing will be able to leave your wallet: no payments, transfers, purchases, QR payments, withdrawals or top ups. Other people can still pay you, and the money will be waiting when you unlock with an OTP.");
   if (!confirmed) return;
   const result = await api("/v1/security/wallet-lock", { method: "POST", body: {} });
   state.user = Object.assign({}, state.user, result.user || {}, { profileLocked: true, profile_locked: true });
@@ -7218,12 +7218,12 @@ function paymentErrorMessage(error) {
   if (error?.fromSessionRefresh || status === 401 || status === 403) {
     // A signed-out session stops the payment before it starts. Say so, because
     // a customer who is not told this assumes the money left anyway.
-    return "Your session has expired. Please sign in again — your wallet and money are unaffected.";
+    return "Your session has expired. Please sign in again. Your wallet and money are unaffected.";
   }
   if (status === 423) return "Your wallet is locked. Unlock it and try again.";
   if (status === 429) return "Too many attempts. Please wait a few minutes and try again.";
   if (error?.timedOut || status === 408) {
-    return "This is taking longer than usual. Check Activity before trying again — if it appears there, it went through.";
+    return "This is taking longer than usual. Check Activity before trying again. If it appears there, it went through.";
   }
   if (status === 0) return "We couldn't reach TitoPay. Please check your connection and try again.";
   // A declined card comes back as a provider result, not a code we own.
@@ -7257,7 +7257,7 @@ async function startEftTopup(context) {
     </div>
     <section class="failure-panel" aria-label="EFT top up unavailable">
       <p class="failure-message">TitoPay cannot match bank transfers to your wallet automatically yet, so EFT top ups are switched off.</p>
-      <p class="failure-guidance">Nothing was charged and your wallet is unchanged. Do not transfer money to TitoPay by EFT — it cannot be credited. Choose <strong>Card &middot; instant</strong> on the Top Up screen to add ${esc(money(context.amount))} now.</p>
+      <p class="failure-guidance">Nothing was charged and your wallet is unchanged. Do not transfer money to TitoPay by EFT, because it cannot be credited. Choose <strong>Card &middot; instant</strong> on the Top Up screen to add ${esc(money(context.amount))} now.</p>
     </section>
     <div class="tx-detail-actions">
       <button class="btn primary" type="button" data-action="topup-use-card">${icon("upload")} Top up by card instead</button>
@@ -9511,7 +9511,7 @@ async function openEmailStatementConfirmation() {
         value="${esc(preview.recipient||state.user?.email||"")}"
         placeholder="name@example.com"
         aria-describedby="statement-recipient-hint">
-      <small id="statement-recipient-hint" class="field-hint">Your own address is filled in. Change it to send the statement to someone else — your accountant, for example.</small>
+      <small id="statement-recipient-hint" class="field-hint">Your own address is filled in. Change it to send the statement to someone else, such as your accountant.</small>
     </div>
     <p class="field-hint">The ${money(EMAIL_STATEMENT_FEE)} fee is charged only when your statement email is successfully requested. Other email notifications remain free. Wherever you send it, the destination is recorded on the charge in your Activity.</p>
     <div class="auth-actions">
@@ -11021,10 +11021,10 @@ function renderVasValidationPanel(form, outcome) {
          <p class="rv-note">TitoPay confirmed the request but returned no ${esc(config.validateHeading.toLowerCase())} details to display. Check the number carefully before you continue.</p>`;
   } else if (outcome.status === "unsupported") {
     panel.innerHTML = `<p class="rv-head rv-head-missing">${esc(config.validateHeading)} verification unavailable</p>
-      <p class="rv-note">TitoPay cannot verify this ${esc(config.validateHeading.toLowerCase())} yet, so it has not been checked. Confirm the number is correct before you continue — your details are still here.</p>`;
+      <p class="rv-note">TitoPay cannot verify this ${esc(config.validateHeading.toLowerCase())} yet, so it has not been checked. Confirm the number is correct before you continue. Your details are still here.</p>`;
   } else {
     panel.innerHTML = `<p class="rv-head rv-head-missing">${esc(config.validateHeading)} not verified</p>
-      <p class="rv-note">${esc(outcome.message || "TitoPay could not verify this number right now.")} Your details are still here — retry or check the number.</p>`;
+      <p class="rv-note">${esc(outcome.message || "TitoPay could not verify this number right now.")} Your details are still here. Retry or check the number.</p>`;
   }
   anchor.insertAdjacentElement("afterend", panel);
 }
@@ -11963,7 +11963,7 @@ function openQrPayModal(existing = {}) {
       <div class="field"><label>QR ID</label><input name="qrId" value="${esc(existing.qrId || "")}" required></div>
       <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" value="${esc(existing.amount || "")}"></div></div>
       <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan QR with camera</button>
-      <p class="field-hint camera-privacy-hint">Your camera is used only while the scanner is open. QR codes are read on your device — the video is never uploaded.</p>
+      <p class="field-hint camera-privacy-hint">Your camera is used only while the scanner is open. QR codes are read on your device. The video is never uploaded.</p>
       <div id="qr-scanner-output" class="empty-state hidden"></div>
       <button class="btn primary" type="submit">${icon("scan")} Review QR Payment</button>
     </form>
@@ -11974,7 +11974,7 @@ async function startQrScanner() {
   const input = document.querySelector('form[data-form="qr-pay"] input[name="qrId"]') || document.querySelector(".modal-card input[name='recipient']");
   if (!output || !input) return;
   output.classList.remove("hidden");
-  output.innerHTML = `${icon("scan")}<strong>Starting camera</strong><p>Allow camera access to scan a TitoPay QR code. Scanning happens on your device — the video is never uploaded.</p>`;
+  output.innerHTML = `${icon("scan")}<strong>Starting camera</strong><p>Allow camera access to scan a TitoPay QR code. Scanning happens on your device. The video is never uploaded.</p>`;
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     output.innerHTML = `${icon("shield")}<strong>Camera unavailable</strong><p>This browser does not expose camera scanning. Enter the QR ID manually.</p>`;
@@ -12022,7 +12022,7 @@ async function startQrScanner() {
         // so it cannot be charged by mistake (the server refuses it too).
         const scanned = classifyScannedQr(value);
         if (scanned.kind === "ticket") {
-          output.innerHTML = `${icon("ticket")}<strong>That is an event ticket</strong><p>This QR admits its holder at the event entrance — it cannot be paid. To pay someone, scan their TitoPay payment QR.</p>`;
+          output.innerHTML = `${icon("ticket")}<strong>That is an event ticket</strong><p>This QR admits its holder at the event entrance. It cannot be paid. To pay someone, scan their TitoPay payment QR.</p>`;
           break;
         }
         if (scanned.kind === "unknown") {
@@ -12859,7 +12859,7 @@ function renderSalesReportView(summary) {
   const busiestHour = hours.length ? hours.indexOf(Math.max(...hours)) : -1;
   return `
     <section style="margin-top:12px">
-      <p class="field-hint" style="margin:0 0 2px">${from || to ? `${from ? friendlyDate(from) : "Start"} — ${to ? friendlyDate(to) : "today"}` : "All time"}</p>
+      <p class="field-hint" style="margin:0 0 2px">${from || to ? `${from ? friendlyDate(from) : "Start"} to ${to ? friendlyDate(to) : "today"}` : "All time"}</p>
       <p style="font-size:34px;font-weight:800;margin:0;letter-spacing:-0.5px">${money(summary.total || 0)}</p>
       <div style="margin:6px 0 2px">${changeChip}</div>
     </section>
@@ -12868,7 +12868,7 @@ function renderSalesReportView(summary) {
       ${settingsRow("Sales", `${summary.count || 0} sales · average ${money(summary.average || 0)}`, "list")}
       ${summary.biggest ? settingsRow("Biggest sale", `${money(summary.biggest.amount)} · ${summary.biggest.channelLabel}`, "wallet") : ""}
       ${busiestHour >= 0 && hours[busiestHour] > 0 ? settingsRow("Busiest hour", `${String(busiestHour).padStart(2, "0")}:00–${String((busiestHour + 1) % 24).padStart(2, "0")}:00 · ${money(hours[busiestHour])}`, "refresh") : ""}
-      ${Number(summary.otherIn || 0) > 0 ? settingsRow("Other money in", `${money(summary.otherIn)} (top-ups, distributions — not counted as sales)`, "wallet") : ""}
+      ${Number(summary.otherIn || 0) > 0 ? settingsRow("Other money in", `${money(summary.otherIn)} (top-ups, distributions, not counted as sales)`, "wallet") : ""}
     </section>
     ${perChannel.length ? `
       <h3 style="margin:14px 0 6px">Where the sales came from</h3>
@@ -12969,7 +12969,7 @@ function renderSalesStockView(products) {
     if (!product.trackStock) return `<span class="chip">not counted</span>`;
     const quantity = Number(product.stockQuantity);
     if (quantity < 0) return `<span class="chip" style="background:#fdeaea;color:#b3261e">oversold ${quantity}</span>`;
-    if (product.lowStock) return `<span class="chip" style="background:#fdf3e2;color:#8a5b00">${quantity} left — low</span>`;
+    if (product.lowStock) return `<span class="chip" style="background:#fdf3e2;color:#8a5b00">${quantity} left (low)</span>`;
     return `<span class="chip" style="background:#e7f6ec;color:#0b7a3b">${quantity} in stock</span>`;
   };
   const productRow = (product) => `
@@ -12996,13 +12996,13 @@ function renderSalesStockView(products) {
         <div class="field"><label>Category</label><input name="category" maxlength="60" placeholder="Plates" list="stock-category-options"><datalist id="stock-category-options">${[...new Set(active.map((product) => product.category))].map((category) => `<option>${esc(category)}</option>`).join("")}</datalist></div>
       </div>
       <div class="field"><label>Opening stock <span class="field-optional">optional</span></label><input name="openingStock" inputmode="numeric" placeholder="Leave empty if you do not count this item">
-        <small class="field-hint">Give a number to switch on stock tracking — sales made from the till then count it down, and stock takes correct it.</small></div>
+        <small class="field-hint">Give a number to switch on stock tracking. Sales from the till count it down, and stock takes correct it.</small></div>
       <button class="btn primary" type="submit">${icon("send")} Add product</button>
     </form>
     ${groups.length ? groups.map((group) => `
       <h3 style="margin:14px 0 6px">${esc(group.category)}</h3>
       <section class="activity-list">${group.items.map(productRow).join("")}</section>`).join("")
-      : `<p class="field-hint" style="margin-top:14px">No products yet. Add what you sell above — each product becomes a one-tap button when you make a sale.</p>`}
+      : `<p class="field-hint" style="margin-top:14px">No products yet. Add what you sell above. Each product becomes a one-tap button when you make a sale.</p>`}
     <p class="field-hint" style="margin-top:12px">Your products appear under <strong>Receive Money</strong> as tap-to-add buttons. Selling from there deducts tracked stock automatically; a stock take sets the real count whenever the shelf and the number disagree.</p>`;
 }
 async function submitBusinessProduct(data) {
@@ -13042,7 +13042,7 @@ async function handleStockAction(target) {
       });
       if (input === null || input.trim() === "") return;
       await api(`/v1/business/products/${product.id}/stock`, { method: "POST", body: { type: "stock_take", countedQuantity: input.trim(), note: "Stock take from the app" } });
-      showToast("Counted quantity saved — the variance is on the product history.");
+      showToast("Counted quantity saved. The variance is on the product history.");
     } else if (priceId) {
       const input = await askForValue({
         title: "Change price",
@@ -13149,13 +13149,13 @@ async function recordSaleBasket() {
   try {
     const result = await api("/v1/business/products/record-sale", { method: "POST", body: { items } });
     state.saleBasket = {};
-    showToast(`Sale recorded — ${esc(money(result.sale.total))}. Tracked stock counted down.`);
+    showToast(`Sale recorded: ${esc(money(result.sale.total))}. Tracked stock counted down.`);
   } catch (error) {
     const message = String(error?.message || "");
     if (/in stock/i.test(message) && await askToConfirm({ title: "Not enough stock", body: message, confirmLabel: "Sell anyway", cancelLabel: "Stop", tone: "danger", hint: "The count goes negative until your next stock take." })) {
       const result = await api("/v1/business/products/record-sale", { method: "POST", body: { items, allowNegative: true } });
       state.saleBasket = {};
-      showToast(`Sale recorded — ${esc(money(result.sale.total))}. Stock is oversold; fix it with a stock take.`);
+      showToast(`Sale recorded: ${esc(money(result.sale.total))}. Stock is oversold; fix it with a stock take.`);
       return;
     }
     throw error;
@@ -13197,7 +13197,7 @@ async function openMyWorkplacesModal() {
   state.currentModalAction = "my-workplaces";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Work</p><h2>My Workplaces</h2><p class="lead">Businesses that added you as staff. Take sales for them from your own phone — every payment goes straight to the business wallet.</p></div>
+      <div><p class="eyebrow">Work</p><h2>My Workplaces</h2><p class="lead">Businesses that added you as staff. Take sales for them from your own phone. Every payment goes straight to the business wallet.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section data-workplaces-list><p class="field-hint">Checking where you work…</p></section>
@@ -13232,7 +13232,7 @@ async function openStaffSellModal(businessUserId) {
   state.workSale = { businessUserId, businessName, basket: {}, products: [] };
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Take a sale</p><h2>${esc(businessName)}</h2><p class="lead">Tap products or enter an amount, then show the payment QR. The customer pays ${esc(businessName)} directly — you never hold the money.</p></div>
+      <div><p class="eyebrow">Take a sale</p><h2>${esc(businessName)}</h2><p class="lead">Tap products or enter an amount, then show the payment QR. The customer pays ${esc(businessName)} directly. You never hold the money.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <div data-wsale-picker><p class="field-hint">Loading the products…</p></div>
@@ -13259,7 +13259,7 @@ function renderStaffSellPicker() {
   const sale = state.workSale;
   if (!host || !sale) return;
   if (!sale.products.length) {
-    host.innerHTML = `<p class="field-hint">${esc(sale.businessName)} has no products loaded — type the amount below instead.</p>`;
+    host.innerHTML = `<p class="field-hint">${esc(sale.businessName)} has no products loaded. Type the amount below instead.</p>`;
     return;
   }
   const lines = sale.products.filter((product) => Number(sale.basket[product.id] || 0) > 0);
@@ -13390,7 +13390,7 @@ async function refreshTitoKidsHome() {
       ${approvals.map((request) => `
         <section class="tk-card tk-approval">
           <p class="tk-sub">Approval needed</p>
-          <p style="margin:4px 0"><strong>${esc(request.childName)}</strong> is asking for <strong>${esc(money(request.amount))}</strong> · ${esc(request.categoryLabel)}${request.note ? ` — “${esc(request.note)}”` : ""}</p>
+          <p style="margin:4px 0"><strong>${esc(request.childName)}</strong> is asking for <strong>${esc(money(request.amount))}</strong> · ${esc(request.categoryLabel)}${request.note ? ` · “${esc(request.note)}”` : ""}</p>
           <div class="auth-actions">
             <button class="btn primary" type="button" data-tk-approve="${esc(request.id)}">${icon("check-circle")} Approve</button>
             <button class="btn secondary" type="button" data-tk-decline="${esc(request.id)}">Decline</button>
@@ -13411,7 +13411,7 @@ async function refreshTitoKidsHome() {
         <section class="empty-state compact-state">
           ${icon("contacts")}
           <strong>No children yet</strong>
-          <p>Add your first child to start managing their money with TitoKids — a real ring-fenced wallet, limits you control, and approvals in your pocket.</p>
+          <p>Add your first child to start managing their money with TitoKids: a real ring-fenced wallet, limits you control, and approvals in your pocket.</p>
         </section>`}
       <div class="auth-actions" style="margin-top:10px">
         <button class="btn ${children.length || families.length || invites.length ? "secondary" : "primary"}" type="button" data-action="titokids-add">${icon("send")} Add Child</button>
@@ -13431,7 +13431,7 @@ function openTitoKidsAddModal() {
     <form class="form-grid" data-form="titokids-add">
       <div class="field"><label>Child’s name</label><input name="fullName" maxlength="120" required placeholder="e.g. Aiden"></div>
       <div class="field"><label>Date of birth <span class="field-optional">optional</span></label><input name="dateOfBirth" type="date">
-        <small class="field-hint">Used only to show their age — nothing else.</small></div>
+        <small class="field-hint">Used only to show their age, nothing else.</small></div>
       <div class="field"><label>Your relationship</label><select name="relationship">
         <option value="parent">Parent</option><option value="guardian">Guardian</option><option value="other">Other authorised relationship</option>
       </select></div>
@@ -13447,7 +13447,7 @@ async function submitTitoKidsAdd(data) {
     fullName: data.fullName, dateOfBirth: data.dateOfBirth || undefined,
     relationship: data.relationship, childIdentifier: data.childIdentifier || undefined
   } });
-  showToast(result.child.linked ? `${result.child.fullName} added and linked — they’ve been told.` : `${result.child.fullName} added.`);
+  showToast(result.child.linked ? `${result.child.fullName} added and linked. They have been told.` : `${result.child.fullName} added.`);
   await openTitoKidsModal();
 }
 async function openTitoKidsChild(childId) {
@@ -13487,7 +13487,7 @@ async function refreshTitoKidsChild(childId) {
           <button class="btn primary" type="button" data-action="titokids-fund:${esc(child.id)}">${icon("wallet")} Add Money</button>
           <button class="btn secondary" type="button" data-action="titokids-pay:${esc(child.id)}">${icon("send")} Pay for a Need</button>
         </div>
-        <p class="field-hint" style="margin:8px 0 0">Add Money moves money from your wallet to ${esc(child.fullName)}’s. Pay for a Need pays a school, shop or person straight from ${esc(child.fullName)}’s wallet — no loose cash.</p>
+        <p class="field-hint" style="margin:8px 0 0">Add Money moves money from your wallet to ${esc(child.fullName)}’s. Pay for a Need pays a school, shop or person straight from ${esc(child.fullName)}’s wallet. No loose cash.</p>
       </section>
       <section class="tk-card" data-tk-managers></section>
       <section class="tk-card">
@@ -13512,7 +13512,7 @@ async function refreshTitoKidsChild(childId) {
           <div style="margin:10px 0">
             <div class="tk-line" style="border:none;padding:0"><strong>${esc(goal.name)}</strong><span>${esc(money(goal.saved))} / ${esc(money(goal.target))} · ${goal.percent}%</span></div>
             <div class="tk-progress"><span style="width:${Math.max(2, Math.min(100, goal.percent))}%"></span></div>
-          </div>`).join("") || `<p class="field-hint">No goals yet — a goal turns saving into something ${esc(child.fullName)} can watch grow.</p>`}
+          </div>`).join("") || `<p class="field-hint">No goals yet. A goal turns saving into something ${esc(child.fullName)} can watch grow.</p>`}
         <form class="form-grid" data-form="titokids-goal" style="margin-top:8px">
           <input type="hidden" name="childId" value="${esc(child.id)}">
           <div class="field-row">
@@ -13583,7 +13583,7 @@ async function refreshTitoKidsManagers(childId) {
     host.innerHTML = `
       <p class="tk-sub"><strong style="color:var(--text)">Who manages this wallet</strong></p>
       <p class="field-hint">${routeMissing
-        ? "Co-parents need the newest TitoPay server. This wallet, its money and its limits are completely unaffected — only this panel is waiting on the update."
+        ? "Co-parents need the newest TitoPay server. This wallet, its money and its limits are completely unaffected. Only this panel is waiting on the update."
         : esc(friendlyFormError(error, "titokids"))}</p>
       <div class="auth-actions" style="margin-top:8px">
         <button class="btn secondary" type="button" data-tk-managers-retry="${esc(childId)}">${icon("refresh")} Try again</button>
@@ -13597,7 +13597,7 @@ async function inviteTitoKidsManager(childId) {
     body: `Who else should help manage ${child.fullName || "this child"}’s money? They need their own TitoPay account, and they choose whether to accept.`,
     label: "Their @username, cellphone or email",
     placeholder: "@username",
-    hint: "They add money from their own wallet — never from yours.",
+    hint: "They add money from their own wallet, never from yours.",
     confirmLabel: "Send invitation"
   });
   if (contact === null || !String(contact).trim()) return;
@@ -13639,7 +13639,7 @@ function openTitoKidsFundModal(childId) {
   openModal(`
     <div class="modal-head">
       <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
-      <div><p class="eyebrow">TitoKids</p><h2>Add money</h2><p class="lead">From your wallet to ${esc(child.fullName || "the child")}’s — instantly, no fees.</p></div>
+      <div><p class="eyebrow">TitoKids</p><h2>Add money</h2><p class="lead">From your wallet to ${esc(child.fullName || "the child")}’s. Instant, with no fees.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="titokids-fund">
@@ -13659,7 +13659,7 @@ async function submitTitoKidsFund(data) {
   const result = await api(`/v1/tito-kids/children/${encodeURIComponent(data.childId)}/fund`, {
     method: "POST", body: { amount: data.amount, note: data.note || undefined, goalId: data.goalId || undefined }
   });
-  showToast(`Added — the wallet now holds ${money(result.balance)}.`);
+  showToast(`Added. The wallet now holds ${money(result.balance)}.`);
   await openTitoKidsChild(data.childId);
 }
 function openTitoKidsPayModal(childId) {
@@ -13668,7 +13668,7 @@ function openTitoKidsPayModal(childId) {
   openModal(`
     <div class="modal-head">
       <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
-      <div><p class="eyebrow">TitoKids</p><h2>Pay for a need</h2><p class="lead">Pays a school, shop or person directly from ${esc(child.fullName || "the child")}’s wallet — the money can only go where you point it.</p></div>
+      <div><p class="eyebrow">TitoKids</p><h2>Pay for a need</h2><p class="lead">Pays a school, shop or person directly from ${esc(child.fullName || "the child")}’s wallet. The money can only go where you point it.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="titokids-pay">
@@ -13708,7 +13708,7 @@ async function submitTitoKidsLimits(data) {
     method: "PATCH",
     body: { dailyLimit: data.dailyLimit || null, weeklyLimit: data.weeklyLimit || null, monthlyLimit: data.monthlyLimit || null, categories }
   });
-  showToast("Limits saved — they apply from the very next payment.");
+  showToast("Limits saved. They apply from the very next payment.");
   await refreshTitoKidsChild(data.childId);
 }
 async function submitTitoKidsGoal(data) {
@@ -13737,7 +13737,7 @@ function titoKidsFamilyMarkup(items) {
         ${(family.requests || []).length ? `
           <p class="tk-sub" style="margin-top:10px"><strong style="color:var(--text)">My requests</strong></p>
           ${family.requests.map((request) => `
-            <div class="tk-line"><span>${esc(money(request.amount))} · ${esc(request.categoryLabel)}${request.note ? ` — ${esc(request.note)}` : ""}</span>
+            <div class="tk-line"><span>${esc(money(request.amount))} · ${esc(request.categoryLabel)}${request.note ? ` · ${esc(request.note)}` : ""}</span>
               <span class="chip" style="${request.status === "approved" ? "background:#e7f6ec;color:#0b7a3b" : request.status === "declined" ? "background:#fdeaea;color:#b3261e" : "background:#e8efff;color:#2f5cff"}">${esc(request.status)}</span></div>`).join("")}` : ""}
         ${(family.activity || []).length ? `
           <p class="tk-sub" style="margin-top:10px"><strong style="color:var(--text)">Recent activity</strong></p>
@@ -13750,7 +13750,7 @@ async function submitTitoKidsRequest(data) {
   await api(`/v1/tito-kids/family/${encodeURIComponent(data.childId)}/requests`, {
     method: "POST", body: { amount: data.amount, category: data.category, note: data.note || undefined }
   });
-  showToast("Sent — you’ll be told the moment they answer.");
+  showToast("Sent. You will be told the moment they answer.");
   await refreshTitoKidsHome();
 }
 // A register entry only reaches a person when the contact matches an active
@@ -13771,8 +13771,8 @@ function businessStaffRow(member) {
         <strong>${esc(member.fullName)}</strong>
         <small>${esc([member.role, member.contact].filter(Boolean).join(" · "))}</small>
         ${known ? (linked
-          ? `<small class="staff-link-state is-linked">${icon("check-circle")} Linked${member.username ? ` to @${esc(member.username)}` : ""} — can sell for you</small>`
-          : `<small class="staff-link-state is-unlinked">${icon("shield")} Not linked — no TitoPay account matches this contact, so they were not notified and cannot sell yet</small>`) : ""}
+          ? `<small class="staff-link-state is-linked">${icon("check-circle")} Linked${member.username ? ` to @${esc(member.username)}` : ""} · can sell for you</small>`
+          : `<small class="staff-link-state is-unlinked">${icon("shield")} Not linked · no TitoPay account matches this contact, so they were not notified and cannot sell yet</small>`) : ""}
       </div>
       <div class="staff-row-actions">
         ${known && !linked ? `<button class="btn ghost mini" type="button" data-action="staff-relink:${esc(member.id)}">${icon("refresh")} Link</button>` : ""}
@@ -13822,8 +13822,8 @@ async function openBusinessStaffModal() {
         <p class="eyebrow">Business tools</p>
         <h2>Staff ${serverMode ? "" : `<span class="staff-preview-chip">Preview</span>`}</h2>
         <p class="lead">${serverMode
-          ? "The people who work in your business. Anyone you add with their TitoPay details is notified and can sell for you from their own phone — payments go straight to your wallet."
-          : "Keep a register of the people who work in your business — cashiers, managers and assistants."}</p>
+          ? "The people who work in your business. Anyone you add with their TitoPay details is notified and can sell for you from their own phone. Payments go straight to your wallet."
+          : "Keep a register of the people who work in your business: cashiers, managers and assistants."}</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -13851,8 +13851,8 @@ async function openBusinessStaffModal() {
       <h3>Staff register <span class="staff-count">${members.length}</span></h3>
       ${members.length ? members.map(businessStaffRow).join("") : `<p class="muted">No staff members yet. Add your first cashier, manager or assistant above.</p>`}
       <p class="muted staff-storage-note">${serverMode
-        ? "Synced with your TitoPay business account across all your devices. Staff added with a TitoPay @username, email or phone are notified in the app and by email, see your business under My Workplaces on their own profile, and can take sales that pay your wallet directly — they never hold your money. Their sales appear under Sales → Staff."
-        : "Saved on this device for now — it is your own record, and the people listed are not notified. Staff sign-ins switch on automatically once TitoPay staff access goes live; your register will sync without re-typing. Event ticket scanners you add under Ticketing ARE notified in the app and by email."}</p>
+        ? "Synced with your TitoPay business account across all your devices. Staff added with a TitoPay @username, email or phone are notified in the app and by email, see your business under My Workplaces on their own profile, and can take sales that pay your wallet directly. They never hold your money. Their sales appear under Sales → Staff."
+        : "Saved on this device for now. It is your own record, and the people listed are not notified. Staff sign-ins switch on automatically once TitoPay staff access goes live; your register will sync without re-typing. Event ticket scanners you add under Ticketing ARE notified in the app and by email."}</p>
       <p class="muted">Event ticket scanners are managed separately under Ticketing.</p>
     </section>
   `);
@@ -14732,7 +14732,7 @@ function openStockvelCreateWizard() {
         ${recipientAutoMethodField("memberMethod", "Member lookup method")}
         <div class="field">
           <label for="sv-members">Members to invite</label>
-          <textarea id="sv-members" name="members" placeholder="@username, cellphone or email — one per line" required></textarea>
+          <textarea id="sv-members" name="members" placeholder="@username, cellphone or email, one per line" required></textarea>
           <p class="field-hint">Each person is checked as a TitoPay user before the group is created.</p>
         </div>
         <div class="field">
@@ -15477,7 +15477,7 @@ function openStockvelAddMembersModal(id) {
       ${recipientAutoMethodField("memberMethod", "Member lookup method")}
       <div class="field">
         <label for="sv-add-members">People to invite</label>
-        <textarea id="sv-add-members" name="members" placeholder="@username, cellphone or email — one per line" required></textarea>
+        <textarea id="sv-add-members" name="members" placeholder="@username, cellphone or email, one per line" required></textarea>
       </div>
       <button class="btn primary" type="submit"${remaining === 0 ? " disabled" : ""}>${icon("send")} Send invitations</button>
     </form>
@@ -15723,7 +15723,7 @@ async function refreshStockvelGroupChat() {
     if (meetingBar) {
       meetingBar.innerHTML = openMeeting
         ? `<section class="integration-note" style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:#e8efff">
-             <span><strong>Meeting in session</strong><br><small>${esc(openMeeting.title)} · everything said now goes into the minutes${chat.canManage ? " — tap a message to pin it as a decision" : ""}</small></span>
+             <span><strong>Meeting in session</strong><br><small>${esc(openMeeting.title)} · everything said now goes into the minutes${chat.canManage ? " · tap a message to pin it as a decision" : ""}</small></span>
              ${chat.canManage ? `<button class="btn secondary" type="button" data-sv-meeting-close="${esc(openMeeting.id)}">End & compile minutes</button>` : ""}
            </section>`
         : chat.canManage
@@ -15748,7 +15748,7 @@ async function refreshStockvelGroupChat() {
     if (minutesHost) {
       const closed = meetings.filter((meeting) => meeting.status === "closed" && meeting.minutes);
       minutesHost.innerHTML = closed.length ? `
-        <p class="field-hint" style="margin:0 0 4px"><strong>Minutes</strong> — compiled when each meeting closed, and emailed to every member.</p>
+        <p class="field-hint" style="margin:0 0 4px"><strong>Minutes</strong>: compiled when each meeting closed, and emailed to every member.</p>
         ${closed.map((meeting) => `
           <details class="integration-note" style="margin:6px 0">
             <summary style="cursor:pointer"><strong>${esc(meeting.title)}</strong> · ${esc(new Date(meeting.closed_at).toLocaleDateString("en-ZA"))}</summary>
@@ -15766,7 +15766,7 @@ async function saveStockvelDraft() {
   if (!form) return;
   const data = new FormData(form);
   const name = String(data.get("recipient") || "").trim();
-  if (name.length < 2) { showToast("Give the group a name first — everything else can wait.", "error"); return; }
+  if (name.length < 2) { showToast("Give the group a name first. Everything else can wait.", "error"); return; }
   try {
     await api(STOCKVEL_PATH, {
       method: "POST",
@@ -15783,7 +15783,7 @@ async function saveStockvelDraft() {
     closeModal();
     await loadStockvelGroups({ force: true }).catch(() => {});
     openStockvelModal();
-    showToast(`"${name}" saved as a draft — activate it when the group is ready.`);
+    showToast(`"${name}" saved as a draft. Activate it when the group is ready.`);
   } catch (error) {
     showToast(friendlyFormError(error, "stockvel"), "error");
   }
@@ -15846,7 +15846,7 @@ async function openPersonalTicketsDashboard() {
         state.ticketing.staffEvents = assigned;
         const host = document.querySelector("[data-staff-scan-entry]");
         if (host && assigned.length) {
-          host.innerHTML = `<button class="btn primary" type="button" data-action="ticketing-staff-open">${icon("scan")} Scan entry — you are staff for ${assigned.length === 1 ? esc(assigned[0].eventName || "an event") : `${assigned.length} events`}</button>`;
+          host.innerHTML = `<button class="btn primary" type="button" data-action="ticketing-staff-open">${icon("scan")} Scan entry · staff for ${assigned.length === 1 ? esc(assigned[0].eventName || "an event") : `${assigned.length} events`}</button>`;
         }
       })
       .catch(() => null);
@@ -16578,7 +16578,7 @@ async function openMyTicketsModal() {
     </section>
     <section class="integration-note" style="margin-top:12px">
       <strong>Been gifted a ticket?</strong>
-      <p class="field-hint" style="margin:2px 0 8px">Enter its ticket code — the number on the ticket email, PDF or stub. The ticket moves into your account under your name, its QR scans at the gate for you, and you can link your event wristband here as usual. The person who gifted it is notified.</p>
+      <p class="field-hint" style="margin:2px 0 8px">Enter its ticket code, the number on the ticket email, PDF or stub. The ticket moves into your account under your name, its QR scans at the gate for you, and you can link your event wristband here as usual. The person who gifted it is notified.</p>
       <form class="form-grid" data-form="ticket-claim">
         <div class="field">
           <label for="ticket-claim-code">Ticket code</label>
@@ -16603,7 +16603,7 @@ async function submitTicketClaim(data) {
   if (!/^\d{6,10}$/.test(code)) throw new Error("Enter the 6 to 10 digit ticket code printed on the ticket.");
   const result = await api("/v1/ticketing/tickets/claim", { method: "POST", body: { code } });
   const eventName = result.ticket?.eventName || "";
-  showToast(eventName ? `Ticket added — ${eventName} is now in My Tickets.` : "Ticket added to your account.");
+  showToast(eventName ? `Ticket added. ${eventName} is now in My Tickets.` : "Ticket added to your account.");
   const form = document.querySelector('form[data-form="ticket-claim"]');
   if (form) form.reset();
   await refreshMyTickets();
@@ -16721,17 +16721,17 @@ function ticketLinkedTag(ticket = {}) {
 function ticketWristbandNote(ticket = {}) {
   const entrance = "Present this ticket at the entrance. Do not share the code publicly.";
   if (linkableTicketId(ticket)) {
-    return "This event is cashless. Link your wristband or card to pay by tapping it at any vendor — it pays from your TitoPay Wallet, and there is no separate event balance.";
+    return "This event is cashless. Link your wristband or card to pay by tapping it at any vendor. It pays from your TitoPay Wallet, and there is no separate event balance.";
   }
   const linkedTag = ticketLinkedTag(ticket);
   if (ticket.wristbandLinked || linkedTag) {
-    return `${entrance} Your wristband${linkedTag && linkedTag.tagLabel ? ` ${linkedTag.tagLabel}` : ""} is linked to this ticket — tap it at any vendor to pay from your TitoPay Wallet.`;
+    return `${entrance} Your wristband${linkedTag && linkedTag.tagLabel ? ` ${linkedTag.tagLabel}` : ""} is linked to this ticket. Tap it at any vendor to pay from your TitoPay Wallet.`;
   }
   if (ticket.cashlessTagsEnabled === true) {
     // Cashless, nothing linked, yet the server did not offer it: the tag list
     // has not loaded, or this ticket is not eligible. Say so rather than
     // pretend the feature does not exist.
-    return `${entrance} This event is cashless — if the Link wristband button is missing, pull this screen closed and open it again.`;
+    return `${entrance} This event is cashless. If the Link wristband button is missing, close this screen and open it again.`;
   }
   if (ticket.cashlessTagsEnabled === false) {
     // The server SAID no. Only an explicit false may make this claim - an
@@ -16992,7 +16992,7 @@ function renderVendorTagChargeModal() {
     </form>
     ${s.result ? `
       <section class="vas-notice" role="status">
-        <p class="vas-notice-head">Approved — ${esc(money(s.result.amount))}</p>
+        <p class="vas-notice-head">Approved · ${esc(money(s.result.amount))}</p>
         <p class="vas-notice-body">Paid to your wallet. Reference ${esc(s.result.reference)}${s.result.event?.name ? ` · ${esc(s.result.event.name)}` : ""}. Charge the next wristband when ready.</p>
       </section>` : ""}
   `);
@@ -17085,7 +17085,7 @@ function openEventTagLostConfirm(tagId) {
       <div>
         <p class="eyebrow">Event Tag</p>
         <h2>Report this tag lost?</h2>
-        <p class="lead">This blocks the tag straight away, so nobody else can use it at ${esc(tag?.eventName || "the event")}. Your money stays in your TitoPay Wallet — there is nothing on the tag itself. Event staff can give you a replacement.</p>
+        <p class="lead">This blocks the tag straight away, so nobody else can use it at ${esc(tag?.eventName || "the event")}. Your money stays in your TitoPay Wallet, because there is nothing on the tag itself. Event staff can give you a replacement.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -17246,7 +17246,7 @@ function renderBusinessTicketingHub() {
       ${paymentBlockers.length ? `
         <section class="vas-notice" role="status">
           <p class="vas-notice-head">Free events are ready to go</p>
-          <p class="vas-notice-body">Set up free seminars, conferences and community events now — no FICA verification needed. To sell <em>paid</em> tickets, complete FICA first and paid ticketing unlocks automatically.</p>
+          <p class="vas-notice-body">Set up free seminars, conferences and community events now, with no FICA verification needed. To sell <em>paid</em> tickets, complete FICA first and paid ticketing unlocks automatically.</p>
           <button class="btn secondary" type="button" data-action="fica-verification">${icon("shield")} Complete FICA to sell paid tickets</button>
         </section>
       ` : ""}
@@ -17402,7 +17402,7 @@ function ticketingVendorsSection(approved) {
       <form class="form-grid" data-form="ticketing-vendor">
         <label>Event<select name="eventId" data-vendor-event-pick>${options}</select></label>
         <label>Vendor business<input name="merchantId" placeholder="@username, wallet ID, phone or merchant code" required autocomplete="off"></label>
-        <p class="field-hint">Enter anything that identifies the vendor's TitoPay Business — their @username, business wallet ID, phone, email or merchant code. They must have a registered TitoPay Business account; patrons then pay them by tapping their Event Tag.</p>
+        <p class="field-hint">Enter anything that identifies the vendor's TitoPay Business: their @username, business wallet ID, phone, email or merchant code. They must have a registered TitoPay Business account; patrons then pay them by tapping their Event Tag.</p>
         <button class="btn secondary" type="submit">${icon("contacts")} Authorise vendor</button>
       </form>
       <div data-vendor-list><p class="muted">Loading authorised vendors…</p></div>
@@ -17421,9 +17421,9 @@ function ticketingTagsSection(approved) {
     return `<section class="empty-state compact-state">${icon("shield")}<strong>No approved event yet</strong><p>Event Tags open as soon as one of your events is approved.</p></section>`;
   }
   const options = approved.map((event) =>
-    `<option value="${esc(event.id)}">${esc(event.eventName)}${event.cashlessTagsEnabled ? " — cashless on" : ""}</option>`).join("");
+    `<option value="${esc(event.id)}">${esc(event.eventName)}${event.cashlessTagsEnabled ? " · cashless on" : ""}</option>`).join("");
   return `
-    <p class="muted">NFC/RFID wristbands and cards for your event. Attendees tap to pay from their own TitoPay Wallet — you hold no float, and there is no event balance to reconcile afterwards.</p>
+    <p class="muted">NFC/RFID wristbands and cards for your event. Attendees tap to pay from their own TitoPay Wallet. You hold no float, and there is no event balance to reconcile afterwards.</p>
     <section class="panel inner-panel">
       <h3>Cashless</h3>
       <form class="form-grid" data-form="ticketing-cashless">
@@ -17659,7 +17659,7 @@ function ticketingStaffForm(events = []) {
         <label>TitoPay user
           <input name="identifier" placeholder="@username, phone or email" required>
         </label>
-        <p class="field-hint">Best match wins: use their exact <strong>@username</strong> when a person has both a personal and a business account. Any active TitoPay account can scan — no FICA needed for door staff.</p>
+        <p class="field-hint">Best match wins: use their exact <strong>@username</strong> when a person has both a personal and a business account. Any active TitoPay account can scan. No FICA is needed for door staff.</p>
         <button class="btn secondary" type="submit">${icon("contacts")} Add scanner</button>
       </form>
       <div data-staff-list><p class="muted">Loading current staff…</p></div>
@@ -17676,7 +17676,7 @@ async function refreshEventStaffList(eventId) {
     const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/staff`);
     const staff = (result.items || []).filter((member) => member.status === "active");
     if (!staff.length) {
-      host.innerHTML = `<p class="muted">No staff on this event yet. Add someone above — they scan from their own TitoPay account.</p>`;
+      host.innerHTML = `<p class="muted">No staff on this event yet. Add someone above. They scan from their own TitoPay account.</p>`;
       return;
     }
     host.innerHTML = `
@@ -17804,7 +17804,7 @@ async function submitTicketingTagIssue(data) {
     host.innerHTML = `
       <section class="event-tag-issued">
         <strong>${issued.length} blank ${issued.length === 1 ? "tag" : "tags"} issued</strong>
-        <p class="muted">Write each code to its tag now — this is the only time they are shown. For your attendees' safety TitoPay does not keep a readable copy, so a code that is not written down now is gone and that tag must be reissued.</p>
+        <p class="muted">Write each code to its tag now. This is the only time they are shown. For your attendees' safety TitoPay does not keep a readable copy, so a code that is not written down now is gone and that tag must be reissued.</p>
         <ol class="event-tag-token-list">
           ${issued.map((tag) => `<li><span>${esc(tag.tagLabel)}</span><code>${esc(tag.token)}</code></li>`).join("")}
         </ol>
@@ -17812,7 +17812,7 @@ async function submitTicketingTagIssue(data) {
           <button class="btn primary" type="button" data-action="event-tag-export">${icon("download")} Download CSV</button>
           <button class="btn secondary" type="button" data-action="event-tag-clear-tokens">${icon("x")} Done, hide these</button>
         </div>
-        <p class="field-hint">The CSV holds these codes in readable form — the only copy that will exist. Keep it like cash: encrypt or delete it once the tags are written, and do not email it around.</p>
+        <p class="field-hint">The CSV holds these codes in readable form. It is the only copy that will exist. Keep it like cash: encrypt or delete it once the tags are written, and do not email it around.</p>
       </section>`;
   }
   showToast(`${issued.length} tag${issued.length === 1 ? "" : "s"} issued.`);
@@ -17986,7 +17986,7 @@ function openTicketingEventForm() {
       <label>City<input name="city"></label>
       <label>Province<input name="province"></label>
       <button class="btn secondary" type="button" data-action="preview-event-map">${icon("scan")} Preview location on map</button>
-      <p class="field-hint">Enter the address, then drop a pin — it opens the venue on your maps app so you can confirm it is right.</p>
+      <p class="field-hint">Enter the address, then drop a pin. It opens the venue on your maps app so you can confirm it is right.</p>
 
       <section class="section-head compact"><h2>Event poster</h2></section>
       <div data-event-poster-preview></div>
@@ -17994,7 +17994,7 @@ function openTicketingEventForm() {
       <p class="field-hint">Recommended: portrait <strong>1080 × 1350 px</strong> (4:5). JPG, PNG or WebP. Anything you upload is scaled to fit; optional for a draft.</p>
 
       <section class="section-head compact"><h2>Tickets</h2></section>
-      <p class="field-hint">Add a type for each price — pick from <strong>General, VIP, VVIP, Complimentary, Package, Gate Pass</strong> or type your own name. Set a price of <strong>0</strong> for a free event (no FICA needed); any price above 0 makes it a paid event that needs FICA before you submit. Complimentary tickets are always R0.</p>
+      <p class="field-hint">Add a type for each price. Pick from <strong>General, VIP, VVIP, Complimentary, Package, Gate Pass</strong> or type your own name. Set a price of <strong>0</strong> for a free event (no FICA needed); any price above 0 makes it a paid event that needs FICA before you submit. Complimentary tickets are always R0.</p>
       <datalist id="ticket-tier-options">
         ${TICKET_TIER_OPTIONS.map((option) => `<option value="${esc(option)}"></option>`).join("")}
       </datalist>
@@ -18093,7 +18093,7 @@ function openEventChangeRequestModal(eventId) {
     <form class="form-grid" data-form="event-change-request" data-event-id="${esc(event.id)}">
       <label>What would you like to change?
         <select name="requestType" data-change-request-type>
-          <option value="postpone">Postpone — set a new date</option>
+          <option value="postpone">Postpone (set a new date)</option>
           <option value="update_details">Update event details</option>
           <option value="cancel">Cancel the event</option>
           <option value="other">Something else</option>
@@ -18113,7 +18113,7 @@ function openEventChangeRequestModal(eventId) {
       </div>
 
       <div data-cr-group="update_details" hidden>
-        <p class="muted">Fill in only what needs to change. Ticket types and prices can't be changed here — cancel and re-create if a price must change.</p>
+        <p class="muted">Fill in only what needs to change. Ticket types and prices can't be changed here. Cancel and re-create if a price must change.</p>
         <label>Description
           <textarea name="description" rows="3" placeholder="Updated event description"></textarea>
         </label>
@@ -18254,7 +18254,7 @@ async function startTicketQrScanner(button) {
     return;
   }
   host.classList.remove("hidden");
-  host.innerHTML = `${icon("scan")}<strong>Starting camera</strong><p>Allow camera access, then hold each ticket QR in view. Scanning happens on your device — the video is never uploaded.</p>`;
+  host.innerHTML = `${icon("scan")}<strong>Starting camera</strong><p>Allow camera access, then hold each ticket QR in view. Scanning happens on your device. The video is never uploaded.</p>`;
   if (button) button.innerHTML = `${icon("x")} Stop camera`;
   let stream;
   const finish = (message) => {
@@ -20683,21 +20683,21 @@ function howItWorksSteps() {
     {
       icon: "wallet",
       title: "What is TitoPay?",
-      body: "TitoPay is a digital wallet made in South Africa. Send and receive money, pay with a QR, buy airtime and electricity, sell as a business and get paid in seconds — all from one app, with the fees shown before any money moves.",
+      body: "TitoPay is a digital wallet made in South Africa. Send and receive money, pay with a QR, buy airtime and electricity, sell as a business and get paid in seconds. All from one app, with the fees shown before any money moves.",
       hint: "TitoPay. Smart Payments. Simplified.",
       tagline: true
     },
     {
       icon: "heart",
       title: "About us",
-      body: "TitoPay is proudly South African, built for the way we actually pay — at the spaza, at the gate, at the taxi rank, between family. One wallet for people and businesses, with real people at Customer Care behind it.",
+      body: "TitoPay is proudly South African, built for the way we actually pay: at the spaza, at the gate, at the taxi rank, between family. One wallet for people and businesses, with real people at Customer Care behind it.",
       hint: "Proudly South African",
       tagline: true
     },
     {
       icon: "zap",
       title: "The problem we solve",
-      body: "Cash gets lost, stolen and miscounted, and card machines cost more than small businesses can carry. TitoPay makes digital payments instant, safe and affordable for everyone — from one person paying a friend to a business running its whole till.",
+      body: "Cash gets lost, stolen and miscounted, and card machines cost more than small businesses can carry. TitoPay makes digital payments instant, safe and affordable for everyone, from one person paying a friend to a business running its whole till.",
       hint: "Instant. Safe. Affordable.",
       tagline: true
     },
@@ -20716,7 +20716,7 @@ function howItWorksSteps() {
     isBusiness ? {
       icon: "sale",
       title: "Make a sale",
-      body: "Tap your products into the sale or type an amount, then show the payment QR — customers pay straight into your wallet, and tracked stock counts itself down.",
+      body: "Tap your products into the sale or type an amount, then show the payment QR. Customers pay straight into your wallet, and tracked stock counts itself down.",
       hint: "Services › Receive Money"
     } : {
       icon: "send",
@@ -20727,31 +20727,31 @@ function howItWorksSteps() {
     {
       icon: "chat",
       title: "TitoPay Chat",
-      body: "Chat with other TitoPay users right inside the app — settle up, split costs and keep the conversation and the money in one place.",
+      body: "Chat with other TitoPay users right inside the app. Settle up, split costs and keep the conversation and the money in one place.",
       hint: "Services › TitoPay Chat"
     },
     {
       icon: "chatbot",
       title: "Help, day or night",
-      body: "The TitoPay Assistant answers instantly — fees, how-tos, what a status means. If it cannot solve it, it hands you to Customer Care with your question attached.",
+      body: "The TitoPay Assistant answers instantly: fees, how-tos, what a status means. If it cannot solve it, it hands you to Customer Care with your question attached.",
       hint: "Help button, top of Home"
     },
     {
       icon: "mail",
       title: "Real people when you need them",
-      body: "Send a support request and watch the conversation under My support requests — Customer Care replies land in the app and in your email.",
+      body: "Send a support request and watch the conversation under My support requests. Customer Care replies land in the app and in your email.",
       hint: "Profile › Support"
     },
     {
       icon: "grid",
       title: "Everyday services",
-      body: "Buy airtime and electricity, pay bills, split costs, buy vouchers and save with a stokvel — straight from your wallet.",
+      body: "Buy airtime and electricity, pay bills, split costs, buy vouchers and save with a stokvel, straight from your wallet.",
       hint: "Services tab"
     },
     {
       icon: "ticket",
       title: "Event tickets",
-      body: "Buy tickets, show the QR at the gate, add them to Apple or Google Wallet — and if someone gifts you a ticket, add it to your account with its code.",
+      body: "Buy tickets, show the QR at the gate, add them to Apple or Google Wallet. If someone gifts you a ticket, add it to your account with its code.",
       hint: "Services › Event Tickets"
     },
     isBusiness ? {
@@ -20762,7 +20762,7 @@ function howItWorksSteps() {
     } : {
       icon: "staff-badge",
       title: "Work for a business",
-      body: "Added as staff by a business? It appears under My Workplaces — take sales for them from your phone, with every payment going straight to their wallet.",
+      body: "Added as staff by a business? It appears under My Workplaces. Take sales for them from your phone, and every payment goes straight to their wallet.",
       hint: "Profile › My Workplaces"
     },
     {
@@ -20774,13 +20774,13 @@ function howItWorksSteps() {
     {
       icon: "list",
       title: "Track every rand",
-      body: "Every transaction lands in Activity. Filter any period, export CSV or PDF, or email a statement — FICA-verified details included once you are approved.",
+      body: "Every transaction lands in Activity. Filter any period, export CSV or PDF, or email a statement. FICA-verified details are included once you are approved.",
       hint: "Activity tab"
     },
     {
       icon: "shield",
       title: "Stay secure",
-      body: "Complete FICA, lock your wallet instantly if something feels wrong, and never share your PIN, password or verification codes — TitoPay will never ask for them.",
+      body: "Complete FICA, lock your wallet instantly if something feels wrong, and never share your PIN, password or verification codes. TitoPay will never ask for them.",
       hint: "Profile › Security & Verification"
     }
   ];
@@ -21442,7 +21442,7 @@ function promoCarousel() {
     ["TitoPay Updates", "Stay informed with the latest TitoPay updates, verified merchant offers, service announcements and important public notices."]
   ];
   return `<section class="promo-carousel" aria-label="TitoPay campaign placements" data-ad-zone="services-home">
-    <article class="empty-state campaign-slot launch-announcement" data-campaign-slot="launch-announcement">${icon("globe")}<strong>Launching Soon — Nationwide</strong><p>Smart Payments, Simplified.</p></article>
+    <article class="empty-state campaign-slot launch-announcement" data-campaign-slot="launch-announcement">${icon("globe")}<strong>Launching Soon, Nationwide</strong><p>Smart Payments, Simplified.</p></article>
     ${promos.map(([title, body], index) => `<article class="empty-state campaign-slot" data-campaign-slot="services-${index + 1}">${icon(index === 0 ? "shield" : "bell")}<strong>${esc(title)}</strong><p>${esc(body)}</p></article>`).join("")}
   </section>`;
 }
@@ -22364,7 +22364,7 @@ function openFicaVerificationModal() {
       </select></div>
       <div class="field"><label data-fica-number-label>ID number</label>
         <input name="idNumber" inputmode="numeric" autocomplete="off" maxlength="20" required placeholder="13-digit South African ID number" data-fica-number>
-        <small class="field-hint">Typed here so the reviewer verifies your documents against it — no squinting at photos.</small></div>
+        <small class="field-hint">Typed here so the reviewer verifies your documents against it. No squinting at photos.</small></div>
       ${isBusiness ? `
       <div class="field"><label>Company registration number</label>
         <input name="companyRegistrationNumber" autocomplete="off" maxlength="30" required placeholder="e.g. 2020/123456/07">
@@ -22476,7 +22476,7 @@ async function submitFica(form) {
   const identityKind = String(data.get("identityKind") || "South African ID");
   const idNumber = String(data.get("idNumber") || "").replace(/\s+/g, "");
   if (/south african id/i.test(identityKind)) {
-    if (!saIdNumberLooksValid(idNumber)) throw new Error("That South African ID number does not look right — check the 13 digits.");
+    if (!saIdNumberLooksValid(idNumber)) throw new Error("That South African ID number does not look right. Check the 13 digits.");
   } else if (!/^[A-Za-z0-9-]{5,20}$/.test(idNumber)) {
     throw new Error(`Enter the ${identityKind.toLowerCase()} number (5 to 20 letters and digits).`);
   }
@@ -22534,7 +22534,7 @@ function openProofOfAccountModal() {
   const isBusiness = state.accountType === "business";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Official Document</p><h2>Proof of Account</h2><p class="lead">A stamped letter confirming your TitoPay ${isBusiness ? "business" : "personal"} account — for landlords, employers, banks or anyone who asks.</p></div>
+      <div><p class="eyebrow">Official Document</p><h2>Proof of Account</h2><p class="lead">A stamped letter confirming your TitoPay ${isBusiness ? "business" : "personal"} account, for landlords, employers, banks or anyone who asks.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="activity-list">

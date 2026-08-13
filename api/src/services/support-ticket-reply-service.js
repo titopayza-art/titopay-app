@@ -139,7 +139,7 @@ async function notifyCustomerOfReply(ticket, reply) {
     const safeOriginal = emailSafe(ticket.message).slice(0, 600);
     await queueRawEmail({
       recipient: account.email,
-      subject: `TitoPay Customer Care replied — ${reference}`,
+      subject: `TitoPay Customer Care replied: ${reference}`,
       textBody: [
         `Hi ${emailSafe(account.full_name) || "there"},`,
         "",

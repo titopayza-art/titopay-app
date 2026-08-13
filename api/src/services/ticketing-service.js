@@ -1216,7 +1216,7 @@ async function notifyTicketHolder(buyer, { title, body, purpose, eventId }) {
 }
 
 const EVENT_STATUS_MESSAGE = {
-  approved: (name) => ({ title: `Your event is approved: ${name}`, body: `Good news — "${name}" has been approved and is now live on TitoPay. You can share your public event page and start selling or issuing tickets.` }),
+  approved: (name) => ({ title: `Your event is approved: ${name}`, body: `Good news: "${name}" has been approved and is now live on TitoPay. You can share your public event page and start selling or issuing tickets.` }),
   rejected: (name, note) => ({ title: `Update on your event: ${name}`, body: `Your event "${name}" was not approved.${note ? ` Reason: ${note}` : ""} You can make changes and submit it again from Business Ticketing in the TitoPay app.` }),
   additional_information_required: (name, note) => ({ title: `More information needed: ${name}`, body: `TitoPay needs a bit more information before "${name}" can go live.${note ? ` ${note}` : ""} Please update the event in Business Ticketing and submit it again.` }),
   suspended: (name, note) => ({ title: `Your event has been suspended: ${name}`, body: `"${name}" has been temporarily suspended and is not selling tickets.${note ? ` Reason: ${note}` : ""} Please contact TitoPay support if you have questions.` }),
@@ -1472,7 +1472,7 @@ async function deliverTicketOrder(orderId) {
   const eventUrl = `https://app.titopay.co.za/events/${order.slug}`;
   const subject = `Your ticket${tickets.length > 1 ? "s" : ""} for ${order.event_name}`;
   const ticketLines = tickets.map((ticket, index) =>
-    `  ${index + 1}. ${ticket.ticket_name || "General admission"} — ticket code ${ticket.ticket_code}`);
+    `  ${index + 1}. ${ticket.ticket_name || "General admission"}, ticket code ${ticket.ticket_code}`);
   const textBody = [
     `Hi${order.full_name ? ` ${order.full_name}` : ""},`,
     "",
@@ -1487,7 +1487,7 @@ async function deliverTicketOrder(orderId) {
     ...ticketLines,
     "",
     "Each code (and its QR in the TitoPay app) admits one person at the entrance.",
-    "Keep the codes private — anyone who has one can enter.",
+    "Keep the codes private. Anyone who has one can enter.",
     "",
     "Open TitoPay → My Tickets to show the QR at the door, download a PDF, or add the ticket to your phone's wallet.",
     `Event details: ${eventUrl}`
@@ -1508,7 +1508,7 @@ async function deliverTicketOrder(orderId) {
   try {
     const emailCentre = require("./email-centre-service");
     const htmlTickets = tickets.map((ticket) =>
-      `<p style="margin:6px 0">${emailCentre.escapeHtml(ticket.ticket_name || "General admission")} — ticket code <strong style="font-size:18px;letter-spacing:2px">${emailCentre.escapeHtml(ticket.ticket_code)}</strong></p>`).join("");
+      `<p style="margin:6px 0">${emailCentre.escapeHtml(ticket.ticket_name || "General admission")}, ticket code <strong style="font-size:18px;letter-spacing:2px">${emailCentre.escapeHtml(ticket.ticket_code)}</strong></p>`).join("");
     const result = await emailCentre.queueRawEmail({
       recipient: to,
       subject,
@@ -1518,7 +1518,7 @@ async function deliverTicketOrder(orderId) {
         `<p>Your purchase is confirmed. Here ${tickets.length > 1 ? "are your tickets" : "is your ticket"} for <strong>${emailCentre.escapeHtml(order.event_name)}</strong>.</p>`,
         `<p>Order <strong>${emailCentre.escapeHtml(order.order_reference)}</strong><br>When: ${emailCentre.escapeHtml(when)}<br>Where: ${emailCentre.escapeHtml(where)}<br>Total paid: <strong>R ${money(order.total).toFixed(2)}</strong></p>`,
         htmlTickets,
-        `<p>Each code (and its QR in the TitoPay app) admits one person at the entrance. Keep the codes private — anyone who has one can enter.</p>`,
+        `<p>Each code (and its QR in the TitoPay app) admits one person at the entrance. Keep the codes private. Anyone who has one can enter.</p>`,
         `<p>Open TitoPay → My Tickets to show the QR at the door, download a PDF, or add the ticket to your phone's wallet.</p>`
       ].join(""),
       userId: order.buyer_user_id,
@@ -1601,7 +1601,7 @@ async function emailTicketToRecipient(actor, ticketCode, destination, meta = {})
     "Show the ticket code (or its QR in the TitoPay app) at the entrance.",
     `Event details: ${eventUrl}`,
     "",
-    "Keep this code private — anyone who has it can enter."
+    "Keep this code private. Anyone who has it can enter."
   ].filter((line) => line !== null && line !== undefined).join("\n");
 
   // The send goes through the Email Centre QUEUE, not a live SMTP connection
@@ -1634,7 +1634,7 @@ async function emailTicketToRecipient(actor, ticketCode, destination, meta = {})
       await deliverEmail({ to, subject, body, metadata: { ticketCode: ticket.ticket_code, purpose: "ticket_self_service_email" } });
     } catch (error) {
       console.error("[ticket-email-send-failed]", { ticketCode: ticket.ticket_code, message: error.message });
-      throw new AppError(502, "TitoPay could not send the email right now. Your ticket is unaffected — please try again in a few minutes.");
+      throw new AppError(502, "TitoPay could not send the email right now. Your ticket is unaffected. Please try again in a few minutes.");
     }
   }
   await eventAudit({
@@ -1901,7 +1901,7 @@ async function claimTicketByCode(actor, rawCode, meta = {}) {
   await ensureTicketingSchema();
   const code = String(rawCode || "").replace(/\s+/g, "");
   if (!/^\d{6,10}$/.test(code)) {
-    throw new AppError(400, "Enter the ticket code — the 6 to 10 digit number printed on the ticket.");
+    throw new AppError(400, "Enter the ticket code, the 6 to 10 digit number printed on the ticket.");
   }
 
   const { rows: throttleRows } = await pool.query(
@@ -1939,7 +1939,7 @@ async function claimTicketByCode(actor, rawCode, meta = {}) {
   };
 
   if (!ticket) return failClaim("No ticket found with that code. Check the code on the ticket email or PDF.");
-  if (ticket.owner_user_id === actor.userId) throw new AppError(409, "That ticket is already in your account — it is in My Tickets.");
+  if (ticket.owner_user_id === actor.userId) throw new AppError(409, "That ticket is already in your account. It is in My Tickets.");
   if (ticket.status === "scanned") return failClaim("That ticket has already been scanned in at the gate, so it cannot be added.", 409);
   if (ticket.status !== "valid") return failClaim("That ticket is no longer valid, so it cannot be added.", 409);
   if (["cancelled", "suspended"].includes(ticket.event_status)) {
@@ -2000,13 +2000,13 @@ async function claimTicketByCode(actor, rawCode, meta = {}) {
           "",
           `Ticket ${code} for ${ticket.event_name} has just been added to another TitoPay account using its ticket code.`,
           "",
-          "If you gifted or passed this ticket on, no action is needed — the new holder now has it in their My Tickets, and entry will be under their name.",
+          "If you gifted or passed this ticket on, no action is needed. The new holder now has it in their My Tickets, and entry will be under their name.",
           "If you did NOT give this ticket to anyone, contact TitoPay support immediately from the app (Support > Contact TitoPay) so the transfer can be reversed."
         ].join("\n"),
         htmlBody: [
           `<p>Hi ${emailCentre.escapeHtml(ticket.owner_name || "there")},</p>`,
           `<p>Ticket <strong>${emailCentre.escapeHtml(code)}</strong> for <strong>${emailCentre.escapeHtml(ticket.event_name)}</strong> has just been added to another TitoPay account using its ticket code.</p>`,
-          "<p>If you gifted or passed this ticket on, no action is needed — the new holder now has it in their My Tickets, and entry will be under their name.</p>",
+          "<p>If you gifted or passed this ticket on, no action is needed. The new holder now has it in their My Tickets, and entry will be under their name.</p>",
           "<p>If you did <strong>not</strong> give this ticket to anyone, contact TitoPay support immediately from the app (<strong>Support &gt; Contact TitoPay</strong>) so the transfer can be reversed.</p>"
         ].join("\n"),
         userId: ticket.owner_user_id,
@@ -2106,7 +2106,7 @@ async function scanTicket(actor, payload = {}, meta = {}) {
     if (parsed && parsed.type === "titopay_ticket" && parsed.ticketCode) {
       rawCode = String(parsed.ticketCode).trim();
     } else if (parsed && (parsed.codeType || parsed.userId)) {
-      throw new AppError(400, "This is a TitoPay payment QR, not an event ticket. It cannot admit anyone — ask the attendee for their ticket QR or code.");
+      throw new AppError(400, "This is a TitoPay payment QR, not an event ticket. It cannot admit anyone. Ask the attendee for their ticket QR or code.");
     } else {
       rawCode = "";
     }
@@ -2260,7 +2260,7 @@ async function addEventStaff(actor, eventId, payload = {}, meta = {}) {
   // member who has to be phoned and talked to the right screen was the whole
   // complaint; the alert and the email walk them there. Best-effort — a mail
   // hiccup must not fail the add.
-  const staffBody = `${event.event_name}: you can now scan tickets at the door. Open Event Tickets on your TitoPay profile — the "Scan entry" button for this event is ready.`;
+  const staffBody = `${event.event_name}: you can now scan tickets at the door. Open Event Tickets on your TitoPay profile. The "Scan entry" button for this event is ready.`;
   try {
     await createNotification({
       user: { id: user.id, user_type: "customer" },
@@ -2289,14 +2289,14 @@ async function addEventStaff(actor, eventId, payload = {}, meta = {}) {
           "",
           "Where to find it: open the TitoPay app on your own account, go to Event Tickets on your profile, and tap \"Scan entry\" for this event. The camera scanner and code entry are both there.",
           "",
-          "If you were not expecting this, you can ignore it — being staff gives you no access to the organiser's account."
+          "If you were not expecting this, you can ignore it. Being staff gives you no access to the organiser's account."
         ].join("\n"),
         htmlBody: [
           `<p>Hi ${emailCentre.escapeHtml(user.full_name || "there")},</p>`,
           `<p><strong>${emailCentre.escapeHtml(event.event_name)}</strong> has added you as a <strong>ticket scanner</strong>${event.event_date ? ` (event date: ${emailCentre.escapeHtml(String(event.event_date).slice(0, 10))})` : ""}.</p>`,
           "<p><strong>What you can do:</strong> scan attendees' ticket QR codes at the gate and watch the live attendance count. You cannot move any money and you do not need FICA for this.</p>",
           "<p><strong>Where to find it:</strong> open the TitoPay app on your own account, go to <strong>Event Tickets</strong> on your profile, and tap <strong>Scan entry</strong> for this event. The camera scanner and code entry are both there.</p>",
-          "<p>If you were not expecting this, you can ignore it — being staff gives you no access to the organiser's account.</p>"
+          "<p>If you were not expecting this, you can ignore it. Being staff gives you no access to the organiser's account.</p>"
         ].join("\n"),
         userId: user.id,
         idempotencyKey: `event-staff-added:${rows[0].id}:${rows[0].updated_at?.toISOString?.() || Date.now()}`,

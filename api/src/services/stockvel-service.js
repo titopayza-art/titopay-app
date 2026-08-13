@@ -298,7 +298,7 @@ async function joinByCode(userId, inviteCode) {
   const group = rows[0];
   if (!group) throw new AppError(404, "No savings group matches that code. Check it with the person who invited you.");
   if (group.status === "closed") throw new AppError(409, "That group has been closed");
-  if (group.status === "draft") throw new AppError(409, "That group is still being set up — ask the organiser to activate it first");
+  if (group.status === "draft") throw new AppError(409, "That group is still being set up. Ask the organiser to activate it first");
   if (group.member_limit) {
     const { rows: countRows } = await pool.query(
       "SELECT COUNT(*)::int AS count FROM stockvel_members WHERE group_id = $1 AND status = 'active'", [group.id]);
@@ -327,14 +327,14 @@ async function removeMember(actorId, groupId, targetUserId) {
   await requireManager(groupId, actorId);
   const target = await membership(groupId, targetUserId);
   if (!target) throw new AppError(404, "That person is not in the group");
-  if (target.role === "chair") throw new AppError(409, "The chair cannot be removed — transfer the group first");
+  if (target.role === "chair") throw new AppError(409, "The chair cannot be removed. Transfer the group first");
   await pool.query("UPDATE stockvel_members SET status = 'removed' WHERE group_id = $1 AND user_id = $2", [groupId, targetUserId]);
   return { removed: true };
 }
 
 async function leaveGroup(userId, groupId) {
   const member = await requireMember(groupId, userId);
-  if (member.role === "chair") throw new AppError(409, "The chair cannot leave — close the group or hand it to another organiser first");
+  if (member.role === "chair") throw new AppError(409, "The chair cannot leave. Close the group or hand it to another organiser first");
   await pool.query("UPDATE stockvel_members SET status = 'left' WHERE group_id = $1 AND user_id = $2", [groupId, userId]);
   return { left: true };
 }
@@ -355,7 +355,7 @@ async function requestWithdrawal(userId, groupId, payload = {}) {
   const amount = money(payload.amount);
   if (!(amount > 0)) throw new AppError(400, "Enter the withdrawal amount");
   const totals = await groupBalance(groupId);
-  if (amount > totals.balance) throw new AppError(409, `The group holds R${totals.balance.toFixed(2)} — a withdrawal cannot exceed it`);
+  if (amount > totals.balance) throw new AppError(409, `The group holds R${totals.balance.toFixed(2)}, and a withdrawal cannot exceed it`);
   const reason = payload.reason ? boundedText(payload.reason, "Reason", { min: 1, max: 300 }) : "";
   const id = uuidv4();
   await pool.query(
@@ -373,7 +373,7 @@ async function decideWithdrawal(actorId, groupId, withdrawalId, approve) {
   if (!withdrawal) throw new AppError(404, "Withdrawal request not found");
   if (withdrawal.status !== "requested") throw new AppError(409, `That request is already ${withdrawal.status}`);
   if (withdrawal.requested_by === actorId && approve) {
-    throw new AppError(409, "You cannot approve your own withdrawal — another organiser must");
+    throw new AppError(409, "You cannot approve your own withdrawal. Another organiser must");
   }
   if (approve) {
     const totals = await groupBalance(groupId);
@@ -431,7 +431,7 @@ async function openMeeting(actorId, groupId, payload = {}) {
   await requireManager(groupId, actorId);
   const { rows: openRows } = await pool.query(
     "SELECT id FROM stockvel_meetings WHERE group_id = $1 AND status = 'open' LIMIT 1", [groupId]);
-  if (openRows[0]) throw new AppError(409, "A meeting is already open — close it first");
+  if (openRows[0]) throw new AppError(409, "A meeting is already open. Close it first");
   const title = payload.title ? boundedText(payload.title, "Meeting title", { min: 2, max: 120 }) : `Meeting ${new Date().toISOString().slice(0, 10)}`;
   const id = uuidv4();
   await pool.query(
@@ -480,7 +480,7 @@ async function closeMeeting(actorId, groupId, meetingId) {
   const closedAt = new Date();
   const line = (label, value) => `${label}: ${value}`;
   const minutes = [
-    `MINUTES — ${meeting.title}`,
+    `MINUTES: ${meeting.title}`,
     line("Group", group.name),
     line("Opened", new Date(meeting.opened_at).toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" })),
     line("Closed", closedAt.toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" })),
@@ -489,7 +489,7 @@ async function closeMeeting(actorId, groupId, meetingId) {
     "",
     "DECISIONS AGREED",
     ...(decisions.length
-      ? decisions.map((row, index) => `${index + 1}. ${row.message} — noted by ${row.name}`)
+      ? decisions.map((row, index) => `${index + 1}. ${row.message} (noted by ${row.name})`)
       : ["No decisions were pinned this meeting."]),
     "",
     "CONTRIBUTIONS DURING THE MEETING",
@@ -515,7 +515,7 @@ async function closeMeeting(actorId, groupId, meetingId) {
       if (!member.email) continue;
       await emailCentre.queueRawEmail({
         recipient: member.email,
-        subject: `Minutes: ${meeting.title} — ${group.name}`,
+        subject: `Minutes: ${meeting.title} · ${group.name}`,
         textBody: `Hi ${member.name || "there"},\n\nThe meeting has been closed and the minutes are below. They are also saved in the group on TitoPay.\n\n${minutes.replace(/[{}]/g, "")}`,
         htmlBody: `<p>Hi ${emailCentre.escapeHtml(member.name || "there")},</p><p>The meeting has been closed and the minutes are below. They are also saved in the group on TitoPay.</p><pre style="white-space:pre-wrap;font-family:inherit">${emailCentre.escapeHtml(minutes)}</pre>`,
         idempotencyKey: `stockvel-minutes:${meetingId}:${member.email}`,
