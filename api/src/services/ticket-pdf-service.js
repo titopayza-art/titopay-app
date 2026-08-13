@@ -1,18 +1,22 @@
 "use strict";
 
-// THE TICKET AS A FILE. When a ticket is emailed, the message now carries a
-// PDF the holder can save, print or forward: event, ticket type, holder,
-// date, venue, the QR the door scans, and the code in clear text underneath
-// for the night the scanner will not focus. Rendered entirely locally with
-// pdfkit + qrcode - no fonts fetched, no images fetched, nothing leaves the
-// server to build it.
+// THE TICKET AS A FILE, IN THE APPROVED DESIGN. When a ticket is emailed,
+// the message carries a PDF matching the approved ticket card: TitoPay
+// wordmark, navy event header, right-aligned details, the QR in its own
+// box, a perforation line, and the ticket code large enough to read out at
+// a loud gate. Rendered entirely locally with pdfkit + qrcode - no fonts
+// fetched, no images fetched, nothing leaves the server to build it.
 
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 
+const PAGE_BG = "#edf1fa";
 const NAVY = "#0b1f3f";
-const BLUE = "#168ac2";
-const MUTED = "#5b6b82";
+const HEADER_NAVY = "#0a1b3d";
+const BLUE = "#5b9df9";
+const EYEBROW_BLUE = "#7da4f5";
+const HEADER_SOFT = "#c7d7f5";
+const MUTED = "#6b7a93";
 const LINE = "#dbe6f2";
 
 async function renderTicketPdf(ticket) {
@@ -23,51 +27,96 @@ async function renderTicketPdf(ticket) {
   });
 
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A5", margin: 36 });
+    const doc = new PDFDocument({ size: "A4", margin: 0 });
     const chunks = [];
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    const width = doc.page.width - 72;
+    const pageW = doc.page.width;
+    const pageH = doc.page.height;
 
-    // Brand head.
-    doc.font("Helvetica-Bold").fontSize(20).fillColor(BLUE).text("TitoPay", 36, 40, { continued: true })
-      .fillColor(NAVY).text(" Ticket");
-    doc.moveTo(36, 70).lineTo(36 + width, 70).lineWidth(1).strokeColor(LINE).stroke();
+    // Page ground.
+    doc.rect(0, 0, pageW, pageH).fill(PAGE_BG);
 
-    // Event.
-    doc.font("Helvetica-Bold").fontSize(16).fillColor(NAVY)
-      .text(String(ticket.event_name || "Event"), 36, 84, { width });
-    doc.moveDown(0.3);
-    doc.font("Helvetica").fontSize(11).fillColor(MUTED)
-      .text(String(ticket.ticket_name || "General admission"), { width });
+    // Wordmark: "Tito" navy, "Pay" blue, centred as one unit.
+    doc.font("Helvetica-Bold").fontSize(40);
+    const titoW = doc.widthOfString("Tito");
+    const payW = doc.widthOfString("Pay");
+    const markX = (pageW - titoW - payW) / 2;
+    doc.fillColor(NAVY).text("Tito", markX, 52, { lineBreak: false });
+    doc.fillColor(BLUE).text("Pay", markX + titoW, 52, { lineBreak: false });
 
-    const detail = (label, value) => {
+    // The ticket card.
+    const cardX = 68;
+    const cardW = pageW - cardX * 2;
+    const cardY = 140;
+    const cardH = 610;
+    const radius = 16;
+    doc.roundedRect(cardX, cardY, cardW, cardH, radius).fill("#ffffff");
+
+    // Navy header, rounded on top only.
+    const headH = 152;
+    doc.save();
+    doc.roundedRect(cardX, cardY, cardW, headH, radius).clip();
+    doc.rect(cardX, cardY, cardW, headH).fill(HEADER_NAVY);
+    doc.restore();
+    doc.rect(cardX, cardY + headH - radius, cardW, radius).fill(HEADER_NAVY);
+
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(EYEBROW_BLUE)
+      .text("TITOPAY TICKET", cardX, cardY + 32, { width: cardW, align: "center", characterSpacing: 4 });
+    doc.font("Helvetica-Bold").fontSize(27).fillColor("#ffffff")
+      .text(String(ticket.event_name || "Event"), cardX + 24, cardY + 52, { width: cardW - 48, align: "center" });
+    doc.font("Helvetica-Bold").fontSize(13).fillColor("#e6ecf9")
+      .text(String(ticket.when || ""), cardX, cardY + 96, { width: cardW, align: "center" });
+    doc.font("Helvetica-Bold").fontSize(13).fillColor(HEADER_SOFT)
+      .text(String(ticket.where || ""), cardX, cardY + 116, { width: cardW, align: "center" });
+
+    // Details: label left, value right, exactly like the card.
+    const detailX = cardX + 36;
+    const detailW = cardW - 72;
+    let y = cardY + headH + 28;
+    const row = (label, value) => {
       if (!value) return;
-      doc.moveDown(0.55);
-      doc.font("Helvetica-Bold").fontSize(9).fillColor(BLUE).text(label.toUpperCase(), { width });
-      doc.font("Helvetica").fontSize(11).fillColor(NAVY).text(String(value), { width });
+      doc.font("Helvetica-Bold").fontSize(13).fillColor(MUTED).text(label, detailX, y, { width: detailW, lineBreak: false });
+      doc.font("Helvetica-Bold").fontSize(13).fillColor(NAVY).text(String(value), detailX, y, { width: detailW, align: "right" });
+      y += 26;
     };
-    detail("When", ticket.when);
-    detail("Where", ticket.where);
-    detail("Ticket holder", ticket.attendee_name || ticket.owner_name);
-    detail("Order", ticket.order_reference);
+    row("Ticket", ticket.ticket_name || "General admission");
+    row("Holder", ticket.attendee_name || ticket.owner_name);
+    row("Order", ticket.order_reference);
 
-    // QR, centred, with the code beneath it.
-    const qrSize = 170;
-    const qrX = 36 + (width - qrSize) / 2;
-    let qrY = doc.y + 16;
-    doc.image(qrPng, qrX, qrY, { width: qrSize, height: qrSize });
-    qrY += qrSize + 10;
-    doc.font("Courier-Bold").fontSize(15).fillColor(NAVY)
-      .text(String(ticket.ticket_code || ""), 36, qrY, { width, align: "center" });
+    // QR in its own soft box.
+    const qrBox = 200;
+    const qrBoxX = cardX + (cardW - qrBox) / 2;
+    const qrBoxY = y + 14;
+    doc.roundedRect(qrBoxX, qrBoxY, qrBox, qrBox, 12).lineWidth(1.2).strokeColor(LINE).stroke();
+    doc.image(qrPng, qrBoxX + 12, qrBoxY + 12, { width: qrBox - 24, height: qrBox - 24 });
+    doc.font("Helvetica-Bold").fontSize(10.5).fillColor(MUTED)
+      .text("Scan at the entrance", cardX, qrBoxY + qrBox + 10, { width: cardW, align: "center" });
 
-    doc.font("Helvetica").fontSize(8.5).fillColor(MUTED)
-      .text("Show this QR code, or read out the ticket code, at the entrance. A ticket admits once: keep this document private, because anyone holding it can enter with it.",
-        36, qrY + 26, { width, align: "center" });
-    doc.text(`Copyright © ${new Date().getUTCFullYear()} TitoPay. All Rights Reserved.`,
-      36, doc.page.height - 52, { width, align: "center" });
+    // Perforation with edge notches.
+    const perfY = qrBoxY + qrBox + 36;
+    doc.save();
+    doc.moveTo(cardX + 24, perfY).lineTo(cardX + cardW - 24, perfY)
+      .lineWidth(1.4).dash(5, { space: 5 }).strokeColor("#b9c4d8").stroke();
+    doc.undash();
+    doc.circle(cardX, perfY, 13).fill(PAGE_BG);
+    doc.circle(cardX + cardW, perfY, 13).fill(PAGE_BG);
+    doc.restore();
+
+    // Ticket code, large and spaced.
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(MUTED)
+      .text("TICKET CODE", cardX, perfY + 24, { width: cardW, align: "center", characterSpacing: 4 });
+    doc.font("Helvetica-Bold").fontSize(32).fillColor(NAVY)
+      .text(String(ticket.ticket_code || ""), cardX, perfY + 42, { width: cardW, align: "center", characterSpacing: 8 });
+    doc.font("Helvetica-Bold").fontSize(10.5).fillColor(MUTED)
+      .text("Present this ticket at the entrance. Do not share the code publicly.",
+        cardX + 24, perfY + 86, { width: cardW - 48, align: "center" });
+
+    // Sign-off under the card.
+    doc.font("Helvetica-Bold").fontSize(12).fillColor(NAVY)
+      .text("Smart Payments. Simplified.", 0, cardY + cardH + 22, { width: pageW, align: "center" });
 
     doc.end();
   });
