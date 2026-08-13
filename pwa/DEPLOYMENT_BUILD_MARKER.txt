@@ -1,9 +1,15 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v340 (titopay-pwa-v340)
+PWA bundle: v341 (titopay-pwa-v341)
 Admin console: admin-console-v81
 
 This build:
+  - My Tickets gains a back button (returns to the screen it was opened
+    from, or closes when there is nowhere to go back to).
+  - Business Ticketing no longer jumps to the top on refresh re-renders:
+    the dashboard remembers the scroll position across cashless toggles,
+    refreshes, draft saves and change requests - linking vendors stays
+    where you were.
   - Tour styling moved from inline attributes into stylesheet classes
     (.tour-*), so the full-screen layout renders identically even where
     an older cached index.html still strips inline styles.

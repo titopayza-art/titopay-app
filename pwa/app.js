@@ -15751,6 +15751,7 @@ async function openMyTicketsModal() {
   state.ticketing.myTicketsStatus = "loading";
   openModal(`
     <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
       <div><p class="eyebrow">TitoPay Tickets</p><h2>My Tickets</h2><p class="lead" data-my-tickets-lead>Loading your tickets.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -16250,6 +16251,11 @@ async function openBusinessTicketingDashboard(options = {}) {
     openInfoModal("Business ticketing", "Switch to Business to create and manage TitoPay events.");
     return;
   }
+  // A refresh re-render used to throw the organiser back to the top of a
+  // long dashboard — infuriating mid-way through linking vendors. Remember
+  // where they were and put them back there.
+  const previousCard = document.querySelector(".modal-backdrop .modal-card");
+  const previousScroll = options.refresh && previousCard ? previousCard.scrollTop : null;
   // Both requests used to be awaited before anything appeared, so the tile
   // looked dead on a slow connection, and a rejection meant no modal opened at
   // all. Open first, then fill in.
@@ -16366,6 +16372,10 @@ async function openBusinessTicketingDashboard(options = {}) {
   // works without it.
   const vendorPick = document.querySelector("select[data-vendor-event-pick]");
   if (vendorPick && vendorPick.value) refreshEventVendorList(vendorPick.value);
+  if (previousScroll != null) {
+    const card = document.querySelector(".modal-backdrop .modal-card");
+    if (card) card.scrollTop = previousScroll;
+  }
 }
 
 /* ---- Ticketing Staff: the door-scanner view -------------------------------
