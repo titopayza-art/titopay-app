@@ -115,7 +115,9 @@ const DEFAULT_CONFIG = {
   // on this cycle.
   cdd: { reviewMonths: 24 },
   // Which risk status each signal escalates to. Order of severity:
-  // normal < elevated < high_risk < edd_review.
+  // normal < elevated < high_risk < edd_review. A signal type not listed
+  // here defaults to "elevated", so new detectors can ship without a code
+  // change and compliance can retune any of these without a deploy.
   riskSignals: {
     unusual_activity: "elevated",
     transaction_pattern: "elevated",
@@ -123,7 +125,16 @@ const DEFAULT_CONFIG = {
     sanctions_screening: "high_risk",
     source_of_funds: "edd_review",
     edd_trigger: "edd_review",
-    manual: "high_risk"
+    manual: "high_risk",
+    // Account and device security signals (fed by the security layer).
+    failed_logins: "elevated",
+    device_risk: "elevated",
+    account_takeover: "high_risk",
+    duplicate_account: "high_risk",
+    // Payment integrity signals.
+    chargeback: "elevated",
+    refund_abuse: "elevated",
+    money_integrity: "high_risk"
   }
 };
 
@@ -217,8 +228,9 @@ async function loadComplianceConfig() {
   return mergeConfig(rows[0]?.value);
 }
 
-async function saveComplianceConfig(actor, value) {
+async function saveComplianceConfig(actor, value, { reason = null } = {}) {
   await ensureComplianceSchema();
+  const previous = await loadComplianceConfig();
   const merged = mergeConfig(value);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS platform_settings (
@@ -240,7 +252,9 @@ async function saveComplianceConfig(actor, value) {
     action: "compliance_limits_updated",
     entityType: "platform_settings",
     entityId: null,
-    metadata: { config: merged }
+    // Reason, previous value and new value together: the change is
+    // reconstructible without reading any other record.
+    metadata: { reason, previous, config: merged }
   });
   return merged;
 }
@@ -725,7 +739,15 @@ async function basicVerify(auth, payload = {}) {
     "SELECT id FROM users WHERE id_number_hash = $1 AND id <> $2 LIMIT 1",
     [hash, auth.userId]
   );
-  if (rows[0]) throw new AppError(409, "This identity document is already linked to another TitoPay account. If that is not you, contact support.");
+  if (rows[0]) {
+    // Trying to register a document that already anchors another account is
+    // a duplicate-account indicator. The attempt is flagged for compliance
+    // on the ATTEMPTING account; the holder of the document is untouched.
+    await recordRiskSignal(auth.userId, "duplicate_account", {
+      trigger: "document_reuse_attempt", documentType, issuingCountry
+    }).catch(() => {});
+    throw new AppError(409, "This identity document is already linked to another TitoPay account. If that is not you, contact support.");
+  }
   await pool.query(
     `UPDATE users SET id_number_hash = $1,
         kyc_document_type = $3,
@@ -785,7 +807,8 @@ const VERIFICATION_STATES = {
   under_review: "Under Review",
   edd_required: "More Info Needed",
   verification_failed: "Verification Failed",
-  restricted: "Restricted"
+  restricted: "Restricted",
+  suspended: "Suspended"
 };
 
 function verificationStateFor(user, tier) {
@@ -793,6 +816,9 @@ function verificationStateFor(user, tier) {
   const fica = String(user.fica_status || "").toLowerCase();
   const edd = String(user.edd_status || "").toLowerCase();
   const risk = String(user.risk_status || "normal").toLowerCase();
+  // Suspended is its own customer-status, distinct from other restrictions:
+  // activity is paused, not merely limited.
+  if (accountStatus === "suspended") return "suspended";
   if (BLOCKED_ACCOUNT_STATUSES.has(accountStatus)) return "restricted";
   if (["rejected", "failed", "declined"].includes(fica)) return "verification_failed";
   if (edd === "under_review" || (risk === "edd_review" && edd !== "required")) return "under_review";

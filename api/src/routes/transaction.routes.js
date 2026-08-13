@@ -41,7 +41,21 @@ router.get("/", async (req, res, next) => {
 router.post("/:id/reverse", requireAdminPermission("transactions"), async (req, res, next) => {
   try {
     const transactionId = requireUuid(req.params.id, "Transaction ID");
-    res.json({ ok: true, transaction: await reverseTransaction(transactionId, req.auth) });
+    // A reversal is the one admin action that moves customer money, so it
+    // carries its reason into the record and always raises a visibility
+    // alert for the integrity queue. The reason is accepted rather than
+    // demanded so existing consoles keep working; an unstated reason is
+    // itself recorded as unstated.
+    const reason = String(req.body?.reason || "").trim().slice(0, 300) || "not stated";
+    const transaction = await reverseTransaction(transactionId, req.auth);
+    const integrity = require("../services/money-integrity-service");
+    await integrity.raiseAlert({
+      alertType: "manual_reversal", severity: "info",
+      fingerprint: `manual_reversal:${transactionId}`,
+      userId: transaction?.user_id || null, transactionId,
+      details: { reason, reversedBy: req.auth.userId }
+    }).catch(() => {});
+    res.json({ ok: true, transaction });
   } catch (error) {
     next(error);
   }

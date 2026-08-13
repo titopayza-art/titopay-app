@@ -38,6 +38,7 @@ async function heartbeat() {
 }
 
 let cyclesSinceSweep = 0;
+let cyclesSinceIntegrity = 0;
 async function cycle() {
   if (stopping) return;
   try {
@@ -54,6 +55,16 @@ async function cycle() {
       cyclesSinceSweep = 0;
       const swept = await sweepExpiredOtpEmails().catch((error) => { console.error("[email-worker] otp sweep failed", { message: error.message }); return null; });
       if (swept && (swept.redacted || swept.purged)) console.info("[email-worker] otp sweep", swept);
+    }
+    // Every ~30 minutes the money integrity sweep verifies recent ledger
+    // activity: balances against postings, duplicates, orphans, unbalanced
+    // legs, stale in-flight payments. The worker is a single process, so
+    // this runs exactly once per interval however many API workers exist.
+    if (++cyclesSinceIntegrity >= 900) {
+      cyclesSinceIntegrity = 0;
+      const audit = await require("./services/money-integrity-service").runIntegritySweep({})
+        .catch((error) => { console.error("[email-worker] integrity sweep failed", { message: error.message }); return null; });
+      if (audit && audit.exceptionCount) console.warn("[email-worker] integrity sweep found issues", audit);
     }
     const settings = await getSettings();
     const jobs = await claimJobs(workerId, settings.worker_concurrency);

@@ -3376,8 +3376,12 @@ router.get("/compliance/limits", requireAdminPermission("services"), async (req,
 
 router.put("/compliance/limits", requireAdminPermission("services"), async (req, res, next) => {
   try {
+    // A limit change is a risk-framework change: it carries a stated reason,
+    // and the audit record keeps the previous and new values side by side.
+    const reason = String(req.body?.reason || "").trim();
+    if (!reason) throw new AppError(400, "State the reason for this limit change. It becomes part of the audit record.");
     const compliance = require("../services/compliance-service");
-    const config = await compliance.saveComplianceConfig(req.auth, req.body?.config || req.body || {});
+    const config = await compliance.saveComplianceConfig(req.auth, req.body?.config || req.body || {}, { reason });
     res.json({ ok: true, config });
   } catch (error) { next(error); }
 });
@@ -3475,6 +3479,217 @@ router.post("/compliance/screening/run", requireAdminPermission("services"), asy
     await writeAuditLog({ actorType: "admin", actorId: req.auth.userId, action: "screening_sweep_run",
       entityType: "compliance_screening", entityId: null, metadata: { screened: rows.length, hits } });
     res.json({ ok: true, screened: rows.length, hits });
+  } catch (error) { next(error); }
+});
+
+// MONEY INTEGRITY AND CASE MANAGEMENT. The integrity engine observes the
+// ledger and raises alerts; the endpoints here are how authorised staff see,
+// investigate and resolve them. Nothing on this surface can move money or
+// edit a financial record: resolution is a decision plus a note, and every
+// decision is audit-logged.
+router.get("/integrity/alerts", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    await integrity.ensureIntegritySchema();
+    const { rows } = await pool.query(
+      `SELECT a.*, u.full_name, u.username
+       FROM money_integrity_alerts a LEFT JOIN users u ON u.id = a.user_id
+       ORDER BY (a.status = 'open') DESC,
+                CASE a.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END,
+                a.created_at DESC
+       LIMIT 300`);
+    res.json({ ok: true, alerts: rows });
+  } catch (error) { next(error); }
+});
+
+router.post("/integrity/alerts/:id/resolve", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    const result = await integrity.resolveAlert(req.params.id, req.auth, req.body?.note);
+    res.json({ ok: true, ...result });
+  } catch (error) { next(error); }
+});
+
+router.post("/integrity/sweep", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    const result = await integrity.runIntegritySweep({ triggeredBy: req.auth.userId });
+    await writeAuditLog({ actorType: "admin", actorId: req.auth.userId, action: "integrity_sweep_run",
+      entityType: "reconciliation_run", entityId: result.runId, metadata: result.found });
+    res.json({ ok: true, ...result });
+  } catch (error) { next(error); }
+});
+
+router.get("/integrity/reconciliation", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    await integrity.ensureIntegritySchema();
+    const [runs, exceptions] = await Promise.all([
+      pool.query("SELECT * FROM reconciliation_runs ORDER BY started_at DESC LIMIT 50"),
+      pool.query(
+        `SELECT e.*, t.reference AS transaction_reference, t.service_code
+         FROM reconciliation_exceptions e LEFT JOIN transactions t ON t.id = e.transaction_id
+         ORDER BY (e.status = 'open') DESC, e.created_at DESC LIMIT 300`)
+    ]);
+    res.json({ ok: true, runs: runs.rows, exceptions: exceptions.rows });
+  } catch (error) { next(error); }
+});
+
+router.post("/integrity/reconciliation/run", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    const result = await integrity.runProviderReconciliation({
+      provider: String(req.body?.provider || "provider").slice(0, 60),
+      entries: req.body?.entries,
+      actor: req.auth
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) { next(error); }
+});
+
+router.post("/integrity/reconciliation/exceptions/:id/resolve", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    const result = await integrity.resolveReconciliationException(req.params.id, req.auth, req.body?.note);
+    res.json({ ok: true, ...result });
+  } catch (error) { next(error); }
+});
+
+// Compliance cases: the flag queue with ownership and decisions. Assigning
+// and deciding are recorded moves; a decision closes the case through the
+// same clearing rules the flag resolver uses.
+router.get("/compliance/cases", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    await integrity.ensureIntegritySchema();
+    const status = String(req.query.status || "").trim();
+    const { rows } = await pool.query(
+      `SELECT cf.*, u.full_name, u.username, u.account_type, u.risk_status, u.fica_status,
+              a.full_name AS assigned_to_name
+       FROM compliance_flags cf
+       JOIN users u ON u.id = cf.user_id
+       LEFT JOIN users a ON a.id = cf.assigned_to
+       ${status ? "WHERE cf.status = $1" : ""}
+       ORDER BY (cf.status = 'open') DESC, cf.created_at DESC LIMIT 300`,
+      status ? [status] : []);
+    res.json({ ok: true, cases: rows });
+  } catch (error) { next(error); }
+});
+
+router.post("/compliance/cases/:id/assign", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    await integrity.ensureIntegritySchema();
+    const assignee = requireUuid(req.body?.adminId, "adminId");
+    const { rows } = await pool.query(
+      "UPDATE compliance_flags SET assigned_to = $2 WHERE id = $1 AND status = 'open' RETURNING id, flag_type",
+      [req.params.id, assignee]);
+    if (!rows[0]) throw new AppError(404, "Case not found or already closed.");
+    await writeAuditLog({ actorType: "admin", actorId: req.auth.userId, action: "compliance_case_assigned",
+      entityType: "compliance_flag", entityId: req.params.id, metadata: { assignee, flagType: rows[0].flag_type } });
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+router.post("/compliance/cases/:id/decide", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    await integrity.ensureIntegritySchema();
+    const decision = String(req.body?.decision || "").trim().slice(0, 120);
+    const note = String(req.body?.note || "").trim().slice(0, 500);
+    if (!decision) throw new AppError(400, "Record the decision taken on this case.");
+    if (!note) throw new AppError(400, "A decision carries a note explaining it.");
+    const { rows } = await pool.query(
+      `UPDATE compliance_flags
+       SET status = 'resolved', decision = $2, resolved_at = NOW(), resolved_by = $3, resolution_note = $4
+       WHERE id = $1 AND status = 'open' RETURNING user_id, flag_type`,
+      [req.params.id, decision, req.auth.userId, note]);
+    if (!rows[0]) throw new AppError(404, "Case not found or already closed.");
+    const landing = String(req.body?.riskStatus || "").trim();
+    if (landing) {
+      await require("../services/compliance-service").setRiskStatus(rows[0].user_id, landing, `case_decided:${req.params.id}`, {}, req.auth);
+    } else {
+      await pool.query(
+        `UPDATE users SET edd_status = 'cleared', risk_status = 'normal' WHERE id = $1
+         AND NOT EXISTS (SELECT 1 FROM compliance_flags WHERE user_id = $1 AND status = 'open')`,
+        [rows[0].user_id]);
+    }
+    await writeAuditLog({ actorType: "admin", actorId: req.auth.userId, action: "compliance_case_decided",
+      entityType: "compliance_flag", entityId: req.params.id,
+      metadata: { decision, note, flagType: rows[0].flag_type } });
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+// The compliance and integrity dashboard: one call, the whole picture.
+router.get("/compliance/overview", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const compliance = require("../services/compliance-service");
+    const integrity = require("../services/money-integrity-service");
+    await compliance.ensureComplianceSchema();
+    await integrity.ensureIntegritySchema();
+    const [kyc, risk, flags, alerts, recon, accounts, transactions30d] = await Promise.all([
+      pool.query(`SELECT CASE WHEN LOWER(COALESCE(fica_status,'')) IN ('verified','approved','complete','completed') THEN 'fully_verified'
+                              WHEN basic_verified_at IS NOT NULL THEN 'basic_verified' ELSE 'unverified' END AS level,
+                         COUNT(*)::INT AS count
+                  FROM users GROUP BY 1`),
+      pool.query("SELECT COALESCE(risk_status,'normal') AS risk, COUNT(*)::INT AS count FROM users GROUP BY 1"),
+      pool.query("SELECT flag_type, COUNT(*)::INT AS count FROM compliance_flags WHERE status = 'open' GROUP BY flag_type"),
+      pool.query("SELECT severity, COUNT(*)::INT AS count FROM money_integrity_alerts WHERE status = 'open' GROUP BY severity"),
+      pool.query("SELECT COUNT(*)::INT AS open FROM reconciliation_exceptions WHERE status = 'open'"),
+      pool.query("SELECT status, COUNT(*)::INT AS count FROM users WHERE status IN ('suspended','blocked','inactive') GROUP BY status"),
+      pool.query(`SELECT status, COUNT(*)::INT AS count FROM transactions
+                  WHERE created_at >= NOW() - INTERVAL '30 days' AND status IN ('failed','reversed','refunded','cancelled')
+                  GROUP BY status`)
+    ]);
+    res.json({
+      ok: true,
+      kyc: kyc.rows, risk: risk.rows, openFlags: flags.rows,
+      openIntegrityAlerts: alerts.rows, openReconciliationExceptions: recon.rows[0]?.open || 0,
+      restrictedAccounts: accounts.rows, problemTransactions30d: transactions30d.rows
+    });
+  } catch (error) { next(error); }
+});
+
+// Dry-run transaction check for support and operations: what would the
+// compliance engine say, without moving anything or changing any state.
+router.post("/compliance/transaction-check", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const compliance = require("../services/compliance-service");
+    const userId = requireUuid(req.body?.userId, "userId");
+    const amount = Number(req.body?.amount);
+    if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "Provide the amount to check.");
+    const decision = { allowed: true, refusals: [] };
+    try { await compliance.assertCanSendAmount(userId, amount); }
+    catch (error) { decision.allowed = false; decision.refusals.push({ check: "send", reason: error.message }); }
+    if (req.body?.recipientId) {
+      try { await compliance.assertCanReceiveAmount(requireUuid(req.body.recipientId, "recipientId"), amount); }
+      catch (error) { decision.allowed = false; decision.refusals.push({ check: "receive", reason: error.message }); }
+    }
+    res.json({ ok: true, ...decision });
+  } catch (error) { next(error); }
+});
+
+// Regulatory reporting evidence: trigger, review, decision, submission
+// reference and responsible person, for whichever obligations TitoPay's
+// compliance framework determines apply.
+router.get("/compliance/reports", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    await integrity.ensureIntegritySchema();
+    const { rows } = await pool.query(
+      `SELECT r.*, a.full_name AS responsible_name
+       FROM regulatory_report_events r LEFT JOIN users a ON a.id = r.responsible_admin
+       ORDER BY r.created_at DESC LIMIT 200`);
+    res.json({ ok: true, reports: rows });
+  } catch (error) { next(error); }
+});
+
+router.post("/compliance/reports", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    const result = await integrity.recordRegulatoryReportEvent(req.auth, req.body || {});
+    res.status(201).json({ ok: true, ...result });
   } catch (error) { next(error); }
 });
 

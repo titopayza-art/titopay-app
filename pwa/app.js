@@ -75,7 +75,8 @@ const VERIFICATION_TONES = {
   under_review: "warn",
   edd_required: "warn",
   verification_failed: "warn",
-  restricted: "warn"
+  restricted: "warn",
+  suspended: "warn"
 };
 
 // ISO 3166-1 country names for the passport verification flow. The API

@@ -562,6 +562,15 @@ async function markFailedLogin(user, identifier, ipAddress, userAgent) {
     success: false,
     metadata: { identifier }
   });
+  // A lockout is a possible takeover attempt, so it feeds the central risk
+  // engine as a signal, never as a verdict: the compliance team sees the
+  // flag alongside everything else about the account. Fire and forget; a
+  // risk-engine hiccup must never change what the login endpoint returns.
+  if (lockNow && user.user_type === "customer") {
+    require("./compliance-service")
+      .recordRiskSignal(user.id, "failed_logins", { trigger: "account_lockout", attempts, ipAddress })
+      .catch(() => {});
+  }
 }
 
 async function clearFailedLogin(userId, ipAddress) {

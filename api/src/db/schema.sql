@@ -1696,3 +1696,131 @@ CREATE TABLE IF NOT EXISTS compliance_screening_list (
   added_by UUID,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- MONEY INTEGRITY. The wallet_ledger is the financial record; these objects
+-- prove the projections agree with it and keep every disagreement visible
+-- until a person resolves it. Nothing here moves money.
+
+CREATE TABLE IF NOT EXISTS money_integrity_alerts (
+  id UUID PRIMARY KEY,
+  alert_type TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'warning',
+  fingerprint TEXT NOT NULL UNIQUE,
+  user_id UUID,
+  wallet_id UUID,
+  transaction_id UUID,
+  details JSONB NOT NULL DEFAULT '{}'::JSONB,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  acknowledged_by UUID,
+  resolved_at TIMESTAMPTZ,
+  resolved_by UUID,
+  resolution_note TEXT
+);
+
+CREATE INDEX IF NOT EXISTS money_integrity_alerts_open_idx
+  ON money_integrity_alerts (status, severity, created_at DESC);
+
+-- Every transactions.status transition, recorded by trigger in the same
+-- database transaction as the change. 'reversed' is terminal and enforced.
+CREATE TABLE IF NOT EXISTS transaction_status_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source TEXT NOT NULL DEFAULT 'db_trigger'
+);
+
+CREATE INDEX IF NOT EXISTS transaction_status_history_tx_idx
+  ON transaction_status_history (transaction_id, changed_at);
+
+CREATE OR REPLACE FUNCTION titopay_record_tx_status() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO transaction_status_history (transaction_id, from_status, to_status)
+    VALUES (NEW.id, NULL, NEW.status);
+    RETURN NEW;
+  END IF;
+  IF OLD.status IS DISTINCT FROM NEW.status THEN
+    IF OLD.status = 'reversed' THEN
+      RAISE EXCEPTION 'transaction % is reversed; reversed is terminal', OLD.id;
+    END IF;
+    INSERT INTO transaction_status_history (transaction_id, from_status, to_status)
+    VALUES (NEW.id, OLD.status, NEW.status);
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'titopay_tx_status_insert') THEN
+    CREATE TRIGGER titopay_tx_status_insert AFTER INSERT ON transactions
+    FOR EACH ROW EXECUTE FUNCTION titopay_record_tx_status();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'titopay_tx_status_update') THEN
+    CREATE TRIGGER titopay_tx_status_update BEFORE UPDATE OF status ON transactions
+    FOR EACH ROW EXECUTE FUNCTION titopay_record_tx_status();
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS reconciliation_runs (
+  id UUID PRIMARY KEY,
+  scope TEXT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ,
+  checked_count INT NOT NULL DEFAULT 0,
+  exception_count INT NOT NULL DEFAULT 0,
+  details JSONB NOT NULL DEFAULT '{}'::JSONB,
+  triggered_by UUID
+);
+
+CREATE TABLE IF NOT EXISTS reconciliation_exceptions (
+  id UUID PRIMARY KEY,
+  run_id UUID REFERENCES reconciliation_runs(id) ON DELETE SET NULL,
+  exception_type TEXT NOT NULL,
+  transaction_id UUID,
+  wallet_id UUID,
+  details JSONB NOT NULL DEFAULT '{}'::JSONB,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ,
+  resolved_by UUID,
+  resolution_note TEXT
+);
+
+CREATE INDEX IF NOT EXISTS reconciliation_exceptions_open_idx
+  ON reconciliation_exceptions (status, created_at DESC);
+
+-- Regulatory reporting evidence. Which report types apply is a legal
+-- determination mapped by compliance; nothing is assumed here.
+CREATE TABLE IF NOT EXISTS regulatory_report_events (
+  id UUID PRIMARY KEY,
+  report_type TEXT NOT NULL,
+  trigger_summary TEXT NOT NULL,
+  review_note TEXT,
+  decision TEXT NOT NULL,
+  submission_reference TEXT,
+  submitted_at TIMESTAMPTZ,
+  responsible_admin UUID NOT NULL,
+  related_user UUID,
+  related_case UUID,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by UUID
+);
+
+-- Case management on the compliance flag queue.
+ALTER TABLE compliance_flags ADD COLUMN IF NOT EXISTS assigned_to UUID;
+ALTER TABLE compliance_flags ADD COLUMN IF NOT EXISTS severity TEXT;
+ALTER TABLE compliance_flags ADD COLUMN IF NOT EXISTS case_type TEXT;
+ALTER TABLE compliance_flags ADD COLUMN IF NOT EXISTS decision TEXT;
+
+-- The lookups the payment rails and the integrity sweep actually run.
+CREATE INDEX IF NOT EXISTS idx_transactions_open_status
+  ON transactions (status, updated_at DESC) WHERE status IN ('pending','processing');
+CREATE INDEX IF NOT EXISTS idx_transactions_checkout_ref
+  ON transactions ((metadata->>'checkoutId')) WHERE metadata ? 'checkoutId';
+CREATE INDEX IF NOT EXISTS idx_transactions_payout_ref
+  ON transactions ((metadata->>'payoutId')) WHERE metadata ? 'payoutId';

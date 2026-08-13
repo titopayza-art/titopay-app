@@ -19,10 +19,14 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 14;
+const API_BUILD = 15;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  15: "Money Integrity Engine: ledger-vs-balance sweeps, duplicate/orphan/" +
+      "unbalanced detection, transaction status history by trigger, provider " +
+      "reconciliation with exception queues, compliance case management, " +
+      "dashboards, regulatory report evidence, security signals into risk.",
   14: "Identity verification goes international: SA ID, passport or other " +
       "approved document with issuing country, hash-only storage, verification " +
       "history, and nine customer-safe verification states on the wallet badge.",
