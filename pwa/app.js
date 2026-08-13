@@ -2531,6 +2531,11 @@ async function onClick(event) {
       .catch((error) => showToast(friendlyFormError(error, "titokids"), "error"));
     return;
   }
+  const tkManagersRetry = event.target.closest("[data-tk-managers-retry]");
+  if (tkManagersRetry) {
+    await refreshTitoKidsManagers(tkManagersRetry.dataset.tkManagersRetry);
+    return;
+  }
   const tkManagerAdd = event.target.closest("[data-tk-manager-add]");
   if (tkManagerAdd) {
     await inviteTitoKidsManager(tkManagerAdd.dataset.tkManagerAdd);
@@ -13456,7 +13461,19 @@ async function refreshTitoKidsManagers(childId) {
         <p class="field-hint" style="margin-top:6px">A co-parent can add money from <strong>their own</strong> wallet, pay for needs, set limits and answer ${esc(child.fullName || "the child")}’s requests. They can never spend your money, remove ${esc(child.fullName || "the child")}, or invite anyone else.</p>
       ` : `<p class="field-hint" style="margin-top:6px">You help manage this wallet. Money you add comes from your own wallet.</p>`}`;
   } catch (error) {
-    host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
+    // A bare "Not found" here reads as though the CHILD is missing, which is
+    // frightening and wrong. The API's route-not-found handler returns exactly
+    // that when the server has not been updated yet, so say which it is.
+    const status = Number(error?.status || 0);
+    const routeMissing = status === 404 && /^not found$/i.test(String(error?.message || "").trim());
+    host.innerHTML = `
+      <p class="tk-sub"><strong style="color:var(--text)">Who manages this wallet</strong></p>
+      <p class="field-hint">${routeMissing
+        ? "Co-parents need the newest TitoPay server. This wallet, its money and its limits are completely unaffected — only this panel is waiting on the update."
+        : esc(friendlyFormError(error, "titokids"))}</p>
+      <div class="auth-actions" style="margin-top:8px">
+        <button class="btn secondary" type="button" data-tk-managers-retry="${esc(childId)}">${icon("refresh")} Try again</button>
+      </div>`;
   }
 }
 async function inviteTitoKidsManager(childId) {

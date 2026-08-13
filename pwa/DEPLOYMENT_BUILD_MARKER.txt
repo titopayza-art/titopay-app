@@ -1,9 +1,22 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v352 (titopay-pwa-v352)
+PWA bundle: v353 (titopay-pwa-v353)
 Admin console: admin-console-v81
 
-This build — the co-parent invite where a parent can see it:
+This build — a panel that said "Not found" now says what is actually wrong:
+
+  DEPLOY BOTH ZIPS FOR CO-PARENTS. app.zip carries the screen; api.zip
+  carries the endpoint it calls. With only app.zip deployed, the panel
+  called /v1/tito-kids/children/:id/managers, hit the API's
+  route-not-found handler and printed its bare "Not found" - which reads
+  as though the CHILD is missing. It never meant that.
+
+  It now says: "Co-parents need the newest TitoPay server. This wallet,
+  its money and its limits are completely unaffected - only this panel is
+  waiting on the update", with Try again. Reproduced in a browser against
+  a 404 to confirm the wording that appears.
+
+Also in this build — the co-parent invite where a parent can see it:
 
   "Who manages this wallet" now sits directly under the balance and the
   Add Money / Pay for a Need buttons, instead of at the bottom of the
