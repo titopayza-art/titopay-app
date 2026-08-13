@@ -3773,9 +3773,15 @@ async function handleAction(action, actionElement = null) {
   // Event Tag payments are ordinary wallet transactions, so "View Transactions"
   // goes to the Activity screen every other payment goes to. There is no
   // separate event history to build.
+  if (action === "event-tag-export") {
+    exportEventTagsCsv();
+    return;
+  }
   if (action === "event-tag-clear-tokens") {
     const host = document.querySelector("[data-event-tag-issue-result]");
     if (host) host.innerHTML = "";
+    // Hiding them means hiding them: the readable copy leaves memory too.
+    state.eventTagIssue = null;
     return;
   }
   if (action === "event-tag-transactions") {
@@ -9510,7 +9516,11 @@ function downloadTransactionsCsv() {
 }
 function csvCell(value) {
   const text = String(value != null ? value : "");
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  // A cell opening with = + - or @ is executed as a formula when the file is
+  // opened in Excel, Numbers or Sheets. The leading apostrophe is the standard
+  // mitigation: the spreadsheet shows the text and runs nothing.
+  const guarded = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return /[",\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
 }
 async function downloadTransactionsPdf() {
   const items = filteredTransactions();
@@ -17593,6 +17603,11 @@ async function submitTicketingTagIssue(data) {
     body: { count: Number(data.count) || 1 }
   });
   const issued = Array.isArray(result.issued) ? result.issued : [];
+  // Held only for as long as the panel is on screen. This is the one moment
+  // the codes exist in readable form anywhere, so the export has to be built
+  // from here — the server cannot produce this file later, by design.
+  const eventName = (state.ticketing?.events || []).find((event) => event.id === data.eventId)?.eventName || "";
+  state.eventTagIssue = { issued, eventName, issuedAt: new Date().toISOString() };
   const host = document.querySelector("[data-event-tag-issue-result]");
   if (host) {
     host.innerHTML = `
@@ -17602,10 +17617,50 @@ async function submitTicketingTagIssue(data) {
         <ol class="event-tag-token-list">
           ${issued.map((tag) => `<li><span>${esc(tag.tagLabel)}</span><code>${esc(tag.token)}</code></li>`).join("")}
         </ol>
-        <button class="btn secondary" type="button" data-action="event-tag-clear-tokens">${icon("x")} Done, hide these</button>
+        <div class="auth-actions">
+          <button class="btn primary" type="button" data-action="event-tag-export">${icon("download")} Download CSV</button>
+          <button class="btn secondary" type="button" data-action="event-tag-clear-tokens">${icon("x")} Done, hide these</button>
+        </div>
+        <p class="field-hint">The CSV holds these codes in readable form — the only copy that will exist. Keep it like cash: encrypt or delete it once the tags are written, and do not email it around.</p>
       </section>`;
   }
   showToast(`${issued.length} tag${issued.length === 1 ? "" : "s"} issued.`);
+}
+
+// The organiser's copy of what was just issued. Built entirely in the phone
+// from the response still on screen: TitoPay stores only hashes, so no server
+// endpoint could ever produce this file, and none should.
+function exportEventTagsCsv() {
+  const batch = state.eventTagIssue;
+  if (!batch || !(batch.issued || []).length) {
+    showToast("Those codes are no longer on screen. Issue a new batch to export one.", "error");
+    return;
+  }
+  const rows = [["Number", "Tag reference", "Tag credential", "Event", "Issued at"]];
+  batch.issued.forEach((tag, index) => {
+    rows.push([index + 1, tag.tagLabel || "", tag.token || "", batch.eventName || "", batch.issuedAt || ""]);
+  });
+  const csv = "\uFEFF" + rows.map((row) => row.map(csvCell).join(",")).join("\n");
+  const slug = String(batch.eventName || "event").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "event";
+  const filename = `titopay-event-tags-${slug}-${dateStamp(new Date())}.csv`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  // A phone in standalone mode often has nowhere to "download" to, so offer
+  // the share sheet first where it exists — the organiser picks Files, and the
+  // file lands where they chose.
+  const file = typeof File === "function" ? new File([blob], filename, { type: "text/csv" }) : null;
+  if (file && navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+    navigator.share({ files: [file], title: filename })
+      .then(() => showToast("Saved. Treat that file like cash."))
+      .catch((error) => {
+        // A cancelled share is not a failure; anything else falls back.
+        if (error && String(error.name) === "AbortError") return;
+        downloadBlob(blob, filename);
+        showToast("Saved. Treat that file like cash.");
+      });
+    return;
+  }
+  downloadBlob(blob, filename);
+  showToast("Saved. Treat that file like cash.");
 }
 
 async function submitTicketingTagAssign(data) {

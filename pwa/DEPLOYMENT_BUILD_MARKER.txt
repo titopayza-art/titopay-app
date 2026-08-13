@@ -1,9 +1,30 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v348 (titopay-pwa-v348)
+PWA bundle: v349 (titopay-pwa-v349)
 Admin console: admin-console-v81
 
-This build — an identifier comes off the screen, and TitoKids co-parents:
+This build — organisers can export the tags they just issued:
+
+  EVENT TAGS: the panel that lists freshly issued blank tags now offers
+  "Download CSV" — number, tag reference, tag credential, event and the
+  time issued. On a phone it goes through the share sheet where one
+  exists (pick Files), and falls back to an ordinary download.
+
+  It is built ON THE DEVICE, from the batch still on screen. It has to
+  be: TitoPay keeps only a hash of every credential, so no server could
+  produce this file later and none should be able to. Tapping "Done, hide
+  these" drops the readable copy from memory as well as from the screen —
+  after that, the export is gone and a tag would have to be reissued.
+  The panel says plainly what the file is: the only readable copy that
+  will exist, to be kept like cash and deleted once the tags are written.
+
+  HARDENED WHILE THERE: every CSV the app generates - tag exports,
+  transaction exports, the bulk-distribution template - now neutralises
+  cells that open with = + - or @. Those are executed as formulas by
+  Excel, Numbers and Sheets, and anyone can name an event. Verified with
+  an event literally named =cmd|calc!A1.
+
+Previous build — an identifier comes off the screen, and TitoKids co-parents:
 
   MY WORKPLACES no longer prints your own @username into its help text.
   Nothing was ever public — that panel renders only inside your own

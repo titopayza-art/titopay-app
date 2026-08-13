@@ -50,3 +50,24 @@ test("My Workplaces offers the username to copy rather than showing it", () => {
   assert.doesNotMatch(panel, /<strong>@\$\{esc\(state\.user/,
     "the handle must not be printed into the panel's text");
 });
+
+test("a CSV the app generates cannot carry a spreadsheet formula", () => {
+  // Event Tag exports, transaction exports and the bulk-distribution template
+  // all go through csvCell, and all are opened in Excel, Numbers or Sheets. A
+  // cell beginning = + - or @ is executed there. Anyone can name an event.
+  const fn = APP.slice(APP.indexOf("function csvCell(value)"));
+  const body = fn.slice(0, fn.indexOf("\n}") + 2);
+  assert.match(body, /\^\[=\+\\-@/, "csvCell must neutralise a leading formula character");
+  assert.match(body, /`'\$\{text\}`/, "the standard mitigation is a leading apostrophe");
+});
+
+test("the Event Tag export is built on the device and never asks a server for codes", () => {
+  // TitoPay stores only hashes of tag credentials. No endpoint can produce
+  // this file, and adding one would undo the whole design.
+  const fn = APP.slice(APP.indexOf("function exportEventTagsCsv()"));
+  const body = fn.slice(0, fn.indexOf("\nasync function"));
+  assert.doesNotMatch(body, /\bapi\(/, "the export must not call the API for credentials");
+  assert.match(body, /state\.eventTagIssue/, "it is built from the batch still on screen");
+  assert.match(APP, /state\.eventTagIssue = null;/,
+    "dismissing the panel must drop the readable copy from memory too");
+});
