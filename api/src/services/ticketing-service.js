@@ -339,6 +339,12 @@ async function ensureTicketingSchema() {
        how the rest of this schema bootstraps. Events without cashless enabled
        are untouched and behave exactly as before. */
     ALTER TABLE events ADD COLUMN IF NOT EXISTS cashless_tags_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    -- A registration event collects attendees rather than selling to them.
+    -- It rides the existing free-ticket path, so the money rules are
+    -- untouched: free needs no FICA, paid always does.
+    ALTER TABLE events ADD COLUMN IF NOT EXISTS registration_mode BOOLEAN NOT NULL DEFAULT FALSE;
+    -- Organiser socials, shown on the public event page.
+    ALTER TABLE events ADD COLUMN IF NOT EXISTS social_links JSONB NOT NULL DEFAULT '{}'::JSONB;
     ALTER TABLE events ADD COLUMN IF NOT EXISTS cashless_settings JSONB NOT NULL DEFAULT '{}'::JSONB;
 
     CREATE TABLE IF NOT EXISTS event_tags (
@@ -578,13 +584,110 @@ async function uniqueSlug(base, eventId = null) {
   }
 }
 
-function normalizeTicketTypes(items = []) {
+/* ---- Ticket phases -------------------------------------------------------
+   A phase is a ticket type with a gate on it. Early Bird runs until the end of
+   the month or until 100 are gone, whichever comes first; General opens after
+   it. Both gates already had columns (sales_opening_at, sales_closing_at,
+   quantity_available) and both were SELECTed at purchase and then ignored, so
+   an organiser could set a window and watch TitoPay sell straight through it.
+
+   This is the decision, kept pure so it can be tested without a database and
+   so the buyer, the organiser and the server all read the same rule.
+
+   A NULL window means "no restriction", which is what every ticket sold so far
+   has. That is deliberate: enforcement must not retroactively close events
+   that were created before phases existed. */
+const PHASE_STATES = {
+  scheduled: "Opens later",
+  on_sale: "On sale",
+  sold_out: "Sold out",
+  closed: "Closed"
+};
+
+function ticketPhaseState(row = {}, now = new Date()) {
+  const at = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const opensAt = row.sales_opening_at ?? row.salesOpeningAt ?? null;
+  const closesAt = row.sales_closing_at ?? row.salesClosingAt ?? null;
+  const opens = opensAt ? new Date(opensAt).getTime() : null;
+  const closes = closesAt ? new Date(closesAt).getTime() : null;
+  const total = Number(row.quantity_available ?? row.quantityAvailable ?? 0);
+  const taken = Number(row.quantity_reserved ?? row.quantityReserved ?? 0)
+    + Number(row.quantity_sold ?? row.quantitySold ?? 0);
+  const remaining = Math.max(0, total - taken);
+
+  // Order matters. A phase that has not opened says so even if it has no
+  // stock yet, because the organiser can still add stock before it opens.
+  let state = "on_sale";
+  if (opens && Number.isFinite(opens) && at < opens) state = "scheduled";
+  else if (closes && Number.isFinite(closes) && at > closes) state = "closed";
+  else if (remaining <= 0) state = "sold_out";
+
+  return {
+    state,
+    label: PHASE_STATES[state],
+    onSale: state === "on_sale",
+    remaining,
+    opensAt: opensAt || null,
+    closesAt: closesAt || null
+  };
+}
+
+// One sentence a buyer can act on, for whichever gate is closed.
+function phaseRefusalMessage(phase, ticketName = "This ticket") {
+  if (phase.state === "scheduled") {
+    return `${ticketName} goes on sale on ${new Date(phase.opensAt).toLocaleString("en-ZA", {
+      dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Johannesburg"
+    })}.`;
+  }
+  if (phase.state === "closed") return `Sales for ${ticketName} have closed.`;
+  if (phase.state === "sold_out") return `${ticketName} is sold out.`;
+  return "";
+}
+
+/* ---- Organiser social links ----------------------------------------------
+   Rendered on the public event page, so every one of them is a link a
+   stranger will click. Only https is allowed: a javascript: or data: URL in
+   an organiser field would be stored XSS on a page anyone can visit. */
+const SOCIAL_PLATFORMS = ["website", "instagram", "facebook", "x", "tiktok", "youtube", "whatsapp"];
+
+function cleanSocialUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  // A bare handle or domain is what people paste. Give it a scheme rather
+  // than refusing it, but never guess a scheme other than https.
+  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw.replace(/^\/+/, "")}`;
+  try {
+    const url = new URL(candidate);
+    // http is upgraded rather than thrown away. Somebody pasting an http link
+    // meant the page, not the scheme, and silently dropping their work is the
+    // unhelpful answer. Every OTHER scheme is refused outright, which is what
+    // keeps javascript: and data: off a page strangers open.
+    if (url.protocol === "http:") url.protocol = "https:";
+    if (url.protocol !== "https:") return "";
+    if (!url.hostname.includes(".")) return "";
+    return url.toString().slice(0, 300);
+  } catch {
+    return "";
+  }
+}
+
+function normalizeSocialLinks(input) {
+  const source = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  const links = {};
+  for (const platform of SOCIAL_PLATFORMS) {
+    const cleaned = cleanSocialUrl(source[platform]);
+    if (cleaned) links[platform] = cleaned;
+  }
+  return links;
+}
+
+function normalizeTicketTypes(items = [], { forceFree = false } = {}) {
   const list = Array.isArray(items) ? items : [];
   return list
     .map((item, index) => ({
       ticketName: cleanText(item.ticketName || item.ticket_name || item.name || "General", 120),
       description: cleanText(item.description, 500),
-      price: money(item.price),
+      price: forceFree ? 0 : money(item.price),
       quantityAvailable: Math.max(0, Number.parseInt(item.quantityAvailable ?? item.quantity_available ?? item.quantity ?? 0, 10) || 0),
       minPurchaseQuantity: Math.max(1, Number.parseInt(item.minPurchaseQuantity ?? item.min_purchase_quantity ?? 1, 10) || 1),
       maxPurchaseQuantity: Math.max(1, Number.parseInt(item.maxPurchaseQuantity ?? item.max_purchase_quantity ?? 10, 10) || 10),
@@ -650,7 +753,14 @@ function eventPayload(payload = {}, eligibility) {
     accessibilityInformation: cleanText(payload.accessibilityInformation || payload.accessibility_information, 3000),
     parkingInformation: cleanText(payload.parkingInformation || payload.parking_information, 3000),
     additionalInstructions: cleanText(payload.additionalInstructions || payload.additional_instructions, 3000),
-    ticketTypes: normalizeTicketTypes(payload.ticketTypes || payload.ticket_types),
+    registrationMode: Boolean(payload.registrationMode ?? payload.registration_mode ?? false),
+    socialLinks: normalizeSocialLinks(payload.socialLinks || payload.social_links),
+    ticketTypes: normalizeTicketTypes(payload.ticketTypes || payload.ticket_types, {
+      // A registration event cannot charge. Forcing it here rather than
+      // trusting the client means a registration event can never quietly
+      // become a paid one, which would need FICA the organiser has not done.
+      forceFree: Boolean(payload.registrationMode ?? payload.registration_mode ?? false)
+    }),
     documents: normalizeDocuments(payload.documents)
   };
 }
@@ -717,6 +827,9 @@ function publicEvent(row = {}, ticketTypes = [], documents = []) {
     // benefits from knowing before they arrive — and it is what the organiser
     // and admin screens read to decide whether to offer the tag controls.
     cashlessTagsEnabled: Boolean(row.cashless_tags_enabled),
+    // A registration event collects attendees instead of selling to them.
+    registrationMode: Boolean(row.registration_mode),
+    socialLinks: row.social_links && typeof row.social_links === "object" ? row.social_links : {},
     submittedAt: row.submitted_at,
     approvedAt: row.approved_at,
     createdAt: row.created_at,
@@ -743,7 +856,8 @@ function publicTicketType(row = {}) {
     refundsAllowed: Boolean(row.refunds_allowed),
     refundDeadline: row.refund_deadline,
     refundConditions: row.refund_conditions,
-    sortOrder: row.sort_order
+    sortOrder: row.sort_order,
+    phase: ticketPhaseState(row)
   };
 }
 
@@ -821,8 +935,8 @@ async function createEventDraft(userId, payload, meta = {}) {
   const slug = await uniqueSlug(data.eventName);
   const { rows } = await pool.query(
     `INSERT INTO events
-     (id, business_user_id, merchant_id, status, slug, event_name, category, description, event_date, start_time, end_time, venue_name, full_venue_address, city, province, country, event_mode, organiser_details, business_details, contact_email, contact_number, event_banner_url, event_images, age_restriction, capacity, terms_conditions, refund_policy, entry_rules, prohibited_items, accessibility_information, parking_information, additional_instructions)
-     VALUES ($1,$2,$3,'draft',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::JSONB,$18::JSONB,$19,$20,$21,$22::JSONB,$23,$24,$25,$26::JSONB,$27,$28,$29,$30,$31)
+     (id, business_user_id, merchant_id, status, slug, event_name, category, description, event_date, start_time, end_time, venue_name, full_venue_address, city, province, country, event_mode, organiser_details, business_details, contact_email, contact_number, event_banner_url, event_images, age_restriction, capacity, terms_conditions, refund_policy, entry_rules, prohibited_items, accessibility_information, parking_information, additional_instructions, registration_mode, social_links)
+     VALUES ($1,$2,$3,'draft',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::JSONB,$18::JSONB,$19,$20,$21,$22::JSONB,$23,$24,$25,$26::JSONB,$27,$28,$29,$30,$31,$32,$33::JSONB)
      RETURNING *`,
     [
       eventId,
@@ -855,7 +969,9 @@ async function createEventDraft(userId, payload, meta = {}) {
       data.prohibitedItems,
       data.accessibilityInformation,
       data.parkingInformation,
-      data.additionalInstructions
+      data.additionalInstructions,
+      data.registrationMode,
+      JSON.stringify(data.socialLinks)
     ]
   );
   await replaceTicketTypes(eventId, data.ticketTypes);
@@ -884,7 +1000,8 @@ async function updateEventDraft(userId, eventId, payload, meta = {}) {
          organiser_details=$16::JSONB, business_details=$17::JSONB, contact_email=$18, contact_number=$19,
          event_banner_url=$20, event_images=$21::JSONB, age_restriction=$22, capacity=$23, terms_conditions=$24,
          refund_policy=$25::JSONB, entry_rules=$26, prohibited_items=$27, accessibility_information=$28,
-         parking_information=$29, additional_instructions=$30, updated_at=NOW()
+         parking_information=$29, additional_instructions=$30,
+         registration_mode=$31, social_links=$32::JSONB, updated_at=NOW()
      WHERE id=$1 AND business_user_id=$2
      RETURNING *`,
     [
@@ -917,7 +1034,9 @@ async function updateEventDraft(userId, eventId, payload, meta = {}) {
       data.prohibitedItems,
       data.accessibilityInformation,
       data.parkingInformation,
-      data.additionalInstructions
+      data.additionalInstructions,
+      data.registrationMode,
+      JSON.stringify(data.socialLinks)
     ]
   );
   await replaceTicketTypes(eventId, data.ticketTypes);
@@ -1357,13 +1476,26 @@ function ticketResponse(row = {}) {
   };
 }
 
-async function ticketPurchasePreview(slug, payload = {}) {
+// Refunded orders do not count against a per-person limit: the buyer no
+// longer holds those tickets.
+async function ticketsAlreadyHeld(buyerUserId, ticketTypeId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(quantity), 0)::INT AS held
+       FROM ticket_orders
+      WHERE buyer_user_id = $1 AND ticket_type_id = $2 AND status = 'paid'`,
+    [buyerUserId, ticketTypeId]
+  );
+  return Number(rows[0]?.held || 0);
+}
+
+async function ticketPurchasePreview(slug, payload = {}, buyerUserId = null) {
   await ensureTicketingSchema();
   const quantity = Math.max(1, Math.min(20, Number.parseInt(payload.quantity || 1, 10) || 1));
   const ticketTypeId = cleanText(payload.ticketTypeId || payload.ticket_type_id, 80);
   const { rows } = await pool.query(
     `SELECT e.*, tt.id AS ticket_type_id, tt.ticket_name, tt.price, tt.quantity_available, tt.quantity_reserved, tt.quantity_sold,
-            tt.min_purchase_quantity, tt.max_purchase_quantity, tt.sales_opening_at, tt.sales_closing_at
+            tt.min_purchase_quantity, tt.max_purchase_quantity, tt.sales_opening_at, tt.sales_closing_at,
+            tt.per_customer_purchase_limit
      FROM events e
      JOIN event_ticket_types tt ON tt.event_id = e.id
      WHERE e.slug = $1 AND e.status = 'approved'
@@ -1375,9 +1507,24 @@ async function ticketPurchasePreview(slug, payload = {}) {
   const row = rows[0];
   if (!row) throw new AppError(404, "Event ticket type is not available");
   const available = Number(row.quantity_available || 0) - Number(row.quantity_reserved || 0) - Number(row.quantity_sold || 0);
+  // The phase gate. These columns were stored and read for months and never
+  // checked, so a sales window was decoration: TitoPay sold straight through
+  // it. Checked here and again inside the purchase transaction, because a
+  // phase can close between the two.
+  const phase = ticketPhaseState(row);
+  if (!phase.onSale) throw new AppError(409, phaseRefusalMessage(phase, row.ticket_name));
   if (quantity < Number(row.min_purchase_quantity || 1)) throw new AppError(400, `Minimum purchase is ${row.min_purchase_quantity} ticket(s)`);
   if (quantity > Number(row.max_purchase_quantity || 10)) throw new AppError(400, `Maximum purchase is ${row.max_purchase_quantity} ticket(s)`);
   if (available < quantity) throw new AppError(409, "Not enough tickets available");
+  if (buyerUserId && row.per_customer_purchase_limit) {
+    const limit = Number(row.per_customer_purchase_limit);
+    const held = await ticketsAlreadyHeld(buyerUserId, row.ticket_type_id);
+    if (held + quantity > limit) {
+      throw new AppError(409, held >= limit
+        ? `You have already bought the maximum of ${limit} for ${row.ticket_name}.`
+        : `You may buy ${limit - held} more of ${row.ticket_name}, up to ${limit} per person.`);
+    }
+  }
   const subtotal = money(Number(row.price || 0) * quantity);
   // A free ticket is free all the way through. The buyer service fee is a flat
   // R10, so without this a "free" ticket would still charge the buyer R10 and
@@ -1652,7 +1799,7 @@ async function emailTicketToRecipient(actor, ticketCode, destination, meta = {})
 async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
   if (actor.profileLocked) throw new AppError(423, "Profile is locked. Ticket purchases are disabled.");
   await ensureTicketingSchema();
-  const preview = await ticketPurchasePreview(slug, payload);
+  const preview = await ticketPurchasePreview(slug, payload, actor.userId);
   const client = await pool.connect();
   const orderId = randomUUID();
   const txId = randomUUID();
@@ -1666,7 +1813,8 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
     await client.query("BEGIN");
     const { rows } = await client.query(
       `SELECT e.*, tt.id AS ticket_type_id, tt.ticket_name, tt.price, tt.quantity_available, tt.quantity_reserved, tt.quantity_sold,
-              tt.min_purchase_quantity, tt.max_purchase_quantity, m.id AS merchant_uuid
+              tt.min_purchase_quantity, tt.max_purchase_quantity, tt.sales_opening_at, tt.sales_closing_at,
+              tt.per_customer_purchase_limit, m.id AS merchant_uuid
        FROM events e
        JOIN event_ticket_types tt ON tt.event_id = e.id
        LEFT JOIN merchants m ON m.id = e.merchant_id
@@ -1676,8 +1824,24 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
     );
     locked = rows[0];
     if (!locked) throw new AppError(404, "Event ticket type is not available");
+    // Re-checked under the row lock. A phase can close, or its last ticket can
+    // go, between the preview the buyer saw and this transaction.
+    const lockedPhase = ticketPhaseState(locked);
+    if (!lockedPhase.onSale) throw new AppError(409, phaseRefusalMessage(lockedPhase, locked.ticket_name));
     const available = Number(locked.quantity_available || 0) - Number(locked.quantity_reserved || 0) - Number(locked.quantity_sold || 0);
     if (available < preview.quantity) throw new AppError(409, "Not enough tickets available");
+    if (locked.per_customer_purchase_limit) {
+      const limit = Number(locked.per_customer_purchase_limit);
+      const { rows: heldRows } = await client.query(
+        `SELECT COALESCE(SUM(quantity), 0)::INT AS held
+           FROM ticket_orders
+          WHERE buyer_user_id = $1 AND ticket_type_id = $2 AND status = 'paid'`,
+        [actor.userId, locked.ticket_type_id]
+      );
+      if (Number(heldRows[0]?.held || 0) + preview.quantity > limit) {
+        throw new AppError(409, `Limit of ${limit} per person for ${locked.ticket_name}.`);
+      }
+    }
 
     const buyerWallet = await loadWalletForUpdate(client, actor.userId);
     if (!buyerWallet) throw new AppError(404, "Buyer wallet not found");
@@ -3104,6 +3268,11 @@ module.exports = {
   adminTransitionEvent,
   ticketPurchasePreview,
   purchaseTickets,
+  // Exported so the phase gate can be tested as the pure decision it is,
+  // and so the organiser and buyer screens read the same rule.
+  ticketPhaseState,
+  normalizeSocialLinks,
+  SOCIAL_PLATFORMS,
   emailTicketToRecipient,
   listMyTicketOrders,
   listMyTickets,

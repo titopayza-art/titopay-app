@@ -13176,3 +13176,49 @@ img {
   -webkit-user-drag: none;
   user-drag: none;
 }
+
+/* PHASES, REGISTRATION AND ORGANISER SOCIALS ------------------------------
+   The sales window sits behind a fold on each ticket tier: most events have
+   one price and one window, and four date fields per tier would tax the
+   common case to serve the rare one. */
+.tier-phase {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 12px;
+  background: var(--surface-2, rgba(10, 77, 255, .03));
+}
+.tier-phase > summary {
+  cursor: pointer;
+  padding: 10px 2px;
+  font-size: 14px;
+  font-weight: 600;
+  list-style: none;
+}
+.tier-phase > summary::-webkit-details-marker { display: none; }
+.tier-phase > summary::after {
+  content: "+";
+  float: right;
+  font-weight: 400;
+  opacity: .6;
+}
+.tier-phase[open] > summary::after { content: "-"; }
+.tier-phase[open] { padding-bottom: 12px; }
+.tier-phase label { display: block; margin-top: 8px; }
+.toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.toggle-row input[type="checkbox"] { margin-top: 3px; flex: 0 0 auto; }
+.toggle-row span { display: block; }
+.toggle-row small { display: block; margin-top: 3px; opacity: .75; }
+.event-social-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.event-social-links .btn { flex: 0 1 auto; }

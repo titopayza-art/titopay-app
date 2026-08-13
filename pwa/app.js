@@ -3347,6 +3347,12 @@ async function handleAction(action, actionElement = null) {
     openTicketingEventForm();
     return;
   }
+  if (action === "toggle-registration-mode") {
+    // Ticking this makes the event free. Say so on the price boxes rather
+    // than leaving numbers on screen that the server is going to ignore.
+    applyRegistrationMode(actionElement.checked);
+    return;
+  }
   if (action === "add-ticket-tier") {
     addTicketTierRow();
     return;
@@ -16000,9 +16006,69 @@ async function loadPublicEventFromPath() {
     state.publicEvent = null;
   }
 }
+// One ticket type on the public page, wearing whichever phase it is in. A
+// buyer must never be shown a Buy button for something the server will refuse,
+// so the button and the refusal are driven by the same state the server sent.
+function publicTicketRowHtml(ticket = {}, registrationMode = false) {
+  const phase = ticket.phase || { state: "on_sale", onSale: true, remaining: 0 };
+  const chip = PHASE_CHIPS[phase.state] || PHASE_CHIPS.on_sale;
+  // Short on purpose. On a 390px screen "Sales closed 10 August 2026, 22:00"
+  // wraps to three lines and pushes the price out of sight. The year is
+  // dropped unless the phase falls in another one, which for an event people
+  // are buying tickets to is almost never.
+  const when = (value, withTime) => {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const sameYear = date.getFullYear() === new Date().getFullYear();
+    const day = date.toLocaleDateString("en-ZA", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) });
+    if (!withTime) return day;
+    return `${day}, ${date.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+  };
+  let note = "";
+  if (phase.state === "scheduled") note = `On sale ${when(phase.opensAt, true)}`;
+  else if (phase.state === "closed") note = `Closed ${when(phase.closesAt)}`;
+  else if (phase.state === "sold_out") note = "None left";
+  else if (phase.closesAt) note = `${phase.remaining} left, until ${when(phase.closesAt)}`;
+  else note = `${phase.remaining} left`;
+  // activity-item, not settings-row: it is the three-column grid the rest of
+  // the app uses (icon, text, trailing chip). These rows had been carrying a
+  // class with almost no styling, which is why the ticket list never looked
+  // like anything else in TitoPay.
+  return `
+    <article class="activity-item">
+      <span class="icon-bubble">${icon("ticket")}</span>
+      <div>
+        <p><strong>${esc(ticket.ticketName)}</strong></p>
+        <small>${registrationMode ? "Free" : money(ticket.price)} · ${esc(note)}</small>
+      </div>
+      <em class="sv-chip ${chip.tone}">${esc(chip.label)}</em>
+    </article>`;
+}
+function eventSocialsHtml(event = {}) {
+  const links = event.socialLinks && typeof event.socialLinks === "object" ? event.socialLinks : {};
+  const present = EVENT_SOCIALS.filter((social) => links[social.key]);
+  if (!present.length) return "";
+  return `
+    <section class="panel">
+      <h2>Follow this event</h2>
+      <div class="event-social-links">
+        ${present.map((social) => `<a class="btn secondary" href="${esc(links[social.key])}" target="_blank" rel="noopener noreferrer nofollow">${esc(social.label)}</a>`).join("")}
+      </div>
+      <p class="field-hint">These links were supplied by the organiser and open outside TitoPay.</p>
+    </section>`;
+}
 function publicTicketingEventView(event = {}) {
   const tickets = event.ticketTypes || [];
-  const firstTicket = tickets[0] || {};
+  const registrationMode = Boolean(event.registrationMode);
+  // Only a phase the server says is on sale may be offered. Anything else is
+  // shown with its state so the buyer knows whether to come back.
+  const buyable = tickets.filter((ticket) => (ticket.phase ? ticket.phase.onSale : true));
+  const firstTicket = buyable[0] || {};
+  const nextUp = tickets
+    .filter((ticket) => ticket.phase && ticket.phase.state === "scheduled" && ticket.phase.opensAt)
+    .sort((a, b) => new Date(a.phase.opensAt) - new Date(b.phase.opensAt))[0];
+  const actionWord = registrationMode ? "Register" : "Buy ticket";
   return `
     <main class="screen auth-screen">
       <header class="topbar">
@@ -16021,36 +16087,39 @@ function publicTicketingEventView(event = {}) {
         </div>
       </section>
       <section class="panel">
-        <h2>Tickets</h2>
-        ${tickets.length ? tickets.map((ticket) => `
-          <article class="settings-row">
-            <span class="icon-bubble">${icon("ticket")}</span>
-            <div>
-              <strong>${esc(ticket.ticketName)}</strong>
-              <small>${money(ticket.price)} · ${Math.max(0, Number(ticket.quantityAvailable || 0) - Number(ticket.quantitySold || 0))} available</small>
-            </div>
-          </article>
-        `).join("") : `<p class="muted">Tickets are not available right now.</p>`}
+        <h2>${registrationMode ? "Registration" : "Tickets"}</h2>
+        ${registrationMode ? `<p class="lead">This event is free. Register and your ticket lands in My Tickets.</p>` : ""}
+        ${tickets.length
+          ? tickets.map((ticket) => publicTicketRowHtml(ticket, registrationMode)).join("")
+          : `<p class="muted">${registrationMode ? "Registration is not open right now." : "Tickets are not available right now."}</p>`}
+        ${!buyable.length && nextUp ? `
+          <p class="field-hint">Nothing is on sale at the moment. <strong>${esc(nextUp.ticketName)}</strong> opens ${esc(friendlyDate(nextUp.phase.opensAt))}. Come back then, or add this page to your home screen so it is easy to find.</p>
+        ` : ""}
+        ${!buyable.length && !nextUp && tickets.length ? `
+          <p class="field-hint">Sales for this event are closed.</p>
+        ` : ""}
         ${state.auth?.accessToken && firstTicket.id ? `
           <form class="form-grid" data-form="ticketing-purchase">
             <input type="hidden" name="eventSlug" value="${esc(event.slug)}">
-            <label>Ticket type
+            <label>${registrationMode ? "Registration type" : "Ticket type"}
               <select name="ticketTypeId">
-                ${tickets.map((ticket) => `<option value="${esc(ticket.id)}">${esc(ticket.ticketName)} · ${money(ticket.price)}</option>`).join("")}
+                ${buyable.map((ticket) => `<option value="${esc(ticket.id)}">${esc(ticket.ticketName)}${registrationMode ? "" : ` · ${money(ticket.price)}`}</option>`).join("")}
               </select>
             </label>
-            <label>Quantity
-              <input name="quantity" type="number" min="1" max="${esc(firstTicket.maxPurchaseQuantity || 10)}" value="1" required>
+            <label>${registrationMode ? "How many people" : "Quantity"}
+              <input name="quantity" type="number" min="1" max="${esc(firstTicket.perCustomerPurchaseLimit || firstTicket.maxPurchaseQuantity || 10)}" value="1" required>
             </label>
-            <button class="btn primary" type="submit">${icon("ticket")} Buy ticket</button>
+            ${firstTicket.perCustomerPurchaseLimit ? `<p class="field-hint">Limit of ${esc(String(firstTicket.perCustomerPurchaseLimit))} per person for ${esc(firstTicket.ticketName)}.</p>` : ""}
+            <button class="btn primary" type="submit">${icon("ticket")} ${esc(actionWord)}</button>
           </form>
-        ` : `
+        ` : state.auth?.accessToken ? "" : `
           <div class="auth-actions">
-            <button class="btn primary" type="button" data-auth-tab="login">${icon("lock")} Sign in to buy</button>
+            <button class="btn primary" type="button" data-auth-tab="login">${icon("lock")} ${registrationMode ? "Sign in to register" : "Sign in to buy"}</button>
             <button class="btn secondary" type="button" data-auth-tab="register">${icon("user")} Create account</button>
           </div>
         `}
       </section>
+      ${eventSocialsHtml(event)}
     </main>
   `;
 }
@@ -17899,12 +17968,46 @@ async function resizeEventPoster(file) {
 // One ticket tier row. Add and remove act on these directly in the DOM, so
 // nothing the organiser has already typed elsewhere is lost to a re-render.
 function ticketTierRowHtml(tier = {}) {
+  // The sales window is behind a fold. Most events have one price and one
+  // window, and making every organiser scroll past four date fields to reach
+  // "Add another ticket type" would tax the common case to serve the rare
+  // one. Opening the fold is what turns a tier into a phase.
+  const hasPhase = Boolean(tier.opensAt || tier.closesAt || tier.perPerson);
   return `<div class="form-grid ticket-tier-row" data-ticket-tier>
       <label>Ticket type<input data-tier-name list="ticket-tier-options" value="${esc(tier.name || "")}" placeholder="General, VIP, VVIP, Complimentary…"></label>
       <label>Price<input data-tier-price type="number" min="0" step="0.01" inputmode="decimal" value="${esc(tier.price != null ? String(tier.price) : "0")}"></label>
       <label>Quantity<input data-tier-qty type="number" min="1" inputmode="numeric" value="${esc(tier.qty != null ? String(tier.qty) : "")}" placeholder="e.g. 100"></label>
+      <details class="tier-phase" ${hasPhase ? "open" : ""}>
+        <summary>Sales window and limits</summary>
+        <p class="field-hint">Leave the dates empty and this type is on sale from approval until the event. Fill them in to make it a phase, like Early Bird. A phase also ends on its own when its quantity is gone, whichever comes first.</p>
+        <label>Goes on sale<input data-tier-opens type="datetime-local" value="${esc(tier.opensAt || "")}"></label>
+        <label>Sales close<input data-tier-closes type="datetime-local" value="${esc(tier.closesAt || "")}"></label>
+        <label>Most one person may buy<input data-tier-per-person type="number" min="1" inputmode="numeric" value="${esc(tier.perPerson != null ? String(tier.perPerson) : "")}" placeholder="No limit"></label>
+      </details>
       <button class="btn ghost" type="button" data-action="remove-ticket-tier">${icon("x")} Remove this ticket type</button>
     </div>`;
+}
+// Registration mode zeroes every price and locks the boxes, so the organiser
+// can see that nothing will be charged instead of being told later. A new tier
+// row added while the toggle is on inherits the same state.
+function applyRegistrationMode(on) {
+  for (const input of document.querySelectorAll("[data-tier-price]")) {
+    if (on) {
+      input.value = "0";
+      input.readOnly = true;
+      input.setAttribute("aria-disabled", "true");
+    } else {
+      input.readOnly = false;
+      input.removeAttribute("aria-disabled");
+    }
+  }
+  const hint = document.querySelector("[data-registration-hint]");
+  if (hint) hint.textContent = on
+    ? "Registration only. Every type is free and nothing will be charged."
+    : "";
+}
+function registrationModeOn() {
+  return Boolean(document.querySelector('[name="registrationMode"]')?.checked);
 }
 function addTicketTierRow(tier = {}) {
   const host = document.querySelector("[data-ticket-tiers]");
@@ -17913,6 +18016,7 @@ function addTicketTierRow(tier = {}) {
   wrap.innerHTML = ticketTierRowHtml(tier).trim();
   const row = wrap.firstElementChild;
   host.appendChild(row);
+  if (registrationModeOn()) applyRegistrationMode(true);
   const nameInput = row.querySelector("[data-tier-name]");
   if (nameInput) nameInput.focus();
 }
@@ -17993,8 +18097,16 @@ function openTicketingEventForm() {
       <label>Upload poster<input type="file" accept="image/*" data-event-poster-input></label>
       <p class="field-hint">Recommended: portrait <strong>1080 × 1350 px</strong> (4:5). JPG, PNG or WebP. Anything you upload is scaled to fit; optional for a draft.</p>
 
+      <section class="section-head compact"><h2>How people join</h2></section>
+      <label class="toggle-row">
+        <input type="checkbox" name="registrationMode" value="yes" data-action="toggle-registration-mode">
+        <span><strong>Registration only, no payment</strong><small>People register to attend and get a free ticket. Nothing is charged, and you do not need FICA. Leave this off to sell tickets.</small></span>
+      </label>
+      <p class="field-hint" data-registration-hint></p>
+
       <section class="section-head compact"><h2>Tickets</h2></section>
       <p class="field-hint">Add a type for each price. Pick from <strong>General, VIP, VVIP, Complimentary, Package, Gate Pass</strong> or type your own name. Set a price of <strong>0</strong> for a free event (no FICA needed); any price above 0 makes it a paid event that needs FICA before you submit. Complimentary tickets are always R0.</p>
+      <p class="field-hint">To run <strong>pre-sales or phases</strong>, add a type for each phase and open <strong>Sales window and limits</strong> on it. Early Bird can close on a date or when its quantity sells out, and General can be set to open the moment Early Bird ends.</p>
       <datalist id="ticket-tier-options">
         ${TICKET_TIER_OPTIONS.map((option) => `<option value="${esc(option)}"></option>`).join("")}
       </datalist>
@@ -18003,6 +18115,10 @@ function openTicketingEventForm() {
         ${ticketTierRowHtml({ name: "VIP", price: 0, qty: 20 })}
       </div>
       <button class="btn secondary" type="button" data-action="add-ticket-tier">${icon("ticket")} Add another ticket type</button>
+
+      <section class="section-head compact"><h2>Where people can find you</h2></section>
+      <p class="field-hint">These appear on your public event page so people can check you out before they buy. Leave any of them empty. Paste the link or just the handle.</p>
+      ${EVENT_SOCIALS.map((social) => `<label>${esc(social.label)}<input name="social_${esc(social.key)}" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="${esc(social.placeholder)}"></label>`).join("")}
 
       <section class="section-head compact"><h2>Policies</h2></section>
       <label>Terms and conditions<textarea name="termsConditions" rows="3"></textarea></label>
@@ -18026,19 +18142,57 @@ function collectTicketTiers() {
     // charge a guest.
     if (/^complimentary$/i.test(name)) price = 0;
     const qty = Number(row.querySelector("[data-tier-qty]")?.value || 0);
-    return { name, price, qty };
+    const perPerson = Number(row.querySelector("[data-tier-per-person]")?.value || 0);
+    return {
+      name, price, qty,
+      opensAt: (row.querySelector("[data-tier-opens]")?.value || "").trim(),
+      closesAt: (row.querySelector("[data-tier-closes]")?.value || "").trim(),
+      perPerson: perPerson > 0 ? perPerson : null
+    };
   }).filter((tier) => tier.name || tier.qty > 0);
+}
+// A datetime-local input has no timezone. Sent raw it would be read as UTC and
+// a phase set for 18:00 in Johannesburg would open at 20:00. Interpreting it
+// in the browser's own zone is what the organiser meant when they typed it.
+function localDateTimeToIso(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+// Only the platforms the server accepts, and only the ones filled in.
+function collectEventSocials(data = {}) {
+  const links = {};
+  for (const social of EVENT_SOCIALS) {
+    const value = String(data[`social_${social.key}`] || "").trim();
+    if (value) links[social.key] = value;
+  }
+  return links;
 }
 async function submitTicketingEventForm(data, form) {
   const tiers = collectTicketTiers();
+  const registrationMode = data.registrationMode === "yes";
   const ticketTypes = tiers.map((tier) => ({
     ticketName: tier.name || "General Admission",
-    price: Number.isFinite(tier.price) && tier.price > 0 ? tier.price : 0,
+    // A registration event never charges. The server enforces this too; doing
+    // it here as well means the organiser sees the truth before they save.
+    price: registrationMode ? 0 : (Number.isFinite(tier.price) && tier.price > 0 ? tier.price : 0),
     quantityAvailable: Number.isFinite(tier.qty) && tier.qty > 0 ? tier.qty : 0,
     minPurchaseQuantity: 1,
     maxPurchaseQuantity: 10,
+    salesOpeningAt: localDateTimeToIso(tier.opensAt),
+    salesClosingAt: localDateTimeToIso(tier.closesAt),
+    perCustomerPurchaseLimit: tier.perPerson,
     refundsAllowed: true
   }));
+  // A phase that closes before it opens would never sell a single ticket, and
+  // the organiser would have no way of knowing why.
+  const backwards = ticketTypes.find((type) =>
+    type.salesOpeningAt && type.salesClosingAt && type.salesClosingAt <= type.salesOpeningAt);
+  if (backwards) {
+    showToast(`${backwards.ticketName} closes before it opens. Check its sales window.`, "error");
+    return;
+  }
   const payload = {
     eventName: data.eventName,
     category: data.category,
@@ -18055,6 +18209,8 @@ async function submitTicketingEventForm(data, form) {
     termsConditions: data.termsConditions,
     refundPolicy: { summary: data.refundPolicySummary },
     eventBannerUrl: state.eventDraftForm?.poster || "",
+    registrationMode,
+    socialLinks: collectEventSocials(data),
     ticketTypes: ticketTypes.length ? ticketTypes : undefined
   };
   const button = form?.querySelector("button[type=submit]");
@@ -22849,6 +23005,26 @@ const SERVICE_GROUPS = [
   { key: "business", label: "Run your business", members: ["invoice", "quote", "proforma-invoice", "business-sales", "enterprise-distribution", "ticketing", "business-ticketing-staff"] },
   { key: "more", label: "More", members: null }
 ];
+// The organiser's social links, shown on the public event page. The server
+// holds the same list in SOCIAL_PLATFORMS and a test pins the two together, so
+// a platform can never be collectable here and unrenderable there.
+const EVENT_SOCIALS = [
+  { key: "website", label: "Website", placeholder: "yourevent.co.za" },
+  { key: "instagram", label: "Instagram", placeholder: "instagram.com/yourevent" },
+  { key: "facebook", label: "Facebook", placeholder: "facebook.com/yourevent" },
+  { key: "x", label: "X", placeholder: "x.com/yourevent" },
+  { key: "tiktok", label: "TikTok", placeholder: "tiktok.com/@yourevent" },
+  { key: "youtube", label: "YouTube", placeholder: "youtube.com/@yourevent" },
+  { key: "whatsapp", label: "WhatsApp", placeholder: "wa.me/27821234567" }
+];
+// What a buyer is told when a phase is not open. The server decides the state
+// and sends it with every ticket type; this only names it.
+const PHASE_CHIPS = {
+  scheduled: { label: "Opens later", tone: "warn" },
+  on_sale: { label: "On sale", tone: "settled" },
+  sold_out: { label: "Sold out", tone: "" },
+  closed: { label: "Closed", tone: "" }
+};
 const TICKETING_SECTIONS = [
   { key: "events", label: "My Events", icon: "ticket", hint: "Create events, submit for approval, track each one." },
   { key: "sales", label: "Sales", icon: "chart", hint: "Tickets sold and money taken, per event and per tier." },

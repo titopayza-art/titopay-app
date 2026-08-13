@@ -465,3 +465,28 @@ Operational reminders:
   node scripts/ensure-revenue-wallet.js --create   (once, on production)
   Email Centre SMTP + titopay-email-worker must be running for mail delivery.
   PWA: open the app, fully close it, open it again.
+
+v374
+  Ticket phases and pre-sales. A ticket type can now open and close on a date,
+  or simply run until its quantity is gone. Early Bird closes on the 30th or
+  when its 100 are sold; General opens the moment Early Bird ends. The columns
+  for this existed since ticketing shipped and were read but never checked, so
+  a sales window was decoration and TitoPay sold straight through it. Enforced
+  now in the preview AND inside the locked purchase transaction, because a
+  phase can close between the price a buyer sees and the money moving. A
+  ticket type with no window is unaffected, which is every ticket sold to date.
+  Per-person limits are enforced too, across separate orders rather than only
+  within one.
+
+  Registration events. An organiser can mark an event registration-only:
+  people register instead of buying, every type is free, and no FICA is
+  needed. The price boxes lock at 0 in the form and the server forces it
+  again, so a registration event cannot quietly become a paid one.
+
+  Organiser social links on the public event page. Website, Instagram,
+  Facebook, X, TikTok, YouTube and WhatsApp. https only, so a javascript: or
+  data: URL cannot reach a page strangers open.
+
+  The public ticket rows also moved from a class with almost no styling onto
+  activity-item, the three-column grid the rest of the app uses. That list had
+  never matched anything else in TitoPay.

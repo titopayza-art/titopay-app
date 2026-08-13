@@ -84,7 +84,7 @@ router.get("/public/events/:slug", async (req, res, next) => {
 
 router.post("/public/events/:slug/purchase-preview", requireAuth, async (req, res, next) => {
   try {
-    res.json({ ok: true, preview: await ticketPurchasePreview(req.params.slug, req.body) });
+    res.json({ ok: true, preview: await ticketPurchasePreview(req.params.slug, req.body, req.auth.userId) });
   } catch (error) {
     next(error);
   }
