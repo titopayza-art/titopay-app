@@ -3378,6 +3378,10 @@ async function handleAction(action, actionElement = null) {
   if (action === "business-sales") {
     openBusinessSalesModal();
   }
+  if (action === "check-for-updates") {
+    await checkForAppUpdate();
+    return;
+  }
   if (action === "my-workplaces") {
     await openMyWorkplacesModal();
   }
@@ -5633,6 +5637,7 @@ function profileView() {
     <section class="profile-actions panel">
       <button class="btn secondary" data-action="refresh">${icon("refresh")} Refresh profile</button>
       <button class="btn secondary" data-action="logout">${icon("lock")} Sign out</button>
+      <p class="field-hint" style="margin:6px 0 0;text-align:center">TitoPay app ${esc(appBundleVersion() || "—")} · <button class="link-btn" type="button" data-action="check-for-updates">Check for updates</button></p>
     </section>
   `;
 }
@@ -5648,6 +5653,45 @@ function profileSummaryRow(label, value, iconName, copyValue = "") {
     <div><small>${esc(label)}</small><strong>${esc(value)}</strong></div>
     ${copyValue ? `<button class="icon-btn summary-copy-btn" type="button" data-copy-value="${esc(copyValue)}" data-copy-label="${esc(label)}" aria-label="Copy ${esc(label.toLowerCase())}">${icon("copy")}</button>` : ""}
   </article>`;
+}
+// "Is the file cached?" should not be a question anybody has to ask. This
+// reads the version off the bundle the browser actually loaded — not a
+// constant somebody has to remember to bump — so what is on screen is the
+// truth about what is running.
+function appBundleVersion() {
+  try {
+    const script = Array.from(document.querySelectorAll("script[src]"))
+      .map((tag) => String(tag.getAttribute("src") || ""))
+      .find((src) => src.includes("app.min.js") || src.includes("app.js"));
+    const match = script && script.match(/[?&]v=([0-9]+)/);
+    return match ? `v${match[1]}` : "";
+  } catch (error) {
+    return "";
+  }
+}
+async function checkForAppUpdate() {
+  if (!("serviceWorker" in navigator)) {
+    showToast("This browser cannot check for updates. Close the app fully and open it again.");
+    return;
+  }
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) {
+      showToast("Update check unavailable here. Close the app fully and open it again.");
+      return;
+    }
+    showToast("Checking for updates…");
+    await registration.update();
+    // A worker that installed and is waiting means a newer build is ready.
+    if (registration.waiting || registration.installing) {
+      showToast("A new version is ready — reloading.");
+      setTimeout(() => location.reload(), 700);
+      return;
+    }
+    showToast(`You are on the latest TitoPay app${appBundleVersion() ? ` (${appBundleVersion()})` : ""}.`);
+  } catch (error) {
+    showToast("Could not check for updates just now.", "error");
+  }
 }
 function profileFeature(title, subtitle, iconName, action, primary = false) {
   return `<button class="profile-feature ${primary ? "primary" : ""}" type="button" data-action="${esc(action)}">
