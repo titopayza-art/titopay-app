@@ -65,5 +65,31 @@ check("money movements raise one from the transaction sync",
 check("a money alert opens Activity, not Profile",
   /notice\.metadata\?\.category === "payment" \? "activity"/.test(APP));
 
+// ---- 3. the Device sessions screen ----------------------------------------
+// Stored session rows carry raw agents forever, so the translation happens at
+// display time in the app. Same discipline as the server function: plain
+// words out, and a name that is already human passes through.
+const clientSource = APP.slice(APP.indexOf("function friendlyDeviceText"), APP.indexOf("async function openDeviceManagementModal"));
+const friendlyDeviceText = new Function(`${clientSource}\nreturn friendlyDeviceText;`)();
+const clientCases = [
+  // The app truncates the agent at 80 chars, so the stored string ends at
+  // "(KHT" with no Safari/ token left. Claiming a browser it cannot see would
+  // be a guess; "iPhone" alone is the honest answer for a truncated agent.
+  ["Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHT", "iPhone"],
+  ["Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", "iPhone \u00b7 Safari"],
+  ["Mozilla/5.0 (Linux; Android 14; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36", "Android phone \u00b7 Chrome"],
+  ["Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/120 Mobile Safari/604.1", "iPhone \u00b7 Chrome"],
+  ["Thuso's iPhone", "Thuso's iPhone"],
+  ["", "Web device"]
+];
+for (const [input, expected] of clientCases) {
+  const actual = friendlyDeviceText(input);
+  check(`sessions screen: ${JSON.stringify(input.slice(0, 30))}`, actual === expected, `-> ${JSON.stringify(actual)}`);
+}
+check("the sessions list renders through the translator",
+  /friendlyDeviceText\(item\.deviceName \|\| item\.device_name\)/.test(APP));
+check("the offline fallback row is translated too",
+  /deviceName: friendlyDeviceText\(navigator\.userAgent\)/.test(APP));
+
 console.log(bad ? `\n${bad} FAILURE(S)` : "\nDEVICE NOTICES VERIFIED");
 process.exit(bad ? 1 : 0);

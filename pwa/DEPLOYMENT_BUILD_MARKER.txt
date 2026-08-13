@@ -1,9 +1,20 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v362 (titopay-pwa-v362)
+PWA bundle: v363 (titopay-pwa-v363)
 Admin console: admin-console-v81
 
-This build — the white seat under Pay stops covering its neighbours:
+This build — Device sessions speak plainly:
+
+  The Security screen listed every session as "Mozilla/5.0 (iPhone; CPU
+  iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHT" - the raw
+  browser agent, six identical times. Rows already stored will always be
+  raw, so the translation happens at display time: each row now reads
+  "iPhone · Safari", "Android phone · Chrome", "Windows PC · Edge". A
+  device someone has named themselves passes through untouched, and a
+  truncated agent that no longer names its browser says just "iPhone"
+  rather than guessing.
+
+Also in this build — the white seat under Pay stops covering its neighbours:
 
   The notch behind the middle button was an 86px rectangle, so it reached
   across and sat on top of the Services and Activity buttons - a white

@@ -5441,13 +5441,42 @@ function openWhyTrustModal() {
     </div>
   `);
 }
+// A stored session row carries whatever the device sent as its name — usually
+// the raw navigator.userAgent, so the Device sessions screen read "Mozilla/5.0
+// (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHT" six
+// times over. The rows already in the database will always be raw, so the
+// translation happens here at display time: any agent becomes the words a
+// person would use, and a name that is already human (a labelled trusted
+// device) passes through untouched.
+function friendlyDeviceText(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "Web device";
+  if (!/Mozilla|AppleWebKit|Gecko|Chrome\/|Safari\//i.test(text)) return text.slice(0, 60);
+  const device = /iPhone/i.test(text) ? "iPhone"
+    : /iPad/i.test(text) ? "iPad"
+    : /Android/i.test(text) ? "Android phone"
+    : /Macintosh|Mac OS X/i.test(text) ? "Mac"
+    : /Windows/i.test(text) ? "Windows PC"
+    : /Linux/i.test(text) ? "Linux computer"
+    : "Web device";
+  // Order matters: Edge, Opera and Samsung Internet all also claim Chrome and
+  // Safari in their agents, and Chrome claims Safari.
+  const browser = /Edg\//i.test(text) ? "Edge"
+    : /OPR\/|Opera/i.test(text) ? "Opera"
+    : /SamsungBrowser\//i.test(text) ? "Samsung Internet"
+    : /Firefox\/|FxiOS/i.test(text) ? "Firefox"
+    : /CriOS|Chrome\//i.test(text) ? "Chrome"
+    : /Safari\//i.test(text) ? "Safari"
+    : "";
+  return browser ? `${device} \u00b7 ${browser}` : device;
+}
 async function openDeviceManagementModal() {
   let items = [];
   try {
     const result = await api("/v1/security/devices");
     items = result.items || [];
   } catch (error) {
-    items = [{ deviceName: navigator.userAgent.slice(0, 72), status: "Current browser session", createdAt: new Date().toISOString() }];
+    items = [{ deviceName: friendlyDeviceText(navigator.userAgent), status: "Current browser session", createdAt: new Date().toISOString() }];
   }
   openModal(`
       <div class="modal-head">
@@ -5455,7 +5484,7 @@ async function openDeviceManagementModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="activity-list">
-      ${items.length ? items.map((item) => `<article class="activity-item"><span class="icon-bubble">${icon("phone")}</span><div><p><strong>${esc(item.deviceName || item.device_name || "Web device")}</strong></p><small>${esc(item.status || "Active")} · ${formatDate(item.created_at || item.createdAt)}</small></div></article>`).join("") : `<article class="activity-item"><span class="icon-bubble">${icon("phone")}</span><div><p><strong>Current device</strong></p><small>This browser session is active now.</small></div></article>`}
+      ${items.length ? items.map((item) => `<article class="activity-item"><span class="icon-bubble">${icon("phone")}</span><div><p><strong>${esc(friendlyDeviceText(item.deviceName || item.device_name))}</strong></p><small>${esc(item.status || "Active")} · ${formatDate(item.created_at || item.createdAt)}</small></div></article>`).join("") : `<article class="activity-item"><span class="icon-bubble">${icon("phone")}</span><div><p><strong>Current device</strong></p><small>This browser session is active now.</small></div></article>`}
     </section>
   `);
 }
