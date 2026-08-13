@@ -1914,11 +1914,35 @@ function askForValue(options = {}) {
 function askToConfirm(options = {}) {
   return appDialog({ ...options, withInput: false });
 }
+// WHY THE APP FELT JUMPY.
+//
+// Almost every sheet refreshes itself by calling openModal again with new
+// HTML - after a save, a toggle, a delete. openModal tears the old card out
+// and builds a new one, so the scroll position went to the top EVERY time.
+// Halfway down a long sheet, one save threw you back to the start; the
+// ticketing dashboard was only the loudest example of a problem the whole app
+// had, and it was patched there alone.
+//
+// This is the general fix. A sheet is identified by its heading; if the
+// replacement is the SAME sheet, the scroll position carries over, and if it
+// is a different sheet it starts at the top as it should. One rule, every
+// sheet, no per-screen bookkeeping to forget.
+function modalSignature(root) {
+  if (!root) return "";
+  const head = root.querySelector(".modal-head");
+  if (!head) return "";
+  const eyebrow = head.querySelector(".eyebrow");
+  const heading = head.querySelector("h2");
+  return `${(eyebrow && eyebrow.textContent) || ""}|${(heading && heading.textContent) || ""}`.trim();
+}
 function openModal(html) {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const keepPrevious = !isFocusRestorationTarget(active) || Boolean(active.closest(".modal-backdrop"));
   const opener = keepPrevious ? state.modalOpener : active;
   const openerSelector = keepPrevious ? state.modalOpenerSelector : modalOpenerSelector(active);
+  const outgoing = document.querySelector(".modal-backdrop .modal-card");
+  const previousSignature = modalSignature(outgoing);
+  const previousScroll = outgoing ? outgoing.scrollTop : 0;
   closeModal({ preserveStack: true });
   state.modalOpener = opener;
   state.modalOpenerSelector = openerSelector || "";
@@ -1954,6 +1978,13 @@ function openModal(html) {
     }
   });
   document.body.appendChild(wrapper);
+  // Same sheet, re-rendered: put the reader back where they were. This has to
+  // happen after the card is in the document - scrollTop on a detached element
+  // is silently discarded - and before paint, so there is no visible jump.
+  if (previousScroll > 0 && previousSignature && modalSignature(wrapper) === previousSignature) {
+    const restored = wrapper.querySelector(".modal-card");
+    if (restored) restored.scrollTop = previousScroll;
+  }
   associateFieldLabels(wrapper);
   paintProgressBars(wrapper);
   document.body.classList.add("modal-open");
@@ -4895,7 +4926,13 @@ function attachAuthKeyboardBehavior(backdrop, card) {
     clearTimeout(focusTimer);
     focusTimer = window.setTimeout(() => {
       scheduleUpdate();
-      if (!activeField()) card.scrollTop = 0;
+      // Returning to the top when the keyboard closes was written for the
+      // sign-in panel, which is one short form and belongs at the top. This
+      // behaviour is attached to EVERY sheet that contains an input, so on a
+      // long sheet - limits, goals, vendors, a stock take - dismissing the
+      // keyboard threw the person back to the start of the sheet. That is the
+      // jumpiness. Anywhere but sign-in, leave the scroll where they left it.
+      if (!activeField() && card.classList.contains("auth-modal-card")) card.scrollTop = 0;
     }, 120);
   };
 

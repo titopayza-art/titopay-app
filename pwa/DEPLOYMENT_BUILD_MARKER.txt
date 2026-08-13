@@ -1,9 +1,39 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v358 (titopay-pwa-v358)
+PWA bundle: v359 (titopay-pwa-v359)
 Admin console: admin-console-v81
 
-This build — the bottom bar covers the footer:
+This build — the jumping is fixed at the source, and the footer is flat:
+
+  THE TWO REASONS THE APP FELT JUMPY, both now fixed for every screen at
+  once rather than one sheet at a time:
+
+  1. Dismissing the keyboard threw you to the top of the sheet. The code
+     that returns a sheet to the top when a field loses focus was written
+     for the one-screen sign-in panel — but it was attached to EVERY
+     sheet containing an input. On a long form (limits, goals, a stock
+     take, paying for a need) closing the keyboard sent you back to the
+     start. It now applies to sign-in only.
+
+  2. Every save, toggle or delete threw you to the top. Almost all sheets
+     refresh by calling openModal again with new HTML, which tears out
+     the old card and builds a new one — losing the scroll position every
+     time. openModal now carries your position across when it is the SAME
+     sheet being re-rendered, and still starts at the top when it is a
+     different one. Ticketing had a hand-written patch for this; it is
+     now a single rule that covers all 150 sheets.
+
+  Both are held by verification/no-jump.js, which drives a real browser:
+  same sheet re-rendered keeps the position, a different sheet starts at
+  the top, and dismissing the keyboard leaves a long form where it was.
+  Each was verified by putting the old behaviour back and watching the
+  test fail.
+
+  THE FOOTER is now flat: a solid white bar across the whole bottom,
+  square edges, no translucency or blur, with the middle action seated in
+  a rounded notch cut into the bar rather than floating over it.
+
+Previous build — the bottom bar covers the footer:
 
   It used to float as a rounded pill with the app's ground showing
   through down both sides and along the bottom — three edges of stray

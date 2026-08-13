@@ -13084,3 +13084,44 @@ form[data-form="ticketing-event"] label select{width:100%}
     padding-inline: max(24px, calc((100% - 620px) / 2)) max(24px, calc((100% - 620px) / 2));
   }
 }
+
+/* THE FOOTER, AS A FOOTER.
+   Reference: a flat white bar across the whole bottom, square at the edges,
+   with the middle action seated in a rounded notch that rises out of it. No
+   translucency, no floating pill, no shadow pretending it hovers. */
+.bottom-nav {
+  border-radius: 0;
+  background: var(--card, #ffffff);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-top: 1px solid rgba(223, 231, 245, 0.9);
+  box-shadow: 0 -2px 14px rgba(6, 26, 61, 0.06);
+}
+
+/* The middle action sits in a notch cut into the bar, rather than hovering
+   over it as a detached circle. The notch is drawn behind the button in the
+   bar's own colour, so the two read as one piece of furniture. */
+.bottom-nav button:nth-child(3) {
+  position: relative;
+  margin-top: -26px;
+}
+
+.bottom-nav button:nth-child(3)::before {
+  content: "";
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  width: 86px;
+  height: 54px;
+  transform: translateX(-50%);
+  background: var(--card, #ffffff);
+  border-radius: 26px 26px 0 0;
+  box-shadow: 0 -2px 12px rgba(6, 26, 61, 0.05);
+  z-index: 0;
+}
+
+.bottom-nav button:nth-child(3) svg,
+.bottom-nav button:nth-child(3) span {
+  position: relative;
+  z-index: 1;
+}
