@@ -3,15 +3,50 @@
 const crypto = require("crypto");
 const { pool } = require("./db/pool");
 const { getSettings, claimJobs, processJob, requeueRetryable, sweepExpiredOtpEmails } = require("./services/email-centre-service");
+const { API_BUILD } = require("./build-info");
 
 const workerId = `${process.pid}-${crypto.randomUUID()}`;
 let stopping = false;
 let timer;
 
+// The worker is a separate process, so "the API is on build N" says nothing
+// about the code delivering the mail - an unrestarted worker once shipped
+// ticket emails while silently dropping their PDF attachments, because only
+// the web process had been updated. Each cycle the worker stamps its build
+// into the database, and /health reports it, so one request answers whether
+// BOTH processes are current.
+let heartbeatCycles = 0;
+async function heartbeat() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS platform_settings (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}'::JSONB,
+        updated_by UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, updated_at)
+       VALUES ('email_worker_heartbeat', $1::JSONB, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify({ build: API_BUILD, workerId, at: new Date().toISOString() })]
+    );
+  } catch (error) {
+    console.error("[email-worker] heartbeat failed", { message: error.message });
+  }
+}
+
 let cyclesSinceSweep = 0;
 async function cycle() {
   if (stopping) return;
   try {
+    // Every ~30 seconds, and on the first cycle, so a fresh restart shows up
+    // in /health within one poll.
+    if (heartbeatCycles === 0 || ++heartbeatCycles >= 15) {
+      heartbeatCycles = 1;
+      await heartbeat();
+    }
     await requeueRetryable();
     // Every ~5 minutes: expired verification codes stop existing in readable
     // form in our own database, and stale challenge hashes are purged.

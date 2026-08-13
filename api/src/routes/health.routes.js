@@ -66,6 +66,16 @@ async function healthStatus(_req, res, next) {
         MAX(sent_at) AS last_sent_at
         FROM email_queue`);
       emailWorker = { status: Number(rows[0].stale) ? "stalled" : "ready", ...rows[0] };
+      // The worker's own build stamp, so an unrestarted worker running old
+      // code is visible here instead of surfacing as silently degraded mail
+      // (the first symptom was ticket emails missing their PDF attachment).
+      const heartbeat = await pool.query(
+        "SELECT value, updated_at FROM platform_settings WHERE key = 'email_worker_heartbeat' LIMIT 1"
+      ).catch(() => ({ rows: [] }));
+      if (heartbeat.rows[0]) {
+        emailWorker.build = heartbeat.rows[0].value?.build ?? null;
+        emailWorker.lastHeartbeatAt = heartbeat.rows[0].updated_at;
+      }
     }
     res.json({
       status: "ok",
