@@ -59,7 +59,8 @@ const {
   listEventChangeRequests,
   processEventChangeRequest,
   eventSalesReport,
-  createTicketSettlement
+  createTicketSettlement,
+  adminTicketingAnalytics
 } = require("../services/ticketing-service");
 const {
   listEventTags,
@@ -3642,6 +3643,21 @@ router.get("/marketing/reviews", requireAdminPermission("marketing"), async (_re
       },
       reviews: reviews.map(publicPwaCustomerReview)
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The console's Ticketing page reads this for its money-and-count cards
+// (gross, platform revenue, tickets sold/scanned) and the sales table. It
+// lives here, beside every other /ticketing/* console route, because this is
+// the path the console actually calls — the same handler also answers at
+// /v1/ticketing/admin/analytics, where it was first registered, and for a
+// while it answered ONLY there: the console's fetch 404ed, its catch turned
+// that into zeros, and the dashboard reported no sales while orders existed.
+router.get("/ticketing/analytics", requireAdminPermission("ticketing"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, analytics: await adminTicketingAnalytics() });
   } catch (error) {
     next(error);
   }
