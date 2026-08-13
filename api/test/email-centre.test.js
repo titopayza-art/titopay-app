@@ -345,12 +345,19 @@ test("App reports asynchronous Welcome Email status without changing the registr
   assert.match(app,/Your welcome email is on its way\./);
 });
 
-test("routine customer login alerts remain in-app while unrecognised-device emails remain enabled", () => {
+test("routine login alerts are recorded, not emailed, while unrecognised-device emails remain enabled", () => {
+  // A staff mailbox was filling with "New TitoPay login" pairs: every admin
+  // sign-in already lands an OTP email in the same inbox, so the second email
+  // said nothing. Routine known-device logins - customer AND admin - are
+  // recorded in the respective notification centre instead. Only an unknown
+  // device still emails.
   const auth=fs.readFileSync(path.join(root,"src/services/auth-service.js"),"utf8");
   const noticeStart=auth.indexOf("async function queueLoginNotice");
   const noticeEnd=auth.indexOf("async function login",noticeStart);
   const notice=auth.slice(noticeStart,noticeEnd);
-  assert.match(notice,/user\.user_type==="customer"&&templateKey==="login_notification"/);
+  assert.match(notice,/if\(templateKey==="login_notification"\)/);
+  assert.doesNotMatch(notice,/user_type==="customer"&&templateKey/,
+    "the routine branch must cover staff too, or their inbox fills again");
   assert.match(notice,/channel:"in_app"/);
   assert.match(notice,/notificationType:"login_notification"/);
   assert.match(notice,/deliveredInApp:true/);

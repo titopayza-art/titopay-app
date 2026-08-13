@@ -879,7 +879,14 @@ async function queueLoginNotice(user,accessToken,payload={}) {
     if(fingerprint){const column=user.user_type==="admin"?"admin_user_id":"user_id";const trusted=await pool.query(`SELECT 1 FROM trusted_devices WHERE ${column}=$1 AND device_fingerprint=$2 AND revoked_at IS NULL LIMIT 1`,[user.id,fingerprint]);if(!trusted.rowCount)templateKey="new_device_login";}
     const device=friendlyDeviceName(payload.deviceName)||(user.user_type==="admin"?"Admin Browser":"Web Browser");
     const noticeKey=sha256(accessToken).slice(0,32);
-    if(user.user_type==="customer"&&templateKey==="login_notification") {
+    // A routine sign-in from a known device is RECORDED, not emailed - for
+    // customers in the app's notification inbox, for staff in the admin
+    // console's notification centre, which is where they already look. Every
+    // admin sign-in also lands an OTP email in the same inbox moments earlier,
+    // so a second email said nothing the inbox did not already show; a staff
+    // mailbox was filling with pairs. Only a sign-in from an UNKNOWN device
+    // still emails, because that is the one worth interrupting somebody for.
+    if(templateKey==="login_notification") {
       const notificationId=await createNotification({
         user,
         channel:"in_app",
