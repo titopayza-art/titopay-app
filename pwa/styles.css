@@ -13281,3 +13281,44 @@ img {
   .ticketing-hub-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .campaign-prices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* SCREENS THAT FIT THE SCREEN ---------------------------------------------
+   Three things kept the app looking like a phone app stretched onto a
+   laptop, and all three are measurable rather than matters of taste.
+
+   1. Every modal was width: min(100%, 560px), so a dense sheet on a 1440px
+      display used 39% of it. Modals now grow in two steps. A confirmation
+      still reads at a comfortable measure; a statement or a scanner gets the
+      room it needs.
+
+   2. Chip rows scroll horizontally with a hidden scrollbar. That is right on
+      a phone, where you swipe them, and wrong on a laptop, where the last
+      chip is simply cut off with nothing to say it is there. They wrap once
+      there is room to wrap into.
+
+   3. An input inside a form-grid label was sizing to its own default width,
+      not its container: 208px of input in a 506px row. They fill the row. */
+@media (min-width: 720px) {
+  .modal-card { width: min(100%, 680px); }
+  .statement-periods,
+  .sv-filter-row,
+  .sv-tabs,
+  .learn-categories,
+  .frequent-row {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+}
+
+@media (min-width: 1080px) {
+  .modal-card { width: min(100%, 760px); }
+  .modal-card.ticketing-wide { width: min(100%, 900px); }
+}
+
+.form-grid label > input:not([type="checkbox"]):not([type="radio"]),
+.form-grid label > select,
+.form-grid label > textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
