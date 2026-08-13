@@ -21489,11 +21489,26 @@ function notificationStorageKey() {
   const identity = user.id || user.email || user.username || "guest";
   return `${IN_APP_NOTIFICATIONS_KEY}:${state.accountType}:${identity}`;
 }
+// DELIBERATELY OUTSIDE the titopay_in_app_notifications_v1 prefix: signing
+// out wipes that whole prefix for privacy, and the cleared marker used to go
+// with it - so everything a person had cleared came back on their next
+// sign-in, re-delivered by the server feed. The marker is one timestamp with
+// nothing personal in it; it earns the right to survive the wipe.
 function notificationClearedAtKey() {
-  return `${notificationStorageKey()}:cleared-at`;
+  const user = state.user || {};
+  const identity = user.id || user.email || user.username || user.phone || "guest";
+  return `titopay_notices_cleared_v1:${state.accountType}:${identity}`;
 }
 function notificationClearedAt() {
-  const value = Number(localStorage.getItem(notificationClearedAtKey()) || 0);
+  let value = Number(localStorage.getItem(notificationClearedAtKey()) || 0);
+  if (!value) {
+    // Migrate a marker written under the old wiped-at-sign-out key.
+    const legacy = Number(localStorage.getItem(`${notificationStorageKey()}:cleared-at`) || 0);
+    if (legacy) {
+      value = legacy;
+      try { localStorage.setItem(notificationClearedAtKey(), String(legacy)); } catch (error) {}
+    }
+  }
   return Number.isFinite(value) ? value : 0;
 }
 function defaultInAppNotifications() {
@@ -21722,8 +21737,13 @@ function notificationCategory(item = {}) {
   const metadata = item.metadata || {};
   if (metadata.category === "payment" || String(item.type || "").startsWith("payment-")) return "payments";
   const serverType = String(metadata.notificationType || item.type || "").toLowerCase();
+  // Buying a ticket is money leaving, so it belongs with Payments. It used to
+  // land under Messages because "ticket" also means a support ticket - the
+  // ticketId of an EVENT ticket satisfied a test written for Customer Care
+  // references. Only ticketRef (a support reference) may mean Messages now.
+  if (serverType === "ticket_purchase" || serverType === "ticket_refund") return "payments";
   if (item.critical || SECURITY_NOTIFICATION.test(serverType)) return "security";
-  if (/chat|support|message/.test(serverType) || metadata.ticketRef || metadata.ticketId) return "messages";
+  if (/chat|support|message/.test(serverType) || metadata.ticketRef) return "messages";
   return "account";
 }
 function notificationItemIcon(item) {
@@ -21924,6 +21944,9 @@ function clearNotifications() {
   localStorage.setItem(notificationClearedAtKey(), String(Date.now()));
   state.notifications = [];
   persistInAppNotifications();
+  // The server feed re-serves anything still unread there. Clearing means
+  // clearing: mark the lot read server-side too, best effort.
+  api("/v1/chat/notifications/read", { method: "POST", body: { ids: [] } }).catch(() => null);
   closeModal();
   openNotificationsModal();
   render();
@@ -22777,10 +22800,15 @@ const GREETING_LANGUAGES = [
   { name: "Tshivenda", hello: "Ndaa" },
   { name: "isiNdebele", hello: "Lotjhani" }
 ];
+// Every value notificationCategory can return MUST have a chip here. The
+// classifier used to file staff, TitoKids and stokvel notices under "account"
+// while no Account chip existed, so those notices were only ever visible
+// under All - filed, in effect, into a drawer with no handle.
 const NOTIFICATION_FILTERS = [
   ["all", "All"],
   ["payments", "Payments"],
   ["messages", "Messages"],
+  ["account", "Account"],
   ["security", "Security"]
 ];
 // Modal openers that participate in back navigation: opening one of these on

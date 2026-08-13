@@ -1,9 +1,31 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v372 (titopay-pwa-v372)
+PWA bundle: v373 (titopay-pwa-v373)
 Admin console: admin-console-v81
 
-This build — one voice, audited letter by letter:
+This build — the Notification Centre files things where they belong, and
+a cleared inbox stays cleared:
+
+  WRONG SECTIONS, two causes fixed:
+  - Buying an event ticket filed the payment under Messages. The
+    classifier treated an event ticket's id like a Customer Care ticket
+    reference. Ticket purchases and refunds are Payments now, and only a
+    support reference means Messages.
+  - Staff, TitoKids and stokvel notices were filed under "account" - a
+    category with NO chip, so they were only ever visible under All. An
+    Account chip now exists; a test fails if the classifier ever again
+    produces a category without a chip.
+
+  DELETED NOTIFICATIONS CAME BACK, two causes fixed:
+  - The cleared-inbox marker lived under the storage prefix the sign-out
+    privacy wipe removes. One sign-out forgot the clear, and the server
+    feed re-delivered everything. The marker (one timestamp, nothing
+    personal) now lives under its own key and survives the wipe; a
+    marker written under the old key is migrated.
+  - Clearing now also marks everything read on the server, so the feed
+    stops re-serving the same items - on this device and any other.
+
+Also in this build — one voice, audited letter by letter:
 
   A full sweep for everything that reads as machine-written or careless,
   measured against the actual files rather than vibes:
