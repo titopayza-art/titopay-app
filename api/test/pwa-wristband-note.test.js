@@ -36,10 +36,20 @@ test("no ticket leaves the wristband question unanswered", () => {
 
   // Every branch returns something: silence is the bug this replaces.
   assert.match(body, /if \(linkableTicketId\(ticket\)\)/, "linkable → offer it");
-  assert.match(body, /ticket\.wristbandLinked/, "already linked → confirm it");
-  assert.match(body, /ticket\.cashlessTagsEnabled/, "cashless but not offered → say what to do");
-  assert.match(body, /not switched on cashless wristbands/, "not cashless → say so plainly");
+  assert.match(body, /ticket\.wristbandLinked \|\| linkedTag/, "already linked → confirm it, from either source");
+  assert.match(body, /ticket\.cashlessTagsEnabled === true/, "cashless but not offered → say what to do");
+  assert.match(body, /ticket\.cashlessTagsEnabled === false/,
+    "only an EXPLICIT false may accuse the organiser - an old server that never sends the field is not a no");
+  assert.match(body, /not switched on cashless wristbands/, "explicit no → say so plainly");
+  assert.match(body, /not available for this ticket right now/, "unknown → claim nothing, blame nobody");
   assert.doesNotMatch(body, /return "";/, "no branch may return an empty note");
+
+  // The already-linked case must not depend on the new server fields: the tags
+  // list predates them and carries ticketId on every server version.
+  const finder = APP.slice(APP.indexOf("function ticketLinkedTag(ticket = {})"));
+  const finderBody = finder.slice(0, finder.indexOf("\n}") + 2);
+  assert.match(finderBody, /state\.ticketing\.myTags/, "linked state is cross-checked against the tags already fetched");
+  assert.match(finderBody, /"ASSIGNED", "ACTIVE"/, "only a band actually on the ticket counts");
 
   // And the note is actually used by the card.
   assert.match(APP, /<footer class="ticket-stub-foot">\$\{ticketWristbandNote\(ticket\)\}<\/footer>/,

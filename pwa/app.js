@@ -16707,21 +16707,38 @@ function eventTagsToShow() {
 // A blank where a "Link wristband" button might be is read as "the feature was
 // removed" by anyone who knows it exists. So the ticket says which of the four
 // situations it is actually in, and never leaves the question hanging.
+// The band already on this ticket, found in the tags list the screen fetched
+// anyway. That endpoint predates the per-ticket cashless fields, so this works
+// against ANY server version — including the one that cannot say cashlessTagsEnabled.
+function ticketLinkedTag(ticket = {}) {
+  const id = String(ticket.ticketId || ticket.id || "");
+  if (!id) return null;
+  return (state.ticketing.myTags || []).find((tag) =>
+    String(tag.ticketId || "") === id && ["ASSIGNED", "ACTIVE"].includes(tag.status)) || null;
+}
 function ticketWristbandNote(ticket = {}) {
   const entrance = "Present this ticket at the entrance. Do not share the code publicly.";
   if (linkableTicketId(ticket)) {
     return "This event is cashless. Link your wristband or card to pay by tapping it at any vendor — it pays from your TitoPay Wallet, and there is no separate event balance.";
   }
-  if (ticket.wristbandLinked) {
-    return `${entrance} Your wristband is linked to this ticket — tap it at any vendor to pay from your TitoPay Wallet.`;
+  const linkedTag = ticketLinkedTag(ticket);
+  if (ticket.wristbandLinked || linkedTag) {
+    return `${entrance} Your wristband${linkedTag && linkedTag.tagLabel ? ` ${linkedTag.tagLabel}` : ""} is linked to this ticket — tap it at any vendor to pay from your TitoPay Wallet.`;
   }
-  if (ticket.cashlessTagsEnabled) {
+  if (ticket.cashlessTagsEnabled === true) {
     // Cashless, nothing linked, yet the server did not offer it: the tag list
     // has not loaded, or this ticket is not eligible. Say so rather than
     // pretend the feature does not exist.
     return `${entrance} This event is cashless — if the Link wristband button is missing, pull this screen closed and open it again.`;
   }
-  return `${entrance} The organiser has not switched on cashless wristbands for this event.`;
+  if (ticket.cashlessTagsEnabled === false) {
+    // The server SAID no. Only an explicit false may make this claim - an
+    // older server that never sends the field must not be read as "off",
+    // which is exactly the false accusation this branch once made.
+    return `${entrance} The organiser has not switched on cashless wristbands for this event.`;
+  }
+  // The server is too old to say. Claim nothing, blame nobody.
+  return `${entrance} Wristband linking is not available for this ticket right now.`;
 }
 
 // Is THIS ticket one the server says can take a wristband? The button lives on

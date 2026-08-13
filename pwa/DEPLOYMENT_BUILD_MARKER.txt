@@ -1,9 +1,28 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v365 (titopay-pwa-v365)
+PWA bundle: v366 (titopay-pwa-v366)
 Admin console: admin-console-v81
 
-This build — "Pay" gets air under the circle:
+This build — the ticket stops accusing the organiser without proof:
+
+  A ticket read "The organiser has not switched on cashless wristbands
+  for this event" while the organiser's screen showed cashless ON. The
+  cause: an older API does not send the per-ticket cashless fields at
+  all, and the app read "field absent" as "off" - stating a guess as a
+  fact. Only an EXPLICIT no from the server may make that claim now; a
+  server too old to say gets "Wristband linking is not available for this
+  ticket right now" - nothing claimed, nobody blamed.
+
+  And a band already on the ticket is now recognised on ANY server
+  version: the tags list the screen fetches anyway carries ticketId and
+  predates the new fields, so "Your wristband TP44660295 is linked to
+  this ticket" appears even where the API cannot say cashlessTagsEnabled.
+  This is the most likely truth behind "I used to be able to link but now
+  I can't": the link WORKED, the ticket wears its band, and the button is
+  gone because the job is done - the ticket now says so, with the tag
+  number.
+
+Also in this build — "Pay" gets air under the circle:
 
   The centre label sat pressed against the bottom of the button - the
   white ring around the circle had eaten the small gap the layout
