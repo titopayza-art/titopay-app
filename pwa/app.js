@@ -5674,7 +5674,7 @@ function profileView() {
     <section class="profile-actions panel">
       <button class="btn secondary" data-action="refresh">${icon("refresh")} Refresh profile</button>
       <button class="btn secondary" data-action="logout">${icon("lock")} Sign out</button>
-      <p class="field-hint" style="margin:6px 0 0;text-align:center">TitoPay App <span title="Build ${esc(appBundleVersion() || "unknown")}">${esc(TITOPAY_APP_VERSION)}</span> · <button class="link-btn" type="button" data-action="check-for-updates">Check for updates</button></p>
+      <p class="field-hint" style="margin:6px 0 0;text-align:center">TitoPay App <span title="Build ${esc(appBundleVersion() || "unknown")}">v${esc(TITOPAY_APP_VERSION)}</span> · <button class="link-btn" type="button" data-action="check-for-updates">Check for updates</button></p>
     </section>
   `;
 }
@@ -5725,7 +5725,7 @@ async function checkForAppUpdate() {
       setTimeout(() => location.reload(), 700);
       return;
     }
-    showToast(`You are on the latest TitoPay App ${TITOPAY_APP_VERSION}${appBundleVersion() ? ` (build ${appBundleVersion()})` : ""}.`);
+    showToast(`You are on the latest TitoPay App v${TITOPAY_APP_VERSION}${appBundleVersion() ? ` (build ${appBundleVersion()})` : ""}.`);
   } catch (error) {
     showToast("Could not check for updates just now.", "error");
   }

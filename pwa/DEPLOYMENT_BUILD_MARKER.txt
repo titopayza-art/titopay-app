@@ -1,9 +1,20 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v359 (titopay-pwa-v359)
+PWA bundle: v360 (titopay-pwa-v360)
 Admin console: admin-console-v81
 
-This build — the jumping is fixed at the source, and the footer is flat:
+This build — the Profile line reads "TitoPay App v1.0".
+
+  The version line was changed from the build number to the product
+  version in v357; this writes it exactly as asked, with the v: "TitoPay
+  App v1.0". The build number stays on the tooltip and in the
+  "you are on the latest" message, because it is what identifies a bundle
+  when something needs diagnosing.
+
+  A device showing "v355" is simply running a bundle from before v357 -
+  the line itself was already fixed.
+
+Also in this build — the jumping is fixed at the source, and the footer is flat:
 
   THE TWO REASONS THE APP FELT JUMPY, both now fixed for every screen at
   once rather than one sheet at a time:
