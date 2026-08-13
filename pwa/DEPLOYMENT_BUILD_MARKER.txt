@@ -1,9 +1,15 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v363 (titopay-pwa-v363)
+PWA bundle: v364 (titopay-pwa-v364)
 Admin console: admin-console-v81
 
-This build — Device sessions speak plainly:
+This build — the update toast says only the version:
+
+  "You are on the latest TitoPay App v1.0." Nothing else. The build
+  number no longer rides along in brackets; it stays on the tooltip of
+  the Profile version line, where support can still ask for it.
+
+Also in this build — Device sessions speak plainly:
 
   The Security screen listed every session as "Mozilla/5.0 (iPhone; CPU
   iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHT" - the raw

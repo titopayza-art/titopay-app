@@ -5754,7 +5754,9 @@ async function checkForAppUpdate() {
       setTimeout(() => location.reload(), 700);
       return;
     }
-    showToast(`You are on the latest TitoPay App v${TITOPAY_APP_VERSION}${appBundleVersion() ? ` (build ${appBundleVersion()})` : ""}.`);
+    // Just the version. The build number stays on the tooltip of the Profile
+    // version line for support - a customer reading a toast does not need it.
+    showToast(`You are on the latest TitoPay App v${TITOPAY_APP_VERSION}.`);
   } catch (error) {
     showToast("Could not check for updates just now.", "error");
   }
