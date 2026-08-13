@@ -13322,3 +13322,28 @@ img {
   min-width: 0;
   box-sizing: border-box;
 }
+
+/* iOS zoom guard ---------------------------------------------------------- */
+
+/* When a focused field's text is under 16px, an iPhone zooms the whole page
+   in to read it -- and inside an installed app it does so even though the
+   viewport already forbids scaling. The page is then left zoomed and panning
+   sideways: the wobble. The guard is a hard floor: on a touch screen no
+   field may ever compute below 16px. max(1em, 16px) lifts only the
+   too-small fields; anything inheriting or designed larger keeps its size. */
+@media (hover: none) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(1em, 16px) !important;
+  }
+
+  /* The deliberately large money and OTP fields stay at their design size. */
+  .field input[inputmode="decimal"] {
+    font-size: 1.3rem !important;
+  }
+
+  .field input[name="otp"] {
+    font-size: 1.35rem !important;
+  }
+}
