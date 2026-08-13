@@ -13106,22 +13106,35 @@ form[data-form="ticketing-event"] label select{width:100%}
   margin-top: -26px;
 }
 
-.bottom-nav button:nth-child(3)::before {
-  content: "";
-  position: absolute;
-  top: -10px;
-  left: 50%;
-  width: 86px;
-  height: 54px;
-  transform: translateX(-50%);
-  background: var(--card, #ffffff);
-  border-radius: 26px 26px 0 0;
-  box-shadow: 0 -2px 12px rgba(6, 26, 61, 0.05);
-  z-index: 0;
+/* The notch was an 86px rectangle, so it reached across and sat on top of the
+   Services and Activity buttons - a white card overlapping its neighbours. The
+   seat now follows the circle exactly: a ring of the bar's own colour drawn
+   around the button itself, which cannot overlap anything because it is the
+   same shape as what it surrounds. */
+.bottom-nav button:nth-child(3) svg {
+  box-shadow:
+    0 0 0 6px var(--card, #ffffff),
+    0 8px 20px rgba(10, 77, 255, 0.3);
 }
 
 .bottom-nav button:nth-child(3) svg,
 .bottom-nav button:nth-child(3) span {
   position: relative;
   z-index: 1;
+}
+
+/* A label that wraps reads as "Service / s". The bar has five fixed columns,
+   so the text must never wrap - it steps down a little on the narrowest
+   phones instead. */
+.bottom-nav button span {
+  white-space: nowrap;
+}
+
+@media (max-width: 380px) {
+  .bottom-nav button {
+    font-size: 0.62rem;
+  }
+  .bottom-nav button:nth-child(3) span {
+    font-size: 0.58rem;
+  }
 }

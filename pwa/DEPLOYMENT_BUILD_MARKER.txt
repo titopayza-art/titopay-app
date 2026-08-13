@@ -1,9 +1,25 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v361 (titopay-pwa-v361)
+PWA bundle: v362 (titopay-pwa-v362)
 Admin console: admin-console-v81
 
-This build — notifications reach the phone, and say something human:
+This build — the white seat under Pay stops covering its neighbours:
+
+  The notch behind the middle button was an 86px rectangle, so it reached
+  across and sat on top of the Services and Activity buttons - a white
+  card overlapping the very frames it was meant to sit between.
+
+  The seat now follows the circle exactly: a 6px ring of the bar's own
+  colour drawn around the button itself. It cannot overlap anything,
+  because it is the same shape as the thing it surrounds. It is a shadow,
+  so it changes no layout and no tap target.
+
+  While there: the five nav labels no longer wrap. On a 360px phone they
+  read "Service / s" and "Activit / y"; they now hold one line, stepping
+  down a little in size on the narrowest screens. Checked at 360px and
+  430px.
+
+Also in this build — notifications reach the phone, and say something human:
 
   MONEY NOW REACHES THE DEVICE. Only a login ever raised a notification
   on the phone. Money arriving, money leaving, a ticket bought, a child
