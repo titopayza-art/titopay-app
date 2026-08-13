@@ -21,9 +21,14 @@
     <link rel="manifest" href="./manifest.webmanifest?v=193">
     <link rel="icon" type="image/png" href="./assets/favicon.png?v=165">
     <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=165">
+    <!-- Without a startup image, iOS shows a white flash between tapping the
+         icon and first paint - the single most website-feeling moment a PWA
+         has. iOS only uses an image whose size matches the device exactly. -->
+    <link rel="apple-touch-startup-image" href="./assets/splash-1170x2532.png?v=165"
+          media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)">
     <link rel="preload" href="./assets/titopay-logo.png" as="image" fetchpriority="high">
-    <link rel="stylesheet" href="./styles.min.css?v=366">
-    <script src="./app.min.js?v=366" defer></script>
+    <link rel="stylesheet" href="./styles.min.css?v=367">
+    <script src="./app.min.js?v=367" defer></script>
     <script src="./notification-routing-fix.js?v=1" defer></script>
   </head>
   <body>

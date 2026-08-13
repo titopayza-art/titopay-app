@@ -13148,3 +13148,31 @@ form[data-form="ticketing-event"] label select{width:100%}
 .bottom-nav button:nth-child(3) span {
   margin-top: 2px;
 }
+
+/* NATIVE FEEL.
+   The difference between "an app" and "a website in a frame" is a set of
+   touch-layer leaks: long-press summoning the iOS callout over a button, UI
+   labels highlighting like paragraph text, the 300ms double-tap-zoom wait,
+   and icons that drag like images. Chrome is furniture, not text.
+
+   Selection is deliberately given BACK where a person genuinely selects:
+   anything they type into, chat messages, and codes or references they may
+   want to copy by hand. Never take selection away from content. */
+body {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+input, textarea, select, [contenteditable="true"],
+.chat-message p, code, pre, .ticket-code {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+button, a, label, .service-tile, .profile-feature {
+  touch-action: manipulation;
+}
+img {
+  -webkit-user-drag: none;
+  user-drag: none;
+}

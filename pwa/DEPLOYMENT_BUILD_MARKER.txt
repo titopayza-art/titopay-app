@@ -1,9 +1,31 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v366 (titopay-pwa-v366)
+PWA bundle: v367 (titopay-pwa-v367)
 Admin console: admin-console-v81
 
-This build — the ticket stops accusing the organiser without proof:
+This build — the app behaves like an app, not a website:
+
+  Audited every touch-layer leak that makes a PWA feel like a page:
+
+  ALREADY RIGHT (verified, unchanged): standalone display, portrait
+  lock, theme colour, maskable icon, app shortcuts, viewport-fit=cover
+  with zoom pinned, overscroll bounce disabled, text-size-adjust fixed,
+  tap-highlight cleared on buttons.
+
+  SEALED IN THIS BUILD:
+  - Long-pressing a button, icon or label no longer summons the iOS
+    copy/share callout - chrome is furniture, not text.
+  - UI text no longer highlights like a paragraph when pressed. Selection
+    is deliberately given BACK where a person genuinely selects: inputs,
+    chat messages, and codes or references they may copy by hand.
+  - Buttons and tiles take touch-action: manipulation - the browser's
+    double-tap-zoom wait is gone from every control.
+  - Icons and images no longer drag like webpage images.
+  - The iOS launch splash is now linked: opening from the Home Screen
+    paints the branded splash instead of the white flash - the single
+    most website-feeling moment a PWA has.
+
+Also in this build — the ticket stops accusing the organiser without proof:
 
   A ticket read "The organiser has not switched on cashless wristbands
   for this event" while the organiser's screen showed cashless ON. The
