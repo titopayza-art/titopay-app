@@ -13080,7 +13080,7 @@ async function openMyWorkplacesModal() {
     state.myWorkplaces = items;
     if (!host) return;
     if (!items.length) {
-      host.innerHTML = `<section class="empty-state compact-state">${icon("staff-badge")}<strong>No workplaces yet</strong><p>When a business adds you to their staff with your TitoPay details, it appears here and you can start selling for them straight away.</p><p class="field-hint">Been added already? The business has to use the details you sign in with. Send them your @username${state.user?.username ? ` — <strong>@${esc(state.user.username)}</strong>` : ""} and ask them to tap <strong>Link</strong> next to your name on their Staff register.</p></section>`;
+      host.innerHTML = `<section class="empty-state compact-state">${icon("staff-badge")}<strong>No workplaces yet</strong><p>When a business adds you to their staff with your TitoPay details, it appears here and you can start selling for them straight away.</p><p class="field-hint">Been added already? The business has to use the details you sign in with. Send them your @username and ask them to tap <strong>Link</strong> next to your name on their Staff register.</p>${state.user?.username ? `<button class="btn secondary" type="button" data-copy-value="@${esc(state.user.username)}" data-copy-label="Username">${icon("copy")} Copy my @username</button>` : ""}</section>`;
       return;
     }
     host.innerHTML = items.map((workplace) => `

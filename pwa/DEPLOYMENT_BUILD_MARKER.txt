@@ -1,9 +1,23 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v347 (titopay-pwa-v347)
+PWA bundle: v348 (titopay-pwa-v348)
 Admin console: admin-console-v81
 
-This build — TitoKids gains co-parents:
+This build — an identifier comes off the screen, and TitoKids co-parents:
+
+  MY WORKPLACES no longer prints your own @username into its help text.
+  Nothing was ever public — that panel renders only inside your own
+  signed-in session, and a @username is a payment handle rather than a
+  credential — but it did not need to be on screen, least of all in a
+  panel people screenshot and send to someone else when asking for help.
+  It is now a "Copy my @username" button: the handle goes to the
+  clipboard when you choose to share it, and a screenshot carries
+  nothing. api/test/pwa-identifier-exposure.test.js fails if any screen
+  starts printing the account's own username, email or phone as visible
+  text again (the Profile screen, which is your own detail page, stays
+  the deliberate exception).
+
+TitoKids co-parents:
 
   Raising a child is rarely a solo job, and neither is paying for one. A
   parent can now invite another adult — the other parent, a guardian, a
