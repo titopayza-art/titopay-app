@@ -20678,6 +20678,29 @@ function openLearnModal() {
 function howItWorksSteps() {
   const isBusiness = state.accountType === "business";
   return [
+    // The tour opens with who we are before what the buttons do: what TitoPay
+    // is, who is behind it, and the problem it exists to solve. Then the app.
+    {
+      icon: "wallet",
+      title: "What is TitoPay?",
+      body: "TitoPay is a digital wallet made for South Africa. Send and receive money, pay with a QR, buy airtime and electricity, sell as a business and get paid in seconds — all from one app, with the fees shown before any money moves.",
+      hint: "TitoPay. Smart Payments. Simplified.",
+      tagline: true
+    },
+    {
+      icon: "heart",
+      title: "About us",
+      body: "TitoPay is proudly South African, built for the way we actually pay — at the spaza, at the gate, at the taxi rank, between family. One wallet for people and businesses, with real people at Customer Care behind it.",
+      hint: "Proudly South African",
+      tagline: true
+    },
+    {
+      icon: "zap",
+      title: "The problem we solve",
+      body: "Cash gets lost, stolen and miscounted, and card machines cost more than small businesses can carry. TitoPay makes digital payments instant, safe and affordable for everyone — from one person paying a friend to a business running its whole till.",
+      hint: "Instant. Safe. Affordable.",
+      tagline: true
+    },
     {
       icon: "wallet",
       title: "Your wallet at a glance",
@@ -20807,7 +20830,7 @@ function paintHowItWorksStep() {
     <span class="icon-bubble tour-icon">${icon(step.icon)}</span>
     <h3 class="tour-title">${esc(step.title)}</h3>
     <p class="tour-copy">${esc(step.body)}</p>
-    <span class="guide-hint tour-hint">${icon("check-circle")} Find it: ${esc(step.hint)}</span>
+    <span class="guide-hint tour-hint">${icon("check-circle")} ${step.tagline ? esc(step.hint) : `Find it: ${esc(step.hint)}`}</span>
   `;
   if (!prefersReducedMotion()) {
     body.classList.remove("guide-anim");

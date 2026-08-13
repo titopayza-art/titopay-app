@@ -1,9 +1,26 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v368 (titopay-pwa-v368)
+PWA bundle: v369 (titopay-pwa-v369)
 Admin console: admin-console-v81
 
-This build — one back arrow, and a button that admits it worked:
+This build — the tour opens with who we are, then what the buttons do:
+
+  Three new pages lead the guided tour, before the twelve app steps
+  (fifteen in total, and the header, dots and step counter all follow
+  the list automatically):
+
+    1. What is TitoPay?      — a digital wallet made for South Africa
+    2. About us              — proudly South African, built for the way
+                               we actually pay, real people behind it
+    3. The problem we solve  — cash gets lost and card machines cost too
+                               much; TitoPay makes digital payments
+                               instant, safe and affordable for everyone
+
+  The pill under an intro page carries its tagline plainly ("TitoPay.
+  Smart Payments. Simplified.") — the "Find it:" prefix stays reserved
+  for steps that point at a real place in the app.
+
+Also in this build — one back arrow, and a button that admits it worked:
 
   TWO BACK ARROWS sat side by side on some sheets. Sheets that author
   their own back arrow in the head were ALSO given an injected one -
