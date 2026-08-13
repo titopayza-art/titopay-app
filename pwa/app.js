@@ -13353,7 +13353,10 @@ async function refreshTitoKidsChild(childId) {
     const nameEl = document.querySelector("[data-tk-child-name]");
     if (nameEl) nameEl.textContent = child.fullName;
     const subEl = document.querySelector("[data-tk-child-sub]");
-    if (subEl) subEl.textContent = child.linked ? `Linked to @${child.childUsername}` : `${child.relationship === "guardian" ? "Guardian" : "Parent"}-managed wallet`;
+    if (subEl) {
+      subEl.textContent = child.linked ? `Linked to @${child.childUsername}` : `${child.relationship === "guardian" ? "Guardian" : "Parent"}-managed wallet`;
+      subEl.dataset.tkBaseSub = subEl.textContent;
+    }
     const limits = child.limits || {};
     const catKeys = Object.keys(limits.categories || {});
     host.innerHTML = `
@@ -13367,6 +13370,7 @@ async function refreshTitoKidsChild(childId) {
         </div>
         <p class="field-hint" style="margin:8px 0 0">Add Money moves money from your wallet to ${esc(child.fullName)}’s. Pay for a Need pays a school, shop or person straight from ${esc(child.fullName)}’s wallet — no loose cash.</p>
       </section>
+      <section class="tk-card" data-tk-managers></section>
       <section class="tk-card">
         <p class="tk-sub"><strong style="color:var(--text)">Limits &amp; Controls</strong> · spent this week: ${esc(money(child.spent?.week || 0))}</p>
         <form class="form-grid" data-form="titokids-limits" style="margin-top:8px">
@@ -13407,7 +13411,6 @@ async function refreshTitoKidsChild(childId) {
             <span class="${item.direction === "in" ? "tk-in" : "tk-out"}">${item.direction === "in" ? "+" : "-"}${esc(money(item.amount))}</span>
           </div>`).join("") : `<p class="field-hint">No activity yet.</p>`}
       </section>
-      <section class="tk-card" data-tk-managers></section>
       <div class="auth-actions">
         <button class="btn ghost" type="button" data-tk-remove="${esc(child.id)}">Remove ${esc(child.fullName)} from TitoKids</button>
       </div>`;
@@ -13426,6 +13429,15 @@ async function refreshTitoKidsManagers(childId) {
   try {
     const result = await api(`/v1/tito-kids/children/${encodeURIComponent(childId)}/managers`);
     const items = result.items || [];
+    // Say it in the header too — who else can move this money is not a detail
+    // to be discovered by scrolling.
+    const subEl = document.querySelector("[data-tk-child-sub]");
+    if (subEl && subEl.dataset.tkBaseSub) {
+      const active = items.filter((person) => person.status === "active").length;
+      const invited = items.filter((person) => person.status === "invited").length;
+      const extra = active ? ` · you + ${active} co-parent${active === 1 ? "" : "s"}` : invited ? ` · ${invited} invitation${invited === 1 ? "" : "s"} pending` : "";
+      subEl.textContent = `${subEl.dataset.tkBaseSub}${extra}`;
+    }
     const child = state.titoKidsChild || {};
     host.innerHTML = `
       <p class="tk-sub"><strong style="color:var(--text)">Who manages this wallet</strong></p>

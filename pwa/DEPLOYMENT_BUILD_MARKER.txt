@@ -1,9 +1,26 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v351 (titopay-pwa-v351)
+PWA bundle: v352 (titopay-pwa-v352)
 Admin console: admin-console-v81
 
-This build — "where do I link my wristband?":
+This build — the co-parent invite where a parent can see it:
+
+  "Who manages this wallet" now sits directly under the balance and the
+  Add Money / Pay for a Need buttons, instead of at the bottom of the
+  sheet below Limits, Goals and Activity. Who may move a child's money
+  belongs with the money, not after the history — nobody scrolls past
+  three sections to discover a feature they do not know exists.
+
+  The header says it too: "Parent-managed wallet · you + 1 co-parent", or
+  "· 1 invitation pending", so a parent sees at a glance who else is on
+  the wallet without opening anything.
+
+  The feature itself shipped in v347 and is unchanged: invite by
+  @username, cellphone or email; they must accept; they fund from THEIR
+  own wallet and can never spend yours; only you can invite, remove a
+  co-parent, or remove the child.
+
+Also in this build — "where do I link my wristband?":
 
   LINK WRISTBAND IS NOW ON THE TICKET. It used to be a separate card
   floating above the list, which is not where anyone looks: someone
