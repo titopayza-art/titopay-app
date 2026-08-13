@@ -1,54 +1,53 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v342 (titopay-pwa-v342)
+PWA bundle: v343 (titopay-pwa-v343)
 Admin console: admin-console-v81
 
-This build — TitoKids goes live, and the app gets simpler:
+This build — the ticketing sheet becomes a hub, and simplicity gets rules:
 
-  TITOKIDS (new, under Personal):
-  - A child gets a real ring-fenced wallet under the parent's account.
-    Every movement is ordinary double-entry ledger, so balances can never
-    drift from the money that actually moved.
-  - Add Money moves funds from the parent's wallet to the child's.
-    Pay for a Need pays a school, shop or person straight from the
-    child's wallet — categorised, no loose cash.
-  - Limits & Controls: category switches plus daily, weekly and monthly
-    caps. A switched-off category is refused outright. A cap asks the
-    parent to confirm before paying anyway, and the override is audited.
-  - Savings goals, with progress measured from the ledger.
-  - A child with their own TitoPay can be linked: they see their balance
-    and activity, and can ask the parent for money. The parent approves
-    or declines in the same sheet, and approving performs the transfer.
-  - A child holding money cannot be removed — the balance must be moved
-    or spent first.
-  - Communication is by in-app alert and email only, never SMS.
+  BUSINESS TICKETING IS NO LONGER ONE LONG SHEET.
+  It was one screen doing events, sales, vendors, cashless and blank-tag
+  issuing at once. Linking a vendor meant scrolling past everything else,
+  and any refresh threw you back to the top. It is now a hub with four
+  short doors:
+    My Events        create, submit for approval, track each event
+    Sales            tickets sold and money taken, per event and per tier
+    Vendors & Door   who may take Event Tag payments; door scanning
+    Event Tags       cashless on/off, issue blank tags, assign a tag
+  The events load ONCE at the hub and every door renders from that same
+  data — no door fetches for itself. A save re-renders only its own door,
+  at the scroll position you were at, so nothing jumps. Each door carries
+  a back arrow to the hub.
 
-  SIMPLER NAVIGATION (nothing removed, duplicate doors closed):
-  - One door per feature. TitoKids, Sales and My Family no longer appear
-    twice; each now has exactly one home. My Family is not a separate
-    screen at all — a linked child's wallet appears inside the TitoKids
-    sheet, above the children they manage.
-  - Bulk Distribution shows in Profile only while its tile is hidden, so
-    an approved business sees it once, not twice.
-  - App search now covers every feature that lives behind a single door
-    — TitoKids, My Workplaces, TitoPay Chat, Sales, Bulk Distribution —
-    so closing a duplicate door never made anything harder to find.
-  - "Ticketing Staff" is renamed "Event Scanners". It kept colliding with
-    the business Staff register, which is a different thing entirely.
-    Existing installations pick up the new name automatically.
+  Sales is new here: it gathers the numbers the event rows already carried
+  into one place and totals them — tickets sold, money taken, and a line
+  per ticket tier.
 
-  FIXED: dates that carry a time — TitoKids activity, stock movements,
-  workplace start dates, a staff member's last scan — displayed as
-  "Not set". They now show the real date.
+  NO EMPTY TILES. Event Scanners now stays out of the way until one of
+  your events is approved. It fails open on purpose: an account TitoPay
+  has not looked at yet still sees the tile, and it costs no extra request
+  — the answer comes from data already fetched. (Products & Stock needed
+  no change: it already lives inside Sales rather than as its own tile.)
 
-Proven: verification/titokids-live.js 9/9 — a linked child added and
-alerted, funding conserved to the cent, a switched-off category refused,
-a daily cap refused then paid on confirmation with the override audited,
-a goal measured from the ledger, a request approved moving real money, a
-declined request moving none, no double decisions, strangers blind to
-the child, and a funded child protected from removal. Full API suite
-459/459. Bundle boots clean in Chromium; the merged TitoKids sheet was
-rendered and checked.
+  FIXED: the small counters at the top of ticketing rendered as bare text
+  ("1Draft") — the .metric-card class had never had a style rule behind
+  it. They are cards now.
+
+  SIMPLICITY.md is new at the repo root: one door per feature, three taps
+  from home, a sheet does one job, no empty tiles, one name per concept,
+  and the money rules that outrank all of them. api/test/app-navigation-
+  simplicity.test.js enforces the first four — it fails if a feature grows
+  a second door, if a single-door feature is missing from app search, if
+  the ticketing hub grows past five doors or a door starts fetching for
+  itself, or if a self-hiding tile stops failing open. Verified by
+  injecting each regression and watching the test fail.
+
+Previous build (v342) — TitoKids, one door per feature, CSP header fix.
+
+Proven: full API suite 464/464 (four new simplicity checks), TitoKids live
+harness 9/9, bundle boots clean in Chromium, and the hub plus all four
+doors were rendered and read back in a real browser, including the back
+arrow returning to the hub.
 
 Migrations to run: none — tables create themselves on first use (also in
 schema.sql for fresh installs).

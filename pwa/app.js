@@ -3201,7 +3201,11 @@ async function handleAction(action, actionElement = null) {
     return;
   }
   if (action === "event-form-back") {
-    await openBusinessTicketingDashboard({ refresh: true });
+    await returnToTicketing("events");
+    return;
+  }
+  if (String(action || "").startsWith("ticketing-section:")) {
+    openTicketingSection(action.slice("ticketing-section:".length));
     return;
   }
   if (action === "ticketing-refresh") {
@@ -16620,38 +16624,37 @@ async function reportEventTagLost(tagId, trigger) {
     setButtonBusy(trigger, false);
   }
 }
+/* ---- Business Ticketing: a hub with four short doors ----------------------
+   This screen used to be one very long sheet doing events, sales, vendors,
+   cashless tags and blank-tag issuing all at once. Halfway down it, linking a
+   vendor meant scrolling past everything else, and any refresh re-render threw
+   the organiser back to the top.
+
+   It is now a hub: the events load ONCE into state.ticketing, and each door
+   renders from that same data without fetching again. Every door is short
+   enough to read without scrolling, so there is nothing to be thrown back to
+   the top of. */
 async function openBusinessTicketingDashboard(options = {}) {
   if (state.accountType !== "business") {
     openInfoModal("Business ticketing", "Switch to Business to create and manage TitoPay events.");
     return;
   }
-  // A refresh re-render used to throw the organiser back to the top of a
-  // long dashboard — infuriating mid-way through linking vendors. Remember
-  // where they were and put them back there.
-  const previousCard = document.querySelector(".modal-backdrop .modal-card");
-  const previousScroll = options.refresh && previousCard ? previousCard.scrollTop : null;
   // Both requests used to be awaited before anything appeared, so the tile
   // looked dead on a slow connection, and a rejection meant no modal opened at
   // all. Open first, then fill in.
-  openModal(`
-    <div class="modal-head">
-      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Loading your events.</p></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
-    <section class="settings-list" aria-busy="true">
-      ${[0, 1, 2].map(() => `<article class="ticket-event is-loading"><span class="skeleton skeleton-line" aria-hidden="true"></span><span class="skeleton skeleton-line short" aria-hidden="true"></span></article>`).join("")}
-    </section>
-  `);
-  let eligibilityResult = null;
-  let eventsResult = null;
-  let changeRequestsResult = null;
+  if (!options.refresh) {
+    openModal(`
+      <div class="modal-head">
+        <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Loading your events.</p></div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <section class="settings-list" aria-busy="true">
+        ${[0, 1, 2].map(() => `<article class="ticket-event is-loading"><span class="skeleton skeleton-line" aria-hidden="true"></span><span class="skeleton skeleton-line short" aria-hidden="true"></span></article>`).join("")}
+      </section>
+    `);
+  }
   try {
-    [eligibilityResult, eventsResult, changeRequestsResult] = await Promise.all([
-      api("/v1/ticketing/eligibility"),
-      api("/v1/ticketing/business/events"),
-      // Best-effort: a change-request read must never take the dashboard down.
-      api("/v1/ticketing/business/change-requests").catch(() => ({ items: [] }))
-    ]);
+    await loadBusinessTicketingData();
   } catch (error) {
     openModal(`
       <div class="modal-head">
@@ -16669,6 +16672,16 @@ async function openBusinessTicketingDashboard(options = {}) {
     `);
     return;
   }
+  renderBusinessTicketingHub();
+}
+// One read, shared by the hub and every door under it.
+async function loadBusinessTicketingData() {
+  const [eligibilityResult, eventsResult, changeRequestsResult] = await Promise.all([
+    api("/v1/ticketing/eligibility"),
+    api("/v1/ticketing/business/events"),
+    // Best-effort: a change-request read must never take the dashboard down.
+    api("/v1/ticketing/business/change-requests").catch(() => ({ items: [] }))
+  ]);
   state.ticketing.eligibility = eligibilityResult.eligibility || null;
   state.ticketing.events = eventsResult.items || [];
   // Annotate each event with any OPEN change request so its row can show the
@@ -16678,27 +16691,71 @@ async function openBusinessTicketingDashboard(options = {}) {
     if (["requested", "under_review"].includes(req.status) && !pendingByEvent[req.eventId]) pendingByEvent[req.eventId] = req;
   }
   for (const event of state.ticketing.events) event.pendingChangeRequest = pendingByEvent[event.id] || null;
-  // A missing eligibility payload previously threw on eligibility.eligible and
-  // took the whole modal down with it.
+  rememberApprovedEventState(state.ticketing.events);
+  return state.ticketing.events;
+}
+// An empty tile teaches people to ignore tiles. Event Scanners has nothing
+// behind it until an event is approved, so it stays out of the way until then.
+//
+// The flag is only ever written from data we already fetched for another
+// reason, and the tile FAILS OPEN: an account we know nothing about yet still
+// sees it. Hiding only happens when we have actually looked and found nothing.
+function approvedEventFlagKey() {
+  const user = state.user || {};
+  return `titopay:has-approved-event:${user.id || user.username || user.email || "guest"}`;
+}
+function rememberApprovedEventState(events) {
+  try {
+    const has = (events || []).some((event) => event.status === "approved");
+    window.localStorage.setItem(approvedEventFlagKey(), has ? "1" : "0");
+  } catch (error) {
+    // A browser with storage disabled simply keeps showing the tile.
+  }
+}
+function eventScannersTileVisible() {
+  try {
+    return window.localStorage.getItem(approvedEventFlagKey()) !== "0";
+  } catch (error) {
+    return true;
+  }
+}
+// A missing eligibility payload previously threw on eligibility.eligible and
+// took the whole modal down with it.
+function ticketingEligibilityView() {
   const eligibility = state.ticketing.eligibility || { eligible: false, blockers: [] };
   const blockers = Array.isArray(eligibility.blockers) ? eligibility.blockers : [];
   // A free event (seminar, conference) needs only the structural checks; paid
   // tickets still need FICA. canCreateFreeEvents comes from the API; the
   // fallbacks keep an older payload working — if the split is absent, behave
   // exactly as before (full eligibility gates everything).
-  const canCreateFree = eligibility.canCreateFreeEvents ?? eligibility.eligible;
-  const paymentBlockers = Array.isArray(eligibility.paymentBlockers) ? eligibility.paymentBlockers : [];
-  const structuralBlockers = Array.isArray(eligibility.structuralBlockers) && eligibility.structuralBlockers.length
-    ? eligibility.structuralBlockers
-    : blockers;
-  const events = state.ticketing.events;
+  return {
+    canCreateFree: eligibility.canCreateFreeEvents ?? eligibility.eligible,
+    paymentBlockers: Array.isArray(eligibility.paymentBlockers) ? eligibility.paymentBlockers : [],
+    structuralBlockers: Array.isArray(eligibility.structuralBlockers) && eligibility.structuralBlockers.length
+      ? eligibility.structuralBlockers
+      : blockers
+  };
+}
+function renderBusinessTicketingHub() {
+  state.currentModalAction = "ticketing-refresh";
+  const { canCreateFree, paymentBlockers, structuralBlockers } = ticketingEligibilityView();
+  const events = state.ticketing.events || [];
+  const approved = events.filter((event) => event.status === "approved");
   const counts = events.reduce((acc, event) => {
     acc[event.status] = (acc[event.status] || 0) + 1;
     return acc;
   }, {});
+  // A door that has nothing behind it yet says so rather than opening on an
+  // empty sheet.
+  const doorNote = {
+    events: `${events.length} event${events.length === 1 ? "" : "s"}`,
+    sales: approved.length ? `${approved.length} live` : "No live events yet",
+    vendors: approved.length ? `${approved.length} event${approved.length === 1 ? "" : "s"}` : "Needs an approved event",
+    tags: approved.length ? (approved.some((event) => event.cashlessTagsEnabled) ? "Cashless on" : "Cashless off") : "Needs an approved event"
+  };
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Set up and manage your events: create, submit for approval, sell tickets and track sales. Scanning entry is under <strong>Event Scanners</strong>.</p></div>
+      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Everything for your events, one thing at a time.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${canCreateFree ? `
@@ -16714,24 +16771,18 @@ async function openBusinessTicketingDashboard(options = {}) {
         ${metricCard("Pending", (counts.submitted || 0) + (counts.under_review || 0))}
         ${metricCard("Approved", counts.approved || 0)}
       </div>
+      <section class="profile-feature-grid">
+        ${TICKETING_SECTIONS.map((section) => `
+          <button class="profile-feature" type="button" data-action="ticketing-section:${section.key}">
+            <span class="icon-bubble">${icon(section.icon)}</span>
+            <span><strong>${esc(section.label)}</strong><small>${esc(section.hint)} · ${esc(doorNote[section.key])}</small></span>
+          </button>`).join("")}
+      </section>
       <div class="auth-actions">
         <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create Event</button>
         <button class="btn secondary" type="button" data-action="vendor-tag-charge">${icon("wallet")} Tap to Charge</button>
         <button class="btn secondary" type="button" data-action="ticketing-refresh">${icon("refresh")} Refresh</button>
       </div>
-      ${events.some((event) => event.status === "approved") ? `
-        <section class="panel inner-panel ticketing-crosslink">
-          <div>
-            <h3>Working the door?</h3>
-            <p class="muted">Scan tickets and watch the live attendance count in the dedicated staff scanner.</p>
-          </div>
-          <button class="btn secondary" type="button" data-action="ticketing-staff-open">${icon("scan")} Open Event Scanners</button>
-        </section>
-      ` : ""}
-      ${ticketingEventTagsPanel(events)}
-      <section class="settings-list">
-        ${events.length ? events.map((event) => ticketingEventRow(event)).join("") : `<p class="muted">No ticketing events yet. Create your first draft when your event details are ready.</p>`}
-      </section>
     ` : `
       <section class="empty-state compact-state">
         ${icon("shield")}
@@ -16741,15 +16792,185 @@ async function openBusinessTicketingDashboard(options = {}) {
       </section>
     `}
   `);
-  // The Event Tags panel shows who may already take tag payments at the first
-  // listed event; switching events reloads it. Best-effort — the dashboard
-  // works without it.
-  const vendorPick = document.querySelector("select[data-vendor-event-pick]");
-  if (vendorPick && vendorPick.value) refreshEventVendorList(vendorPick.value);
-  if (previousScroll != null) {
-    const card = document.querySelector(".modal-backdrop .modal-card");
-    if (card) card.scrollTop = previousScroll;
+}
+// Opening a door. The events are already in hand, so this never waits on the
+// network and never re-renders the whole dashboard underneath the organiser.
+function openTicketingSection(key) {
+  const section = TICKETING_SECTIONS.find((item) => item.key === key);
+  if (!section) return;
+  if (!state.ticketing.events) {
+    openBusinessTicketingDashboard();
+    return;
   }
+  state.currentModalAction = `ticketing-section:${key}`;
+  const events = state.ticketing.events || [];
+  const approved = events.filter((event) => event.status === "approved");
+  const body = key === "events" ? ticketingEventsSection(events)
+    : key === "sales" ? ticketingSalesSection(events)
+    : key === "vendors" ? ticketingVendorsSection(approved)
+    : ticketingTagsSection(approved);
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">Business Ticketing</p><h2>${esc(section.label)}</h2><p class="lead">${esc(section.hint)}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${body}
+  `);
+  if (key === "vendors") {
+    const vendorPick = document.querySelector("select[data-vendor-event-pick]");
+    if (vendorPick && vendorPick.value) refreshEventVendorList(vendorPick.value);
+  }
+}
+// After a save inside a door, re-read and re-render THAT door — never the whole
+// dashboard, so the organiser stays exactly where they were working.
+async function refreshTicketingSection(key) {
+  try {
+    await loadBusinessTicketingData();
+  } catch (error) {
+    // A failed refresh must not blank the sheet the organiser is looking at.
+    return;
+  }
+  const card = document.querySelector(".modal-backdrop .modal-card");
+  const scroll = card ? card.scrollTop : 0;
+  openTicketingSection(key);
+  const next = document.querySelector(".modal-backdrop .modal-card");
+  if (next) next.scrollTop = scroll;
+}
+// Where an action should land when it finishes: back on the door it was
+// started from, or the hub when it did not come from one.
+async function returnToTicketing(sectionKey) {
+  if (sectionKey && state.ticketing && state.ticketing.events) {
+    await refreshTicketingSection(sectionKey);
+    return;
+  }
+  await openBusinessTicketingDashboard({ refresh: true });
+}
+function ticketingEventsSection(events) {
+  return `
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create Event</button>
+    </div>
+    <section class="settings-list">
+      ${events.length ? events.map((event) => ticketingEventRow(event)).join("") : `<p class="muted">No ticketing events yet. Create your first draft when your event details are ready.</p>`}
+    </section>`;
+}
+// Sales, read from the ticket types already loaded — the same numbers the event
+// rows carry, gathered in one place and totalled.
+function ticketingSalesSection(events) {
+  const selling = events.filter((event) => (Array.isArray(event.ticketTypes) ? event.ticketTypes : []).length);
+  if (!selling.length) {
+    return `<section class="empty-state compact-state">${icon("chart")}<strong>No ticket sales yet</strong><p>Sales appear here as soon as an event with ticket types starts selling.</p></section>`;
+  }
+  const line = (type) => {
+    const sold = Number(type.quantitySold ?? type.quantity_sold) || 0;
+    const available = Number(type.quantityAvailable ?? type.quantity_available) || 0;
+    const price = Number(type.price) || 0;
+    return { name: type.ticketName || type.ticket_name || "Ticket", sold, available, price, revenue: sold * price };
+  };
+  let totalSold = 0;
+  let totalRevenue = 0;
+  const cards = selling.map((event) => {
+    const lines = (event.ticketTypes || []).map(line);
+    const sold = lines.reduce((sum, item) => sum + item.sold, 0);
+    const revenue = lines.reduce((sum, item) => sum + item.revenue, 0);
+    const capacity = lines.reduce((sum, item) => sum + item.available, 0);
+    totalSold += sold;
+    totalRevenue += revenue;
+    return `
+      <section class="panel inner-panel">
+        <h3>${esc(event.eventName || "Untitled event")}</h3>
+        <p class="muted">${esc(ticketingStatusLabel(event.status))}${event.eventDate ? ` · ${esc(formatDate(event.eventDate).split(",")[0])}` : ""}</p>
+        <div class="ticket-event-figures">
+          <div><span>Sold</span><strong>${sold}${capacity ? ` of ${capacity}` : ""}</strong></div>
+          <div><span>Money taken</span><strong>${esc(money(revenue))}</strong></div>
+          ${capacity ? `<div><span>Still available</span><strong>${Math.max(capacity - sold, 0)}</strong></div>` : ""}
+        </div>
+        <div class="settings-list">
+          ${lines.map((item) => settingsRow(item.name, `${item.sold}${item.available ? ` of ${item.available}` : ""} sold · ${money(item.price)} each · ${money(item.revenue)}`, "ticket")).join("")}
+        </div>
+      </section>`;
+  }).join("");
+  return `
+    <div class="dashboard-grid compact">
+      ${metricCard("Tickets sold", totalSold)}
+      ${metricCard("Money taken", money(totalRevenue))}
+    </div>
+    ${cards}`;
+}
+function ticketingVendorsSection(approved) {
+  if (!approved.length) {
+    return `<section class="empty-state compact-state">${icon("contacts")}<strong>No approved event yet</strong><p>Vendors and door scanning open as soon as one of your events is approved.</p></section>`;
+  }
+  const options = approved.map((event) =>
+    `<option value="${esc(event.id)}">${esc(event.eventName)}</option>`).join("");
+  return `
+    <section class="panel inner-panel ticketing-crosslink">
+      <div>
+        <h3>Working the door?</h3>
+        <p class="muted">Scanning tickets and adding the people who scan them lives in Event Scanners.</p>
+      </div>
+      <button class="btn secondary" type="button" data-action="ticketing-staff-open">${icon("scan")} Open Event Scanners</button>
+    </section>
+    <section class="panel inner-panel">
+      <h3>Authorised vendors</h3>
+      <p class="muted">The businesses patrons may pay by tapping an Event Tag at your event.</p>
+      <form class="form-grid" data-form="ticketing-vendor">
+        <label>Event<select name="eventId" data-vendor-event-pick>${options}</select></label>
+        <label>Vendor business<input name="merchantId" placeholder="@username, wallet ID, phone or merchant code" required autocomplete="off"></label>
+        <p class="field-hint">Enter anything that identifies the vendor's TitoPay Business — their @username, business wallet ID, phone, email or merchant code. They must have a registered TitoPay Business account; patrons then pay them by tapping their Event Tag.</p>
+        <button class="btn secondary" type="submit">${icon("contacts")} Authorise vendor</button>
+      </form>
+      <div data-vendor-list><p class="muted">Loading authorised vendors…</p></div>
+    </section>`;
+}
+/* ---- Event Tags, from the organiser's side --------------------------------
+   Switch cashless on for an approved event, say which merchants may take tag
+   payments there, mint blank credentials and hand them to attendees.
+
+   There is no "load funds onto a tag" control here, and there never will be:
+   attendees pay from their own TitoPay wallets, so the organiser holds no
+   float and owes no refunds when the event ends. That is the whole reason the
+   tag is a credential rather than a purse. */
+function ticketingTagsSection(approved) {
+  if (!approved.length) {
+    return `<section class="empty-state compact-state">${icon("shield")}<strong>No approved event yet</strong><p>Event Tags open as soon as one of your events is approved.</p></section>`;
+  }
+  const options = approved.map((event) =>
+    `<option value="${esc(event.id)}">${esc(event.eventName)}${event.cashlessTagsEnabled ? " — cashless on" : ""}</option>`).join("");
+  return `
+    <p class="muted">NFC/RFID wristbands and cards for your event. Attendees tap to pay from their own TitoPay Wallet — you hold no float, and there is no event balance to reconcile afterwards.</p>
+    <section class="panel inner-panel">
+      <h3>Cashless</h3>
+      <form class="form-grid" data-form="ticketing-cashless">
+        <label>Event<select name="eventId">${options}</select></label>
+        <label>Cashless Event Tags
+          <select name="enabled">
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+        </label>
+        <button class="btn secondary" type="submit">${icon("shield")} Save cashless setting</button>
+      </form>
+    </section>
+    <section class="panel inner-panel">
+      <h3>Issue blank tags</h3>
+      <form class="form-grid" data-form="ticketing-tag-issue">
+        <label>Event<select name="eventId">${options}</select></label>
+        <label>How many blank tags<input name="count" type="number" min="1" max="500" value="10" required></label>
+        <button class="btn secondary" type="submit">${icon("plus")} Issue blank tags</button>
+      </form>
+      <div data-event-tag-issue-result></div>
+    </section>
+    <section class="panel inner-panel">
+      <h3>Assign a tag</h3>
+      <form class="form-grid" data-form="ticketing-tag-assign">
+        <label>Event<select name="eventId">${options}</select></label>
+        <label>Tag credential<input name="token" placeholder="Read from the tag" required autocomplete="off"></label>
+        <label>Ticket code<input name="ticketCode" inputmode="numeric" maxlength="10" placeholder="10 digit ticket code" required></label>
+        <button class="btn primary" type="submit">${icon("scan")} Assign and activate</button>
+      </form>
+    </section>`;
 }
 
 /* ---- Event Scanners: the door-scanner view -------------------------------
@@ -17014,67 +17235,13 @@ function ticketingScannerForm(events = []) {
     </section>
   `;
 }
-/* ---- Event Tags, from the organiser's side --------------------------------
-   Switch cashless on for an approved event, say which merchants may take tag
-   payments there, mint blank credentials and hand them to attendees.
-
-   There is no "load funds onto a tag" control here, and there never will be:
-   attendees pay from their own TitoPay wallets, so the organiser holds no
-   float and owes no refunds when the event ends. That is the whole reason the
-   tag is a credential rather than a purse. */
-function ticketingEventTagsPanel(events = []) {
-  const approved = events.filter((event) => event.status === "approved");
-  if (!approved.length) return "";
-  const options = approved.map((event) =>
-    `<option value="${esc(event.id)}">${esc(event.eventName)}${event.cashlessTagsEnabled ? " — cashless on" : ""}</option>`).join("");
-  return `
-    <section class="panel inner-panel">
-      <h3>Event Tags (cashless)</h3>
-      <p class="muted">NFC/RFID wristbands and cards for your event. Attendees tap to pay from their own TitoPay Wallet — you hold no float, and there is no event balance to reconcile afterwards.</p>
-
-      <form class="form-grid" data-form="ticketing-cashless">
-        <label>Event<select name="eventId">${options}</select></label>
-        <label>Cashless Event Tags
-          <select name="enabled">
-            <option value="true">On</option>
-            <option value="false">Off</option>
-          </select>
-        </label>
-        <button class="btn secondary" type="submit">${icon("shield")} Save cashless setting</button>
-      </form>
-
-      <form class="form-grid" data-form="ticketing-vendor">
-        <label>Event<select name="eventId" data-vendor-event-pick>${options}</select></label>
-        <label>Vendor business<input name="merchantId" placeholder="@username, wallet ID, phone or merchant code" required autocomplete="off"></label>
-        <p class="field-hint">Enter anything that identifies the vendor's TitoPay Business — their @username, business wallet ID, phone, email or merchant code. They must have a registered TitoPay Business account; patrons then pay them by tapping their Event Tag.</p>
-        <button class="btn secondary" type="submit">${icon("contacts")} Authorise vendor</button>
-      </form>
-      <div data-vendor-list><p class="muted">Loading authorised vendors…</p></div>
-
-      <form class="form-grid" data-form="ticketing-tag-issue">
-        <label>Event<select name="eventId">${options}</select></label>
-        <label>How many blank tags<input name="count" type="number" min="1" max="500" value="10" required></label>
-        <button class="btn secondary" type="submit">${icon("plus")} Issue blank tags</button>
-      </form>
-      <div data-event-tag-issue-result></div>
-
-      <form class="form-grid" data-form="ticketing-tag-assign">
-        <label>Event<select name="eventId">${options}</select></label>
-        <label>Tag credential<input name="token" placeholder="Read from the tag" required autocomplete="off"></label>
-        <label>Ticket code<input name="ticketCode" inputmode="numeric" maxlength="10" placeholder="10 digit ticket code" required></label>
-        <button class="btn primary" type="submit">${icon("scan")} Assign and activate</button>
-      </form>
-    </section>
-  `;
-}
-
 async function submitTicketingCashless(data) {
   const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/cashless`, {
     method: "POST",
     body: { enabled: data.enabled === "true" }
   });
   showToast(result.cashless?.cashlessTagsEnabled ? "Event Tags are on for this event." : "Event Tags are off for this event.");
-  await openBusinessTicketingDashboard({ refresh: true });
+  await returnToTicketing("tags");
 }
 
 async function submitTicketingVendor(data, form) {
@@ -17359,7 +17526,7 @@ async function submitTicketingEventForm(data, form) {
     const result = await api("/v1/ticketing/business/events", { method: "POST", body: payload });
     state.eventDraftForm = { poster: "" };
     showToast("Event draft saved. Submit it when ready.");
-    await openBusinessTicketingDashboard({ refresh: true });
+    await returnToTicketing("events");
     return result;
   } catch (error) {
     showToast(friendlyFormError(error, "ticketing"), "error");
@@ -17370,7 +17537,7 @@ async function submitTicketingEventForm(data, form) {
 async function submitTicketingEvent(eventId) {
   await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/submit`, { method: "POST", body: {} });
   showToast("Event submitted for approval.");
-  await openBusinessTicketingDashboard({ refresh: true });
+  await returnToTicketing("events");
 }
 
 /* ---- Organiser change requests --------------------------------------------
@@ -17481,7 +17648,7 @@ async function submitEventChangeRequest(data, form) {
     body: { requestType, requestedChanges, reason }
   });
   showToast("Your change request was sent to TitoPay for review.");
-  await openBusinessTicketingDashboard({ refresh: true });
+  await returnToTicketing("events");
 }
 async function submitTicketingStaff(data, form) {
   const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/staff`, {
@@ -20286,6 +20453,9 @@ function visibleServices() {
     if (action === "enterprise-distribution" || id === "enterprise-distribution") {
       return state.accountType === "business" && Boolean(state.enterpriseDistribution?.eligibility?.eligible);
     }
+    if (action === "business-ticketing-staff" || id === "business-ticketing-staff") {
+      return service[audienceKey] && eventScannersTileVisible();
+    }
     return service[audienceKey];
   });
 }
@@ -22000,6 +22170,15 @@ const NOTIFICATION_FILTERS = [
 // Modal openers that participate in back navigation: opening one of these on
 // top of another keeps a trail, and the injected back arrow replays the
 // previous opener. The openers all read live state, so replaying is exact.
+const TICKETING_SECTIONS = [
+  { key: "events", label: "My Events", icon: "ticket", hint: "Create events, submit for approval, track each one." },
+  { key: "sales", label: "Sales", icon: "chart", hint: "Tickets sold and money taken, per event and per tier." },
+  { key: "vendors", label: "Vendors & Door", icon: "contacts", hint: "Who may take Event Tag payments, and who scans at the door." },
+  { key: "tags", label: "Event Tags", icon: "shield", hint: "Cashless on or off, issue blank tags, assign one to a ticket." }
+];
+// The Business Ticketing hub's doors. Lives here rather than beside the hub
+// because a const between the function sections is not hoisted, and the file's
+// sections are order-sensitive.
 const MODAL_STACK_ACTIONS = new Set([
   "security-centre", "device-management", "active-sessions", "login-history",
   "biometric-info", "privacy-controls", "security-tips", "report-fraud",
@@ -22019,6 +22198,7 @@ const MODAL_STACK_ACTIONS = new Set([
 // Matched on the prefix before the colon; the full string is what replays.
 const MODAL_STACK_ACTION_PREFIXES = new Set([
   "ticketing-open-event", "ticket-email", "ticketing-request-change", "staff-sell",
+  "ticketing-section",
   "titokids-child", "titokids-fund", "titokids-pay"
 ]);
 // Ticket tier names offered when setting up an event. Suggestions only — the

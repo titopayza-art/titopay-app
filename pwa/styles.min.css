@@ -48,3 +48,4 @@
 .tk-line:last-child { border-bottom: none; }
 .tk-in { color: #0b7a3b; font-weight: 700; }
 .tk-out { color: #10203f; font-weight: 700; }
+.dashboard-grid.compact{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:10px;margin:4px 0 14px}.metric-card{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:16px;background:var(--card);border:1px solid rgba(10,77,255,.10);box-shadow:0 6px 18px rgba(6,26,61,.05)}.metric-card strong{font-size:22px;font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}.metric-card span{font-size:12.5px;color:#5b6472}
