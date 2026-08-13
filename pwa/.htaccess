@@ -90,7 +90,7 @@
   # the browser enforces both, and two identical policies intersect to the same
   # policy. The single practical difference is that frame-ancestors now binds.
   # If the meta tag is ever edited, edit this line with it.
-  Header always set Content-Security-Policy "default-src 'self'; connect-src 'self' https://api.titopay.co.za wss://api.titopay.co.za; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; style-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self'"
+  Header always set Content-Security-Policy "default-src 'self'; connect-src 'self' https://api.titopay.co.za wss://api.titopay.co.za; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self'"
 
   # X-Frame-Options is redundant against frame-ancestors on a current browser
   # and is the only protection on an old one. It costs a header.

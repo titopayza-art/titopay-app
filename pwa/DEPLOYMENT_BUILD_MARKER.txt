@@ -1,71 +1,54 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v341 (titopay-pwa-v341)
+PWA bundle: v342 (titopay-pwa-v342)
 Admin console: admin-console-v81
 
-This build:
-  - My Tickets gains a back button (returns to the screen it was opened
-    from, or closes when there is nowhere to go back to).
-  - Business Ticketing no longer jumps to the top on refresh re-renders:
-    the dashboard remembers the scroll position across cashless toggles,
-    refreshes, draft saves and change requests - linking vendors stays
-    where you were.
-  - Tour styling moved from inline attributes into stylesheet classes
-    (.tour-*), so the full-screen layout renders identically even where
-    an older cached index.html still strips inline styles.
-  - Tour: the ghost close bubble is gone for real. It was the sheet the
-    tour was opened FROM bleeding through — the tour now removes any
-    layer beneath it and sits on a fully opaque ground above everything.
-  - Tour layout uses the whole screen: header at the top, the step card
-    stretches to fill the middle with larger type (27px titles, 16.5px
-    body, bigger icon and hint pill), Back/Next pinned at the bottom.
-    The stray floating close bubble is gone - one close button remains.
-  - Guided tour: the dark navy canvas is removed. The tour keeps its 12
-    steps, full-screen layout, step card, ghost numeral and progress dots
-    on the app's own light ground.
+This build — TitoKids goes live, and the app gets simpler:
 
-Previous build — the soft-blue look, chat theme choice, rounded photos:
-  - The app's ground is now the soft blue everywhere it used to be plain
-    white (one design token changed: --soft #f7f9fd -> #eef4fe, plus the
-    matching body gradient). Cards, sheets and inputs are untouched, so
-    every screen keeps its exact layout — including the Security Centre.
-  - TitoPay Chat and the Assistant gain a Theme button (chat header /
-    next to refresh): one tap gives the conversation a calm blue canvas,
-    remembered on the device, off by default.
-  - Profile photos clip to their rounded corners properly — a scaled
-    photo used to poke square corners past the radius.
+  TITOKIDS (new, under Personal):
+  - A child gets a real ring-fenced wallet under the parent's account.
+    Every movement is ordinary double-entry ledger, so balances can never
+    drift from the money that actually moved.
+  - Add Money moves funds from the parent's wallet to the child's.
+    Pay for a Need pays a school, shop or person straight from the
+    child's wallet — categorised, no loose cash.
+  - Limits & Controls: category switches plus daily, weekly and monthly
+    caps. A switched-off category is refused outright. A cap asks the
+    parent to confirm before paying anyway, and the override is audited.
+  - Savings goals, with progress measured from the ledger.
+  - A child with their own TitoPay can be linked: they see their balance
+    and activity, and can ask the parent for money. The parent approves
+    or declines in the same sheet, and approving performs the transfer.
+  - A child holding money cannot be removed — the balance must be moved
+    or spent first.
+  - Communication is by in-app alert and email only, never SMS.
 
-Previous build — the stokvel goes live, and the tour fills the screen:
+  SIMPLER NAVIGATION (nothing removed, duplicate doors closed):
+  - One door per feature. TitoKids, Sales and My Family no longer appear
+    twice; each now has exactly one home. My Family is not a separate
+    screen at all — a linked child's wallet appears inside the TitoKids
+    sheet, above the children they manage.
+  - Bulk Distribution shows in Profile only while its tile is hidden, so
+    an approved business sees it once, not twice.
+  - App search now covers every feature that lives behind a single door
+    — TitoKids, My Workplaces, TitoPay Chat, Sales, Bulk Distribution —
+    so closing a duplicate door never made anything harder to find.
+  - "Ticketing Staff" is renamed "Event Scanners". It kept colliding with
+    the business Staff register, which is a different thing entirely.
+    Existing installations pick up the new name automatically.
 
-  STOKVEL (the "Group management is not live yet" panel is gone):
-  - The /v1/stockvels server now exists for the contract the app has been
-    calling: groups list and detail, join with an invite code (SV + 8
-    digits), member promote/demote/remove/leave, recorded withdrawals
-    with dual control (over-balance refused; nobody approves their own),
-    close/delete guarded while the group still holds members' money.
-  - The group balance is read from the SAME transactions the wallet
-    recorded — never a parallel tally that can drift.
-  - Drafts: "Save draft" at any step of the create wizard; drafts appear
-    on the hub, refuse joiners, and activate with one tap when ready.
-  - Group chat for members (members-only both directions). Organisers can
-    open a MEETING: everything said goes into the record, organisers tap
-    a message to pin it as a DECISION, and ending the meeting compiles
-    the MINUTES immediately — attendance, pinned decisions, contributions
-    made during the meeting, closing balance — saved in the group and
-    emailed to every member. Deterministic on purpose: minutes say what
-    happened, never a guess.
-  - Creating a stokvel (existing wizard, unchanged money flow) now also
-    persists the group with its invite code the moment creation succeeds.
+  FIXED: dates that carry a time — TitoKids activity, stock movements,
+  workplace start dates, a staff member's last scan — displayed as
+  "Not set". They now show the real date.
 
-  GUIDED TOUR: now truly full screen — the navy canvas fills the display
-  with the card vertically centred; the white sheet below is gone.
-  Verified with real browser screenshots.
-
-Proven live (verification/stockvel-live.js, 8/8): draft -> refuse joiners
--> activate -> join by code; balance reconciles to real transactions;
-withdrawal guards; members-only chat; minutes with decision, contribution
-and balance; minutes emailed to every member; meetings close exactly
-once; only organisers run meetings. Full API suite 459/459.
+Proven: verification/titokids-live.js 9/9 — a linked child added and
+alerted, funding conserved to the cent, a switched-off category refused,
+a daily cap refused then paid on confirmation with the override audited,
+a goal measured from the ledger, a request approved moving real money, a
+declined request moving none, no double decisions, strangers blind to
+the child, and a funded child protected from removal. Full API suite
+459/459. Bundle boots clean in Chromium; the merged TitoKids sheet was
+rendered and checked.
 
 Migrations to run: none — tables create themselves on first use (also in
 schema.sql for fresh installs).
@@ -74,3 +57,5 @@ Operational reminders (unchanged):
   node scripts/ensure-revenue-wallet.js --create   (once, on production)
   npm install after extracting api.zip (node-forge dependency)
   Email Centre SMTP + titopay-email-worker must be running for mail delivery.
+  PWA: open the app, fully close it, open it again (the service worker
+  activates on the second launch).

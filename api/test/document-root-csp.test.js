@@ -3,10 +3,18 @@
 // A POLICY APPLIES TO A DIRECTORY, NOT TO THE FILE YOU TESTED.
 //
 // pwa/.htaccess sends a Content-Security-Policy header carrying script-src
-// 'self' and style-src 'self'. That header was verified against pwa/index.html
-// — which already declared the identical policy in a <meta> tag, and was
-// therefore the one file under that root that COULD NOT regress. The header
-// reaches every file in the directory.
+// 'self'. That header was verified against pwa/index.html — which already
+// declared the identical policy in a <meta> tag, and was therefore the one file
+// under that root that COULD NOT regress. The header reaches every file in the
+// directory.
+//
+// style-src has since gained 'unsafe-inline', deliberately. The app builds its
+// screens in JavaScript and sets style attributes as it goes — 116 of them —
+// and the meta tag was loosened to allow that. The header was NOT updated to
+// match, so the stricter of the two won and those styles were stripped on the
+// real server: the guided tour arrived at a customer's phone with its layout
+// missing. The two now agree again. script-src stays 'self' — that is the
+// directive that stops injected code, and nothing about it has changed.
 //
 // pwa/verify-email/index.html had no meta CSP and an inline <style>, so it had
 // been running unpoliced. The header refused its entire stylesheet: 13 rules to
@@ -59,23 +67,51 @@ function inlineBlocks(html) {
   return { styles: styles.length, scripts: scripts.length };
 }
 
-test("no page under pwa/ carries inline style or script, because the root policy forbids it", () => {
+test("no page under pwa/ carries inline script, because the root policy forbids it", () => {
   const policy = htaccessPolicy("pwa");
   assert.ok(policy, "pwa/.htaccess must send a CSP — that is the whole premise of this test");
-  assert.match(policy, /style-src 'self'/, "if style-src loosens, revisit this test rather than deleting it");
-  assert.match(policy, /script-src 'self'/);
+  assert.match(policy, /script-src 'self'/, "if script-src ever loosens, that is a security decision, not a styling one");
 
   const offenders = [];
   for (const file of htmlFiles("pwa")) {
-    const { styles, scripts } = inlineBlocks(fs.readFileSync(file, "utf8"));
-    if (styles || scripts) {
-      offenders.push(`${path.relative(REPO, file)} (${styles} inline <style>, ${scripts} inline <script>)`);
-    }
+    const { scripts } = inlineBlocks(fs.readFileSync(file, "utf8"));
+    if (scripts) offenders.push(`${path.relative(REPO, file)} (${scripts} inline <script>)`);
   }
 
   assert.deepEqual(offenders, [],
-    "these pages will render unstyled or unscripted in production:\n  " + offenders.join("\n  ") +
-    "\nMove the block into a .css/.js file beside the page and link it.");
+    "these pages will run unscripted in production:\n  " + offenders.join("\n  ") +
+    "\nMove the block into a .js file beside the page and link it.");
+});
+
+test("the pwa header and the pwa meta tag carry the same policy", () => {
+  // The bug this catches has already happened once: the meta tag was loosened
+  // to let the app style what it builds, the header was left strict, and the
+  // browser enforced both — so the strict one silently won and screens reached
+  // customers with their layout stripped. Neither file is readable alone; the
+  // only truth is that they agree.
+  const header = htaccessPolicy("pwa");
+  const html = fs.readFileSync(path.join(REPO, "pwa", "index.html"), "utf8");
+  // The policy itself contains apostrophes ('self'), so the capture has to be
+  // anchored on the attribute's own quote character rather than "either quote".
+  const meta = (html.match(/<meta[^>]+http-equiv="Content-Security-Policy"[^>]*content="([^"]+)"/i)
+    || html.match(/<meta[^>]+http-equiv='Content-Security-Policy'[^>]*content='([^']+)'/i)
+    || [])[1];
+  assert.ok(meta, "pwa/index.html must declare a meta CSP");
+
+  const directives = (policy) => Object.fromEntries(
+    policy.split(";").map((part) => part.trim()).filter(Boolean)
+      .map((part) => { const [name, ...values] = part.split(/\s+/); return [name, values.join(" ")]; })
+  );
+  const headerDirectives = directives(header);
+  const metaDirectives = directives(meta);
+
+  for (const [name, value] of Object.entries(metaDirectives)) {
+    assert.equal(headerDirectives[name], value,
+      `${name} differs between pwa/index.html and pwa/.htaccess — the browser enforces both, so the stricter one wins silently`);
+  }
+  // frame-ancestors is the one directive that is header-only: a meta tag
+  // cannot carry it, which is why the header exists at all.
+  assert.match(header, /frame-ancestors 'none'/);
 });
 
 test("every page under pwa/ is actually covered, so none is silently exempt", () => {

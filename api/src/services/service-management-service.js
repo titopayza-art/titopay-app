@@ -33,7 +33,7 @@ const DEFAULT_SERVICES = [
   ["quote", "Quote", "list", "quote", "Create customer quotes. PDF download is R2.50.", "active", false, true, 230, "none"],
   ["proforma-invoice", "Proforma Invoice", "list", "proforma-invoice", "Create proforma invoices. PDF download is R2.50.", "active", false, true, 240, "none"],
   ["ticketing", "Ticketing", "ticket", "ticketing", "Create approved events, manage ticket sales and prepare attendee entry controls.", "active", false, true, 300, "new"],
-  ["business-ticketing-staff", "Ticketing Staff", "contacts", "business-ticketing-staff", "Assign verified TitoPay users to support approved events.", "active", false, true, 301, "new"],
+  ["business-ticketing-staff", "Event Scanners", "contacts", "business-ticketing-staff", "The people who scan tickets at your door. Add them, and they scan from their own phone.", "active", false, true, 301, "new"],
   ["shop-marketplace", "Shop Marketplace", "store", "shop-marketplace", "Marketplace services for local brands and digital products.", "disabled", false, false, 310, "none"],
   ["rewards", "Rewards", "sparkles", "rewards", "Personal rewards programme.", "disabled", false, false, 320, "none"],
   ["business-rewards", "Business Rewards", "sparkles", "business-rewards", "Business rewards programme.", "disabled", false, false, 330, "none"],
@@ -104,6 +104,7 @@ async function ensureDefaultServices() {
     await pool.query(
       "UPDATE service_config SET fee = 0.50, description = 'Scan and pay TitoPay QR codes. A R0.50 QR payment fee applies.', updated_at = NOW() WHERE service_code = 'qr-pay' AND COALESCE(fee, 0) < 0.50"
     );
+    await applyServiceCopyFixups();
     return;
   }
   const values = [];
@@ -125,6 +126,22 @@ async function ensureDefaultServices() {
   );
   await pool.query(
     "UPDATE service_config SET fee = 0.50, description = 'Scan and pay TitoPay QR codes. A R0.50 QR payment fee applies.', updated_at = NOW() WHERE service_code = 'qr-pay' AND COALESCE(fee, 0) < 0.50"
+  );
+  await applyServiceCopyFixups();
+}
+
+// The seed only inserts rows that do not exist yet, so renaming a service in
+// DEFAULT_SERVICES would never reach an installation that already has the row.
+// Renames worth pushing out live here instead. The guard on the old name means
+// an admin who has renamed the tile themselves keeps their wording.
+async function applyServiceCopyFixups() {
+  await pool.query(
+    `UPDATE service_config
+        SET service_name = 'Event Scanners',
+            description = 'The people who scan tickets at your door. Add them, and they scan from their own phone.',
+            updated_at = NOW()
+      WHERE service_code = 'business-ticketing-staff'
+        AND service_name = 'Ticketing Staff'`
   );
 }
 

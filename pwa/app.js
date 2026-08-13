@@ -505,7 +505,12 @@ function addDays(date, days) {
 }
 function friendlyDate(value) {
   if (!value) return "Not set";
-  const date = new Date(`${value}T00:00:00`);
+  const raw = String(value);
+  // A plain YYYY-MM-DD is read as local midnight so the day never slips
+  // backwards in SAST. Anything carrying a time - the timestamps the server
+  // returns for activity, stock movements and scans - is parsed as it stands;
+  // reading those as date-only used to make them all display "Not set".
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00`) : new Date(raw);
   if (Number.isNaN(date.getTime())) return "Not set";
   return date.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }).replace(/,/g, "");
 }
@@ -1053,8 +1058,22 @@ function appSearchEntries() {
     { label: "Proof of Account", hint: "Profile · Account", icon: "document-invoice", attr: 'data-action="proof-of-account"' },
     { label: "How TitoPay Works", hint: "Guided tour", icon: "learn", attr: 'data-action="how-titopay-works"' },
     { label: "Support", hint: "Customer Care", icon: "send", attr: 'data-action="support"' },
+    { label: "TitoPay Chat", hint: "Chat with TitoPay users", icon: "chat", attr: 'data-action="titopay-chat"' },
     { label: "Notifications", hint: "Alerts", icon: "bell", attr: 'data-action="notifications"' }
   ];
+  // Features that live behind a single door are still typed for here, so
+  // removing duplicate entry points never makes anything harder to find.
+  if (state.accountType !== "business") {
+    features.push(
+      { label: "TitoKids", hint: "Your family's money", icon: "contacts", attr: 'data-action="tito-kids"' },
+      { label: "My Workplaces", hint: "Sell for a business", icon: "staff-badge", attr: 'data-action="my-workplaces"' }
+    );
+  } else {
+    features.push(
+      { label: "Sales", hint: "Reports and staff performance", icon: "chart", attr: 'data-action="business-sales"' },
+      { label: "Bulk Distribution", hint: "Pay many people at once", icon: "bulk-distribution", attr: 'data-action="enterprise-distribution"' }
+    );
+  }
   return [...services, ...features];
 }
 function renderAppSearchResults() {
@@ -3228,14 +3247,13 @@ async function handleAction(action, actionElement = null) {
   if (action === "my-workplaces") {
     await openMyWorkplacesModal();
   }
-  if (action === "tito-kids") {
+  // "my-family" is kept only as an alias: the family view now lives inside the
+  // TitoKids sheet, so any older link or notification still lands somewhere real.
+  if (action === "tito-kids" || action === "my-family") {
     await openTitoKidsModal();
   }
   if (action === "titokids-add") {
     openTitoKidsAddModal();
-  }
-  if (action === "my-family") {
-    await openMyFamilyModal();
   }
   if (String(action || "").startsWith("titokids-child:")) {
     await openTitoKidsChild(action.slice("titokids-child:".length));
@@ -5441,8 +5459,6 @@ function profileView() {
     <section class="section-head compact"><h2>Account</h2></section>
     <section class="profile-feature-grid">
       ${profileFeature("TitoPay Chat", isBusiness ? "Chat with customers before payments." : "Chat with TitoPay users before payments.", "chat", "titopay-chat", true)}
-      ${isBusiness ? "" : profileFeature("TitoKids", "Manage and support your child\u2019s money.", "contacts", "tito-kids")}
-      ${isBusiness ? "" : profileFeature("My Family", "Your family wallet \u2014 balance, activity and money requests.", "contacts", "my-family")}
       ${isBusiness ? "" : profileFeature("My Workplaces", "Businesses that added you as staff — take sales for them from your phone.", "staff-badge", "my-workplaces")}
       ${profileFeature("Saved Beneficiaries", isBusiness ? "Manage customers, suppliers, employees and payout recipients." : "Manage favourite and recent payment recipients.", "user", "saved-beneficiaries")}
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
@@ -5458,8 +5474,7 @@ function profileView() {
       ${profileFeature("Share TitoPay", "Invite friends, family or customers by WhatsApp, SMS or any sharing app.", "share", "share-titopay")}
       ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
       ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
-      ${isBusiness ? profileFeature("Sales", "Sales reports, day-by-day data and staff performance.", "chart", "business-sales") : ""}
-      ${isBusiness ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
+      ${isBusiness && !enterpriseDistributionTileVisible() ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
     </section>
     <section class="section-head compact"><h2>Help & learning</h2></section>
     <section class="profile-feature-grid">
@@ -13058,11 +13073,20 @@ async function refreshTitoKidsHome() {
   const host = document.querySelector("[data-tk-home]");
   if (!host) return;
   try {
-    const result = await api("/v1/tito-kids");
+    // One family door. A parent sees the children they manage; a linked child
+    // sees their own wallet and can ask for money; somebody who is both sees
+    // both, in that order - your own money first.
+    const [result, family] = await Promise.all([
+      api("/v1/tito-kids"),
+      api("/v1/tito-kids/family").catch(() => ({ items: [], categories: {} }))
+    ]);
     state.titoKids = result;
+    state.myFamilyCategories = family.categories || {};
     const children = result.children || [];
     const approvals = result.approvals || [];
+    const families = family.items || [];
     host.innerHTML = `
+      ${titoKidsFamilyMarkup(families)}
       ${approvals.map((request) => `
         <section class="tk-card tk-approval">
           <p class="tk-sub">Approval needed</p>
@@ -13083,14 +13107,14 @@ async function refreshTitoKidsHome() {
           </span>
           <span aria-hidden="true">${icon("arrow-left")}</span>
         </button>`).join("")
-      : `
+      : families.length ? "" : `
         <section class="empty-state compact-state">
           ${icon("contacts")}
           <strong>No children yet</strong>
           <p>Add your first child to start managing their money with TitoKids — a real ring-fenced wallet, limits you control, and approvals in your pocket.</p>
         </section>`}
       <div class="auth-actions" style="margin-top:10px">
-        <button class="btn primary" type="button" data-action="titokids-add">${icon("send")} Add Child</button>
+        <button class="btn ${children.length || families.length ? "secondary" : "primary"}" type="button" data-action="titokids-add">${icon("send")} Add Child</button>
       </div>`;
   } catch (error) {
     host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
@@ -13291,28 +13315,11 @@ async function submitTitoKidsGoal(data) {
   showToast(`Goal “${data.name}” created.`);
   await refreshTitoKidsChild(data.childId);
 }
-/* Child side: My Family */
-async function openMyFamilyModal() {
-  state.currentModalAction = "my-family";
-  openModal(`
-    <div class="modal-head">
-      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
-      <div><p class="eyebrow">TitoKids</p><h2>My Family</h2><p class="lead">Your family wallet — see your money and ask when you need more.</p></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
-    <section data-tk-family><p class="field-hint">Loading…</p></section>
-  `);
-  const host = document.querySelector("[data-tk-family]");
-  try {
-    const result = await api("/v1/tito-kids/family");
-    state.myFamilyCategories = result.categories || {};
-    const items = result.items || [];
-    if (!host) return;
-    if (!items.length) {
-      host.innerHTML = `<section class="empty-state compact-state">${icon("contacts")}<strong>No family link yet</strong><p>When a parent or guardian adds you on TitoKids with your TitoPay details, your family wallet appears here.</p></section>`;
-      return;
-    }
-    host.innerHTML = items.map((family) => `
+/* The child's own side, rendered inside the same TitoKids sheet: balance,
+   money requests and recent activity. One door, not two. */
+function titoKidsFamilyMarkup(items) {
+  if (!Array.isArray(items) || !items.length) return "";
+  return items.map((family) => `
       <section class="tk-card">
         <div class="tk-row">${tkRing(family.parentName)}
           <span><span class="tk-sub">Managed by ${esc(family.parentName)}</span><span class="tk-balance" style="display:block">${esc(money(family.balance))}</span><span class="tk-sub">Available</span></span>
@@ -13321,10 +13328,10 @@ async function openMyFamilyModal() {
           <input type="hidden" name="childId" value="${esc(family.childId)}">
           <div class="field-row">
             <div class="field"><label>Ask for</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required placeholder="50.00"></div></div>
-            <div class="field"><label>For</label><select name="category">${Object.entries(state.myFamilyCategories).map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join("")}</select></div>
+            <div class="field"><label>For</label><select name="category">${Object.entries(state.myFamilyCategories || {}).map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join("")}</select></div>
           </div>
           <div class="field"><label>Why? <span class="field-optional">optional</span></label><input name="note" maxlength="200" placeholder="e.g. Taxi to practice"></div>
-          <button class="btn primary" type="submit">${icon("send")} Ask ${esc(family.parentName.split(" ")[0])}</button>
+          <button class="btn primary" type="submit">${icon("send")} Ask ${esc(String(family.parentName || "").split(" ")[0])}</button>
         </form>
         ${(family.requests || []).length ? `
           <p class="tk-sub" style="margin-top:10px"><strong style="color:var(--text)">My requests</strong></p>
@@ -13337,16 +13344,13 @@ async function openMyFamilyModal() {
             <div class="tk-line"><span>${esc(item.categoryLabel)}<br><small class="tk-sub">${esc(friendlyDate(item.createdAt))}</small></span>
               <span class="${item.direction === "in" ? "tk-in" : "tk-out"}">${item.direction === "in" ? "+" : "-"}${esc(money(item.amount))}</span></div>`).join("")}` : ""}
       </section>`).join("");
-  } catch (error) {
-    if (host) host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
-  }
 }
 async function submitTitoKidsRequest(data) {
   await api(`/v1/tito-kids/family/${encodeURIComponent(data.childId)}/requests`, {
     method: "POST", body: { amount: data.amount, category: data.category, note: data.note || undefined }
   });
   showToast("Sent — you’ll be told the moment they answer.");
-  await openMyFamilyModal();
+  await refreshTitoKidsHome();
 }
 function businessStaffRow(member) {
   const initial = String(member.fullName || "?").trim().charAt(0).toUpperCase() || "?";
@@ -16694,7 +16698,7 @@ async function openBusinessTicketingDashboard(options = {}) {
   }, {});
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Set up and manage your events: create, submit for approval, sell tickets and track sales. Scanning entry is under <strong>Ticketing Staff</strong>.</p></div>
+      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Set up and manage your events: create, submit for approval, sell tickets and track sales. Scanning entry is under <strong>Event Scanners</strong>.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${canCreateFree ? `
@@ -16721,7 +16725,7 @@ async function openBusinessTicketingDashboard(options = {}) {
             <h3>Working the door?</h3>
             <p class="muted">Scan tickets and watch the live attendance count in the dedicated staff scanner.</p>
           </div>
-          <button class="btn secondary" type="button" data-action="ticketing-staff-open">${icon("scan")} Open Ticketing Staff</button>
+          <button class="btn secondary" type="button" data-action="ticketing-staff-open">${icon("scan")} Open Event Scanners</button>
         </section>
       ` : ""}
       ${ticketingEventTagsPanel(events)}
@@ -16748,9 +16752,9 @@ async function openBusinessTicketingDashboard(options = {}) {
   }
 }
 
-/* ---- Ticketing Staff: the door-scanner view -------------------------------
+/* ---- Event Scanners: the door-scanner view -------------------------------
    The "Ticketing" tile is the organiser's management hub. This is the separate
-   "Ticketing Staff" tile: a focused scanner for whoever is working the door.
+   "Event Scanners" tile: a focused scanner for whoever is working the door.
    Pick the approved event, watch the running attendance count, and scan each
    ticket. It deliberately carries none of the create/sell/tags management —
    that is what kept the two tiles looking like the same screen. */
@@ -16762,7 +16766,7 @@ async function openTicketingStaffScanner(options = {}) {
   const isBusiness = state.accountType === "business";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Ticketing Staff</p><h2>Scan entry</h2><p class="lead">Loading your events.</p></div>
+      <div><p class="eyebrow">Event Scanners</p><h2>Scan entry</h2><p class="lead">Loading your events.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="settings-list" aria-busy="true">
@@ -16785,7 +16789,7 @@ async function openTicketingStaffScanner(options = {}) {
   } catch (error) {
     openModal(`
       <div class="modal-head">
-        <div><p class="eyebrow">Ticketing Staff</p><h2>Events could not be loaded</h2><p class="lead">${esc(friendlyFormError(error, "ticketing"))}</p></div>
+        <div><p class="eyebrow">Event Scanners</p><h2>Events could not be loaded</h2><p class="lead">${esc(friendlyFormError(error, "ticketing"))}</p></div>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
       <div class="auth-actions">
@@ -16804,7 +16808,7 @@ async function openTicketingStaffScanner(options = {}) {
   if (!scannable.length) {
     openModal(`
       <div class="modal-head">
-        <div><p class="eyebrow">Ticketing Staff</p><h2>No events to scan yet</h2><p class="lead">${isBusiness ? "Door scanning opens as soon as an event is approved." : "Door scanning unlocks when an organiser adds you to their event staff."}</p></div>
+        <div><p class="eyebrow">Event Scanners</p><h2>No events to scan yet</h2><p class="lead">${isBusiness ? "Door scanning opens as soon as an event is approved." : "Door scanning unlocks when an organiser adds you to their event staff."}</p></div>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
       <section class="empty-state compact-state">
@@ -16815,7 +16819,7 @@ async function openTicketingStaffScanner(options = {}) {
           <button class="btn primary" type="button" data-action="ticketing-staff-manage">${icon("ticket")} Go to Ticketing</button>
         ` : `
           <strong>You are not on an event's staff yet</strong>
-          <p>Ask the event organiser to add your @username, phone or email under <strong>Ticketing Staff → Staff permissions</strong> on their business account. The moment they do, their event appears here and you can scan tickets at the door.</p>
+          <p>Ask the event organiser to add your @username, phone or email under <strong>Ticketing → Event Scanners</strong> on their business account. The moment they do, their event appears here and you can scan tickets at the door.</p>
         `}
       </section>
     `);
@@ -16823,7 +16827,7 @@ async function openTicketingStaffScanner(options = {}) {
   }
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Ticketing Staff</p><h2>Scan entry</h2><p class="lead">Choose the event, then scan or type each ticket code at the door. The count updates as people come in.</p></div>
+      <div><p class="eyebrow">Event Scanners</p><h2>Scan entry</h2><p class="lead">Choose the event, then scan or type each ticket code at the door. The count updates as people come in.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="panel inner-panel">
