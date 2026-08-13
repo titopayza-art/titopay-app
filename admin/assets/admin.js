@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v81";
+  return "admin-console-v82";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -2598,10 +2598,146 @@ async function renderTransactions() {
     `${rows.length} rows`
   );
 }
+// The whole compliance and money-integrity picture on one page: the FICA
+// queue the reviewers know, plus the build-15 surfaces — integrity alerts,
+// reconciliation exceptions, cases, limits, integrity settings, sanctions
+// screening and regulatory report evidence. Every panel degrades to a note
+// if the API predates it, so the queue keeps working against any build.
 async function renderCompliance() {
-  const result = await apiFetch("/admin/compliance/queue");
+  const quiet = (path) => apiFetch(path).catch(() => null);
+  const [result, overview, alerts, recon, cases, limitsConfig, integrityConfig, screening, reports] = await Promise.all([
+    apiFetch("/admin/compliance/queue"),
+    quiet("/admin/compliance/overview"),
+    quiet("/admin/integrity/alerts"),
+    quiet("/admin/integrity/reconciliation"),
+    quiet("/admin/compliance/cases?status=open"),
+    quiet("/admin/compliance/limits"),
+    quiet("/admin/integrity/config"),
+    quiet("/admin/compliance/screening"),
+    quiet("/admin/compliance/reports")
+  ]);
   PAGE_EXPORTS.compliance = result.items;
-  document.getElementById("page-content").innerHTML = tableCard(
+  const needsApi = `<div class="empty"><strong>Requires API build 15</strong><small>Deploy the current api.zip and this panel comes alive.</small></div>`;
+
+  const overviewHtml = overview ? renderMetrics([
+    ["Open integrity alerts", (overview.openIntegrityAlerts || []).reduce((sum, row) => sum + Number(row.count || 0), 0)],
+    ["Critical / high", (overview.openIntegrityAlerts || []).filter((row) => ["critical", "high"].includes(row.severity)).reduce((sum, row) => sum + Number(row.count || 0), 0)],
+    ["Open cases", (overview.openFlags || []).reduce((sum, row) => sum + Number(row.count || 0), 0)],
+    ["Recon exceptions", overview.openReconciliationExceptions || 0],
+    ["Elevated+ risk", (overview.risk || []).filter((row) => row.risk !== "normal").reduce((sum, row) => sum + Number(row.count || 0), 0)],
+    ["Fully verified", (overview.kyc || []).find((row) => row.level === "fully_verified")?.count || 0],
+    ["Basic verified", (overview.kyc || []).find((row) => row.level === "basic_verified")?.count || 0],
+    ["Unverified", (overview.kyc || []).find((row) => row.level === "unverified")?.count || 0]
+  ]) : needsApi;
+
+  const alertsHtml = alerts ? renderRows(alerts.alerts || [], [
+    { label: "Alert", render: (row) => `<strong>${escapeHtml(row.alert_type)}</strong><br><small>${escapeHtml(new Date(row.created_at).toLocaleString())}</small>` },
+    { label: "Severity", render: (row) => `<span class="chip ${row.severity === "critical" || row.severity === "high" ? "red" : row.severity === "warning" ? "orange" : "blue"}">${escapeHtml(row.severity)}</span>` },
+    { label: "Status", render: (row) => `<span class="chip ${row.status === "open" ? "orange" : "green"}">${escapeHtml(row.status)}</span>` },
+    { label: "Customer", render: (row) => escapeHtml(row.full_name || row.username || "-") },
+    { label: "Details", render: (row) => `<small>${escapeHtml(JSON.stringify(row.details || {}).slice(0, 140))}</small>` }
+  ], (row) => row.status === "open" ? `<button data-integrity-alert-resolve="${escapeHtml(row.id)}">Resolve</button>` : "") : needsApi;
+
+  const exceptionsHtml = recon ? renderRows(recon.exceptions || [], [
+    { label: "Exception", render: (row) => `<strong>${escapeHtml(row.exception_type)}</strong><br><small>${escapeHtml(new Date(row.created_at).toLocaleString())}</small>` },
+    { label: "Transaction", render: (row) => escapeHtml(row.transaction_reference || row.transaction_id || "-") },
+    { label: "Status", render: (row) => `<span class="chip ${row.status === "open" ? "orange" : "green"}">${escapeHtml(row.status)}</span>` },
+    { label: "Details", render: (row) => `<small>${escapeHtml(JSON.stringify(row.details || {}).slice(0, 140))}</small>` }
+  ], (row) => row.status === "open" ? `<button data-recon-exception-resolve="${escapeHtml(row.id)}">Resolve</button>` : "") : needsApi;
+
+  const casesHtml = cases ? renderRows(cases.cases || [], [
+    { label: "Case", render: (row) => `<strong>${escapeHtml(row.flag_type)}</strong><br><small>${escapeHtml(new Date(row.created_at).toLocaleString())}</small>` },
+    { label: "Customer", render: (row) => `<strong>${escapeHtml(row.full_name || "-")}</strong><br><small>${escapeHtml(row.username || "")}</small>` },
+    { label: "KYC / Risk", render: (row) => `<small>${escapeHtml(row.fica_status || "-")} / ${escapeHtml(row.risk_status || "normal")}</small>` },
+    { label: "Assigned", render: (row) => escapeHtml(row.assigned_to_name || "Unassigned") }
+  ], (row) => `
+      <button data-case-assign="${escapeHtml(row.id)}">Assign to me</button>
+      <button data-case-decide="${escapeHtml(row.id)}">Decide</button>
+    `) : needsApi;
+
+  const limitsHtml = limitsConfig ? `
+    <div class="form-grid">
+      <label for="limits-json">Limit configuration (JSON)</label>
+      <textarea id="limits-json" rows="14" spellcheck="false">${escapeHtml(JSON.stringify(limitsConfig.config, null, 2))}</textarea>
+      <label for="limits-reason">Reason for this change</label>
+      <input id="limits-reason" type="text" maxlength="300" placeholder="Why these values, per the approved RMCP">
+      <div class="action-row"><button data-limits-save>Save limit configuration</button></div>
+    </div>` : needsApi;
+
+  const ic = integrityConfig?.config || {};
+  const integrityHtml = integrityConfig ? `
+    <div class="form-grid">
+      <label for="ic-email">Escalation email for high and critical alerts</label>
+      <input id="ic-email" type="email" value="${escapeHtml(ic.escalationEmail || "")}" placeholder="compliance@titopay.co.za">
+      <label for="ic-stale">Stale in-flight window (hours)</label>
+      <input id="ic-stale" type="number" min="1" value="${escapeHtml(String(ic.staleInFlightHours ?? 24))}">
+      <label for="ic-window">Sweep window (days)</label>
+      <input id="ic-window" type="number" min="1" max="90" value="${escapeHtml(String(ic.sweepWindowDays ?? 7))}">
+      <label for="ic-wallets">Wallets verified per sweep</label>
+      <input id="ic-wallets" type="number" min="1" max="5000" value="${escapeHtml(String(ic.sweepWalletLimit ?? 500))}">
+      <label for="ic-tolerance">Net tolerance (Rand)</label>
+      <input id="ic-tolerance" type="number" step="0.01" min="0.01" value="${escapeHtml(String(ic.netTolerance ?? 0.01))}">
+      <label for="ic-reason">Reason for this change</label>
+      <input id="ic-reason" type="text" maxlength="300" placeholder="Why these values">
+      <div class="action-row"><button data-integrity-config-save>Save integrity settings</button></div>
+    </div>` : needsApi;
+
+  const screeningHtml = screening ? `
+    ${renderRows(screening.entries || [], [
+      { label: "Designation", key: "label" },
+      { label: "Name pattern", render: (row) => escapeHtml(row.name_pattern || "-") },
+      { label: "ID hash", render: (row) => row.has_id_hash ? '<span class="chip blue">Yes</span>' : "-" },
+      { label: "Active", render: (row) => `<span class="chip ${row.active ? "green" : "grey"}">${row.active ? "Active" : "Off"}</span>` }
+    ])}
+    <div class="form-grid">
+      <label for="scr-label">Add designation label</label>
+      <input id="scr-label" type="text" maxlength="200" placeholder="Sanctions list entry name">
+      <label for="scr-name">Name pattern (optional)</label>
+      <input id="scr-name" type="text" maxlength="200" placeholder="Full name to match">
+      <label for="scr-id">SA ID number (optional, stored as a hash)</label>
+      <input id="scr-id" type="text" maxlength="13" inputmode="numeric" placeholder="13 digits">
+      <div class="action-row">
+        <button data-screening-add>Add entry</button>
+        <button data-screening-run class="secondary">Run screening sweep</button>
+      </div>
+    </div>` : needsApi;
+
+  const reportsHtml = reports ? `
+    ${renderRows(reports.reports || [], [
+      { label: "Report", render: (row) => `<strong>${escapeHtml(row.report_type)}</strong><br><small>${escapeHtml(new Date(row.created_at).toLocaleString())}</small>` },
+      { label: "Trigger", render: (row) => `<small>${escapeHtml(String(row.trigger_summary || "").slice(0, 110))}</small>` },
+      { label: "Decision", key: "decision" },
+      { label: "Reference", render: (row) => escapeHtml(row.submission_reference || "-") },
+      { label: "Responsible", render: (row) => escapeHtml(row.responsible_name || "-") }
+    ])}
+    <div class="form-grid">
+      <label for="rep-type">Report type (as defined in TitoPay's compliance framework)</label>
+      <input id="rep-type" type="text" maxlength="120">
+      <label for="rep-trigger">What triggered this consideration</label>
+      <input id="rep-trigger" type="text" maxlength="300">
+      <label for="rep-decision">Decision (for example: submitted, not reportable, escalated)</label>
+      <input id="rep-decision" type="text" maxlength="120">
+      <label for="rep-ref">Submission reference (optional)</label>
+      <input id="rep-ref" type="text" maxlength="120">
+      <div class="action-row"><button data-report-record>Record report event</button></div>
+    </div>` : needsApi;
+
+  document.getElementById("page-content").innerHTML = `
+    ${tableCard("Compliance & Integrity Overview", overviewHtml, "Live counts from the compliance and money integrity engines.")}
+    ${renderComplianceQueueCard(result)}
+    ${tableCard("Money Integrity Alerts",
+      `<div class="action-row"><button data-integrity-sweep>Run sweep now</button></div>${alertsHtml}`,
+      "The sweep runs automatically about every 30 minutes. Resolving requires a note; a recurring condition re-opens its alert.")}
+    ${tableCard("Reconciliation", exceptionsHtml, "Provider statement disagreements. Nothing is auto-corrected; each exception carries its investigation to resolution.")}
+    ${tableCard("Compliance Cases", casesHtml, "Open risk and EDD cases. Deciding the last open case for a customer clears their review state.")}
+    ${tableCard("Risk Framework Limits", limitsHtml, "TitoPay operational limits under the approved RMCP, not statutory amounts. Every change requires a reason and is audit-logged with previous and new values.")}
+    ${tableCard("Integrity Settings", integrityHtml, "How the money integrity sweep behaves, and where high and critical alerts escalate.")}
+    ${tableCard("Sanctions Screening", screeningHtml, "Compliance-maintained designations. Matches raise a high-risk flag; the sweep screens up to 5000 active accounts.")}
+    ${tableCard("Regulatory Report Evidence", reportsHtml, "Trigger, review, decision and submission reference per event. Which reports apply is determined by TitoPay's compliance framework.")}
+  `;
+}
+function renderComplianceQueueCard(result) {
+  return tableCard(
     "Compliance Queue",
     renderRows(result.items, [
       { label: "User", render: (row) => `<strong>${escapeHtml(row.full_name)}</strong><br><small>${escapeHtml(row.username)}</small>` },
@@ -7546,6 +7682,164 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({ status: reviewStatus.dataset.reviewStatus }),
       });
       showToast("Compliance review updated");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  // Money integrity and compliance case actions. Every resolving move asks
+  // for the note that becomes part of the audit record.
+  const integritySweep = event.target.closest("[data-integrity-sweep]");
+  if (integritySweep) {
+    integritySweep.disabled = true;
+    try {
+      const result = await apiFetch("/admin/integrity/sweep", { method: "POST", body: "{}" });
+      showToast(result.exceptionCount ? `Sweep finished: ${result.exceptionCount} finding(s) raised or confirmed.` : "Sweep finished: nothing out of place.");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+      integritySweep.disabled = false;
+    }
+  }
+  const alertResolve = event.target.closest("[data-integrity-alert-resolve]");
+  if (alertResolve) {
+    const note = window.prompt("How was this alert resolved? The note becomes part of the record:");
+    if (!note) return;
+    try {
+      await apiFetch(`/admin/integrity/alerts/${alertResolve.dataset.integrityAlertResolve}/resolve`, {
+        method: "POST", body: JSON.stringify({ note })
+      });
+      showToast("Alert resolved");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const exceptionResolve = event.target.closest("[data-recon-exception-resolve]");
+  if (exceptionResolve) {
+    const note = window.prompt("How was this exception resolved? The note becomes part of the record:");
+    if (!note) return;
+    try {
+      await apiFetch(`/admin/integrity/reconciliation/exceptions/${exceptionResolve.dataset.reconExceptionResolve}/resolve`, {
+        method: "POST", body: JSON.stringify({ note })
+      });
+      showToast("Exception resolved");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const caseAssign = event.target.closest("[data-case-assign]");
+  if (caseAssign) {
+    try {
+      await apiFetch(`/admin/compliance/cases/${caseAssign.dataset.caseAssign}/assign`, {
+        method: "POST", body: JSON.stringify({ adminId: PAGE_EXPORTS.currentMe?.id })
+      });
+      showToast("Case assigned to you");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const caseDecide = event.target.closest("[data-case-decide]");
+  if (caseDecide) {
+    const decision = window.prompt("Decision (for example: no_action, restricted, edd_completed, escalated):");
+    if (!decision) return;
+    const note = window.prompt("Note explaining the decision:");
+    if (!note) return;
+    try {
+      await apiFetch(`/admin/compliance/cases/${caseDecide.dataset.caseDecide}/decide`, {
+        method: "POST", body: JSON.stringify({ decision, note })
+      });
+      showToast("Case decided");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const limitsSave = event.target.closest("[data-limits-save]");
+  if (limitsSave) {
+    const reason = document.getElementById("limits-reason")?.value.trim();
+    if (!reason) { showToast("State the reason for this limit change."); return; }
+    let config;
+    try { config = JSON.parse(document.getElementById("limits-json").value); }
+    catch (error) { showToast("The limit configuration is not valid JSON."); return; }
+    if (!window.confirm("Apply this limit configuration? It takes effect on the very next transaction.")) return;
+    try {
+      await apiFetch("/admin/compliance/limits", { method: "PUT", body: JSON.stringify({ config, reason }) });
+      showToast("Limit configuration saved and audit-logged");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const integrityConfigSave = event.target.closest("[data-integrity-config-save]");
+  if (integrityConfigSave) {
+    const reason = document.getElementById("ic-reason")?.value.trim();
+    if (!reason) { showToast("State the reason for this settings change."); return; }
+    try {
+      await apiFetch("/admin/integrity/config", {
+        method: "PUT",
+        body: JSON.stringify({
+          reason,
+          config: {
+            escalationEmail: document.getElementById("ic-email")?.value.trim(),
+            staleInFlightHours: document.getElementById("ic-stale")?.value,
+            sweepWindowDays: document.getElementById("ic-window")?.value,
+            sweepWalletLimit: document.getElementById("ic-wallets")?.value,
+            netTolerance: document.getElementById("ic-tolerance")?.value
+          }
+        })
+      });
+      showToast("Integrity settings saved and audit-logged");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const screeningAdd = event.target.closest("[data-screening-add]");
+  if (screeningAdd) {
+    try {
+      await apiFetch("/admin/compliance/screening", {
+        method: "POST",
+        body: JSON.stringify({
+          label: document.getElementById("scr-label")?.value.trim(),
+          namePattern: document.getElementById("scr-name")?.value.trim(),
+          idNumber: document.getElementById("scr-id")?.value.trim()
+        })
+      });
+      showToast("Screening entry added");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const screeningRun = event.target.closest("[data-screening-run]");
+  if (screeningRun) {
+    if (!window.confirm("Screen up to 5000 active accounts against the designation list now?")) return;
+    screeningRun.disabled = true;
+    try {
+      const result = await apiFetch("/admin/compliance/screening/run", { method: "POST", body: "{}" });
+      showToast(`Screened ${result.screened} accounts, ${result.hits} match(es).`);
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+      screeningRun.disabled = false;
+    }
+  }
+  const reportRecord = event.target.closest("[data-report-record]");
+  if (reportRecord) {
+    try {
+      await apiFetch("/admin/compliance/reports", {
+        method: "POST",
+        body: JSON.stringify({
+          reportType: document.getElementById("rep-type")?.value.trim(),
+          triggerSummary: document.getElementById("rep-trigger")?.value.trim(),
+          decision: document.getElementById("rep-decision")?.value.trim(),
+          submissionReference: document.getElementById("rep-ref")?.value.trim() || null
+        })
+      });
+      showToast("Report event recorded");
       await renderCompliance();
     } catch (error) {
       showToast(adminErrorMessage(error.message));

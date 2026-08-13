@@ -219,6 +219,45 @@ async function loadIntegrityConfig() {
     : { ...DEFAULT_INTEGRITY_CONFIG };
 }
 
+// Integrity settings are changed from the admin console, with the same
+// discipline as the tier limits: a stated reason, and previous and new
+// values side by side in the audit record.
+async function saveIntegrityConfig(actor, value = {}, { reason = null } = {}) {
+  await ensureIntegritySchema();
+  const stated = String(reason || "").trim();
+  if (!stated) throw new AppError(400, "State the reason for this integrity settings change. It becomes part of the audit record.");
+  const previous = await loadIntegrityConfig();
+  const merged = { ...DEFAULT_INTEGRITY_CONFIG };
+  const numberOr = (candidate, fallback) => {
+    const parsed = Number(candidate);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  };
+  merged.staleInFlightHours = numberOr(value.staleInFlightHours, previous.staleInFlightHours);
+  merged.sweepWalletLimit = Math.min(5000, numberOr(value.sweepWalletLimit, previous.sweepWalletLimit));
+  merged.netTolerance = numberOr(value.netTolerance, previous.netTolerance);
+  merged.sweepWindowDays = Math.min(90, numberOr(value.sweepWindowDays, previous.sweepWindowDays));
+  const email = String(value.escalationEmail ?? previous.escalationEmail ?? "").trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AppError(400, "The escalation email address does not look valid.");
+  }
+  merged.escalationEmail = email || null;
+  await pool.query(
+    `INSERT INTO platform_settings (key, value, updated_at)
+     VALUES ('money_integrity_config', $1::JSONB, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(merged)]
+  );
+  await writeAuditLog({
+    actorType: "admin",
+    actorId: actor?.userId || null,
+    action: "integrity_config_updated",
+    entityType: "platform_settings",
+    entityId: null,
+    metadata: { reason: stated, previous, config: merged }
+  });
+  return merged;
+}
+
 // One alert per finding: the fingerprint deduplicates, so a condition that
 // persists across sweeps stays a single open alert instead of a flood.
 // High and critical alerts are escalated the moment they are first raised.
@@ -592,6 +631,7 @@ async function recordRegulatoryReportEvent(actor, payload = {}) {
 module.exports = {
   ensureIntegritySchema,
   loadIntegrityConfig,
+  saveIntegrityConfig,
   raiseAlert,
   runIntegritySweep,
   runProviderReconciliation,

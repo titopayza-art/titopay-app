@@ -3520,6 +3520,21 @@ router.post("/integrity/sweep", requireAdminPermission("services"), async (req, 
   } catch (error) { next(error); }
 });
 
+router.get("/integrity/config", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    res.json({ ok: true, config: await integrity.loadIntegrityConfig(), defaults: integrity.DEFAULT_INTEGRITY_CONFIG });
+  } catch (error) { next(error); }
+});
+
+router.put("/integrity/config", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const integrity = require("../services/money-integrity-service");
+    const config = await integrity.saveIntegrityConfig(req.auth, req.body?.config || {}, { reason: req.body?.reason });
+    res.json({ ok: true, config });
+  } catch (error) { next(error); }
+});
+
 router.get("/integrity/reconciliation", requireAdminPermission("services"), async (req, res, next) => {
   try {
     const integrity = require("../services/money-integrity-service");

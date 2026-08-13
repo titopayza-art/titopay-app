@@ -129,3 +129,18 @@ test("integrity thresholds are configuration, not code", () => {
   assert.match(INTEGRITY, /escalationEmail: null/,
     "no escalation address is invented; compliance configures it");
 });
+
+test("integrity settings are editable from the console with the same discipline as limits", () => {
+  assert.match(ADMIN, /router\.get\("\/integrity\/config"/);
+  assert.match(ADMIN, /router\.put\("\/integrity\/config"/);
+  assert.match(INTEGRITY, /async function saveIntegrityConfig/);
+  assert.match(INTEGRITY, /State the reason for this integrity settings change/);
+  assert.match(INTEGRITY, /integrity_config_updated/);
+  assert.match(INTEGRITY, /metadata: \{ reason: stated, previous, config: merged \}/);
+  // And the console page carries the panels.
+  const CONSOLE = fs.readFileSync(path.join(__dirname, "..", "..", "admin", "admin.js"), "utf8");
+  for (const marker of ["data-integrity-sweep", "data-integrity-alert-resolve", "data-case-decide",
+    "data-limits-save", "data-integrity-config-save", "data-screening-run", "data-report-record"]) {
+    assert.ok(CONSOLE.includes(marker), `console wires ${marker}`);
+  }
+});
