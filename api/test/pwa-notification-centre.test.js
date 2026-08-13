@@ -62,3 +62,30 @@ test("clearing the inbox clears it on the server too", () => {
   assert.match(body, /api\("\/v1\/chat\/notifications\/read", \{ method: "POST"/,
     "without the server call, the feed re-serves the same items as unread");
 });
+
+// 3. "Can deleted messages stay gone." The local marker protects one browser.
+//    A new phone, a reinstall or a cleared browser has no marker, and the feed
+//    used to return the whole read history - so the clear looked undone. The
+//    server now keeps its own cleared-at stamp per user.
+
+test("the server remembers a cleared inbox, so no device gets the history back", () => {
+  const routes = fs.readFileSync(
+    path.join(__dirname, "..", "src", "routes", "chat.routes.js"), "utf8");
+
+  // The feed excludes everything from before the user's clear stamp.
+  assert.match(routes, /created_at > COALESCE\(\s*\(SELECT cleared_at FROM notification_clears WHERE user_id = \$1\)/,
+    "GET /notifications must filter out notices older than the clear stamp");
+
+  // The Clear-inbox signal (empty ids) stamps the marker; a single-id read never does.
+  const read = routes.slice(routes.indexOf('"/notifications/read"'));
+  const readBody = read.slice(0, read.indexOf("\nrouter."));
+  assert.match(readBody, /if \(!ids\.length\)[\s\S]{0,200}markNotificationsCleared/,
+    "an empty ids array is the Clear inbox button - it must stamp the server marker");
+
+  const service = fs.readFileSync(
+    path.join(__dirname, "..", "src", "services", "notification-service.js"), "utf8");
+  assert.match(service, /notification_clears \(\s*user_id UUID PRIMARY KEY/,
+    "one stamp per user: the clear binds the account, not a device");
+  assert.match(service, /ON CONFLICT \(user_id\) DO UPDATE SET cleared_at/,
+    "clearing again moves the stamp forward instead of failing");
+});

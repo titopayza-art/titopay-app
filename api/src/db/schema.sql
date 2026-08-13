@@ -1602,3 +1602,10 @@ CREATE TABLE IF NOT EXISTS service_builder_definitions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Cleared means cleared on every device: the notification feed never serves
+-- anything from before the user's last clear-all.
+CREATE TABLE IF NOT EXISTS notification_clears (
+  user_id UUID PRIMARY KEY,
+  cleared_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

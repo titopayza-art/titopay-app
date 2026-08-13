@@ -50,6 +50,7 @@ router.get("/config", (_req, res) => {
 router.get("/notifications", async (req, res, next) => {
   try {
     const { pool } = require("../db/pool");
+    await require("../services/notification-service").ensureNotificationClears();
     const { rows } = await pool.query(
       `UPDATE notifications
        SET status = CASE WHEN status = 'sent' THEN 'delivered' ELSE status END,
@@ -63,6 +64,11 @@ router.get("/notifications", async (req, res, next) => {
            OR notification_type LIKE 'support_%'
            OR notification_type LIKE '%_announcement'
          )
+         -- Cleared means cleared, on every device. Only notifications from
+         -- after the user's last clear-all are ever served again.
+         AND created_at > COALESCE(
+           (SELECT cleared_at FROM notification_clears WHERE user_id = $1),
+           'epoch'::TIMESTAMPTZ)
        RETURNING id, notification_type, title, body, status, metadata, created_at`,
       [req.auth.userId]
     );
@@ -108,6 +114,12 @@ router.post("/notifications/read", async (req, res, next) => {
   try {
     const { pool } = require("../db/pool");
     const ids = Array.isArray(req.body.ids) ? req.body.ids.filter((id) => /^[0-9a-f-]{36}$/i.test(String(id))) : [];
+    // An empty ids list is "clear everything" - the app sends it from the
+    // Clear inbox button. Stamp the durable marker so the feed never serves
+    // today's history to tomorrow's device.
+    if (!ids.length) {
+      await require("../services/notification-service").markNotificationsCleared(req.auth.userId);
+    }
     const { rowCount } = await pool.query(
       `UPDATE notifications
        SET status = 'read', read_at = COALESCE(read_at, NOW()), updated_at = NOW()

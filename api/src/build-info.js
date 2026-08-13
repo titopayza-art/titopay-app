@@ -19,10 +19,11 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 4;
+const API_BUILD = 5;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  5: "Cleared notifications stay cleared on every device: server-side clear marker.",
   4: "Campaigns scoped to one event, paid on submission, released only on admin approval.",
   3: "Campaign Tools: R1500 email pack per event, R0.60 per SMS sent.",
   2: "Ticket phases and pre-sales enforced; registration events; organiser social links.",

@@ -425,7 +425,41 @@ async function sendOtpNotification({ user, code, purpose, channels }) {
   return attempts;
 }
 
+/* THE SERVER-SIDE CLEARED MARKER.
+ *
+ * Clearing the Notification Centre marked everything read, but the feed
+ * returned read notifications anyway - so any device without the app's
+ * local cleared marker (a new phone, a reinstall, a cleared browser) was
+ * handed the entire history back, and "cleared" quietly meant "cleared on
+ * this device only". One timestamp per user, written when they clear,
+ * makes cleared mean cleared everywhere: the feed never again serves
+ * anything from before that moment. Notifications that arrive AFTER the
+ * clear are untouched.
+ */
+let notificationClearsReady = null;
+function ensureNotificationClears() {
+  if (!notificationClearsReady) {
+    notificationClearsReady = pool.query(`
+      CREATE TABLE IF NOT EXISTS notification_clears (
+        user_id UUID PRIMARY KEY,
+        cleared_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch((error) => { notificationClearsReady = null; throw error; });
+  }
+  return notificationClearsReady;
+}
+
+async function markNotificationsCleared(userId) {
+  await ensureNotificationClears();
+  await pool.query(
+    `INSERT INTO notification_clears (user_id, cleared_at) VALUES ($1, NOW())
+     ON CONFLICT (user_id) DO UPDATE SET cleared_at = NOW()`,
+    [userId]);
+}
+
 module.exports = {
+  ensureNotificationClears,
+  markNotificationsCleared,
   sendOtpNotification,
   getEmailProviderStatus,
   sendSmtpTestEmail,
