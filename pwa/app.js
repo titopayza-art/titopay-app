@@ -2132,6 +2132,9 @@ function icon(name) {
     paperclip: `<path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 1 1 5.7 5.7l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.5-8.5"/>`,
     share: `<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/>`,
     "arrow-left": `<path d="m15 18-6-6 6-6"/><path d="M21 12H9"/>`,
+    // Opens something. The child card used arrow-left, which points back the
+    // way you came - exactly the wrong direction for a row you tap into.
+    "arrow-right": `<path d="m9 18 6-6-6-6"/><path d="M3 12h12"/>`,
     eye: `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="3"/>`,
     "eye-off": `<path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.3A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17.5 17.5 0 0 1-3.1 4.1"/><path d="M6.1 6.1A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4.2-.8"/>`,
     refresh: `<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>`,
@@ -13185,6 +13188,11 @@ function titoKidsTileService() {
 function titoKidsTileVisible() {
   return state.accountType === "personal";
 }
+function titoKidsCategoryLabel(key) {
+  const fromServer = (state.titoKids && state.titoKids.categories) || {};
+  return fromServer[key] || TITOKIDS_CATEGORY_LABELS[key]
+    || String(key || "").replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 function tkRing(name) {
   return `<span class="tk-ring" aria-hidden="true">${esc(String(name || "?").trim().charAt(0).toUpperCase() || "?")}</span>`;
 }
@@ -13234,9 +13242,9 @@ async function refreshTitoKidsHome() {
             <strong>${esc(child.fullName)}</strong>${child.pendingRequests ? ` <span class="chip" style="background:#e8efff;color:#2f5cff">${child.pendingRequests} waiting</span>` : ""}
             <span class="tk-sub" style="display:block">Child Wallet${child.linked ? ` · @${esc(child.childUsername)}` : ""}</span>
             <span class="tk-balance">${esc(money(child.balance))}</span>
-            <span class="tk-sub" style="display:block">Available balance</span>
+            <span class="tk-sub" style="display:block">${Number(child.balance) > 0 ? "Available balance" : "Tap to add money and set their limits"}</span>
           </span>
-          <span aria-hidden="true">${icon("arrow-left")}</span>
+          <span aria-hidden="true">${icon("arrow-right")}</span>
         </button>`).join("")
       : families.length ? "" : `
         <section class="empty-state compact-state">
@@ -13328,7 +13336,7 @@ async function refreshTitoKidsChild(childId) {
           </div>
           <span class="field-label">Categories ${esc(child.fullName)} can be paid for</span>
           <div class="tk-chiprow">
-            ${catKeys.map((key) => `<label class="chip" style="cursor:pointer;${limits.categories[key] ? "" : "opacity:0.45;text-decoration:line-through"}"><input type="checkbox" name="cat_${esc(key)}" ${limits.categories[key] ? "checked" : ""} style="margin-right:5px">${esc((state.titoKids?.categories || {})[key] || key)}</label>`).join("")}
+            ${catKeys.map((key) => `<label class="chip" style="cursor:pointer;${limits.categories[key] ? "" : "opacity:0.45;text-decoration:line-through"}"><input type="checkbox" name="cat_${esc(key)}" ${limits.categories[key] ? "checked" : ""} style="margin-right:5px">${esc(titoKidsCategoryLabel(key))}</label>`).join("")}
           </div>
           <button class="btn secondary" type="submit">${icon("check-circle")} Save limits</button>
         </form>
@@ -22373,6 +22381,15 @@ const NOTIFICATION_FILTERS = [
 // previous opener. The openers all read live state, so replaying is exact.
 // How the Services screen is grouped. Order is the order on screen; "more" is
 // the catch-all and must stay last with no members of its own.
+// The human name for each TitoKids spending category. The server sends these
+// with the family payload, but the child sheet can be re-rendered without that
+// payload in hand (a refresh inside the sheet, an offline open), and a control
+// labelled "airtime_data" is a database column showing through the paint.
+const TITOKIDS_CATEGORY_LABELS = {
+  school: "School", food: "Food", transport: "Transport", airtime_data: "Airtime & Data",
+  shopping: "Shopping", pocket_money: "Pocket Money", savings: "Savings",
+  entertainment: "Entertainment", other: "Other"
+};
 const SERVICE_GROUPS = [
   { key: "send", label: "Send & pay", members: ["send-money", "qr-pay", "payment-request", "bill-split", "send-gift"] },
   { key: "money", label: "Money in & out", members: ["top-up", "receive-money", "withdraw", "payouts", "tip", "refund"] },

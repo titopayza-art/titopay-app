@@ -1,9 +1,23 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v345 (titopay-pwa-v345)
+PWA bundle: v346 (titopay-pwa-v346)
 Admin console: admin-console-v81
 
-This build — "I added them as a manager and nothing appears":
+This build — TitoKids polish, and "I added them as a manager and nothing
+appears":
+
+  TITOKIDS. Three things a parent meets on the first screen after adding
+  a child:
+  - The chevron on a child's card pointed LEFT — back the way you came —
+    on a row you tap into. It points right now, and there is a proper
+    arrow-right icon rather than a reversed back arrow.
+  - A child whose wallet is still empty now says what to do instead of
+    only what is true: "Tap to add money and set their limits".
+  - The spending categories could render as raw database keys
+    ("airtime_data", "pocket_money") whenever the child sheet was drawn
+    without the family payload in hand — a refresh inside the sheet, or
+    an offline open. They now always read as words.
+
 
   THE CAUSE. A staff member only reaches a person when the contact typed
   matches an ACTIVE TitoPay account. When it does not, the entry is still
