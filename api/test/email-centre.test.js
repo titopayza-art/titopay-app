@@ -423,6 +423,9 @@ test("Personal and Business PDF statements use the current logo and fit amount v
   assert.match(app,/const profileType = state\.accountType === "business" \? "Business profile" : "Personal profile"/);
   assert.match(app,/text\(52, 768, "Tito", 27, "F2", "0\.03 0\.08 0\.22"\)/);
   assert.match(app,/text\(97, 768, "Pay", 27, "F2", "0\.18 0\.54 0\.95"\)/);
+  // The offline fallback is the clean two-tone wordmark only. The old
+  // hand-drawn accent triangle floated above the text like a stray mark.
+  assert.doesNotMatch(app,/68 794 m 80 806/);
   assert.match(app,/const statementHeaderX = 352/);
   assert.match(app,/text\(statementHeaderX, 776, "ACCOUNT STATEMENT", 15/);
   assert.match(app,/text\(statementHeaderX, 757, firstPage \? profileType : `\$\{profileType\} \(continued\)`, 9/);

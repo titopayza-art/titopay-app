@@ -10305,7 +10305,6 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null, fica 
     if (logo?.pdfBytes?.length) {
       commands.push("q 180 0 0 46 52 756 cm /Im1 Do Q");
     } else {
-      commands.push("q 0.18 0.54 0.95 rg 68 794 m 80 806 l 68 806 l h f Q");
       text(52, 768, "Tito", 27, "F2", "0.03 0.08 0.22");
       text(97, 768, "Pay", 27, "F2", "0.18 0.54 0.95");
     }
@@ -23618,7 +23617,6 @@ function proofOfAccountPdf({ now, letterNo, logo = null }) {
     logo.pdfBytes = logoBytes;
     commands.push("q 180 0 0 46 52 756 cm /Im1 Do Q");
   } else {
-    commands.push("q 0.18 0.54 0.95 rg 68 794 m 80 806 l 68 806 l h f Q");
     text(52, 768, "Tito", 27, "F2", "0.03 0.08 0.22");
     text(97, 768, "Pay", 27, "F2", "0.18 0.54 0.95");
   }
