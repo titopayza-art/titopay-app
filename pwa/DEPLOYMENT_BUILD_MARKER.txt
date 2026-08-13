@@ -1,9 +1,20 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v356 (titopay-pwa-v356)
+PWA bundle: v357 (titopay-pwa-v357)
 Admin console: admin-console-v81
 
-This build — a ticket now answers the wristband question itself:
+This build — the app says its VERSION, not its build number:
+
+  Profile read "TitoPay app v355". It now reads "TitoPay App 1.0". The
+  build number changes several times a week and means nothing to anybody
+  outside the repository; the product version is what a customer calls
+  it. Same choice the admin console already makes with "Version 1.0".
+
+  The build is not lost — it is on the tooltip of the version, and in the
+  "you are on the latest" message, because it is what identifies a bundle
+  when something is wrong. Support can still ask for it.
+
+Also in this build — a ticket now answers the wristband question itself:
 
   Link wristband was never removed. It moved onto the ticket in v351 and
   appears when the server says that ticket can take a tag. The failure

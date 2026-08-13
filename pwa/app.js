@@ -5637,7 +5637,7 @@ function profileView() {
     <section class="profile-actions panel">
       <button class="btn secondary" data-action="refresh">${icon("refresh")} Refresh profile</button>
       <button class="btn secondary" data-action="logout">${icon("lock")} Sign out</button>
-      <p class="field-hint" style="margin:6px 0 0;text-align:center">TitoPay app ${esc(appBundleVersion() || "—")} · <button class="link-btn" type="button" data-action="check-for-updates">Check for updates</button></p>
+      <p class="field-hint" style="margin:6px 0 0;text-align:center">TitoPay App <span title="Build ${esc(appBundleVersion() || "unknown")}">${esc(TITOPAY_APP_VERSION)}</span> · <button class="link-btn" type="button" data-action="check-for-updates">Check for updates</button></p>
     </section>
   `;
 }
@@ -5688,7 +5688,7 @@ async function checkForAppUpdate() {
       setTimeout(() => location.reload(), 700);
       return;
     }
-    showToast(`You are on the latest TitoPay app${appBundleVersion() ? ` (${appBundleVersion()})` : ""}.`);
+    showToast(`You are on the latest TitoPay App ${TITOPAY_APP_VERSION}${appBundleVersion() ? ` (build ${appBundleVersion()})` : ""}.`);
   } catch (error) {
     showToast("Could not check for updates just now.", "error");
   }
@@ -22658,6 +22658,11 @@ const TITOKIDS_CATEGORY_LABELS = {
   shopping: "Shopping", pocket_money: "Pocket Money", savings: "Savings",
   entertainment: "Entertainment", other: "Other"
 };
+// What a customer calls the app. The build number underneath it changes many
+// times a week; the product version does not, and "v355" means nothing to
+// anybody outside this repository. Same choice as the admin console, which
+// shows "Version 1.0" with its console build on the tooltip.
+const TITOPAY_APP_VERSION = "1.0";
 const SERVICE_GROUPS = [
   { key: "send", label: "Send & pay", members: ["send-money", "qr-pay", "payment-request", "bill-split", "send-gift"] },
   { key: "money", label: "Money in & out", members: ["top-up", "receive-money", "withdraw", "payouts", "tip", "refund"] },
