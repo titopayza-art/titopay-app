@@ -63,6 +63,11 @@ const {
   adminTicketingAnalytics
 } = require("../services/ticketing-service");
 const {
+  listDefinitions: listServiceBuilderDefinitions,
+  saveDefinition: saveServiceBuilderDefinition,
+  deleteDefinition: deleteServiceBuilderDefinition
+} = require("../services/service-builder-service");
+const {
   listEventTags,
   eventTagAnalytics,
   listEventVendors,
@@ -3643,6 +3648,52 @@ router.get("/marketing/reviews", requireAdminPermission("marketing"), async (_re
       },
       reviews: reviews.map(publicPwaCustomerReview)
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ---- Service Builder ------------------------------------------------------
+   The console's Service Builder probes GET /service-builder/services on load
+   and switches from browser-local storage to API storage the moment it
+   answers with a services array. Definitions are configuration documents the
+   console composed; nothing here executes them and no customer-facing
+   behaviour reads this table. Gated by "services" — the same permission the
+   console itself uses to decide who sees the builder. */
+router.get("/service-builder/services", requireAdminPermission("services"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, services: await listServiceBuilderDefinitions() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/service-builder/services", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const saved = await saveServiceBuilderDefinition(req.body?.service, req.auth.userId);
+    // audit_logs.entity_id is a UUID column; svc_… ids ride in metadata.
+    await writeAuditLog({
+      actorType: "admin", actorId: req.auth.userId, action: "service_builder_definition_saved",
+      entityType: "service_builder_definition", entityId: null,
+      ipAddress: req.auth.ipAddress, userAgent: req.auth.userAgent,
+      metadata: { serviceId: saved.id, status: saved.status }
+    });
+    res.json({ ok: true, service: saved });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/service-builder/services/:id", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    await deleteServiceBuilderDefinition(req.params.id);
+    await writeAuditLog({
+      actorType: "admin", actorId: req.auth.userId, action: "service_builder_definition_deleted",
+      entityType: "service_builder_definition", entityId: null,
+      ipAddress: req.auth.ipAddress, userAgent: req.auth.userAgent,
+      metadata: { serviceId: String(req.params.id) }
+    });
+    res.json({ ok: true, deleted: true });
   } catch (error) {
     next(error);
   }

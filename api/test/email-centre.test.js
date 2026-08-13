@@ -509,3 +509,38 @@ test("verification codes are disposable: expiry header, one thread, and a databa
   assert.equal((otp.match(/expiryMinutes:String\(settings\.email_otp_expiry_minutes\)/g) || []).length, 2);
   assert.match(service, /This code expires in \{\{expiryMinutes\}\} minutes and can only be used once/);
 });
+
+test("a raw email with only a text body can never render blank", () => {
+  // The TitoKids guardian invite went out with textBody only. queueRawEmail
+  // built the HTML part by wrapping htmlBody — undefined — so the branded
+  // shell arrived with a logo, a footer, and nothing in between. Mail clients
+  // show the HTML part whenever one exists, so the perfectly good text part
+  // was never displayed. The fix derives the HTML from the text.
+  const html = email.htmlFromText("Hi there,\n\nLine one\nline two.\n\nBye.");
+  assert.equal(html, "<p>Hi there,</p><p>Line one<br>line two.</p><p>Bye.</p>");
+
+  // Angle brackets in the text must arrive as text, not as markup.
+  assert.equal(email.htmlFromText("a < b & c"), "<p>a &lt; b &amp; c</p>");
+
+  // queueRawEmail must reach for the fallback exactly when htmlBody is empty.
+  const service = fs.readFileSync(path.join(root, "src/services/email-centre-service.js"), "utf8");
+  assert.match(service, /const effectiveHtmlBody=String\(htmlBody\|\|""\)\.trim\(\)\?htmlBody:htmlFromText\(textBody\);/);
+  assert.match(service, /brandedHtml\(interpolate\(stripDangerousMarkup\(effectiveHtmlBody\)/);
+});
+
+test("the TitoKids guardian invite email says what to do and when", () => {
+  // "Blank email, and it doesn't explain what they should do and when" — both
+  // halves of that report stay fixed: the invite carries a deliberate HTML
+  // body, numbered steps to the exact screen, and an answer to "when": no
+  // deadline, nothing changes unless you accept.
+  const kids = fs.readFileSync(path.join(root, "src/services/titokids-service.js"), "utf8");
+  const invite = kids.slice(kids.indexOf("queueRawEmail({"), kids.indexOf("idempotencyKey: `titokids-guardian-invite-"));
+  assert.match(invite, /htmlBody: \[/, "the invite must carry an explicit HTML body");
+  assert.match(invite, /Open <strong>Services<\/strong> and choose <strong>TitoKids<\/strong>/);
+  assert.match(invite, /Choose <strong>Accept<\/strong> or <strong>Decline<\/strong>/);
+  assert.match(invite, /There is no deadline\. The invitation stays open until you answer it/);
+  assert.match(invite, /you can decline it in the app or simply ignore this email/);
+  // The app link goes through the {{appUrl}} variable, so it always points at
+  // the configured origin rather than a hard-coded address.
+  assert.match(invite, /href="\{\{appUrl\}\}"/);
+});

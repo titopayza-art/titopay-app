@@ -720,6 +720,7 @@ async function inviteGuardian(ownerUserId, childId, payload = {}) {
   if (person.email) {
     try {
       const emailCentre = require("./email-centre-service");
+      const esc = emailCentre.escapeHtml;
       await emailCentre.queueRawEmail({
         recipient: person.email,
         subject: `${inviterName} asked you to help manage ${child.full_name}'s TitoKids wallet`,
@@ -728,12 +729,32 @@ async function inviteGuardian(ownerUserId, childId, payload = {}) {
           "",
           `${inviterName} has asked you to help manage ${child.full_name}'s TitoKids wallet on TitoPay.`,
           "",
-          "If you accept, you can add money from your own wallet, pay for needs like school or transport, set spending limits and answer requests.",
-          "Money you add always comes out of YOUR wallet, never anyone else's.",
+          `If you accept, you can add pocket money from your own wallet, pay for needs like school or transport, set spending limits and answer ${child.full_name}'s requests. Money you add always comes out of your own wallet, and nobody else can ever spend from yours.`,
           "",
-          "Open TitoPay and go to TitoKids to accept or decline.",
+          "To accept or decline:",
+          `1. Open the TitoPay app ({{appUrl}}) and sign in as ${person.username ? `@${person.username}` : "yourself"}.`,
+          "2. Open Services and choose TitoKids.",
+          "3. Your invitation is at the top of the screen. Choose Accept or Decline.",
+          "",
+          "There is no deadline. The invitation stays open until you answer it, and nothing changes on your account unless you accept.",
+          "",
+          `If you were not expecting this, you can decline it in the app or simply ignore this email. ${child.full_name}'s wallet stays exactly as it is.`,
           "",
           "TitoPay"
+        ].join("\n"),
+        htmlBody: [
+          `<p>Hi ${esc(person.full_name || "there")},</p>`,
+          `<p><strong>${esc(inviterName)}</strong> has asked you to help manage <strong>${esc(child.full_name)}</strong>'s TitoKids wallet on TitoPay.</p>`,
+          `<p>If you accept, you can add pocket money from your own wallet, pay for needs like school or transport, set spending limits and answer ${esc(child.full_name)}'s requests. Money you add always comes out of your own wallet, and nobody else can ever spend from yours.</p>`,
+          "<p><strong>To accept or decline:</strong></p>",
+          "<ol>",
+          `<li>Open the <a href="{{appUrl}}">TitoPay app</a> and sign in${person.username ? ` as @${esc(person.username)}` : ""}.</li>`,
+          "<li>Open <strong>Services</strong> and choose <strong>TitoKids</strong>.</li>",
+          "<li>Your invitation is at the top of the screen. Choose <strong>Accept</strong> or <strong>Decline</strong>.</li>",
+          "</ol>",
+          "<p>There is no deadline. The invitation stays open until you answer it, and nothing changes on your account unless you accept.</p>",
+          `<p>If you were not expecting this, you can decline it in the app or simply ignore this email. ${esc(child.full_name)}'s wallet stays exactly as it is.</p>`,
+          "<p>TitoPay</p>"
         ].join("\n"),
         userId: person.id,
         idempotencyKey: `titokids-guardian-invite-${id}`,

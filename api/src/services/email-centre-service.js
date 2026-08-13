@@ -98,6 +98,18 @@ function stripDangerousMarkup(value) {
     .replace(/(href|src)\s*=\s*(["'])\s*(?:javascript|data:text\/html):[\s\S]*?\2/gi, '$1="#"');
 }
 
+// A raw email queued with only a text body used to render as the branded
+// shell around nothing: the HTML part wrapped an empty string, mail clients
+// show the HTML part when both exist, and the words never reached the
+// reader. The TitoKids guardian invite arrived exactly like that — logo,
+// footer, and a blank middle. Deriving the HTML from the text makes a
+// text-only raw email impossible to send blank.
+function htmlFromText(text) {
+  return String(text || "").trim().split(/\n{2,}/).filter(Boolean)
+    .map((paragraph) => `<p>${escapeHtml(paragraph.trim()).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
 function interpolate(template, variables = {}, { html = false } = {}) {
   return String(template || "").replace(/{{\s*([A-Za-z][A-Za-z0-9]*)\s*}}/g, (_match, key) => {
     if (!ALLOWED_VARIABLES.has(key)) return "";
@@ -402,7 +414,8 @@ async function queueRawEmail({recipient,subject,htmlBody,textBody,variables={},u
   validateTemplateSource(`${subject}\n${htmlBody}\n${textBody}`);
   const values={companyName:settings.company_name,supportEmail:settings.support_email,supportUrl:settings.support_url,websiteUrl:settings.website_url,appUrl:config.appOrigin,currentYear:new Date().getUTCFullYear(),...variables};
   const renderedSubject=interpolate(String(subject||"").replace(/[\r\n]/g," ").slice(0,300),values);
-  const content={html:brandedHtml(interpolate(stripDangerousMarkup(htmlBody),values,{html:true}),settings),text:`${interpolate(textBody,values)}\n\n${settings.company_name}\n${settings.tagline}\n${settings.support_email}\n${settings.website_url}`};
+  const effectiveHtmlBody=String(htmlBody||"").trim()?htmlBody:htmlFromText(textBody);
+  const content={html:brandedHtml(interpolate(stripDangerousMarkup(effectiveHtmlBody),values,{html:true}),settings),text:`${interpolate(textBody,values)}\n\n${settings.company_name}\n${settings.tagline}\n${settings.support_email}\n${settings.website_url}`};
   const {rows}=await pool.query(`INSERT INTO email_queue(recipient,subject,template_key,template_version,variables,encrypted_content,provider,idempotency_key,maximum_attempts,user_id,metadata) VALUES(LOWER($1),$2,'marketing_email',1,$3::jsonb,$4,$5,$6,$7,$8,$9::jsonb) ON CONFLICT(idempotency_key) DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *`,[recipient,renderedSubject,JSON.stringify(safePayload(variables)),encrypt(JSON.stringify(content)),settings.default_provider,idempotencyKey,settings.maximum_retry_count,userId,JSON.stringify(metadata)]);
   return rows[0];
 }
@@ -664,4 +677,4 @@ async function sweepExpiredOtpEmails(){
     "DELETE FROM otp_codes WHERE expires_at < NOW() - INTERVAL '7 days'");
   return {redacted:rowCount,purged};
 }
-module.exports={EMAIL_PERMISSIONS,sweepExpiredOtpEmails,seedDefaultTemplates,ALLOWED_VARIABLES,DEFAULT_TEMPLATES,ensureEmailSchema,escapeHtml,stripDangerousMarkup,interpolate,renderTemplate,getSettings,updateSettings,listTemplates,getTemplate,saveTemplate,deleteTemplate,queueEmail,queueWelcomeEmail,welcomeTemplateKeyForAccountType,isWelcomeTemplateKey,queueRawEmail,createVerificationForUser,verifyEmailToken,resendVerification,requestEmailPasswordReset,confirmEmailPasswordReset,listQueue,queueDetail,manageQueue,listLogs,logDetail,dashboard,analytics,claimJobs,processJob,requeueRetryable,providerTest,processWebhook,maskSecrets,safePayload,sanitiseError};
+module.exports={EMAIL_PERMISSIONS,sweepExpiredOtpEmails,seedDefaultTemplates,ALLOWED_VARIABLES,DEFAULT_TEMPLATES,ensureEmailSchema,escapeHtml,stripDangerousMarkup,htmlFromText,interpolate,renderTemplate,getSettings,updateSettings,listTemplates,getTemplate,saveTemplate,deleteTemplate,queueEmail,queueWelcomeEmail,welcomeTemplateKeyForAccountType,isWelcomeTemplateKey,queueRawEmail,createVerificationForUser,verifyEmailToken,resendVerification,requestEmailPasswordReset,confirmEmailPasswordReset,listQueue,queueDetail,manageQueue,listLogs,logDetail,dashboard,analytics,claimJobs,processJob,requeueRetryable,providerTest,processWebhook,maskSecrets,safePayload,sanitiseError};

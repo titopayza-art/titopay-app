@@ -1591,3 +1591,14 @@ CREATE TABLE IF NOT EXISTS titokids_goals (
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','achieved','archived')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Admin console Service Builder: configuration documents composed in the
+-- console. Nothing executes these; the PWA's service catalogue is separate.
+CREATE TABLE IF NOT EXISTS service_builder_definitions (
+  id TEXT PRIMARY KEY,
+  definition JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  updated_by UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

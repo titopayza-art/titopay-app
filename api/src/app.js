@@ -88,6 +88,19 @@ app.get("/favicon.ico", (_req, res) => {
 });
 
 app.use(validateJsonContentType);
+// The Service Builder saves a whole service definition in one POST, and a
+// definition legitimately carries up to four branding images as data URIs
+// (each capped at 400KB before base64 grows them). That one admin-only,
+// permission-gated path gets a larger parser; every other route keeps the
+// 768kb ceiling below, so nothing else on the API loosens.
+const serviceBuilderJsonParser = express.json({ limit: "4mb", strict: true });
+app.use((req, res, next) => {
+  const requestPath = String(req.originalUrl || req.url || "").split("?")[0];
+  if (req.method === "POST" && requestPath === "/v1/admin/service-builder/services") {
+    return serviceBuilderJsonParser(req, res, next);
+  }
+  next();
+});
 app.use(express.json({
   limit: "768kb",
   strict: true,
