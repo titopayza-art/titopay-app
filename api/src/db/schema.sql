@@ -1528,3 +1528,51 @@ CREATE TABLE IF NOT EXISTS rate_limit_counters (
 );
 CREATE INDEX IF NOT EXISTS idx_rate_limit_counters_expires
   ON rate_limit_counters (expires_at);
+
+-- TitoKids: child sub-wallets managed by a parent. The child's money lives in
+-- a real wallet (kind 'system', no wallet number) owned by the parent user, so
+-- every fund/pay movement is ordinary double-entry ledger — never a tally.
+CREATE TABLE IF NOT EXISTS titokids_children (
+  id UUID PRIMARY KEY,
+  parent_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  child_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  wallet_id UUID NOT NULL REFERENCES wallets(id) ON DELETE RESTRICT,
+  full_name TEXT NOT NULL,
+  date_of_birth DATE,
+  relationship TEXT NOT NULL DEFAULT 'parent' CHECK (relationship IN ('parent','guardian','other')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','removed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_titokids_child_link
+  ON titokids_children (parent_user_id, child_user_id)
+  WHERE child_user_id IS NOT NULL AND status = 'active';
+CREATE TABLE IF NOT EXISTS titokids_limits (
+  child_id UUID PRIMARY KEY REFERENCES titokids_children(id) ON DELETE CASCADE,
+  daily_limit NUMERIC(18,2),
+  weekly_limit NUMERIC(18,2),
+  monthly_limit NUMERIC(18,2),
+  approval_threshold NUMERIC(18,2),
+  categories JSONB NOT NULL DEFAULT '{}'::JSONB,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS titokids_requests (
+  id UUID PRIMARY KEY,
+  child_id UUID NOT NULL REFERENCES titokids_children(id) ON DELETE CASCADE,
+  requested_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount NUMERIC(18,2) NOT NULL,
+  category TEXT NOT NULL DEFAULT 'other',
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'requested' CHECK (status IN ('requested','approved','declined')),
+  decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  decided_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS titokids_goals (
+  id UUID PRIMARY KEY,
+  child_id UUID NOT NULL REFERENCES titokids_children(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  target_amount NUMERIC(18,2) NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','achieved','archived')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

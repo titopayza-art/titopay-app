@@ -30,3 +30,21 @@
 .tour-nav [data-guide-next] { flex: 1.4; }
 .modal-card.tour-card { min-height: 100dvh; max-width: none; width: 100%; margin: 0; border-radius: 0; background: var(--soft, #eef4fe); }
 .modal-backdrop.tour-backdrop { background: var(--soft, #eef4fe); backdrop-filter: none; z-index: 75; }
+
+/* TitoKids - premium family surfaces. The guardian ring around a child's
+   avatar is the one ownable TitoKids mark. Class-based so the layout holds
+   even where inline style attributes are stripped. */
+.tk-card { background: var(--card, #fff); border: 1px solid var(--line, #dfe7f5); border-radius: var(--radius, 20px); padding: 16px; margin: 10px 0; box-shadow: var(--shadow-card, 0 4px 16px rgba(6,26,61,0.06)); }
+.tk-row { display: flex; align-items: center; gap: 12px; }
+.tk-ring { width: 54px; height: 54px; border-radius: 18px; display: grid; place-items: center; font-weight: 800; font-size: 1.15rem; color: #fff; background: linear-gradient(135deg, #0a4dff, #4fa3ff); box-shadow: 0 0 0 3px #fff, 0 0 0 5px rgba(10, 77, 255, 0.35); flex: 0 0 auto; }
+.tk-balance { font-size: 30px; font-weight: 800; letter-spacing: -0.5px; margin: 2px 0 0; }
+.tk-sub { color: var(--muted, #62708a); font-size: 12.5px; margin: 0; }
+.tk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.tk-progress { height: 8px; border-radius: 4px; background: #e8edf7; overflow: hidden; margin-top: 6px; }
+.tk-progress span { display: block; height: 100%; background: linear-gradient(90deg, #0a4dff, #4fa3ff); border-radius: 4px; }
+.tk-chiprow { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.tk-approval { border-left: 4px solid var(--blue, #0a4dff); }
+.tk-line { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line, #eef2fa); }
+.tk-line:last-child { border-bottom: none; }
+.tk-in { color: #0b7a3b; font-weight: 700; }
+.tk-out { color: #10203f; font-weight: 700; }

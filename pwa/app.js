@@ -2195,6 +2195,12 @@ async function onSubmit(event) {
     if (form.dataset.form === "ticket-claim") await submitTicketClaim(data);
     if (form.dataset.form === "staff-sale") await submitStaffSale(data);
     if (form.dataset.form === "stockvel-chat") await submitStockvelChat(data);
+    if (form.dataset.form === "titokids-add") await submitTitoKidsAdd(data);
+    if (form.dataset.form === "titokids-fund") await submitTitoKidsFund(data);
+    if (form.dataset.form === "titokids-pay") await submitTitoKidsPay(data);
+    if (form.dataset.form === "titokids-limits") await submitTitoKidsLimits(data);
+    if (form.dataset.form === "titokids-goal") await submitTitoKidsGoal(data);
+    if (form.dataset.form === "titokids-request") await submitTitoKidsRequest(data);
     if (form.dataset.form === "chatbot") await submitChatbotMessage(data);
     if (form.dataset.form === "titopay-chat-lookup") await submitTitoPayChatLookup(data);
     if (form.dataset.form === "titopay-chat-message") await submitTitoPayChatMessage(form, formData);
@@ -2401,6 +2407,23 @@ async function onClick(event) {
     api(`${STOCKVEL_PATH}/${encodeURIComponent(state.stockvelChat.groupId)}/messages/${encodeURIComponent(svDecision.dataset.svDecision)}/decision`, { method: "POST", body: { isDecision: true } })
       .then(() => refreshStockvelGroupChat())
       .catch((error) => showToast(friendlyFormError(error, "stockvel"), "error"));
+    return;
+  }
+  const tkApprove = event.target.closest("[data-tk-approve], [data-tk-decline]");
+  if (tkApprove) {
+    const approve = Boolean(tkApprove.dataset.tkApprove);
+    const requestId = tkApprove.dataset.tkApprove || tkApprove.dataset.tkDecline;
+    api(`/v1/tito-kids/approvals/${encodeURIComponent(requestId)}/${approve ? "approve" : "decline"}`, { method: "POST" })
+      .then(() => { showToast(approve ? "Approved — the money is in their wallet." : "Declined."); return refreshTitoKidsHome(); })
+      .catch((error) => showToast(friendlyFormError(error, "titokids"), "error"));
+    return;
+  }
+  const tkRemove = event.target.closest("[data-tk-remove]");
+  if (tkRemove) {
+    if (!window.confirm("Remove this child from TitoKids? Their wallet must be empty first; the record and history stay on your audit trail.")) return;
+    api(`/v1/tito-kids/children/${encodeURIComponent(tkRemove.dataset.tkRemove)}`, { method: "PATCH", body: { status: "removed" } })
+      .then(() => { showToast("Removed."); return openTitoKidsModal(); })
+      .catch((error) => showToast(friendlyFormError(error, "titokids"), "error"));
     return;
   }
   const supportRemove = event.target.closest("[data-support-remove]");
@@ -3204,6 +3227,27 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "my-workplaces") {
     await openMyWorkplacesModal();
+  }
+  if (action === "tito-kids") {
+    await openTitoKidsModal();
+  }
+  if (action === "titokids-add") {
+    openTitoKidsAddModal();
+  }
+  if (action === "my-family") {
+    await openMyFamilyModal();
+  }
+  if (String(action || "").startsWith("titokids-child:")) {
+    await openTitoKidsChild(action.slice("titokids-child:".length));
+    return;
+  }
+  if (String(action || "").startsWith("titokids-fund:")) {
+    openTitoKidsFundModal(action.slice("titokids-fund:".length));
+    return;
+  }
+  if (String(action || "").startsWith("titokids-pay:")) {
+    openTitoKidsPayModal(action.slice("titokids-pay:".length));
+    return;
   }
   if (String(action || "").startsWith("staff-sell:")) {
     await openStaffSellModal(action.slice("staff-sell:".length));
@@ -5397,6 +5441,8 @@ function profileView() {
     <section class="section-head compact"><h2>Account</h2></section>
     <section class="profile-feature-grid">
       ${profileFeature("TitoPay Chat", isBusiness ? "Chat with customers before payments." : "Chat with TitoPay users before payments.", "chat", "titopay-chat", true)}
+      ${isBusiness ? "" : profileFeature("TitoKids", "Manage and support your child\u2019s money.", "contacts", "tito-kids")}
+      ${isBusiness ? "" : profileFeature("My Family", "Your family wallet \u2014 balance, activity and money requests.", "contacts", "my-family")}
       ${isBusiness ? "" : profileFeature("My Workplaces", "Businesses that added you as staff — take sales for them from your phone.", "staff-badge", "my-workplaces")}
       ${profileFeature("Saved Beneficiaries", isBusiness ? "Manage customers, suppliers, employees and payout recipients." : "Manage favourite and recent payment recipients.", "user", "saved-beneficiaries")}
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
@@ -12978,6 +13024,330 @@ async function submitStaffSale(data) {
   renderStaffSellPicker();
   showToast(`Sale of ${money(saleResult.total)} recorded for ${sale.businessName}.`);
 }
+/* ---- TitoKids: TitoPay's family money platform ---------------------------
+   Parent side: children with real ring-fenced wallets, funding, category-
+   checked payments, limits, goals and approvals. Child side (linked TitoPay
+   login): My Family - balance, activity, and money requests the parent
+   approves. All money numbers come back from the server ledger. */
+function titoKidsTileService() {
+  return {
+    id: "tito-kids", label: "TitoKids", icon: "contacts", service_icon: "contacts",
+    action: "tito-kids", type: "titoKids", status: "active",
+    description: "Manage and support your child's money."
+  };
+}
+function titoKidsTileVisible() {
+  return state.accountType === "personal";
+}
+function tkRing(name) {
+  return `<span class="tk-ring" aria-hidden="true">${esc(String(name || "?").trim().charAt(0).toUpperCase() || "?")}</span>`;
+}
+async function openTitoKidsModal() {
+  state.currentModalAction = "tito-kids";
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">TitoKids</p><h2>Your family</h2><p class="lead">Money made easier for your family.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section data-tk-home><p class="field-hint">Loading your family…</p></section>
+  `);
+  await refreshTitoKidsHome();
+}
+async function refreshTitoKidsHome() {
+  const host = document.querySelector("[data-tk-home]");
+  if (!host) return;
+  try {
+    const result = await api("/v1/tito-kids");
+    state.titoKids = result;
+    const children = result.children || [];
+    const approvals = result.approvals || [];
+    host.innerHTML = `
+      ${approvals.map((request) => `
+        <section class="tk-card tk-approval">
+          <p class="tk-sub">Approval needed</p>
+          <p style="margin:4px 0"><strong>${esc(request.childName)}</strong> is asking for <strong>${esc(money(request.amount))}</strong> · ${esc(request.categoryLabel)}${request.note ? ` — “${esc(request.note)}”` : ""}</p>
+          <div class="auth-actions">
+            <button class="btn primary" type="button" data-tk-approve="${esc(request.id)}">${icon("check-circle")} Approve</button>
+            <button class="btn secondary" type="button" data-tk-decline="${esc(request.id)}">Decline</button>
+          </div>
+        </section>`).join("")}
+      ${children.length ? children.map((child) => `
+        <button class="tk-card tk-row" type="button" data-action="titokids-child:${esc(child.id)}" style="width:100%;text-align:left;cursor:pointer">
+          ${tkRing(child.fullName)}
+          <span style="flex:1;min-width:0">
+            <strong>${esc(child.fullName)}</strong>${child.pendingRequests ? ` <span class="chip" style="background:#e8efff;color:#2f5cff">${child.pendingRequests} waiting</span>` : ""}
+            <span class="tk-sub" style="display:block">Child Wallet${child.linked ? ` · @${esc(child.childUsername)}` : ""}</span>
+            <span class="tk-balance">${esc(money(child.balance))}</span>
+            <span class="tk-sub" style="display:block">Available balance</span>
+          </span>
+          <span aria-hidden="true">${icon("arrow-left")}</span>
+        </button>`).join("")
+      : `
+        <section class="empty-state compact-state">
+          ${icon("contacts")}
+          <strong>No children yet</strong>
+          <p>Add your first child to start managing their money with TitoKids — a real ring-fenced wallet, limits you control, and approvals in your pocket.</p>
+        </section>`}
+      <div class="auth-actions" style="margin-top:10px">
+        <button class="btn primary" type="button" data-action="titokids-add">${icon("send")} Add Child</button>
+      </div>`;
+  } catch (error) {
+    host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
+  }
+}
+function openTitoKidsAddModal() {
+  state.currentModalAction = "titokids-add";
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">TitoKids</p><h2>Add a child</h2><p class="lead">A dedicated wallet under your account, controlled by you.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="titokids-add">
+      <div class="field"><label>Child’s name</label><input name="fullName" maxlength="120" required placeholder="e.g. Aiden"></div>
+      <div class="field"><label>Date of birth <span class="field-optional">optional</span></label><input name="dateOfBirth" type="date">
+        <small class="field-hint">Used only to show their age — nothing else.</small></div>
+      <div class="field"><label>Your relationship</label><select name="relationship">
+        <option value="parent">Parent</option><option value="guardian">Guardian</option><option value="other">Other authorised relationship</option>
+      </select></div>
+      <div class="field"><label>Child’s TitoPay <span class="field-optional">optional</span></label>
+        <input name="childIdentifier" maxlength="120" placeholder="@username, email or cellphone">
+        <small class="field-hint">If your child has their own TitoPay, linking lets them see their balance under My Family and ask you for money. Leave blank to manage everything yourself.</small></div>
+      <button class="btn primary" type="submit">${icon("check-circle")} Add child</button>
+    </form>
+  `);
+}
+async function submitTitoKidsAdd(data) {
+  const result = await api("/v1/tito-kids/children", { method: "POST", body: {
+    fullName: data.fullName, dateOfBirth: data.dateOfBirth || undefined,
+    relationship: data.relationship, childIdentifier: data.childIdentifier || undefined
+  } });
+  showToast(result.child.linked ? `${result.child.fullName} added and linked — they’ve been told.` : `${result.child.fullName} added.`);
+  await openTitoKidsModal();
+}
+async function openTitoKidsChild(childId) {
+  state.currentModalAction = `titokids-child:${childId}`;
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">TitoKids</p><h2 data-tk-child-name>Child</h2><p class="lead" data-tk-child-sub>Loading…</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section data-tk-child><p class="field-hint">Loading…</p></section>
+  `);
+  await refreshTitoKidsChild(childId);
+}
+async function refreshTitoKidsChild(childId) {
+  const host = document.querySelector("[data-tk-child]");
+  if (!host) return;
+  try {
+    const result = await api(`/v1/tito-kids/children/${encodeURIComponent(childId)}`);
+    const child = result.child;
+    state.titoKidsChild = child;
+    const nameEl = document.querySelector("[data-tk-child-name]");
+    if (nameEl) nameEl.textContent = child.fullName;
+    const subEl = document.querySelector("[data-tk-child-sub]");
+    if (subEl) subEl.textContent = child.linked ? `Linked to @${child.childUsername}` : `${child.relationship === "guardian" ? "Guardian" : "Parent"}-managed wallet`;
+    const limits = child.limits || {};
+    const catKeys = Object.keys(limits.categories || {});
+    host.innerHTML = `
+      <section class="tk-card">
+        <div class="tk-row">${tkRing(child.fullName)}
+          <span><span class="tk-sub">Available</span><span class="tk-balance" style="display:block">${esc(money(child.balance))}</span></span>
+        </div>
+        <div class="tk-grid">
+          <button class="btn primary" type="button" data-action="titokids-fund:${esc(child.id)}">${icon("wallet")} Add Money</button>
+          <button class="btn secondary" type="button" data-action="titokids-pay:${esc(child.id)}">${icon("send")} Pay for a Need</button>
+        </div>
+        <p class="field-hint" style="margin:8px 0 0">Add Money moves money from your wallet to ${esc(child.fullName)}’s. Pay for a Need pays a school, shop or person straight from ${esc(child.fullName)}’s wallet — no loose cash.</p>
+      </section>
+      <section class="tk-card">
+        <p class="tk-sub"><strong style="color:var(--text)">Limits &amp; Controls</strong> · spent this week: ${esc(money(child.spent?.week || 0))}</p>
+        <form class="form-grid" data-form="titokids-limits" style="margin-top:8px">
+          <input type="hidden" name="childId" value="${esc(child.id)}">
+          <div class="field-row">
+            <div class="field"><label>Daily</label><div class="input-affix currency-affix" data-prefix="R"><input name="dailyLimit" inputmode="decimal" value="${limits.dailyLimit ?? ""}" placeholder="No limit"></div></div>
+            <div class="field"><label>Weekly</label><div class="input-affix currency-affix" data-prefix="R"><input name="weeklyLimit" inputmode="decimal" value="${limits.weeklyLimit ?? ""}" placeholder="No limit"></div></div>
+            <div class="field"><label>Monthly</label><div class="input-affix currency-affix" data-prefix="R"><input name="monthlyLimit" inputmode="decimal" value="${limits.monthlyLimit ?? ""}" placeholder="No limit"></div></div>
+          </div>
+          <span class="field-label">Categories ${esc(child.fullName)} can be paid for</span>
+          <div class="tk-chiprow">
+            ${catKeys.map((key) => `<label class="chip" style="cursor:pointer;${limits.categories[key] ? "" : "opacity:0.45;text-decoration:line-through"}"><input type="checkbox" name="cat_${esc(key)}" ${limits.categories[key] ? "checked" : ""} style="margin-right:5px">${esc((state.titoKids?.categories || {})[key] || key)}</label>`).join("")}
+          </div>
+          <button class="btn secondary" type="submit">${icon("check-circle")} Save limits</button>
+        </form>
+      </section>
+      <section class="tk-card">
+        <p class="tk-sub"><strong style="color:var(--text)">Savings goals</strong></p>
+        ${(child.goals || []).map((goal) => `
+          <div style="margin:10px 0">
+            <div class="tk-line" style="border:none;padding:0"><strong>${esc(goal.name)}</strong><span>${esc(money(goal.saved))} / ${esc(money(goal.target))} · ${goal.percent}%</span></div>
+            <div class="tk-progress"><span style="width:${Math.max(2, Math.min(100, goal.percent))}%"></span></div>
+          </div>`).join("") || `<p class="field-hint">No goals yet — a goal turns saving into something ${esc(child.fullName)} can watch grow.</p>`}
+        <form class="form-grid" data-form="titokids-goal" style="margin-top:8px">
+          <input type="hidden" name="childId" value="${esc(child.id)}">
+          <div class="field-row">
+            <div class="field"><label>Goal</label><input name="name" maxlength="120" required placeholder="e.g. School Trip"></div>
+            <div class="field"><label>Target</label><div class="input-affix currency-affix" data-prefix="R"><input name="target" inputmode="decimal" required placeholder="2000"></div></div>
+          </div>
+          <button class="btn secondary" type="submit">${icon("send")} Create goal</button>
+        </form>
+      </section>
+      <section class="tk-card">
+        <p class="tk-sub"><strong style="color:var(--text)">Activity</strong></p>
+        ${(child.activity || []).length ? (child.activity || []).slice(0, 25).map((item) => `
+          <div class="tk-line">
+            <span><strong>${esc(item.categoryLabel)}</strong>${item.recipient ? ` · ${esc(item.recipient)}` : ""}${item.note ? `<br><small class="tk-sub">${esc(item.note)}</small>` : ""}<br><small class="tk-sub">${esc(friendlyDate(item.createdAt))}</small></span>
+            <span class="${item.direction === "in" ? "tk-in" : "tk-out"}">${item.direction === "in" ? "+" : "-"}${esc(money(item.amount))}</span>
+          </div>`).join("") : `<p class="field-hint">No activity yet.</p>`}
+      </section>
+      <div class="auth-actions">
+        <button class="btn ghost" type="button" data-tk-remove="${esc(child.id)}">Remove ${esc(child.fullName)} from TitoKids</button>
+      </div>`;
+  } catch (error) {
+    host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
+  }
+}
+function openTitoKidsFundModal(childId) {
+  const child = state.titoKidsChild || {};
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">TitoKids</p><h2>Add money</h2><p class="lead">From your wallet to ${esc(child.fullName || "the child")}’s — instantly, no fees.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="titokids-fund">
+      <input type="hidden" name="childId" value="${esc(childId)}">
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required placeholder="100.00"></div></div>
+      ${(child.goals || []).filter((goal) => !goal.achieved).length ? `
+      <div class="field"><label>Toward a goal <span class="field-optional">optional</span></label><select name="goalId">
+        <option value="">Just the wallet</option>
+        ${(child.goals || []).filter((goal) => !goal.achieved).map((goal) => `<option value="${esc(goal.id)}">${esc(goal.name)} (${goal.percent}%)</option>`).join("")}
+      </select></div>` : ""}
+      <div class="field"><label>Note <span class="field-optional">optional</span></label><input name="note" maxlength="200" placeholder="e.g. Pocket money"></div>
+      <button class="btn primary" type="submit">${icon("wallet")} Add money</button>
+    </form>
+  `);
+}
+async function submitTitoKidsFund(data) {
+  const result = await api(`/v1/tito-kids/children/${encodeURIComponent(data.childId)}/fund`, {
+    method: "POST", body: { amount: data.amount, note: data.note || undefined, goalId: data.goalId || undefined }
+  });
+  showToast(`Added — the wallet now holds ${money(result.balance)}.`);
+  await openTitoKidsChild(data.childId);
+}
+function openTitoKidsPayModal(childId) {
+  const child = state.titoKidsChild || {};
+  const categories = state.titoKids?.categories || {};
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">TitoKids</p><h2>Pay for a need</h2><p class="lead">Pays a school, shop or person directly from ${esc(child.fullName || "the child")}’s wallet — the money can only go where you point it.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="titokids-pay">
+      <input type="hidden" name="childId" value="${esc(childId)}">
+      <div class="field"><label>Pay to</label><input name="identifier" required maxlength="120" placeholder="@username, email or cellphone"></div>
+      <div class="field"><label>What is it for?</label><select name="category">
+        ${Object.entries(categories).map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join("")}
+      </select></div>
+      <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required placeholder="45.00"></div></div>
+      <div class="field"><label>Note <span class="field-optional">optional</span></label><input name="note" maxlength="200" placeholder="e.g. School lunch for the week"></div>
+      <button class="btn primary" type="submit">${icon("send")} Pay</button>
+    </form>
+  `);
+}
+async function submitTitoKidsPay(data) {
+  const body = { identifier: data.identifier, amount: data.amount, category: data.category, note: data.note || undefined };
+  let result;
+  try {
+    result = await api(`/v1/tito-kids/children/${encodeURIComponent(data.childId)}/pay`, { method: "POST", body });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (/limit/i.test(message) && /Confirm to pay anyway/i.test(message) && window.confirm(`${message.replace(" Confirm to pay anyway, or adjust the limits.", "")}\n\nPay anyway? This will be recorded as an over-limit payment.`)) {
+      result = await api(`/v1/tito-kids/children/${encodeURIComponent(data.childId)}/pay`, { method: "POST", body: { ...body, allowOverLimit: true } });
+    } else {
+      throw error;
+    }
+  }
+  showToast(`Paid ${money(result.amount)} to ${result.recipientName} · ${result.category ? (state.titoKids?.categories || {})[result.category] || result.category : ""}.`);
+  await openTitoKidsChild(data.childId);
+}
+async function submitTitoKidsLimits(data) {
+  const categories = {};
+  Object.keys(data).forEach((key) => { if (key.startsWith("cat_")) categories[key.slice(4)] = true; });
+  const child = state.titoKidsChild || {};
+  Object.keys(child.limits?.categories || {}).forEach((key) => { if (categories[key] === undefined) categories[key] = false; });
+  await api(`/v1/tito-kids/children/${encodeURIComponent(data.childId)}/limits`, {
+    method: "PATCH",
+    body: { dailyLimit: data.dailyLimit || null, weeklyLimit: data.weeklyLimit || null, monthlyLimit: data.monthlyLimit || null, categories }
+  });
+  showToast("Limits saved — they apply from the very next payment.");
+  await refreshTitoKidsChild(data.childId);
+}
+async function submitTitoKidsGoal(data) {
+  await api(`/v1/tito-kids/children/${encodeURIComponent(data.childId)}/goals`, { method: "POST", body: { name: data.name, target: data.target } });
+  showToast(`Goal “${data.name}” created.`);
+  await refreshTitoKidsChild(data.childId);
+}
+/* Child side: My Family */
+async function openMyFamilyModal() {
+  state.currentModalAction = "my-family";
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">TitoKids</p><h2>My Family</h2><p class="lead">Your family wallet — see your money and ask when you need more.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section data-tk-family><p class="field-hint">Loading…</p></section>
+  `);
+  const host = document.querySelector("[data-tk-family]");
+  try {
+    const result = await api("/v1/tito-kids/family");
+    state.myFamilyCategories = result.categories || {};
+    const items = result.items || [];
+    if (!host) return;
+    if (!items.length) {
+      host.innerHTML = `<section class="empty-state compact-state">${icon("contacts")}<strong>No family link yet</strong><p>When a parent or guardian adds you on TitoKids with your TitoPay details, your family wallet appears here.</p></section>`;
+      return;
+    }
+    host.innerHTML = items.map((family) => `
+      <section class="tk-card">
+        <div class="tk-row">${tkRing(family.parentName)}
+          <span><span class="tk-sub">Managed by ${esc(family.parentName)}</span><span class="tk-balance" style="display:block">${esc(money(family.balance))}</span><span class="tk-sub">Available</span></span>
+        </div>
+        <form class="form-grid" data-form="titokids-request" style="margin-top:10px">
+          <input type="hidden" name="childId" value="${esc(family.childId)}">
+          <div class="field-row">
+            <div class="field"><label>Ask for</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required placeholder="50.00"></div></div>
+            <div class="field"><label>For</label><select name="category">${Object.entries(state.myFamilyCategories).map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join("")}</select></div>
+          </div>
+          <div class="field"><label>Why? <span class="field-optional">optional</span></label><input name="note" maxlength="200" placeholder="e.g. Taxi to practice"></div>
+          <button class="btn primary" type="submit">${icon("send")} Ask ${esc(family.parentName.split(" ")[0])}</button>
+        </form>
+        ${(family.requests || []).length ? `
+          <p class="tk-sub" style="margin-top:10px"><strong style="color:var(--text)">My requests</strong></p>
+          ${family.requests.map((request) => `
+            <div class="tk-line"><span>${esc(money(request.amount))} · ${esc(request.categoryLabel)}${request.note ? ` — ${esc(request.note)}` : ""}</span>
+              <span class="chip" style="${request.status === "approved" ? "background:#e7f6ec;color:#0b7a3b" : request.status === "declined" ? "background:#fdeaea;color:#b3261e" : "background:#e8efff;color:#2f5cff"}">${esc(request.status)}</span></div>`).join("")}` : ""}
+        ${(family.activity || []).length ? `
+          <p class="tk-sub" style="margin-top:10px"><strong style="color:var(--text)">Recent activity</strong></p>
+          ${family.activity.slice(0, 10).map((item) => `
+            <div class="tk-line"><span>${esc(item.categoryLabel)}<br><small class="tk-sub">${esc(friendlyDate(item.createdAt))}</small></span>
+              <span class="${item.direction === "in" ? "tk-in" : "tk-out"}">${item.direction === "in" ? "+" : "-"}${esc(money(item.amount))}</span></div>`).join("")}` : ""}
+      </section>`).join("");
+  } catch (error) {
+    if (host) host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
+  }
+}
+async function submitTitoKidsRequest(data) {
+  await api(`/v1/tito-kids/family/${encodeURIComponent(data.childId)}/requests`, {
+    method: "POST", body: { amount: data.amount, category: data.category, note: data.note || undefined }
+  });
+  showToast("Sent — you’ll be told the moment they answer.");
+  await openMyFamilyModal();
+}
 function businessStaffRow(member) {
   const initial = String(member.fullName || "?").trim().charAt(0).toUpperCase() || "?";
   return `
@@ -17364,6 +17734,9 @@ function quickServiceCandidates() {
   if (businessSalesTileVisible() && !services.some((service) => String(service.action || service.id) === "business-sales")) {
     services.push(businessSalesTileService());
   }
+  if (titoKidsTileVisible() && !services.some((service) => String(service.action || service.id) === "tito-kids")) {
+    services.push(titoKidsTileService());
+  }
   const unique = new Map();
   services.forEach((service) => {
     const id = String(service.id || service.serviceCode || "");
@@ -19878,7 +20251,8 @@ function commercialServiceIcon(item = {}) {
     ticketing: "ticketing",
     "business-ticketing-staff": "staff-badge",
     "enterprise-distribution": "bulk-distribution",
-    "business-sales": "chart"
+    "business-sales": "chart",
+    "tito-kids": "contacts"
   };
   return byAction[key] || normalizeIconName(item.service_icon || item.serviceIcon || key);
 }
@@ -19891,6 +20265,7 @@ function serviceTypeFromAction(action, status) {
   if (action === "business-staff") return "businessStaff";
   if (action === "enterprise-distribution") return "enterpriseDistribution";
   if (action === "business-sales") return "businessSales";
+  if (action === "tito-kids") return "titoKids";
   if (action === "learn") return "learn";
   if (action === "stockvel") return "stockvel";
   if (action === "tip") return "tip";
@@ -20099,6 +20474,7 @@ function serviceById(id) {
   if (found) return found;
   if (id === "enterprise-distribution" && enterpriseDistributionTileVisible()) return enterpriseDistributionTileService();
   if (id === "business-sales" && businessSalesTileVisible()) return businessSalesTileService();
+  if (id === "tito-kids" && titoKidsTileVisible()) return titoKidsTileService();
   return undefined;
 }
 function servicesView() {
@@ -20117,6 +20493,9 @@ function servicesView() {
   }
   if (businessSalesTileVisible() && !active.some((service) => String(service.action || service.id) === "business-sales")) {
     active.push(businessSalesTileService());
+  }
+  if (titoKidsTileVisible() && !active.some((service) => String(service.action || service.id) === "tito-kids")) {
+    active.push(titoKidsTileService());
   }
   const soon = hideDuplicateAirtimeDataTiles(comingSoonServices().filter(shouldShowServiceTile));
   const searchTile = state.auth?.accessToken
@@ -20208,6 +20587,7 @@ function handleService(id) {
   if (service.type === "businessStaff" || service.action === "business-staff") return openBusinessStaffModal();
   if (service.type === "enterpriseDistribution" || service.action === "enterprise-distribution") return openEnterpriseDistributionDashboard();
   if (service.type === "businessSales" || service.action === "business-sales") return openBusinessSalesModal();
+  if (service.type === "titoKids" || service.action === "tito-kids") return openTitoKidsModal();
   if (service.action === "top-up") return openTopUpModal(service);
   if (service.action === "withdraw") return openWithdrawModal(service);
   if (["airtime", "airtime-data", "airtime-and-data", "data", "electricity", "voucher"].includes(service.action)) {
@@ -21628,12 +22008,14 @@ const MODAL_STACK_ACTIONS = new Set([
   // page, the scanner and a ticket's email screen always offers a way back.
   "ticketing-refresh", "ticketing-staff-open", "ticketing-staff-manage",
   "ticketing-create-event", "vendor-tag-charge", "ticketing-browse-public",
-  "my-tickets", "business-sales", "business-sales-staff", "my-workplaces"
+  "my-tickets", "business-sales", "business-sales-staff", "my-workplaces",
+  "tito-kids", "titokids-add", "my-family"
 ]);
 // Parametrised modal actions ("action:value") that join the same back trail.
 // Matched on the prefix before the colon; the full string is what replays.
 const MODAL_STACK_ACTION_PREFIXES = new Set([
-  "ticketing-open-event", "ticket-email", "ticketing-request-change", "staff-sell"
+  "ticketing-open-event", "ticket-email", "ticketing-request-change", "staff-sell",
+  "titokids-child", "titokids-fund", "titokids-pay"
 ]);
 // Ticket tier names offered when setting up an event. Suggestions only — the
 // field stays free text, so organisers can name a tier anything. Complimentary
