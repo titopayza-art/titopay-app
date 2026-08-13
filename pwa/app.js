@@ -18373,7 +18373,10 @@ async function syncTitoPayChatNotifications() {
     };
     if (!addInAppNotification(notice)) return;
     changed = true;
-    if (item.notification_type === "login_notification") {
+    // A login is still announced immediately, even in the foreground - it is a
+    // security event and the person may not have caused it. Everything else
+    // waits until the app is not on screen.
+    if (item.notification_type === "login_notification" || shouldRaiseDeviceNotice(notice)) {
       showTitoPayDeviceNotification(notice).catch(() => null);
     }
   });
@@ -21518,10 +21521,36 @@ function syncTransactionNotifications() {
     const isNew = !seen.has(key);
     seen.add(key);
     // Backfill quietly on first sync; only genuinely new movements are unread.
-    if (addInAppNotification(transactionNotificationItem(tx, isNew && !firstSync))) changed = true;
+    const item = transactionNotificationItem(tx, isNew && !firstSync);
+    if (addInAppNotification(item)) {
+      changed = true;
+      // Money that actually moved since the last look, and only then.
+      if (isNew && !firstSync && shouldRaiseDeviceNotice(item)) {
+        showTitoPayDeviceNotification(item).catch(() => null);
+      }
+    }
   });
   writeJson(seenKey, [...seen].slice(-300));
   return changed;
+}
+// WHICH NOTICES EARN A PLACE ON THE LOCK SCREEN.
+//
+// Only a login ever reached the device. Everything else - money arriving,
+// money leaving, a ticket bought, a child asking for money - sat silently in
+// the app until somebody opened it, which is the one moment they no longer
+// needed telling. These are the ones worth interrupting somebody for: money
+// that moved, and something waiting on their answer.
+//
+// Deliberately NOT on this list: marketing, general chat chatter, and
+// anything the person is already looking at. A notification that arrives for
+// everything is a notification nobody reads.
+function shouldRaiseDeviceNotice(notice = {}) {
+  const type = String(notice.metadata?.notificationType || notice.category || notice.type || "");
+  if (!DEVICE_NOTICE_TYPES.has(type)) return false;
+  // Not while they are looking at the app: an in-app badge already says it,
+  // and a banner over the screen you are using is noise, not news.
+  if (typeof document !== "undefined" && document.visibilityState === "visible") return false;
+  return true;
 }
 async function showTitoPayDeviceNotification(notice = {}) {
   if (!("Notification" in window) || Notification.permission !== "granted") return false;
@@ -21531,7 +21560,7 @@ async function showTitoPayDeviceNotification(notice = {}) {
     badge: "./assets/favicon.png?v=165",
     tag: `titopay-${notice.id || "login-notification"}`,
     renotify: false,
-    data: { route: notice.metadata?.route || "profile" }
+    data: { route: notice.metadata?.route || (notice.metadata?.category === "payment" ? "activity" : "profile") }
   };
   if ("serviceWorker" in navigator) {
     const registration = await navigator.serviceWorker.ready;
@@ -22700,6 +22729,17 @@ const TITOKIDS_CATEGORY_LABELS = {
 // anybody outside this repository. Same choice as the admin console, which
 // shows "Version 1.0" with its console build on the tooltip.
 const TITOPAY_APP_VERSION = "1.0";
+const DEVICE_NOTICE_TYPES = new Set([
+  "login_notification",
+  "payment-in", "payment-out",
+  "titokids_request", "titokids_request_decided",
+  "titokids_guardian_invite", "titokids_guardian_response",
+  "business_staff_added", "business_staff_removed",
+  "support_reply", "ticket_purchase", "ticket_claimed",
+  "stockvel_withdrawal_request", "stockvel_invitation"
+]);
+// Lives here rather than beside the notification code because a const between
+// the function sections is not hoisted, and those sections are order-sensitive.
 const SERVICE_GROUPS = [
   { key: "send", label: "Send & pay", members: ["send-money", "qr-pay", "payment-request", "bill-split", "send-gift"] },
   { key: "money", label: "Money in & out", members: ["top-up", "receive-money", "withdraw", "payouts", "tip", "refund"] },

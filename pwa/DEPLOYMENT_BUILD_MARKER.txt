@@ -1,9 +1,34 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v360 (titopay-pwa-v360)
+PWA bundle: v361 (titopay-pwa-v361)
 Admin console: admin-console-v81
 
-This build — the Profile line reads "TitoPay App v1.0".
+This build — notifications reach the phone, and say something human:
+
+  MONEY NOW REACHES THE DEVICE. Only a login ever raised a notification
+  on the phone. Money arriving, money leaving, a ticket bought, a child
+  asking for money, a co-parent invitation, a staff member added, a
+  support reply — all of it sat silently in the app until somebody opened
+  it, which is the one moment they no longer needed telling.
+
+  Those now arrive on the device, and a money alert opens Activity rather
+  than Profile. Deliberately NOT included: marketing and general chat
+  chatter. A notification that arrives for everything is one nobody reads.
+
+  AND IT STAYS QUIET WHEN YOU ARE ALREADY THERE. Nothing interrupts
+  somebody who is using the app — the badge already says it. The one
+  exception is a login, which is announced immediately either way,
+  because the person may not be the one who caused it.
+
+  THE LOGIN NOTICE STOPS SHOUTING A DEBUG STRING. It printed the raw
+  browser agent, so a lock screen read "recorded from Mozilla/5.0
+  (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHT".
+  It now reads "recorded from your iPhone", "an Android phone (Chrome)",
+  "a Windows PC (Edge)". Fixed on the SERVER, where the message is
+  written, so older apps still sending raw agents are cleaned up too.
+  api.zip carries that half.
+
+Also in this build — the Profile line reads "TitoPay App v1.0".
 
   The version line was changed from the build number to the product
   version in v357; this writes it exactly as asked, with the v: "TitoPay

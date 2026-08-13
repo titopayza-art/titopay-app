@@ -844,12 +844,40 @@ async function issueAdminPasswordOnlySession({ user, payload, meta, scope, polic
   };
 }
 
+// The app sends navigator.userAgent as the device name, so a customer's phone
+// read: "recorded from Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)
+// AppleWebKit/605.1.15 (KHT". That is a debug string on a lock screen. Turn it
+// into what a person would say - "iPhone, Safari" - and do it HERE, because
+// the server composes the message and older apps keep sending raw agents.
+function friendlyDeviceName(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "a web browser";
+  // Already human (the app's own labels, a named trusted device).
+  if (!/Mozilla|AppleWebKit|Gecko|Chrome\/|Safari\//i.test(text)) return text.slice(0, 60);
+  const device = /iPhone/i.test(text) ? "iPhone"
+    : /iPad/i.test(text) ? "iPad"
+    : /Android/i.test(text) ? "an Android phone"
+    : /Macintosh|Mac OS X/i.test(text) ? "a Mac"
+    : /Windows/i.test(text) ? "a Windows PC"
+    : /Linux/i.test(text) ? "a Linux computer"
+    : "a web browser";
+  // Order matters: Edge and Chrome both claim Safari, Chrome claims Safari too.
+  const browser = /Edg\//i.test(text) ? "Edge"
+    : /OPR\/|Opera/i.test(text) ? "Opera"
+    : /Firefox\//i.test(text) ? "Firefox"
+    : /CriOS|Chrome\//i.test(text) ? "Chrome"
+    : /Safari\//i.test(text) ? "Safari"
+    : "";
+  const article = device.startsWith("a") || device.startsWith("an") ? device : `your ${device}`;
+  return browser ? `${article} (${browser})` : article;
+}
+
 async function queueLoginNotice(user,accessToken,payload={}) {
   if(!user?.id)return;
   try {
     const fingerprint=String(payload.deviceFingerprint||payload.device_fingerprint||"").trim();let templateKey="login_notification";
     if(fingerprint){const column=user.user_type==="admin"?"admin_user_id":"user_id";const trusted=await pool.query(`SELECT 1 FROM trusted_devices WHERE ${column}=$1 AND device_fingerprint=$2 AND revoked_at IS NULL LIMIT 1`,[user.id,fingerprint]);if(!trusted.rowCount)templateKey="new_device_login";}
-    const device=payload.deviceName||(user.user_type==="admin"?"Admin Browser":"Web Browser");
+    const device=friendlyDeviceName(payload.deviceName)||(user.user_type==="admin"?"Admin Browser":"Web Browser");
     const noticeKey=sha256(accessToken).slice(0,32);
     if(user.user_type==="customer"&&templateKey==="login_notification") {
       const notificationId=await createNotification({
