@@ -16190,9 +16190,7 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
         ${ticketWalletControl(ticket)}
         ${linkableTicketId(ticket) ? `<button class="btn primary" type="button" data-action="event-tag-link:${esc(linkableTicketId(ticket))}">${icon("scan")} Link wristband</button>` : ""}
       </div>
-      <footer class="ticket-stub-foot">${linkableTicketId(ticket)
-        ? "This event is cashless. Link your wristband or card to pay by tapping it at any vendor — it pays from your TitoPay Wallet, and there is no separate event balance."
-        : "Present this ticket at the entrance. Do not share the code publicly."}</footer>
+      <footer class="ticket-stub-foot">${ticketWristbandNote(ticket)}</footer>
     </article>`;
 }
 function rememberRenderedTicket(ticket, order, event) {
@@ -16636,6 +16634,26 @@ function renderMyTickets() {
 function eventTagsToShow() {
   // A replaced tag is history, not something the customer needs on screen.
   return (state.ticketing.myTags || []).filter((tag) => tag && tag.status !== "REPLACED");
+}
+
+// A blank where a "Link wristband" button might be is read as "the feature was
+// removed" by anyone who knows it exists. So the ticket says which of the four
+// situations it is actually in, and never leaves the question hanging.
+function ticketWristbandNote(ticket = {}) {
+  const entrance = "Present this ticket at the entrance. Do not share the code publicly.";
+  if (linkableTicketId(ticket)) {
+    return "This event is cashless. Link your wristband or card to pay by tapping it at any vendor — it pays from your TitoPay Wallet, and there is no separate event balance.";
+  }
+  if (ticket.wristbandLinked) {
+    return `${entrance} Your wristband is linked to this ticket — tap it at any vendor to pay from your TitoPay Wallet.`;
+  }
+  if (ticket.cashlessTagsEnabled) {
+    // Cashless, nothing linked, yet the server did not offer it: the tag list
+    // has not loaded, or this ticket is not eligible. Say so rather than
+    // pretend the feature does not exist.
+    return `${entrance} This event is cashless — if the Link wristband button is missing, pull this screen closed and open it again.`;
+  }
+  return `${entrance} The organiser has not switched on cashless wristbands for this event.`;
 }
 
 // Is THIS ticket one the server says can take a wristband? The button lives on

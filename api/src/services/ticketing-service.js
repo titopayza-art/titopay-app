@@ -2028,7 +2028,12 @@ async function listMyTickets(userId) {
     `SELECT t.*,
             o.order_reference, o.status AS order_status, o.created_at AS order_created_at,
             tt.ticket_name,
-            e.event_name, e.slug, e.event_date, e.start_time, e.venue_name, e.city, e.province
+            e.event_name, e.slug, e.event_date, e.start_time, e.venue_name, e.city, e.province,
+            COALESCE(e.cashless_tags_enabled, FALSE) AS cashless_tags_enabled,
+            EXISTS (
+              SELECT 1 FROM event_tags g
+               WHERE g.ticket_id = t.id AND g.status IN ('ASSIGNED','ACTIVE')
+            ) AS wristband_linked
        FROM tickets t
        JOIN ticket_orders o ON o.id = t.order_id
        JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
@@ -2047,6 +2052,11 @@ async function listMyTickets(userId) {
     ...ticketResponse(row),
     qrImageDataUrl: qrImages[index],
     ticketTypeName: row.ticket_name,
+    // Carried so a ticket can explain itself rather than leave a blank where a
+    // "Link wristband" button would be. Silence reads as "the feature was
+    // removed" to anyone who knows it exists.
+    cashlessTagsEnabled: Boolean(row.cashless_tags_enabled),
+    wristbandLinked: Boolean(row.wristband_linked),
     eventName: row.event_name,
     eventDate: row.event_date,
     venueName: row.venue_name,

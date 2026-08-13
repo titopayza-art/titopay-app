@@ -1,9 +1,30 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v355 (titopay-pwa-v355)
+PWA bundle: v356 (titopay-pwa-v356)
 Admin console: admin-console-v81
 
-This build — the co-parent rows stop breaking their own buttons:
+This build — a ticket now answers the wristband question itself:
+
+  Link wristband was never removed. It moved onto the ticket in v351 and
+  appears when the server says that ticket can take a tag. The failure
+  was SILENCE: when a ticket was not eligible the card showed nothing,
+  and to somebody who knows the feature exists, nothing looks exactly
+  like deleted.
+
+  Every ticket now accounts for its own wristband state, in all four
+  cases:
+    linkable            -> the Link wristband button, and how it works
+    already linked      -> "your wristband is linked to this ticket"
+    cashless, not offered -> "if the button is missing, close and reopen"
+    not cashless        -> "the organiser has not switched on cashless
+                           wristbands for this event"
+
+  That last line is the answer this build exists to give: if there is no
+  button, the ticket now says WHY, on the ticket, without anybody having
+  to ask. api.zip carries the two facts the ticket needs — whether the
+  event is cashless and whether a tag is already on that ticket.
+
+Also in this build — the co-parent rows stop breaking their own buttons:
 
   In the "Who manages this wallet" list, the flex row squeezed the
   control until "Remove" wrapped into "Remov / e", and "Add a co-parent"
