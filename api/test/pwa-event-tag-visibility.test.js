@@ -46,13 +46,27 @@ test("the tickets screen says so when wristbands could not be checked", () => {
     "and say plainly that the check failed rather than showing nothing");
   assert.match(body, /data-action="my-tickets-refresh"/,
     "with a way to try again");
-  // The tickets themselves must never be held hostage by a tag failure.
-  assert.match(body, /\$\{\(state\.ticketing\.linkableTickets \|\| \[\]\)\.map\(eventTagLinkCard\)/,
-    "the linkable cards still render normally when the lookup worked");
+  // The tickets themselves must never be held hostage by a tag failure - the
+  // notice sits above them, it does not replace them.
+  assert.match(body, /tags\.map\(eventTagCard\)/, "linked tags still render");
+  assert.match(body, /myTicketCard|ticketStub|tickets\.map/, "and so do the tickets");
 });
 
-test("the Link Event Tag button still exists and is still one tap", () => {
-  assert.match(APP, /function eventTagLinkCard\(ticket = \{\}\)/, "the card was not removed");
-  assert.match(APP, /data-action="event-tag-link:\$\{esc\(ticket\.ticketId\)\}"/,
-    "and it still opens the tap-to-link flow directly");
+test("Link wristband sits on the ticket itself, and only there", () => {
+  // It used to be a separate card above the list. Somebody looking for it is
+  // looking at their ticket, so that is where the button belongs - and one
+  // door means it is not in both places (SIMPLICITY.md rule 1).
+  const stub = APP.slice(APP.indexOf('<div class="ticket-stub-actions">'));
+  const actions = stub.slice(0, stub.indexOf("</footer>"));
+  assert.match(actions, /data-action="event-tag-link:\$\{esc\(linkableTicketId\(ticket\)\)\}"/,
+    "the ticket's own actions offer the link");
+  assert.match(actions, /Link wristband/, "in the words a person is looking for");
+  assert.doesNotMatch(APP, /function eventTagLinkCard\(/,
+    "the separate card is gone - two doors onto one action is the thing we removed");
+
+  // The server still decides whether a ticket can take a tag; the app only asks.
+  const fn = APP.slice(APP.indexOf("function linkableTicketId(ticket = {})"));
+  const body = fn.slice(0, fn.indexOf("\n}") + 2);
+  assert.match(body, /state\.ticketing\.linkableTickets/, "read from the server's list");
+  assert.doesNotMatch(body, /cashless/i, "the app must not second-guess the cashless rule itself");
 });

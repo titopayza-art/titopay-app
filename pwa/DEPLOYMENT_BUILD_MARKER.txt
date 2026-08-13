@@ -1,9 +1,22 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v350 (titopay-pwa-v350)
+PWA bundle: v351 (titopay-pwa-v351)
 Admin console: admin-console-v81
 
-This build — a wristband button that could vanish without saying why:
+This build — "where do I link my wristband?":
+
+  LINK WRISTBAND IS NOW ON THE TICKET. It used to be a separate card
+  floating above the list, which is not where anyone looks: someone
+  linking a wristband is looking AT THEIR TICKET. The button now sits
+  with Download PDF, Email ticket and Add to Apple Wallet, and the
+  ticket's footer explains the event is cashless when it is. The separate
+  card is gone — one door, not two.
+
+  It still appears only when the server says that ticket can take a tag:
+  valid ticket, approved AND cashless event, nothing linked to it yet.
+  The app does not second-guess that rule; it asks.
+
+Also in this build — a wristband button that could vanish without saying why:
 
   "Link Event Tag" was never removed. It appears when the server lists a
   ticket as linkable: the ticket is valid, its event is approved AND

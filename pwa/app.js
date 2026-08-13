@@ -16115,8 +16115,11 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
         ${code ? `<button class="btn secondary ticket-download-btn" type="button" data-action="ticket-download:${esc(code)}">${icon("download")} Download PDF</button>` : ""}
         ${code ? `<button class="btn secondary ticket-email-btn" type="button" data-action="ticket-email:${esc(code)}">${icon("mail")} Email ticket</button>` : ""}
         ${ticketWalletControl(ticket)}
+        ${linkableTicketId(ticket) ? `<button class="btn primary" type="button" data-action="event-tag-link:${esc(linkableTicketId(ticket))}">${icon("scan")} Link wristband</button>` : ""}
       </div>
-      <footer class="ticket-stub-foot">Present this ticket at the entrance. Do not share the code publicly.</footer>
+      <footer class="ticket-stub-foot">${linkableTicketId(ticket)
+        ? "This event is cashless. Link your wristband or card to pay by tapping it at any vendor — it pays from your TitoPay Wallet, and there is no separate event balance."
+        : "Present this ticket at the entrance. Do not share the code publicly."}</footer>
     </article>`;
 }
 function rememberRenderedTicket(ticket, order, event) {
@@ -16542,7 +16545,6 @@ function renderMyTickets() {
           <button class="btn secondary" type="button" data-action="my-tickets-refresh">${icon("refresh")} Try again</button>
         </div>
       </section>` : ""}
-    ${(state.ticketing.linkableTickets || []).map(eventTagLinkCard).join("")}
     ${tags.map(eventTagCard).join("")}
     <section class="ticket-stub-list">${tickets
       .map((ticket) => ticketStub(ticket, ticket.order || {}, ticket.event || {}))
@@ -16563,25 +16565,19 @@ function eventTagsToShow() {
   return (state.ticketing.myTags || []).filter((tag) => tag && tag.status !== "REPLACED");
 }
 
-// Shown for a ticket at a cashless event that has no wristband on it yet. It
-// is the entry point to the whole tap-to-link flow, and it disappears the
-// moment a tag is linked, because then the tag card above says it all.
-function eventTagLinkCard(ticket = {}) {
-  return `
-    <article class="event-tag-card is-link">
-      <header class="event-tag-head">
-        <div>
-          <p class="eyebrow">Event Tag</p>
-          <strong>${esc(ticket.eventName || "TitoPay Event")}</strong>
-        </div>
-        <em class="sv-chip warn">Not linked</em>
-      </header>
-      <p class="event-tag-says">This event is cashless. Link your wristband or card to pay by tapping it at any vendor.</p>
-      <p class="event-tag-wallet">${icon("wallet")} Pays from your TitoPay Wallet. There is no separate event balance.</p>
-      <div class="event-tag-actions">
-        <button class="btn primary" type="button" data-action="event-tag-link:${esc(ticket.ticketId)}">${icon("scan")} Link Event Tag</button>
-      </div>
-    </article>`;
+// Is THIS ticket one the server says can take a wristband? The button lives on
+// the ticket itself rather than on a separate card above the list: somebody
+// looking for it is looking at their ticket, not at a panel about tickets.
+// The server decides — valid ticket, approved and cashless event, nothing
+// linked yet — and the app only asks whether this ticket is in that list.
+function linkableTicketId(ticket = {}) {
+  const linkable = state.ticketing.linkableTickets || [];
+  if (!linkable.length) return "";
+  const code = String(ticketCodeOf(ticket) || "");
+  const id = String(ticket.ticketId || ticket.id || "");
+  const match = linkable.find((item) =>
+    (id && String(item.ticketId) === id) || (code && String(item.ticketCode) === code));
+  return match ? String(match.ticketId) : "";
 }
 
 function eventTagCard(tag = {}) {
