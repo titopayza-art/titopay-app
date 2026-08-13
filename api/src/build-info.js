@@ -19,10 +19,11 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 7;
+const API_BUILD = 8;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  8: "Emails render full-width and readable on phones: viewport-aware wrapper.",
   7: "Stokvel treasurer contributions live; gift notices; PDF tickets in email; " +
      "email overhaul (copyright, legal links, unsubscribe, no dead verify link); " +
      "support list cleanup; response compression; hot-path indexes.",
