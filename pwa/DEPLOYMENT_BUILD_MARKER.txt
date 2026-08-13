@@ -1,9 +1,37 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v371 (titopay-pwa-v371)
+PWA bundle: v372 (titopay-pwa-v372)
 Admin console: admin-console-v81
 
-This build — the writing stops leaning on dashes:
+This build — one voice, audited letter by letter:
+
+  A full sweep for everything that reads as machine-written or careless,
+  measured against the actual files rather than vibes:
+
+  - BUTTON CASE. The app spoke in two voices: 154 buttons in sentence
+    case, about 60 in Title Case. Sentence case is the majority and the
+    modern standard, so the Title Case minority (33 labels: Add Money,
+    Send Tip, View Receipt, Create Event, Tap to Charge and friends) now
+    reads Add money, Send tip, View receipt. Tiles, tabs and feature
+    names (Send Money, Security Centre, My Tickets) keep their capitals:
+    those are names, and names are capitalised.
+  - Buttons that point at a real tab keep its capital: Check Activity,
+    Open Profile, Go to Ticketing.
+  - APOSTROPHES. Fourteen curly apostrophes sat in an app that types
+    straight ones. All straight now.
+  - ELLIPSES. Three "..." became the "…" the rest of the app uses.
+  - The one emoji in the product (a pin on stokvel decisions) is gone;
+    the styled DECISION label already said it.
+  - Verified clean: no exclamation marks anywhere in the product's
+    voice, no "seamless/effortless/empower" marketing filler, no
+    lorem or placeholder text, money formatted through one Intl
+    formatter everywhere in the app.
+
+  Reported, not yet changed (it spans every server email): app money
+  reads "R 1 700,00" (en-ZA) while server emails read "R1700.00".
+  They should match; that sweep deserves its own careful build.
+
+Previous build — the writing stops leaning on dashes:
 
   Every " — " used as a lazy connector is gone from the words customers
   read: 101 rewrites across the app and 50 more across the server's

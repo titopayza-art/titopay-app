@@ -1024,7 +1024,7 @@ function activityView() {
         <h2>Saved payment receipts</h2>
         <p class="muted">${receipts.length ? `${receipts.length} secure receipt${receipts.length === 1 ? "" : "s"} saved in TitoPay.` : "Receipts from QR payments and merchant sales will appear here."}</p>
       </div>
-      <button class="btn secondary" type="button" data-action="wallet-receipts">${icon("receipt-list")} Open Receipts</button>
+      <button class="btn secondary" type="button" data-action="wallet-receipts">${icon("receipt-list")} Open receipts</button>
     </section>
   `;
 }
@@ -1501,7 +1501,7 @@ function openTipModal() {
           <option value="Well done">Well done</option>
         </select>
       </div>
-      <button class="btn primary" type="submit">${icon("tip")} Send Tip</button>
+      <button class="btn primary" type="submit">${icon("tip")} Send tip</button>
     </form>
     <section class="reassure-card" role="note" aria-label="Receiving tips">
       <span class="icon-bubble">${icon("qr")}</span>
@@ -1511,7 +1511,7 @@ function openTipModal() {
       </div>
     </section>
     <div class="auth-actions">
-      <button class="btn secondary" data-action="tip-qr">${icon("tip")} Generate Tip QR</button>
+      <button class="btn secondary" data-action="tip-qr">${icon("tip")} Generate tip QR</button>
       <button class="btn secondary" data-action="tip-poster">${icon("qr")} Tip A4 poster</button>
     </div>
   `);
@@ -1617,7 +1617,7 @@ function openSuccessModal(transaction, preview, serviceCode, recipient) {
         <p><strong>Would you like to save this recipient as a beneficiary?</strong></p>
         <div class="auth-actions">
           <button class="btn secondary" type="button" data-action="beneficiary-save-after-payment">Save</button>
-          <button class="btn ghost" type="button" data-action="beneficiary-save-dismiss">Not Now</button>
+          <button class="btn ghost" type="button" data-action="beneficiary-save-dismiss">Not now</button>
         </div>
       </section>` : ""}
     <div class="tx-detail-actions">
@@ -1770,8 +1770,8 @@ function renderSupportEscalation(message) {
       <p>Estimated wait: 2-5 minutes. You can keep using TitoPay while the request is in the support queue.</p>
       <div class="support-actions">
         <button type="button" class="btn primary" data-support-escalation="live_chat">${icon("chat")} Start Live Chat</button>
-        <button type="button" class="btn secondary" data-support-escalation="callback">${icon("phone")} Request a Callback</button>
-        <button type="button" class="btn secondary" data-support-escalation="wait">${icon("refresh")} Continue Waiting</button>
+        <button type="button" class="btn secondary" data-support-escalation="callback">${icon("phone")} Request a callback</button>
+        <button type="button" class="btn secondary" data-support-escalation="wait">${icon("refresh")} Continue waiting</button>
       </div>
     </section>
   `);
@@ -3812,7 +3812,7 @@ async function handleAction(action, actionElement = null) {
   if (action === "my-tickets-refresh") {
     await refreshMyTickets();
   }
-  // Event Tag payments are ordinary wallet transactions, so "View Transactions"
+  // Event Tag payments are ordinary wallet transactions, so "View transactions"
   // goes to the Activity screen every other payment goes to. There is no
   // separate event history to build.
   if (action === "event-tag-export") {
@@ -4174,7 +4174,7 @@ function authView() {
       </section>
 
       <section class="auth-actions">
-        <button class="btn primary" data-auth-tab="login">${icon("lock")} Sign In</button>
+        <button class="btn primary" data-auth-tab="login">${icon("lock")} Sign in</button>
         <button class="btn secondary" data-auth-tab="register">${isBusiness ? "Create Business Account" : "Create Account"}</button>
       </section>
 
@@ -4222,7 +4222,7 @@ function authModalHtml(mode = "login") {
         : "Create Account"
       : mode === "reset"
         ? "Forgot PIN or Password"
-        : "Sign In";
+        : "Sign in";
   const copy =
     mode === "register"
       ? "Set up your TitoPay profile and wallet access."
@@ -4239,7 +4239,7 @@ function authModalHtml(mode = "login") {
         </div>`
       : `
         <div class="auth-modal-links">
-          <button class="btn ghost" data-auth-tab="login" type="button">Back to Sign In</button>
+          <button class="btn ghost" data-auth-tab="login" type="button">Back to sign in</button>
         </div>`;
   return `
     <div class="modal-head">
@@ -4418,10 +4418,10 @@ async function requestReset(data) {
       <div class="field"><label>OTP code</label><input name="otp" aria-label="OTP code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" required></div>
       <div class="field"><label>New PIN or password</label><input name="newPassword" aria-label="New PIN or password" type="password" minlength="4" required></div>
       <div class="field"><label>Confirm PIN or password</label><input name="confirmNewPassword" aria-label="Confirm PIN or password" type="password" minlength="4" required></div>
-      <button class="btn primary" type="submit">${icon("shield")} Reset PIN / Password</button>
+      <button class="btn primary" type="submit">${icon("shield")} Reset PIN or password</button>
     </form>`;
   const authPanel = document.querySelector("#auth-panel");
-  if (authPanel) authPanel.innerHTML = `${html}<div class="auth-modal-links"><button class="btn ghost" data-auth-tab="login" type="button">Back to Sign In</button></div>`;
+  if (authPanel) authPanel.innerHTML = `${html}<div class="auth-modal-links"><button class="btn ghost" data-auth-tab="login" type="button">Back to sign in</button></div>`;
   else openModal(`<div class="modal-head"><div><p class="eyebrow">Security</p><h2>Confirm OTP</h2></div><button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>${html}`);
   showToast(result.deduplicated
     ? `Your existing ${channelLabel} request is still active. No duplicate fee was charged.`
@@ -5872,7 +5872,7 @@ async function openProfileDetailsModal() {
         <div class="field"><label>Full name</label><input name="fullName" value="${esc(user.fullName || user.full_name || "")}" required></div>
         <div class="field"><label>Username</label><input name="username" value="${esc(user.username || "")}" minlength="3" maxlength="32" required></div>
         <div class="field"><label>Email</label><input name="email" type="email" value="${esc(user.email || "")}"></div>
-        <div class="field"><label>Cellphone</label><input name="phone" value="${esc(user.phone || "")}" placeholder="+27..." required></div>
+        <div class="field"><label>Cellphone</label><input name="phone" value="${esc(user.phone || "")}" placeholder="+27…" required></div>
         ${isBusiness ? `<div class="field"><label>Business name</label><input name="businessName" value="${esc(businessProfileName())}" required></div>` : ""}
         <button class="btn primary" type="submit">${icon("send")} Submit for approval</button>
       </form>
@@ -6476,7 +6476,7 @@ function transactionCostWording(serviceCode, netAmount, amount) {
       feeLabel: "TitoPay withdrawal fee",
       totalLabel: "Total deducted",
       netLabel: "You receive",
-      outcome: `You${"’"}ll receive ${money(netAmount)} in your bank account`
+      outcome: `You${"'"}ll receive ${money(netAmount)} in your bank account`
     };
   }
   if (isCardTopupService(serviceCode)) {
@@ -7380,7 +7380,7 @@ function openTopupRedirectModal(result) {
       <p>${icon("shield")} <span>Taking you to Peach Payments to pay ${esc(money(result.total ?? result.amount))} securely.${Number(result.fee) > 0 ? ` That is ${esc(money(result.amount))} into your wallet plus a ${esc(money(result.fee))} TitoPay top up fee.` : ""} Your wallet is credited once TitoPay confirms the payment.</span></p>
     </section>
     <div class="tx-detail-actions">
-      <button class="btn ghost" type="button" data-action="cancel-topup-redirect">${icon("arrow-left")} Back to Top Up</button>
+      <button class="btn ghost" type="button" data-action="cancel-topup-redirect">${icon("arrow-left")} Back to top up</button>
     </div>
   `);
 }
@@ -8419,7 +8419,7 @@ async function openSavedBeneficiariesModal({ refresh = false } = {}) {
     ${beneficiarySummaryStrip()}
     <div class="field"><label for="beneficiary-search">Search beneficiaries</label><input id="beneficiary-search" type="search" data-beneficiary-search value="${esc(state.beneficiarySearch)}" placeholder="Name, nickname, username or wallet"></div>
     <div data-beneficiary-list>${beneficiaryManagementList()}</div>
-    <button class="btn primary" type="button" data-action="beneficiary-add">${icon("plus")} Add Beneficiary</button>
+    <button class="btn primary" type="button" data-action="beneficiary-add">${icon("plus")} Add beneficiary</button>
   `);
 }
 function openBeneficiaryForm(item = null) {
@@ -8429,7 +8429,7 @@ function openBeneficiaryForm(item = null) {
   if (!item) state.beneficiaryVerification = null;
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Saved Beneficiaries</p><h2>${item ? "Edit beneficiary" : "Add Beneficiary"}</h2><p class="lead">${item ? "Update the nickname or recipient type." : "Check the recipient on TitoPay, then confirm and save. Adding a beneficiary moves no money."}</p></div>
+      <div><p class="eyebrow">Saved Beneficiaries</p><h2>${item ? "Edit beneficiary" : "Add beneficiary"}</h2><p class="lead">${item ? "Update the nickname or recipient type." : "Check the recipient on TitoPay, then confirm and save. Adding a beneficiary moves no money."}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="beneficiary">
@@ -8551,7 +8551,7 @@ function openInviteRecipientModal(identifier, invite = {}) {
       <p class="muted">Share the TitoPay invite link by SMS, email or WhatsApp. Payments can be completed once the recipient has registered.</p>
     </section>
     <div class="auth-actions">
-      <button class="btn primary" data-invite-share="${esc(identifier)}" data-invite-message="${esc(invite.message || "")}" data-invite-url="${esc(invite.url || "https://app.titopay.co.za")}">${icon("send")} Share Invite</button>
+      <button class="btn primary" data-invite-share="${esc(identifier)}" data-invite-message="${esc(invite.message || "")}" data-invite-url="${esc(invite.url || "https://app.titopay.co.za")}">${icon("send")} Share invite</button>
       <button class="btn secondary" data-close>Close</button>
     </div>
   `);
@@ -9007,7 +9007,7 @@ function openBusinessDocumentSavedModal(document, preview) {
     <p class="field-hint">Transaction preview total: ${money(preview.total || preview.amount || document.totals.total)}. Sharing the document is free; only the PDF download carries the extraction fee.</p>
     <div class="auth-actions">
       <button class="btn secondary" data-action="invoice-link">${icon("share")} Share document</button>
-      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay ${money(DOCUMENT_PDF_FEE)} + Download PDF</button>
+      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay ${money(DOCUMENT_PDF_FEE)} + download PDF</button>
     </div>
   `);
 }
@@ -9142,7 +9142,7 @@ function openReceiptModal(receiptId) {
     ${receiptHtml(receipt)}
     <div class="receipt-actions">
       <button class="btn secondary" type="button" data-close>${icon("check-circle")} Done</button>
-      <button class="btn primary" type="button" data-receipt-share="${esc(receipt.id)}">${icon("share")} Share Receipt</button>
+      <button class="btn primary" type="button" data-receipt-share="${esc(receipt.id)}">${icon("share")} Share receipt</button>
     </div>
   `);
 }
@@ -11930,7 +11930,7 @@ function printQrPoster() {
 function openTipQrModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Tip</p><h2>Generate Tip QR</h2><p class="lead">Create a TitoPay Tip QR, share it, and track tips in transaction history.</p></div>
+      <div><p class="eyebrow">Tip</p><h2>Generate tip QR</h2><p class="lead">Create a TitoPay Tip QR, share it, and track tips in transaction history.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="receive">
@@ -11944,7 +11944,7 @@ function openTipQrModal() {
         <div class="input-affix currency-affix" data-prefix="R"><input id="tip-qr-amount" name="amount" inputmode="decimal"></div>
         <small class="field-hint">Leave empty to let the tipper choose.</small>
       </div>
-      <button class="btn primary" type="submit">${icon("tip")} Generate Tip QR</button>
+      <button class="btn primary" type="submit">${icon("tip")} Generate tip QR</button>
     </form>
     <div class="auth-actions">
       <button class="btn secondary" data-action="tip-poster">${icon("qr")} Tip A4 poster</button>
@@ -11965,7 +11965,7 @@ function openQrPayModal(existing = {}) {
       <button class="btn secondary" type="button" data-action="start-qr-scan">${icon("scan")} Scan QR with camera</button>
       <p class="field-hint camera-privacy-hint">Your camera is used only while the scanner is open. QR codes are read on your device. The video is never uploaded.</p>
       <div id="qr-scanner-output" class="empty-state hidden"></div>
-      <button class="btn primary" type="submit">${icon("scan")} Review QR Payment</button>
+      <button class="btn primary" type="submit">${icon("scan")} Review QR payment</button>
     </form>
   `);
 }
@@ -12121,7 +12121,7 @@ function renderMerchantQrWaitingScreen() {
         <strong>Waiting for payment...</strong>
         <small data-sale-countdown>05:00</small>
       </section>
-      <button class="btn secondary" type="button" data-action="merchant-cancel-sale">${icon("x")} Cancel Sale</button>
+      <button class="btn secondary" type="button" data-action="merchant-cancel-sale">${icon("x")} Cancel sale</button>
     </section>
   `);
   setMerchantPosModalClass();
@@ -12487,7 +12487,7 @@ function openMerchantSaleNoteModal() {
       <div class="field"><label>Customer name</label><input name="customerName" value="${esc(note.customerName || "")}" autocomplete="name"></div>
       <div class="field"><label>Description</label><textarea name="description" placeholder="What is this sale for?">${esc(note.description || "")}</textarea></div>
       <div class="field"><label>Invoice/reference number</label><input name="reference" value="${esc(note.reference || "")}" placeholder="Optional"></div>
-      <button class="btn primary" type="submit">${icon("shield")} Save Note</button>
+      <button class="btn primary" type="submit">${icon("shield")} Save note</button>
     </form>
   `);
 }
@@ -12577,7 +12577,7 @@ function expireMerchantSale() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="empty-state compact-state">${icon("qr")}<strong>Unable to complete sale</strong><p>No payment was received before the 5-minute timer ended.</p></section>
-    <button class="btn primary" type="button" data-action="merchant-make-sale">${icon("store")} New Sale</button>
+    <button class="btn primary" type="button" data-action="merchant-make-sale">${icon("store")} New sale</button>
   `);
 }
 function startMerchantSalePaymentPolling() {
@@ -12666,7 +12666,7 @@ function renderMerchantSaleSuccess(receipt) {
       </section>
       <div class="merchant-success-actions">
         <button class="btn secondary" type="button" data-action="merchant-sale-done">${icon("check-circle")} Done</button>
-        <button class="btn primary" type="button" data-receipt-open="${esc(receipt.id)}">${icon("ticket")} View Receipt</button>
+        <button class="btn primary" type="button" data-receipt-open="${esc(receipt.id)}">${icon("ticket")} View receipt</button>
       </div>
     </section>
   `);
@@ -13379,8 +13379,8 @@ async function refreshTitoKidsHome() {
       ${invites.map((invite) => `
         <section class="tk-card tk-approval">
           <p class="tk-sub">Invitation</p>
-          <p style="margin:4px 0"><strong>${esc(invite.invitedByName)}</strong> asked you to help manage <strong>${esc(invite.childName)}</strong>’s money.</p>
-          <p class="field-hint" style="margin:0 0 8px">If you accept, you can add money from your own wallet, pay for needs, set limits and answer their requests. You can never spend ${esc(invite.invitedByName)}’s money.</p>
+          <p style="margin:4px 0"><strong>${esc(invite.invitedByName)}</strong> asked you to help manage <strong>${esc(invite.childName)}</strong>'s money.</p>
+          <p class="field-hint" style="margin:0 0 8px">If you accept, you can add money from your own wallet, pay for needs, set limits and answer their requests. You can never spend ${esc(invite.invitedByName)}'s money.</p>
           <div class="auth-actions">
             <button class="btn primary" type="button" data-tk-invite-accept="${esc(invite.id)}">${icon("check-circle")} Accept</button>
             <button class="btn secondary" type="button" data-tk-invite-decline="${esc(invite.id)}">Decline</button>
@@ -13414,7 +13414,7 @@ async function refreshTitoKidsHome() {
           <p>Add your first child to start managing their money with TitoKids: a real ring-fenced wallet, limits you control, and approvals in your pocket.</p>
         </section>`}
       <div class="auth-actions" style="margin-top:10px">
-        <button class="btn ${children.length || families.length || invites.length ? "secondary" : "primary"}" type="button" data-action="titokids-add">${icon("send")} Add Child</button>
+        <button class="btn ${children.length || families.length || invites.length ? "secondary" : "primary"}" type="button" data-action="titokids-add">${icon("send")} Add child</button>
       </div>`;
   } catch (error) {
     host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
@@ -13429,13 +13429,13 @@ function openTitoKidsAddModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="titokids-add">
-      <div class="field"><label>Child’s name</label><input name="fullName" maxlength="120" required placeholder="e.g. Aiden"></div>
+      <div class="field"><label>Child's name</label><input name="fullName" maxlength="120" required placeholder="e.g. Aiden"></div>
       <div class="field"><label>Date of birth <span class="field-optional">optional</span></label><input name="dateOfBirth" type="date">
         <small class="field-hint">Used only to show their age, nothing else.</small></div>
       <div class="field"><label>Your relationship</label><select name="relationship">
         <option value="parent">Parent</option><option value="guardian">Guardian</option><option value="other">Other authorised relationship</option>
       </select></div>
-      <div class="field"><label>Child’s TitoPay <span class="field-optional">optional</span></label>
+      <div class="field"><label>Child's TitoPay <span class="field-optional">optional</span></label>
         <input name="childIdentifier" maxlength="120" placeholder="@username, email or cellphone">
         <small class="field-hint">If your child has their own TitoPay, linking lets them see their balance under My Family and ask you for money. Leave blank to manage everything yourself.</small></div>
       <button class="btn primary" type="submit">${icon("check-circle")} Add child</button>
@@ -13484,10 +13484,10 @@ async function refreshTitoKidsChild(childId) {
           <span><span class="tk-sub">Available</span><span class="tk-balance" style="display:block">${esc(money(child.balance))}</span></span>
         </div>
         <div class="tk-grid">
-          <button class="btn primary" type="button" data-action="titokids-fund:${esc(child.id)}">${icon("wallet")} Add Money</button>
-          <button class="btn secondary" type="button" data-action="titokids-pay:${esc(child.id)}">${icon("send")} Pay for a Need</button>
+          <button class="btn primary" type="button" data-action="titokids-fund:${esc(child.id)}">${icon("wallet")} Add money</button>
+          <button class="btn secondary" type="button" data-action="titokids-pay:${esc(child.id)}">${icon("send")} Pay for a need</button>
         </div>
-        <p class="field-hint" style="margin:8px 0 0">Add Money moves money from your wallet to ${esc(child.fullName)}’s. Pay for a Need pays a school, shop or person straight from ${esc(child.fullName)}’s wallet. No loose cash.</p>
+        <p class="field-hint" style="margin:8px 0 0">Add money moves money from your wallet to ${esc(child.fullName)}'s. Pay for a need pays a school, shop or person straight from ${esc(child.fullName)}'s wallet. No loose cash.</p>
       </section>
       <section class="tk-card" data-tk-managers></section>
       <section class="tk-card">
@@ -13572,7 +13572,7 @@ async function refreshTitoKidsManagers(childId) {
         <div class="auth-actions" style="margin-top:8px">
           <button class="btn secondary" type="button" data-tk-manager-add="${esc(childId)}">${icon("contacts")} Add a co-parent</button>
         </div>
-        <p class="field-hint" style="margin-top:6px">A co-parent can add money from <strong>their own</strong> wallet, pay for needs, set limits and answer ${esc(child.fullName || "the child")}’s requests. They can never spend your money, remove ${esc(child.fullName || "the child")}, or invite anyone else.</p>
+        <p class="field-hint" style="margin-top:6px">A co-parent can add money from <strong>their own</strong> wallet, pay for needs, set limits and answer ${esc(child.fullName || "the child")}'s requests. They can never spend your money, remove ${esc(child.fullName || "the child")}, or invite anyone else.</p>
       ` : `<p class="field-hint" style="margin-top:6px">You help manage this wallet. Money you add comes from your own wallet.</p>`}`;
   } catch (error) {
     // A bare "Not found" here reads as though the CHILD is missing, which is
@@ -13594,7 +13594,7 @@ async function inviteTitoKidsManager(childId) {
   const child = state.titoKidsChild || {};
   const contact = await askForValue({
     title: "Add a co-parent",
-    body: `Who else should help manage ${child.fullName || "this child"}’s money? They need their own TitoPay account, and they choose whether to accept.`,
+    body: `Who else should help manage ${child.fullName || "this child"}'s money? They need their own TitoPay account, and they choose whether to accept.`,
     label: "Their @username, cellphone or email",
     placeholder: "@username",
     hint: "They add money from their own wallet, never from yours.",
@@ -13628,7 +13628,7 @@ async function removeTitoKidsManager(managerId, name) {
 async function respondToTitoKidsInvite(inviteId, accept) {
   try {
     const result = await api(`/v1/tito-kids/invitations/${encodeURIComponent(inviteId)}/${accept ? "accept" : "decline"}`, { method: "POST", body: {} });
-    showToast(accept ? `You now help manage ${result.childName}’s money.` : "Invitation declined.");
+    showToast(accept ? `You now help manage ${result.childName}'s money.` : "Invitation declined.");
   } catch (error) {
     showToast(friendlyFormError(error, "titokids"), "error");
   }
@@ -13639,7 +13639,7 @@ function openTitoKidsFundModal(childId) {
   openModal(`
     <div class="modal-head">
       <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
-      <div><p class="eyebrow">TitoKids</p><h2>Add money</h2><p class="lead">From your wallet to ${esc(child.fullName || "the child")}’s. Instant, with no fees.</p></div>
+      <div><p class="eyebrow">TitoKids</p><h2>Add money</h2><p class="lead">From your wallet to ${esc(child.fullName || "the child")}'s. Instant, with no fees.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="titokids-fund">
@@ -13668,7 +13668,7 @@ function openTitoKidsPayModal(childId) {
   openModal(`
     <div class="modal-head">
       <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
-      <div><p class="eyebrow">TitoKids</p><h2>Pay for a need</h2><p class="lead">Pays a school, shop or person directly from ${esc(child.fullName || "the child")}’s wallet. The money can only go where you point it.</p></div>
+      <div><p class="eyebrow">TitoKids</p><h2>Pay for a need</h2><p class="lead">Pays a school, shop or person directly from ${esc(child.fullName || "the child")}'s wallet. The money can only go where you point it.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="titokids-pay">
@@ -15736,7 +15736,7 @@ async function refreshStockvelGroupChat() {
       host.innerHTML = items.length ? items.map((message) => `
         <div style="margin:7px 0;display:flex;flex-direction:column;align-items:${message.userId === myId ? "flex-end" : "flex-start"}" ${chat.canManage ? `data-sv-decision="${esc(message.id)}" role="button" tabindex="0" title="Tap to pin as a decision"` : ""}>
           <div style="max-width:85%;background:${message.isDecision ? "#fdf3e2" : message.userId === myId ? "#2f5cff" : "#eef2fa"};color:${message.isDecision ? "#8a5b00" : message.userId === myId ? "#fff" : "#0b1f3f"};border-radius:14px;padding:8px 12px">
-            ${message.isDecision ? `<small style="display:block;font-weight:700">📌 DECISION</small>` : ""}
+            ${message.isDecision ? `<small style="display:block;font-weight:700">DECISION</small>` : ""}
             <small style="display:block;opacity:0.75">${esc(message.name || message.username || "Member")}</small>
             ${esc(message.message)}
           </div>
@@ -16777,10 +16777,10 @@ function eventTagCard(tag = {}) {
         <div><dt>Status</dt><dd>${esc(meta.label)}</dd></div>
       </dl>
       <div class="event-tag-actions">
-        <button class="btn primary" type="button" data-service="top-up">${icon("upload")} Top Up Wallet</button>
-        <button class="btn secondary" type="button" data-action="event-tag-transactions">${icon("list")} View Transactions</button>
-        ${tag.eventSlug ? `<button class="btn secondary" type="button" data-action="ticketing-open-event:${esc(tag.eventSlug)}">${icon("ticket")} Event Information</button>` : ""}
-        ${canReportLost ? `<button class="btn secondary event-tag-lost" type="button" data-action="event-tag-lost:${esc(tag.tagId)}">${icon("shield")} Report Tag Lost</button>` : ""}
+        <button class="btn primary" type="button" data-service="top-up">${icon("upload")} Top up wallet</button>
+        <button class="btn secondary" type="button" data-action="event-tag-transactions">${icon("list")} View transactions</button>
+        ${tag.eventSlug ? `<button class="btn secondary" type="button" data-action="ticketing-open-event:${esc(tag.eventSlug)}">${icon("ticket")} Event information</button>` : ""}
+        ${canReportLost ? `<button class="btn secondary event-tag-lost" type="button" data-action="event-tag-lost:${esc(tag.tagId)}">${icon("shield")} Report tag lost</button>` : ""}
       </div>
     </article>`;
 }
@@ -16957,7 +16957,7 @@ function stopEventTagScan() {
    ========================================================================== */
 function openVendorTagChargeModal() {
   if (state.accountType !== "business") {
-    openInfoModal("Tap to Charge", "Switch to your Business profile to take Event Tag payments.");
+    openInfoModal("Tap to charge", "Switch to your Business profile to take Event Tag payments.");
     return;
   }
   state.vendorTagCharge = { amount: "", token: "", scanning: false, result: null };
@@ -16968,7 +16968,7 @@ function renderVendorTagChargeModal() {
   const canNfc = nfcAvailable();
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Event Tag · Tap to Charge</p><h2>Charge a wristband</h2><p class="lead">Enter the amount, then tap the patron's wristband on this phone.</p></div>
+      <div><p class="eyebrow">Event Tag · Tap to charge</p><h2>Charge a wristband</h2><p class="lead">Enter the amount, then tap the patron's wristband on this phone.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="vendor-tag-charge">
@@ -17263,8 +17263,8 @@ function renderBusinessTicketingHub() {
           </button>`).join("")}
       </section>
       <div class="auth-actions">
-        <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create Event</button>
-        <button class="btn secondary" type="button" data-action="vendor-tag-charge">${icon("wallet")} Tap to Charge</button>
+        <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create event</button>
+        <button class="btn secondary" type="button" data-action="vendor-tag-charge">${icon("wallet")} Tap to charge</button>
         <button class="btn secondary" type="button" data-action="ticketing-refresh">${icon("refresh")} Refresh</button>
       </div>
     ` : `
@@ -17333,7 +17333,7 @@ async function returnToTicketing(sectionKey) {
 function ticketingEventsSection(events) {
   return `
     <div class="auth-actions">
-      <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create Event</button>
+      <button class="btn primary" type="button" data-action="ticketing-create-event">${icon("ticket")} Create event</button>
     </div>
     <section class="settings-list">
       ${events.length ? events.map((event) => ticketingEventRow(event)).join("") : `<p class="muted">No ticketing events yet. Create your first draft when your event details are ready.</p>`}
@@ -19986,7 +19986,7 @@ function openCustomerCareCallOnlyModal() {
     <section class="call-panel customer-care-call-panel">
       <span class="call-avatar">${icon("chat")}</span>
       <strong>Need to speak to TitoPay?</strong>
-      <p>Open the assistant and choose “Request a Callback”. Your chat history stays available, and Customer Care will handle the voice call securely.</p>
+      <p>Open the assistant and choose “Request a callback”. Your chat history stays available, and Customer Care will handle the voice call securely.</p>
     </section>
     <div class="call-controls support-call-controls">
       <button class="btn primary" type="button" data-action="chatbot">${icon("phone")} Open Customer Care</button>
@@ -20334,7 +20334,7 @@ function openChatbotModal() {
     <form class="chatbot-compose" data-form="chatbot">
       <input type="hidden" name="provider" value="clickatell">
       <label class="sr-only" for="chatbot-message-input">Message</label>
-      <input id="chatbot-message-input" name="message" placeholder="Type your question..." autocomplete="off" required>
+      <input id="chatbot-message-input" name="message" placeholder="Type your question…" autocomplete="off" required>
       <button class="btn primary" type="submit" aria-label="Send message">${icon("send")}</button>
     </form>
   `);
@@ -20374,8 +20374,8 @@ async function hydrateSupportConversation(conversationId) {
 
     // The thread holds more than messages. The Customer Care escalation card
     // and the rating card are rendered into it as well, and they carry the only
-    // controls the customer can act on — Start Live Chat, Request a Callback,
-    // Continue Waiting. replaceChildren() below destroys every child, so the
+    // controls the customer can act on — Start Live Chat, Request a callback,
+    // Continue waiting. replaceChildren() below destroys every child, so the
     // first poll after the card appeared deleted it: measured at 2.8 seconds,
     // well inside the time it takes someone to read three buttons and reach for
     // one. They are lifted out here and put back afterwards, as the very same
@@ -20486,7 +20486,7 @@ async function submitChatbotMessage(data) {
     return;
   }
   const loadingId = `chat-loading-${Date.now()}`;
-  appendChatMessage("assistant", "Checking TitoPay support knowledge...", loadingId);
+  appendChatMessage("assistant", "Checking TitoPay support knowledge…", loadingId);
   let answer = "";
   let needsEscalation = false;
   try {
@@ -21114,7 +21114,7 @@ function quickServicesCustomizerBody() {
     </section>
     <div class="auth-actions quick-service-customizer-actions">
       <button class="btn secondary" type="button" data-action="reset-quick-services">Use defaults</button>
-      <button class="btn primary" type="button" data-action="save-quick-services" ${draft.length ? "" : "disabled"}>Save Quick Services</button>
+      <button class="btn primary" type="button" data-action="save-quick-services" ${draft.length ? "" : "disabled"}>Save quick services</button>
     </div>`;
 }
 function openQuickServicesCustomizer() {
