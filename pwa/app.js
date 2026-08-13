@@ -20683,7 +20683,7 @@ function howItWorksSteps() {
     {
       icon: "wallet",
       title: "What is TitoPay?",
-      body: "TitoPay is a digital wallet made for South Africa. Send and receive money, pay with a QR, buy airtime and electricity, sell as a business and get paid in seconds — all from one app, with the fees shown before any money moves.",
+      body: "TitoPay is a digital wallet made in South Africa. Send and receive money, pay with a QR, buy airtime and electricity, sell as a business and get paid in seconds — all from one app, with the fees shown before any money moves.",
       hint: "TitoPay. Smart Payments. Simplified.",
       tagline: true
     },

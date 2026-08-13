@@ -1,6 +1,6 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v369 (titopay-pwa-v369)
+PWA bundle: v370 (titopay-pwa-v370)
 Admin console: admin-console-v81
 
 This build — the tour opens with who we are, then what the buttons do:
@@ -9,7 +9,7 @@ This build — the tour opens with who we are, then what the buttons do:
   (fifteen in total, and the header, dots and step counter all follow
   the list automatically):
 
-    1. What is TitoPay?      — a digital wallet made for South Africa
+    1. What is TitoPay?      — a digital wallet made in South Africa
     2. About us              — proudly South African, built for the way
                                we actually pay, real people behind it
     3. The problem we solve  — cash gets lost and card machines cost too
