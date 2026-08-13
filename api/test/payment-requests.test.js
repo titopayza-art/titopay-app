@@ -68,21 +68,32 @@ test("a request can only be answered by its payer and cancelled by its requester
     "cancel is requester-scoped and pending-only");
 });
 
-test("the requester is held to the R200 000 monthly receiving rule, matching the rails", () => {
-  // FICA is a monthly receiving limit, not a wall at the door: an unverified
-  // account may receive up to R200 000 a calendar month, and only a request
-  // that would pass that line is refused. Both the request service and the
-  // transfer rails read the same constant and the same ledger-derived total.
+test("receiving is open unless TitoPay has blocked the account", () => {
+  // Policy: FICA status does not gate receiving money. The only accounts
+  // that cannot receive or request are blocked, suspended or closed ones,
+  // and both the request service and the transfer rails use the same
+  // BLOCKED_ACCOUNT_STATUSES set to decide it.
   assert.match(SERVICE, /assertRequesterCanReceive/);
-  assert.match(SERVICE, /UNVERIFIED_MONTHLY_RECEIVE_LIMIT/);
-  assert.match(SERVICE, /monthlyReceivedTotal/);
-  assert.match(TX_SERVICE, /const UNVERIFIED_MONTHLY_RECEIVE_LIMIT = 200000/);
-  assert.match(TX_SERVICE, /assertUnverifiedReceiveWithinLimit/);
+  assert.match(SERVICE, /BLOCKED_ACCOUNT_STATUSES/);
+  assert.match(TX_SERVICE, /assertRecipientCanReceive/);
+  assert.match(TX_SERVICE, /BLOCKED_ACCOUNT_STATUSES/);
   assert.doesNotMatch(TX_SERVICE, /Recipient must be a verified TitoPay user/,
-    "the old hard gate must stay gone");
-  // The limit is derived from the wallet ledger's own credit entries, never a
-  // separate tally that can drift.
-  assert.match(TX_SERVICE, /entry_type = 'credit'[\s\S]{0,80}DATE_TRUNC\('month', NOW\(\)\)/);
+    "the old FICA wall must stay gone");
+  assert.doesNotMatch(TX_SERVICE, /UNVERIFIED_MONTHLY_RECEIVE_LIMIT/,
+    "the R200 000 limit was removed by policy decision");
+  assert.doesNotMatch(SERVICE, /UNVERIFIED_MONTHLY_RECEIVE_LIMIT/);
+});
+
+test("every sent transfer records WHO was paid, for receipts and notices", () => {
+  assert.match(TX_SERVICE, /recipientName: recipientWallet\.full_name/);
+  assert.match(TX_SERVICE, /recipientContact: recipientWallet\.phone \|\| recipientWallet\.email/);
+  assert.match(TX_SERVICE, /recipientLine/);
+  const EMAIL = fs.readFileSync(path.join(__dirname, "..", "src", "services", "email-centre-service.js"), "utf8");
+  assert.match(EMAIL, /"recipientLine"/, "the receipt template variable must be whitelisted");
+  assert.match(EMAIL, /to \{\{recipientLine\}\}/, "the transfer receipt must name the recipient");
+  // And the app shows it: detail sheet and the sent notification.
+  assert.match(APP, /txMeta\.recipientName/);
+  assert.match(APP, /Sent to \$\{sentToName\}/);
 });
 
 test("payment request notices travel the feed the app already reads", () => {

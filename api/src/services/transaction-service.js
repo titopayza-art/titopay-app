@@ -298,7 +298,7 @@ async function feePreview(payload) {
       if (!status.registered) {
         throw new AppError(404, status.message, { invite: status.invite, recipient });
       }
-      await assertUnverifiedReceiveWithinLimit(status.recipient, amount);
+      assertRecipientCanReceive(status.recipient);
       verifiedRecipients.push({ identifier: recipient, ...status });
     }
     recipientStatus = verifiedRecipients.length === 1 ? verifiedRecipients[0] : { registered: true, recipients: verifiedRecipients };
@@ -315,34 +315,16 @@ async function feePreview(payload) {
   };
 }
 
-// THE R200 000 RULE. FICA is not a wall at the door; it is a monthly
-// receiving limit. An unverified account may receive up to R200 000 in a
-// calendar month, counted from the wallet ledger's own credit entries, and
-// only a payment that would take it PAST that line requires the recipient to
-// verify first. One rule for every account, personal and business alike.
-const UNVERIFIED_MONTHLY_RECEIVE_LIMIT = 200000;
+// RECEIVING IS OPEN UNLESS THE ACCOUNT IS BLOCKED. Policy decision: FICA
+// status does not gate receiving money. The only accounts that cannot
+// receive are the ones TitoPay has blocked, suspended or closed.
+const { BLOCKED_ACCOUNT_STATUSES } = require("../lib/chat-policy");
 
-async function monthlyReceivedTotal(userId) {
-  const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(ABS(wl.amount)), 0) AS received
-     FROM wallet_ledger wl
-     JOIN wallets w ON w.id = wl.wallet_id
-     WHERE w.user_id = $1
-       AND wl.entry_type = 'credit'
-       AND wl.created_at >= DATE_TRUNC('month', NOW())`,
-    [userId]
-  );
-  return roundMoney(rows[0]?.received || 0);
-}
-
-async function assertUnverifiedReceiveWithinLimit(recipient, amount) {
-  if (!recipient?.userId || recipient.verified !== false) return;
-  const received = await monthlyReceivedTotal(recipient.userId);
-  if (received + roundMoney(amount) > UNVERIFIED_MONTHLY_RECEIVE_LIMIT) {
-    throw new AppError(
-      403,
-      `This recipient has received R${received.toFixed(2)} this month. An unverified account can receive up to R${UNVERIFIED_MONTHLY_RECEIVE_LIMIT.toFixed(2)} a month, and this payment would go past that. They must complete FICA verification to receive more.`
-    );
+function assertRecipientCanReceive(recipient) {
+  if (!recipient?.userId) return;
+  const accountStatus = String(recipient.status || "").toLowerCase();
+  if (BLOCKED_ACCOUNT_STATUSES.has(accountStatus)) {
+    throw new AppError(403, "This account cannot receive money at the moment. The recipient should contact TitoPay support.");
   }
 }
 
@@ -351,7 +333,7 @@ async function resolveRecipientWallet(recipient) {
   const lookupValues = recipientLookupValues({ recipient }).map((value) => String(value).toLowerCase());
   const phoneLookupValues = recipientPhoneLookupValues({ recipient });
   const { rows } = await pool.query(
-    `SELECT w.*, u.username, u.email, u.phone
+    `SELECT w.*, u.username, u.email, u.phone, u.full_name
      FROM users u
      JOIN wallets w ON w.user_id = u.id
      WHERE LOWER(u.username) = ANY($1::TEXT[])
@@ -488,7 +470,7 @@ async function createTransaction(actor, payload) {
         debitTotal,
         reference,
         payload.recipient || null,
-        JSON.stringify({ ...payload.metadata, clientIdempotencyKey: idempotencyKey || payload.metadata?.clientIdempotencyKey || null, netAmount, recipientWalletId: recipientWallet?.id || null })
+        JSON.stringify({ ...payload.metadata, clientIdempotencyKey: idempotencyKey || payload.metadata?.clientIdempotencyKey || null, netAmount, recipientWalletId: recipientWallet?.id || null, ...(recipientWallet ? { recipientName: recipientWallet.full_name || null, recipientUsername: recipientWallet.username || null, recipientContact: recipientWallet.phone || recipientWallet.email || null } : {}) })
       ]
     );
 
@@ -555,7 +537,7 @@ async function createTransaction(actor, payload) {
         : /top.?up/.test(normalizedServiceCode) ? "wallet_top_up_receipt"
           : /transfer|send/.test(normalizedServiceCode) ? "money_transfer_receipt" : "payment_receipt";
       await queueEmail({ recipient:account.email, templateKey, userId:actor.userId,
-        variables:{fullName:account.full_name,email:account.email,amount:chargedAmount.toFixed(2),currency:"ZAR",transactionReference:reference},
+        variables:{fullName:account.full_name,email:account.email,amount:chargedAmount.toFixed(2),currency:"ZAR",transactionReference:reference,recipientLine:recipientWallet?[recipientWallet.full_name,recipientWallet.username?`@${recipientWallet.username}`:"",recipientWallet.phone||recipientWallet.email||""].filter(Boolean).join(", "):String(payload.recipient||"")},
         idempotencyKey:`transaction-receipt:${txId}`, metadata:{transactionId:txId,serviceCode:normalizedServiceCode} });
     }
   } catch (error) {
@@ -922,9 +904,7 @@ async function revenueSummary() {
 }
 
 module.exports = {
-  UNVERIFIED_MONTHLY_RECEIVE_LIMIT,
-  monthlyReceivedTotal,
-  assertUnverifiedReceiveWithinLimit,
+  assertRecipientCanReceive,
   feePreview,
   createTransaction,
   listTransactionsForUser,

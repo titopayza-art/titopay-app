@@ -22,7 +22,6 @@ const { v4: uuidv4 } = require("uuid");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { verifyRecipient } = require("./security-service");
-const { isVerifiedTitoPayUser } = require("../lib/chat-policy");
 const { createNotification } = require("./notification-service");
 
 const REQUEST_STATUSES = new Set(["pending", "paying", "paid", "declined", "cancelled"]);
@@ -91,25 +90,20 @@ function isoDay(value) {
   return String(value).slice(0, 10);
 }
 
-// The requester RECEIVES the money, and the receiving rule is the R200 000
-// one: an unverified account may receive up to R200 000 in a calendar month,
-// and only a request that would take it past that line needs FICA first.
-// Checking here means a request that could never be paid is refused when it
-// is made, not days later when someone tries to honour it.
+// The requester RECEIVES the money, and receiving is open unless TitoPay
+// has blocked the account. Same rule as the transfer rails, checked here so
+// a request that could never be paid is refused when it is made.
 async function assertRequesterCanReceive(userId, amount = 0) {
+  void amount;
   const { rows } = await pool.query(
     "SELECT id, account_type, status, fica_status, username, full_name, email, phone FROM users WHERE id = $1",
     [userId]
   );
   const requester = rows[0];
   if (!requester) throw new AppError(404, "Account not found.");
-  if (!isVerifiedTitoPayUser(requester)) {
-    const { monthlyReceivedTotal, UNVERIFIED_MONTHLY_RECEIVE_LIMIT } = require("./transaction-service");
-    const received = await monthlyReceivedTotal(userId);
-    if (received + Number(amount || 0) > UNVERIFIED_MONTHLY_RECEIVE_LIMIT) {
-      throw new AppError(403,
-        `You have received R${received.toFixed(2)} this month. An unverified account can receive up to R${UNVERIFIED_MONTHLY_RECEIVE_LIMIT.toFixed(2)} a month, and this request would go past that. Complete FICA verification under Profile to keep receiving.`);
-    }
+  const { BLOCKED_ACCOUNT_STATUSES } = require("../lib/chat-policy");
+  if (BLOCKED_ACCOUNT_STATUSES.has(String(requester.status || "").toLowerCase())) {
+    throw new AppError(403, "Your account cannot receive money at the moment. Contact TitoPay support.");
   }
   return requester;
 }

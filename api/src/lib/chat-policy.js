@@ -27,4 +27,4 @@ function isVerifiedTitoPayUser(user) {
   return Boolean(active && verified);
 }
 
-module.exports = { isVerifiedTitoPayUser };
+module.exports = { isVerifiedTitoPayUser, BLOCKED_ACCOUNT_STATUSES };

@@ -7,8 +7,7 @@
  * as Send Money, and can be declined or cancelled with nothing moving at all.
  *
  * Checks:
- *   1.  An unverified requester may request under R200 000 a month and is
- *       refused only when a request would pass the line.
+ *   1.  Receiving is open at any amount unless the account is blocked.
  *   2.  Creating a request notifies the payer through the notification feed.
  *   3.  The payer sees it under incoming; the requester under outgoing.
  *   4.  A stranger can neither pay nor decline someone else's request.
@@ -97,25 +96,36 @@ async function balanceOf(userId) {
     const sipho = await seedUser("sipho", { balance: 50 });
     const unverified = await seedUser("newbie", { fica: "pending", accountType: "business" });
 
-    // 1. The R200 000 rule: an unverified account requests freely under the
-    //    line, and is refused only when a request would pass it.
+    // 1. Receiving is open unless the account is blocked: an unverified
+    //    account requests any amount; a blocked account is refused.
     const allowed = await call(unverified.token, "POST", "/v1/payments/requests",
       { recipient: `@${thuso.username}`, amount: 100 });
     assert.equal(allowed.status, 200, JSON.stringify(allowed.data));
-    const overLimit = await call(unverified.token, "POST", "/v1/payments/requests",
+    const bigAllowed = await call(unverified.token, "POST", "/v1/payments/requests",
       { recipient: `@${thuso.username}`, amount: 250000 });
-    assert.equal(overLimit.status, 403);
-    assert.match(String(overLimit.data.error || ""), /200 ?000/);
-    assert.match(String(overLimit.data.error || ""), /FICA/i);
-    ok("an unverified account requests freely under R200 000 a month and is refused only past the line");
+    assert.equal(bigAllowed.status, 200, JSON.stringify(bigAllowed.data));
+    const blocked = await seedUser("blocked", { fica: "pending" });
+    await pool.query("UPDATE users SET status = 'blocked' WHERE id = $1", [blocked.id]);
+    const refusedBlocked = await call(blocked.token, "POST", "/v1/payments/requests",
+      { recipient: `@${thuso.username}`, amount: 50 });
+    assert.equal(refusedBlocked.status, 403, "a blocked account is shut out at the door");
+    const sendToBlocked = await call(thuso.token, "POST", "/v1/transactions",
+      { serviceCode: "wallet_transfer", amount: 50, recipient: `@${blocked.username}` });
+    assert.equal(sendToBlocked.status, 403);
+    assert.match(String(sendToBlocked.data.error || ""), /cannot receive money/i);
+    ok("unverified accounts request freely at any amount; a blocked account can neither act nor receive");
 
-    // The transfer rails obey the same rule: money can be SENT to an
-    // unverified account under the line.
+    // The transfer rails obey the same rule: money reaches an unverified
+    // account, and the record carries WHO was paid.
     const sendToUnverified = await call(thuso.token, "POST", "/v1/transactions",
       { serviceCode: "wallet_transfer", amount: 50, recipient: `@${unverified.username}` });
     assert.ok([200, 201].includes(sendToUnverified.status), JSON.stringify(sendToUnverified.data));
     assert.equal(await balanceOf(unverified.id), 50, "the unverified account received the money");
-    ok("sending money to an unverified account works under the R200 000 line");
+    const { rows: sentRows } = await pool.query(
+      "SELECT metadata FROM transactions WHERE id = $1", [sendToUnverified.data.transactionId || sendToUnverified.data.transaction?.transactionId]);
+    assert.equal(sentRows[0].metadata.recipientName, "newbie Harness", "the record names who was paid");
+    assert.ok(sentRows[0].metadata.recipientContact, "and how to reach them");
+    ok("sending to an unverified account works, and the record names who was paid with their contact");
 
     // 11. No asking yourself.
     const selfish = await call(thuso.token, "POST", "/v1/payments/requests",

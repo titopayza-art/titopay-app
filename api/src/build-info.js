@@ -19,10 +19,12 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 10;
+const API_BUILD = 11;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  11: "Receiving is open unless the account is blocked; every sent transfer " +
+      "records and reports who was paid, name and contact included.",
   10: "FICA is now the R200 000 monthly receiving limit, not a wall: unverified " +
       "accounts receive and request freely under the line, one rule on all rails.",
   9: "/health now reports the email worker's own build, so an unrestarted worker is visible.",

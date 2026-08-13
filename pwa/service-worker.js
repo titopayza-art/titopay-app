@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v381-limit-rule";
+const CACHE_NAME = "titopay-pwa-v382-named-recipients";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=381",
-  "./app.min.js?v=381",
+  "./styles.min.css?v=382",
+  "./app.min.js?v=382",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

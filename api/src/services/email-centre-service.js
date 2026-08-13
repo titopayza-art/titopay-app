@@ -32,7 +32,7 @@ const ALLOWED_VARIABLES = new Set([
   "requestReference", "requestSubject", "requestStatus",
   "taskTitle", "taskCategory", "taskDueDate",
   "courseTitle", "courseDueDate", "decisionTone", "hrContactEmail"
-]);
+, "recipientLine"]);
 const SECRET_KEYS = /password|apiKey|api_key|secret|token|privateKey|credential/i;
 const TITOPAY_LOGO_URL = "https://titopay.co.za/assets/titopay-official-logo.png";
 const WELCOME_TEMPLATE_KEYS = new Set(["personal_account_welcome", "business_account_welcome"]);
@@ -48,7 +48,7 @@ const DEFAULT_TEMPLATES = [
   ["new_device_login", "New Device Login", "New device signed in to TitoPay", "A new device signed in to your TitoPay account."],
   ["payment_receipt", "Payment Receipt", "TitoPay payment receipt {{transactionReference}}", "<p>Hi {{fullName}},</p><p>Your payment of {{currency}} {{amount}} went through successfully.</p><p>Reference: {{transactionReference}}</p><p>You can see the full details any time under your activity in the TitoPay app. If you do not recognise this payment, contact us at {{supportEmail}} right away.</p>"],
   ["wallet_top_up_receipt", "Wallet Top-Up Receipt", "TitoPay wallet top-up receipt", "<p>Hi {{fullName}},</p><p>Your wallet has been topped up with {{currency}} {{amount}}. The money is available straight away.</p><p>Reference: {{transactionReference}}</p><p>If you did not make this top-up, contact us at {{supportEmail}} right away.</p>"],
-  ["money_transfer_receipt", "Money Transfer Receipt", "TitoPay transfer receipt {{transactionReference}}", "<p>Hi {{fullName}},</p><p>Your transfer of {{currency}} {{amount}} has been completed and delivered.</p><p>Reference: {{transactionReference}}</p><p>The full record is in your activity in the TitoPay app. If you did not make this transfer, contact us at {{supportEmail}} right away.</p>"],
+  ["money_transfer_receipt", "Money Transfer Receipt", "TitoPay transfer receipt {{transactionReference}}", "<p>Hi {{fullName}},</p><p>Your transfer of {{currency}} {{amount}} to {{recipientLine}} has been completed and delivered.</p><p>Reference: {{transactionReference}}</p><p>The full record is in your activity in the TitoPay app. If you did not make this transfer, contact us at {{supportEmail}} right away.</p>"],
   ["qr_payment_receipt", "QR Payment Receipt", "TitoPay QR payment receipt", "<p>Hi {{fullName}},</p><p>Your QR payment of {{currency}} {{amount}} went through successfully.</p><p>Reference: {{transactionReference}}</p><p>You can see the full details in your activity in the TitoPay app. If you do not recognise this payment, contact us at {{supportEmail}} right away.</p>"],
   ["refund_confirmation", "Refund Confirmation", "TitoPay refund confirmation", "Your refund of {{currency}} {{amount}} was processed. Reference: {{transactionReference}}."],
   ["business_account_submitted", "Business Account Submitted", "Business account submitted", "{{businessName}} was submitted for review."],
@@ -230,7 +230,10 @@ async function seedDefaultTemplates(db = pool) {
       "<p>Hi {{fullName}},</p><p>Your wallet has been topped up with {{currency}} {{amount}}. The money is available straight away.</p><p>Reference: {{transactionReference}}</p><p>If you did not make this top-up, contact us at {{supportEmail}} right away.</p>"],
     ["money_transfer_receipt",
       "Your transfer of {{currency}} {{amount}} was completed.",
-      "<p>Hi {{fullName}},</p><p>Your transfer of {{currency}} {{amount}} has been completed and delivered.</p><p>Reference: {{transactionReference}}</p><p>The full record is in your activity in the TitoPay app. If you did not make this transfer, contact us at {{supportEmail}} right away.</p>"],
+      "<p>Hi {{fullName}},</p><p>Your transfer of {{currency}} {{amount}} to {{recipientLine}} has been completed and delivered.</p><p>Reference: {{transactionReference}}</p><p>The full record is in your activity in the TitoPay app. If you did not make this transfer, contact us at {{supportEmail}} right away.</p>"],
+    ["money_transfer_receipt",
+      "<p>Hi {{fullName}},</p><p>Your transfer of {{currency}} {{amount}} has been completed and delivered.</p><p>Reference: {{transactionReference}}</p><p>The full record is in your activity in the TitoPay app. If you did not make this transfer, contact us at {{supportEmail}} right away.</p>",
+      "<p>Hi {{fullName}},</p><p>Your transfer of {{currency}} {{amount}} to {{recipientLine}} has been completed and delivered.</p><p>Reference: {{transactionReference}}</p><p>The full record is in your activity in the TitoPay app. If you did not make this transfer, contact us at {{supportEmail}} right away.</p>"],
     ["qr_payment_receipt",
       "Your QR payment of {{currency}} {{amount}} was completed. Reference: {{transactionReference}}.",
       "<p>Hi {{fullName}},</p><p>Your QR payment of {{currency}} {{amount}} went through successfully.</p><p>Reference: {{transactionReference}}</p><p>You can see the full details in your activity in the TitoPay app. If you do not recognise this payment, contact us at {{supportEmail}} right away.</p>"]

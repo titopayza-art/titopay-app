@@ -6534,7 +6534,13 @@ function openTransactionDetailModal(key) {
   const reference = item.reference || "";
   const txId = item.transaction_id || item.transactionId || item.id || "";
   // Counterparty and fee are shown ONLY when the payload actually carries them.
-  const counterparty = item.recipient || item.recipient_name || item.recipientName ||
+  // The transaction record stores who was paid (name, username, contact), so
+  // "To" answers the question a receipt exists to answer.
+  const txMeta = item.metadata || {};
+  const recipientDetail = txMeta.recipientName
+    ? [txMeta.recipientName, txMeta.recipientUsername ? `@${txMeta.recipientUsername}` : "", txMeta.recipientContact || ""].filter(Boolean).join(" · ")
+    : "";
+  const counterparty = recipientDetail || item.recipient || item.recipient_reference || item.recipient_name || item.recipientName ||
     item.sender || item.sender_name || item.senderName ||
     item.merchant || item.merchant_name || item.merchantName || "";
   const feeRaw = item.fee ?? item.fee_amount ?? item.feeAmount;
@@ -22256,15 +22262,22 @@ function notificationSeenTxKey() {
 function transactionNotificationItem(tx, unread) {
   const credit = String(tx.direction || "").toLowerCase() === "credit";
   const amount = Number(tx.amount ?? tx.total ?? 0);
+  const meta = tx.metadata || {};
+  const sentToName = !credit ? (meta.recipientName || "") : "";
+  const sentToLine = !credit
+    ? [meta.recipientName, meta.recipientContact || (meta.recipientUsername ? `@${meta.recipientUsername}` : "")].filter(Boolean).join(", ")
+      || tx.recipient_reference || tx.recipient || ""
+    : "";
   const parts = [
     tx.service_name || tx.serviceName || "Wallet transaction",
     Number.isFinite(amount) && amount > 0 ? money(amount) : "",
+    sentToLine ? `To ${sentToLine}` : "",
     tx.reference ? `Ref ${tx.reference}` : ""
   ].filter(Boolean);
   return {
     id: `tx-${tx.id || tx.reference}`,
     type: credit ? "payment-in" : "payment-out",
-    title: credit ? "Money received" : "Payment sent",
+    title: credit ? "Money received" : sentToName ? `Sent to ${sentToName}` : "Payment sent",
     body: parts.join(" \u00b7 "),
     unread,
     createdAt: tx.created_at || tx.createdAt || new Date().toISOString(),
