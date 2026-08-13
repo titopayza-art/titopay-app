@@ -394,10 +394,10 @@
     },
     {
       "service_code": "business-ticketing-staff",
-      "service_name": "Ticketing Staff",
+      "service_name": "Event Scanners",
       "service_icon": "contacts",
       "action": "business-ticketing-staff",
-      "description": "Assign verified TitoPay users to support approved events.",
+      "description": "The people who scan tickets at your door. Add them, and they scan from their own phone.",
       "fee": 0,
       "commission": 0,
       "status": "active",

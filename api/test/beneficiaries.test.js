@@ -60,6 +60,10 @@ test("PWA beneficiary management supports bank-style ordering, search and safe r
   assert.match(app, /\/v1\/beneficiaries\?limit=100/);
   assert.match(app, /new Date\(b\.lastPaidAt \|\| b\.last_paid_at \|\| 0\)/);
   assert.match(app, /No beneficiaries match your search/);
-  assert.match(app, /No money will move and past transactions will remain in Activity/);
+  // Removal must still promise, in the confirmation itself, that nothing moves
+  // and nothing is lost. The wording moved from window.confirm into the app's
+  // own dialog; the promise is what this asserts, not the phrasing.
+  assert.match(app, /askToConfirm\(\{\s*\n\s*title: "Remove beneficiary"/);
+  assert.match(app, /No money moves, and past transactions stay in Activity/);
   assert.match(app, /setButtonBusy\(actionElement, true\)/);
 });

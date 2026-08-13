@@ -12926,3 +12926,89 @@ form[data-form="ticketing-event"] label select{width:100%}
   font-size: 12.5px;
   color: #5b6472;
 }
+
+/* The app's own ask — a small dialog that sits OVER whatever sheet is open,
+   replacing window.prompt and window.confirm. Above .modal-backdrop (60) and
+   the tour (75), below the toast layer (90). */
+.tp-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  background: rgba(6, 26, 61, 0.42);
+  backdrop-filter: blur(2px);
+}
+.tp-dialog {
+  width: min(420px, 100%);
+  background: var(--card);
+  border-radius: 20px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 24px 60px rgba(6, 26, 61, 0.28);
+}
+.tp-dialog h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.tp-dialog p {
+  margin: 0;
+  color: #5b6472;
+  font-size: 14.5px;
+  line-height: 1.45;
+}
+.tp-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+.tp-dialog-field span {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #5b6472;
+}
+.tp-dialog-field input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(10, 77, 255, 0.18);
+  background: var(--soft);
+  font-size: 16px;
+}
+.tp-dialog-field input:focus {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.tp-dialog-hint {
+  color: #5b6472;
+  font-size: 12.5px;
+}
+.tp-dialog-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+.tp-dialog-actions .btn {
+  flex: 1;
+}
+
+/* A destructive confirmation should not look like an ordinary one. The token
+   already existed; the button variant did not. Used by the app's own dialog
+   for archive, revoke and remove. */
+.btn.danger {
+  background: var(--danger);
+  color: #ffffff;
+  border: 1px solid var(--danger);
+}
+.btn.danger:hover,
+.btn.danger:focus-visible {
+  background: #c23a3a;
+  border-color: #c23a3a;
+}

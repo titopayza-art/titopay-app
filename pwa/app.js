@@ -1835,6 +1835,85 @@ function resolveModalOpener(opener, selector) {
   }
   return isFocusRestorationTarget(replacement) && replacement.offsetParent !== null ? replacement : null;
 }
+/* ---- Asking for one thing ------------------------------------------------
+   Stock counts, prices and a meeting title were collected with window.prompt,
+   and destructive steps confirmed with window.confirm. Both are browser
+   furniture: on a phone they arrive as a grey box carrying the site's address,
+   which reads as "the app broke" rather than "the app asked".
+
+   This is the app asking, in the app's own voice. It is deliberately NOT built
+   on openModal: that closes whatever sheet is open, and these always appear
+   OVER the sheet the person is working in, then leave it exactly as it was. */
+function appDialog(options = {}) {
+  const {
+    title = "", body = "", label = "", value = "", placeholder = "", hint = "",
+    confirmLabel = "Confirm", cancelLabel = "Cancel", withInput = false,
+    inputMode = "", maxLength = 120, tone = ""
+  } = options;
+  return new Promise((resolve) => {
+    const layer = document.createElement("div");
+    layer.className = "tp-dialog-layer";
+    layer.innerHTML = `
+      <section class="tp-dialog" role="dialog" aria-modal="true" aria-label="${esc(title || confirmLabel)}">
+        ${title ? `<h3>${esc(title)}</h3>` : ""}
+        ${body ? `<p>${esc(body)}</p>` : ""}
+        ${withInput ? `
+          <label class="tp-dialog-field">
+            ${label ? `<span>${esc(label)}</span>` : ""}
+            <input data-dialog-input value="${esc(value)}" placeholder="${esc(placeholder)}" maxlength="${Number(maxLength) || 120}"
+              ${inputMode ? `inputmode="${esc(inputMode)}"` : ""} autocomplete="off">
+          </label>
+        ` : ""}
+        ${hint ? `<small class="tp-dialog-hint">${esc(hint)}</small>` : ""}
+        <div class="tp-dialog-actions">
+          <button class="btn secondary" type="button" data-dialog-cancel>${esc(cancelLabel)}</button>
+          <button class="btn ${tone === "danger" ? "danger" : "primary"}" type="button" data-dialog-confirm>${esc(confirmLabel)}</button>
+        </div>
+      </section>`;
+    const input = layer.querySelector("[data-dialog-input]");
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKey, true);
+      layer.remove();
+      resolve(result);
+    };
+    const confirm = () => finish(withInput ? String(input ? input.value : "") : true);
+    const cancel = () => finish(withInput ? null : false);
+    function onKey(event) {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        cancel();
+      } else if (event.key === "Enter" && withInput) {
+        event.preventDefault();
+        confirm();
+      }
+    }
+    layer.addEventListener("click", (event) => {
+      if (event.target === layer || event.target.closest("[data-dialog-cancel]")) cancel();
+      else if (event.target.closest("[data-dialog-confirm]")) confirm();
+    });
+    // Captured, so Escape closes this dialog and not the sheet underneath it.
+    document.addEventListener("keydown", onKey, true);
+    document.body.appendChild(layer);
+    if (input) {
+      input.focus();
+      input.select();
+    } else {
+      const button = layer.querySelector("[data-dialog-confirm]");
+      if (button) button.focus();
+    }
+  });
+}
+// Returns the typed text, or null when the person backed out. An empty string
+// is a real answer ("clear this"), so callers check for null, not falsiness.
+function askForValue(options = {}) {
+  return appDialog({ ...options, withInput: true });
+}
+function askToConfirm(options = {}) {
+  return appDialog({ ...options, withInput: false });
+}
 function openModal(html) {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const keepPrevious = !isFocusRestorationTarget(active) || Boolean(active.closest(".modal-backdrop"));
@@ -2405,7 +2484,11 @@ async function onClick(event) {
   }
   const svMeetingOpen = event.target.closest("[data-sv-meeting-open]");
   if (svMeetingOpen && state.stockvelChat) {
-    const title = window.prompt("Meeting title (optional):", `Meeting ${new Date().toLocaleDateString("en-ZA")}`);
+    const title = await askForValue({
+      title: "Open a meeting",
+      body: "Everything said from now goes into the record, and the minutes are compiled when you close it.",
+      label: "Meeting title", value: `Meeting ${new Date().toLocaleDateString("en-ZA")}`, confirmLabel: "Open meeting"
+    });
     if (title === null) return;
     api(`${STOCKVEL_PATH}/${encodeURIComponent(state.stockvelChat.groupId)}/meetings`, { method: "POST", body: { title: title.trim() || undefined } })
       .then(() => { showToast("Meeting opened — the conversation from now goes into the minutes."); return refreshStockvelGroupChat(); })
@@ -2414,7 +2497,11 @@ async function onClick(event) {
   }
   const svMeetingClose = event.target.closest("[data-sv-meeting-close]");
   if (svMeetingClose && state.stockvelChat) {
-    if (!window.confirm("End the meeting? The minutes are compiled immediately and emailed to every member.")) return;
+    if (!await askToConfirm({
+      title: "End the meeting",
+      body: "The minutes are compiled immediately and emailed to every member.",
+      confirmLabel: "End and send minutes"
+    })) return;
     api(`${STOCKVEL_PATH}/${encodeURIComponent(state.stockvelChat.groupId)}/meetings/${encodeURIComponent(svMeetingClose.dataset.svMeetingClose)}/close`, { method: "POST" })
       .then(() => { showToast("Meeting closed — minutes compiled and emailed to the group."); return refreshStockvelGroupChat(); })
       .catch((error) => showToast(friendlyFormError(error, "stockvel"), "error"));
@@ -2422,7 +2509,11 @@ async function onClick(event) {
   }
   const svDecision = event.target.closest("[data-sv-decision]");
   if (svDecision && state.stockvelChat?.canManage) {
-    if (!window.confirm("Pin this message as a group decision? Decisions lead the minutes.")) return;
+    if (!await askToConfirm({
+      title: "Pin as a decision",
+      body: "Decisions lead the minutes.",
+      confirmLabel: "Pin decision"
+    })) return;
     api(`${STOCKVEL_PATH}/${encodeURIComponent(state.stockvelChat.groupId)}/messages/${encodeURIComponent(svDecision.dataset.svDecision)}/decision`, { method: "POST", body: { isDecision: true } })
       .then(() => refreshStockvelGroupChat())
       .catch((error) => showToast(friendlyFormError(error, "stockvel"), "error"));
@@ -2439,7 +2530,11 @@ async function onClick(event) {
   }
   const tkRemove = event.target.closest("[data-tk-remove]");
   if (tkRemove) {
-    if (!window.confirm("Remove this child from TitoKids? Their wallet must be empty first; the record and history stay on your audit trail.")) return;
+    if (!await askToConfirm({
+      title: "Remove from TitoKids",
+      body: "Their wallet must be empty first. The record and history stay on your audit trail.",
+      confirmLabel: "Remove", tone: "danger"
+    })) return;
     api(`/v1/tito-kids/children/${encodeURIComponent(tkRemove.dataset.tkRemove)}`, { method: "PATCH", body: { status: "removed" } })
       .then(() => { showToast("Removed."); return openTitoKidsModal(); })
       .catch((error) => showToast(friendlyFormError(error, "titokids"), "error"));
@@ -2447,7 +2542,11 @@ async function onClick(event) {
   }
   const supportRemove = event.target.closest("[data-support-remove]");
   if (supportRemove) {
-    if (!window.confirm("Remove this request from your list? Customer Care keeps the record, but it disappears here.")) return;
+    if (!await askToConfirm({
+      title: "Remove from your list",
+      body: "Customer Care keeps the record, but it disappears here.",
+      confirmLabel: "Remove", tone: "danger"
+    })) return;
     api(`/v1/support/tickets/${encodeURIComponent(supportRemove.dataset.supportRemove)}`, { method: "DELETE" })
       .then(() => { showToast("Request removed from your list."); return refreshMySupportRequests(); })
       .catch((error) => showToast(friendlyFormError(error, "support"), "error"));
@@ -3148,8 +3247,11 @@ async function handleAction(action, actionElement = null) {
     const beneficiary = (state.beneficiaries || []).find((item) => item.id === id);
     if (!beneficiary) throw new Error("Saved beneficiary was not found.");
     const destination = beneficiaryRecipient(beneficiary);
-    const confirmation = `Remove ${beneficiaryDisplayName(beneficiary)}${destination ? ` (${destination})` : ""} from Saved Beneficiaries?\n\nNo money will move and past transactions will remain in Activity.`;
-    if (!window.confirm(confirmation)) return;
+    if (!await askToConfirm({
+      title: "Remove beneficiary",
+      body: `${beneficiaryDisplayName(beneficiary)}${destination ? ` (${destination})` : ""} comes off Saved Beneficiaries. No money moves, and past transactions stay in Activity.`,
+      confirmLabel: "Remove", tone: "danger"
+    })) return;
     setButtonBusy(actionElement, true);
     try {
       await api(`/v1/beneficiaries/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -3841,7 +3943,11 @@ async function submitSupportRequest(data) {
 async function submitSupportRating(rating) {
   const button = document.querySelector(`[data-support-rating="${String(rating)}"]`);
   const ticketId = button?.dataset.supportTicket || "";
-  const feedback = window.prompt("Optional feedback for TitoPay Customer Care") || "";
+  const feedback = (await askForValue({
+    title: "Close this request",
+    body: "Anything you would like Customer Care to know before it closes?",
+    label: "Feedback", placeholder: "Optional", maxLength: 300, confirmLabel: "Close request"
+  })) || "";
   try {
     await api("/v1/chatbot/ratings", {
       method: "POST",
@@ -12763,22 +12869,39 @@ async function handleStockAction(target) {
   if (!product) return;
   try {
     if (restockId) {
-      const input = window.prompt(`How many units of "${product.name}" arrived?`, "");
+      const input = await askForValue({
+        title: "Restock",
+        body: `How many units of "${product.name}" arrived?`,
+        label: "Units received", placeholder: "e.g. 24", inputMode: "numeric", confirmLabel: "Add to stock"
+      });
       if (input === null || input.trim() === "") return;
       await api(`/v1/business/products/${product.id}/stock`, { method: "POST", body: { type: "restock", quantity: input.trim() } });
       showToast("Stock added.");
     } else if (stocktakeId) {
-      const input = window.prompt(`Stock take for "${product.name}": how many units are actually on the shelf right now?`, "");
+      const input = await askForValue({
+        title: "Stock take",
+        body: `How many units of "${product.name}" are actually on the shelf right now?`,
+        label: "Counted on the shelf", placeholder: "e.g. 18", inputMode: "numeric", confirmLabel: "Record count",
+        hint: "The difference against the expected count is recorded, so the variance is traceable."
+      });
       if (input === null || input.trim() === "") return;
       await api(`/v1/business/products/${product.id}/stock`, { method: "POST", body: { type: "stock_take", countedQuantity: input.trim(), note: "Stock take from the app" } });
       showToast("Counted quantity saved — the variance is on the product history.");
     } else if (priceId) {
-      const input = window.prompt(`New price for "${product.name}" (currently ${money(product.price)}):`, String(product.price));
+      const input = await askForValue({
+        title: "Change price",
+        body: `"${product.name}" currently sells for ${money(product.price)}.`,
+        label: "New price", value: String(product.price), inputMode: "decimal", confirmLabel: "Save price"
+      });
       if (input === null || input.trim() === "") return;
       await api(`/v1/business/products/${product.id}`, { method: "PUT", body: { price: input.trim() } });
       showToast("Price updated.");
     } else if (archiveId) {
-      if (!window.confirm(`Archive "${product.name}"? It disappears from make-a-sale but its history stays.`)) return;
+      if (!await askToConfirm({
+        title: "Archive product",
+        body: `"${product.name}" disappears from make-a-sale. Its sales history stays exactly as it is.`,
+        confirmLabel: "Archive", tone: "danger"
+      })) return;
       await api(`/v1/business/products/${product.id}`, { method: "PUT", body: { status: "archived" } });
       showToast("Product archived.");
     } else if (historyId) {
@@ -12873,7 +12996,7 @@ async function recordSaleBasket() {
     showToast(`Sale recorded — ${esc(money(result.sale.total))}. Tracked stock counted down.`);
   } catch (error) {
     const message = String(error?.message || "");
-    if (/in stock/i.test(message) && window.confirm(`${message}\n\nSell anyway? The count goes negative until your next stock take.`)) {
+    if (/in stock/i.test(message) && await askToConfirm({ title: "Not enough stock", body: message, confirmLabel: "Sell anyway", cancelLabel: "Stop", tone: "danger", hint: "The count goes negative until your next stock take." })) {
       const result = await api("/v1/business/products/record-sale", { method: "POST", body: { items, allowNegative: true } });
       state.saleBasket = {};
       showToast(`Sale recorded — ${esc(money(result.sale.total))}. Stock is oversold; fix it with a stock take.`);
@@ -13022,7 +13145,7 @@ async function submitStaffSale(data) {
     result = await api(`/v1/staff-workspace/workplaces/${encodeURIComponent(sale.businessUserId)}/sale`, { method: "POST", body });
   } catch (error) {
     const message = String(error?.message || "");
-    if (/in stock/i.test(message) && window.confirm(`${message}\n\nSell anyway? The count goes negative until the next stock take.`)) {
+    if (/in stock/i.test(message) && await askToConfirm({ title: "Not enough stock", body: message, confirmLabel: "Sell anyway", cancelLabel: "Stop", tone: "danger", hint: "The count goes negative until the next stock take." })) {
       result = await api(`/v1/staff-workspace/workplaces/${encodeURIComponent(sale.businessUserId)}/sale`, { method: "POST", body: { ...body, allowNegative: true } });
     } else {
       throw error;
@@ -13293,7 +13416,7 @@ async function submitTitoKidsPay(data) {
     result = await api(`/v1/tito-kids/children/${encodeURIComponent(data.childId)}/pay`, { method: "POST", body });
   } catch (error) {
     const message = String(error?.message || "");
-    if (/limit/i.test(message) && /Confirm to pay anyway/i.test(message) && window.confirm(`${message.replace(" Confirm to pay anyway, or adjust the limits.", "")}\n\nPay anyway? This will be recorded as an over-limit payment.`)) {
+    if (/limit/i.test(message) && /Confirm to pay anyway/i.test(message) && await askToConfirm({ title: "Over the limit", body: message.replace(" Confirm to pay anyway, or adjust the limits.", ""), confirmLabel: "Pay anyway", cancelLabel: "Not now", tone: "danger" })) {
       result = await api(`/v1/tito-kids/children/${encodeURIComponent(data.childId)}/pay`, { method: "POST", body: { ...body, allowOverLimit: true } });
     } else {
       throw error;
@@ -17213,7 +17336,11 @@ async function refreshEventStaffList(eventId) {
   }
 }
 async function removeTicketingStaff(eventId, staffUserId) {
-  if (!window.confirm("Remove this person from the event staff? They will no longer be able to scan tickets.")) return;
+  if (!await askToConfirm({
+      title: "Remove from event staff",
+      body: "They will no longer be able to scan tickets at this event.",
+      confirmLabel: "Remove", tone: "danger"
+    })) return;
   await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/staff/${encodeURIComponent(staffUserId)}/remove`, { method: "POST", body: {} });
   showToast("Removed from event staff.");
   await refreshEventStaffList(eventId);
@@ -17287,7 +17414,11 @@ async function refreshEventVendorList(eventId) {
   }
 }
 async function revokeTicketingVendor(eventId, vendorId) {
-  if (!window.confirm("Revoke this vendor? Their terminals stop taking Event Tag payments at this event immediately.")) return;
+  if (!await askToConfirm({
+      title: "Revoke this vendor",
+      body: "Their terminals stop taking Event Tag payments at this event immediately.",
+      confirmLabel: "Revoke", tone: "danger"
+    })) return;
   await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/vendors/${encodeURIComponent(vendorId)}/revoke`, { method: "POST", body: {} });
   showToast("Vendor revoked for this event.");
   await refreshEventVendorList(eventId);
@@ -20681,10 +20812,8 @@ function servicesView() {
   return `
     ${state.auth?.accessToken ? securityStatusStrip() : ""}
     ${state.serviceError ? promoCarousel() : ""}
-    <section class="service-grid">
-      ${searchTile}
-      ${active.length ? active.map((service) => serviceTile(service, true)).join("") : serviceEmptyState()}
-    </section>
+    ${searchTile ? `<section class="service-grid">${searchTile}</section>` : ""}
+    ${active.length ? groupedServiceSections(active) : `<section class="service-grid">${serviceEmptyState()}</section>`}
     ${soon.length ? `
       <section class="section-head">
         <div>
@@ -20697,6 +20826,35 @@ function servicesView() {
       </section>
     ` : ""}
   `;
+}
+// Nineteen tiles in one flat grid is a list you have to READ. The same tiles
+// under headings are a page you can SCAN — and nothing moves further away:
+// every service is still exactly where it was, one tap from this screen.
+//
+// A service the map does not know about lands under "More" rather than
+// vanishing, so an admin adding a service to the catalogue can never make it
+// disappear from the app. app-navigation-simplicity.test.js checks that every
+// active service comes out the other side exactly once.
+function serviceGroupOf(service) {
+  const keys = [service.id, service.action, service.serviceCode, service.service_code]
+    .map((value) => String(value || "").trim().toLowerCase());
+  for (const group of SERVICE_GROUPS) {
+    if (group.members && keys.some((key) => key && group.members.includes(key))) return group.key;
+  }
+  return "more";
+}
+function groupedServiceSections(services) {
+  const buckets = new Map(SERVICE_GROUPS.map((group) => [group.key, []]));
+  services.forEach((service) => buckets.get(serviceGroupOf(service)).push(service));
+  return SERVICE_GROUPS.map((group) => {
+    const items = buckets.get(group.key) || [];
+    if (!items.length) return "";
+    return `
+      <section class="section-head compact"><div><h2>${esc(group.label)}</h2></div></section>
+      <section class="service-grid">
+        ${items.map((service) => serviceTile(service, true)).join("")}
+      </section>`;
+  }).join("");
 }
 function serviceTile(service, clickable = false) {
   if (!service) return "";
@@ -22170,6 +22328,16 @@ const NOTIFICATION_FILTERS = [
 // Modal openers that participate in back navigation: opening one of these on
 // top of another keeps a trail, and the injected back arrow replays the
 // previous opener. The openers all read live state, so replaying is exact.
+// How the Services screen is grouped. Order is the order on screen; "more" is
+// the catch-all and must stay last with no members of its own.
+const SERVICE_GROUPS = [
+  { key: "send", label: "Send & pay", members: ["send-money", "qr-pay", "payment-request", "bill-split", "send-gift"] },
+  { key: "money", label: "Money in & out", members: ["top-up", "receive-money", "withdraw", "payouts", "tip", "refund"] },
+  { key: "buy", label: "Buy", members: ["airtime", "data", "airtime-data", "electricity", "voucher", "pay-bills", "tickets"] },
+  { key: "plan", label: "Plan & save", members: ["stockvel", "tito-kids", "learn"] },
+  { key: "business", label: "Run your business", members: ["invoice", "quote", "proforma-invoice", "business-sales", "enterprise-distribution", "ticketing", "business-ticketing-staff"] },
+  { key: "more", label: "More", members: null }
+];
 const TICKETING_SECTIONS = [
   { key: "events", label: "My Events", icon: "ticket", hint: "Create events, submit for approval, track each one." },
   { key: "sales", label: "Sales", icon: "chart", hint: "Tickets sold and money taken, per event and per tier." },

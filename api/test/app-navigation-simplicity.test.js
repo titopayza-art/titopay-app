@@ -19,7 +19,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const APP = fs.readFileSync(path.join(__dirname, "..", "..", "pwa", "app.js"), "utf8");
+const REPO = path.join(__dirname, "..", "..");
+const APP = fs.readFileSync(path.join(REPO, "pwa", "app.js"), "utf8");
 
 // profileFeature(title, subtitle, icon, action, primary) — the action is the
 // fourth argument, and every call in the file is written on one line.
@@ -120,4 +121,56 @@ test("a tile that hides itself fails open", () => {
     "eventScannersTileVisible must hide only on a stored negative, so an unknown account still sees the tile");
   assert.match(fn.slice(0, 300), /catch \(error\) \{\s*return true;/,
     "a browser with storage disabled must keep showing the tile");
+});
+
+test("grouping the Services screen loses nothing and buries nothing", () => {
+  // Nineteen tiles in a flat grid is a list you read rather than a page you
+  // scan. Grouping only helps if it is honest: every service must come out the
+  // other side, exactly once, at the same tap depth.
+  const groups = (APP.match(/const SERVICE_GROUPS = \[[\s\S]*?\n\];/) || [""])[0];
+  assert.ok(groups, "SERVICE_GROUPS declares the grouping");
+
+  const keys = [...groups.matchAll(/key: "([a-z]+)"/g)].map((m) => m[1]);
+  assert.equal(keys[keys.length - 1], "more", "the catch-all must sort last, or an unmapped service lands above real ones");
+  assert.match(groups, /\{ key: "more", label: "More", members: null \}/,
+    "the catch-all owns no members of its own — it exists to catch what the map does not know");
+
+  // A service may not be claimed by two groups; the first would silently win.
+  const members = [...groups.matchAll(/members: \[([^\]]*)\]/g)]
+    .flatMap((m) => [...m[1].matchAll(/"([a-z0-9-]+)"/g)].map((x) => x[1]));
+  assert.equal(new Set(members).size, members.length,
+    `a service is claimed by two groups: ${members.filter((id, i) => members.indexOf(id) !== i).join(", ")}`);
+
+  // Every service in the shipped catalogue is either mapped or caught. This is
+  // the check that makes the grouping safe: nothing can vanish.
+  const catalogue = JSON.parse(fs.readFileSync(path.join(REPO, "pwa", "services-default.json"), "utf8"));
+  const list = Array.isArray(catalogue) ? catalogue : (catalogue.services || catalogue.items || []);
+  assert.ok(list.length > 10, "the fallback catalogue should be present");
+
+  // groupedServiceSections renders every service it is given, so "caught by
+  // More" is a pass. The real risk is a group that silently drops one.
+  const renderer = functionBody("groupedServiceSections");
+  assert.match(renderer, /buckets\.get\(serviceGroupOf\(service\)\)\.push\(service\)/,
+    "every service must be pushed into a bucket");
+  assert.match(functionBody("serviceGroupOf"), /return "more";/,
+    "an unmapped service falls through to More rather than disappearing");
+});
+
+test("the app asks in its own voice — no browser prompts left", () => {
+  // window.prompt and window.confirm arrive on a phone as a grey box carrying
+  // the site's address. It reads as "the app broke", not "the app asked".
+  const offenders = [];
+  APP.split("\n").forEach((line, index) => {
+    if (/window\.(prompt|confirm)\s*\(/.test(line)) offenders.push(`${index + 1}: ${line.trim().slice(0, 80)}`);
+  });
+  assert.deepEqual(offenders, [],
+    "use askForValue()/askToConfirm() instead:\n  " + offenders.join("\n  "));
+
+  // The dialog must layer OVER the open sheet. openModal closes whatever is
+  // open, so building on it would shut the sheet the person is working in.
+  const dialog = functionBody("appDialog");
+  assert.doesNotMatch(dialog, /openModal\(/, "appDialog must not be built on openModal");
+  assert.match(dialog, /document\.body\.appendChild\(layer\)/, "the dialog is its own layer above the sheet");
+  assert.match(dialog, /document\.addEventListener\("keydown", onKey, true\)/,
+    "Escape must be captured, or it closes the sheet underneath instead of the dialog");
 });

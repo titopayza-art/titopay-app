@@ -58,7 +58,35 @@ such rule:
 - **Cost nothing.** Decide it from data already fetched for another reason,
   never an extra request on boot.
 
-## 5. One name per concept
+## 5. The Services screen is grouped, never a wall
+
+Nineteen tiles in a flat grid is a list you have to read. The same tiles under
+headings are a page you can scan, and nothing moves further away — every service
+stays exactly one tap from that screen.
+
+    Send & pay        send, QR pay, request, split, gift
+    Money in & out    top up, receive, withdraw, payouts, tip, refund
+    Buy               airtime, data, electricity, vouchers, bills, tickets
+    Plan & save       stokvel, TitoKids, learn
+    Run your business invoices, quotes, sales, ticketing, bulk distribution
+    More              everything the map does not name
+
+`More` is the catch-all and owns no members. A service added to the catalogue
+that nobody mapped lands there rather than disappearing — grouping must never be
+able to lose a feature.
+
+## 6. The app asks in its own voice
+
+No `window.prompt`, no `window.confirm`. On a phone those arrive as a grey box
+carrying the site's address, which reads as "the app broke" rather than "the app
+asked".
+
+Use `askForValue()` for a value and `askToConfirm()` for a decision. Both layer
+over the sheet the person is working in and leave it exactly as it was —
+deliberately not built on `openModal`, which would close it. Destructive
+confirmations pass `tone: "danger"`.
+
+## 7. One name per concept
 
 Three things called "chat" and three called "staff" is a naming problem that
 reads as a complexity problem.
@@ -72,7 +100,7 @@ reads as a complexity problem.
 If a new feature needs one of these words, it probably belongs inside that
 feature rather than beside it.
 
-## 6. Money rules that outrank simplicity
+## 8. Money rules that outrank simplicity
 
 Simplicity never buys its way out of these:
 
