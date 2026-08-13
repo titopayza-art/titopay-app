@@ -1638,14 +1638,34 @@ CREATE TABLE IF NOT EXISTS payment_requests (
 CREATE INDEX IF NOT EXISTS payment_requests_payer_idx
   ON payment_requests (payer_user_id, status, created_at DESC);
 
--- Progressive KYC/FICA. Tier 1 is a validated SA ID number (stored only as a
--- salted hash); Tier 2 is documentary FICA (fica_status). Enhanced due
--- diligence flags are the audit trail of automatic risk triggers. The tier
--- limits themselves live in platform_settings key 'compliance_tier_limits',
--- editable through the admin API, never hard-coded.
+-- Progressive KYC/FICA. Tier 1 is a validated identity document: an SA ID
+-- number, a passport with its issuing country, or another approved identity
+-- document, stored only as a salted hash. Tier 2 is documentary FICA
+-- (fica_status). Enhanced due diligence flags are the audit trail of
+-- automatic risk triggers. The tier limits themselves live in
+-- platform_settings key 'compliance_tier_limits', editable through the
+-- admin API, never hard-coded.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS basic_verified_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS id_number_hash TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS edd_status TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_document_type TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_issuing_country TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_nationality TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_date_of_birth DATE;
+
+-- Verification history: one row per completed verification, hash only.
+CREATE TABLE IF NOT EXISTS kyc_verifications (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  document_type TEXT NOT NULL,
+  issuing_country TEXT,
+  document_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'verified',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS kyc_verifications_user_idx
+  ON kyc_verifications (user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS compliance_flags (
   id UUID PRIMARY KEY,

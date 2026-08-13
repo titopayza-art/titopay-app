@@ -19,10 +19,13 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 13;
+const API_BUILD = 14;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  14: "Identity verification goes international: SA ID, passport or other " +
+      "approved document with issuing country, hash-only storage, verification " +
+      "history, and nine customer-safe verification states on the wallet badge.",
   13: "Compliance finalized: risk axis separate from KYC (normal/elevated/high " +
       "risk/EDD), sanctions screening list, transaction monitoring, ongoing CDD, " +
       "daily/withdrawal/balance limits, pre-limit upgrade nudges, RMCP disclaimers.",

@@ -223,11 +223,26 @@ test("the shipped bundle is rebuilt from this source", () => {
   const min = fs.readFileSync(pwaFile("app.min.js"), "utf8");
   // Terser does not mangle top-level names, so every entry point the tests and
   // the markup rely on must still be reachable by name.
-  for (const name of ["api", "render", "boot", "primaryWallet", "statementPdf", "transactionPostedToWallet", "statementPostedAmount"]) {
+  for (const name of ["api", "render", "boot", "primaryWallet", "statementPdf", "assembleStatementPagesPdf", "transactionPostedToWallet", "statementPostedAmount"]) {
     assert.ok(min.includes(`function ${name}(`), `${name} is missing from app.min.js — rebuild it`);
   }
   const sourceFns = new Set((source.match(/^(?:async )?function [A-Za-z0-9_$]+/gm) || []).map((m) => m.replace(/.*function /, "")));
   assert.ok(sourceFns.size > 850);
+});
+
+test("the account statement paginates instead of overprinting its footer", () => {
+  // A busy month used to cram every row onto page 1: eight settled rows,
+  // six attempts, and the rest drawn over the footer band. Rows now flow to
+  // continuation pages and every page numbers itself.
+  const body = source.slice(source.indexOf("function statementPdf("), source.indexOf("function assembleStatementPagesPdf("));
+  assert.match(body, /startContinuationPage/);
+  assert.match(body, /ACTIVITY \(CONTINUED\)/);
+  assert.match(body, /Page \$\{index \+ 1\} of \$\{pages\.length\}/);
+  assert.doesNotMatch(body, /posted\.slice\(0, 8\)/, "the one-page row cap is gone");
+  assert.doesNotMatch(body, /Page 1 of 1/, "no hard-coded single-page footer remains");
+  // The assembler emits one page object and content stream per page.
+  const assembler = source.slice(source.indexOf("function assembleStatementPagesPdf("));
+  assert.match(assembler.slice(0, 3000), /\/Count \$\{pages\.length\}/);
 });
 
 test("the service worker and the page agree on the bundle version", () => {

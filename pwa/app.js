@@ -63,6 +63,26 @@ const EVENT_TAG_STATES = {
 // underscores rather than as bare substrings, so "pin" cannot be caught inside
 // an unrelated word, and notificationCategory checks this BEFORE the
 // support/chat rule so a security alert can never be filed as a message.
+// The wallet badge mirrors the backend's verification state; these tones
+// only choose the badge colour. Kept in this block because every top-level
+// const sits in an order-sensitive one.
+const VERIFICATION_TONES = {
+  fully_verified: "ok",
+  basic_verified: "mid",
+  verification_in_progress: "mid",
+  unverified: "warn",
+  verification_required: "warn",
+  under_review: "warn",
+  edd_required: "warn",
+  verification_failed: "warn",
+  restricted: "warn"
+};
+
+// ISO 3166-1 country names for the passport verification flow. The API
+// stores the code; the list is here so nobody types a country by hand. Kept
+// in this block because every top-level const sits in an order-sensitive one.
+const KYC_COUNTRIES = [["AF","Afghanistan"],["AL","Albania"],["DZ","Algeria"],["AD","Andorra"],["AO","Angola"],["AG","Antigua and Barbuda"],["AR","Argentina"],["AM","Armenia"],["AU","Australia"],["AT","Austria"],["AZ","Azerbaijan"],["BS","Bahamas"],["BH","Bahrain"],["BD","Bangladesh"],["BB","Barbados"],["BY","Belarus"],["BE","Belgium"],["BZ","Belize"],["BJ","Benin"],["BT","Bhutan"],["BO","Bolivia"],["BA","Bosnia and Herzegovina"],["BW","Botswana"],["BR","Brazil"],["BN","Brunei"],["BG","Bulgaria"],["BF","Burkina Faso"],["BI","Burundi"],["CV","Cabo Verde"],["KH","Cambodia"],["CM","Cameroon"],["CA","Canada"],["CF","Central African Republic"],["TD","Chad"],["CL","Chile"],["CN","China"],["CO","Colombia"],["KM","Comoros"],["CG","Congo"],["CD","Congo, Democratic Republic"],["CR","Costa Rica"],["CI","Cote d'Ivoire"],["HR","Croatia"],["CU","Cuba"],["CY","Cyprus"],["CZ","Czechia"],["DK","Denmark"],["DJ","Djibouti"],["DM","Dominica"],["DO","Dominican Republic"],["EC","Ecuador"],["EG","Egypt"],["SV","El Salvador"],["GQ","Equatorial Guinea"],["ER","Eritrea"],["EE","Estonia"],["SZ","Eswatini"],["ET","Ethiopia"],["FJ","Fiji"],["FI","Finland"],["FR","France"],["GA","Gabon"],["GM","Gambia"],["GE","Georgia"],["DE","Germany"],["GH","Ghana"],["GR","Greece"],["GD","Grenada"],["GT","Guatemala"],["GN","Guinea"],["GW","Guinea-Bissau"],["GY","Guyana"],["HT","Haiti"],["HN","Honduras"],["HK","Hong Kong"],["HU","Hungary"],["IS","Iceland"],["IN","India"],["ID","Indonesia"],["IR","Iran"],["IQ","Iraq"],["IE","Ireland"],["IL","Israel"],["IT","Italy"],["JM","Jamaica"],["JP","Japan"],["JO","Jordan"],["KZ","Kazakhstan"],["KE","Kenya"],["KI","Kiribati"],["KW","Kuwait"],["KG","Kyrgyzstan"],["LA","Laos"],["LV","Latvia"],["LB","Lebanon"],["LS","Lesotho"],["LR","Liberia"],["LY","Libya"],["LI","Liechtenstein"],["LT","Lithuania"],["LU","Luxembourg"],["MO","Macao"],["MG","Madagascar"],["MW","Malawi"],["MY","Malaysia"],["MV","Maldives"],["ML","Mali"],["MT","Malta"],["MH","Marshall Islands"],["MR","Mauritania"],["MU","Mauritius"],["MX","Mexico"],["FM","Micronesia"],["MD","Moldova"],["MC","Monaco"],["MN","Mongolia"],["ME","Montenegro"],["MA","Morocco"],["MZ","Mozambique"],["MM","Myanmar"],["NA","Namibia"],["NR","Nauru"],["NP","Nepal"],["NL","Netherlands"],["NZ","New Zealand"],["NI","Nicaragua"],["NE","Niger"],["NG","Nigeria"],["KP","North Korea"],["MK","North Macedonia"],["NO","Norway"],["OM","Oman"],["PK","Pakistan"],["PW","Palau"],["PS","Palestine"],["PA","Panama"],["PG","Papua New Guinea"],["PY","Paraguay"],["PE","Peru"],["PH","Philippines"],["PL","Poland"],["PT","Portugal"],["QA","Qatar"],["RO","Romania"],["RU","Russia"],["RW","Rwanda"],["KN","Saint Kitts and Nevis"],["LC","Saint Lucia"],["VC","Saint Vincent and the Grenadines"],["WS","Samoa"],["SM","San Marino"],["ST","Sao Tome and Principe"],["SA","Saudi Arabia"],["SN","Senegal"],["RS","Serbia"],["SC","Seychelles"],["SL","Sierra Leone"],["SG","Singapore"],["SK","Slovakia"],["SI","Slovenia"],["SB","Solomon Islands"],["SO","Somalia"],["ZA","South Africa"],["KR","South Korea"],["SS","South Sudan"],["ES","Spain"],["LK","Sri Lanka"],["SD","Sudan"],["SR","Suriname"],["SE","Sweden"],["CH","Switzerland"],["SY","Syria"],["TW","Taiwan"],["TJ","Tajikistan"],["TZ","Tanzania"],["TH","Thailand"],["TL","Timor-Leste"],["TG","Togo"],["TO","Tonga"],["TT","Trinidad and Tobago"],["TN","Tunisia"],["TR","Turkiye"],["TM","Turkmenistan"],["TV","Tuvalu"],["UG","Uganda"],["UA","Ukraine"],["AE","United Arab Emirates"],["GB","United Kingdom"],["US","United States"],["UY","Uruguay"],["UZ","Uzbekistan"],["VU","Vanuatu"],["VE","Venezuela"],["VN","Vietnam"],["YE","Yemen"],["ZM","Zambia"],["ZW","Zimbabwe"]];
+
 const SECURITY_NOTIFICATION = /(^|_)(login|signin|sign|device|devices|session|sessions|otp|pin|passcode|password|lock|unlock|locked|security|fraud|verification|verify|trusted|recovery)(_|$)/;
 const BUSINESS_LOGO_PREFIX = "titopay_business_logo_v1";
 const USERNAME_REGISTRY_KEY = "titopay_username_registry_v1";
@@ -947,17 +967,24 @@ function dashboardGreetingLine() {
   return `<p class="dashboard-greeting"><strong>${esc(greeting.phrase)}${greeting.name ? `, ${esc(greeting.name)}` : ""}</strong>${greeting.language === "English" ? "" : `<small>${esc(greeting.language)}</small>`}</p>`;
 }
 // The wallet card says WHERE the account stands, not a tier number: a quiet
-// status and one door to the full picture.
+// status and one door to the full picture. The badge mirrors the backend's
+// verification state; VERIFICATION_TONES (top block) only chooses its colour.
 function walletVerificationRow() {
   const c = state.compliance;
-  const status = !c ? ["", "Verification"]
-    : c.eddActive ? ["warn", "Under Review"]
-      : c.verified ? ["ok", "\u2713 Fully Verified"]
-        : c.tier === 1 ? ["mid", "\u2713 Basic Verified"]
-          : ["warn", "Verify Identity"];
+  let tone = "";
+  let label = "Verification";
+  if (c) {
+    if (c.verificationState && c.verificationLabel) {
+      tone = VERIFICATION_TONES[c.verificationState] || "warn";
+      label = c.verificationLabel;
+    } else if (c.eddActive) { tone = "warn"; label = "Under Review"; }
+    else if (c.verified) { tone = "ok"; label = "\u2713 Fully Verified"; }
+    else if (c.tier === 1) { tone = "mid"; label = "\u2713 Basic Verified"; }
+    else { tone = "warn"; label = "Verify Identity"; }
+  }
   return `
     <button class="wallet-verification" type="button" data-action="limits-verification" aria-label="Limits and verification">
-      <span class="wv-status ${status[0]}">${esc(status[1])}</span>
+      <span class="wv-status ${tone}">${esc(label)}</span>
       <span class="wv-link">Limits &amp; Verification <span aria-hidden="true">\u2192</span></span>
     </button>`;
 }
@@ -977,6 +1004,15 @@ async function loadComplianceStatus({ silent = true } = {}) {
   } catch {
     // The wallet card falls back to the plain door; nothing else depends on it.
   }
+}
+// KYC_COUNTRIES lives in the top block with the other configuration.
+function kycCountryName(code) {
+  const hit = KYC_COUNTRIES.find((entry) => entry[0] === String(code || "").toUpperCase());
+  return hit ? hit[1] : "";
+}
+function kycCountryOptions(selected) {
+  return `<option value="">Select country</option>${KYC_COUNTRIES.map(([code, name]) =>
+    `<option value="${code}"${code === selected ? " selected" : ""}>${esc(name)}</option>`).join("")}`;
 }
 function limitBar(label, used, limit, percent) {
   if (limit === null || limit === undefined) {
@@ -1003,21 +1039,54 @@ function complianceTierCard(entry, status) {
       unlock = `
         <form class="form-grid" data-form="basic-verify">
           <div class="field">
+            <label for="bv-doc">Identity document</label>
+            <select id="bv-doc" name="documentType">
+              <option value="sa_id">South African ID</option>
+              <option value="passport">Passport</option>
+              <option value="other">Other approved identity document</option>
+            </select>
+            <small class="field-hint">No South African ID? Verify with your passport or another approved identity document instead.</small>
+          </div>
+          <div class="field" data-doc-field="sa_id">
             <label for="bv-id">SA ID number</label>
-            <input id="bv-id" name="idNumber" inputmode="numeric" maxlength="13" placeholder="13 digits" required>
+            <input id="bv-id" name="idNumber" inputmode="numeric" maxlength="13" placeholder="13 digits">
             <small class="field-hint">Checked instantly. Stored only as a one way fingerprint, never as the number itself.</small>
           </div>
-          <button class="btn primary" type="submit">${icon("shield")} Verify my ID</button>
+          <div class="field" data-doc-field="intl" hidden>
+            <label for="bv-num">Document number</label>
+            <input id="bv-num" name="documentNumber" autocomplete="off" maxlength="20" placeholder="As printed on the document">
+            <small class="field-hint">Stored only as a one way fingerprint, never as the number itself, and never shown in the app.</small>
+          </div>
+          <div class="field" data-doc-field="intl" hidden>
+            <label for="bv-country">Issuing country</label>
+            <select id="bv-country" name="issuingCountry">${kycCountryOptions("")}</select>
+          </div>
+          <div class="field" data-doc-field="intl" hidden>
+            <label for="bv-dob">Date of birth</label>
+            <input id="bv-dob" name="dateOfBirth" type="date" autocomplete="bday">
+            <small class="field-hint">As it appears on the document.</small>
+          </div>
+          <button class="btn primary" type="submit">${icon("shield")} Verify my identity</button>
         </form>`;
     } else if (entry.tier === 2) {
       unlock = `<button class="btn primary" type="button" data-action="fica-verification">${icon("shield")} Start full FICA verification</button>`;
     }
+  }
+  // Which document proved the identity, on the achieved level. The document
+  // number itself is never stored, so it can never be shown.
+  let documentLine = "";
+  if (entry.tier === 1 && (current || achieved) && status.document) {
+    const names = { sa_id: "South African ID", passport: "Passport", other: "Approved identity document" };
+    const base = names[status.document.type] || "Identity document";
+    const country = status.document.type === "sa_id" ? "" : (kycCountryName(status.document.issuingCountry) ? `, issued in ${kycCountryName(status.document.issuingCountry)}` : "");
+    documentLine = `<p class="field-hint">Verified with: ${esc(base + country)}.</p>`;
   }
   return `
     <section class="panel tier-card${current ? " tier-current" : ""}">
       <div class="tier-head"><strong>${esc(entry.label)}</strong>${chip}</div>
       <p class="field-hint">${esc(entry.description || "")}</p>
       <p class="tier-limits">${esc(limits)}</p>
+      ${documentLine}
       ${unlock}
     </section>`;
 }
@@ -1036,22 +1105,44 @@ async function openLimitsVerificationModal() {
     return;
   }
   const u = status.usage || {};
+  const l = status.limits || {};
+  const fixedLimit = (label, value) => `<div class="limit-line"><span>${esc(label)}</span><strong>${value === null || value === undefined ? "No fixed limit" : esc(money(value))}</strong></div>`;
+  // A quiet, customer-safe note for the states that need one. Internal risk
+  // ratings never appear here.
+  const stateNote = {
+    verification_in_progress: "Your documents are with the verification team. You will be told in the app the moment the review completes.",
+    verification_required: "Please verify your identity again to keep full access to your wallet. It only takes a few minutes below.",
+    verification_failed: "Your last verification could not be completed. Check your details and try again below, or contact Support.",
+    restricted: "Your account is currently restricted. Contact TitoPay support to restore access."
+  }[status.verificationState] || "";
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Your Wallet</p><h2>Limits &amp; Verification</h2>
         <p class="lead">${status.verified
-          ? "Your identity is fully verified. Your wallet has full access without fixed monthly limits, and routine monitoring keeps every wallet on TitoPay safe."
-          : "Your limits grow with your verification. Each step takes minutes, and the app tells you before you get near a limit."}</p></div>
+          ? "Your identity is fully verified. Your available limits depend on your verification status, risk profile and applicable TitoPay compliance requirements."
+          : "Your limits grow with your verification. Your available limits depend on your verification status, risk profile and applicable TitoPay compliance requirements."}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${stateNote ? `
+      <section class="integration-note" aria-label="Verification status">
+        <p>${icon("shield")} <span>${esc(stateNote)}</span></p>
+      </section>` : ""}
     ${status.eddActive ? `
       <section class="integration-note" aria-label="Enhanced due diligence">
         <p>${icon("shield")} <span><strong>A routine compliance review is open on your account.</strong> Please send proof of source of funds or income, and for a business the beneficial owner details, to compliance@titopay.co.za or through Support. Your account keeps working while the team reviews.</span></p>
       </section>` : ""}
     <section class="panel">
       <h3 class="tier-section-label">This month</h3>
-      ${limitBar("Received", u.received || 0, status.limits?.monthlyReceive ?? null, u.receivePercent || 0)}
-      ${limitBar("Sent", u.sent || 0, status.limits?.monthlySend ?? null, u.sendPercent || 0)}
+      ${limitBar("Received", u.received || 0, l.monthlyReceive ?? null, u.receivePercent || 0)}
+      ${limitBar("Sent", u.sent || 0, l.monthlySend ?? null, u.sendPercent || 0)}
+    </section>
+    <section class="panel">
+      <h3 class="tier-section-label">Your current limits</h3>
+      ${fixedLimit("Per payment", l.singleTransaction ?? null)}
+      ${fixedLimit("Sending per day", l.dailySend ?? null)}
+      ${fixedLimit("Per withdrawal", l.singleWithdrawal ?? null)}
+      ${fixedLimit("Withdrawals per month", l.monthlyWithdraw ?? null)}
+      ${fixedLimit("Wallet balance", l.maxBalance ?? null)}
     </section>
     <p class="field-hint">${esc(status.disclaimer || "")}</p>
     <h3 class="tier-section-label">Verification levels</h3>
@@ -1063,9 +1154,20 @@ async function openLimitsVerificationModal() {
   `);
 }
 async function submitBasicVerify(form, data) {
-  const result = await api("/v1/compliance/basic-verify", { method: "POST", body: { idNumber: data.idNumber } });
+  const documentType = data.documentType || "sa_id";
+  let body;
+  if (documentType === "sa_id") {
+    if (!String(data.idNumber || "").trim()) throw new Error("Enter your SA ID number.");
+    body = { documentType, idNumber: data.idNumber };
+  } else {
+    if (!String(data.documentNumber || "").trim()) throw new Error("Enter the document number as printed on the document.");
+    if (!String(data.issuingCountry || "").trim()) throw new Error("Select the country that issued the document.");
+    if (!String(data.dateOfBirth || "").trim()) throw new Error("Enter your date of birth as on the document.");
+    body = { documentType, documentNumber: data.documentNumber, issuingCountry: data.issuingCountry, dateOfBirth: data.dateOfBirth };
+  }
+  const result = await api("/v1/compliance/basic-verify", { method: "POST", body });
   state.compliance = result;
-  showToast("Your ID is verified. Your limits have been raised.");
+  showToast("Your identity is verified. Your limits have been raised.");
   await openLimitsVerificationModal();
   render();
 }
@@ -1077,7 +1179,7 @@ function dashboardView() {
     <section class="dashboard-grid">
       <div>
         <section class="wallet-card${state.accountType === "business" ? " wallet-card-business" : ""}">
-          <p class="eyebrow muted">${state.accountType === "business" ? "Business Wallet" : "Personal Wallet"}</p>
+          <p class="eyebrow muted">${state.accountType === "business" ? "Business Wallet" : "Personal Wallet"} <span class="wallet-currency">ZAR</span></p>
           <div class="wallet-balance-line">
             <div class="wallet-balance">${state.loading && !state.wallets.length ? '<span class="skeleton skeleton-balance" aria-hidden="true"></span>' : displayMoney(wallet ? wallet.available_balance : undefined)}</div>
             <button class="balance-toggle" type="button" data-action="toggle-balance" aria-label="${state.balanceHidden ? "Show wallet balance" : "Hide wallet balance"}">${icon(state.balanceHidden ? "eye" : "eye-off")}</button>
@@ -1086,7 +1188,6 @@ function dashboardView() {
             <span>Wallet ID</span>
             <strong>${esc(displayWalletId(wallet || {}))}</strong>
           </div>
-          <p class="muted">Available balance in South African Rand.</p>
           ${walletVerificationRow()}
           <div class="wallet-actions wallet-actions-compact">
             ${walletAction("Top Up", "upload", "top-up")}
@@ -3508,6 +3609,18 @@ function onInput(event) {
   }
 }
 function onChange(event) {
+  // Identity verification: the document choice decides which fields show.
+  // SA ID needs only the number; a passport or other approved document needs
+  // its number, issuing country and date of birth.
+  const kycDocType = event.target.closest('form[data-form="basic-verify"] select[name="documentType"]');
+  if (kycDocType) {
+    const form = kycDocType.closest("form");
+    const intl = kycDocType.value !== "sa_id";
+    form.querySelectorAll("[data-doc-field]").forEach((field) => {
+      field.hidden = field.dataset.docField === "intl" ? !intl : intl;
+    });
+    return;
+  }
   const quickServiceToggle = event.target.closest("[data-quick-service-toggle]");
   if (quickServiceToggle) {
     updateQuickServiceDraft(quickServiceToggle.dataset.quickServiceToggle, quickServiceToggle.checked);
@@ -10167,7 +10280,12 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null, fica 
   const issuedDate = now.toLocaleDateString("en-ZA", { day: "2-digit", month: "long", year: "numeric" });
   const issuedTime = now.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false });
   const generatedAt = now.toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" });
-  const commands = [];
+  // The statement paginates: rows flow down each page, and when the next row
+  // would collide with the footer band a fresh page starts with a slim
+  // continuation header. Every page draws into its own command list.
+  const pages = [];
+  let commands = null;
+  const startPage = () => { commands = []; pages.push(commands); };
   const fill = (x, y, w, h, color) => commands.push(`q ${color} rg ${x} ${y} ${w} ${h} re f Q`);
   const stroke = (x, y, w, h, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x} ${y} ${w} ${h} re S Q`);
   const line = (x1, y1, x2, y2, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`);
@@ -10180,33 +10298,38 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null, fica 
     const width = String(value || "").length * size * 0.48;
     text(centerX - width / 2, y, value, size, font, color);
   };
-  const circle = (cx, cy, r, color = "0.60 0.10 0.14", width = 1.2) => {
-    const k = 0.5522847498 * r;
-    commands.push(`q ${color} RG ${width} w ${cx + r} ${cy} m ${cx + r} ${cy + k} ${cx + k} ${cy + r} ${cx} ${cy + r} c ${cx - k} ${cy + r} ${cx - r} ${cy + k} ${cx - r} ${cy} c ${cx - r} ${cy - k} ${cx - k} ${cy - r} ${cx} ${cy - r} c ${cx + k} ${cy - r} ${cx + r} ${cy - k} ${cx + r} ${cy} c S Q`);
-  };
 
-  fill(0, 720, 595, 92, "1 1 1");
-  fill(0, 716, 595, 4, "0.00 0.34 1.00");
-  // Use the supplied official wordmark in exported statements. The vector
-  // fallback keeps exports working if the asset cannot be loaded offline.
+  // Prepare the wordmark bytes once; every page header reuses the XObject.
   if (logo?.dataUrl) {
     const logoBase64 = String(logo.dataUrl).split(",")[1] || "";
     const logoBinary = atob(logoBase64);
     const logoBytes = new Uint8Array(logoBinary.length);
     for (let index = 0; index < logoBinary.length; index += 1) logoBytes[index] = logoBinary.charCodeAt(index);
     logo.pdfBytes = logoBytes;
-    commands.push("q 180 0 0 46 52 756 cm /Im1 Do Q");
-  } else {
-    commands.push("q 0.18 0.54 0.95 rg 68 794 m 80 806 l 68 806 l h f Q");
-    text(52, 768, "Tito", 27, "F2", "0.03 0.08 0.22");
-    text(97, 768, "Pay", 27, "F2", "0.18 0.54 0.95");
   }
-  text(52, 746, "Smart Payments. Simplified.", 8.6, "F1", "0.38 0.43 0.52");
-  const statementHeaderX = 352;
-  text(statementHeaderX, 776, "ACCOUNT STATEMENT", 15, "F2", "0.03 0.08 0.22");
-  text(statementHeaderX, 757, profileType, 9, "F1", "0.38 0.43 0.52");
-  text(statementHeaderX, 743, `Issued ${issuedDate} at ${issuedTime}`, 8.5, "F1", "0.38 0.43 0.52");
-  text(statementHeaderX, 730, `Reference ${referenceNo}`, 8.5, "F1", "0.38 0.43 0.52");
+
+  const drawPageHeader = (firstPage) => {
+    fill(0, 720, 595, 92, "1 1 1");
+    fill(0, 716, 595, 4, "0.00 0.34 1.00");
+    // Use the supplied official wordmark in exported statements. The vector
+    // fallback keeps exports working if the asset cannot be loaded offline.
+    if (logo?.pdfBytes?.length) {
+      commands.push("q 180 0 0 46 52 756 cm /Im1 Do Q");
+    } else {
+      commands.push("q 0.18 0.54 0.95 rg 68 794 m 80 806 l 68 806 l h f Q");
+      text(52, 768, "Tito", 27, "F2", "0.03 0.08 0.22");
+      text(97, 768, "Pay", 27, "F2", "0.18 0.54 0.95");
+    }
+    text(52, 746, "Smart Payments. Simplified.", 8.6, "F1", "0.38 0.43 0.52");
+    const statementHeaderX = 352;
+    text(statementHeaderX, 776, "ACCOUNT STATEMENT", 15, "F2", "0.03 0.08 0.22");
+    text(statementHeaderX, 757, firstPage ? profileType : `${profileType} (continued)`, 9, "F1", "0.38 0.43 0.52");
+    text(statementHeaderX, 743, `Issued ${issuedDate} at ${issuedTime}`, 8.5, "F1", "0.38 0.43 0.52");
+    text(statementHeaderX, 730, `Reference ${referenceNo}`, 8.5, "F1", "0.38 0.43 0.52");
+  };
+
+  startPage();
+  drawPageHeader(true);
 
   fill(52, 538, 491, 138, "0.99 0.99 1.00");
   stroke(52, 538, 491, 138);
@@ -10261,15 +10384,45 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null, fica 
   const netText = statementMoney(Math.abs(net), net >= 0 ? "+" : "-");
   text(404, 471, netText, statementAmountFontSize(netText, 126, 13), "F2", "0.04 0.11 0.27");
 
-  text(52, 430, `${state.accountType === "business" ? "BUSINESS" : "PERSONAL"} ACTIVITY (${posted.length})`, 10, "F2", "0.12 0.32 0.62");
-  fill(52, 399, 491, 24, "0.03 0.08 0.22");
-  text(64, 408, "DATE", 9, "F2", "1 1 1");
-  text(155, 408, "DESCRIPTION", 9, "F2", "1 1 1");
-  rightText(528, 408, "AMOUNT", 9, "F2", "1 1 1");
+  // The official stamp lives in the fixed band between the header and the
+  // ACCOUNT DETAILS card, where nothing else ever draws. Page 1 only.
+  fill(392, 680, 151, 44, "0.95 0.97 1.00");
+  stroke(392, 680, 151, 44, "0.82 0.88 0.98");
+  centerText(467, 712, "OFFICIAL TITOPAY STATEMENT", 7.5, "F2", "0.12 0.32 0.62");
+  centerText(467, 700, compactStatementReference(referenceNo, 22), 6.4, "F1", "0.06 0.10 0.20");
+  centerText(467, 688, issuedDate, 6.2, "F1", "0.42 0.46 0.55");
 
-  const postedRows = posted.slice(0, 8);
+  // ACTIVITY, flowing across pages. Rows never draw into the footer band:
+  // when the next row would, a continuation page starts with the same table
+  // header, and the page number in the footer keeps count.
+  const activityKind = state.accountType === "business" ? "BUSINESS" : "PERSONAL";
+  const ROW_BOTTOM = 122;
+  const drawTableHeader = (top) => {
+    fill(52, top, 491, 24, "0.03 0.08 0.22");
+    text(64, top + 9, "DATE", 9, "F2", "1 1 1");
+    text(155, top + 9, "DESCRIPTION", 9, "F2", "1 1 1");
+    rightText(528, top + 9, "AMOUNT", 9, "F2", "1 1 1");
+  };
+  const startContinuationPage = (withTableHeader) => {
+    startPage();
+    drawPageHeader(false);
+    if (withTableHeader) {
+      text(52, 690, `${activityKind} ACTIVITY (CONTINUED)`, 10, "F2", "0.12 0.32 0.62");
+      drawTableHeader(659);
+      return 635;
+    }
+    return 690;
+  };
+
+  text(52, 430, `${activityKind} ACTIVITY (${posted.length})`, 10, "F2", "0.12 0.32 0.62");
+  drawTableHeader(399);
   let y = 375;
+
+  // Bounded generously rather than truncated to one page: a statement of a
+  // hundred movements is a few pages, not a cut-off list.
+  const postedRows = posted.slice(0, 100);
   postedRows.forEach((item, index) => {
+    if (y < ROW_BOTTOM) y = startContinuationPage(true);
     if (index % 2 === 0) fill(52, y - 3, 491, 23, "0.98 0.985 0.995");
     const credit = transactionIsCredit(item);
     const title = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
@@ -10281,10 +10434,16 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null, fica 
     rightText(528, y + 4, amountText, statementAmountFontSize(amountText), "F2", credit ? "0.03 0.50 0.38" : "0.62 0.10 0.13");
     y -= 25;
   });
+  if (posted.length > postedRows.length) {
+    if (y < ROW_BOTTOM) y = startContinuationPage(true);
+    text(64, y + 4, `and ${posted.length - postedRows.length} further settled movement(s) in this period.`, 8, "F1", "0.42 0.46 0.55");
+    y -= 25;
+  }
   if (!postedRows.length) {
     text(64, y + 4, "No settled wallet movements were recorded for this period.", 8.5, "F1", "0.42 0.46 0.55");
     y -= 25;
   }
+  if (y < ROW_BOTTOM) y = startContinuationPage(false);
   line(52, y + 13, 543, y + 13);
   text(52, y - 8, "Closing net for period", 10, "F2");
   const closingNetText = statementMoney(Math.abs(net), net >= 0 ? "+" : "-");
@@ -10293,45 +10452,54 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null, fica 
 
   // Attempts that never reached the wallet are disclosed, not hidden — but they
   // sit below the closing figure, carry their real status, and are stated to
-  // have had no effect on any total above.
+  // have had no effect on any total above. They flow onto further pages the
+  // same way the settled rows do.
   if (attempts.length) {
+    if (y < ROW_BOTTOM) y = startContinuationPage(false);
     text(52, y, `UNSUCCESSFUL OR PENDING ATTEMPTS (${attempts.length}) - NO EFFECT ON THE TOTALS ABOVE`, 8, "F2", "0.62 0.10 0.13");
     y -= 16;
-    attempts.slice(0, 6).forEach((item) => {
+    const attemptRows = attempts.slice(0, 60);
+    attemptRows.forEach((item) => {
+      if (y < 112) {
+        y = startContinuationPage(false);
+        text(52, y, "UNSUCCESSFUL OR PENDING ATTEMPTS (CONTINUED) - NO EFFECT ON THE TOTALS ABOVE", 8, "F2", "0.62 0.10 0.13");
+        y -= 16;
+      }
       const title = item.service_name || item.serviceName || item.service_code || item.serviceCode || "TitoPay transaction";
       const status = String(item.status || "not completed").toUpperCase();
       text(64, y, splitStatementText(`${statementDateLabel(item.created_at || item.createdAt)}  ${title}  ${item.reference || ""}`, 62, 1)[0], 7, "F1", "0.42 0.46 0.55");
       rightText(528, y, `${status} - ${statementMoney(statementAttemptedAmount(item))} NOT RECEIVED`, 7, "F1", "0.62 0.10 0.13");
       y -= 12;
     });
-    if (attempts.length > 6) {
-      text(64, y, `and ${attempts.length - 6} further attempt(s) with no wallet effect.`, 7, "F1", "0.42 0.46 0.55");
+    if (attempts.length > attemptRows.length) {
+      if (y < 112) y = startContinuationPage(false);
+      text(64, y, `and ${attempts.length - attemptRows.length} further attempt(s) with no wallet effect.`, 7, "F1", "0.42 0.46 0.55");
     }
   }
 
-  // The official stamp lives in the fixed band between the header and the
-  // ACCOUNT DETAILS card, where nothing else ever draws. It used to sit near
-  // the page foot at a fixed position, and a statement with enough activity
-  // (posted rows + the unsuccessful-attempts list grow DOWNWARD into that
-  // corner) printed straight over it. Same stamp, same size — personal and
-  // business statements share this layout.
-  fill(392, 680, 151, 44, "0.95 0.97 1.00");
-  stroke(392, 680, 151, 44, "0.82 0.88 0.98");
-  centerText(467, 712, "OFFICIAL TITOPAY STATEMENT", 7.5, "F2", "0.12 0.32 0.62");
-  centerText(467, 700, compactStatementReference(referenceNo, 22), 6.4, "F1", "0.06 0.10 0.20");
-  centerText(467, 688, issuedDate, 6.2, "F1", "0.42 0.46 0.55");
+  // Footers last, once the page count is known.
+  pages.forEach((page, index) => {
+    commands = page;
+    line(52, 86, 543, 86);
+    text(52, 56, "Smart Payments. Simplified.", 7, "F1", "0.42 0.46 0.55");
+    text(52, 27, `Generated ${generatedAt}. This statement is generated electronically and is valid without signature.`, 6.2, "F1", "0.42 0.46 0.55");
+    rightText(543, 34, `Page ${index + 1} of ${pages.length}`, 7, "F1", "0.42 0.46 0.55");
+  });
 
-  line(52, 86, 543, 86);
-  text(52, 56, "Smart Payments. Simplified.", 7, "F1", "0.42 0.46 0.55");
-  text(52, 27, `Generated ${generatedAt}. This statement is generated electronically and is valid without signature.`, 6.2, "F1", "0.42 0.46 0.55");
-  rightText(543, 34, "Page 1 of 1", 7, "F1", "0.42 0.46 0.55");
-
-  const content = commands.join("\n");
+  return assembleStatementPagesPdf(pages, logo);
+}
+// Multi-page document assembly for the account statement: one shared font
+// pair and optional wordmark XObject, one page object and content stream per
+// page, correct xref. The single-page assembler below stays for the other
+// statement-styled documents.
+function assembleStatementPagesPdf(pages, logo = null) {
   const hasLogo = Boolean(logo?.pdfBytes?.length);
-  const contentObjectNumber = hasLogo ? 7 : 6;
+  const firstPageObject = hasLogo ? 6 : 5;
+  const firstContentObject = firstPageObject + pages.length;
+  const totalObjects = firstContentObject + pages.length - 1;
   const resources = hasLogo
-    ? `/Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Im1 6 0 R >> >>`
-    : `/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >>`;
+    ? `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> /XObject << /Im1 5 0 R >> >>`
+    : `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >>`;
   const encoder = new TextEncoder();
   const chunks = [];
   const offsets = [0];
@@ -10348,18 +10516,26 @@ function statementPdf({ items, now, statementNo, referenceNo, logo = null, fica 
   };
   push("%PDF-1.4\n");
   object(1, ["1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj"]);
-  object(2, ["2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj"]);
-  object(3, [`3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ${resources} /Contents ${contentObjectNumber} 0 R >> endobj`]);
-  object(4, ["4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj"]);
-  object(5, ["5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj"]);
+  const kids = pages.map((_, index) => `${firstPageObject + index} 0 R`).join(" ");
+  object(2, [`2 0 obj << /Type /Pages /Kids [${kids}] /Count ${pages.length} >> endobj`]);
+  object(3, ["3 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj"]);
+  object(4, ["4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj"]);
   if (hasLogo) {
-    object(6, [`6 0 obj << /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logo.pdfBytes.length} >> stream\n`, logo.pdfBytes, "\nendstream endobj"]);
+    object(5, [`5 0 obj << /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logo.pdfBytes.length} >> stream\n`, logo.pdfBytes, "\nendstream endobj"]);
   }
-  object(contentObjectNumber, [`${contentObjectNumber} 0 obj << /Length ${encoder.encode(content).length} >> stream\n${content}\nendstream endobj`]);
+  pages.forEach((_, index) => {
+    const number = firstPageObject + index;
+    object(number, [`${number} 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ${resources} /Contents ${firstContentObject + index} 0 R >> endobj`]);
+  });
+  pages.forEach((pageCommands, index) => {
+    const number = firstContentObject + index;
+    const content = pageCommands.join("\n");
+    object(number, [`${number} 0 obj << /Length ${encoder.encode(content).length} >> stream\n${content}\nendstream endobj`]);
+  });
   const xref = byteOffset;
-  let crossReference = `xref\n0 ${contentObjectNumber + 1}\n0000000000 65535 f \n`;
-  for (let index = 1; index <= contentObjectNumber; index += 1) crossReference += `${leftPad(String(offsets[index]), 10, "0")} 00000 n \n`;
-  push(`${crossReference}trailer\n<< /Size ${contentObjectNumber + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  let crossReference = `xref\n0 ${totalObjects + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index <= totalObjects; index += 1) crossReference += `${leftPad(String(offsets[index]), 10, "0")} 00000 n \n`;
+  push(`${crossReference}trailer\n<< /Size ${totalObjects + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
   const output = new Uint8Array(byteOffset);
   let position = 0;
   chunks.forEach((chunk) => {

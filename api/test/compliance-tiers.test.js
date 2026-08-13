@@ -61,12 +61,57 @@ test("EDD is automatic, audited, and tells the customer", () => {
   assert.match(ADMIN, /edd_status = 'cleared'/);
 });
 
-test("tier 1 is a validated SA ID stored only as a hash", () => {
+test("tier 1 is a validated identity document stored only as a hash", () => {
+  // SA ID keeps its full local validation...
   assert.match(COMPLIANCE, /function validateSaIdNumber/);
   assert.match(COMPLIANCE, /sum % 10 !== 0/, "the Luhn check digit is verified");
+  // ...and no customer is assumed South African: passports and other
+  // approved documents verify with an issuing country and date of birth.
+  assert.match(COMPLIANCE, /documentTypes: \["sa_id", "passport", "other"\]/);
+  assert.match(COMPLIANCE, /function normalizeDocumentNumber/);
+  assert.match(COMPLIANCE, /ISO_COUNTRIES/);
+  assert.match(COMPLIANCE, /kyc_verifications/, "every verification lands in the history table");
   assert.match(COMPLIANCE, /createHash\("sha256"\)/);
   assert.doesNotMatch(COMPLIANCE, /INSERT INTO users[\s\S]{0,200}id_number[^_]/,
-    "the raw ID number must never be stored");
+    "the raw document number must never be stored");
+  assert.doesNotMatch(COMPLIANCE, /kyc_document_number/,
+    "no column exists that could hold the number in the clear");
+});
+
+test("the flow never brands basic verification as SA-only", () => {
+  // The approved wording is "Identity verified", wherever it appears.
+  assert.doesNotMatch(COMPLIANCE, /SA ID verified/);
+  assert.doesNotMatch(APP, /SA ID verified/);
+  assert.match(COMPLIANCE, /Identity verified\. Everyday wallet limits\./);
+  // The app offers the document choice and the passport fields.
+  assert.match(APP, /South African ID<\/option>/);
+  assert.match(APP, /Passport<\/option>/);
+  assert.match(APP, /Other approved identity document<\/option>/);
+  assert.match(APP, /name="issuingCountry"/);
+  assert.match(APP, /name="dateOfBirth"/);
+  assert.match(APP, /KYC_COUNTRIES/);
+});
+
+test("the nine verification states exist and drive the wallet badge", () => {
+  for (const state of ["unverified", "verification_in_progress", "basic_verified", "fully_verified",
+    "verification_required", "under_review", "edd_required", "verification_failed", "restricted"]) {
+    assert.match(COMPLIANCE, new RegExp(state), `state ${state} exists`);
+  }
+  assert.match(COMPLIANCE, /function verificationStateFor/);
+  // The registration default never reads as an in-flight review.
+  assert.match(COMPLIANCE, /"pending" is the registration default/);
+  // The badge follows the backend state dynamically.
+  assert.match(APP, /VERIFICATION_TONES/);
+  assert.match(APP, /c\.verificationState && c\.verificationLabel/);
+});
+
+test("the limits screen shows the full limit set with the approved copy", () => {
+  assert.match(APP, /Your limits grow with your verification\. Your available limits depend on your verification status, risk profile and applicable TitoPay compliance requirements\./);
+  assert.match(APP, /Per payment/);
+  assert.match(APP, /Sending per day/);
+  assert.match(APP, /Per withdrawal/);
+  assert.match(APP, /Withdrawals per month/);
+  assert.match(APP, /Wallet balance/);
 });
 
 test("the wallet card shows status, not tier arithmetic, with one door", () => {

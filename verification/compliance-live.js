@@ -233,7 +233,52 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     await pool.query("DELETE FROM platform_settings WHERE key = 'compliance_tier_limits'");
     ok("the customer is nudged to upgrade before reaching a limit, in their notifications");
 
-    console.log(`\n${passed}/10 checks passed. Progressive KYC holds on the real API.`);
+    // 11. A foreign customer verifies with a passport: document type and
+    //     issuing country are stored, the number only as a hash, and reuse
+    //     of the same passport is refused. The wording never says SA ID.
+    const traveller = await seedUser("Traveller", { balance: 5000 });
+    const noCountry = await call(traveller.token, "POST", "/v1/compliance/basic-verify",
+      { documentType: "passport", documentNumber: `P${TAG}77`, dateOfBirth: "1992-04-15" });
+    assert.equal(noCountry.status, 400, "a passport without its issuing country is refused");
+    const passportOk = await call(traveller.token, "POST", "/v1/compliance/basic-verify",
+      { documentType: "passport", documentNumber: `P${TAG}77`, issuingCountry: "GB", dateOfBirth: "1992-04-15" });
+    assert.equal(passportOk.status, 200, JSON.stringify(passportOk.data));
+    assert.equal(passportOk.data.tier, 1);
+    assert.equal(passportOk.data.document.type, "passport");
+    assert.equal(passportOk.data.document.issuingCountry, "GB");
+    assert.ok(!JSON.stringify(passportOk.data).includes(`P${TAG}77`.toUpperCase()),
+      "the passport number never appears in the status payload");
+    assert.doesNotMatch(String(passportOk.data.label || "") + String((passportOk.data.tiers || []).map((t) => t.description).join(" ")), /SA ID verified/);
+    const { rows: travellerRow } = await pool.query(
+      "SELECT kyc_document_type, kyc_issuing_country, id_number_hash FROM users WHERE id = $1", [traveller.id]);
+    assert.equal(travellerRow[0].kyc_document_type, "passport");
+    assert.equal(travellerRow[0].kyc_issuing_country, "GB");
+    assert.match(String(travellerRow[0].id_number_hash), /^[a-f0-9]{64}$/, "hash only, never the number");
+    const copycat = await seedUser("Copycat", { balance: 100 });
+    const passportReuse = await call(copycat.token, "POST", "/v1/compliance/basic-verify",
+      { documentType: "passport", documentNumber: `P${TAG}77`, issuingCountry: "GB", dateOfBirth: "1990-01-01" });
+    assert.equal(passportReuse.status, 409, "one passport, one account");
+    const { rows: history } = await pool.query(
+      "SELECT document_type, issuing_country FROM kyc_verifications WHERE user_id = $1", [traveller.id]);
+    assert.equal(history[0].document_type, "passport");
+    ok("a passport verifies a foreign customer: hash-only storage, issuing country kept, reuse refused");
+
+    // 12. The verification state machine reaches the wallet badge: the state
+    //     and its customer-safe label travel in the status payload.
+    assert.equal(passportOk.data.verificationState, "basic_verified");
+    assert.match(String(passportOk.data.verificationLabel), /Basic Verified/);
+    const whaleState = await call(whale.token, "GET", "/v1/compliance/status");
+    assert.ok(["edd_required", "under_review"].includes(whaleState.data.verificationState),
+      `EDD shows a review state, got ${whaleState.data.verificationState}`);
+    await pool.query("UPDATE users SET fica_status = 'rejected' WHERE id = $1", [copycat.id]);
+    const failedState = await call(copycat.token, "GET", "/v1/compliance/status");
+    assert.equal(failedState.data.verificationState, "verification_failed");
+    await pool.query("UPDATE users SET fica_status = 'submitted' WHERE id = $1", [copycat.id]);
+    const progressState = await call(copycat.token, "GET", "/v1/compliance/status");
+    assert.equal(progressState.data.verificationState, "verification_in_progress");
+    ok("verification states flow to the badge: basic verified, review, failed and in-progress all derive correctly");
+
+    console.log(`\n${passed}/12 checks passed. Progressive KYC holds on the real API.`);
     process.exit(0);
   } catch (error) {
     console.error("\nFAILED:", error.message);
@@ -243,6 +288,7 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     const ids = users.map((u) => u.id);
     await pool.query("DELETE FROM platform_settings WHERE key = 'compliance_tier_limits'").catch(() => {});
     await pool.query("DELETE FROM compliance_flags WHERE user_id = ANY($1::UUID[])", [ids]).catch(() => {});
+    await pool.query("DELETE FROM kyc_verifications WHERE user_id = ANY($1::UUID[])", [ids]).catch(() => {});
     await pool.query("DELETE FROM compliance_screening_list WHERE label LIKE $1", [`%${TAG}%`]).catch(() => {});
     await pool.query("DELETE FROM notifications WHERE user_id = ANY($1::UUID[])", [ids]).catch(() => {});
     await pool.query("DELETE FROM wallet_ledger WHERE wallet_id IN (SELECT id FROM wallets WHERE user_id = ANY($1::UUID[]))", [ids]).catch(() => {});

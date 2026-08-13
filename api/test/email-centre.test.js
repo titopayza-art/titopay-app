@@ -425,7 +425,7 @@ test("Personal and Business PDF statements use the current logo and fit amount v
   assert.match(app,/text\(97, 768, "Pay", 27, "F2", "0\.18 0\.54 0\.95"\)/);
   assert.match(app,/const statementHeaderX = 352/);
   assert.match(app,/text\(statementHeaderX, 776, "ACCOUNT STATEMENT", 15/);
-  assert.match(app,/text\(statementHeaderX, 757, profileType, 9/);
+  assert.match(app,/text\(statementHeaderX, 757, firstPage \? profileType : `\$\{profileType\} \(continued\)`, 9/);
   assert.match(app,/text\(statementHeaderX, 743, `Issued \$\{issuedDate\} at \$\{issuedTime\}`, 8\.5/);
   assert.match(app,/text\(statementHeaderX, 730, `Reference \$\{referenceNo\}`, 8\.5/);
   assert.match(app,/function statementAmountFontSize\(value, maxWidth = 92, maxSize = 9\)/);

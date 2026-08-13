@@ -13502,3 +13502,39 @@ img {
 .tier-card.tier-current { border: 1.5px solid var(--blue); }
 
 .tier-limits { margin: 6px 0 10px; font-size: 0.92rem; }
+
+/* ============================================================
+   Home density pass: the dashboard fits more of itself on one
+   phone screen. The wallet card keeps its layout and identity;
+   every band just spends fewer pixels on air, so Quick services
+   and the Transaction summary arrive sooner on small phones.
+   ============================================================ */
+.wallet-currency {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  vertical-align: 1px;
+}
+
+@media (max-width: 480px) {
+  .wallet-card { padding: 18px 16px 16px; }
+  .wallet-balance { margin: 6px 0 10px; font-size: clamp(1.9rem, 8.6vw, 2.6rem); }
+  .wallet-meta-line { margin: -2px 0 8px; padding: 6px 11px; }
+  .balance-toggle { width: 40px; height: 40px; flex: 0 0 40px; }
+  .wallet-verification { margin: 8px 0 0; padding: 8px 10px; }
+  .wallet-actions-compact { margin-top: 12px; gap: 10px; }
+  .wallet-actions-compact button { min-height: 48px; }
+  .section-head.quick-services-head { margin-top: 10px; }
+  .service-tile { min-height: clamp(96px, 24vw, 116px); gap: 7px; padding: 12px 8px; }
+  .icon-bubble { width: clamp(46px, 12vw, 54px); height: clamp(46px, 12vw, 54px); }
+  .service-tile span { font-size: 0.8rem; }
+  .home-summary-head { margin-bottom: 8px; }
+  .trust-item, .stat { min-height: 60px; gap: 4px; padding: 8px 6px; }
+  .home-summary-card { padding: 14px 14px 12px; }
+}

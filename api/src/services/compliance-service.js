@@ -3,7 +3,8 @@
 // PROGRESSIVE KYC/FICA: FOUR LEVELS, RISK-BASED, CONFIGURABLE, AUDITABLE.
 //
 //   Tier 0  Unverified      registration only; tight transaction limits
-//   Tier 1  Basic verified  SA ID number validated; everyday limits
+//   Tier 1  Basic verified  identity document validated (SA ID, passport or
+//                           another approved identity document); everyday limits
 //   Tier 2  Full FICA/KYC   documentary verification; no standing limits
 //   EDD     Enhanced due diligence, triggered automatically by unusual or
 //           high-value activity; asks for source of funds and, where it
@@ -33,6 +34,14 @@
 //         behaving, driven by monitoring, screening, patterns and manual
 //         compliance decisions. A fully verified account can still be under
 //         review; a new account can be low risk.
+//
+// IDENTITY IS NOT ASSUMED SOUTH AFRICAN. Tier 1 accepts any approved
+// identity document: an SA ID number, a passport with its issuing country,
+// or another approved identity document. Which types are accepted is
+// configuration (identity.documentTypes), the document number is stored only
+// as a salted hash, and only the fields the applicable compliance framework
+// actually needs are collected (data minimisation). Every verification is a
+// row in kyc_verifications, so the account carries its verification history.
 
 const crypto = require("crypto");
 const { pool } = require("../db/pool");
@@ -56,7 +65,7 @@ const DEFAULT_CONFIG = {
     },
     1: {
       label: "Basic verified",
-      description: "SA ID verified. Everyday wallet limits.",
+      description: "Identity verified. Everyday wallet limits.",
       monthlyReceive: 50000,
       monthlySend: 50000,
       singleTransaction: 25000,
@@ -77,9 +86,18 @@ const DEFAULT_CONFIG = {
       maxBalance: null
     }
   },
+  // Which identity documents unlock Tier 1, per the approved RMCP. sa_id is
+  // validated locally; passport and other approved documents carry an
+  // issuing country and date of birth.
+  identity: {
+    documentTypes: ["sa_id", "passport", "other"]
+  },
   edd: {
-    // Activity at or past these marks raises an enhanced due diligence flag
-    // for the compliance team and asks the customer for source of funds.
+    // OPTIONAL value marks. Activity at or past these marks raises an
+    // enhanced due diligence flag, but EDD is never only about a number:
+    // velocity, structuring patterns, sanctions screening, ongoing CDD and
+    // manual compliance decisions all raise it independently of any amount.
+    // Set either mark to null to switch that value trigger off entirely.
     singleTransactionReview: 100000,
     monthlyVolumeReview: 500000
   },
@@ -120,6 +138,28 @@ function ensureComplianceSchema() {
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS edd_status TEXT NOT NULL DEFAULT 'none'");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_status TEXT NOT NULL DEFAULT 'normal'");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS cdd_reviewed_at TIMESTAMPTZ");
+    // Which document proved the identity, and where it was issued. The
+    // document NUMBER never appears here: only the salted hash above.
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_document_type TEXT");
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_issuing_country TEXT");
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_nationality TEXT");
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_date_of_birth DATE");
+    // Verification history: one row per completed verification step, hash
+    // only, so compliance can see when and how identity was established.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS kyc_verifications (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        document_type TEXT NOT NULL,
+        issuing_country TEXT,
+        document_hash TEXT,
+        status TEXT NOT NULL DEFAULT 'verified',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS kyc_verifications_user_idx ON kyc_verifications (user_id, created_at DESC)"
+    );
     await pool.query(`
       CREATE TABLE IF NOT EXISTS compliance_screening_list (
         id UUID PRIMARY KEY,
@@ -159,6 +199,7 @@ function mergeConfig(stored) {
         merged.tiers[key] = { ...merged.tiers[key], ...stored.tiers[key] };
       }
     }
+    if (stored.identity && typeof stored.identity === "object") merged.identity = { ...merged.identity, ...stored.identity };
     if (stored.edd && typeof stored.edd === "object") merged.edd = { ...merged.edd, ...stored.edd };
     if (stored.monitoring && typeof stored.monitoring === "object") merged.monitoring = { ...merged.monitoring, ...stored.monitoring };
     if (stored.cdd && typeof stored.cdd === "object") merged.cdd = { ...merged.cdd, ...stored.cdd };
@@ -216,7 +257,7 @@ function tierForUserRow(user) {
 async function loadUserComplianceRow(userId) {
   await ensureComplianceSchema();
   const { rows } = await pool.query(
-    "SELECT id, full_name, username, account_type, status, fica_status, basic_verified_at, edd_status, risk_status, cdd_reviewed_at FROM users WHERE id = $1",
+    "SELECT id, full_name, username, account_type, status, fica_status, basic_verified_at, edd_status, risk_status, cdd_reviewed_at, kyc_document_type, kyc_issuing_country FROM users WHERE id = $1",
     [userId]
   );
   return rows[0] || null;
@@ -256,7 +297,7 @@ async function walletBalanceOf(userId) {
 
 function upgradeSentence(tier) {
   return tier === 0
-    ? "Verifying your SA ID under Limits and Verification takes two minutes and raises your limits."
+    ? "Verifying your identity under Limits and Verification takes two minutes and raises your limits."
     : "Completing full FICA verification under Limits and Verification removes standing limits.";
 }
 
@@ -492,10 +533,15 @@ async function reviewForEdd(userId, amount, serviceCode) {
     const usage = await monthUsage(userId);
     const today = await dayUsage(userId);
 
-    // High-value marks raise EDD, once while a review is open.
+    // OPTIONAL value marks raise EDD, once while a review is open. A null
+    // mark means no value trigger at all: EDD then rests entirely on risk
+    // factors (velocity, structuring, screening, CDD, manual decisions),
+    // never on a fixed monetary amount.
     const underReview = riskRank(user.risk_status) >= riskRank("edd_review");
-    const single = Number(config.edd.singleTransactionReview);
-    const monthly = Number(config.edd.monthlyVolumeReview);
+    const single = config.edd.singleTransactionReview === null || config.edd.singleTransactionReview === undefined
+      ? NaN : Number(config.edd.singleTransactionReview);
+    const monthly = config.edd.monthlyVolumeReview === null || config.edd.monthlyVolumeReview === undefined
+      ? NaN : Number(config.edd.monthlyVolumeReview);
     if (!underReview) {
       if (Number.isFinite(single) && Number(amount) >= single) {
         await recordRiskSignal(userId, "edd_trigger", {
@@ -572,10 +618,14 @@ async function reviewForEdd(userId, amount, serviceCode) {
   }
 }
 
-// Tier 1: a validated SA ID number. Thirteen digits, a real date of birth,
-// and the Luhn check digit the ID scheme uses. The number itself is stored
-// only as a salted hash: enough to prove it was captured and detect reuse,
-// never the number in the clear.
+// TIER 1: A VALIDATED IDENTITY DOCUMENT. Not every customer has an SA ID:
+// the flow accepts an SA ID number, a passport with its issuing country, or
+// another approved identity document, whichever the configured list allows.
+// Whatever the document, the number itself is stored only as a salted hash:
+// enough to prove it was captured and detect reuse, never in the clear.
+
+// SA ID: thirteen digits, a real date of birth, and the Luhn check digit
+// the ID scheme uses.
 function validateSaIdNumber(idNumber) {
   const digits = String(idNumber || "").replace(/\s+/g, "");
   if (!/^\d{13}$/.test(digits)) return "An SA ID number has 13 digits.";
@@ -595,20 +645,101 @@ function validateSaIdNumber(idNumber) {
   return null;
 }
 
+// ISO 3166-1 alpha-2 codes, for validating a passport's issuing country and
+// a customer's nationality. Names live in the app; the API stores codes.
+const ISO_COUNTRIES = new Set((
+  "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ " +
+  "CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR " +
+  "GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP " +
+  "KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT " +
+  "MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW " +
+  "SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ " +
+  "UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW"
+).split(" "));
+
+function normalizeCountry(value) {
+  const code = String(value || "").trim().toUpperCase();
+  return ISO_COUNTRIES.has(code) ? code : null;
+}
+
+// Passports and other approved documents: alphanumeric, 5 to 20 characters
+// once spaces are removed. Formats differ by country, so this is a sanity
+// check, not a national format rule.
+function normalizeDocumentNumber(value) {
+  const cleaned = String(value || "").replace(/\s+/g, "").toUpperCase();
+  if (!/^[A-Z0-9-]{5,20}$/.test(cleaned)) return null;
+  return cleaned;
+}
+
+function validDateOfBirth(value) {
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const date = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  const now = new Date();
+  const age = (now - date) / (365.25 * 24 * 3600 * 1000);
+  if (age < 13 || age > 120) return null;
+  return text;
+}
+
+// The one Tier 1 door, whatever the document. Collects only what the
+// framework needs: an SA ID carries its own date of birth and issuing
+// country, so it asks for nothing else; a passport or other approved
+// document needs its issuing country and the holder's date of birth.
 async function basicVerify(auth, payload = {}) {
   await ensureComplianceSchema();
-  const problem = validateSaIdNumber(payload.idNumber);
-  if (problem) throw new AppError(400, problem);
-  const digits = String(payload.idNumber).replace(/\s+/g, "");
-  const hash = crypto.createHash("sha256").update(`titopay-id:${digits}`).digest("hex");
+  const config = await loadComplianceConfig();
+  const allowed = Array.isArray(config.identity?.documentTypes) && config.identity.documentTypes.length
+    ? config.identity.documentTypes : ["sa_id", "passport", "other"];
+  // Requests from app versions before document selection carry only an SA ID
+  // number; they stay valid.
+  const documentType = String(payload.documentType || (payload.idNumber ? "sa_id" : "")).toLowerCase();
+  if (!allowed.includes(documentType)) {
+    throw new AppError(400, "Choose the identity document you want to verify with: South African ID, passport, or another approved identity document.");
+  }
+
+  let hash;
+  let issuingCountry = null;
+  let nationality = null;
+  let dateOfBirth = null;
+  if (documentType === "sa_id") {
+    const problem = validateSaIdNumber(payload.idNumber);
+    if (problem) throw new AppError(400, problem);
+    const digits = String(payload.idNumber).replace(/\s+/g, "");
+    // Same salt as always, so existing hashes and screening entries keep
+    // matching.
+    hash = crypto.createHash("sha256").update(`titopay-id:${digits}`).digest("hex");
+    issuingCountry = "ZA";
+  } else {
+    const number = normalizeDocumentNumber(payload.documentNumber);
+    if (!number) throw new AppError(400, "Enter the document number as it appears on the document, letters and digits only.");
+    issuingCountry = normalizeCountry(payload.issuingCountry);
+    if (!issuingCountry) throw new AppError(400, "Select the country that issued the document.");
+    dateOfBirth = validDateOfBirth(payload.dateOfBirth);
+    if (!dateOfBirth) throw new AppError(400, "Enter your date of birth as on the document.");
+    nationality = normalizeCountry(payload.nationality) || issuingCountry;
+    hash = crypto.createHash("sha256").update(`titopay-doc:${documentType}:${issuingCountry}:${number}`).digest("hex");
+  }
+
   const { rows } = await pool.query(
     "SELECT id FROM users WHERE id_number_hash = $1 AND id <> $2 LIMIT 1",
     [hash, auth.userId]
   );
-  if (rows[0]) throw new AppError(409, "This ID number is already linked to another TitoPay account. If that is not you, contact support.");
+  if (rows[0]) throw new AppError(409, "This identity document is already linked to another TitoPay account. If that is not you, contact support.");
   await pool.query(
-    "UPDATE users SET id_number_hash = $1, basic_verified_at = COALESCE(basic_verified_at, NOW()) WHERE id = $2",
-    [hash, auth.userId]
+    `UPDATE users SET id_number_hash = $1,
+        kyc_document_type = $3,
+        kyc_issuing_country = $4,
+        kyc_nationality = COALESCE($5, kyc_nationality),
+        kyc_date_of_birth = COALESCE($6::DATE, kyc_date_of_birth),
+        basic_verified_at = COALESCE(basic_verified_at, NOW())
+      WHERE id = $2`,
+    [hash, auth.userId, documentType, issuingCountry, nationality, dateOfBirth]
+  );
+  await pool.query(
+    `INSERT INTO kyc_verifications (id, user_id, document_type, issuing_country, document_hash, status)
+     VALUES ($1, $2, $3, $4, $5, 'verified')`,
+    [crypto.randomUUID(), auth.userId, documentType, issuingCountry, hash]
   );
   await writeAuditLog({
     actorType: "customer",
@@ -618,7 +749,7 @@ async function basicVerify(auth, payload = {}) {
     entityId: auth.userId,
     ipAddress: auth.ipAddress,
     userAgent: auth.userAgent,
-    metadata: { method: "sa_id_number" }
+    metadata: { method: documentType, issuingCountry }
   });
   await screenUser(auth.userId).catch(() => {});
   return complianceStatus(auth);
@@ -632,8 +763,49 @@ function shapeTier(config, tier) {
     description: t.description,
     monthlyReceive: t.monthlyReceive ?? null,
     monthlySend: t.monthlySend ?? null,
-    singleTransaction: t.singleTransaction ?? null
+    singleTransaction: t.singleTransaction ?? null,
+    dailySend: t.dailySend ?? null,
+    singleWithdrawal: t.singleWithdrawal ?? null,
+    monthlyWithdraw: t.monthlyWithdraw ?? null,
+    maxBalance: t.maxBalance ?? null
   };
+}
+
+// THE VERIFICATION STATE MACHINE, derived, never stored as its own column:
+// account status, fica_status, EDD and the KYC tier already carry the truth
+// between them, and deriving keeps the badge in step with the backend by
+// construction. Every state here is customer-safe; internal risk ratings
+// (elevated, high risk) never surface.
+const VERIFICATION_STATES = {
+  unverified: "Verify Identity",
+  verification_in_progress: "Verification in Progress",
+  basic_verified: "✓ Basic Verified",
+  fully_verified: "✓ Fully Verified",
+  verification_required: "Verification Required",
+  under_review: "Under Review",
+  edd_required: "More Info Needed",
+  verification_failed: "Verification Failed",
+  restricted: "Restricted"
+};
+
+function verificationStateFor(user, tier) {
+  const accountStatus = String(user.status || "").toLowerCase();
+  const fica = String(user.fica_status || "").toLowerCase();
+  const edd = String(user.edd_status || "").toLowerCase();
+  const risk = String(user.risk_status || "normal").toLowerCase();
+  if (BLOCKED_ACCOUNT_STATUSES.has(accountStatus)) return "restricted";
+  if (["rejected", "failed", "declined"].includes(fica)) return "verification_failed";
+  if (edd === "under_review" || (risk === "edd_review" && edd !== "required")) return "under_review";
+  if (edd === "required") return "edd_required";
+  if (["required", "reverify", "reverification_required"].includes(fica)) return "verification_required";
+  // "pending" is the registration default, not a submission: it never counts
+  // as in progress. In progress means documents are actually with the team.
+  if (["submitted", "processing", "in_progress", "review", "under_review", "pending_review", "documents_submitted"].includes(fica)) {
+    return "verification_in_progress";
+  }
+  if (tier === 2) return "fully_verified";
+  if (tier === 1) return "basic_verified";
+  return "unverified";
 }
 
 async function complianceStatus(auth) {
@@ -651,12 +823,19 @@ async function complianceStatus(auth) {
   const receivePercent = percentOf(usage.received, current.monthlyReceive);
   const sendPercent = percentOf(usage.sent, current.monthlySend);
   const promptNeeded = tier < 2 && Math.max(receivePercent, sendPercent) >= Number(config.promptAtPercent);
+  const verificationState = verificationStateFor(user, tier);
   return {
     tier,
     label: current.label,
     ficaStatus: String(user.fica_status || "none"),
     eddStatus: String(user.edd_status || "none"),
     eddActive,
+    verificationState,
+    verificationLabel: VERIFICATION_STATES[verificationState] || "Verification",
+    // Which document proved the identity, never the document number itself.
+    document: user.kyc_document_type
+      ? { type: String(user.kyc_document_type), issuingCountry: user.kyc_issuing_country || null }
+      : null,
     // Customer-safe review state only. Internal risk ratings (elevated, high
     // risk) are never shown to the account holder.
     underReview: eddActive,
@@ -670,8 +849,8 @@ async function complianceStatus(auth) {
     nextSteps: tier === 2
       ? (eddActive ? ["Send proof of source of funds or income to compliance@titopay.co.za or through Support."] : [])
       : tier === 1
-        ? ["Complete full FICA verification: upload your ID document and proof of address under Profile, FICA verification."]
-        : ["Verify your SA ID number below for instant everyday limits.",
+        ? ["Complete full FICA verification: upload your identity document and proof of address under Profile, FICA verification."]
+        : ["Verify your identity below with your South African ID, passport or another approved identity document for instant everyday limits.",
            "Then complete full FICA verification under Profile, FICA verification to remove standing limits."]
   };
 }
@@ -694,5 +873,7 @@ module.exports = {
   basicVerify,
   complianceStatus,
   validateSaIdNumber,
+  verificationStateFor,
+  VERIFICATION_STATES,
   DEFAULT_CONFIG
 };
