@@ -16472,10 +16472,16 @@ async function refreshMyTickets() {
     // the screen: an attendee with no cashless event should see their tickets
     // exactly as they always have, and an attendee with one should still see
     // them if the tag lookup is unavailable.
+    // The tag lookups must never fail the screen — an attendee with no cashless
+    // event should see their tickets exactly as always. But swallowing the
+    // failure silently is how "Link Event Tag" disappears with no explanation:
+    // the button is simply absent and nobody can tell whether the event is not
+    // cashless or the lookup broke. Remember which it was.
+    state.ticketing.tagLookupFailed = false;
     const [result, tagResult, linkableResult] = await Promise.all([
       api("/v1/ticketing/tickets"),
-      api("/v1/ticketing/tags").catch(() => ({ items: [] })),
-      api("/v1/ticketing/tags/linkable").catch(() => ({ items: [] }))
+      api("/v1/ticketing/tags").catch(() => { state.ticketing.tagLookupFailed = true; return { items: [] }; }),
+      api("/v1/ticketing/tags/linkable").catch(() => { state.ticketing.tagLookupFailed = true; return { items: [] }; })
     ]);
     state.ticketing.myTickets = Array.isArray(result.items) ? result.items : Array.isArray(result.tickets) ? result.tickets : [];
     state.ticketing.myTags = Array.isArray(tagResult.items) ? tagResult.items : [];
@@ -16525,6 +16531,17 @@ function renderMyTickets() {
     return;
   }
   host.innerHTML = `
+    ${state.ticketing.tagLookupFailed ? `
+      <section class="event-tag-card is-link">
+        <header class="event-tag-head">
+          <div><p class="eyebrow">Event Tag</p><strong>Wristbands could not be checked</strong></div>
+          <em class="sv-chip warn">Offline</em>
+        </header>
+        <p class="event-tag-says">Your tickets are fine and unchanged. TitoPay could not reach the wristband service just now, so if this event is cashless the Link Event Tag button is missing rather than gone.</p>
+        <div class="event-tag-actions">
+          <button class="btn secondary" type="button" data-action="my-tickets-refresh">${icon("refresh")} Try again</button>
+        </div>
+      </section>` : ""}
     ${(state.ticketing.linkableTickets || []).map(eventTagLinkCard).join("")}
     ${tags.map(eventTagCard).join("")}
     <section class="ticket-stub-list">${tickets

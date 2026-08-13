@@ -1,9 +1,32 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v349 (titopay-pwa-v349)
+PWA bundle: v350 (titopay-pwa-v350)
 Admin console: admin-console-v81
 
-This build — organisers can export the tags they just issued:
+This build — a wristband button that could vanish without saying why:
+
+  "Link Event Tag" was never removed. It appears when the server lists a
+  ticket as linkable: the ticket is valid, its event is approved AND
+  cashless, and no tag is on that ticket yet. When one of those is not
+  true the button is correctly absent.
+
+  What was wrong is what happened when the LOOKUP FAILED. Both tag calls
+  were wrapped in a catch that returned an empty list, so a 500, an
+  expired session or a weak signal produced exactly the same screen as
+  "this event is not cashless" — no button, no message, no way to tell
+  the two apart. Someone who knows the feature exists is left thinking it
+  was taken away.
+
+  My Tickets now says so: "Wristbands could not be checked — your tickets
+  are fine and unchanged", with Try again. The tickets themselves are
+  never held back by a tag failure.
+
+  IF THE BUTTON IS STILL MISSING with no such notice, the event is not
+  cashless for that ticket. On the business side: Ticketing → Event Tags →
+  Cashless → pick the event → On → Save cashless setting. Then reopen My
+  Tickets.
+
+Previous build — organisers can export the tags they just issued:
 
   EVENT TAGS: the panel that lists freshly issued blank tags now offers
   "Download CSV" — number, tag reference, tag credential, event and the
