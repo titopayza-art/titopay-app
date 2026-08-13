@@ -105,6 +105,9 @@ async function assertRequesterCanReceive(userId, amount = 0) {
   if (BLOCKED_ACCOUNT_STATUSES.has(String(requester.status || "").toLowerCase())) {
     throw new AppError(403, "Your account cannot receive money at the moment. Contact TitoPay support.");
   }
+  // The tier-based receive limit, so a request that could never be paid is
+  // refused now with the upgrade path named.
+  await require("./compliance-service").assertCanReceiveAmount(userId, amount, { selfView: true });
   return requester;
 }
 

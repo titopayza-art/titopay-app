@@ -670,6 +670,7 @@ async function refreshData() {
   await loadAccount();
   state.loading = false;
   render();
+  loadComplianceStatus().catch(() => {});
 }
 async function syncPendingPwaReviews() {
   if (!state.auth?.accessToken) return false;
@@ -945,6 +946,128 @@ function dashboardGreetingLine() {
   const greeting = dashboardGreeting();
   return `<p class="dashboard-greeting"><strong>${esc(greeting.phrase)}${greeting.name ? `, ${esc(greeting.name)}` : ""}</strong>${greeting.language === "English" ? "" : `<small>${esc(greeting.language)}</small>`}</p>`;
 }
+// The wallet card says WHERE the account stands, not a tier number: a quiet
+// status and one door to the full picture.
+function walletVerificationRow() {
+  const c = state.compliance;
+  const status = !c ? ["", "Verification"]
+    : c.eddActive ? ["warn", "Review required"]
+      : c.verified ? ["ok", "\u2713 Verified"]
+        : c.tier === 1 ? ["mid", "Basic verified"]
+          : ["warn", "Unverified"];
+  return `
+    <button class="wallet-verification" type="button" data-action="limits-verification" aria-label="Limits and verification">
+      <span class="wv-status ${status[0]}">${esc(status[1])}</span>
+      <span class="wv-link">Limits &amp; Verification <span aria-hidden="true">\u2192</span></span>
+    </button>`;
+}
+async function loadComplianceStatus({ silent = true } = {}) {
+  try {
+    const data = await api("/v1/compliance/status");
+    const before = JSON.stringify(state.compliance || {});
+    state.compliance = data;
+    // The nudge that stops anyone discovering a limit by hitting it: once per
+    // session, when usage crosses the configured share of any monthly limit.
+    if (data.promptNeeded && !state.compliancePrompted) {
+      state.compliancePrompted = true;
+      const worst = Math.max(data.usage?.receivePercent || 0, data.usage?.sendPercent || 0);
+      showToast(`You have used ${worst}% of a monthly limit. Upgrade under Limits and Verification to keep transacting without interruption.`);
+    }
+    if (!silent || before !== JSON.stringify(data)) render();
+  } catch {
+    // The wallet card falls back to the plain door; nothing else depends on it.
+  }
+}
+function limitBar(label, used, limit, percent) {
+  if (limit === null || limit === undefined) {
+    return `<div class="limit-line"><span>${esc(label)}</span><strong>No standing limit</strong></div>`;
+  }
+  return `
+    <div class="limit-line">
+      <span>${esc(label)}</span>
+      <strong>${esc(money(used))} of ${esc(money(limit))}</strong>
+    </div>
+    <div class="limit-bar" role="img" aria-label="${esc(label)}: ${percent}% used"><i style="width:${Math.min(100, Math.max(2, percent))}%"${percent >= 80 ? ' class="hot"' : ""}></i></div>`;
+}
+function complianceTierCard(entry, status) {
+  const current = entry.tier === status.tier;
+  const achieved = entry.tier < status.tier;
+  const chip = current ? '<span class="sv-chip warn">Your level</span>'
+    : achieved ? '<span class="sv-chip settled">Complete</span>' : "";
+  const limits = entry.monthlyReceive === null
+    ? "No standing limits, with ongoing monitoring."
+    : `Receive up to ${money(entry.monthlyReceive)} and send up to ${money(entry.monthlySend)} a month, ${money(entry.singleTransaction)} per payment.`;
+  let unlock = "";
+  if (!current && !achieved) {
+    if (entry.tier === 1) {
+      unlock = `
+        <form class="form-grid" data-form="basic-verify">
+          <div class="field">
+            <label for="bv-id">SA ID number</label>
+            <input id="bv-id" name="idNumber" inputmode="numeric" maxlength="13" placeholder="13 digits" required>
+            <small class="field-hint">Checked instantly. Stored only as a one way fingerprint, never as the number itself.</small>
+          </div>
+          <button class="btn primary" type="submit">${icon("shield")} Verify my ID</button>
+        </form>`;
+    } else if (entry.tier === 2) {
+      unlock = `<button class="btn primary" type="button" data-action="fica-verification">${icon("shield")} Start full FICA verification</button>`;
+    }
+  }
+  return `
+    <section class="panel tier-card${current ? " tier-current" : ""}">
+      <div class="tier-head"><strong>${esc(entry.label)}</strong>${chip}</div>
+      <p class="field-hint">${esc(entry.description || "")}</p>
+      <p class="tier-limits">${esc(limits)}</p>
+      ${unlock}
+    </section>`;
+}
+async function openLimitsVerificationModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Your Wallet</p><h2>Limits &amp; Verification</h2><p class="lead">Loading your verification status\u2026</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>`);
+  let status;
+  try {
+    status = await api("/v1/compliance/status");
+    state.compliance = status;
+  } catch (error) {
+    showToast(friendlyFormError(error, "compliance"), "error");
+    return;
+  }
+  const u = status.usage || {};
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Your Wallet</p><h2>Limits &amp; Verification</h2>
+        <p class="lead">${status.verified
+          ? "Your identity is fully verified. Your wallet has no standing limits, with routine monitoring that protects everyone on TitoPay."
+          : "Your limits grow with your verification. Each step takes minutes, and the app tells you before you get near a limit."}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${status.eddActive ? `
+      <section class="integration-note" aria-label="Enhanced due diligence">
+        <p>${icon("shield")} <span><strong>A routine compliance review is open on your account.</strong> Please send proof of source of funds or income, and for a business the beneficial owner details, to compliance@titopay.co.za or through Support. Your account keeps working while the team reviews.</span></p>
+      </section>` : ""}
+    <section class="panel">
+      <h3 class="tier-section-label">This month</h3>
+      ${limitBar("Received", u.received || 0, status.limits?.monthlyReceive ?? null, u.receivePercent || 0)}
+      ${limitBar("Sent", u.sent || 0, status.limits?.monthlySend ?? null, u.sendPercent || 0)}
+    </section>
+    <h3 class="tier-section-label">Verification levels</h3>
+    ${(status.tiers || []).map((entry) => complianceTierCard(entry, status)).join("")}
+    <section class="panel tier-card">
+      <div class="tier-head"><strong>Enhanced due diligence</strong>${status.eddActive ? '<span class="sv-chip warn">Active</span>' : ""}</div>
+      <p class="field-hint">For unusual or high value activity, TitoPay may ask for proof of source of funds or income, and beneficial owner details for a business. This happens automatically, you are told in the app the moment it does, and your account keeps working while the compliance team reviews.</p>
+    </section>
+  `);
+}
+async function submitBasicVerify(form, data) {
+  const result = await api("/v1/compliance/basic-verify", { method: "POST", body: { idNumber: data.idNumber } });
+  state.compliance = result;
+  showToast("Your ID is verified. Your limits have been raised.");
+  await openLimitsVerificationModal();
+  render();
+}
 function dashboardView() {
   const wallet = primaryWallet();
   const quickServices = homeQuickServices();
@@ -963,6 +1086,7 @@ function dashboardView() {
             <strong>${esc(displayWalletId(wallet || {}))}</strong>
           </div>
           <p class="muted">Available balance in South African Rand.</p>
+          ${walletVerificationRow()}
           <div class="wallet-actions wallet-actions-compact">
             ${walletAction("Top Up", "upload", "top-up")}
             ${state.accountType === "business" ? walletAction("Payout", "withdraw", "payouts") : walletAction("Withdraw", "withdraw", "withdraw")}
@@ -2524,6 +2648,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "otp") await verifyOtp(data);
     if (form.dataset.form === "stockvel-join") await submitStockvelJoin(data);
     if (form.dataset.form === "stockvel-create") await submitStockvelCreate(form, data);
+    if (form.dataset.form === "basic-verify") await submitBasicVerify(form, data);
     if (form.dataset.form === "stockvel-contribute") await submitStockvelContribution(form, data);
     else if (form.dataset.form === "stockvel-add-members") await submitStockvelAddMembers(data);
     else if (form.dataset.form === "stockvel-withdrawal") await submitStockvelWithdrawal(data);
@@ -4225,6 +4350,9 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "payment-requests") {
     await openPaymentRequestsModal();
+  }
+  if (action === "limits-verification") {
+    await openLimitsVerificationModal();
   }
   if (action.startsWith("payreq-pay:")) {
     await answerPaymentRequest(action.slice("payreq-pay:".length), "pay");
@@ -23575,7 +23703,7 @@ const TICKETING_SECTIONS = [
 const MODAL_STACK_ACTIONS = new Set([
   "security-centre", "device-management", "active-sessions", "login-history",
   "biometric-info", "privacy-controls", "security-tips", "report-fraud",
-  "why-trust-titopay", "notifications", "payment-requests", "preview-sms-notifications",
+  "why-trust-titopay", "notifications", "payment-requests", "limits-verification", "preview-sms-notifications",
   "preview-email-notifications", "authentication-preference", "change-password",
   "fica-verification", "profile-verification", "saved-beneficiaries",
   "proof-of-account", "app-search", "support",

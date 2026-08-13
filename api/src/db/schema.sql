@@ -1637,3 +1637,27 @@ CREATE TABLE IF NOT EXISTS payment_requests (
 
 CREATE INDEX IF NOT EXISTS payment_requests_payer_idx
   ON payment_requests (payer_user_id, status, created_at DESC);
+
+-- Progressive KYC/FICA. Tier 1 is a validated SA ID number (stored only as a
+-- salted hash); Tier 2 is documentary FICA (fica_status). Enhanced due
+-- diligence flags are the audit trail of automatic risk triggers. The tier
+-- limits themselves live in platform_settings key 'compliance_tier_limits',
+-- editable through the admin API, never hard-coded.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS basic_verified_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS id_number_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS edd_status TEXT NOT NULL DEFAULT 'none';
+
+CREATE TABLE IF NOT EXISTS compliance_flags (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  flag_type TEXT NOT NULL,
+  details JSONB NOT NULL DEFAULT '{}'::JSONB,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ,
+  resolved_by UUID,
+  resolution_note TEXT
+);
+
+CREATE INDEX IF NOT EXISTS compliance_flags_open_idx
+  ON compliance_flags (status, created_at DESC);

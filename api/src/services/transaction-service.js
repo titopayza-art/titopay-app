@@ -299,6 +299,10 @@ async function feePreview(payload) {
         throw new AppError(404, status.message, { invite: status.invite, recipient });
       }
       assertRecipientCanReceive(status.recipient);
+      // Tier-based receive limit, from config, derived from the ledger.
+      if (status.recipient?.userId) {
+        await require("./compliance-service").assertCanReceiveAmount(status.recipient.userId, amount);
+      }
       verifiedRecipients.push({ identifier: recipient, ...status });
     }
     recipientStatus = verifiedRecipients.length === 1 ? verifiedRecipients[0] : { registered: true, recipients: verifiedRecipients };
@@ -380,6 +384,11 @@ async function createTransaction(actor, payload) {
     if (rows[0]) return transactionResponseFromRow(rows[0]);
   }
 
+  // The sender's own tier limits, from config: single transaction and
+  // monthly send. Checked before any wallet work so the refusal is clean.
+  if (!feeOnly) {
+    await require("./compliance-service").assertCanSendAmount(actor.userId, amount);
+  }
   const preview = await feePreview({
     serviceCode: normalizedServiceCode,
     amount,
@@ -519,6 +528,10 @@ async function createTransaction(actor, payload) {
     client.release();
   }
 
+  require("./compliance-service").reviewForEdd(actor.userId, chargedAmount, normalizedServiceCode);
+  if (recipientWallet?.user_id) {
+    require("./compliance-service").reviewForEdd(recipientWallet.user_id, netAmount, normalizedServiceCode);
+  }
   await writeAuditLog({
     actorType: actor.userType,
     actorId: actor.userId,

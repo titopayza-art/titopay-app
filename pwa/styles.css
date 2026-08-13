@@ -13413,3 +13413,89 @@ img {
     flex: 1;
   }
 }
+
+/* Limits and Verification --------------------------------------------------- */
+
+/* The wallet card's one quiet line: status pill left, door right. */
+.wallet-verification {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  margin: 10px 0 2px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius-control);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.wv-status {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.wv-status.ok { background: #d9f4e4; color: #0b7a3b; }
+.wv-status.mid { background: #e2ebff; color: #2f5cff; }
+.wv-status.warn { background: #ffe9d6; color: #a8560f; }
+
+.wv-link {
+  font-size: 0.82rem;
+  font-weight: 700;
+  opacity: 0.92;
+}
+
+.limit-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0 6px;
+  font-size: 0.9rem;
+}
+
+.limit-line strong { font-variant-numeric: tabular-nums; }
+
+.limit-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--soft-blue);
+  overflow: hidden;
+}
+
+.limit-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.limit-bar i.hot { background: #d97706; }
+
+.tier-section-label {
+  margin: 18px 0 8px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.tier-card { margin-bottom: 12px; }
+
+.tier-card .tier-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tier-card.tier-current { border: 1.5px solid var(--blue); }
+
+.tier-limits { margin: 6px 0 10px; font-size: 0.92rem; }

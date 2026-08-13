@@ -3364,6 +3364,55 @@ router.post("/marketing/email-campaigns",requireAdminPermission("marketing"),asy
 
 router.post("/marketing/email-campaigns/:id/approve",requireAdminPermission("marketing_email_approve"),async(req,res,next)=>{try{if(!canApproveMarketingSms(req.auth.role))throw new AppError(403,"CEO or COO approval is required");const campaigns=await getMarketingEmailCampaigns(),campaign=campaigns.find((item)=>item.id===req.params.id);if(!campaign)throw new AppError(404,"Email campaign not found");if(campaign.status!=="pending_approval")throw new AppError(409,"Email campaign has already been published");const {marketingOptOutEmails,buildUnsubscribeUrl}=require("../services/email-centre-service");const optedOut=await marketingOptOutEmails();const recipients=(await listMarketingEmailRecipients(campaign.audience,campaign.targetUserId||null)).filter((recipient)=>!optedOut.has(String(recipient.email).toLowerCase()));let queuedCount=0,failedCount=0;for(const recipient of recipients){try{const names=String(recipient.full_name||"").split(/\s+/);await queueRawEmail({recipient:recipient.email,subject:campaign.subject,htmlBody:campaign.htmlBody,textBody:campaign.textBody,userId:recipient.id,variables:{firstName:names[0]||"there",lastName:names.slice(1).join(" "),fullName:recipient.full_name,email:recipient.email,accountType:recipient.account_type},idempotencyKey:`marketing-email:${campaign.id}:${recipient.id}`,metadata:{campaignId:campaign.id,audience:campaign.audience,approvedBy:req.auth.userId},unsubscribeUrl:buildUnsubscribeUrl(recipient.email)});queuedCount++;}catch(error){failedCount++;console.error("[marketing-email] queue failed",{campaignId:campaign.id,userId:recipient.id,message:error.message});}}campaign.status=failedCount&&!queuedCount?"failed":failedCount?"published_with_failures":"published";campaign.estimatedRecipients=recipients.length;campaign.queuedCount=queuedCount;campaign.failedCount=failedCount;campaign.approvedBy=req.auth.userId;campaign.approvedByRole=normalizeAdminRole(req.auth.role);campaign.approvedAt=new Date().toISOString();campaign.publishedAt=campaign.approvedAt;campaign.updatedAt=campaign.approvedAt;await saveMarketingEmailCampaigns(campaigns,req.auth.userId);await writeAuditLog({actorType:"admin",actorId:req.auth.userId,action:"marketing_email_campaign_approved_and_published",entityType:"marketing_email_campaign",entityId:campaign.id,ipAddress:req.auth.ipAddress,userAgent:req.auth.userAgent,metadata:{audience:campaign.audience,recipients:recipients.length,queuedCount,failedCount,approvedByRole:campaign.approvedByRole}});res.json({ok:true,campaign});}catch(error){next(error);}});
 
+// Compliance: the tier limit configuration and the EDD flag queue. The
+// numbers here ARE the institution's risk framework, so every change is
+// permission-gated and audit-logged.
+router.get("/compliance/limits", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const compliance = require("../services/compliance-service");
+    res.json({ ok: true, config: await compliance.loadComplianceConfig(), defaults: compliance.DEFAULT_CONFIG });
+  } catch (error) { next(error); }
+});
+
+router.put("/compliance/limits", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const compliance = require("../services/compliance-service");
+    const config = await compliance.saveComplianceConfig(req.auth, req.body?.config || req.body || {});
+    res.json({ ok: true, config });
+  } catch (error) { next(error); }
+});
+
+router.get("/compliance/flags", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    await require("../services/compliance-service").ensureComplianceSchema();
+    const { rows } = await pool.query(
+      `SELECT cf.*, u.full_name, u.username, u.account_type
+       FROM compliance_flags cf JOIN users u ON u.id = cf.user_id
+       ORDER BY (cf.status = 'open') DESC, cf.created_at DESC LIMIT 200`);
+    res.json({ ok: true, flags: rows });
+  } catch (error) { next(error); }
+});
+
+router.post("/compliance/flags/:id/resolve", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    await require("../services/compliance-service").ensureComplianceSchema();
+    const note = String(req.body?.note || "").slice(0, 500);
+    const { rows } = await pool.query(
+      `UPDATE compliance_flags SET status = 'resolved', resolved_at = NOW(), resolved_by = $2, resolution_note = $3
+       WHERE id = $1 AND status = 'open' RETURNING user_id`,
+      [req.params.id, req.auth.userId, note || null]);
+    if (!rows[0]) throw new AppError(404, "Flag not found or already resolved");
+    await pool.query(
+      `UPDATE users SET edd_status = 'cleared' WHERE id = $1
+       AND NOT EXISTS (SELECT 1 FROM compliance_flags WHERE user_id = $1 AND status = 'open')`,
+      [rows[0].user_id]);
+    await writeAuditLog({ actorType: "admin", actorId: req.auth.userId, action: "edd_flag_resolved",
+      entityType: "compliance_flag", entityId: req.params.id, ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent, metadata: { note } });
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
 router.get("/marketing/announcements", requireAdminPermission("marketing"), async (req, res, next) => {
   try {
     const [{ rows }, audienceCounts] = await Promise.all([

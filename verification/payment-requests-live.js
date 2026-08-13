@@ -7,7 +7,8 @@
  * as Send Money, and can be declined or cancelled with nothing moving at all.
  *
  * Checks:
- *   1.  Receiving is open at any amount unless the account is blocked.
+ *   1.  Progressive KYC tiers govern requests: under-limit flows, over-limit
+ *       names the upgrade path, blocked accounts are refused.
  *   2.  Creating a request notifies the payer through the notification feed.
  *   3.  The payer sees it under incoming; the requester under outgoing.
  *   4.  A stranger can neither pay nor decline someone else's request.
@@ -96,14 +97,17 @@ async function balanceOf(userId) {
     const sipho = await seedUser("sipho", { balance: 50 });
     const unverified = await seedUser("newbie", { fica: "pending", accountType: "business" });
 
-    // 1. Receiving is open unless the account is blocked: an unverified
-    //    account requests any amount; a blocked account is refused.
+    // 1. The progressive KYC tiers govern requests: an unverified (tier 0)
+    //    account requests freely under its configured receive limit and is
+    //    refused past it with the upgrade path named; a blocked account is
+    //    refused outright.
     const allowed = await call(unverified.token, "POST", "/v1/payments/requests",
       { recipient: `@${thuso.username}`, amount: 100 });
     assert.equal(allowed.status, 200, JSON.stringify(allowed.data));
-    const bigAllowed = await call(unverified.token, "POST", "/v1/payments/requests",
+    const bigRefused = await call(unverified.token, "POST", "/v1/payments/requests",
       { recipient: `@${thuso.username}`, amount: 250000 });
-    assert.equal(bigAllowed.status, 200, JSON.stringify(bigAllowed.data));
+    assert.equal(bigRefused.status, 403, JSON.stringify(bigRefused.data));
+    assert.match(String(bigRefused.data.error || ""), /verification level/i);
     const blocked = await seedUser("blocked", { fica: "pending" });
     await pool.query("UPDATE users SET status = 'blocked' WHERE id = $1", [blocked.id]);
     const refusedBlocked = await call(blocked.token, "POST", "/v1/payments/requests",
@@ -113,7 +117,7 @@ async function balanceOf(userId) {
       { serviceCode: "wallet_transfer", amount: 50, recipient: `@${blocked.username}` });
     assert.equal(sendToBlocked.status, 403);
     assert.match(String(sendToBlocked.data.error || ""), /cannot receive money/i);
-    ok("unverified accounts request freely at any amount; a blocked account can neither act nor receive");
+    ok("tier limits govern requests: small ones flow, oversized ones name the upgrade path, blocked accounts are refused");
 
     // The transfer rails obey the same rule: money reaches an unverified
     // account, and the record carries WHO was paid.
