@@ -511,3 +511,29 @@ v375
   the difference between marketing to your own customers, which POPIA section
   69 permits with an opt-out, and spam. Every message carries a way out, and
   an opt-out is permanent and binds every organiser on the platform.
+
+v376
+  Campaign Tools tightened on all three points.
+
+  The audience is now ONE event: the people who bought a ticket to it or
+  registered for it, and nobody else. An organiser running three events can no
+  longer tell everyone on their books about one of them. Registrants need no
+  special case, because registering issues a paid-status R0 order through the
+  same path a purchase takes.
+
+  Every campaign is now reviewed by TitoPay before release. It appears in the
+  admin console under Ticketing as the Campaign Approval Queue, with the
+  message, the audience size and what was paid. Approving releases it;
+  rejecting refunds every cent, because nothing went out.
+
+  The money is taken at submission, before release, so approval is a one-click
+  release rather than a step that can fail on an empty wallet after an admin
+  has already said yes. "R0.60 per SMS sent" still holds: anything that fails
+  to deliver is refunded on release.
+
+  Ticketing now adapts to the screen. The public event page was built as an
+  auth screen, which caps at 560px because a sign-in form should not stretch
+  across a monitor. An event page is not a sign-in form: on a laptop it was a
+  narrow ribbon down the middle of the display. It now widens to 1040px and
+  splits into event detail beside tickets and organiser links. The ticketing
+  sheets widen to 860px from 760px up. Phone layout is untouched.

@@ -4466,16 +4466,19 @@ async function openEventTagPanel(eventId) {
   host.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 async function renderTicketing() {
-  const [result, refundResult, changeResult, analyticsResult] = await Promise.all([
+  const [result, refundResult, changeResult, analyticsResult, campaignResult] = await Promise.all([
     apiFetch("/admin/ticketing/events"),
     apiFetch("/admin/ticketing/refunds").catch(() => ({ items: [] })),
     apiFetch("/admin/ticketing/change-requests").catch(() => ({ items: [] })),
     apiFetch("/admin/ticketing/analytics").catch(() => ({ analytics: null })),
+    apiFetch("/admin/ticketing/campaigns").catch(() => ({ items: [] })),
   ]);
   const rows = result.items || [];
   const refunds = refundResult.items || [];
   const changeRequests = changeResult.items || [];
   const analytics = analyticsResult.analytics || null;
+  const pendingCampaigns = campaignResult.items || [];
+  PAGE_EXPORTS.ticketingCampaigns = pendingCampaigns;
   const openChanges = changeRequests.filter((item) => ["requested", "under_review"].includes(item.status));
   PAGE_EXPORTS.ticketing = rows;
   PAGE_EXPORTS.ticketingRefunds = refunds;
@@ -4519,12 +4522,22 @@ async function renderTicketing() {
       ["Approved", counts.approved || 0],
       ["Refunds", refunds.filter((item) => item.status === "requested").length],
       ["Change Requests", openChanges.length],
+      ["Campaigns to review", pendingCampaigns.length],
       ["Gross ticket sales", `R${Number(totals.gross || 0).toFixed(2)}`],
       ["Platform revenue", `R${Number(totals.platformRevenue || 0).toFixed(2)}`],
       ["Tickets sold / scanned", `${totals.ticketsIssued || 0} / ${totals.ticketsScanned || 0}`],
     ])}
     <div id="ticketing-detail-host"></div>
     ${analyticsCard}
+    ${pendingCampaigns.length ? tableCard("Campaign Approval Queue", renderRows(pendingCampaigns, [
+      { label: "Event", render: (row) => `<strong>${escapeHtml(row.eventName || "-")}</strong><br><small>${escapeHtml(row.organiserName || "organiser")}</small>` },
+      { label: "Channel", render: (row) => `<span class="chip ${row.channel === "sms" ? "blue" : "green"}">${row.channel === "sms" ? "SMS" : "Email"}</span><br><small>${row.audienceSize} recipients</small>` },
+      { label: "Message", render: (row) => `${row.subject ? `<strong>${escapeHtml(row.subject)}</strong><br>` : ""}<small>${escapeHtml(row.body || "")}</small>` },
+      { label: "Paid", render: (row) => `<strong>R${Number(row.amountCharged || 0).toFixed(2)}</strong><br><small>${row.amountCharged > 0 ? "refunded if rejected" : "covered by email pack"}</small>` },
+    ], (row) => `
+      <button data-campaign-approve="${escapeHtml(row.id)}">Approve and send</button>
+      <button data-campaign-reject="${escapeHtml(row.id)}">Reject and refund</button>
+    `), "An organiser has paid for this and it is waiting on TitoPay. Approving sends it to the people who bought or registered for that event. Rejecting refunds every cent, because nothing went out.") : ""}
     ${tableCard("Change Request Queue", renderRows(changeRequests, [
       { label: "Event", render: (row) => `<strong>${escapeHtml(row.eventName || "-")}</strong><br><small>${escapeHtml(row.requesterName || "organiser")}</small>` },
       { label: "Request", render: (row) => `${escapeHtml(CHANGE_LABELS[row.requestType] || row.requestType || "-")}${row.requestType === "postpone" && row.requestedChanges && row.requestedChanges.eventDate ? `<br><small>New date: ${escapeHtml(String(row.requestedChanges.eventDate))}</small>` : ""}` },
@@ -7077,6 +7090,35 @@ document.addEventListener("click", async (event) => {
     }
     return;
   }
+  const campaignApprove = event.target.closest("[data-campaign-approve]");
+  const campaignReject = event.target.closest("[data-campaign-reject]");
+  if (campaignApprove || campaignReject) {
+    const button = campaignApprove || campaignReject;
+    const campaignId = button.dataset.campaignApprove || button.dataset.campaignReject;
+    const row = (PAGE_EXPORTS.ticketingCampaigns || []).find((item) => item.id === campaignId);
+    const approving = Boolean(campaignApprove);
+    const question = approving
+      ? `Approve and send this ${row?.channel === "sms" ? "SMS" : "email"} campaign to ${row?.audienceSize || 0} people who bought or registered for ${row?.eventName || "this event"}?`
+      : `Reject this campaign? R${Number(row?.amountCharged || 0).toFixed(2)} is refunded to the organiser and nothing is sent.`;
+    if (!window.confirm(question)) return;
+    const note = approving ? "" : (window.prompt("Tell the organiser why, in one line:") || "");
+    if (!approving && note === null) return;
+    button.disabled = true;
+    try {
+      const result = await apiFetch(`/admin/ticketing/campaigns/${campaignId}/action`, {
+        method: "POST", body: JSON.stringify({ decision: approving ? "approve" : "reject", note })
+      });
+      showToast(approving
+        ? `Campaign approved. ${result.sent} sent${result.failed ? `, ${result.failed} failed and refunded` : ""}.`
+        : `Campaign rejected and R${Number(result.refunded || 0).toFixed(2)} refunded.`);
+      await renderTicketing();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+      button.disabled = false;
+    }
+    return;
+  }
+
   const marketingSmsReject = event.target.closest("[data-marketing-sms-reject]");
   if (marketingSmsReject) {
     const campaignId = marketingSmsReject.dataset.marketingSmsReject;

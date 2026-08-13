@@ -56,16 +56,21 @@ test("there is no way to send to a list the organiser supplies", () => {
   // The whole POPIA position rests on this. If a recipient list could ever be
   // passed in, the audience query would stop being the only door.
   assert.match(SOURCE, /FROM ticket_orders o/,
-    "the audience is derived from ticket buyers");
-  assert.match(SOURCE, /WHERE e\.business_user_id = \$1/,
-    "and only from events this organiser runs");
-  for (const smell of ["recipients", "recipientList", "payload.numbers", "payload.emails", "payload.audience"]) {
-    assert.ok(!SOURCE.includes(smell),
-      `sendCampaign must not read ${smell} from the request, or an organiser could message strangers`);
+    "the audience is derived from ticket buyers and registrants");
+  assert.match(SOURCE, /WHERE o\.event_id = \$1/,
+    "and scoped to ONE event: an organiser may not reach their other events' buyers");
+  assert.ok(!/WHERE e\.business_user_id = \$1/.test(SOURCE),
+    "the audience must never widen back out to every event this organiser runs");
+  // The risk is reading a LIST out of the request, not the word itself: a
+  // count called "recipients" in the audit metadata is fine and useful.
+  for (const smell of [/req\.body\.\w*(recipient|number|email|phone|audience)/i,
+                       /payload\.(recipients|recipientList|numbers|emails|phones|audience)\b/i]) {
+    assert.ok(!smell.test(SOURCE),
+      `the service must not take a recipient list from the request (${smell}), or an organiser could message strangers`);
   }
   // sendCampaign takes a payload, and the only things it may read out of it
   // are the channel and the words.
-  const send = SOURCE.slice(SOURCE.indexOf("async function sendCampaign"));
+  const send = SOURCE.slice(SOURCE.indexOf("async function submitCampaign"));
   const reads = [...send.matchAll(/payload\.(\w+)/g)].map((m) => m[1]);
   assert.deepEqual([...new Set(reads)].sort(), ["body", "channel", "message", "subject"],
     "sendCampaign reads only the channel and the message from the caller");
@@ -81,16 +86,43 @@ test("an opt-out is honoured, permanent, and applies to every organiser", () => 
   assert.match(SOURCE, /Reply STOP to opt out/);
 });
 
-test("nobody is charged for a message that did not send", () => {
-  const send = SOURCE.slice(SOURCE.indexOf("async function sendCampaign"));
-  assert.match(send, /charged = money\(sent \* prices\.smsUnitPrice\)/,
-    "SMS is billed on the count that sent, not the count attempted");
-  assert.match(send, /if \(channel === "sms" && sent > 0\)/,
-    "a campaign where everything failed must charge nothing");
-  // And the balance is checked before the send starts, so TitoPay is never
-  // left carrying the provider's bill for an organiser who cannot pay.
-  assert.match(send, /const estimate = money\(audience\.length \* prices\.smsUnitPrice\)/);
-  assert.match(send, /if \(balance < estimate\)/);
+test("a campaign is paid for before release, and refunded if it does not go", () => {
+  // Charged at submission so an approval is a one-click release rather than a
+  // step that can fail on an empty wallet after an admin has said yes.
+  const submit = SOURCE.slice(SOURCE.indexOf("async function submitCampaign"),
+    SOURCE.indexOf("async function releaseCampaign"));
+  assert.match(submit, /const cost = channel === "sms" \? money\(audience\.length \* prices\.smsUnitPrice\) : 0;/);
+  assert.match(submit, /txId = await chargeOrganiser\(client, \{/, "the charge happens at submission");
+  assert.match(submit, /'pending_approval'/, "and the campaign then waits");
+  assert.ok(!/deliverSms|queueRawEmail/.test(submit),
+    "submitCampaign must not deliver anything: that is what approval is for");
+
+  // "per SMS sent" is kept honest by refunding what did not go.
+  const release = SOURCE.slice(SOURCE.indexOf("async function releaseCampaign"),
+    SOURCE.indexOf("async function rejectCampaign"));
+  assert.match(release, /refunded = money\(failed \* prices\.smsUnitPrice\)/);
+  // A rejected campaign never went, so all of it comes back.
+  const reject = SOURCE.slice(SOURCE.indexOf("async function rejectCampaign"));
+  assert.match(reject, /const refund = money\(campaign\.amount_charged\)/);
+  assert.match(reject, /status='rejected'/);
+});
+
+test("only an admin can release a campaign to real people", () => {
+  const adminRoutes = fs.readFileSync(
+    path.join(__dirname, "..", "src", "routes", "admin.routes.js"), "utf8");
+  assert.match(adminRoutes, /router\.get\("\/ticketing\/campaigns", requireAdminPermission\("ticketing"\)/);
+  assert.match(adminRoutes, /router\.post\("\/ticketing\/campaigns\/:id\/action", requireAdminPermission\("ticketing"\)/);
+  // The organiser's own routes may submit, never release.
+  const ticketingRoutes = fs.readFileSync(
+    path.join(__dirname, "..", "src", "routes", "ticketing.routes.js"), "utf8");
+  assert.match(ticketingRoutes, /campaigns\.submitCampaign\(/);
+  assert.ok(!/campaigns\.releaseCampaign\(/.test(ticketingRoutes),
+    "releaseCampaign must not be reachable from an organiser's own routes");
+  // And the console gives a human the two buttons.
+  const console_ = fs.readFileSync(path.join(__dirname, "..", "..", "admin", "assets", "admin.js"), "utf8");
+  assert.match(console_, /data-campaign-approve/);
+  assert.match(console_, /data-campaign-reject/);
+  assert.match(console_, /Campaign Approval Queue/);
 });
 
 test("email campaigns need the pack, and the pack is bought once", () => {

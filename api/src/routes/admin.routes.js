@@ -62,6 +62,7 @@ const {
   createTicketSettlement,
   adminTicketingAnalytics
 } = require("../services/ticketing-service");
+const campaigns = require("../services/event-campaign-service");
 const {
   listDefinitions: listServiceBuilderDefinitions,
   saveDefinition: saveServiceBuilderDefinition,
@@ -3709,6 +3710,36 @@ router.delete("/service-builder/services/:id", requireAdminPermission("services"
 router.get("/ticketing/analytics", requireAdminPermission("ticketing"), async (_req, res, next) => {
   try {
     res.json({ ok: true, analytics: await adminTicketingAnalytics() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* Campaign review. An organiser's message to their patrons is paid for at
+   submission and held here until somebody at TitoPay has read it. Approving
+   releases it; rejecting refunds every cent, because it never went. */
+router.get("/ticketing/campaigns", requireAdminPermission("ticketing"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, items: await campaigns.listPendingCampaigns() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/ticketing/campaigns/:id/action", requireAdminPermission("ticketing"), async (req, res, next) => {
+  try {
+    const campaignId = requireUuid(req.params.id, "Campaign ID");
+    const decision = String(req.body?.decision || "").toLowerCase();
+    if (!["approve", "reject"].includes(decision)) throw new AppError(400, "Decision must be approve or reject");
+    const result = decision === "approve"
+      ? await campaigns.releaseCampaign(campaignId, req.auth.userId, { note: req.body?.note })
+      : await campaigns.rejectCampaign(campaignId, req.auth.userId, { note: req.body?.note });
+    await writeAuditLog({
+      actorType: "admin", actorId: req.auth.userId, action: `event_campaign_${decision}d`,
+      entityType: "event_campaign", entityId: campaignId,
+      ipAddress: req.auth.ipAddress, userAgent: req.auth.userAgent, metadata: result
+    });
+    res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }

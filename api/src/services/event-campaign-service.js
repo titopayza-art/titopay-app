@@ -82,10 +82,20 @@ function ensureCampaignSchema() {
         sent_count INTEGER NOT NULL DEFAULT 0,
         failed_count INTEGER NOT NULL DEFAULT 0,
         amount_charged NUMERIC(18,2) NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'sending'
-          CHECK (status IN ('sending','sent','partially_sent','failed')),
+        status TEXT NOT NULL DEFAULT 'pending_approval',
+        transaction_id UUID,
+        reviewed_by UUID,
+        reviewed_at TIMESTAMPTZ,
+        decision_note TEXT NOT NULL DEFAULT '',
+        refunded_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE event_campaigns ADD COLUMN IF NOT EXISTS transaction_id UUID;
+      ALTER TABLE event_campaigns ADD COLUMN IF NOT EXISTS reviewed_by UUID;
+      ALTER TABLE event_campaigns ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+      ALTER TABLE event_campaigns ADD COLUMN IF NOT EXISTS decision_note TEXT NOT NULL DEFAULT '';
+      ALTER TABLE event_campaigns ADD COLUMN IF NOT EXISTS refunded_amount NUMERIC(18,2) NOT NULL DEFAULT 0;
+      ALTER TABLE event_campaigns DROP CONSTRAINT IF EXISTS event_campaigns_status_check;
       CREATE INDEX IF NOT EXISTS idx_event_campaigns_event
         ON event_campaigns (event_id, created_at DESC);
       -- An opt-out belongs to the person, not to one organiser. Somebody who
@@ -138,20 +148,27 @@ async function loadOwnEvent(businessUserId, eventId) {
    organiser, minus anyone who has opted out. Derived here and nowhere else,
    so there is no code path that can reach a person the organiser has no
    relationship with. */
-async function audienceRows(businessUserId, channel) {
+async function audienceRows(eventId, channel) {
   const contactColumn = channel === "sms" ? "u.phone" : "u.email";
+  // Scoped to ONE event on purpose. An organiser running three events may
+  // only tell the people who hold a ticket to event A about event A. Reaching
+  // the whole customer base from one event's screen is exactly the overreach
+  // POPIA section 69 is about, and it is also just rude.
+  //
+  // Registrants are included and need no special case: registering for a free
+  // event issues a paid-status order for R0 through the same path a purchase
+  // takes, so "bought a ticket" and "registered" are the same row here.
   const { rows } = await pool.query(
     `SELECT DISTINCT u.id, u.full_name, u.email, u.phone
        FROM ticket_orders o
-       JOIN events e ON e.id = o.event_id
        JOIN users u ON u.id = o.buyer_user_id
-      WHERE e.business_user_id = $1
+      WHERE o.event_id = $1
         AND o.status = 'paid'
         AND u.status = 'active'
         AND ${contactColumn} IS NOT NULL
         AND ${contactColumn} <> ''
         AND NOT EXISTS (SELECT 1 FROM event_campaign_optouts x WHERE x.user_id = u.id)`,
-    [businessUserId]);
+    [eventId]);
   return rows;
 }
 
@@ -159,8 +176,8 @@ async function campaignOverview(businessUserId, eventId) {
   await ensureCampaignSchema();
   const event = await loadOwnEvent(businessUserId, eventId);
   const [emailAudience, smsAudience, packs, history] = await Promise.all([
-    audienceRows(businessUserId, "email"),
-    audienceRows(businessUserId, "sms"),
+    audienceRows(eventId, "email"),
+    audienceRows(eventId, "sms"),
     pool.query("SELECT channel FROM event_campaign_packs WHERE event_id = $1", [eventId]),
     pool.query(
       `SELECT id, channel, subject, audience_size, sent_count, failed_count,
@@ -275,7 +292,12 @@ function optOutLine(channel) {
     : "\n\nYou are receiving this because you bought a ticket from this organiser on TitoPay. To stop event marketing, open TitoPay and turn off event updates in your notification settings.";
 }
 
-async function sendCampaign(businessUserId, eventId, payload = {}, meta = {}) {
+/* SUBMIT: the organiser writes it and pays for it. Nothing is sent.
+   Charging here rather than at release is deliberate. A campaign waiting for
+   review is already paid for, so an approval is a one-click release rather
+   than a step that can fail on an empty wallet after an admin has said yes.
+   If it is rejected, or if some messages fail, the money comes back. */
+async function submitCampaign(businessUserId, eventId, payload = {}) {
   await ensureCampaignSchema();
   const event = await loadOwnEvent(businessUserId, eventId);
   const channel = payload.channel === "sms" ? "sms" : "email";
@@ -293,33 +315,71 @@ async function sendCampaign(businessUserId, eventId, payload = {}, meta = {}) {
     }
   }
 
-  const audience = await audienceRows(businessUserId, channel);
+  const audience = await audienceRows(eventId, channel);
   if (!audience.length) {
     throw new AppError(409, channel === "sms"
-      ? "None of your patrons have a mobile number we can reach, or they have all opted out."
-      : "None of your patrons have an email address we can reach, or they have all opted out.");
+      ? "Nobody who bought or registered for this event has a mobile number we can reach, or they have all opted out."
+      : "Nobody who bought or registered for this event has an email address we can reach, or they have all opted out.");
   }
 
-  // SMS is charged on what is sent, but the balance is checked against the
-  // estimate first: starting a send the organiser cannot pay for would leave
-  // TitoPay carrying the provider's bill.
-  if (channel === "sms") {
-    const estimate = money(audience.length * prices.smsUnitPrice);
-    const { rows: balanceRows } = await pool.query(
-      "SELECT available_balance FROM wallets WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1",
-      [businessUserId]);
-    const balance = Number(balanceRows[0]?.available_balance || 0);
-    if (balance < estimate) {
-      throw new AppError(400, `This campaign reaches ${audience.length} patrons and costs R${estimate.toFixed(2)}. Your wallet has R${balance.toFixed(2)}.`);
+  const cost = channel === "sms" ? money(audience.length * prices.smsUnitPrice) : 0;
+  const campaignId = randomUUID();
+  let txId = null;
+
+  if (cost > 0) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      txId = await chargeOrganiser(client, {
+        businessUserId, amount: cost,
+        reference: `CAMPAIGN-SMS-${campaignId.slice(0, 8)}`,
+        metadata: { serviceCode: SMS_SERVICE_CODE, eventId, campaignId, recipients: audience.length }
+      });
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
   }
 
-  const campaignId = randomUUID();
   await pool.query(
-    `INSERT INTO event_campaigns (id, event_id, business_user_id, channel, subject, body, audience_size, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'sending')`,
-    [campaignId, eventId, businessUserId, channel, subject, body, audience.length]);
+    `INSERT INTO event_campaigns (id, event_id, business_user_id, channel, subject, body,
+                                  audience_size, amount_charged, transaction_id, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending_approval')`,
+    [campaignId, eventId, businessUserId, channel, subject, body, audience.length, cost, txId]);
 
+  return {
+    campaignId,
+    channel,
+    audienceSize: audience.length,
+    amountCharged: cost,
+    status: "pending_approval",
+    message: channel === "sms"
+      ? `Paid and sent for review. R${cost.toFixed(2)} for ${audience.length} SMS is held now. TitoPay checks the message before it goes out, and anything not delivered is refunded.`
+      : `Sent for review. TitoPay checks the message before it reaches your ${audience.length} patrons. Your email pack covers it, so there is nothing more to pay.`
+  };
+}
+
+/* RELEASE: an admin has approved it, so it goes. Only reachable from the
+   admin ticketing console. */
+async function releaseCampaign(campaignId, adminId, { note = "" } = {}) {
+  await ensureCampaignSchema();
+  const { rows } = await pool.query(
+    `SELECT c.*, e.event_name FROM event_campaigns c
+       JOIN events e ON e.id = c.event_id WHERE c.id = $1`, [campaignId]);
+  const campaign = rows[0];
+  if (!campaign) throw new AppError(404, "Campaign not found");
+  if (campaign.status !== "pending_approval") {
+    throw new AppError(409, `This campaign is already ${String(campaign.status).replace(/_/g, " ")}.`);
+  }
+
+  await pool.query(
+    "UPDATE event_campaigns SET status='sending', reviewed_by=$2, reviewed_at=NOW(), decision_note=$3 WHERE id=$1",
+    [campaignId, adminId, clean(note, 500)]);
+
+  const audience = await audienceRows(campaign.event_id, campaign.channel);
   const notifications = require("./notification-service");
   const emailCentre = require("./email-centre-service");
   let sent = 0;
@@ -327,69 +387,127 @@ async function sendCampaign(businessUserId, eventId, payload = {}, meta = {}) {
 
   for (const person of audience) {
     try {
-      if (channel === "sms") {
+      if (campaign.channel === "sms") {
         await notifications.deliverSms({
           recipient: person.phone,
-          message: `${body}${optOutLine("sms")}`.slice(0, MAX_SMS_LENGTH + 40)
+          message: `${campaign.body}${optOutLine("sms")}`.slice(0, MAX_SMS_LENGTH + 40)
         });
       } else {
         const result = await emailCentre.queueRawEmail({
           recipient: person.email,
-          subject,
-          textBody: `Hi ${person.full_name || "there"},\n\n${body}${optOutLine("email")}`,
+          subject: campaign.subject,
+          textBody: `Hi ${person.full_name || "there"},\n\n${campaign.body}${optOutLine("email")}`,
           userId: person.id,
           idempotencyKey: `event-campaign:${campaignId}:${person.id}`,
-          metadata: { campaignId, eventId, purpose: "event_campaign" }
+          metadata: { campaignId, eventId: campaign.event_id, purpose: "event_campaign" }
         });
         if (result && result.skipped) throw new AppError(503, "Email sending is switched off");
       }
       sent += 1;
     } catch (error) {
       failed += 1;
-      console.error("[event-campaign] delivery failed", { campaignId, channel, message: error.message });
+      console.error("[event-campaign] delivery failed", { campaignId, message: error.message });
     }
   }
 
-  // Charged now, on the count that actually went. An organiser whose whole
-  // campaign failed pays nothing.
-  let charged = 0;
-  if (channel === "sms" && sent > 0) {
-    charged = money(sent * prices.smsUnitPrice);
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await chargeOrganiser(client, {
-        businessUserId, amount: charged,
-        reference: `CAMPAIGN-SMS-${event.slug}`.slice(0, 60),
-        metadata: { serviceCode: SMS_SERVICE_CODE, eventId, campaignId, sent }
-      });
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("[event-campaign] charge failed after sending", { campaignId, message: error.message });
-    } finally {
-      client.release();
-    }
+  // "R0.60 per SMS sent" is kept honest by refunding what did not go.
+  let refunded = 0;
+  const prices = await currentPricing();
+  if (campaign.channel === "sms" && failed > 0) {
+    refunded = money(failed * prices.smsUnitPrice);
+    await refundOrganiser(campaign.business_user_id, refunded, {
+      serviceCode: SMS_SERVICE_CODE, campaignId, eventId: campaign.event_id, undelivered: failed
+    });
   }
 
   const status = sent === 0 ? "failed" : failed > 0 ? "partially_sent" : "sent";
   await pool.query(
-    `UPDATE event_campaigns SET sent_count = $2, failed_count = $3, amount_charged = $4, status = $5
-      WHERE id = $1`,
-    [campaignId, sent, failed, charged, status]);
+    `UPDATE event_campaigns SET sent_count=$2, failed_count=$3, refunded_amount=$4, status=$5 WHERE id=$1`,
+    [campaignId, sent, failed, refunded, status]);
+  return { campaignId, sent, failed, refunded, status };
+}
 
-  return {
-    campaignId,
-    channel,
-    audienceSize: audience.length,
-    sent,
-    failed,
-    amountCharged: charged,
-    status,
-    message: channel === "sms"
-      ? `${sent} SMS sent. You were charged R${charged.toFixed(2)} at R${prices.smsUnitPrice.toFixed(2)} each${failed ? `, and ${failed} could not be delivered, which you were not charged for` : ""}.`
-      : `${sent} emails queued to your patrons${failed ? `, and ${failed} could not be queued` : ""}. Email campaigns for this event are already paid for.`
-  };
+/* REJECT: it never goes, so every cent comes back. */
+async function rejectCampaign(campaignId, adminId, { note = "" } = {}) {
+  await ensureCampaignSchema();
+  const { rows } = await pool.query("SELECT * FROM event_campaigns WHERE id = $1", [campaignId]);
+  const campaign = rows[0];
+  if (!campaign) throw new AppError(404, "Campaign not found");
+  if (campaign.status !== "pending_approval") {
+    throw new AppError(409, `This campaign is already ${String(campaign.status).replace(/_/g, " ")}.`);
+  }
+  const refund = money(campaign.amount_charged);
+  if (refund > 0) {
+    await refundOrganiser(campaign.business_user_id, refund, {
+      serviceCode: SMS_SERVICE_CODE, campaignId, eventId: campaign.event_id, reason: "campaign_rejected"
+    });
+  }
+  await pool.query(
+    `UPDATE event_campaigns SET status='rejected', reviewed_by=$2, reviewed_at=NOW(),
+            decision_note=$3, refunded_amount=$4 WHERE id=$1`,
+    [campaignId, adminId, clean(note, 500), refund]);
+  return { campaignId, refunded: refund };
+}
+
+// Money back to the organiser's wallet, through the ledger, out of revenue.
+async function refundOrganiser(businessUserId, amount, metadata) {
+  if (!(amount > 0)) return;
+  const { applyWalletMovement, getRevenueWallet } = require("./wallet-service");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      "SELECT * FROM wallets WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
+      [businessUserId]);
+    const wallet = rows[0];
+    if (!wallet) throw new AppError(404, "Business wallet not found");
+    const txId = randomUUID();
+    await client.query(
+      `INSERT INTO transactions (id, user_id, wallet_id, service_code, amount, fee, total,
+                                 status, direction, reference, metadata)
+       VALUES ($1,$2,$3,$4,$5,0,$5,'success','credit',$6,$7::JSONB)`,
+      [txId, businessUserId, wallet.id, metadata.serviceCode, amount,
+       `CAMPAIGN-REFUND-${String(metadata.campaignId).slice(0, 8)}-${txId.slice(0, 6)}`,
+       JSON.stringify({ ...metadata, refund: true })]);
+    await applyWalletMovement(client, {
+      walletId: wallet.id, transactionId: txId, entryType: "credit", amount,
+      reference: `CAMPAIGN-REFUND-${String(metadata.campaignId).slice(0, 8)}`,
+      metadata: { ...metadata, refund: true }
+    });
+    const revenueWallet = await getRevenueWallet(client).catch(() => null);
+    if (revenueWallet) {
+      await applyWalletMovement(client, {
+        walletId: revenueWallet.id, transactionId: txId, entryType: "debit", amount,
+        reference: `CAMPAIGN-REFUND-${String(metadata.campaignId).slice(0, 8)}`,
+        metadata: { ...metadata, refund: true }
+      });
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("[event-campaign] refund failed", { message: error.message, ...metadata });
+  } finally {
+    client.release();
+  }
+}
+
+// Everything waiting for an admin decision, newest first.
+async function listPendingCampaigns() {
+  await ensureCampaignSchema();
+  const { rows } = await pool.query(
+    `SELECT c.id, c.channel, c.subject, c.body, c.audience_size, c.amount_charged,
+            c.status, c.created_at, e.event_name, e.slug, u.full_name AS organiser_name
+       FROM event_campaigns c
+       JOIN events e ON e.id = c.event_id
+       JOIN users u ON u.id = c.business_user_id
+      WHERE c.status = 'pending_approval'
+      ORDER BY c.created_at ASC LIMIT 100`);
+  return rows.map((row) => ({
+    id: row.id, channel: row.channel, subject: row.subject, body: row.body,
+    audienceSize: row.audience_size, amountCharged: money(row.amount_charged),
+    status: row.status, createdAt: row.created_at,
+    eventName: row.event_name, eventSlug: row.slug, organiserName: row.organiser_name
+  }));
 }
 
 async function optOut(userId) {
@@ -404,7 +522,10 @@ module.exports = {
   ensureCampaignSchema,
   campaignOverview,
   buyEmailPack,
-  sendCampaign,
+  submitCampaign,
+  releaseCampaign,
+  rejectCampaign,
+  listPendingCampaigns,
   optOut,
   EMAIL_PACK_PRICE,
   SMS_UNIT_PRICE,

@@ -1949,7 +1949,12 @@ function openModal(html) {
   lockPageScroll();
   const wrapper = document.createElement("div");
   wrapper.className = "modal-backdrop";
-  wrapper.innerHTML = `<section class="modal-card" role="dialog" aria-modal="true" tabindex="-1">${html}</section>`;
+  // The ticketing sheets carry tables and side-by-side cards, so on a desktop
+  // they are allowed more room than a confirmation dialog needs. Phones are
+  // unaffected: the wider rule only applies from 760px up.
+  const wide = String(state.currentModalAction || "").startsWith("ticketing-section:")
+    || /business-ticketing|ticketing-dashboard/.test(String(state.currentModalAction || ""));
+  wrapper.innerHTML = `<section class="modal-card${wide ? " ticketing-wide" : ""}" role="dialog" aria-modal="true" tabindex="-1">${html}</section>`;
   wrapper.addEventListener("click", async (event) => {
     if (event.target === wrapper || event.target.closest("[data-close]")) {
       closeModal();
@@ -16080,12 +16085,14 @@ function publicTicketingEventView(event = {}) {
     .sort((a, b) => new Date(a.phase.opensAt) - new Date(b.phase.opensAt))[0];
   const actionWord = registrationMode ? "Register" : "Buy ticket";
   return `
-    <main class="screen auth-screen">
+    <main class="screen auth-screen public-event-screen">
       <header class="topbar">
         <button class="icon-btn" data-action="public-event-back" aria-label="Go back">${icon("arrow-left")}</button>
         <img src="./assets/titopay-logo.png" alt="TitoPay" class="brand-logo">
         <button class="icon-btn landing-menu-btn" data-action="landing-menu" aria-label="Open TitoPay menu">${icon("menu")}</button>
       </header>
+      <div class="public-event-grid">
+      <div class="pe-main">
       <section class="panel">
         <p class="eyebrow">Approved TitoPay Event</p>
         <h1>${esc(event.eventName || "Event")}</h1>
@@ -16096,6 +16103,8 @@ function publicTicketingEventView(event = {}) {
           ${settingsRow("Organiser", event.businessDetails?.businessName || event.businessName || "Verified TitoPay Business", "shield")}
         </div>
       </section>
+      </div>
+      <div class="pe-side">
       <section class="panel">
         <h2>${registrationMode ? "Registration" : "Tickets"}</h2>
         ${registrationMode ? `<p class="lead">This event is free. Register and your ticket lands in My Tickets.</p>` : ""}
@@ -16130,6 +16139,8 @@ function publicTicketingEventView(event = {}) {
         `}
       </section>
       ${eventSocialsHtml(event)}
+      </div>
+      </div>
     </main>
   `;
 }
@@ -17538,17 +17549,18 @@ function campaignPanelHtml(overview = {}) {
   return `
     <section class="panel-card">
       <h3>Your audience</h3>
-      <p class="muted">Everyone who has bought a ticket to one of your events, minus anyone who has opted out. TitoPay works this out for you, so there is no list to upload and nobody is contacted who has not bought from you.</p>
+      <p class="muted">Everyone who bought a ticket to <strong>this event</strong>, or registered for it, minus anyone who has opted out. TitoPay works this out for you: there is no list to upload, and people who bought tickets to your other events are not included.</p>
       <div class="settings-list">
-        ${settingsRow("Reachable by email", `${audience.email || 0} ${audience.email === 1 ? "patron" : "patrons"}`, "mail")}
-        ${settingsRow("Reachable by SMS", `${audience.sms || 0} ${audience.sms === 1 ? "patron" : "patrons"}`, "phone")}
+        ${settingsRow("Reachable by email", `${audience.email || 0} ${audience.email === 1 ? "person" : "people"} on this event`, "mail")}
+        ${settingsRow("Reachable by SMS", `${audience.sms || 0} ${audience.sms === 1 ? "person" : "people"} on this event`, "phone")}
         ${settingsRow("Cost to SMS all of them", money(audience.smsCost || 0), "wallet")}
       </div>
-      ${noPatrons ? `<p class="field-hint">Nobody has bought a ticket from you yet, so there is no one to reach. Come back once you have sold your first tickets, and do not buy the email pack before then.</p>` : ""}
+      ${noPatrons ? `<p class="field-hint">Nobody has bought or registered for this event yet, so there is nobody to reach. Come back once your first tickets go, and do not buy the email pack before then.</p>` : ""}
     </section>
 
     <section class="panel-card">
       <h3>Email campaign</h3>
+      <p class="field-hint">Every campaign is checked by TitoPay before it reaches anyone. You will see it here as <strong>Waiting for review</strong> until then.</p>
       ${pricing.emailPackOwned
         ? `<p class="field-hint">Paid for. Email campaigns for this event are unlimited.</p>`
         : `<p class="field-hint">${money(pricing.emailPackPrice || 1500)} once for this event, then send as many as you like. Charged from your TitoPay wallet.</p>
@@ -17557,17 +17569,17 @@ function campaignPanelHtml(overview = {}) {
         <form class="form-grid" data-form="campaign-email">
           <label>Subject<input name="subject" maxlength="150" required placeholder="Tickets are selling fast"></label>
           <label>Message<textarea name="message" rows="4" maxlength="5000" required placeholder="Tell your patrons what is happening, when, and why they should come."></textarea></label>
-          <button class="btn primary" type="submit">${icon("send")} Send to ${audience.email || 0} by email</button>
+          <button class="btn primary" type="submit">${icon("send")} Submit for review</button>
         </form>` : ""}
     </section>
 
     <section class="panel-card">
       <h3>SMS campaign</h3>
-      <p class="field-hint">${money(0.6)} per SMS sent. Reaching all ${audience.sms || 0} costs <strong>${money(audience.smsCost || 0)}</strong>. You will see the exact figure again before anything is charged.</p>
+      <p class="field-hint">${money(0.6)} per SMS sent. Reaching all ${audience.sms || 0} costs <strong>${money(audience.smsCost || 0)}</strong>, taken when you submit and refunded in full if TitoPay does not approve the message. Anything that fails to deliver is refunded too.</p>
       <form class="form-grid" data-form="campaign-sms">
         <label>Message<textarea name="message" rows="3" maxlength="320" required placeholder="Doors open 20:00. Grab your ticket on TitoPay before they go."></textarea></label>
         <p class="field-hint">Keep it short. An opt-out line is added for you, because the law requires one.</p>
-        <button class="btn primary" type="submit">${icon("send")} Send to ${audience.sms || 0} by SMS</button>
+        <button class="btn primary" type="submit">${icon("send")} Pay and submit for review</button>
       </form>
     </section>
 
@@ -17577,10 +17589,26 @@ function campaignPanelHtml(overview = {}) {
         <div class="settings-list">
           ${campaigns.map((item) => settingsRow(
             `${item.channel === "sms" ? "SMS" : "Email"}${item.subject ? `: ${item.subject}` : ""}`,
-            `${item.sentCount} sent${item.failedCount ? `, ${item.failedCount} failed` : ""} · ${money(item.amountCharged)} · ${friendlyDate(item.createdAt)}`,
+            campaignStatusLine(item),
             item.channel === "sms" ? "phone" : "mail")).join("")}
         </div>
       </section>` : ""}`;
+}
+// One line per campaign in the history, saying where it actually is. A
+// campaign waiting on TitoPay must never look like one that already went.
+function campaignStatusLine(item = {}) {
+  const when = friendlyDate(item.createdAt);
+  const paid = Number(item.amountCharged || 0);
+  if (item.status === "pending_approval") {
+    return `Waiting for review${paid > 0 ? ` · ${money(paid)} held` : ""} · ${when}`;
+  }
+  if (item.status === "rejected") {
+    return `Not approved${paid > 0 ? `, ${money(paid)} refunded` : ""} · ${when}`;
+  }
+  if (item.status === "sending") return `Sending now · ${when}`;
+  if (item.status === "failed") return `Nothing could be delivered${paid > 0 ? `, ${money(paid)} refunded` : ""} · ${when}`;
+  const refunded = Number(item.refundedAmount || 0);
+  return `${item.sentCount} sent${item.failedCount ? `, ${item.failedCount} failed` : ""} · ${money(paid - refunded)}${refunded > 0 ? ` after ${money(refunded)} refunded` : ""} · ${when}`;
 }
 function selectedCampaignEventId() {
   return document.querySelector("[data-campaign-event]")?.value || "";
@@ -17636,11 +17664,11 @@ async function submitCampaign(channel, data, form) {
   // paid for by the pack, so it only confirms the reach.
   const cost = channel === "sms" ? money(reach * 0.6) : null;
   const go = await askToConfirm({
-    title: channel === "sms" ? "Send this SMS campaign" : "Send this email campaign",
+    title: channel === "sms" ? "Submit this SMS campaign" : "Submit this email campaign",
     body: channel === "sms"
-      ? `This goes to ${reach} patrons and costs up to ${cost}, at ${money(0.6)} per SMS. You are only charged for messages that actually send.`
-      : `This goes to ${reach} patrons. Your email pack for this event is already paid for, so there is nothing more to pay.`,
-    confirmLabel: channel === "sms" ? `Send and pay up to ${cost}` : `Send to ${reach}`
+      ? `${cost} is taken now for ${reach} messages. TitoPay checks the wording before anything is sent. If it is not approved you get every cent back, and anything that fails to deliver is refunded too.`
+      : `This goes to ${reach} people who bought or registered for this event, once TitoPay has checked the wording. Your email pack covers it, so there is nothing more to pay.`,
+    confirmLabel: channel === "sms" ? `Pay ${cost} and submit` : `Submit for review`
   });
   if (!go) return;
   const button = form?.querySelector("button[type=submit]");

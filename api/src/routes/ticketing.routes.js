@@ -410,7 +410,7 @@ router.post("/business/events/:id/campaigns/email-pack", requireAuth, async (req
 router.post("/business/events/:id/campaigns", requireAuth, async (req, res, next) => {
   try {
     const eventId = requireUuid(req.params.id, "Event ID");
-    res.status(201).json({ ok: true, result: await campaigns.sendCampaign(req.auth.userId, eventId, req.body, meta(req)) });
+    res.status(201).json({ ok: true, result: await campaigns.submitCampaign(req.auth.userId, eventId, req.body) });
   } catch (error) {
     next(error);
   }

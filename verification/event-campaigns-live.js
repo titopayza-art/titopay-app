@@ -73,6 +73,21 @@ async function seedUser({ type = "personal", balance = 0, phone = null, email = 
   return { id, sessionId, token: signAccessToken({ sub: id, sid: sessionId, jti, typ: "customer" }) };
 }
 
+async function seedAdmin() {
+  const id = crypto.randomUUID();
+  const n = crypto.randomUUID().slice(0, 6);
+  await pool.query(
+    `INSERT INTO admin_users (id, full_name, username, email, role, password_hash, status)
+     VALUES ($1,'Campaign Reviewer',$2,$3,'coo','x','active')`,
+    [id, `cmpadm_${n}`, `cmpadm-${n}@example.test`]);
+  const sessionId = crypto.randomUUID();
+  const jti = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO sessions (id, user_type, user_id, scope, refresh_token_hash, access_jti, expires_at)
+     VALUES ($1,'admin',$2,'admin','x',$3, NOW() + INTERVAL '1 hour')`, [sessionId, id, jti]);
+  return { id, sessionId, token: signAccessToken({ sub: id, sid: sessionId, jti, typ: "admin" }) };
+}
+
 (async () => {
   const { app } = require(path.join(API, "src", "app.js"));
   const { ensureTicketingSchema } = require(path.join(API, "src", "services", "ticketing-service.js"));
@@ -122,14 +137,35 @@ async function seedUser({ type = "personal", balance = 0, phone = null, email = 
         [eventId, typeId, p.id, `CMP-${crypto.randomUUID().slice(0, 8)}`]);
     }
 
-    // 1. The audience is the buyers, not everyone.
+    // A SECOND event by the same organiser, with a different buyer. If the
+    // audience were still "everyone who bought from this organiser", this
+    // person would leak into the first event's campaign.
+    const otherEvent = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO events (id, business_user_id, event_name, slug, status, event_date, approved_at)
+       VALUES ($1,$2,$3,$4,'approved', CURRENT_DATE + 40, NOW())`,
+      [otherEvent, organiser.id, `Other ${TAG}`, `other-${TAG}`]);
+    made.events.push(otherEvent);
+    const otherType = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO event_ticket_types (id, event_id, ticket_name, price, quantity_available, sort_order)
+       VALUES ($1,$2,'General',0,50,10)`, [otherType, otherEvent]);
+    const otherBuyer = await seedUser({ phone: `+2784${String(Date.now()).slice(-6)}` });
+    made.users.push(otherBuyer.id);
+    await pool.query(
+      `INSERT INTO ticket_orders (id, event_id, ticket_type_id, buyer_user_id, order_reference,
+                                  quantity, subtotal, buyer_fee, business_commission, business_net, total, status, delivery_status)
+       VALUES (gen_random_uuid(),$1,$2,$3,$4,1,0,0,0,0,0,'paid','queued')`,
+      [otherEvent, otherType, otherBuyer.id, `CMP-${crypto.randomUUID().slice(0, 8)}`]);
+
+    // 1. The audience is this event's buyers, not everyone.
     let overview = (await (await call(organiser.token, `/v1/ticketing/business/events/${eventId}/campaigns`)).json()).campaigns;
     assert.equal(overview.audience.email, 3, `three patrons, got ${overview.audience.email}`);
     assert.equal(overview.audience.sms, 3);
     assert.equal(Number(overview.audience.smsCost), 1.8, "3 x R0.60 = R1.80");
     assert.equal(overview.pricing.emailPackPrice, 1500);
     assert.equal(overview.pricing.smsUnitPrice, 0.6);
-    ok("the audience is the organiser's own 3 ticket buyers, and the stranger is not in it");
+    ok("the audience is only this event's 3 buyers: not the stranger, and not the other event's buyer");
 
     // 3. Email without the pack is refused, with the price in the message.
     const noPack = await call(organiser.token, `/v1/ticketing/business/events/${eventId}/campaigns`,
@@ -152,11 +188,14 @@ async function seedUser({ type = "personal", balance = 0, phone = null, email = 
     // Email now sends, and costs nothing further.
     const emailSend = await call(organiser.token, `/v1/ticketing/business/events/${eventId}/campaigns`,
       { channel: "email", subject: "Tickets are moving", message: "Doors at 20:00." });
-    assert.equal(emailSend.status, 201, JSON.stringify(await emailSend.json()));
+    const emailBody = await emailSend.json();
+    assert.equal(emailSend.status, 201, JSON.stringify(emailBody));
+    assert.equal(emailBody.result.status, "pending_approval", "an email campaign waits for TitoPay");
     assert.equal(await bal(organiser.id), afterPack, "an email campaign after the pack costs nothing more");
-    ok("email campaigns after the pack are unlimited and charge nothing further");
+    ok("an email campaign is submitted for review, not sent, and costs nothing further");
 
-    // 4. SMS bills per message sent. One of the three numbers fails.
+    // 4. SMS is charged AT SUBMISSION and held for review, then released by
+    //    an admin. Nothing may reach a phone before somebody has read it.
     const beforeSms = await bal(organiser.id);
     const revenueBefore = Number((await pool.query(
       "SELECT available_balance FROM wallets WHERE user_id IS NULL AND kind = 'revenue' LIMIT 1")).rows[0]?.available_balance || 0);
@@ -165,18 +204,47 @@ async function seedUser({ type = "personal", balance = 0, phone = null, email = 
       { channel: "sms", message: "Doors at 20:00. Get your ticket on TitoPay." });
     const smsBody = await smsSend.json();
     assert.equal(smsSend.status, 201, JSON.stringify(smsBody));
-    const smsResult = smsBody.result;
-    assert.equal(smsLog.length, 3, "all three were attempted");
-    assert.equal(smsResult.sent, 2, `two should send, got ${smsResult.sent}`);
-    assert.equal(smsResult.failed, 1);
-    assert.equal(Number(smsResult.amountCharged), 1.2, "2 sent x R0.60 = R1.20, the failure is free");
+    assert.equal(smsBody.result.status, "pending_approval");
+    assert.equal(smsLog.length, 0, "NOT ONE message may go out before an admin has approved it");
+    const heldBalance = await bal(organiser.id);
+    assert.equal(Number((beforeSms - heldBalance).toFixed(2)), 1.8, "3 x R0.60 is charged up front, before release");
+    ok("an SMS campaign is charged R1.80 on submission and sends nothing until it is approved");
+
+    // The admin queue, and the release.
+    const admin = await seedAdmin();
+    const queue = await (await call(admin.token, "/v1/admin/ticketing/campaigns")).json();
+    const waiting = queue.items.find((item) => item.id === smsBody.result.campaignId);
+    assert.ok(waiting, "the campaign is in the admin review queue");
+    assert.equal(waiting.audienceSize, 3);
+    ok("the message is waiting in Admin -> Ticketing with its audience and what was paid");
+
+    const released = await call(admin.token, `/v1/admin/ticketing/campaigns/${smsBody.result.campaignId}/action`,
+      { decision: "approve" });
+    assert.equal(released.status, 200, await released.text());
+    assert.equal(smsLog.length, 3, "all three were attempted once approved");
     const afterSms = await bal(organiser.id);
-    assert.equal(Number((beforeSms - afterSms).toFixed(2)), 1.2, `wallet moved R${(beforeSms - afterSms).toFixed(2)}`);
+    // One number is unreachable, so R0.60 comes back: "per SMS sent" holds.
+    assert.equal(Number((beforeSms - afterSms).toFixed(2)), 1.2,
+      `2 sent x R0.60 = R1.20 net, saw R${(beforeSms - afterSms).toFixed(2)}`);
     const revenueAfter = Number((await pool.query(
       "SELECT available_balance FROM wallets WHERE user_id IS NULL AND kind = 'revenue' LIMIT 1")).rows[0]?.available_balance || 0);
-    assert.equal(Number((revenueAfter - revenueBefore).toFixed(2)), 1.2, "TitoPay's revenue wallet is credited the same R1.20");
+    assert.equal(Number((revenueAfter - revenueBefore).toFixed(2)), 1.2, "revenue keeps only the R1.20 that was delivered");
     assert.match(smsLog[0].message, /STOP/i, "every SMS carries an opt-out");
-    ok("SMS charges exactly R0.60 per message SENT (2 of 3), the failure is free, and revenue balances");
+    ok("approving releases it, and the undelivered one is refunded so billing stays per SMS sent");
+
+    // A rejected campaign never goes, and every cent comes back.
+    const beforeReject = await bal(organiser.id);
+    smsLog.length = 0;
+    const toReject = await (await call(organiser.token, `/v1/ticketing/business/events/${eventId}/campaigns`,
+      { channel: "sms", message: "Buy now or regret it forever" })).json();
+    assert.equal(Number((beforeReject - await bal(organiser.id)).toFixed(2)), 1.8, "charged on submission");
+    const rejected = await call(admin.token, `/v1/admin/ticketing/campaigns/${toReject.result.campaignId}/action`,
+      { decision: "reject", note: "Too pushy" });
+    assert.equal(rejected.status, 200, await rejected.text());
+    assert.equal(smsLog.length, 0, "a rejected campaign sends nothing");
+    assert.equal(Number((await bal(organiser.id)).toFixed(2)), Number(beforeReject.toFixed(2)),
+      "every cent of a rejected campaign comes back");
+    ok("a rejected campaign sends nothing and is refunded in full");
 
     // 5. Opting out removes a patron everywhere.
     const optedOut = await call(patrons[0].token, "/v1/ticketing/campaigns/opt-out", {});
@@ -211,7 +279,7 @@ async function seedUser({ type = "personal", balance = 0, phone = null, email = 
     assert.equal(smsLog.length, 0, "not one message may go out before the money is confirmed");
     ok("an organiser who cannot afford the campaign is stopped before a single SMS is sent");
 
-    console.log(`\n${passed}/7 checks passed. R1 500 per event for email, R0.60 per SMS sent.`);
+    console.log(`\n${passed}/9 checks passed. R1 500 per event for email, R0.60 per SMS sent.`);
     process.exit(0);
   } catch (error) {
     console.error("\nFAILED:", error.message);

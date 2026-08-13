@@ -13240,3 +13240,44 @@ img {
 .campaign-prices strong { display: block; font-size: 20px; margin: 2px 0 4px; }
 .campaign-prices small { display: block; opacity: .75; line-height: 1.4; }
 @media (max-width: 420px) { .campaign-prices { grid-template-columns: 1fr; } }
+
+/* TICKETING ON A BIG SCREEN -----------------------------------------------
+   The public event page was built as `screen auth-screen`, and auth-screen
+   caps at 560px because a sign-in form should not stretch across a monitor.
+   An event page is not a sign-in form: on a laptop it rendered as a narrow
+   ribbon down the middle of the display with the description running for
+   twenty lines. It now widens with the window, and the detail and the
+   tickets sit side by side once there is room for both.
+
+   The ticketing sheets get the same treatment. They are the densest screens
+   in the app, and holding them at phone width on a desktop wastes the space
+   that would let a table breathe. */
+.public-event-screen { max-width: 100%; }
+.public-event-grid { display: block; }
+
+@media (min-width: 760px) {
+  .public-event-screen { max-width: 940px; margin-inline: auto; }
+  .public-event-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+  }
+  /* The event's own detail leads and spans the full height, so the ticket
+     list and the organiser's links stack beside it instead of leaving a
+     hole under the shorter column. */
+  .public-event-grid { align-items: start; }
+  .pe-main, .pe-side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+}
+
+@media (min-width: 1040px) {
+  .public-event-screen { max-width: 1040px; }
+}
+
+/* Ticketing sheets: wider as the window allows, never wider than is
+   readable. Phone behaviour is untouched. */
+@media (min-width: 760px) {
+  .modal-card.ticketing-wide { width: min(100%, 860px); }
+  .ticketing-hub-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .campaign-prices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
