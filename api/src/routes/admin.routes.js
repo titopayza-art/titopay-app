@@ -153,7 +153,7 @@ const INTEGRATION_PROVIDERS = {
   // row so saving it can never touch the working Collection configuration.
   // Reference: https://developer.peachpayments.com/docs/payouts-api-1
   peach_payouts: {
-    label: "Peach Payments — Payout / Withdrawal",
+    label: "Peach Payments Payout / Withdrawal",
     description: "Bank withdrawals and payouts (money out).",
     category: "payments",
     routingEligible: false,

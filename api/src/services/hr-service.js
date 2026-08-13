@@ -2088,7 +2088,7 @@ async function exportResource(resourceName, kind, auth) {
 }
 
 function attendancePdf(rows, auth) {
-  const safe = (value, max = 18) => String(value ?? "—").replace(/[()\\]/g, "").slice(0, max);
+  const safe = (value, max = 18) => String(value ?? "-").replace(/[()\\]/g, "").slice(0, max);
   const dates = rows.map((row) => String(row.workDate || "").slice(0, 10)).filter(Boolean).sort();
   const range = dates.length ? `${dates[0]} to ${dates[dates.length - 1]}` : "No attendance dates";
   const columns = [

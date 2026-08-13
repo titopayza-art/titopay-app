@@ -66,7 +66,7 @@ router.post("/public/contact", publicContactLimiter, async (req, res, next) => {
     await pool.query(
       `INSERT INTO support_tickets (id, ticket_ref, user_id, category, subject, message, status, assigned_to)
        VALUES ($1, $2, NULL, $3, $4, $5, 'open', 'Customer Care Queue')`,
-      [id, ticketRef, category, `Website contact: ${category} — ${fullName}`.slice(0, 255), storedMessage]
+      [id, ticketRef, category, `Website contact: ${category} from ${fullName}`.slice(0, 255), storedMessage]
     );
 
     res.status(201).json({ ok: true, ticketRef });

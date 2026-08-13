@@ -65,7 +65,7 @@ router.post("/:id/invitations", run(async (req, res) => {
     return;
   }
   const group = await svc.getGroup(req.auth.userId, groupId);
-  res.status(201).json({ ok: true, inviteCode: group.invite_code, message: `Share the invite code ${group.invite_code} — joining happens under Join with a code.` });
+  res.status(201).json({ ok: true, inviteCode: group.invite_code, message: `Share the invite code ${group.invite_code}. Joining happens under Join with a code.` });
 }));
 
 // Contributions: a member's transfer to the group's treasurer on the normal

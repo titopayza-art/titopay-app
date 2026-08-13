@@ -1083,7 +1083,7 @@ async function submitEvent(userId, eventId, meta = {}) {
         "",
         "You can track its status any time under Business Ticketing in the TitoPay app.",
         "",
-        "— TitoPay"
+        "TitoPay"
       ].join("\n"),
       metadata: { eventId, purpose: "event_submission_confirmation" }
     }).catch((error) => console.error("[event-submission-email-failed]", { eventId, message: error.message }));
