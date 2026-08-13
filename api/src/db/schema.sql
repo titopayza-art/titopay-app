@@ -1661,3 +1661,18 @@ CREATE TABLE IF NOT EXISTS compliance_flags (
 
 CREATE INDEX IF NOT EXISTS compliance_flags_open_idx
   ON compliance_flags (status, created_at DESC);
+
+-- Risk status is a separate axis from KYC. Screening entries are maintained
+-- by compliance administrators; matches raise high-risk signals.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_status TEXT NOT NULL DEFAULT 'normal';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cdd_reviewed_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS compliance_screening_list (
+  id UUID PRIMARY KEY,
+  label TEXT NOT NULL,
+  name_pattern TEXT,
+  id_number_hash TEXT,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  added_by UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

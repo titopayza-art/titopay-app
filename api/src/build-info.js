@@ -19,10 +19,13 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 12;
+const API_BUILD = 13;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  13: "Compliance finalized: risk axis separate from KYC (normal/elevated/high " +
+      "risk/EDD), sanctions screening list, transaction monitoring, ongoing CDD, " +
+      "daily/withdrawal/balance limits, pre-limit upgrade nudges, RMCP disclaimers.",
   12: "Progressive KYC/FICA: four tiers with configurable limits, instant SA ID " +
       "basic verification, automatic EDD flags, and Limits and Verification in the app.",
   11: "Receiving is open unless the account is blocked; every sent transfer " +

@@ -245,6 +245,11 @@ async function createTopupCheckout(actor, payload = {}) {
   const idempotencyKey = String(payload.idempotencyKey || payload.metadata?.clientIdempotencyKey || "").trim().slice(0, 120);
   if (!idempotencyKey) throw new AppError(400, "An idempotency key is required");
 
+  // The wallet balance cap for the customer's verification tier, checked
+  // BEFORE they are sent to the card page: a top up that could not be
+  // credited must never be charged.
+  await require("./compliance-service").assertBalanceHeadroom(actor.userId, amount);
+
   // A repeated submit returns the original checkout instead of charging twice.
   const existing = await pool.query(
     `SELECT * FROM transactions

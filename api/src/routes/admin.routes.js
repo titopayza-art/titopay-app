@@ -3402,14 +3402,79 @@ router.post("/compliance/flags/:id/resolve", requireAdminPermission("services"),
        WHERE id = $1 AND status = 'open' RETURNING user_id`,
       [req.params.id, req.auth.userId, note || null]);
     if (!rows[0]) throw new AppError(404, "Flag not found or already resolved");
-    await pool.query(
-      `UPDATE users SET edd_status = 'cleared' WHERE id = $1
-       AND NOT EXISTS (SELECT 1 FROM compliance_flags WHERE user_id = $1 AND status = 'open')`,
-      [rows[0].user_id]);
+    const landing = String(req.body?.riskStatus || "").trim();
+    if (landing) {
+      await require("../services/compliance-service").setRiskStatus(rows[0].user_id, landing, `flag_resolved:${req.params.id}`, {}, req.auth);
+    } else {
+      await pool.query(
+        `UPDATE users SET edd_status = 'cleared', risk_status = 'normal' WHERE id = $1
+         AND NOT EXISTS (SELECT 1 FROM compliance_flags WHERE user_id = $1 AND status = 'open')`,
+        [rows[0].user_id]);
+    }
     await writeAuditLog({ actorType: "admin", actorId: req.auth.userId, action: "edd_flag_resolved",
       entityType: "compliance_flag", entityId: req.params.id, ipAddress: req.auth.ipAddress,
       userAgent: req.auth.userAgent, metadata: { note } });
     res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+// Risk management: manual risk decisions and the screening list. Every
+// change is audit-logged; screening sweeps run on demand.
+router.post("/compliance/users/:id/risk", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const compliance = require("../services/compliance-service");
+    const status = String(req.body?.riskStatus || "").trim();
+    const reason = String(req.body?.reason || "").slice(0, 300);
+    if (!reason) throw new AppError(400, "A reason is required for a manual risk decision");
+    const result = await compliance.setRiskStatus(req.params.id, status, `manual:${reason}`, {}, req.auth);
+    res.json({ ok: true, ...result });
+  } catch (error) { next(error); }
+});
+
+router.get("/compliance/screening", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    await require("../services/compliance-service").ensureComplianceSchema();
+    const { rows } = await pool.query(
+      "SELECT id, label, name_pattern, (id_number_hash IS NOT NULL) AS has_id_hash, active, created_at FROM compliance_screening_list ORDER BY created_at DESC LIMIT 500");
+    res.json({ ok: true, entries: rows });
+  } catch (error) { next(error); }
+});
+
+router.post("/compliance/screening", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const compliance = require("../services/compliance-service");
+    await compliance.ensureComplianceSchema();
+    const label = boundedText(req.body?.label, "Label", { min: 2, max: 200 });
+    const namePattern = String(req.body?.namePattern || "").trim().slice(0, 200) || null;
+    const idNumber = String(req.body?.idNumber || "").replace(/\s+/g, "");
+    const idHash = /^\d{13}$/.test(idNumber)
+      ? crypto.createHash("sha256").update(`titopay-id:${idNumber}`).digest("hex")
+      : null;
+    if (!namePattern && !idHash) throw new AppError(400, "Provide a name pattern or a 13 digit ID number to screen against");
+    const id = crypto.randomUUID();
+    await pool.query(
+      "INSERT INTO compliance_screening_list (id, label, name_pattern, id_number_hash, added_by) VALUES ($1,$2,$3,$4,$5)",
+      [id, label, namePattern, idHash, req.auth.userId]);
+    await writeAuditLog({ actorType: "admin", actorId: req.auth.userId, action: "screening_entry_added",
+      entityType: "compliance_screening", entityId: id, metadata: { label, hasName: Boolean(namePattern), hasId: Boolean(idHash) } });
+    res.status(201).json({ ok: true, id });
+  } catch (error) { next(error); }
+});
+
+router.post("/compliance/screening/run", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const compliance = require("../services/compliance-service");
+    await compliance.ensureComplianceSchema();
+    const { rows } = await pool.query(
+      "SELECT id FROM users WHERE status = 'active' ORDER BY created_at DESC LIMIT 5000");
+    let hits = 0;
+    for (const row of rows) {
+      const result = await compliance.screenUser(row.id);
+      if (result.hit) hits += 1;
+    }
+    await writeAuditLog({ actorType: "admin", actorId: req.auth.userId, action: "screening_sweep_run",
+      entityType: "compliance_screening", entityId: null, metadata: { screened: rows.length, hits } });
+    res.json({ ok: true, screened: rows.length, hits });
   } catch (error) { next(error); }
 });
 

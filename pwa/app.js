@@ -951,7 +951,7 @@ function dashboardGreetingLine() {
 function walletVerificationRow() {
   const c = state.compliance;
   const status = !c ? ["", "Verification"]
-    : c.eddActive ? ["warn", "Review required"]
+    : c.eddActive ? ["warn", "Under Review"]
       : c.verified ? ["ok", "\u2713 Fully Verified"]
         : c.tier === 1 ? ["mid", "\u2713 Basic Verified"]
           : ["warn", "Verify Identity"];
@@ -1053,6 +1053,7 @@ async function openLimitsVerificationModal() {
       ${limitBar("Received", u.received || 0, status.limits?.monthlyReceive ?? null, u.receivePercent || 0)}
       ${limitBar("Sent", u.sent || 0, status.limits?.monthlySend ?? null, u.sendPercent || 0)}
     </section>
+    <p class="field-hint">${esc(status.disclaimer || "")}</p>
     <h3 class="tier-section-label">Verification levels</h3>
     ${(status.tiers || []).map((entry) => complianceTierCard(entry, status)).join("")}
     <section class="panel tier-card">
@@ -22563,6 +22564,7 @@ function notificationCategory(item = {}) {
   // Payments, and tapping it should lead to the Requests screen.
   if (serverType.startsWith("payment_request")) return "payments";
   if (serverType === "gift_received") return "payments";
+  if (serverType.startsWith("compliance_")) return "account";
   if (item.critical || SECURITY_NOTIFICATION.test(serverType)) return "security";
   if (/chat|support|message/.test(serverType) || metadata.ticketRef) return "messages";
   return "account";

@@ -142,7 +142,12 @@ async function createWithdrawal(actor, payload = {}) {
   const idempotencyKey = String(payload.idempotencyKey || payload.metadata?.clientIdempotencyKey || "").trim().slice(0, 120);
   if (!idempotencyKey) throw new AppError(400, "An idempotency key is required");
 
-  // Provider link first, so an unavailable payout capability is reported as
+  // The actor's own tier withdrawal limits come first: whatever the provider
+  // state, the customer's eligibility is theirs to hear about, with the
+  // upgrade path named in the refusal.
+  await require("./compliance-service").assertCanWithdraw(actor.userId, amount);
+
+  // Provider link next, so an unavailable payout capability is reported as
   // itself and no wallet is ever touched for a payout that cannot be sent.
   assertPayoutAvailable(await payoutAvailability());
 

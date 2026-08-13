@@ -102,13 +102,13 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
       { serviceCode: "wallet_transfer", amount: 2000, recipient: `@${friend.username}` });
     assert.ok([200, 201].includes(okSend.status), JSON.stringify(okSend.data));
     const secondSend = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 2400, recipient: `@${friend.username}`, idempotencyKey: `b-${TAG}` });
-    assert.ok([200, 201].includes(secondSend.status));
-    const overMonthly = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 2200, recipient: `@${friend.username}`, idempotencyKey: `c-${TAG}` });
-    assert.equal(overMonthly.status, 403, JSON.stringify(overMonthly.data));
-    assert.match(String(overMonthly.data.error || ""), /sent R4400\.00 this month/);
-    ok("tier 0 binds: single payment and monthly send limits both refuse with the numbers spelled out");
+      { serviceCode: "wallet_transfer", amount: 1800, recipient: `@${friend.username}`, idempotencyKey: `b-${TAG}` });
+    assert.ok([200, 201].includes(secondSend.status), JSON.stringify(secondSend.data));
+    const overDaily = await call(newbie.token, "POST", "/v1/transactions",
+      { serviceCode: "wallet_transfer", amount: 500, recipient: `@${friend.username}`, idempotencyKey: `c-${TAG}` });
+    assert.equal(overDaily.status, 403, JSON.stringify(overDaily.data));
+    assert.match(String(overDaily.data.error || ""), /R4000\.00 a day/);
+    ok("tier 0 binds: the single payment and daily send limits both refuse with the numbers spelled out");
 
     // 2. Basic verify upgrades instantly and blocks ID reuse.
     const status0 = await call(newbie.token, "GET", "/v1/compliance/status");
@@ -161,7 +161,7 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     assert.ok([200, 201].includes(huge.status), JSON.stringify(huge.data));
     await new Promise((r) => setTimeout(r, 400));
     const { rows: flags } = await pool.query(
-      "SELECT * FROM compliance_flags WHERE user_id = $1 AND flag_type = 'enhanced_due_diligence'", [whale.id]);
+      "SELECT * FROM compliance_flags WHERE user_id = $1 AND flag_type = 'edd_trigger'", [whale.id]);
     assert.ok(flags[0], "the EDD flag is written");
     assert.equal(flags[0].status, "open");
     const { rows: whaleRow } = await pool.query("SELECT edd_status FROM users WHERE id = $1", [whale.id]);
@@ -183,7 +183,57 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     assert.ok(s1.data.nextSteps.length >= 1);
     ok("the status endpoint reports tier, usage, percentages, prompt flag and next steps");
 
-    console.log(`\n${passed}/6 checks passed. Progressive KYC holds on the real API.`);
+    // 7. Risk status is a separate axis: a signal escalates it while the KYC
+    //    tier stays put, and only a compliance decision lowers it.
+    const compliance = require(path.join(API, "src", "services", "compliance-service.js"));
+    await compliance.recordRiskSignal(rich.id, "unusual_activity", { pattern: "harness" });
+    let { rows: fr } = await pool.query("SELECT risk_status, fica_status FROM users WHERE id = $1", [rich.id]);
+    assert.equal(fr[0].risk_status, "elevated");
+    assert.equal(fr[0].fica_status, "verified", "KYC status untouched by risk movement");
+    await compliance.setRiskStatus(rich.id, "normal", "harness_clear");
+    ({ rows: fr } = await pool.query("SELECT risk_status FROM users WHERE id = $1", [rich.id]));
+    assert.equal(fr[0].risk_status, "normal");
+    ok("risk status moves independently of KYC and only a compliance decision lowers it");
+
+    // 8. Sanctions screening: a list entry matches by name, raises high risk,
+    //    and the flag records what matched.
+    await pool.query(
+      "INSERT INTO compliance_screening_list (id, label, name_pattern) VALUES ($1, $2, $3)",
+      [crypto.randomUUID(), `Harness designation ${TAG}`, `Thief Harness`]);
+    const thiefScreen = await compliance.screenUser(thief.id);
+    assert.equal(thiefScreen.hit, true);
+    const { rows: thiefRow } = await pool.query("SELECT risk_status FROM users WHERE id = $1", [thief.id]);
+    assert.equal(thiefRow[0].risk_status, "high_risk");
+    const { rows: screenFlags } = await pool.query(
+      "SELECT details FROM compliance_flags WHERE user_id = $1 AND flag_type = 'sanctions_screening'", [thief.id]);
+    assert.equal(screenFlags[0].details.matchedBy, "name");
+    ok("sanctions screening matches the list, raises high risk, and records the match");
+
+    // 9. The withdrawal gate binds per tier.
+    const bigWithdrawal = await call(newbie.token, "POST", "/v1/payouts/withdrawals",
+      { amount: 15000, idempotencyKey: `w-${TAG}`, bankAccountNumber: "1234567890", bankCode: "250655", accountHolder: "Newbie Harness" });
+    assert.equal(bigWithdrawal.status, 403, JSON.stringify(bigWithdrawal.data));
+    assert.match(String(bigWithdrawal.data.error || ""), /single withdrawal.*R10000\.00/i);
+    ok("withdrawal limits bind by tier before any wallet or provider work");
+
+    // 10. The pre-limit nudge is a real notification.
+    const { rows: sentRows2 } = await pool.query(
+      `SELECT COALESCE(SUM(ABS(wl.amount)) FILTER (WHERE wl.entry_type = 'debit'), 0) AS sent
+       FROM wallet_ledger wl JOIN wallets w ON w.id = wl.wallet_id
+       WHERE w.user_id = $1 AND wl.created_at >= DATE_TRUNC('month', NOW())`, [newbie.id]);
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, updated_at)
+       VALUES ('compliance_tier_limits', $1::JSONB, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [JSON.stringify({ tiers: { 1: { monthlySend: Math.round(Number(sentRows2[0].sent) / 0.85) } } })]);
+    await compliance.reviewForEdd(newbie.id, 10, "wallet_transfer");
+    const nudgeFeed = await call(newbie.token, "GET", "/v1/chat/notifications");
+    assert.ok((nudgeFeed.data.notifications || []).some((n) => n.notification_type === "compliance_prompt"),
+      "the upgrade nudge arrives as a notification before the limit is hit");
+    await pool.query("DELETE FROM platform_settings WHERE key = 'compliance_tier_limits'");
+    ok("the customer is nudged to upgrade before reaching a limit, in their notifications");
+
+    console.log(`\n${passed}/10 checks passed. Progressive KYC holds on the real API.`);
     process.exit(0);
   } catch (error) {
     console.error("\nFAILED:", error.message);
@@ -193,6 +243,7 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     const ids = users.map((u) => u.id);
     await pool.query("DELETE FROM platform_settings WHERE key = 'compliance_tier_limits'").catch(() => {});
     await pool.query("DELETE FROM compliance_flags WHERE user_id = ANY($1::UUID[])", [ids]).catch(() => {});
+    await pool.query("DELETE FROM compliance_screening_list WHERE label LIKE $1", [`%${TAG}%`]).catch(() => {});
     await pool.query("DELETE FROM notifications WHERE user_id = ANY($1::UUID[])", [ids]).catch(() => {});
     await pool.query("DELETE FROM wallet_ledger WHERE wallet_id IN (SELECT id FROM wallets WHERE user_id = ANY($1::UUID[]))", [ids]).catch(() => {});
     await pool.query("DELETE FROM revenue_ledger WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id = ANY($1::UUID[]))", [ids]).catch(() => {});

@@ -21,6 +21,18 @@
 // low-value products and full verification plus ongoing due diligence as
 // value and risk rise. This module implements that shape; the actual numbers
 // are the accountable institution's own risk framework, set in config.
+//
+// IMPORTANT: no number in DEFAULT_CONFIG is a statutory FICA or SARB
+// threshold. They are TitoPay operational limits under its Risk Management
+// and Compliance Programme (RMCP), subject to legal and compliance review,
+// and every one of them is expected to be set through the admin API.
+//
+// KYC STATUS and RISK STATUS are separate axes:
+//   KYC   tier 0/1/2 - who the customer is (identity assurance)
+//   RISK  normal | elevated | high_risk | edd_review - how the account is
+//         behaving, driven by monitoring, screening, patterns and manual
+//         compliance decisions. A fully verified account can still be under
+//         review; a new account can be low risk.
 
 const crypto = require("crypto");
 const { pool } = require("../db/pool");
@@ -36,21 +48,33 @@ const DEFAULT_CONFIG = {
       description: "Registration only. Verify your identity to transact freely.",
       monthlyReceive: 5000,
       monthlySend: 5000,
-      singleTransaction: 2500
+      singleTransaction: 2500,
+      dailySend: 4000,
+      singleWithdrawal: 1000,
+      monthlyWithdraw: 3000,
+      maxBalance: 25000
     },
     1: {
       label: "Basic verified",
       description: "SA ID verified. Everyday wallet limits.",
       monthlyReceive: 50000,
       monthlySend: 50000,
-      singleTransaction: 25000
+      singleTransaction: 25000,
+      dailySend: 20000,
+      singleWithdrawal: 10000,
+      monthlyWithdraw: 40000,
+      maxBalance: 100000
     },
     2: {
       label: "Fully verified",
       description: "Full FICA verification for higher balances, larger payments and withdrawals. Activity stays subject to ongoing monitoring.",
       monthlyReceive: null,
       monthlySend: null,
-      singleTransaction: null
+      singleTransaction: null,
+      dailySend: null,
+      singleWithdrawal: null,
+      monthlyWithdraw: null,
+      maxBalance: null
     }
   },
   edd: {
@@ -61,8 +85,32 @@ const DEFAULT_CONFIG = {
   },
   // The app starts prompting the customer to upgrade at this share of any
   // monthly limit, so nobody discovers a limit by hitting it.
-  promptAtPercent: 80
+  promptAtPercent: 80,
+  // Transaction monitoring marks (operational, RMCP-governed, not statutory).
+  monitoring: {
+    velocityCount24h: 30,
+    velocityAmount24h: 150000,
+    structuringCount: 5,
+    structuringMarginPercent: 10
+  },
+  // Ongoing customer due diligence: fully verified accounts are re-reviewed
+  // on this cycle.
+  cdd: { reviewMonths: 24 },
+  // Which risk status each signal escalates to. Order of severity:
+  // normal < elevated < high_risk < edd_review.
+  riskSignals: {
+    unusual_activity: "elevated",
+    transaction_pattern: "elevated",
+    velocity: "elevated",
+    sanctions_screening: "high_risk",
+    source_of_funds: "edd_review",
+    edd_trigger: "edd_review",
+    manual: "high_risk"
+  }
 };
+
+const RISK_ORDER = ["normal", "elevated", "high_risk", "edd_review"];
+const RISK_STATUSES = new Set(RISK_ORDER);
 
 let schemaReady = null;
 function ensureComplianceSchema() {
@@ -70,6 +118,19 @@ function ensureComplianceSchema() {
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS basic_verified_at TIMESTAMPTZ");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS id_number_hash TEXT");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS edd_status TEXT NOT NULL DEFAULT 'none'");
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_status TEXT NOT NULL DEFAULT 'normal'");
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS cdd_reviewed_at TIMESTAMPTZ");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS compliance_screening_list (
+        id UUID PRIMARY KEY,
+        label TEXT NOT NULL,
+        name_pattern TEXT,
+        id_number_hash TEXT,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        added_by UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS compliance_flags (
         id UUID PRIMARY KEY,
@@ -99,6 +160,9 @@ function mergeConfig(stored) {
       }
     }
     if (stored.edd && typeof stored.edd === "object") merged.edd = { ...merged.edd, ...stored.edd };
+    if (stored.monitoring && typeof stored.monitoring === "object") merged.monitoring = { ...merged.monitoring, ...stored.monitoring };
+    if (stored.cdd && typeof stored.cdd === "object") merged.cdd = { ...merged.cdd, ...stored.cdd };
+    if (stored.riskSignals && typeof stored.riskSignals === "object") merged.riskSignals = { ...merged.riskSignals, ...stored.riskSignals };
     if (Number.isFinite(Number(stored.promptAtPercent))) merged.promptAtPercent = Number(stored.promptAtPercent);
   }
   return merged;
@@ -152,7 +216,7 @@ function tierForUserRow(user) {
 async function loadUserComplianceRow(userId) {
   await ensureComplianceSchema();
   const { rows } = await pool.query(
-    "SELECT id, full_name, username, account_type, status, fica_status, basic_verified_at, edd_status FROM users WHERE id = $1",
+    "SELECT id, full_name, username, account_type, status, fica_status, basic_verified_at, edd_status, risk_status, cdd_reviewed_at FROM users WHERE id = $1",
     [userId]
   );
   return rows[0] || null;
@@ -170,6 +234,24 @@ async function monthUsage(userId) {
     [userId]
   );
   return { received: Number(rows[0]?.received || 0), sent: Number(rows[0]?.sent || 0) };
+}
+
+async function dayUsage(userId) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(ABS(wl.amount)) FILTER (WHERE wl.entry_type = 'debit'), 0) AS sent,
+            COUNT(*) FILTER (WHERE wl.entry_type = 'debit')::INT AS debit_count
+     FROM wallet_ledger wl
+     JOIN wallets w ON w.id = wl.wallet_id
+     WHERE w.user_id = $1 AND wl.created_at >= NOW() - INTERVAL '24 hours'`,
+    [userId]
+  );
+  return { sent: Number(rows[0]?.sent || 0), debitCount: Number(rows[0]?.debit_count || 0) };
+}
+
+async function walletBalanceOf(userId) {
+  const { rows } = await pool.query(
+    "SELECT COALESCE(SUM(available_balance), 0) AS balance FROM wallets WHERE user_id = $1", [userId]);
+  return Number(rows[0]?.balance || 0);
 }
 
 function upgradeSentence(tier) {
@@ -198,6 +280,61 @@ async function assertCanReceiveAmount(recipientUserId, amount, { selfView = fals
       ? `Your account can receive up to R${Number(limit).toFixed(2)} a month at its current verification level, and this request would go past that. Raise your limits under Limits and Verification.`
       : `This recipient's account can receive up to R${Number(limit).toFixed(2)} a month at its current verification level, and this payment would go past that. They can raise the limit under Limits and Verification in their app.`);
   }
+  const maxBalance = config.tiers[String(tier)]?.maxBalance;
+  if (maxBalance !== null && maxBalance !== undefined) {
+    const balance = await walletBalanceOf(recipientUserId);
+    if (balance + Number(amount || 0) > Number(maxBalance)) {
+      throw new AppError(403, selfView
+        ? `Your wallet can hold up to R${Number(maxBalance).toFixed(2)} at its current verification level. Raise the limit under Limits and Verification.`
+        : `This recipient's wallet can hold up to R${Number(maxBalance).toFixed(2)} at its current verification level, and this payment would go past that.`);
+    }
+  }
+}
+
+// Wallet balance cap for credits that do not pass through the transfer rails
+// (card top-ups). Checked before the customer is sent to the card page.
+async function assertBalanceHeadroom(userId, amount) {
+  const user = await loadUserComplianceRow(userId);
+  if (!user) return;
+  const config = await loadComplianceConfig();
+  const maxBalance = config.tiers[String(tierForUserRow(user))]?.maxBalance;
+  if (maxBalance === null || maxBalance === undefined) return;
+  const balance = await walletBalanceOf(userId);
+  if (balance + Number(amount || 0) > Number(maxBalance)) {
+    throw new AppError(403,
+      `Your wallet can hold up to R${Number(maxBalance).toFixed(2)} at its current verification level, and this top up would go past that. Raise the limit under Limits and Verification.`);
+  }
+}
+
+// Withdrawal limits for the actor's tier: per withdrawal and per month.
+async function assertCanWithdraw(userId, amount) {
+  const user = await loadUserComplianceRow(userId);
+  if (!user) return;
+  const config = await loadComplianceConfig();
+  const tier = tierForUserRow(user);
+  const tierConfig = config.tiers[String(tier)] || {};
+  const value = Number(amount || 0);
+  if (tierConfig.singleWithdrawal !== null && tierConfig.singleWithdrawal !== undefined
+      && value > Number(tierConfig.singleWithdrawal)) {
+    throw new AppError(403,
+      `A single withdrawal at your verification level can be up to R${Number(tierConfig.singleWithdrawal).toFixed(2)}. ${upgradeSentence(tier)}`);
+  }
+  if (tierConfig.monthlyWithdraw !== null && tierConfig.monthlyWithdraw !== undefined) {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(SUM(ABS(wl.amount)), 0) AS withdrawn
+       FROM wallet_ledger wl
+       JOIN wallets w ON w.id = wl.wallet_id
+       JOIN transactions t ON t.id = wl.transaction_id
+       WHERE w.user_id = $1 AND wl.entry_type = 'debit'
+         AND t.service_code IN ('withdraw', 'withdraw_money_to_bank', 'bank_withdrawal', 'payouts', 'business_payout', 'merchant_payout')
+         AND wl.created_at >= DATE_TRUNC('month', NOW())`,
+      [userId]
+    );
+    if (Number(rows[0].withdrawn) + value > Number(tierConfig.monthlyWithdraw)) {
+      throw new AppError(403,
+        `You have withdrawn R${Number(rows[0].withdrawn).toFixed(2)} this month, and your verification level allows up to R${Number(tierConfig.monthlyWithdraw).toFixed(2)}. ${upgradeSentence(tier)}`);
+    }
+  }
 }
 
 // Sending: single-transaction and monthly-send limits for the actor's tier.
@@ -213,6 +350,13 @@ async function assertCanSendAmount(userId, amount) {
     throw new AppError(403,
       `A single payment at your verification level can be up to R${Number(tierConfig.singleTransaction).toFixed(2)}. ${upgradeSentence(tier)}`);
   }
+  if (tierConfig.dailySend !== null && tierConfig.dailySend !== undefined) {
+    const today = await dayUsage(userId);
+    if (today.sent + value > Number(tierConfig.dailySend)) {
+      throw new AppError(403,
+        `You have sent R${today.sent.toFixed(2)} in the last 24 hours, and your verification level allows up to R${Number(tierConfig.dailySend).toFixed(2)} a day. ${upgradeSentence(tier)}`);
+    }
+  }
   if (tierConfig.monthlySend !== null && tierConfig.monthlySend !== undefined) {
     const usage = await monthUsage(userId);
     if (usage.sent + value > Number(tierConfig.monthlySend)) {
@@ -222,39 +366,58 @@ async function assertCanSendAmount(userId, amount) {
   }
 }
 
-// EDD: raised automatically, never silently. The flag is the audit record,
-// the customer is told what is needed, and the compliance team resolves it.
-async function reviewForEdd(userId, amount, serviceCode) {
-  try {
-    const user = await loadUserComplianceRow(userId);
-    if (!user || String(user.edd_status) === "required" || String(user.edd_status) === "under_review") return;
-    const config = await loadComplianceConfig();
-    const usage = await monthUsage(userId);
-    const single = Number(config.edd.singleTransactionReview);
-    const monthly = Number(config.edd.monthlyVolumeReview);
-    const bigSingle = Number.isFinite(single) && Number(amount) >= single;
-    const bigMonth = Number.isFinite(monthly) && usage.sent + usage.received >= monthly;
-    if (!bigSingle && !bigMonth) return;
-    await pool.query("UPDATE users SET edd_status = 'required' WHERE id = $1", [userId]);
-    await pool.query(
-      `INSERT INTO compliance_flags (id, user_id, flag_type, details)
-       VALUES ($1, $2, 'enhanced_due_diligence', $3::JSONB)`,
-      [crypto.randomUUID(), userId, JSON.stringify({
-        trigger: bigSingle ? "single_transaction" : "monthly_volume",
-        amount: Number(amount),
-        monthReceived: usage.received,
-        monthSent: usage.sent,
-        serviceCode: serviceCode || null
-      })]
-    );
+// THE RISK ENGINE. Risk status is a separate axis from KYC: it moves on
+// signals, every movement is a compliance_flags row plus an audit log entry,
+// and only the compliance team moves it back down.
+function riskRank(status) {
+  const index = RISK_ORDER.indexOf(String(status || "normal"));
+  return index < 0 ? 0 : index;
+}
+
+async function setRiskStatus(userId, nextStatus, reason, details = {}, actor = null) {
+  if (!RISK_STATUSES.has(nextStatus)) throw new AppError(400, "Unknown risk status.");
+  const user = await loadUserComplianceRow(userId);
+  if (!user) throw new AppError(404, "Account not found.");
+  const current = String(user.risk_status || "normal");
+  await pool.query("UPDATE users SET risk_status = $2, edd_status = CASE WHEN $2 = 'edd_review' THEN 'required' WHEN $2 = 'normal' THEN 'cleared' ELSE edd_status END WHERE id = $1",
+    [userId, nextStatus]);
+  await writeAuditLog({
+    actorType: actor ? "admin" : "system",
+    actorId: actor?.userId || null,
+    action: "risk_status_changed",
+    entityType: "user",
+    entityId: userId,
+    metadata: { from: current, to: nextStatus, reason, ...details }
+  });
+  return { from: current, to: nextStatus };
+}
+
+// A signal escalates risk according to the configured mapping. Downgrades
+// never happen here: only a compliance decision lowers risk.
+async function recordRiskSignal(userId, signalType, details = {}) {
+  const config = await loadComplianceConfig();
+  const target = config.riskSignals[signalType] || "elevated";
+  const user = await loadUserComplianceRow(userId);
+  if (!user) return null;
+  const flagId = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO compliance_flags (id, user_id, flag_type, details)
+     VALUES ($1, $2, $3, $4::JSONB)`,
+    [flagId, userId, signalType, JSON.stringify(details)]
+  );
+  if (riskRank(target) > riskRank(user.risk_status)) {
+    await setRiskStatus(userId, target, `signal:${signalType}`, details);
+  } else {
     await writeAuditLog({
-      actorType: "system",
-      actorId: null,
-      action: "edd_triggered",
-      entityType: "user",
-      entityId: userId,
-      metadata: { trigger: bigSingle ? "single_transaction" : "monthly_volume", amount: Number(amount) }
+      actorType: "system", actorId: null, action: "risk_signal_recorded",
+      entityType: "compliance_flag", entityId: flagId,
+      metadata: { signalType, riskStatus: user.risk_status, ...details }
     });
+  }
+  // EDD-level signals also tell the customer what is needed. Lower-severity
+  // signals stay internal: telling a customer they are "elevated risk" is
+  // tipping off, not transparency.
+  if (target === "edd_review") {
     const { createNotification } = require("./notification-service");
     await createNotification({
       user: { id: userId, user_type: "customer" },
@@ -263,8 +426,149 @@ async function reviewForEdd(userId, amount, serviceCode) {
       body: "Recent activity on your account needs a routine compliance review. Please send proof of source of funds or income, and for a business the beneficial owner details, to compliance@titopay.co.za or through Support. Your account keeps working while the team reviews.",
       metadata: { clientNotificationId: `edd-${userId}` }
     }).catch(() => {});
+  }
+  return flagId;
+}
+
+// Sanctions and internal designation screening. The list is maintained by
+// compliance administrators; a real screening provider can replace the
+// matcher without changing anything downstream. Matching is by normalised
+// name or by the same salted ID hash Tier 1 stores.
+function normalizeName(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function screenUser(userId) {
+  await ensureComplianceSchema();
+  const user = await loadUserComplianceRow(userId);
+  if (!user) return { hit: false };
+  const { rows: hashRows } = await pool.query("SELECT id_number_hash FROM users WHERE id = $1", [userId]);
+  const { rows: list } = await pool.query(
+    "SELECT id, label, name_pattern, id_number_hash FROM compliance_screening_list WHERE active = TRUE");
+  const name = normalizeName(user.full_name);
+  for (const entry of list) {
+    const nameHit = entry.name_pattern && name && name.includes(normalizeName(entry.name_pattern));
+    const idHit = entry.id_number_hash && hashRows[0]?.id_number_hash === entry.id_number_hash;
+    if (nameHit || idHit) {
+      await recordRiskSignal(userId, "sanctions_screening", {
+        listEntryId: entry.id, listLabel: entry.label, matchedBy: idHit ? "id_number" : "name"
+      });
+      return { hit: true, entry: entry.label };
+    }
+  }
+  return { hit: false };
+}
+
+// The upgrade nudge: a real notification, once per calendar month, when
+// usage crosses the configured share of any limit. Nobody discovers a limit
+// by hitting it.
+async function nudgeBeforeLimits(userId, config, tier, tierConfig) {
+  if (tier >= 2) return;
+  const usage = await monthUsage(userId);
+  const pct = (used, limit) => (limit === null || limit === undefined || Number(limit) <= 0)
+    ? 0 : Math.round((used / Number(limit)) * 100);
+  const worst = Math.max(pct(usage.received, tierConfig.monthlyReceive), pct(usage.sent, tierConfig.monthlySend));
+  if (worst < Number(config.promptAtPercent) || worst >= 100) return;
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const { createNotification } = require("./notification-service");
+  await createNotification({
+    user: { id: userId, user_type: "customer" },
+    channel: "in_app", notificationType: "compliance_prompt", provider: "in_app",
+    title: `You have used ${worst}% of a monthly limit`,
+    body: "Upgrade your verification under Limits and Verification, in your wallet card, to keep transacting without interruption. It takes minutes.",
+    metadata: { clientNotificationId: `compliance-nudge-${monthKey}-${userId}`, percent: worst }
+  }).catch(() => {});
+}
+
+// The monitoring pass that runs after every completed transaction. Kept
+// under the original name because the transaction rail calls it.
+async function reviewForEdd(userId, amount, serviceCode) {
+  try {
+    const user = await loadUserComplianceRow(userId);
+    if (!user) return;
+    const config = await loadComplianceConfig();
+    const tier = tierForUserRow(user);
+    const tierConfig = config.tiers[String(tier)] || {};
+    const usage = await monthUsage(userId);
+    const today = await dayUsage(userId);
+
+    // High-value marks raise EDD, once while a review is open.
+    const underReview = riskRank(user.risk_status) >= riskRank("edd_review");
+    const single = Number(config.edd.singleTransactionReview);
+    const monthly = Number(config.edd.monthlyVolumeReview);
+    if (!underReview) {
+      if (Number.isFinite(single) && Number(amount) >= single) {
+        await recordRiskSignal(userId, "edd_trigger", {
+          trigger: "single_transaction", amount: Number(amount), serviceCode: serviceCode || null,
+          monthReceived: usage.received, monthSent: usage.sent
+        });
+        await writeAuditLog({ actorType: "system", actorId: null, action: "edd_triggered", entityType: "user", entityId: userId, metadata: { trigger: "single_transaction", amount: Number(amount) } });
+        return;
+      }
+      if (Number.isFinite(monthly) && usage.sent + usage.received >= monthly) {
+        await recordRiskSignal(userId, "edd_trigger", {
+          trigger: "monthly_volume", amount: Number(amount), serviceCode: serviceCode || null,
+          monthReceived: usage.received, monthSent: usage.sent
+        });
+        await writeAuditLog({ actorType: "system", actorId: null, action: "edd_triggered", entityType: "user", entityId: userId, metadata: { trigger: "monthly_volume", amount: Number(amount) } });
+        return;
+      }
+    }
+
+    // Velocity: unusual burst of debits in 24 hours.
+    const mon = config.monitoring || {};
+    if (riskRank(user.risk_status) < riskRank("elevated")
+        && ((Number.isFinite(Number(mon.velocityCount24h)) && today.debitCount >= Number(mon.velocityCount24h))
+         || (Number.isFinite(Number(mon.velocityAmount24h)) && today.sent >= Number(mon.velocityAmount24h)))) {
+      await recordRiskSignal(userId, "velocity", {
+        debitCount24h: today.debitCount, sent24h: today.sent, serviceCode: serviceCode || null
+      });
+    }
+
+    // Structuring shape: repeated payments just under the single-payment
+    // limit. Only meaningful where a limit exists.
+    if (tierConfig.singleTransaction && riskRank(user.risk_status) < riskRank("elevated")) {
+      const margin = Number(tierConfig.singleTransaction) * (1 - Number(mon.structuringMarginPercent || 10) / 100);
+      const { rows } = await pool.query(
+        `SELECT COUNT(*)::INT AS near
+         FROM transactions
+         WHERE user_id = $1 AND status = 'completed' AND direction = 'debit'
+           AND amount >= $2 AND amount <= $3
+           AND created_at >= NOW() - INTERVAL '24 hours'`,
+        [userId, margin, Number(tierConfig.singleTransaction)]
+      );
+      if (rows[0].near >= Number(mon.structuringCount || 5)) {
+        await recordRiskSignal(userId, "transaction_pattern", {
+          pattern: "repeated_near_limit", count: rows[0].near, limit: Number(tierConfig.singleTransaction)
+        });
+      }
+    }
+
+    // Ongoing CDD for fully verified accounts, on the configured cycle.
+    if (tier === 2) {
+      if (!user.cdd_reviewed_at) {
+        await pool.query("UPDATE users SET cdd_reviewed_at = NOW() WHERE id = $1 AND cdd_reviewed_at IS NULL", [userId]);
+      } else {
+        const months = Number(config.cdd.reviewMonths || 24);
+        const { rows } = await pool.query(
+          `SELECT (cdd_reviewed_at < NOW() - ($2 || ' months')::INTERVAL) AS stale FROM users WHERE id = $1`,
+          [userId, String(months)]);
+        if (rows[0]?.stale) {
+          const { rows: openCdd } = await pool.query(
+            "SELECT 1 FROM compliance_flags WHERE user_id = $1 AND flag_type = 'ongoing_cdd' AND status = 'open' LIMIT 1", [userId]);
+          if (!openCdd[0]) {
+            await recordRiskSignal(userId, "unusual_activity", { pattern: "ongoing_cdd_due", monthsSinceReview: months });
+            await pool.query(
+              "UPDATE compliance_flags SET flag_type = 'ongoing_cdd' WHERE user_id = $1 AND flag_type = 'unusual_activity' AND details->>'pattern' = 'ongoing_cdd_due' AND status = 'open'",
+              [userId]);
+          }
+        }
+      }
+    }
+
+    await nudgeBeforeLimits(userId, config, tier, tierConfig);
   } catch (error) {
-    console.error("[compliance] edd review failed", { userId, message: error.message });
+    console.error("[compliance] monitoring failed", { userId, message: error.message });
   }
 }
 
@@ -316,6 +620,7 @@ async function basicVerify(auth, payload = {}) {
     userAgent: auth.userAgent,
     metadata: { method: "sa_id_number" }
   });
+  await screenUser(auth.userId).catch(() => {});
   return complianceStatus(auth);
 }
 
@@ -338,7 +643,8 @@ async function complianceStatus(auth) {
   const tier = tierForUserRow(user);
   const usage = await monthUsage(auth.userId);
   const current = shapeTier(config, tier);
-  const eddActive = ["required", "under_review"].includes(String(user.edd_status || ""));
+  const eddActive = ["required", "under_review"].includes(String(user.edd_status || ""))
+    || String(user.risk_status || "") === "edd_review";
   const percentOf = (used, limit) => (limit === null || limit === undefined || Number(limit) <= 0)
     ? 0
     : Math.min(100, Math.round((used / Number(limit)) * 100));
@@ -351,6 +657,10 @@ async function complianceStatus(auth) {
     ficaStatus: String(user.fica_status || "none"),
     eddStatus: String(user.edd_status || "none"),
     eddActive,
+    // Customer-safe review state only. Internal risk ratings (elevated, high
+    // risk) are never shown to the account holder.
+    underReview: eddActive,
+    disclaimer: "These are TitoPay operational limits under its Risk Management and Compliance Programme, reviewed by the compliance team. They are not statutory FICA amounts.",
     verified: tier === 2,
     usage: { ...usage, receivePercent, sendPercent },
     limits: current,
@@ -368,6 +678,12 @@ async function complianceStatus(auth) {
 
 module.exports = {
   ensureComplianceSchema,
+  assertBalanceHeadroom,
+  assertCanWithdraw,
+  setRiskStatus,
+  recordRiskSignal,
+  screenUser,
+  RISK_ORDER,
   loadComplianceConfig,
   saveComplianceConfig,
   tierForUserRow,

@@ -38,7 +38,7 @@ test("the four levels exist and usage is ledger-derived", () => {
   assert.match(COMPLIANCE, /Unverified/);
   assert.match(COMPLIANCE, /Basic verified/);
   assert.match(COMPLIANCE, /Fully verified/);
-  assert.match(COMPLIANCE, /enhanced_due_diligence/);
+  assert.match(COMPLIANCE, /edd_trigger/);
   // Usage comes from wallet_ledger, never a parallel tally.
   assert.match(COMPLIANCE, /FROM wallet_ledger wl[\s\S]{0,120}DATE_TRUNC\('month', NOW\(\)\)/);
 });
@@ -50,7 +50,7 @@ test("enforcement rides the one transaction rail", () => {
 });
 
 test("EDD is automatic, audited, and tells the customer", () => {
-  assert.match(COMPLIANCE, /UPDATE users SET edd_status = 'required'/);
+  assert.match(COMPLIANCE, /edd_status = CASE WHEN \$2 = 'edd_review' THEN 'required'/);
   assert.match(COMPLIANCE, /INSERT INTO compliance_flags/);
   assert.match(COMPLIANCE, /action: "edd_triggered"/);
   assert.match(COMPLIANCE, /notificationType: "compliance_edd"/);
@@ -88,4 +88,48 @@ test("the wallet card shows status, not tier arithmetic, with one door", () => {
   assert.match(APP, /Enhanced due diligence/);
   // And the automatic early prompt.
   assert.match(APP, /promptNeeded/);
+});
+
+test("risk status is a separate, escalation-only axis with four levels", () => {
+  assert.match(COMPLIANCE, /const RISK_ORDER = \["normal", "elevated", "high_risk", "edd_review"\]/);
+  assert.match(COMPLIANCE, /function riskRank/);
+  assert.match(COMPLIANCE, /async function setRiskStatus/);
+  assert.match(COMPLIANCE, /action: "risk_status_changed"/, "every movement is audit-logged");
+  // Signals only escalate; lowering is a compliance decision through
+  // setRiskStatus with an actor.
+  assert.match(COMPLIANCE, /riskRank\(target\) > riskRank\(user\.risk_status\)/);
+  // Internal ratings are never shown to the customer.
+  assert.match(COMPLIANCE, /Customer-safe review state only/);
+  assert.doesNotMatch(APP, /high[_ ]risk/i, "internal risk ratings must not appear in the app");
+});
+
+test("monitoring, screening and ongoing CDD are wired and configurable", () => {
+  assert.match(COMPLIANCE, /velocityCount24h/);
+  assert.match(COMPLIANCE, /structuringMarginPercent/);
+  assert.match(COMPLIANCE, /repeated_near_limit/);
+  assert.match(COMPLIANCE, /async function screenUser/);
+  assert.match(COMPLIANCE, /compliance_screening_list/);
+  assert.match(COMPLIANCE, /ongoing_cdd/);
+  assert.match(COMPLIANCE, /cdd: \{ reviewMonths/);
+  const ADMIN2 = read("src", "routes", "admin.routes.js");
+  assert.match(ADMIN2, /router\.post\("\/compliance\/screening\/run"/);
+  assert.match(ADMIN2, /router\.post\("\/compliance\/users\/:id\/risk"/);
+});
+
+test("the full limit set is enforced on every rail, configurable end to end", () => {
+  assert.match(COMPLIANCE, /dailySend/);
+  assert.match(COMPLIANCE, /maxBalance/);
+  assert.match(COMPLIANCE, /singleWithdrawal/);
+  assert.match(COMPLIANCE, /monthlyWithdraw/);
+  const WITHDRAW = read("src", "services", "peach-withdrawal-service.js");
+  assert.match(WITHDRAW, /assertCanWithdraw\(actor\.userId, amount\)/);
+  const CHECKOUT = read("src", "services", "peach-checkout-service.js");
+  assert.match(CHECKOUT, /assertBalanceHeadroom\(actor\.userId, amount\)/);
+});
+
+test("no number is presented as a statutory FICA threshold", () => {
+  assert.match(COMPLIANCE, /not.*statutory/i);
+  assert.match(COMPLIANCE, /RMCP/);
+  assert.match(COMPLIANCE, /disclaimer/);
+  assert.match(APP, /status\.disclaimer/, "the app shows the RMCP disclaimer in Limits and Verification");
 });
