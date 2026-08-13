@@ -1,9 +1,23 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v367 (titopay-pwa-v367)
+PWA bundle: v368 (titopay-pwa-v368)
 Admin console: admin-console-v81
 
-This build — the app behaves like an app, not a website:
+This build — one back arrow, and a button that admits it worked:
+
+  TWO BACK ARROWS sat side by side on some sheets. Sheets that author
+  their own back arrow in the head were ALSO given an injected one -
+  the injector only recognised its own class, not the authored form.
+  It now recognises either, so every stacked sheet has exactly one
+  arrow. Verified by walking the real path in a browser: hub -> door ->
+  one arrow -> back to the hub.
+
+  "ENABLE DEVICE ALERTS" now reads "Device alerts enabled" once
+  permission is granted - exactly like the SMS and Email buttons beside
+  it. The sheet already re-renders the moment permission lands, so the
+  label flips immediately.
+
+Also in this build — the app behaves like an app, not a website:
 
   Audited every touch-layer leak that makes a PWA feel like a page:
 

@@ -1994,7 +1994,9 @@ function openModal(html) {
   // A modal opened from another modal gets a back arrow to return there.
   if (state.modalActionStack.length && card) {
     const head = card.querySelector(".modal-head");
-    if (head && !head.querySelector(".modal-back-btn")) {
+    // Some sheets author their own back arrow in the head. Injecting a second
+    // one put two identical arrows side by side - recognise EITHER form.
+    if (head && !head.querySelector('.modal-back-btn, [data-action="modal-back"]')) {
       const backButton = document.createElement("button");
       backButton.type = "button";
       backButton.className = "icon-btn modal-back-btn";
@@ -21804,7 +21806,7 @@ function openNotificationsModal(options = {}) {
     ${notificationListHtml()}
     <div class="auth-actions">
       <button class="btn secondary" data-action="mark-notifications-read">${icon("check-circle")} Mark all read</button>
-      <button class="btn secondary" data-action="enable-browser-notifications">${icon("bell")} Enable device alerts</button>
+      <button class="btn secondary" data-action="enable-browser-notifications">${icon("bell")} ${"Notification" in window && Notification.permission === "granted" ? "Device alerts enabled" : "Enable device alerts"}</button>
       <button class="btn secondary" data-action="preview-sms-notifications">${icon("phone")} ${smsEnabled ? "SMS enabled" : "Enable SMS alerts"}</button>
       <button class="btn secondary" data-action="preview-email-notifications">${icon("mail")} ${emailPreferences.enabled ? "Email enabled" : "Enable email alerts"}</button>
       <button class="btn secondary" data-action="clear-notifications">${icon("x")} Clear inbox</button>
