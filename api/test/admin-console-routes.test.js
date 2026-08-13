@@ -138,3 +138,19 @@ test("both copies of admin.js are the same file", () => {
   assert.equal(root, CONSOLE,
     "admin/admin.js and admin/assets/admin.js have drifted — copy the fixed one over the other");
 });
+
+test("/health reports the API build, so deployment state is checkable", () => {
+  // Four debugging sessions have opened with a feature that was present in the
+  // code and absent on the server. The deployed API state was invisible from
+  // outside; now one request answers it.
+  const health = fs.readFileSync(path.join(REPO, "api", "src", "routes", "health.routes.js"), "utf8");
+  assert.match(health, /\.\.\.buildInfo\(\)/, "healthStatus must report the build");
+  assert.match(health, /require\("\.\.\/build-info"\)/);
+
+  const info = require("../src/build-info");
+  assert.equal(typeof info.API_BUILD, "number");
+  assert.ok(info.API_BUILD >= 1, "the build number counts up from 1");
+  assert.equal(info.buildInfo().build, info.API_BUILD);
+  assert.ok(info.BUILD_NOTES[info.API_BUILD],
+    "every build number needs a note saying what shipped in it, or the number cannot be acted on");
+});

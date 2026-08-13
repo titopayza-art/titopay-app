@@ -1,6 +1,7 @@
 const express = require("express");
 const { pool } = require("../db/pool");
 const { getPlatformSetting } = require("../services/platform-settings-service");
+const { buildInfo } = require("../build-info");
 
 const router = express.Router();
 
@@ -69,6 +70,9 @@ async function healthStatus(_req, res, next) {
     res.json({
       status: "ok",
       database: "ok",
+      // Reported so that "is the deployed API current?" is one request rather
+      // than an investigation. See src/build-info.js.
+      ...buildInfo(),
       emailWorker
     });
   } catch (error) {
