@@ -1,9 +1,16 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v364 (titopay-pwa-v364)
+PWA bundle: v365 (titopay-pwa-v365)
 Admin console: admin-console-v81
 
-This build — the update toast says only the version:
+This build — "Pay" gets air under the circle:
+
+  The centre label sat pressed against the bottom of the button - the
+  white ring around the circle had eaten the small gap the layout
+  provided. The label now clears the ring ("Pay" on personal, "Accept
+  Pay" on business - same element, same fix). CSS only.
+
+Also in this build — the update toast says only the version:
 
   "You are on the latest TitoPay App v1.0." Nothing else. The build
   number no longer rides along in brackets; it stays on the tooltip of

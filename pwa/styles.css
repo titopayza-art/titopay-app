@@ -13138,3 +13138,13 @@ form[data-form="ticketing-event"] label select{width:100%}
     font-size: 0.58rem;
   }
 }
+
+/* "Pay" / "Accept Pay" sat pressed against the bottom of the circle - the
+   white ring around the button ate the little gap the flex gap provided. Give
+   the label room to breathe under the ring. */
+.bottom-nav button:nth-child(3) {
+  gap: 9px;
+}
+.bottom-nav button:nth-child(3) span {
+  margin-top: 2px;
+}
