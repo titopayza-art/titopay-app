@@ -1883,7 +1883,10 @@ async function refreshMySupportRequests() {
       host.innerHTML = `<p class="field-hint">No support requests yet. Anything you submit appears here, together with Customer Care replies.</p>`;
       return;
     }
-    host.innerHTML = `<h3 style="margin:16px 0 8px">My support requests</h3>` + items.map(renderSupportTicketThread).join("");
+    const finishedCount = items.filter((ticket) => ["resolved", "closed"].includes(String(ticket.status))).length;
+    host.innerHTML = `<h3 style="margin:16px 0 8px">My support requests</h3>`
+      + (finishedCount > 1 ? `<div class="auth-actions" style="margin:0 0 10px"><button class="chip" type="button" data-support-clear-finished>${icon("x")} Clear all ${finishedCount} finished requests</button></div>` : "")
+      + items.map(renderSupportTicketThread).join("");
   } catch (error) {
     host.innerHTML = `<p class="field-hint">Sign in to see your support requests and Customer Care replies here.</p>`;
   }
@@ -2520,6 +2523,8 @@ async function onSubmit(event) {
     if (form.dataset.form === "reset-confirm") await confirmReset(data);
     if (form.dataset.form === "otp") await verifyOtp(data);
     if (form.dataset.form === "stockvel-join") await submitStockvelJoin(data);
+    if (form.dataset.form === "stockvel-create") await submitStockvelCreate(form, data);
+    if (form.dataset.form === "stockvel-contribute") await submitStockvelContribution(form, data);
     else if (form.dataset.form === "stockvel-add-members") await submitStockvelAddMembers(data);
     else if (form.dataset.form === "stockvel-withdrawal") await submitStockvelWithdrawal(data);
     else if (form.dataset.form === "stockvel-close") await submitStockvelClose(data);
@@ -2839,6 +2844,18 @@ async function onClick(event) {
       .catch((error) => showToast(friendlyFormError(error, "titokids"), "error"));
     return;
   }
+  const supportClearFinished = event.target.closest("[data-support-clear-finished]");
+  if (supportClearFinished) {
+    if (!await askToConfirm({
+      title: "Clear finished requests",
+      body: "Every resolved and closed request disappears from your list in one go. Customer Care keeps the records, and open conversations stay.",
+      confirmLabel: "Clear them"
+    })) return;
+    api("/v1/support/tickets", { method: "DELETE" })
+      .then((result) => { showToast(`${result.removed || 0} finished request${result.removed === 1 ? "" : "s"} cleared.`); return refreshMySupportRequests(); })
+      .catch((error) => showToast(friendlyFormError(error, "support"), "error"));
+    return;
+  }
   const supportRemove = event.target.closest("[data-support-remove]");
   if (supportRemove) {
     if (!await askToConfirm({
@@ -2929,11 +2946,6 @@ async function onClick(event) {
   const giftOccasion = event.target.closest("[data-gift-occasion]");
   if (giftOccasion) {
     selectGiftOccasion(giftOccasion);
-    return;
-  }
-  const giftTiming = event.target.closest("[data-gift-timing]");
-  if (giftTiming) {
-    selectGiftTiming(giftTiming);
     return;
   }
   const ticketRefresh = event.target.closest("[data-ticket-refresh]");
@@ -11695,18 +11707,6 @@ function openSendGiftModal(service) {
         <p class="field-hint" data-gift-counter aria-live="polite">240 characters left</p>
       </div>
 
-      <div class="field">
-        <p class="field-label" id="gift-when-label">When should it arrive?</p>
-        <div class="gift-when" role="group" aria-labelledby="gift-when-label">
-          <button class="chip gift-timing is-active" type="button" data-gift-timing="now" aria-pressed="true">Send now</button>
-          <button class="chip gift-timing" type="button" data-gift-timing="later" aria-pressed="false">Schedule it</button>
-        </div>
-      </div>
-      <div class="field hidden" data-gift-schedule>
-        <label for="gift-when">Delivery date and time</label>
-        <input id="gift-when" name="scheduledDelivery" type="datetime-local">
-      </div>
-
       <button class="btn primary" type="submit">${icon("gift")} Preview gift</button>
     </form>
   `);
@@ -11733,26 +11733,6 @@ function selectGiftOccasion(button) {
       else input.focus();
     }
   }
-}
-// "Send now" versus "Schedule it" is an explicit choice. An empty date field
-// left the customer guessing whether a blank meant now or nothing.
-function selectGiftTiming(button) {
-  const form = button.closest("form");
-  if (!form) return;
-  const later = button.dataset.giftTiming === "later";
-  form.querySelectorAll("[data-gift-timing]").forEach((chip) => {
-    const active = chip === button;
-    chip.classList.toggle("is-active", active);
-    chip.setAttribute("aria-pressed", active ? "true" : "false");
-  });
-  const schedule = form.querySelector("[data-gift-schedule]");
-  if (!schedule) return;
-  schedule.classList.toggle("hidden", !later);
-  const input = schedule.querySelector("input");
-  if (!input) return;
-  input.required = later;
-  if (!later) input.value = "";
-  else input.focus();
 }
 function updateGiftCounter(field) {
   const counter = field.closest("form")?.querySelector("[data-gift-counter]");
@@ -14952,8 +14932,7 @@ function openStockvelCreateWizard() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${stockvelStepIndicator(0)}
-    <form class="form-grid stable-service-form stockvel-flow sv-form" data-form="transaction" data-stockvel-wizard>
-      <input type="hidden" name="serviceCode" value="stockvel">
+    <form class="form-grid stable-service-form stockvel-flow sv-form" data-form="stockvel-create" data-stockvel-wizard>
       <input type="hidden" name="stockvelType" value="Rotating contribution group">
 
       <fieldset class="sv-panel" data-stockvel-step="0">
@@ -15095,7 +15074,9 @@ function applyStockvelStep() {
   if (submit) submit.hidden = !last;
   if (last) renderStockvelSummary(form);
   const heading = form.querySelector(`[data-stockvel-step="${step}"] input, [data-stockvel-step="${step}"] select, [data-stockvel-step="${step}"] textarea`);
-  if (heading) heading.focus({ preventScroll: true });
+  // Focus opens the keyboard on a phone, and the keyboard shoves the sheet
+  // around on every Continue - that is the jump. Only desktops auto-focus.
+  if (heading && window.matchMedia("(hover: hover) and (pointer: fine)").matches) heading.focus({ preventScroll: true });
   const card = form.closest(".modal-card");
   if (card) card.scrollTop = 0;
 }
@@ -15575,8 +15556,7 @@ function openStockvelContributionModal(id) {
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form" data-form="transaction">
-      <input type="hidden" name="serviceCode" value="stockvel">
+    <form class="form-grid stable-service-form" data-form="stockvel-contribute">
       <input type="hidden" name="stockvelGroupId" value="${esc(group.id)}">
       <input type="hidden" name="stockvelGroupName" value="${esc(group.name)}">
       <input type="hidden" name="recipient" value="${esc(group.name)}">
@@ -16045,6 +16025,70 @@ async function refreshStockvelGroupChat() {
   } catch (error) {
     if (host) host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "stockvel"))}</p>`;
   }
+}
+// The wizard's final submit. Creating a group is free - no transaction, no
+// fee - so it goes straight to the stokvel API. The member list is real:
+// every registered person named there receives the invite code in their app
+// and email, and anyone not on TitoPay is reported back by name.
+async function submitStockvelCreate(form, data) {
+  const name = String(data.recipient || "").trim();
+  if (name.length < 2) throw new Error("Give the group a name first.");
+  const members = normalizeRecipientList(data.members || "", data.memberMethod || "auto");
+  const created = await api(STOCKVEL_PATH, {
+    method: "POST",
+    body: {
+      name,
+      description: data.description || "",
+      cadence: data.cadence || "monthly",
+      contributionAmount: data.amount || "0",
+      goalAmount: data.stockvelSavingsGoal || null,
+      memberLimit: data.memberLimit || null,
+      status: "active"
+    }
+  });
+  const group = created.group || created;
+  let inviteSummary = "";
+  if (members.length) {
+    try {
+      const invites = await api(`${STOCKVEL_PATH}/${encodeURIComponent(group.id)}/invitations`, {
+        method: "POST",
+        body: { identifiers: members }
+      });
+      const sent = (invites.invited || []).length;
+      inviteSummary = sent ? `${sent} invitation${sent === 1 ? "" : "s"} sent.` : "";
+      if ((invites.notRegistered || []).length) {
+        inviteSummary += ` Not on TitoPay yet: ${invites.notRegistered.join(", ")} - share the code with them directly.`;
+      }
+    } catch {
+      inviteSummary = "The group is created, but the invitations could not be sent. Share the invite code from the group screen.";
+    }
+  }
+  closeModal();
+  await loadStockvelGroups({ force: true }).catch(() => {});
+  openStockvelModal();
+  showToast(`"${name}" is live. Invite code ${group.inviteCode || group.invite_code}. ${inviteSummary}`.trim());
+}
+// A contribution is a confirmed money action: the member sees the amount,
+// the fee and the treasurer holding the money before anything moves.
+async function submitStockvelContribution(form, data) {
+  const amount = Number(String(data.amount || "").replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid contribution amount.");
+  const groupId = data.stockvelGroupId;
+  const preview = await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}/contributions/preview?amount=${encodeURIComponent(amount)}`);
+  const feeLine = Number(preview.fee) > 0 ? `Fee: ${money(preview.fee)}. Total: ${money(preview.total)}.` : "No fee.";
+  const confirmed = await askToConfirm({
+    title: `Contribute ${money(preview.amount)}?`,
+    body: `${money(preview.total)} leaves your wallet for "${preview.groupName}". ${feeLine} The money is held by ${preview.treasurer}, the group's organiser, and this contribution appears on the register every member sees.`,
+    confirmLabel: "Contribute now"
+  });
+  if (!confirmed) return;
+  const result = await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}/contributions`, {
+    method: "POST",
+    body: { amount, cycle: data.reference || "", idempotencyKey: createClientTransactionKey("stockvel_contribution") }
+  });
+  showToast(`Contribution of ${money(result.amount || amount)} made. Reference ${result.reference}.`);
+  refreshData().catch(() => {});
+  try { await openStockvelDashboard(groupId); } catch { closeModal(); }
 }
 // Save the wizard as a draft at any step: whatever is filled in survives on
 // the server, appears on the hub with a draft chip, and activates later.
@@ -22369,6 +22413,7 @@ function notificationCategory(item = {}) {
   // A payment request is money being asked for or answered - it lives with
   // Payments, and tapping it should lead to the Requests screen.
   if (serverType.startsWith("payment_request")) return "payments";
+  if (serverType === "gift_received") return "payments";
   if (item.critical || SECURITY_NOTIFICATION.test(serverType)) return "security";
   if (/chat|support|message/.test(serverType) || metadata.ticketRef) return "messages";
   return "account";

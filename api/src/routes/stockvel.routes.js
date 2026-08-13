@@ -3,6 +3,7 @@
 const express = require("express");
 const { requireAuth } = require("../middleware/auth");
 const { requireUuid } = require("../lib/validation");
+const { AppError } = require("../lib/errors");
 const svc = require("../services/stockvel-service");
 
 const router = express.Router();
@@ -58,8 +59,26 @@ router.delete("/:id", run(async (req, res) => {
 
 router.post("/:id/invitations", run(async (req, res) => {
   const groupId = requireUuid(req.params.id, "Group ID");
+  const identifiers = Array.isArray(req.body?.identifiers) ? req.body.identifiers : [];
+  if (identifiers.length) {
+    res.status(201).json({ ok: true, ...(await svc.inviteMembers(req.auth.userId, groupId, identifiers)) });
+    return;
+  }
   const group = await svc.getGroup(req.auth.userId, groupId);
   res.status(201).json({ ok: true, inviteCode: group.invite_code, message: `Share the invite code ${group.invite_code} — joining happens under Join with a code.` });
+}));
+
+// Contributions: a member's transfer to the group's treasurer on the normal
+// transaction rails, counted on the group register via its metadata.
+router.get("/:id/contributions/preview", run(async (req, res) => {
+  const groupId = requireUuid(req.params.id, "Group ID");
+  res.json({ ok: true, ...(await svc.previewContribution(req.auth.userId, groupId, req.query.amount)) });
+}));
+
+router.post("/:id/contributions", run(async (req, res) => {
+  if (req.auth.profileLocked) throw new AppError(423, "Profile is locked. Financial transactions are disabled.");
+  const groupId = requireUuid(req.params.id, "Group ID");
+  res.status(201).json({ ok: true, ...(await svc.contribute(req.auth, groupId, req.body || {})) });
 }));
 
 router.post("/:id/members/:memberId/promote", run(async (req, res) => {

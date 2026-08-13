@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 const cors = require("cors");
 const helmet = require("helmet");
+const compression = require("compression");
 const { config } = require("./config/env");
 const routes = require("./routes");
 const hrRoutes = require("./routes/hr.routes");
@@ -9,6 +10,7 @@ const providerWebhookRoutes = require("./routes/provider-webhook.routes");
 const payoutWebhookRoutes = require("./routes/payout-webhook.routes");
 const paymentReturnRoutes = require("./routes/payment-return.routes");
 const emailWebhookRoutes = require("./routes/email-webhook.routes");
+const emailUnsubscribeRoutes = require("./routes/email-unsubscribe.routes");
 const { requestIdMiddleware } = require("./middleware/request-id");
 const { generalLimiter } = require("./middleware/rate-limits");
 const { securityHeaders, validateJsonContentType } = require("./middleware/security");
@@ -39,6 +41,12 @@ const corsOptions = {
 // clients spoof X-Forwarded-For and bypass IP-based limits.
 app.set("trust proxy", config.trustProxy);
 app.disable("x-powered-by");
+// Gzip every compressible response. The customer app talks JSON over mobile
+// data; compressing a 60KB transactions payload to ~8KB is the single
+// cheapest speed win the server can offer, and Express only compresses when
+// the client asks for it (Accept-Encoding), so nothing breaks for clients
+// that do not.
+app.use(compression());
 app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
@@ -144,6 +152,10 @@ app.use("/v1/webhooks/peach-payouts", payoutWebhookRoutes);
 // necessity — it is a redirect target, and it never decides a payment outcome.
 app.use("/v1/payments/topup/return", paymentReturnRoutes);
 app.use("/v1/webhooks/email", emailWebhookRoutes);
+// The unsubscribe link from marketing emails. Public by necessity - it is
+// clicked from a mailbox - and safe because each link is signed for exactly
+// one address.
+app.use("/v1/email/unsubscribe", emailUnsubscribeRoutes);
 
 // Mount HR before the main route stack so public HR auth/application endpoints
 // are never intercepted by customer/admin bearer-token middleware.
@@ -155,5 +167,10 @@ app.use("/hr", hrRoutes);
 app.use(routes);
 app.use(notFoundHandler);
 app.use(errorHandler);
+
+// Fire-and-forget: the indexes are IF NOT EXISTS and additive, so a failure
+// (for example a replica in read-only mode) costs speed, never correctness.
+require("./db/performance-indexes").ensurePerformanceIndexes()
+  .catch((error) => console.error("[boot] performance indexes skipped", { message: error.message }));
 
 module.exports = { app };

@@ -1751,6 +1751,23 @@ async function emailTicketToRecipient(actor, ticketCode, destination, meta = {})
     "Keep this code private. Anyone who has it can enter."
   ].filter((line) => line !== null && line !== undefined).join("\n");
 
+  // The ticket itself travels as a PDF: QR, code, event, holder - the thing
+  // the recipient actually expects to find attached. If rendering fails for
+  // any reason the email still goes out with the code in the body, because a
+  // missing attachment must never block a ticket.
+  let pdfAttachment = null;
+  try {
+    const { renderTicketPdf } = require("./ticket-pdf-service");
+    const pdf = await renderTicketPdf({ ...ticket, when, where });
+    pdfAttachment = {
+      filename: `titopay-ticket-${ticket.ticket_code}.pdf`,
+      contentBase64: pdf.toString("base64"),
+      contentType: "application/pdf"
+    };
+  } catch (error) {
+    console.error("[ticket-pdf-failed]", { ticketCode: ticket.ticket_code, message: error.message });
+  }
+
   // The send goes through the Email Centre QUEUE, not a live SMTP connection
   // inside this request. A slow or broken mail server used to hold this request
   // hostage until the connection gave up — which the app could only report as
@@ -1764,11 +1781,12 @@ async function emailTicketToRecipient(actor, ticketCode, destination, meta = {})
     const result = await emailCentre.queueRawEmail({
       recipient: to,
       subject,
-      textBody: body,
-      htmlBody: `<p>${emailCentre.escapeHtml(body).replace(/\n/g, "<br>")}</p>`,
+      textBody: pdfAttachment ? `${body}\n\nYour ticket is attached as a PDF you can save, print or show at the door.` : body,
+      htmlBody: `<p>${emailCentre.escapeHtml(body).replace(/\n/g, "<br>")}</p>${pdfAttachment ? "<p><strong>Your ticket is attached as a PDF</strong> you can save, print or show at the door.</p>" : ""}`,
       userId: actor.userId,
       idempotencyKey: `ticket-email:${ticket.ticket_code}:${createHash("sha256").update(`${to}:${Date.now()}`).digest("hex").slice(0, 24)}`,
-      metadata: { ticketCode: ticket.ticket_code, purpose: "ticket_self_service_email" }
+      metadata: { ticketCode: ticket.ticket_code, purpose: "ticket_self_service_email" },
+      attachments: pdfAttachment ? [pdfAttachment] : []
     });
     queued = Boolean(result && !result.skipped);
   } catch (error) {

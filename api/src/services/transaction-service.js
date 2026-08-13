@@ -19,14 +19,19 @@ const REGISTERED_RECIPIENT_SERVICES = new Set([
   "payment_request",
   "business_payment_request",
   "bill_split",
-  "stockvel"
+  "stockvel",
+  "stockvel_contribution"
 ]);
 
 const LIVE_SINGLE_RECIPIENT_WALLET_SERVICES = new Set([
   "wallet_transfer",
   "send_money",
   "send_gift",
-  "tip"
+  "tip",
+  // A stokvel contribution is a transfer to the group's treasurer (the chair),
+  // made through POST /v1/stockvels/:id/contributions, which resolves the
+  // treasurer server-side. The group balance is derived from these rows.
+  "stockvel_contribution"
 ]);
 
 const LIVE_QR_WALLET_SERVICES = new Set([
@@ -60,10 +65,14 @@ const REQUEST_ONLY_SERVICES = new Set([
   "business_payment_request"
 ]);
 
+// Old clients still submit these codes straight into the wallet-debit flow,
+// where money would leave with no resolvable recipient on the other side.
+// They stay refused. The LIVE flows are elsewhere: bill_split fans out
+// payment requests under /v1/payments/requests, and stokvel contributions
+// run as treasurer transfers under /v1/stockvels/:id/contributions.
 const MULTI_PARTY_SERVICES_PENDING_SETTLEMENT = new Set([
   "bill_split",
-  "stockvel",
-  "stockvel_contribution"
+  "stockvel"
 ]);
 
 // Card top-ups are a wallet CREDIT funded by Peach Checkout, not a wallet
@@ -127,7 +136,21 @@ const PROVIDER_DEPENDENT_SERVICES = new Set([
   "marketplace_seller_commission",
   "marketplace_commission",
   "marketplace_buyer_service_fee",
-  "marketplace_refund_processing"
+  "marketplace_refund_processing",
+  // Catalogue doors whose flows are not built yet. Without these entries the
+  // fee preview answered cleanly and only Confirm failed — the exact
+  // "payment glitch" experience this file exists to prevent. Listed here,
+  // the customer is told at the preview that the service is not live.
+  "shop_marketplace",
+  "rewards",
+  "business_rewards",
+  "virtual_doctor",
+  "travel",
+  "donate",
+  "cross_border",
+  "get_cash",
+  "cash_back",
+  "refund"
 ]);
 
 function splitRecipientList(value) {
@@ -508,6 +531,59 @@ async function createTransaction(actor, payload) {
     }
   } catch (error) {
     console.error("[transaction] receipt queue failed", { transactionId:txId, message:error.message });
+  }
+  // A gift is money WITH a message. The transfer above delivered the money;
+  // this delivers the gift: the recipient is told who sent it, for what
+  // occasion, and what they wrote - in the app and by email. Without this the
+  // "digital gift" arrived as an anonymous credit.
+  if (normalizedServiceCode === "send_gift" && recipientWallet?.user_id) {
+    try {
+      const occasion = String(payload.metadata?.customOccasion || payload.metadata?.occasion || "").trim().slice(0, 60);
+      const giftMessage = String(payload.metadata?.message || "").trim().slice(0, 240);
+      const { rows: senderRows } = await pool.query("SELECT full_name, username FROM users WHERE id=$1", [actor.userId]);
+      const senderName = senderRows[0]?.full_name || (senderRows[0]?.username ? `@${senderRows[0].username}` : "Someone");
+      const amountLabel = `R${netAmount.toFixed(2)}`;
+      const occasionLine = occasion && occasion.toLowerCase() !== "custom" ? ` for ${occasion}` : "";
+      await require("./notification-service").createNotification({
+        user: { id: recipientWallet.user_id, user_type: "customer" },
+        channel: "in_app", notificationType: "gift_received", provider: "in_app",
+        title: `${senderName} sent you a gift of ${amountLabel}`,
+        body: `${senderName} sent you ${amountLabel}${occasionLine}.${giftMessage ? ` Their message: "${giftMessage}"` : ""} The money is in your wallet now.`,
+        metadata: { transactionId: txId, reference, occasion: occasion || null, clientNotificationId: `gift-${txId}` }
+      });
+      const { rows: recipientRows } = await pool.query("SELECT email, full_name FROM users WHERE id=$1", [recipientWallet.user_id]);
+      const giftRecipient = recipientRows[0];
+      if (giftRecipient?.email) {
+        const emailCentre = require("./email-centre-service");
+        const escape = emailCentre.escapeHtml;
+        await emailCentre.queueRawEmail({
+          recipient: giftRecipient.email,
+          subject: `${senderName} sent you a gift on TitoPay`,
+          textBody: [
+            `Hi ${giftRecipient.full_name || "there"},`,
+            "",
+            `${senderName} sent you a gift of ${amountLabel}${occasionLine}.`,
+            ...(giftMessage ? ["", `Their message: "${giftMessage}"`] : []),
+            "",
+            "The money is already in your TitoPay wallet. Open the app ({{appUrl}}) to see it.",
+            "",
+            "TitoPay"
+          ].join("\n"),
+          htmlBody: [
+            `<p>Hi ${escape(giftRecipient.full_name || "there")},</p>`,
+            `<p><strong>${escape(senderName)}</strong> sent you a gift of <strong>${escape(amountLabel)}</strong>${escape(occasionLine)}.</p>`,
+            ...(giftMessage ? [`<p>Their message: &quot;${escape(giftMessage)}&quot;</p>`] : []),
+            `<p>The money is already in your TitoPay wallet. <a href="{{appUrl}}">Open the app</a> to see it.</p>`,
+            "<p>TitoPay</p>"
+          ].join("\n"),
+          userId: recipientWallet.user_id,
+          idempotencyKey: `gift-received:${txId}`,
+          metadata: { transactionId: txId }
+        });
+      }
+    } catch (error) {
+      console.error("[transaction] gift notice failed", { transactionId: txId, message: error.message });
+    }
   }
   return {
     transactionId: txId,

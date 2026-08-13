@@ -529,9 +529,161 @@ async function closeMeeting(actorId, groupId, meetingId) {
   return { id: meetingId, status: "closed", minutes };
 }
 
+// A CONTRIBUTION IS A TRANSFER TO THE TREASURER, ON THE NORMAL RAILS.
+//
+// A stokvel's money has to live in a real wallet someone answers for. Here
+// that is the chair (the group's creator) — the treasurer, exactly as in a
+// traditional stokvel. A contribution is therefore an ordinary
+// wallet-to-wallet transfer from the member to the chair, executed by
+// createTransaction with everything that implies: balance check, wallet
+// locks, ledger entries, idempotency, receipt. The stokvelGroupId in the
+// metadata is what makes the transfer count on the group's register, which
+// is derived from these transactions and never kept as a separate tally.
+async function contributionTreasurer(groupId) {
+  const { rows } = await pool.query(
+    `SELECT g.id, g.name, g.status, u.id AS treasurer_id, u.username, u.email, u.full_name
+     FROM stockvel_groups g
+     JOIN users u ON u.id = g.owner_user_id
+     WHERE g.id = $1`,
+    [groupId]
+  );
+  const group = rows[0];
+  if (!group) throw new AppError(404, "Savings group not found");
+  if (group.status === "draft") throw new AppError(409, "This group is still a draft. The organiser must activate it before contributions start.");
+  if (group.status === "closed") throw new AppError(409, "This group has been closed. No further contributions are taken.");
+  return group;
+}
+
+async function previewContribution(userId, groupId, amount) {
+  await requireMember(groupId, userId);
+  const group = await contributionTreasurer(groupId);
+  const value = money(amount);
+  if (!Number.isFinite(value) || value <= 0) throw new AppError(400, "Enter a contribution amount greater than zero.");
+  const { calculateFee } = require("./pricing-service");
+  const fee = await calculateFee("stockvel_contribution", value);
+  return {
+    amount: fee.amount,
+    fee: fee.fee,
+    total: fee.total,
+    groupName: group.name,
+    treasurer: group.full_name || `@${group.username}`
+  };
+}
+
+async function contribute(actor, groupId, payload = {}) {
+  await requireMember(groupId, actor.userId);
+  const group = await contributionTreasurer(groupId);
+  const value = money(payload.amount);
+  if (!Number.isFinite(value) || value <= 0) throw new AppError(400, "Enter a contribution amount greater than zero.");
+  const { createTransaction } = require("./transaction-service");
+  const transfer = await createTransaction(actor, {
+    serviceCode: "stockvel_contribution",
+    amount: value,
+    recipient: group.username || group.email,
+    idempotencyKey: String(payload.idempotencyKey || "").trim().slice(0, 120) || undefined,
+    metadata: {
+      stockvelGroupId: String(groupId),
+      stockvelGroupName: group.name,
+      cycle: String(payload.cycle || payload.reference || "").trim().slice(0, 80) || null
+    }
+  });
+  return { ...transfer, groupId, groupName: group.name };
+}
+
+// INVITING MEMBERS ACTUALLY REACHES THEM.
+//
+// Joining stays code-based — nobody can be pulled into a money group without
+// entering the code themselves — but the wizard's member list now does what
+// it promises: each registered person named there gets the invitation, with
+// the code, in their app and their email. Anyone not on TitoPay yet is
+// reported back so the organiser knows to share the code another way.
+async function inviteMembers(userId, groupId, identifiers = []) {
+  await requireManager(groupId, userId);
+  const { rows: groupRows } = await pool.query(
+    "SELECT g.*, u.full_name AS owner_name FROM stockvel_groups g JOIN users u ON u.id = g.owner_user_id WHERE g.id = $1",
+    [groupId]
+  );
+  const group = groupRows[0];
+  if (!group) throw new AppError(404, "Savings group not found");
+  const { rows: inviterRows } = await pool.query("SELECT full_name, username FROM users WHERE id = $1", [userId]);
+  const inviterName = inviterRows[0]?.full_name || `@${inviterRows[0]?.username || "a TitoPay user"}`;
+  const { verifyRecipient } = require("./security-service");
+  const { createNotification } = require("./notification-service");
+  const list = [...new Set(identifiers.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 50);
+  const invited = [];
+  const notRegistered = [];
+  for (const identifier of list) {
+    const status = await verifyRecipient({ userType: "customer", userId }, { recipient: identifier }).catch(() => null);
+    const person = status?.registered ? status.recipient : null;
+    if (!person?.userId || person.userId === userId) {
+      if (!person?.userId) notRegistered.push(identifier);
+      continue;
+    }
+    await createNotification({
+      user: { id: person.userId, user_type: "customer" },
+      channel: "in_app", notificationType: "stockvel_invite", provider: "in_app",
+      title: `${inviterName} invited you to the "${group.name}" stokvel`,
+      body: `Join with invite code ${group.invite_code}: open Stokvel in the app, choose Join with a code, and enter it. The group contributes ${Number(group.contribution_amount) > 0 ? `R${Number(group.contribution_amount).toFixed(2)} ${group.cadence}` : "on the schedule the group agreed"}. Nothing joins you to the group until you enter the code yourself.`,
+      metadata: { stockvelGroupId: String(groupId), inviteCode: group.invite_code, clientNotificationId: `stockvel-invite-${groupId}-${person.userId}` }
+    }).catch(() => {});
+    if (person.email) {
+      try {
+        const emailCentre = require("./email-centre-service");
+        const esc = emailCentre.escapeHtml;
+        await emailCentre.queueRawEmail({
+          recipient: person.email,
+          subject: `${inviterName} invited you to the "${group.name}" stokvel on TitoPay`,
+          textBody: [
+            `Hi ${person.fullName || "there"},`,
+            "",
+            `${inviterName} has invited you to join "${group.name}", a savings group on TitoPay.`,
+            "",
+            `Your invite code: ${group.invite_code}`,
+            "",
+            "To join:",
+            "1. Open the TitoPay app ({{appUrl}}) and sign in.",
+            "2. Open Services and choose Stokvel.",
+            "3. Choose Join with a code and enter the code above.",
+            "",
+            "Nothing happens to your account until you enter the code yourself, and you can see the group's full contribution record from the day you join.",
+            "",
+            "If you were not expecting this, you can simply ignore this email.",
+            "",
+            "TitoPay"
+          ].join("\n"),
+          htmlBody: [
+            `<p>Hi ${esc(person.fullName || "there")},</p>`,
+            `<p><strong>${esc(inviterName)}</strong> has invited you to join <strong>${esc(group.name)}</strong>, a savings group on TitoPay.</p>`,
+            `<p>Your invite code: <strong>${esc(group.invite_code)}</strong></p>`,
+            "<p><strong>To join:</strong></p>",
+            "<ol>",
+            '<li>Open the <a href="{{appUrl}}">TitoPay app</a> and sign in.</li>',
+            "<li>Open <strong>Services</strong> and choose <strong>Stokvel</strong>.</li>",
+            "<li>Choose <strong>Join with a code</strong> and enter the code above.</li>",
+            "</ol>",
+            "<p>Nothing happens to your account until you enter the code yourself, and you can see the group's full contribution record from the day you join.</p>",
+            "<p>If you were not expecting this, you can simply ignore this email.</p>",
+            "<p>TitoPay</p>"
+          ].join("\n"),
+          userId: person.userId,
+          idempotencyKey: `stockvel-invite-${groupId}-${person.userId}`,
+          metadata: { groupId }
+        });
+      } catch (error) {
+        console.error("[stockvel] invite email failed", { groupId, message: error.message });
+      }
+    }
+    invited.push(person.username ? `@${person.username}` : identifier);
+  }
+  return { inviteCode: group.invite_code, invited, notRegistered };
+}
+
 module.exports = {
   ensureStockvelSchema,
   createGroup,
+  previewContribution,
+  contribute,
+  inviteMembers,
   updateGroup,
   listGroups,
   getGroup,

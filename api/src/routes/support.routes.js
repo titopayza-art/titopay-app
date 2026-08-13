@@ -180,6 +180,27 @@ router.get("/tickets", async (req, res, next) => {
   }
 });
 
+router.delete("/tickets", async (req, res, next) => {
+  try {
+    requireCustomer(req);
+    const { hideMyFinishedTickets } = require("../services/support-ticket-reply-service");
+    const result = await hideMyFinishedTickets(req.auth);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "support_tickets_cleared_by_customer",
+      entityType: "support_ticket",
+      entityId: null,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: { removed: result.removed }
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.delete("/tickets/:id", async (req, res, next) => {
   try {
     requireCustomer(req);

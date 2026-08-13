@@ -63,6 +63,11 @@ async function listMyTickets(userId) {
             st.created_at, st.updated_at, ${REPLIES_JSON}
      FROM support_tickets st
      WHERE st.user_id = $1 AND COALESCE(st.hidden_by_customer, FALSE) = FALSE
+       -- A rating is feedback about support, not a request FOR support. It
+       -- reads as clutter ("support_rating - resolved") in My support
+       -- requests, so it stays out of the customer-facing list. The team
+       -- still sees every rating on the admin side.
+       AND COALESCE(st.category, '') <> 'support_rating'
      ORDER BY st.updated_at DESC
      LIMIT 100`,
     [userId]
@@ -82,6 +87,20 @@ async function hideMyTicket(auth, ticketId) {
   }
   await pool.query("UPDATE support_tickets SET hidden_by_customer = TRUE, updated_at = NOW() WHERE id = $1", [ticketId]);
   return { removed: true, ticketRef: ticket.ticket_ref };
+}
+
+// One tap instead of one tap per card: hide every finished request at once.
+// Open conversations stay - the team is still busy with them - and every row
+// survives for the audit trail exactly as single removal does.
+async function hideMyFinishedTickets(auth) {
+  await ensureSupportReplySchema();
+  const { rowCount } = await pool.query(
+    `UPDATE support_tickets SET hidden_by_customer = TRUE, updated_at = NOW()
+     WHERE user_id = $1 AND status IN ('resolved', 'closed')
+       AND COALESCE(hidden_by_customer, FALSE) = FALSE`,
+    [auth.userId]
+  );
+  return { removed: rowCount };
 }
 
 async function listTicketsForAdmin() {
@@ -224,6 +243,7 @@ module.exports = {
   ensureSupportReplySchema,
   listMyTickets,
   hideMyTicket,
+  hideMyFinishedTickets,
   listTicketsForAdmin,
   addAdminReply,
   addCustomerReply

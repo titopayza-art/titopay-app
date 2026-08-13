@@ -721,9 +721,12 @@ async function register(payload, meta) {
     userAgent: meta.userAgent,
     metadata: { scope: payload.scope || "customer", accountType }
   });
-  await createVerificationForUser(rows[0], meta).catch((error) => {
-    console.error("[auth] registration verification email queue failed", { userId, message:error.message, code:error.code });
-  });
+  // Deliberately NOT sent: the email-verification landing page does not exist
+  // yet, so the "Verify your email" message pointed every new customer at a
+  // 404. A welcome email with a dead link is worse than no email. The token
+  // machinery stays (createVerificationForUser / resendVerification) for the
+  // day the landing page ships; until then registration sends only the
+  // welcome email below, which contains no dead links.
   const welcomeEmail = await queueWelcomeEmail(rows[0], {
     ...meta,
     accountType,

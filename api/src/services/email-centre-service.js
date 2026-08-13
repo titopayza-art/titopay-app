@@ -46,10 +46,10 @@ const DEFAULT_TEMPLATES = [
   ["password_changed", "Password Changed", "Your TitoPay password was changed", "Your TitoPay password was changed. Contact {{supportEmail}} if this was not you."],
   ["login_notification", "Login Notification", "New TitoPay login", "A login to your TitoPay account was recorded."],
   ["new_device_login", "New Device Login", "New device signed in to TitoPay", "A new device signed in to your TitoPay account."],
-  ["payment_receipt", "Payment Receipt", "TitoPay payment receipt {{transactionReference}}", "Payment {{transactionReference}} for {{currency}} {{amount}} was completed."],
-  ["wallet_top_up_receipt", "Wallet Top-Up Receipt", "TitoPay wallet top-up receipt", "Your wallet was topped up by {{currency}} {{amount}}. Reference: {{transactionReference}}."],
-  ["money_transfer_receipt", "Money Transfer Receipt", "TitoPay transfer receipt {{transactionReference}}", "Your transfer of {{currency}} {{amount}} was completed."],
-  ["qr_payment_receipt", "QR Payment Receipt", "TitoPay QR payment receipt", "Your QR payment of {{currency}} {{amount}} was completed. Reference: {{transactionReference}}."],
+  ["payment_receipt", "Payment Receipt", "TitoPay payment receipt {{transactionReference}}", "<p>Hi {{fullName}},</p><p>Your payment of {{currency}} {{amount}} went through successfully.</p><p>Reference: {{transactionReference}}</p><p>You can see the full details any time under your activity in the TitoPay app. If you do not recognise this payment, contact us at {{supportEmail}} right away.</p>"],
+  ["wallet_top_up_receipt", "Wallet Top-Up Receipt", "TitoPay wallet top-up receipt", "<p>Hi {{fullName}},</p><p>Your wallet has been topped up with {{currency}} {{amount}}. The money is available straight away.</p><p>Reference: {{transactionReference}}</p><p>If you did not make this top-up, contact us at {{supportEmail}} right away.</p>"],
+  ["money_transfer_receipt", "Money Transfer Receipt", "TitoPay transfer receipt {{transactionReference}}", "<p>Hi {{fullName}},</p><p>Your transfer of {{currency}} {{amount}} has been completed and delivered.</p><p>Reference: {{transactionReference}}</p><p>The full record is in your activity in the TitoPay app. If you did not make this transfer, contact us at {{supportEmail}} right away.</p>"],
+  ["qr_payment_receipt", "QR Payment Receipt", "TitoPay QR payment receipt", "<p>Hi {{fullName}},</p><p>Your QR payment of {{currency}} {{amount}} went through successfully.</p><p>Reference: {{transactionReference}}</p><p>You can see the full details in your activity in the TitoPay app. If you do not recognise this payment, contact us at {{supportEmail}} right away.</p>"],
   ["refund_confirmation", "Refund Confirmation", "TitoPay refund confirmation", "Your refund of {{currency}} {{amount}} was processed. Reference: {{transactionReference}}."],
   ["business_account_submitted", "Business Account Submitted", "Business account submitted", "{{businessName}} was submitted for review."],
   ["business_account_approved", "Business Account Approved", "Business account approved", "{{businessName}} has been approved."],
@@ -136,9 +136,17 @@ function welcomeAccountType(templateKey) {
   return String(templateKey || "").startsWith("business_") ? "business" : "personal";
 }
 
-function brandedHtml(content, settings) {
-  return `<!doctype html><html><body style="margin:0;background:#f2f7fc;color:#0b1f3f;font-family:Arial,sans-serif"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px"><table role="presentation" width="600" style="max-width:100%;background:#fff;border-radius:12px;overflow:hidden"><tr><td style="background:#fff;padding:18px 28px;border-bottom:1px solid #dbe6f2"><img src="${TITOPAY_LOGO_URL}" alt="TitoPay" width="210" style="display:block;width:210px;max-width:100%;height:auto;border:0"></td></tr><tr><td style="padding:30px 28px;font-size:16px;line-height:1.65">${content}</td></tr><tr><td style="padding:22px 28px;background:#eaf5fc;color:#294563;font-size:13px;line-height:1.6"><strong>${escapeHtml(settings.company_name)}</strong><br>${escapeHtml(settings.tagline)}<br><a href="mailto:${escapeHtml(settings.support_email)}">${escapeHtml(settings.support_email)}</a> · <a href="${escapeHtml(settings.website_url)}">${escapeHtml(settings.website_url)}</a><br><a href="${escapeHtml(settings.support_url)}">Support</a> · <a href="${escapeHtml(settings.website_url)}/privacy">Privacy Policy</a> · <a href="${escapeHtml(settings.website_url)}/terms">Terms and Conditions</a></td></tr></table></td></tr></table></body></html>`;
+function brandedHtml(content, settings, options = {}) {
+  // The legal pages live at /legal on the website - /privacy and /terms were
+  // dead links in every footer. The unsubscribe link only appears on
+  // marketing sends, where the law and common decency both require it.
+  const legalUrl = `${String(settings.website_url || "").replace(/\/$/, "")}/legal`;
+  const unsubscribe = options.unsubscribeUrl
+    ? ` · <a href="${escapeHtml(options.unsubscribeUrl)}">Unsubscribe</a>`
+    : "";
+  return `<!doctype html><html><body style="margin:0;background:#f2f7fc;color:#0b1f3f;font-family:Arial,sans-serif"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px"><table role="presentation" width="600" style="max-width:100%;background:#fff;border-radius:12px;overflow:hidden"><tr><td style="background:#fff;padding:18px 28px;border-bottom:1px solid #dbe6f2"><img src="${TITOPAY_LOGO_URL}" alt="TitoPay" width="210" style="display:block;width:210px;max-width:100%;height:auto;border:0"></td></tr><tr><td style="padding:30px 28px;font-size:16px;line-height:1.65">${content}</td></tr><tr><td style="padding:22px 28px;background:#eaf5fc;color:#294563;font-size:13px;line-height:1.6"><strong>${escapeHtml(settings.company_name)}</strong><br>${escapeHtml(settings.tagline)}<br><a href="mailto:${escapeHtml(settings.support_email)}">${escapeHtml(settings.support_email)}</a> · <a href="${escapeHtml(settings.website_url)}">${escapeHtml(settings.website_url)}</a><br><a href="${escapeHtml(settings.support_url)}">Support</a> · <a href="${escapeHtml(legalUrl)}">Privacy Policy</a> · <a href="${escapeHtml(legalUrl)}">Terms and Conditions</a>${unsubscribe}<br><br>Copyright © ${new Date().getUTCFullYear()} TitoPay. All Rights Reserved.</td></tr></table></td></tr></table></body></html>`;
 }
+
 
 function renderTemplate(template, variables, settings) {
   const defaults = {
@@ -203,6 +211,29 @@ async function seedDefaultTemplates(db = pool) {
        updated_at = NOW()
      WHERE template_key = 'email_otp' AND body LIKE '%The code expires shortly.%'`
   ).catch(() => {});
+  // The receipt templates were one machine-shaped sentence each. These
+  // rewrites are guarded on that exact old sentence, so a template an
+  // operator has already edited in the Email Centre is never overwritten.
+  const receiptFixups = [
+    ["payment_receipt",
+      "Payment {{transactionReference}} for {{currency}} {{amount}} was completed.",
+      "<p>Hi {{fullName}},</p><p>Your payment of {{currency}} {{amount}} went through successfully.</p><p>Reference: {{transactionReference}}</p><p>You can see the full details any time under your activity in the TitoPay app. If you do not recognise this payment, contact us at {{supportEmail}} right away.</p>"],
+    ["wallet_top_up_receipt",
+      "Your wallet was topped up by {{currency}} {{amount}}. Reference: {{transactionReference}}.",
+      "<p>Hi {{fullName}},</p><p>Your wallet has been topped up with {{currency}} {{amount}}. The money is available straight away.</p><p>Reference: {{transactionReference}}</p><p>If you did not make this top-up, contact us at {{supportEmail}} right away.</p>"],
+    ["money_transfer_receipt",
+      "Your transfer of {{currency}} {{amount}} was completed.",
+      "<p>Hi {{fullName}},</p><p>Your transfer of {{currency}} {{amount}} has been completed and delivered.</p><p>Reference: {{transactionReference}}</p><p>The full record is in your activity in the TitoPay app. If you did not make this transfer, contact us at {{supportEmail}} right away.</p>"],
+    ["qr_payment_receipt",
+      "Your QR payment of {{currency}} {{amount}} was completed. Reference: {{transactionReference}}.",
+      "<p>Hi {{fullName}},</p><p>Your QR payment of {{currency}} {{amount}} went through successfully.</p><p>Reference: {{transactionReference}}</p><p>You can see the full details in your activity in the TitoPay app. If you do not recognise this payment, contact us at {{supportEmail}} right away.</p>"]
+  ];
+  for (const [key, oldBody, newBody] of receiptFixups) {
+    await db.query(
+      "UPDATE email_templates SET body = $2, updated_at = NOW() WHERE template_key = $1 AND body = $3",
+      [key, newBody, oldBody]
+    ).catch(() => {});
+  }
   for (const [key, name, subject, body] of DEFAULT_TEMPLATES) {
     const htmlBody = body;
     const textBody = body.replace(/<br\s*\/?>/gi,"\n").replace(/<[^>]+>/g,"").replace(/\s+/g," ").trim();
@@ -367,6 +398,54 @@ async function queueEmail({ recipient, templateKey, variables = {}, userId = nul
   return {...existing.rows[0],deduplicated:true};
 }
 
+// MARKETING OPT-OUT. One row per address, honoured before any campaign send.
+// The unsubscribe link is signed with the same secret family as the email
+// encryption, so a link works without a login and cannot be forged for
+// someone else's address.
+let optOutEnsured = null;
+function ensureMarketingOptOuts() {
+  optOutEnsured ||= pool.query(`
+    CREATE TABLE IF NOT EXISTS marketing_email_optouts (
+      email TEXT PRIMARY KEY,
+      user_id UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch((error) => { optOutEnsured = null; throw error; });
+  return optOutEnsured;
+}
+
+function unsubscribeSignature(email) {
+  return crypto.createHmac("sha256", cryptoKey()).update(`unsubscribe:${String(email).toLowerCase()}`).digest("hex").slice(0, 32);
+}
+
+function buildUnsubscribeUrl(email) {
+  const apiBase = String(process.env.API_ORIGIN || "https://api.titopay.co.za").replace(/\/$/, "");
+  return `${apiBase}/v1/email/unsubscribe?e=${encodeURIComponent(Buffer.from(String(email).toLowerCase()).toString("base64url"))}&s=${unsubscribeSignature(email)}`;
+}
+
+async function recordMarketingOptOut(emailB64, signature) {
+  await ensureMarketingOptOuts();
+  const email = Buffer.from(String(emailB64 || ""), "base64url").toString("utf8").toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new AppError(400, "This unsubscribe link is not valid.");
+  const expected = unsubscribeSignature(email);
+  const provided = String(signature || "");
+  if (provided.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(provided))) {
+    throw new AppError(400, "This unsubscribe link is not valid.");
+  }
+  const { rows } = await pool.query("SELECT id FROM users WHERE LOWER(email) = $1 LIMIT 1", [email]);
+  await pool.query(
+    "INSERT INTO marketing_email_optouts (email, user_id) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING",
+    [email, rows[0]?.id || null]
+  );
+  return { email };
+}
+
+async function marketingOptOutEmails() {
+  await ensureMarketingOptOuts();
+  const { rows } = await pool.query("SELECT email FROM marketing_email_optouts");
+  return new Set(rows.map((row) => String(row.email).toLowerCase()));
+}
+
 function welcomeTemplateKeyForAccountType(accountType) {
   return String(accountType || "").toLowerCase() === "business"
     ? "business_account_welcome"
@@ -407,7 +486,7 @@ async function queueWelcomeEmail(user, meta = {}) {
   return job;
 }
 
-async function queueRawEmail({recipient,subject,htmlBody,textBody,variables={},userId=null,idempotencyKey,metadata={}}) {
+async function queueRawEmail({recipient,subject,htmlBody,textBody,variables={},userId=null,idempotencyKey,metadata={},attachments=[],unsubscribeUrl=null}) {
   await ensureEmailSchema();
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(recipient||"")))throw new AppError(400,"Recipient email is invalid");
   const settings=await getSettings();if(!settings.sending_enabled)return {skipped:true,reason:"sending_disabled"};
@@ -415,7 +494,12 @@ async function queueRawEmail({recipient,subject,htmlBody,textBody,variables={},u
   const values={companyName:settings.company_name,supportEmail:settings.support_email,supportUrl:settings.support_url,websiteUrl:settings.website_url,appUrl:config.appOrigin,currentYear:new Date().getUTCFullYear(),...variables};
   const renderedSubject=interpolate(String(subject||"").replace(/[\r\n]/g," ").slice(0,300),values);
   const effectiveHtmlBody=String(htmlBody||"").trim()?htmlBody:htmlFromText(textBody);
-  const content={html:brandedHtml(interpolate(stripDangerousMarkup(effectiveHtmlBody),values,{html:true}),settings),text:`${interpolate(textBody,values)}\n\n${settings.company_name}\n${settings.tagline}\n${settings.support_email}\n${settings.website_url}`};
+  // Attachments ride inside the same encrypted content as the body, so the
+  // worker needs no schema change and the file is never stored in the clear.
+  const safeAttachments=(Array.isArray(attachments)?attachments:[]).slice(0,3).filter((item)=>item&&item.filename&&item.contentBase64).map((item)=>({filename:String(item.filename).replace(/[^\w.-]/g,"_").slice(0,80),contentBase64:String(item.contentBase64),contentType:String(item.contentType||"application/octet-stream")}));
+  const unsubscribeFooter=unsubscribeUrl?`\n\nTo stop receiving marketing emails from TitoPay, unsubscribe here: ${unsubscribeUrl}`:"";
+  if(unsubscribeUrl)metadata={...metadata,unsubscribeUrl};
+  const content={html:brandedHtml(interpolate(stripDangerousMarkup(effectiveHtmlBody),values,{html:true}),settings,{unsubscribeUrl}),text:`${interpolate(textBody,values)}\n\n${settings.company_name}\n${settings.tagline}\n${settings.support_email}\n${settings.website_url}\nCopyright © ${new Date().getUTCFullYear()} TitoPay. All Rights Reserved.${unsubscribeFooter}`,...(safeAttachments.length?{attachments:safeAttachments}:{})};
   const {rows}=await pool.query(`INSERT INTO email_queue(recipient,subject,template_key,template_version,variables,encrypted_content,provider,idempotency_key,maximum_attempts,user_id,metadata) VALUES(LOWER($1),$2,'marketing_email',1,$3::jsonb,$4,$5,$6,$7,$8,$9::jsonb) ON CONFLICT(idempotency_key) DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING *`,[recipient,renderedSubject,JSON.stringify(safePayload(variables)),encrypt(JSON.stringify(content)),settings.default_provider,idempotencyKey,settings.maximum_retry_count,userId,JSON.stringify(metadata)]);
   return rows[0];
 }
@@ -625,13 +709,15 @@ async function deliverQueuedContent(job){const provider=await effectiveProvider(
 const otpMail=job.template_key==="email_otp"||job.template_key==="password_change_otp";
 const otpExpiryMinutes=Number((job.variables&&job.variables.expiryMinutes)||10)||10;
 const otpThreadId=`<titopay-otp-${crypto.createHash("sha256").update(String(job.recipient||"").toLowerCase()).digest("hex").slice(0,16)}@titopay.co.za>`;
-const result=await transport.sendMail({from:provider.from,replyTo:provider.replyTo,to:job.recipient,subject:job.subject,html:content.html,text:content.text,...(otpMail?{headers:{"Expiry-Date":new Date(Date.now()+otpExpiryMinutes*60000).toUTCString(),"Auto-Submitted":"auto-generated"},inReplyTo:otpThreadId,references:otpThreadId}:{})});return {messageId:result.messageId,accepted:result.accepted,rejected:result.rejected,response:result.response};}
+const mailAttachments=(content.attachments||[]).map((item)=>({filename:item.filename,content:Buffer.from(item.contentBase64,"base64"),contentType:item.contentType}));
+const unsubscribeHeader=job.metadata&&job.metadata.unsubscribeUrl?{"List-Unsubscribe":`<${job.metadata.unsubscribeUrl}>`}:{};
+const result=await transport.sendMail({from:provider.from,replyTo:provider.replyTo,to:job.recipient,subject:job.subject,html:content.html,text:content.text,...(mailAttachments.length?{attachments:mailAttachments}:{}),...(otpMail?{headers:{"Expiry-Date":new Date(Date.now()+otpExpiryMinutes*60000).toUTCString(),"Auto-Submitted":"auto-generated",...unsubscribeHeader},inReplyTo:otpThreadId,references:otpThreadId}:{headers:unsubscribeHeader})});return {messageId:result.messageId,accepted:result.accepted,rejected:result.rejected,response:result.response};}
   if(!provider.apiKey)throw new Error(`${provider.provider} provider is not configured`);
   let result;
-  if(provider.provider==="resend")result=await providerJsonRequest(provider,provider.apiUrl||"https://api.resend.com/emails",{headers:{authorization:`Bearer ${provider.apiKey}`},payload:{from:provider.from,to:[job.recipient],subject:job.subject,html:content.html,text:content.text,reply_to:provider.replyTo}});
-  else if(provider.provider==="postmark")result=await providerJsonRequest(provider,provider.apiUrl||"https://api.postmarkapp.com/email",{headers:{"X-Postmark-Server-Token":provider.apiKey},payload:{From:provider.from,To:job.recipient,Subject:job.subject,HtmlBody:content.html,TextBody:content.text,ReplyTo:provider.replyTo,MessageStream:"outbound"}});
-  else if(provider.provider==="brevo")result=await providerJsonRequest(provider,provider.apiUrl||"https://api.brevo.com/v3/smtp/email",{headers:{"api-key":provider.apiKey},payload:{sender:{name:provider.fromName,email:provider.fromEmail},to:[{email:job.recipient}],replyTo:{email:provider.replyTo},subject:job.subject,htmlContent:content.html,textContent:content.text}});
-  else if(provider.provider==="sendgrid")result=await providerJsonRequest(provider,provider.apiUrl||"https://api.sendgrid.com/v3/mail/send",{headers:{authorization:`Bearer ${provider.apiKey}`},payload:{personalizations:[{to:[{email:job.recipient}]}],from:{email:provider.fromEmail,name:provider.fromName},reply_to:{email:provider.replyTo},subject:job.subject,content:[{type:"text/plain",value:content.text},{type:"text/html",value:content.html}]}});
+  if(provider.provider==="resend")result=await providerJsonRequest(provider,provider.apiUrl||"https://api.resend.com/emails",{headers:{authorization:`Bearer ${provider.apiKey}`},payload:{from:provider.from,to:[job.recipient],subject:job.subject,html:content.html,text:content.text,reply_to:provider.replyTo,...((content.attachments||[]).length?{attachments:content.attachments.map((item)=>({filename:item.filename,content:item.contentBase64}))}:{})}});
+  else if(provider.provider==="postmark")result=await providerJsonRequest(provider,provider.apiUrl||"https://api.postmarkapp.com/email",{headers:{"X-Postmark-Server-Token":provider.apiKey},payload:{From:provider.from,To:job.recipient,Subject:job.subject,HtmlBody:content.html,TextBody:content.text,ReplyTo:provider.replyTo,MessageStream:"outbound",...((content.attachments||[]).length?{Attachments:content.attachments.map((item)=>({Name:item.filename,Content:item.contentBase64,ContentType:item.contentType}))}:{})}});
+  else if(provider.provider==="brevo")result=await providerJsonRequest(provider,provider.apiUrl||"https://api.brevo.com/v3/smtp/email",{headers:{"api-key":provider.apiKey},payload:{sender:{name:provider.fromName,email:provider.fromEmail},to:[{email:job.recipient}],replyTo:{email:provider.replyTo},subject:job.subject,htmlContent:content.html,textContent:content.text,...((content.attachments||[]).length?{attachment:content.attachments.map((item)=>({name:item.filename,content:item.contentBase64}))}:{})}});
+  else if(provider.provider==="sendgrid")result=await providerJsonRequest(provider,provider.apiUrl||"https://api.sendgrid.com/v3/mail/send",{headers:{authorization:`Bearer ${provider.apiKey}`},payload:{personalizations:[{to:[{email:job.recipient}]}],from:{email:provider.fromEmail,name:provider.fromName},reply_to:{email:provider.replyTo},subject:job.subject,content:[{type:"text/plain",value:content.text},{type:"text/html",value:content.html}],...((content.attachments||[]).length?{attachments:content.attachments.map((item)=>({content:item.contentBase64,filename:item.filename,type:item.contentType,disposition:"attachment"}))}:{})}});
   else if(provider.provider==="mailgun"){const url=provider.apiUrl||(provider.mailgunDomain?`https://api.mailgun.net/v3/${encodeURIComponent(provider.mailgunDomain)}/messages`:"");if(!url)throw new Error("Mailgun domain or API URL is not configured");const form=new URLSearchParams({from:provider.from,to:job.recipient,subject:job.subject,html:content.html,text:content.text,"h:Reply-To":provider.replyTo});const response=await fetch(url,{method:"POST",headers:{authorization:`Basic ${Buffer.from(`api:${provider.apiKey}`).toString("base64")}`,"content-type":"application/x-www-form-urlencoded"},body:form.toString()});const json=await response.json().catch(()=>({}));if(!response.ok)throw new Error(`${provider.provider} returned ${response.status}`);result={json,response};}
   else if(provider.provider==="ses")throw new Error("Amazon SES must be configured through its SMTP endpoint");
   else {if(!provider.apiUrl)throw new Error(`${provider.provider} API URL is not configured`);result=await providerJsonRequest(provider,provider.apiUrl,{headers:{authorization:`Bearer ${provider.apiKey}`},payload:{from:provider.from,to:job.recipient,subject:job.subject,html:content.html,text:content.text,replyTo:provider.replyTo}});}
@@ -677,4 +763,4 @@ async function sweepExpiredOtpEmails(){
     "DELETE FROM otp_codes WHERE expires_at < NOW() - INTERVAL '7 days'");
   return {redacted:rowCount,purged};
 }
-module.exports={EMAIL_PERMISSIONS,sweepExpiredOtpEmails,seedDefaultTemplates,ALLOWED_VARIABLES,DEFAULT_TEMPLATES,ensureEmailSchema,escapeHtml,stripDangerousMarkup,htmlFromText,interpolate,renderTemplate,getSettings,updateSettings,listTemplates,getTemplate,saveTemplate,deleteTemplate,queueEmail,queueWelcomeEmail,welcomeTemplateKeyForAccountType,isWelcomeTemplateKey,queueRawEmail,createVerificationForUser,verifyEmailToken,resendVerification,requestEmailPasswordReset,confirmEmailPasswordReset,listQueue,queueDetail,manageQueue,listLogs,logDetail,dashboard,analytics,claimJobs,processJob,requeueRetryable,providerTest,processWebhook,maskSecrets,safePayload,sanitiseError};
+module.exports={EMAIL_PERMISSIONS,ensureMarketingOptOuts,buildUnsubscribeUrl,recordMarketingOptOut,marketingOptOutEmails,sweepExpiredOtpEmails,seedDefaultTemplates,ALLOWED_VARIABLES,DEFAULT_TEMPLATES,ensureEmailSchema,escapeHtml,stripDangerousMarkup,htmlFromText,interpolate,renderTemplate,getSettings,updateSettings,listTemplates,getTemplate,saveTemplate,deleteTemplate,queueEmail,queueWelcomeEmail,welcomeTemplateKeyForAccountType,isWelcomeTemplateKey,queueRawEmail,createVerificationForUser,verifyEmailToken,resendVerification,requestEmailPasswordReset,confirmEmailPasswordReset,listQueue,queueDetail,manageQueue,listLogs,logDetail,dashboard,analytics,claimJobs,processJob,requeueRetryable,providerTest,processWebhook,maskSecrets,safePayload,sanitiseError};

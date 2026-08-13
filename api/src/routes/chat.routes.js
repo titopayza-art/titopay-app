@@ -64,6 +64,8 @@ router.get("/notifications", async (req, res, next) => {
            OR notification_type LIKE 'support_%'
            OR notification_type LIKE '%_announcement'
            OR notification_type LIKE 'payment_request%'
+           OR notification_type = 'stockvel_invite'
+           OR notification_type = 'gift_received'
          )
          -- Cleared means cleared, on every device. Only notifications from
          -- after the user's last clear-all are ever served again.
@@ -132,6 +134,8 @@ router.post("/notifications/read", async (req, res, next) => {
            OR notification_type LIKE 'support_%'
            OR notification_type LIKE '%_announcement'
            OR notification_type LIKE 'payment_request%'
+           OR notification_type = 'stockvel_invite'
+           OR notification_type = 'gift_received'
          )
          AND ($2::UUID[] = '{}'::UUID[] OR id = ANY($2::UUID[]))`,
       [req.auth.userId, ids]
