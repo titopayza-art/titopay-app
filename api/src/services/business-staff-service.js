@@ -216,6 +216,68 @@ async function addStaff(businessUserId, payload = {}) {
   };
 }
 
+// "I added them and nothing appears on their phone."
+//
+// A register entry only reaches a person when the contact typed matches an
+// active TitoPay account. When it does not, the entry is still saved — that is
+// deliberate, a business may list someone before they join — but nothing is
+// sent and My Workplaces stays empty for them. The only sign of it used to be
+// one toast at the moment of adding.
+//
+// This is the repair: try again on the stored contact, or on a corrected one.
+// It is also the flow for "they have joined TitoPay since I added them".
+async function relinkStaff(businessUserId, memberId, payload = {}) {
+  await ensureStaffSchema();
+  const business = await requireBusiness(businessUserId);
+  const { rows: existing } = await pool.query(
+    "SELECT * FROM business_staff WHERE id = $1 AND business_user_id = $2 AND status = 'active' LIMIT 1",
+    [memberId, businessUserId]
+  );
+  const member = existing[0];
+  if (!member) throw new AppError(404, "That person is not on your staff register");
+
+  const contact = payload.contact === undefined || payload.contact === null || String(payload.contact).trim() === ""
+    ? member.contact
+    : boundedText(payload.contact, "Contact", { min: 3, max: 120 });
+
+  const staffUser = await resolveStaffUser(contact);
+  if (staffUser && staffUser.id === businessUserId) {
+    throw new AppError(400, "That contact is this business account itself — use the person's own TitoPay details.");
+  }
+  if (!staffUser) {
+    // Save the corrected contact even when it still does not match, so the
+    // owner is not retyping it every attempt.
+    if (contact !== member.contact) {
+      await pool.query("UPDATE business_staff SET contact = $1, updated_at = NOW() WHERE id = $2", [contact, memberId]);
+    }
+    throw new AppError(404, `No active TitoPay account matches "${contact}". Check the spelling with them, or ask them to sign up first — the exact @username is the most reliable.`);
+  }
+  if (member.staff_user_id === staffUser.id) {
+    return { member: shapeMember({ ...member, contact, staff_username: staffUser.username }), linked: true, message: `${member.full_name} is already linked to @${staffUser.username}.` };
+  }
+  // The partial unique index allows one active row per (business, staff user).
+  const { rows: clash } = await pool.query(
+    "SELECT id, full_name FROM business_staff WHERE business_user_id = $1 AND staff_user_id = $2 AND status = 'active' AND id <> $3 LIMIT 1",
+    [businessUserId, staffUser.id, memberId]
+  );
+  if (clash[0]) {
+    throw new AppError(409, `@${staffUser.username} is already on your staff register as ${clash[0].full_name}. Remove that entry first if this one should replace it.`);
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE business_staff SET staff_user_id = $1, contact = $2, updated_at = NOW()
+     WHERE id = $3 AND business_user_id = $4 AND status = 'active'
+     RETURNING *`,
+    [staffUser.id, contact, memberId, businessUserId]
+  );
+  await notifyStaffAdded(business, staffUser, rows[0].role);
+  return {
+    member: shapeMember({ ...rows[0], staff_username: staffUser.username }),
+    linked: true,
+    message: `${rows[0].full_name} is linked to @${staffUser.username} and has been notified — My Workplaces now shows your business on their phone.`
+  };
+}
+
 async function removeStaff(businessUserId, memberId) {
   await ensureStaffSchema();
   const business = await requireBusiness(businessUserId);
@@ -359,6 +421,7 @@ async function staffSalesTotals(businessUserId, { from, to } = {}) {
 }
 
 module.exports = {
+  relinkStaff,
   ensureStaffSchema,
   listStaff,
   addStaff,

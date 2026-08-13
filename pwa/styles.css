@@ -13012,3 +13012,32 @@ form[data-form="ticketing-event"] label select{width:100%}
   background: #c23a3a;
   border-color: #c23a3a;
 }
+
+/* A staff member who is on the register but not linked to a TitoPay account
+   cannot be notified and cannot sell. The row has to show that, or the owner
+   believes the person was added and the person sees nothing. */
+.staff-row-unlinked {
+  border-left: 3px solid #e0a33a;
+  background: #fffaf0;
+}
+.staff-link-state {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.staff-link-state svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+.staff-link-state.is-linked { color: #0b7a3b; }
+.staff-link-state.is-unlinked { color: #8a5b00; }
+.staff-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}

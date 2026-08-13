@@ -1,57 +1,56 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v344 (titopay-pwa-v344)
+PWA bundle: v345 (titopay-pwa-v345)
 Admin console: admin-console-v81
 
-This build — the Services wall becomes a page, and the app stops
-borrowing the browser's voice:
+This build — "I added them as a manager and nothing appears":
 
-  SERVICES ARE GROUPED. Nineteen tiles in one flat grid was a list you
-  had to read. The same tiles now sit under headings — Send & pay, Money
-  in & out, Buy, Plan & save, Run your business, More — so the screen can
-  be scanned. Nothing moved further away: every service is still exactly
-  one tap from that screen, opening the same way it always did.
-  "More" is a catch-all that owns nothing. A service added to the
-  catalogue that nobody grouped lands there rather than disappearing, so
-  grouping can never lose a feature.
+  THE CAUSE. A staff member only reaches a person when the contact typed
+  matches an ACTIVE TitoPay account. When it does not, the entry is still
+  saved — deliberately, a business may list someone before they join —
+  but nothing is sent and My Workplaces stays empty on their phone. The
+  only sign of it was one toast at the moment of adding, and the register
+  afterwards looked identical either way. The owner believed the person
+  was added; the person saw an empty screen; nobody could see why.
 
-  THE APP ASKS IN ITS OWN VOICE. Every window.prompt and window.confirm
-  is gone — 16 of them. Stock counts, restocks, price changes, a meeting
-  title and closing feedback were collected through browser prompts, and
-  archive/revoke/remove confirmed through browser confirms. On a phone
-  those arrive as a grey box carrying the site's address, which reads as
-  "the app broke" rather than "the app asked". They are now TitoPay's own
-  dialog, laid OVER the sheet you are working in and leaving it exactly
-  as it was. Escape and tapping outside cancel; Enter accepts a typed
-  value; destructive steps get a red button.
+  THE FIX.
+  - The Staff register now SHOWS the state on every row: "Linked to
+    @username — can sell for you", or an amber row reading "Not linked —
+    no TitoPay account matches this contact, so they were not notified
+    and cannot sell yet".
+  - Unlinked rows carry a Link button. It retries on the stored contact
+    or a corrected one, and is also the flow for "they have joined
+    TitoPay since I added them". A wrong contact is refused with the
+    reason and the attempt is remembered, so nobody retypes it.
+    Linking notifies the person immediately and they can sell at once.
+  - A contact that is already on the register under another name is
+    refused with that name, instead of failing on a database constraint.
+  - My Workplaces, when empty, now tells the staff member exactly what to
+    do: send the business your @username (shown, so it can be copied) and
+    ask them to tap Link next to your name.
 
-  A destructive button now looks destructive: the --danger token existed,
-  the .btn.danger variant did not.
+  SECURITY (api.zip): node-forge 1.3.1 -> 1.4.0, clearing the one
+  high-severity advisory npm audit reported. It signs Apple Wallet
+  passes, so it was verified rather than assumed — the pass tests build a
+  real certificate, run the real signing pipeline and parse the PKCS#7
+  back. npm audit now reports 0 vulnerabilities.
 
-  Event Scanners: the rename now also reaches the offline fallback
-  catalogue the app uses when it cannot read the server.
-
-  SIMPLICITY.md gains the two new rules, and
-  api/test/app-navigation-simplicity.test.js enforces them — it fails if
-  a browser prompt returns, if the dialog is ever built on openModal (it
-  would close the sheet underneath), if Escape stops being captured, if a
-  service is claimed by two groups, or if "More" stops being the
-  catch-all.
-
-Previous builds: v343 the ticketing hub and the simplicity rules; v342
-TitoKids, one door per feature, and the CSP header fix.
-
-Proven: full API suite 466/466, TitoKids live harness 9/9, bundle boots
-clean in Chromium, the grouped Services screen rendered from the real
-catalogue and read back group by group, and the dialog verified opening
-over a sheet and leaving it intact on cancel.
+Proven: verification/business-staff-live.js 10/10 — including the repair
+end to end: unlinked entry, wrong contact refused with a reason and
+remembered, right contact links and notifies, the workplace appears, the
+newly linked person takes a real sale, and relinking again is a no-op
+rather than a second notification. Full API suite 466/466, bundle boots
+clean, dialog contract 12/12.
 
 Migrations to run: none — tables create themselves on first use (also in
 schema.sql for fresh installs).
 
-Operational reminders (unchanged):
+Operational reminders:
+  npm i --omit=dev after extracting api.zip, then
+  npm audit --omit=dev            (expect: found 0 vulnerabilities)
+  npm install-scripts approve bcrypt && npm rebuild bcrypt   (optional,
+    restores the native bcrypt build; bcryptjs is a safe fallback)
+  pm2 restart titopay-api --update-env
   node scripts/ensure-revenue-wallet.js --create   (once, on production)
-  npm install after extracting api.zip (node-forge dependency)
   Email Centre SMTP + titopay-email-worker must be running for mail delivery.
-  PWA: open the app, fully close it, open it again (the service worker
-  activates on the second launch).
+  PWA: open the app, fully close it, open it again.

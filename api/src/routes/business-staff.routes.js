@@ -9,7 +9,8 @@ const {
   removeStaff,
   listMyWorkplaces,
   workplaceProducts,
-  staffSale
+  staffSale,
+  relinkStaff
 } = require("../services/business-staff-service");
 
 // Owner side — mounted at /v1/business/staff, the contract the PWA's Staff
@@ -28,6 +29,15 @@ ownerRouter.get("/", async (req, res, next) => {
 ownerRouter.post("/", async (req, res, next) => {
   try {
     res.status(201).json({ ok: true, ...(await addStaff(req.auth.userId, req.body || {})) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+ownerRouter.post("/:id/relink", async (req, res, next) => {
+  try {
+    const memberId = requireUuid(req.params.id, "Staff member ID");
+    res.json({ ok: true, ...(await relinkStaff(req.auth.userId, memberId, req.body || {})) });
   } catch (error) {
     next(error);
   }

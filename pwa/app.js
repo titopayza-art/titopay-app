@@ -3423,6 +3423,10 @@ async function handleAction(action, actionElement = null) {
     openTipQrModal();
     return;
   }
+  if (action.startsWith("staff-relink:")) {
+    await relinkBusinessStaff(action.slice("staff-relink:".length));
+    return;
+  }
   if (action.startsWith("staff-remove:")) {
     await removeBusinessStaffMember(action.slice("staff-remove:".length));
     return;
@@ -13053,7 +13057,7 @@ async function openMyWorkplacesModal() {
     state.myWorkplaces = items;
     if (!host) return;
     if (!items.length) {
-      host.innerHTML = `<section class="empty-state compact-state">${icon("staff-badge")}<strong>No workplaces yet</strong><p>When a business adds you to their staff with your TitoPay details, it appears here and you can start selling for them straight away.</p></section>`;
+      host.innerHTML = `<section class="empty-state compact-state">${icon("staff-badge")}<strong>No workplaces yet</strong><p>When a business adds you to their staff with your TitoPay details, it appears here and you can start selling for them straight away.</p><p class="field-hint">Been added already? The business has to use the details you sign in with. Send them your @username${state.user?.username ? ` — <strong>@${esc(state.user.username)}</strong>` : ""} and ask them to tap <strong>Link</strong> next to your name on their Staff register.</p></section>`;
       return;
     }
     host.innerHTML = items.map((workplace) => `
@@ -13479,18 +13483,55 @@ async function submitTitoKidsRequest(data) {
   showToast("Sent — you’ll be told the moment they answer.");
   await refreshTitoKidsHome();
 }
+// A register entry only reaches a person when the contact matches an active
+// TitoPay account. When it does not, the entry is still saved but nothing is
+// sent and My Workplaces stays empty on their phone — so the row has to SAY so.
+// Being on the list and being able to sell are two different things, and the
+// owner is the only one who can tell them apart.
 function businessStaffRow(member) {
   const initial = String(member.fullName || "?").trim().charAt(0).toUpperCase() || "?";
+  // An entry saved on the device (offline fallback) has no linked flag at all;
+  // only a server row can be known to be unlinked.
+  const known = Object.prototype.hasOwnProperty.call(member, "linked");
+  const linked = Boolean(member.linked);
   return `
-    <div class="staff-row">
+    <div class="staff-row${known && !linked ? " staff-row-unlinked" : ""}">
       <span class="icon-bubble" aria-hidden="true">${esc(initial)}</span>
       <div class="staff-row-copy">
         <strong>${esc(member.fullName)}</strong>
         <small>${esc([member.role, member.contact].filter(Boolean).join(" · "))}</small>
+        ${known ? (linked
+          ? `<small class="staff-link-state is-linked">${icon("check-circle")} Linked${member.username ? ` to @${esc(member.username)}` : ""} — can sell for you</small>`
+          : `<small class="staff-link-state is-unlinked">${icon("shield")} Not linked — no TitoPay account matches this contact, so they were not notified and cannot sell yet</small>`) : ""}
       </div>
-      <button class="icon-btn staff-row-remove" type="button" data-action="staff-remove:${esc(member.id)}" aria-label="Remove ${esc(member.fullName)} from the staff register">${icon("x")}</button>
+      <div class="staff-row-actions">
+        ${known && !linked ? `<button class="btn ghost mini" type="button" data-action="staff-relink:${esc(member.id)}">${icon("refresh")} Link</button>` : ""}
+        <button class="icon-btn staff-row-remove" type="button" data-action="staff-remove:${esc(member.id)}" aria-label="Remove ${esc(member.fullName)} from the staff register">${icon("x")}</button>
+      </div>
     </div>
   `;
+}
+// Try the link again — on the stored contact, or on a corrected one. Also the
+// flow for "they have joined TitoPay since I added them".
+async function relinkBusinessStaff(memberId) {
+  const member = (state.businessStaff || []).find((item) => item.id === memberId);
+  const contact = await askForValue({
+    title: "Link to their TitoPay",
+    body: `Check the details ${member ? member.fullName : "this person"} uses to sign in to TitoPay. Their exact @username is the most reliable.`,
+    label: "Cellphone, @username or email",
+    value: member ? member.contact || "" : "",
+    confirmLabel: "Link"
+  });
+  if (contact === null) return;
+  try {
+    const result = await api(`/v1/business/staff/${encodeURIComponent(memberId)}/relink`, {
+      method: "POST", body: { contact: String(contact).trim() }
+    });
+    showToast(result.message || "Linked.");
+  } catch (error) {
+    showToast(friendlyFormError(error, "staff"), "error");
+  }
+  await openBusinessStaffModal();
 }
 async function openBusinessStaffModal() {
   let members = null;
@@ -13503,6 +13544,8 @@ async function openBusinessStaffModal() {
     members = readLocalBusinessStaff();
   }
   state.businessStaffServerMode = serverMode;
+  // Kept so the relink flow can pre-fill the contact that did not match.
+  state.businessStaff = members;
   openModal(`
     <div class="modal-head">
       <div>

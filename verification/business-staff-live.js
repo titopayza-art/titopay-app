@@ -155,6 +155,45 @@ async function cleanup() {
     assert.ok(/cannot sell/i.test(unlinked.message), "the response says they cannot sell yet");
     ok("a register entry without a TitoPay account is saved and honestly labelled");
 
+    // 10. THE REPAIR. This is the reported fault: added as a manager, nothing
+    // appeared. The entry was saved unlinked, and until now there was no way
+    // back from that except deleting and retyping.
+    const paper = (await staff.listStaff(ids.biz)).find((m) => m.fullName === "Paper Person");
+    assert.equal(paper.linked, false, "the register itself reports the unlinked state");
+    assert.equal((await staff.listMyWorkplaces(ids.stranger)).length, 0, "nothing on their phone yet");
+
+    // A wrong contact is refused with a reason, and the corrected contact is
+    // kept so the owner is not retyping it on every attempt.
+    let refusedWith = "";
+    try { await staff.relinkStaff(ids.biz, paper.id, { contact: "@nobody_here_at_all" }); }
+    catch (error) { refusedWith = error.message; }
+    assert.match(refusedWith, /No active TitoPay account matches/, "the refusal says why");
+    assert.equal((await staff.listStaff(ids.biz)).find((m) => m.id === paper.id).contact, "@nobody_here_at_all",
+      "the attempted contact is kept, so the next try starts from it");
+
+    // The right one links, notifies, and the workplace appears.
+    const relinked = await staff.relinkStaff(ids.biz, paper.id, { contact: `@${TAG}_stranger` });
+    assert.equal(relinked.linked, true);
+    assert.match(relinked.message, /notified/i);
+    const nowWorks = await staff.listMyWorkplaces(ids.stranger);
+    assert.equal(nowWorks.length, 1, "My Workplaces now shows the business");
+    assert.equal(nowWorks[0].role, "Assistant", "with the role they were given");
+    const { rows: linkAlerts } = await pool.query(
+      "SELECT * FROM notifications WHERE user_id = $1 AND notification_type = 'business_staff_added'", [ids.stranger]);
+    assert.equal(linkAlerts.length, 1, "the person is told the moment the link lands");
+
+    // And they can actually sell now — the whole point of being linked.
+    const proofSale = await staff.staffSale(ids.stranger, ids.biz, { amount: 25 });
+    assert.ok(proofSale, "a newly linked staff member can take a sale");
+
+    // Relinking again is a no-op, not a duplicate notification.
+    const again = await staff.relinkStaff(ids.biz, paper.id, { contact: `@${TAG}_stranger` });
+    assert.match(again.message, /already linked/i);
+    const { rows: stillOne } = await pool.query(
+      "SELECT * FROM notifications WHERE user_id = $1 AND notification_type = 'business_staff_added'", [ids.stranger]);
+    assert.equal(stillOne.length, 1, "no second notification for the same link");
+    ok("relink: wrong contact refused with a reason and remembered, right one links + notifies + can sell, repeat is a no-op");
+
     console.log("\n" + "=".repeat(80));
     console.log(`  ALL ${passed} CHECKS PASSED — staff is real: register, workplaces, till sales.`);
     console.log("=".repeat(80) + "\n");
