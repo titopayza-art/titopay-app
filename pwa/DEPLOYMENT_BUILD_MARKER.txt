@@ -1,9 +1,12 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v339 (titopay-pwa-v339)
+PWA bundle: v340 (titopay-pwa-v340)
 Admin console: admin-console-v81
 
 This build:
+  - Tour styling moved from inline attributes into stylesheet classes
+    (.tour-*), so the full-screen layout renders identically even where
+    an older cached index.html still strips inline styles.
   - Tour: the ghost close bubble is gone for real. It was the sheet the
     tour was opened FROM bleeding through — the tour now removes any
     layer beneath it and sits on a fully opaque ground above everything.

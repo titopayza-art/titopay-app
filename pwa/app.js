@@ -19671,53 +19671,33 @@ function howItWorksSteps() {
 function openHowItWorksModal() {
   const steps = howItWorksSteps();
   // The tour owns the screen. Any sheet it was opened from is removed
-  // outright first — a stale layer underneath used to bleed its close
-  // button through the top of the tour.
+  // outright first, and every visual lives in stylesheet classes so the
+  // layout holds even where inline style attributes are stripped.
   document.querySelectorAll(".modal-backdrop").forEach((element) => element.remove());
   state.modalActionStack = [];
   openModal(`
-    <div class="guide" data-guide data-guide-step="0" style="border-radius:0;padding:24px 22px 20px;position:relative;overflow:hidden">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <div class="guide tour-canvas" data-guide data-guide-step="0">
+      <div class="tour-head">
         <div>
-          <p class="eyebrow" style="margin:0">Guided Tour</p>
-          <h2 style="margin:2px 0 2px">How TitoPay works</h2>
-          <p class="lead" style="margin:0;font-size:13px">${steps.length} quick steps through the app.</p>
+          <p class="eyebrow">Guided Tour</p>
+          <h2>How TitoPay works</h2>
+          <p class="lead">${steps.length} quick steps through the app.</p>
         </div>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
-      <div class="guide-progress" aria-hidden="true" style="display:flex;gap:5px;justify-content:center;margin:18px 0 4px">
-        ${steps.map(() => `<span style="width:7px;height:7px;border-radius:50%;background:#c9d7f2;transition:background 0.2s,transform 0.2s"></span>`).join("")}
-      </div>
-      <article class="guide-step" data-guide-body style="text-align:center;padding:8px 4px 4px;position:relative;flex:1;display:flex;flex-direction:column;justify-content:center"></article>
-      <p class="guide-count muted" data-guide-count aria-live="polite" style="text-align:center;margin:2px 0 10px;font-size:12px"></p>
-      <div class="guide-nav" style="display:flex;gap:10px">
-        <button class="btn secondary" type="button" data-action="guide-back" data-guide-back style="flex:1">${icon("arrow-left")} Back</button>
-        <button class="btn primary" type="button" data-action="guide-next" data-guide-next style="flex:1.4">Next</button>
+      <div class="guide-progress tour-dots" aria-hidden="true">${steps.map(() => "<span></span>").join("")}</div>
+      <article class="tour-body" data-guide-body></article>
+      <p class="tour-count muted" data-guide-count aria-live="polite"></p>
+      <div class="tour-nav">
+        <button class="btn secondary" type="button" data-action="guide-back" data-guide-back>${icon("arrow-left")} Back</button>
+        <button class="btn primary" type="button" data-action="guide-next" data-guide-next>Next</button>
       </div>
     </div>
   `);
-  // Full screen on the app's own light ground - no white sheet below, no
-  // second colour world.
   const tourCard = document.querySelector(".modal-backdrop .modal-card");
   if (tourCard) {
-    tourCard.style.minHeight = "100dvh";
-    tourCard.style.maxWidth = "none";
-    tourCard.style.width = "100%";
-    tourCard.style.margin = "0";
-    tourCard.style.borderRadius = "0";
-    tourCard.style.background = "var(--soft, #eef4fe)";
-    const backdrop = tourCard.closest(".modal-backdrop");
-    if (backdrop) {
-      backdrop.style.background = "var(--soft, #eef4fe)";
-      backdrop.style.backdropFilter = "none";
-      backdrop.style.zIndex = "75";
-    }
-    const guide = tourCard.querySelector("[data-guide]");
-    if (guide) {
-      guide.style.minHeight = "100dvh";
-      guide.style.display = "flex";
-      guide.style.flexDirection = "column";
-    }
+    tourCard.classList.add("tour-card");
+    tourCard.closest(".modal-backdrop")?.classList.add("tour-backdrop");
   }
   paintHowItWorksStep();
 }
@@ -19729,26 +19709,23 @@ function paintHowItWorksStep() {
   const step = steps[index];
   const body = container.querySelector("[data-guide-body]");
   body.innerHTML = `
-    <span aria-hidden="true" style="position:absolute;top:4px;right:2px;font-size:110px;font-weight:800;color:rgba(16,32,63,0.05);line-height:1;user-select:none">${String(index + 1).padStart(2, "0")}</span>
-    <span class="icon-bubble" style="width:84px;height:84px;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;transform:scale(1.25)">${icon(step.icon)}</span>
-    <h3 style="margin:0 0 12px;font-size:27px;letter-spacing:-0.4px">${esc(step.title)}</h3>
-    <p style="margin:0 auto 22px;max-width:36ch;font-size:16.5px;line-height:1.6;color:var(--muted)">${esc(step.body)}</p>
-    <span class="guide-hint" style="font-size:14px;padding:10px 16px">${icon("check-circle")} Find it: ${esc(step.hint)}</span>
+    <span class="tour-num" aria-hidden="true">${String(index + 1).padStart(2, "0")}</span>
+    <span class="icon-bubble tour-icon">${icon(step.icon)}</span>
+    <h3 class="tour-title">${esc(step.title)}</h3>
+    <p class="tour-copy">${esc(step.body)}</p>
+    <span class="guide-hint tour-hint">${icon("check-circle")} Find it: ${esc(step.hint)}</span>
   `;
   if (!prefersReducedMotion()) {
     body.classList.remove("guide-anim");
     void body.offsetWidth;
     body.classList.add("guide-anim");
   }
-  container.querySelectorAll(".guide-progress span").forEach((dot, dotIndex) => {
-    const active = dotIndex === index;
-    dot.style.background = active ? "var(--blue, #0a4dff)" : dotIndex < index ? "#8fb3ff" : "#c9d7f2";
-    dot.style.transform = active ? "scale(1.35)" : "scale(1)";
+  container.querySelectorAll(".tour-dots span").forEach((dot, dotIndex) => {
+    dot.classList.toggle("is-active", dotIndex === index);
+    dot.classList.toggle("is-done", dotIndex < index);
   });
   container.querySelector("[data-guide-count]").textContent = `Step ${index + 1} of ${steps.length}`;
-  const back = container.querySelector("[data-guide-back]");
-  back.disabled = index === 0;
-  back.style.opacity = index === 0 ? "0.5" : "1";
+  container.querySelector("[data-guide-back]").disabled = index === 0;
   container.querySelector("[data-guide-next]").innerHTML = index === steps.length - 1 ? `${icon("check-circle")} Done` : "Next";
 }
 function stepHowItWorksGuide(delta) {

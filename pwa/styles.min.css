@@ -5,3 +5,28 @@
 /* Rounded media always clips (a scaled photo used to poke square corners past the radius), and the opt-in blue chat canvas. */
 .avatar, .profile-avatar, .chat-contact-avatar { overflow: hidden; }
 .chat-blue-on { background: linear-gradient(180deg, #dfeaff 0%, #eef4ff 100%) !important; border-radius: var(--radius-control, 16px); }
+
+/* Guided tour - full-screen layout as real classes, so the tour renders
+   correctly even under a CSP that strips inline style attributes. */
+.tour-canvas { border-radius: 0; padding: 24px 22px 20px; position: relative; overflow: hidden; min-height: 100dvh; display: flex; flex-direction: column; }
+.tour-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.tour-head .eyebrow { margin: 0; }
+.tour-head h2 { margin: 2px 0; }
+.tour-head .lead { margin: 0; font-size: 13px; }
+.tour-dots { display: flex; gap: 5px; justify-content: center; margin: 18px 0 4px; }
+.tour-dots span { width: 7px; height: 7px; border-radius: 50%; background: #c9d7f2; transition: background 0.2s, transform 0.2s; }
+.tour-dots span.is-active { background: var(--blue, #0a4dff); transform: scale(1.35); }
+.tour-dots span.is-done { background: #8fb3ff; }
+.tour-body { text-align: center; padding: 8px 4px 4px; position: relative; flex: 1; display: flex; flex-direction: column; justify-content: center; }
+.tour-num { position: absolute; top: 4px; right: 2px; font-size: 110px; font-weight: 800; color: rgba(16, 32, 63, 0.05); line-height: 1; user-select: none; }
+.tour-icon { width: 84px; height: 84px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; transform: scale(1.25); }
+.tour-title { margin: 0 0 12px; font-size: 27px; letter-spacing: -0.4px; }
+.tour-copy { margin: 0 auto 22px; max-width: 36ch; font-size: 16.5px; line-height: 1.6; color: var(--muted); }
+.tour-hint { font-size: 14px; padding: 10px 16px; }
+.tour-count { text-align: center; margin: 2px 0 10px; font-size: 12px; }
+.tour-nav { display: flex; gap: 10px; }
+.tour-nav [data-guide-back] { flex: 1; }
+.tour-nav [data-guide-back]:disabled { opacity: 0.5; }
+.tour-nav [data-guide-next] { flex: 1.4; }
+.modal-card.tour-card { min-height: 100dvh; max-width: none; width: 100%; margin: 0; border-radius: 0; background: var(--soft, #eef4fe); }
+.modal-backdrop.tour-backdrop { background: var(--soft, #eef4fe); backdrop-filter: none; z-index: 75; }
