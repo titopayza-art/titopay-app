@@ -1391,23 +1391,252 @@ function openPurchaseModal(service) {
 function openPaymentRequestModal(service) {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Payment Request</p><h2>Request funds</h2><p class="lead">Create a one-time or recurring request by username, phone number or email.</p></div>
+      <div><p class="eyebrow">Payment Request</p><h2>Request funds</h2><p class="lead">Ask a TitoPay user for money. They pay or decline it in their app, and nothing moves until they choose.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form" data-form="transaction">
+    <section data-payreq-inbox aria-live="polite"></section>
+    <form class="form-grid stable-service-form" data-form="payment-request">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       ${recipientMethodField("auto")}
       <div class="field"><label>Recipient</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
       ${contactSuggestions()}
       <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Description</label><textarea name="description" placeholder="What is the request for?"></textarea></div>
-      <div class="field"><label>Due date</label><input name="dueDate" type="date"></div>
-      <div class="field"><label>Request type</label><select name="requestType"><option>One-time request</option><option>Recurring request</option></select></div>
-      <div class="field"><label>Recurring frequency</label><select name="recurringFrequency"><option>Not recurring</option><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select></div>
-      <div class="field"><label>Recurring end date</label><input name="recurringEndDate" type="date"></div>
+      <div class="field"><label>Description</label><textarea name="description" maxlength="240" placeholder="What is the request for?"></textarea></div>
+      <div class="field"><label>Due date <span class="field-optional">optional</span></label><input name="dueDate" type="date"></div>
+      <div class="field"><label>Request type</label><select name="requestType" data-payreq-type><option>One-time request</option><option>Recurring request</option></select></div>
+      <div class="field hidden" data-payreq-recurring><label>Recurring frequency</label><select name="recurringFrequency"><option>Weekly</option><option>Monthly</option><option>Quarterly</option></select></div>
+      <div class="field hidden" data-payreq-recurring>
+        <label>Recurring end date <span class="field-optional">optional</span></label><input name="recurringEndDate" type="date">
+        <small class="field-hint">The next request in a series is only sent after the current one is paid, so a series can never pile up.</small>
+      </div>
       <button class="btn primary" type="submit">${icon("download")} Send request</button>
     </form>
+    <button class="btn ghost" type="button" data-action="payment-requests">${icon("list")} View my requests</button>
   `);
+  const typePicker = document.querySelector("[data-payreq-type]");
+  if (typePicker) typePicker.addEventListener("change", () => {
+    const recurring = /recur/i.test(typePicker.value);
+    document.querySelectorAll("[data-payreq-recurring]").forEach((field) => field.classList.toggle("hidden", !recurring));
+  });
+  loadPaymentRequestInbox();
+}
+// The requests waiting for the customer are surfaced inside the same door
+// they would use to make one, so an incoming request is impossible to miss on
+// the way to making an outgoing one.
+async function loadPaymentRequestInbox() {
+  try {
+    const data = await api("/v1/payments/requests");
+    state.paymentRequests = data;
+    const host = document.querySelector("[data-payreq-inbox]");
+    if (!host) return;
+    const waiting = (data.incoming || []).filter((item) => item.status === "pending");
+    if (!waiting.length) return;
+    host.innerHTML = `
+      <button class="btn ghost payreq-waiting" type="button" data-action="payment-requests">
+        ${icon("bell")} ${waiting.length === 1 ? "1 request is waiting for you" : `${waiting.length} requests are waiting for you`} - view and answer
+      </button>`;
+  } catch {
+    // The banner is a convenience. The form works without it.
+  }
+}
+function paymentRequestStatusChip(status) {
+  const tone = status === "paid" ? " settled" : status === "pending" ? " warn" : "";
+  const label = { pending: "Waiting", paid: "Paid", declined: "Declined", cancelled: "Cancelled" }[status] || status;
+  return `<span class="sv-chip${tone}">${esc(label)}</span>`;
+}
+function paymentRequestRowHtml(item, role) {
+  const other = role === "incoming" ? item.requester : item.payer;
+  const name = other?.name || (other?.username ? displayUsername(other.username) : "TitoPay user");
+  const what = item.description || item.splitLabel || item.reference;
+  const due = item.dueDate && item.status === "pending" ? ` · due ${item.dueDate}` : "";
+  const note = item.declineNote ? ` · "${item.declineNote}"` : "";
+  const trailing = item.status !== "pending"
+    ? paymentRequestStatusChip(item.status)
+    : role === "incoming"
+      ? `<span class="payreq-actions"><button class="btn primary" type="button" data-action="payreq-pay:${esc(item.id)}">Pay ${esc(money(item.amount))}</button><button class="btn ghost" type="button" data-action="payreq-decline:${esc(item.id)}">Decline</button></span>`
+      : `<span class="payreq-actions">${paymentRequestStatusChip(item.status)}<button class="btn ghost" type="button" data-action="payreq-cancel:${esc(item.id)}">Cancel</button></span>`;
+  return `
+    <article class="activity-item payreq-item">
+      <span class="icon-bubble">${icon(role === "incoming" ? "download" : "send")}</span>
+      <div>
+        <p><strong>${esc(role === "incoming" ? `${name} asks ${money(item.amount)}` : `${money(item.amount)} from ${name}`)}</strong></p>
+        <small>${esc(what)}${esc(due)}${esc(note)}</small>
+      </div>
+      ${trailing}
+    </article>`;
+}
+async function openPaymentRequestsModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Payment Request</p><h2>Requests</h2><p class="lead">Loading your requests…</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>`);
+  let data;
+  try {
+    data = await api("/v1/payments/requests");
+  } catch (error) {
+    showToast(error.message || "Could not load requests.", "error");
+    return;
+  }
+  state.paymentRequests = data;
+  const incoming = data.incoming || [];
+  const outgoing = data.outgoing || [];
+  const waiting = incoming.filter((item) => item.status === "pending");
+  const answered = incoming.filter((item) => item.status !== "pending").slice(0, 10);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Payment Request</p><h2>Requests</h2><p class="lead">Requests you have been sent, and requests you have made. Nothing leaves your wallet unless you press Pay.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="modal-section">
+      <h3>Waiting for you${waiting.length ? ` (${waiting.length})` : ""}</h3>
+      ${waiting.length
+        ? waiting.map((item) => paymentRequestRowHtml(item, "incoming")).join("")
+        : `<p class="field-hint">Nobody is asking you for money right now.</p>`}
+    </section>
+    <section class="modal-section">
+      <h3>Your requests</h3>
+      ${outgoing.length
+        ? outgoing.slice(0, 20).map((item) => paymentRequestRowHtml(item, "outgoing")).join("")
+        : `<p class="field-hint">You have not requested money from anyone yet. Use Request funds or Split a bill to start.</p>`}
+    </section>
+    ${answered.length ? `
+      <section class="modal-section">
+        <h3>Answered</h3>
+        ${answered.map((item) => paymentRequestRowHtml(item, "incoming")).join("")}
+      </section>` : ""}
+  `);
+}
+async function answerPaymentRequest(requestId, kind) {
+  const cached = state.paymentRequests || {};
+  const item = [...(cached.incoming || []), ...(cached.outgoing || [])].find((entry) => entry.id === requestId);
+  if (!item) {
+    await openPaymentRequestsModal();
+    return;
+  }
+  const requesterName = item.requester?.name || displayUsername(item.requester?.username || "") || "the requester";
+  if (kind === "pay") {
+    if (isWalletLocked()) {
+      showToast("Wallet locked. Unlock your wallet before paying.", "error");
+      return;
+    }
+    const confirmed = await askToConfirm({
+      title: `Pay ${money(item.amount)}?`,
+      body: `${money(item.amount)} goes to ${requesterName} from your wallet now${item.description ? ` for "${item.description}"` : ""}. Wallet transfers carry no fee.`,
+      confirmLabel: "Pay now"
+    });
+    if (!confirmed) return;
+    try {
+      await api(`/v1/payments/requests/${encodeURIComponent(requestId)}/pay`, { method: "POST" });
+      showToast(`Paid. ${requesterName} has been notified.`);
+      refreshData().catch(() => {});
+    } catch (error) {
+      showToast(error.message || "Payment failed. Nothing was taken.", "error");
+    }
+  }
+  if (kind === "decline") {
+    const confirmed = await askToConfirm({
+      title: "Decline this request?",
+      body: `${requesterName} is told it was declined. No money moves, and they cannot charge you.`,
+      confirmLabel: "Decline request"
+    });
+    if (!confirmed) return;
+    try {
+      await api(`/v1/payments/requests/${encodeURIComponent(requestId)}/decline`, { method: "POST", body: {} });
+      showToast("Declined. No money moved.");
+    } catch (error) {
+      showToast(error.message || "Could not decline.", "error");
+    }
+  }
+  if (kind === "cancel") {
+    const confirmed = await askToConfirm({
+      title: "Cancel this request?",
+      body: "The other person is told the request is withdrawn and nothing is owed.",
+      confirmLabel: "Cancel request"
+    });
+    if (!confirmed) return;
+    try {
+      await api(`/v1/payments/requests/${encodeURIComponent(requestId)}/cancel`, { method: "POST" });
+      showToast("Request cancelled.");
+    } catch (error) {
+      showToast(error.message || "Could not cancel.", "error");
+    }
+  }
+  await openPaymentRequestsModal();
+}
+async function submitPaymentRequestForm(form, data) {
+  const amount = Number(String(data.amount || "").replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount.");
+  const recipient = normalizeRecipientInput(data.recipient, data.recipientMethod || "auto");
+  const result = await api("/v1/payments/requests", {
+    method: "POST",
+    body: {
+      recipient,
+      amount,
+      description: data.description || "",
+      dueDate: data.dueDate || null,
+      requestType: data.requestType || "One-time request",
+      recurringFrequency: data.recurringFrequency || "",
+      recurringEndDate: data.recurringEndDate || null
+    }
+  });
+  const payerName = result.payer?.name || recipient;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Payment Request</p><h2>Request sent</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="empty-state">
+      <p><strong>${esc(payerName)}</strong> has been asked for <strong>${esc(money(result.amount))}</strong>.</p>
+      <p>The request is in their app and their email. You get a notification the moment they pay or decline, and you can cancel it any time before then. Reference ${esc(result.reference)}.</p>
+    </div>
+    <button class="btn primary" type="button" data-action="payment-requests">${icon("list")} View my requests</button>
+    <button class="btn ghost" type="button" data-close>Done</button>
+  `);
+  showToast("Request sent.");
+}
+async function submitBillSplitForm(form, data) {
+  const total = Number(String(data.amount || "").replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(total) || total <= 0) throw new Error("Enter the total bill.");
+  const method = data.splitMethod || BILL_SPLIT_EQUAL;
+  const equal = method === BILL_SPLIT_EQUAL;
+  const rows = [...form.querySelectorAll("[data-split-participant]")]
+    .map((row) => ({
+      identifier: String(row.querySelector("[data-split-person]")?.value || "").trim(),
+      manual: Number(String(row.querySelector("[data-split-manual]")?.value || "").replace(/[^\d.]/g, ""))
+    }))
+    .filter((row) => row.identifier);
+  if (!rows.length) throw new Error("Add at least one participant.");
+  const shares = splitEvenly(total, rows.length + 1);
+  const participants = rows.map((row, index) => ({
+    identifier: normalizeRecipientInput(row.identifier, data.participantMethod || "auto"),
+    amount: equal ? shares[index + 1] : row.manual
+  }));
+  if (participants.some((person) => !Number.isFinite(person.amount) || person.amount <= 0)) {
+    throw new Error(equal ? "Enter the total bill." : "Enter an amount for every participant.");
+  }
+  const result = await api("/v1/payments/requests/split", {
+    method: "POST",
+    body: { reference: data.reference, amount: total, splitMethod: method, participants }
+  });
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Bill Split</p><h2>Requests sent</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="empty-state">
+      <p>Everyone in <strong>${esc(result.label)}</strong> has been sent their share.</p>
+    </div>
+    ${(result.requests || []).map((entry) => `
+      <article class="activity-item">
+        <span class="icon-bubble">${icon("scissors")}</span>
+        <div><p><strong>${esc(entry.payer?.name || entry.payer?.username || "Participant")}</strong></p><small>Asked for ${esc(money(entry.amount))} · ${esc(entry.reference)}</small></div>
+      </article>`).join("")}
+    <p class="field-hint">Each person approves their own share in their app. You get a notification for every answer, and you can follow it all under View my requests.</p>
+    <button class="btn primary" type="button" data-action="payment-requests">${icon("list")} View my requests</button>
+    <button class="btn ghost" type="button" data-close>Done</button>
+  `);
+  showToast("Split requests sent.");
 }
 function openRefundModal(service) {
   openModal(`
@@ -2295,6 +2524,8 @@ async function onSubmit(event) {
     else if (form.dataset.form === "stockvel-withdrawal") await submitStockvelWithdrawal(data);
     else if (form.dataset.form === "stockvel-close") await submitStockvelClose(data);
     else if (form.dataset.form === "transaction") await processTransaction(data);
+    if (form.dataset.form === "payment-request") await submitPaymentRequestForm(form, data);
+    if (form.dataset.form === "bill-split") await submitBillSplitForm(form, data);
     if (form.dataset.form === "qr-pay") await processQrPayment(data);
     if (form.dataset.form === "receive") await generateQr(data);
     if (form.dataset.form === "merchant-sale-note") saveMerchantSaleNote(data);
@@ -3979,6 +4210,18 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "split-add-participant") {
     addBillSplitParticipant();
+  }
+  if (action === "payment-requests") {
+    await openPaymentRequestsModal();
+  }
+  if (action.startsWith("payreq-pay:")) {
+    await answerPaymentRequest(action.slice("payreq-pay:".length), "pay");
+  }
+  if (action.startsWith("payreq-decline:")) {
+    await answerPaymentRequest(action.slice("payreq-decline:".length), "decline");
+  }
+  if (action.startsWith("payreq-cancel:")) {
+    await answerPaymentRequest(action.slice("payreq-cancel:".length), "cancel");
   }
   if (action === "invoice-link") {
     await shareBusinessDocument();
@@ -11251,6 +11494,10 @@ function billSplitParticipantRow(index = 0) {
         <input id="${id}" data-split-person type="text" autocomplete="off" placeholder="@username, +27 cellphone or email">
       </div>
       <p class="split-share" data-split-share aria-live="off">${esc(money(0))}</p>
+      <div class="field split-manual-field hidden" data-split-manual-wrap>
+        <label class="visually-hidden" for="${id}-amount">Amount for participant ${index + 1}</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="${id}-amount" data-split-manual inputmode="decimal" placeholder="0.00"></div>
+      </div>
       <button class="icon-btn split-remove" type="button" data-split-remove aria-label="Remove participant ${index + 1}">${icon("x")}</button>
     </div>`;
 }
@@ -11268,11 +11515,24 @@ function syncBillSplit() {
   // participants plus yourself.
   const shares = equal ? splitEvenly(total, named.length + 1) : [];
   let cursor = 1;
+  let manualSum = 0;
+  let manualMissing = 0;
   people.forEach((person) => {
     const cell = person.row.querySelector("[data-split-share]");
+    const manualWrap = person.row.querySelector("[data-split-manual-wrap]");
+    if (manualWrap) manualWrap.classList.toggle("hidden", equal);
+    if (cell) cell.classList.toggle("hidden", !equal);
+    if (!equal) {
+      const value = Number(String(person.row.querySelector("[data-split-manual]")?.value || "").replace(/[^\d.]/g, ""));
+      if (person.value) {
+        if (Number.isFinite(value) && value > 0) manualSum = Math.round((manualSum + value) * 100) / 100;
+        else manualMissing += 1;
+      }
+      return;
+    }
     if (!cell) return;
     if (!person.value) cell.textContent = "";
-    else if (!equal || !total) cell.textContent = "";
+    else if (!total) cell.textContent = "";
     else {
       cell.textContent = money(shares[cursor] || 0);
       cursor += 1;
@@ -11304,17 +11564,24 @@ function syncBillSplit() {
           ? "The bill does not divide evenly. Your share carries the extra cent so every share still adds up to the full bill."
           : "Each participant is sent a request for their share. They approve it themselves."}</p>`;
     } else {
+      const over = manualSum > total + 0.005;
       summary.innerHTML = `
         <div class="split-figures">
           <div><span>Split between</span><strong>${named.length + 1} people</strong></div>
-          <div><span>Total bill</span><strong>${esc(money(total))}</strong></div>
+          <div><span>Assigned</span><strong>${esc(money(manualSum))} of ${esc(money(total))}</strong></div>
+          <div><span>Your share</span><strong>${esc(money(Math.max(total - manualSum, 0)))}</strong></div>
         </div>
-        <p class="field-hint">TitoPay cannot calculate ${esc(method.toLowerCase())} shares in the app yet. Each participant is sent a request carrying the bill description, and the amounts are agreed between you.</p>`;
+        <p class="field-hint">${over
+          ? `The amounts add up to more than the bill. Take ${esc(money(manualSum - total))} off before sending.`
+          : manualMissing
+            ? "Enter an amount next to each participant. Whatever is not assigned is your share."
+            : "Each participant is sent a request for exactly the amount next to their name. Whatever is left is your share."}</p>`;
     }
   }
 
   const submit = form.querySelector('button[type="submit"]');
-  if (submit) submit.disabled = !named.length || !total;
+  const manualBlocked = !equal && (manualMissing > 0 || manualSum <= 0 || manualSum > total + 0.005);
+  if (submit) submit.disabled = !named.length || !total || manualBlocked;
 }
 function addBillSplitParticipant() {
   const host = document.querySelector("[data-split-participants]");
@@ -11341,9 +11608,8 @@ function openBillSplitModal(service) {
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid stable-service-form split-form" data-form="transaction" data-split-form>
+    <form class="form-grid stable-service-form split-form" data-form="bill-split" data-split-form>
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
-      <input type="hidden" name="recipient" value="Bill Split Participants">
       <input type="hidden" name="participants" value="">
 
       <div class="field">
@@ -22100,6 +22366,9 @@ function notificationCategory(item = {}) {
   // ticketId of an EVENT ticket satisfied a test written for Customer Care
   // references. Only ticketRef (a support reference) may mean Messages now.
   if (serverType === "ticket_purchase" || serverType === "ticket_refund") return "payments";
+  // A payment request is money being asked for or answered - it lives with
+  // Payments, and tapping it should lead to the Requests screen.
+  if (serverType.startsWith("payment_request")) return "payments";
   if (item.critical || SECURITY_NOTIFICATION.test(serverType)) return "security";
   if (/chat|support|message/.test(serverType) || metadata.ticketRef) return "messages";
   return "account";
@@ -23240,7 +23509,7 @@ const TICKETING_SECTIONS = [
 const MODAL_STACK_ACTIONS = new Set([
   "security-centre", "device-management", "active-sessions", "login-history",
   "biometric-info", "privacy-controls", "security-tips", "report-fraud",
-  "why-trust-titopay", "notifications", "preview-sms-notifications",
+  "why-trust-titopay", "notifications", "payment-requests", "preview-sms-notifications",
   "preview-email-notifications", "authentication-preference", "change-password",
   "fica-verification", "profile-verification", "saved-beneficiaries",
   "proof-of-account", "app-search", "support",

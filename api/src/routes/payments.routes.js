@@ -95,4 +95,46 @@ for (const [path, action] of [["confirm", confirmCardTopup], ["capture", capture
   router.post(`/topup/:paymentId/${path}`, legacyAction(action));
 }
 
+// Payment requests: Request funds and Bill Split. Creating and answering a
+// request never moves money by itself - the only money movement is the pay
+// action, which runs on the same wallet_transfer rails as Send Money.
+const paymentRequests = require("../services/payment-request-service");
+
+router.post("/requests", async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await paymentRequests.createRequest(req.auth, req.body || {})) });
+  } catch (error) { next(error); }
+});
+
+router.post("/requests/split", async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await paymentRequests.createSplit(req.auth, req.body || {})) });
+  } catch (error) { next(error); }
+});
+
+router.get("/requests", async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await paymentRequests.listRequests(req.auth)) });
+  } catch (error) { next(error); }
+});
+
+router.post("/requests/:id/pay", async (req, res, next) => {
+  try {
+    assertTransactionsAllowed(req);
+    res.json({ ok: true, ...(await paymentRequests.payRequest(req.auth, req.params.id, req.body || {})) });
+  } catch (error) { next(error); }
+});
+
+router.post("/requests/:id/decline", async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await paymentRequests.declineRequest(req.auth, req.params.id, req.body || {})) });
+  } catch (error) { next(error); }
+});
+
+router.post("/requests/:id/cancel", async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await paymentRequests.cancelRequest(req.auth, req.params.id)) });
+  } catch (error) { next(error); }
+});
+
 module.exports = router;

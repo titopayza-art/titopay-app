@@ -13347,3 +13347,69 @@ img {
     font-size: 1.35rem !important;
   }
 }
+
+/* Payment requests -------------------------------------------------------- */
+
+.modal-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.modal-section > h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.payreq-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.payreq-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.payreq-actions .btn {
+  min-height: 40px;
+  padding: 8px 14px;
+}
+
+.payreq-waiting {
+  width: 100%;
+  margin-bottom: 14px;
+  border-color: var(--blue);
+  color: var(--blue);
+  font-weight: 700;
+}
+
+/* The typed split amount replaces the computed share when the split is not
+   equal; only one of the two occupies the middle column of the row. */
+.split-manual-field .input-affix input {
+  min-height: 44px;
+  max-width: 130px;
+}
+
+/* On a phone the Pay and Decline buttons take their own full-width row under
+   the request text instead of crushing it sideways. */
+@media (max-width: 480px) {
+  .payreq-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .payreq-item .payreq-actions {
+    grid-column: 1 / -1;
+  }
+
+  .payreq-actions .btn {
+    flex: 1;
+  }
+}

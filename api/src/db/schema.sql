@@ -1609,3 +1609,31 @@ CREATE TABLE IF NOT EXISTS notification_clears (
   user_id UUID PRIMARY KEY,
   cleared_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Payment requests: Request funds and Bill Split. A row is an ASK, not a
+-- movement of money. Money moves only when the payer pays, through the same
+-- wallet_transfer rails as Send Money, and transaction_id records that
+-- settlement. A bill split is one request per participant sharing a
+-- split_group_id.
+CREATE TABLE IF NOT EXISTS payment_requests (
+  id UUID PRIMARY KEY,
+  reference TEXT NOT NULL,
+  requester_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  payer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+  description TEXT,
+  due_date DATE,
+  request_type TEXT NOT NULL DEFAULT 'one_time',
+  recurring_frequency TEXT,
+  recurring_end_date DATE,
+  split_group_id UUID,
+  split_label TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  decline_note TEXT,
+  transaction_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS payment_requests_payer_idx
+  ON payment_requests (payer_user_id, status, created_at DESC);
