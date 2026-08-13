@@ -21,7 +21,7 @@ const ALLOWED_VARIABLES = new Set([
   "firstName", "lastName", "fullName", "email", "businessName", "amount", "currency",
   "transactionReference", "verificationLink", "resetPasswordLink", "supportEmail", "supportUrl",
   "companyName", "currentYear", "ticketReference", "kycStatus", "accountType", "otp", "appUrl", "websiteUrl",
-  "statementPeriod", "statementReference", "transactionCount", "moneyIn", "moneyOut", "netMovement", "statementLines", "statementFee",
+  "expiryMinutes", "statementPeriod", "statementReference", "transactionCount", "moneyIn", "moneyOut", "netMovement", "statementLines", "statementFee",
   // HR work communications. An unknown variable renders as an empty string
   // rather than an error, so a template referring to one of these before it was
   // permitted produced silently blank mail — which is why they are declared
@@ -69,7 +69,7 @@ const DEFAULT_TEMPLATES = [
   ["hr_request_update", "HR Request Update", "Your HR request {{requestReference}} has an update", "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:0 0 22px\"><tr><td style=\"background:#eef4fb;border-left:3px solid #0b3f8f;padding:9px 14px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#3a5a86;font-weight:700\">TitoPay staff &middot; {{announcementPriority}}</td></tr></table><p style=\"margin:0 0 4px;font-size:15px;color:#0b1f3f\">Hello {{firstName}},</p><table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:18px 0 22px\"><tr><td style=\"background:{{decisionTone}};padding:14px 20px;border-radius:8px\"><span style=\"display:block;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#ffffff;opacity:.85\">Internal request</span><span style=\"display:block;margin-top:3px;font-size:22px;line-height:1.2;font-weight:700;color:#ffffff;text-transform:capitalize\">{{decision}}</span></td></tr></table><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-top:1px solid #e2ebf5;border-bottom:1px solid #e2ebf5;margin:0 0 22px\"><tr><td style=\"padding:7px 0;font-size:14px;color:#5b7799;width:42%\">Request</td><td style=\"padding:7px 0;font-size:15px;color:#0b1f3f;font-weight:600\">{{requestSubject}}</td></tr><tr><td style=\"padding:7px 0;font-size:14px;color:#5b7799;width:42%\">Reference</td><td style=\"padding:7px 0;font-size:15px;color:#0b1f3f;font-weight:600\">{{requestReference}}</td></tr></table><p style=\"margin:0 0 4px;font-size:15px;line-height:1.6;color:#22405f\">The reply is waiting in the HR portal. It is not repeated in this email, because internal requests can contain confidential information.</p><p style=\"margin:22px 0 0\"><a href=\"{{appUrl}}\" style=\"display:inline-block;padding:13px 22px;background:#0b3f8f;color:#fff;text-decoration:none;border-radius:6px;font-weight:700;font-size:15px\">Read it in the HR portal</a></p><p style=\"margin:26px 0 0;padding-top:16px;border-top:1px solid #e2ebf5;font-size:13px;color:#5b7799;line-height:1.6\">Questions about this? Email <a href=\"mailto:{{hrContactEmail}}\" style=\"color:#0b3f8f\">{{hrContactEmail}}</a> &mdash; replying to this message reaches the same place.<br>An internal message for TitoPay staff. Please do not forward it outside the company.</p>"],
   ["hr_onboarding_task", "HR Onboarding Task", "Onboarding: {{taskTitle}}", "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:0 0 22px\"><tr><td style=\"background:#eef4fb;border-left:3px solid #0b3f8f;padding:9px 14px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#3a5a86;font-weight:700\">TitoPay staff &middot; {{announcementPriority}}</td></tr></table><p style=\"margin:0 0 4px;font-size:15px;color:#0b1f3f\">Hello {{firstName}},</p><h1 style=\"margin:0 0 14px;font-size:22px;line-height:1.25;color:#0b1f3f;font-weight:700\">{{taskTitle}}</h1><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-top:1px solid #e2ebf5;border-bottom:1px solid #e2ebf5;margin:0 0 22px\"><tr><td style=\"padding:7px 0;font-size:14px;color:#5b7799;width:42%\">Part of</td><td style=\"padding:7px 0;font-size:15px;color:#0b1f3f;font-weight:600\">{{taskCategory}}</td></tr><tr><td style=\"padding:7px 0;font-size:14px;color:#5b7799;width:42%\">Due by</td><td style=\"padding:7px 0;font-size:15px;color:#0b1f3f;font-weight:600\">{{taskDueDate}}</td></tr></table><p style=\"margin:0;font-size:15px;line-height:1.6;color:#22405f\">This has been added to your onboarding. You can complete it in the HR portal.</p><p style=\"margin:22px 0 0\"><a href=\"{{appUrl}}\" style=\"display:inline-block;padding:13px 22px;background:#0b3f8f;color:#fff;text-decoration:none;border-radius:6px;font-weight:700;font-size:15px\">Open your onboarding</a></p><p style=\"margin:26px 0 0;padding-top:16px;border-top:1px solid #e2ebf5;font-size:13px;color:#5b7799;line-height:1.6\">Questions about this? Email <a href=\"mailto:{{hrContactEmail}}\" style=\"color:#0b3f8f\">{{hrContactEmail}}</a> &mdash; replying to this message reaches the same place.<br>An internal message for TitoPay staff. Please do not forward it outside the company.</p>"],
   ["hr_training_reminder", "HR Mandatory Training Reminder", "{{courseTitle}} is due", "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:0 0 22px\"><tr><td style=\"background:#eef4fb;border-left:3px solid #0b3f8f;padding:9px 14px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#3a5a86;font-weight:700\">TitoPay staff &middot; {{announcementPriority}}</td></tr></table><p style=\"margin:0 0 4px;font-size:15px;color:#0b1f3f\">Hello {{firstName}},</p><h1 style=\"margin:0 0 14px;font-size:22px;line-height:1.25;color:#0b1f3f;font-weight:700\">{{courseTitle}}</h1><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-top:1px solid #e2ebf5;border-bottom:1px solid #e2ebf5;margin:0 0 22px\"><tr><td style=\"padding:7px 0;font-size:14px;color:#5b7799;width:42%\">Status</td><td style=\"padding:7px 0;font-size:15px;color:#0b1f3f;font-weight:600\">Mandatory, not yet complete</td></tr><tr><td style=\"padding:7px 0;font-size:14px;color:#5b7799;width:42%\">Was due</td><td style=\"padding:7px 0;font-size:15px;color:#0b1f3f;font-weight:600\">{{courseDueDate}}</td></tr></table><p style=\"margin:0;font-size:15px;line-height:1.6;color:#22405f\">Please complete it in the Learning Hub. It should take one sitting.</p><p style=\"margin:22px 0 0\"><a href=\"{{appUrl}}\" style=\"display:inline-block;padding:13px 22px;background:#0b3f8f;color:#fff;text-decoration:none;border-radius:6px;font-weight:700;font-size:15px\">Open the Learning Hub</a></p><p style=\"margin:26px 0 0;padding-top:16px;border-top:1px solid #e2ebf5;font-size:13px;color:#5b7799;line-height:1.6\">Questions about this? Email <a href=\"mailto:{{hrContactEmail}}\" style=\"color:#0b3f8f\">{{hrContactEmail}}</a> &mdash; replying to this message reaches the same place.<br>An internal message for TitoPay staff. Please do not forward it outside the company.</p>"],
-  ["email_otp", "Email OTP", "Your TitoPay Verification Code", "<p>Hello {{firstName}},</p><p>Use the verification code below to continue.</p><p style=\"font-size:30px;font-weight:700;letter-spacing:8px;color:#0b1f3f\">{{otp}}</p><p>The code expires shortly. If you did not request this verification, please ignore this email and contact {{supportEmail}}.</p>"]
+  ["email_otp", "Email OTP", "Your TitoPay Verification Code", "<p>Hello {{firstName}},</p><p>Use the verification code below to continue.</p><p style=\"font-size:30px;font-weight:700;letter-spacing:8px;color:#0b1f3f\">{{otp}}</p><p>This code expires in {{expiryMinutes}} minutes and can only be used once. If you did not request it, ignore this email and contact {{supportEmail}}.</p>"]
 ];
 
 let schemaReady;
@@ -182,6 +182,15 @@ function safeContentPreview(job) {
 }
 
 async function seedDefaultTemplates(db = pool) {
+  // Copy fixups for templates already seeded with older wording. Guarded on
+  // the old sentence, so an operator's own edits are never overwritten.
+  await db.query(
+    `UPDATE email_templates SET body = REPLACE(body,
+       'The code expires shortly. If you did not request this verification, please ignore this email and contact',
+       'This code expires in {{expiryMinutes}} minutes and can only be used once. If you did not request it, ignore this email and contact'),
+       updated_at = NOW()
+     WHERE template_key = 'email_otp' AND body LIKE '%The code expires shortly.%'`
+  ).catch(() => {});
   for (const [key, name, subject, body] of DEFAULT_TEMPLATES) {
     const htmlBody = body;
     const textBody = body.replace(/<br\s*\/?>/gi,"\n").replace(/<[^>]+>/g,"").replace(/\s+/g," ").trim();
@@ -594,7 +603,16 @@ async function deliverQueuedContent(job){const provider=await effectiveProvider(
   // every message that existed before this behaves exactly as it did.
   const jobReplyTo = job.metadata && typeof job.metadata.replyTo === "string" ? job.metadata.replyTo.trim() : "";
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(jobReplyTo)) provider.replyTo = jobReplyTo;
-  const content=JSON.parse(decrypt(job.encrypted_content));if(provider.provider==="smtp"||(provider.provider==="ses"&&provider.smtpHost)){if(!provider.smtpHost)throw new Error("SMTP email provider is not configured");const transport=nodemailer.createTransport({host:provider.smtpHost,port:provider.smtpPort,secure:Boolean(provider.smtpSecure),auth:provider.smtpUser||provider.smtpPassword?{user:provider.smtpUser,pass:provider.smtpPassword}:undefined,tls:{rejectUnauthorized:config.integrations.email.smtpRejectUnauthorized}});const result=await transport.sendMail({from:provider.from,replyTo:provider.replyTo,to:job.recipient,subject:job.subject,html:content.html,text:content.text});return {messageId:result.messageId,accepted:result.accepted,rejected:result.rejected,response:result.response};}
+  const content=JSON.parse(decrypt(job.encrypted_content));if(provider.provider==="smtp"||(provider.provider==="ses"&&provider.smtpHost)){if(!provider.smtpHost)throw new Error("SMTP email provider is not configured");const transport=nodemailer.createTransport({host:provider.smtpHost,port:provider.smtpPort,secure:Boolean(provider.smtpSecure),auth:provider.smtpUser||provider.smtpPassword?{user:provider.smtpUser,pass:provider.smtpPassword}:undefined,tls:{rejectUnauthorized:config.integrations.email.smtpRejectUnauthorized}});// A verification code is disposable mail, and the message can say so:
+// Expiry-Date is honoured by Outlook and Exchange (shown struck through and
+// eligible for auto-clean once past), and a stable References id makes Gmail
+// stack every code for the same person into ONE conversation instead of a
+// row per sign-in. No mail system lets a sender delete delivered mail; this
+// is everything a sender can honestly do.
+const otpMail=job.template_key==="email_otp"||job.template_key==="password_change_otp";
+const otpExpiryMinutes=Number((job.variables&&job.variables.expiryMinutes)||10)||10;
+const otpThreadId=`<titopay-otp-${crypto.createHash("sha256").update(String(job.recipient||"").toLowerCase()).digest("hex").slice(0,16)}@titopay.co.za>`;
+const result=await transport.sendMail({from:provider.from,replyTo:provider.replyTo,to:job.recipient,subject:job.subject,html:content.html,text:content.text,...(otpMail?{headers:{"Expiry-Date":new Date(Date.now()+otpExpiryMinutes*60000).toUTCString(),"Auto-Submitted":"auto-generated"},inReplyTo:otpThreadId,references:otpThreadId}:{})});return {messageId:result.messageId,accepted:result.accepted,rejected:result.rejected,response:result.response};}
   if(!provider.apiKey)throw new Error(`${provider.provider} provider is not configured`);
   let result;
   if(provider.provider==="resend")result=await providerJsonRequest(provider,provider.apiUrl||"https://api.resend.com/emails",{headers:{authorization:`Bearer ${provider.apiKey}`},payload:{from:provider.from,to:[job.recipient],subject:job.subject,html:content.html,text:content.text,reply_to:provider.replyTo}});
@@ -629,4 +647,21 @@ async function processWebhook(provider,event,signature,rawBody){
   await writeAuditLog({actorType:"provider",action:"email_delivery_webhook_processed",entityType:"email_delivery_event",entityId:inserted.rows[0].id,metadata:{provider,eventType:type,providerMessageId:messageId}});return {processed:true};
 }
 
-module.exports={EMAIL_PERMISSIONS,seedDefaultTemplates,ALLOWED_VARIABLES,DEFAULT_TEMPLATES,ensureEmailSchema,escapeHtml,stripDangerousMarkup,interpolate,renderTemplate,getSettings,updateSettings,listTemplates,getTemplate,saveTemplate,deleteTemplate,queueEmail,queueWelcomeEmail,welcomeTemplateKeyForAccountType,isWelcomeTemplateKey,queueRawEmail,createVerificationForUser,verifyEmailToken,resendVerification,requestEmailPasswordReset,confirmEmailPasswordReset,listQueue,queueDetail,manageQueue,listLogs,logDetail,dashboard,analytics,claimJobs,processJob,requeueRetryable,providerTest,processWebhook,maskSecrets,safePayload,sanitiseError};
+// Once a code is expired it must stop existing in readable form ANYWHERE we
+// control. The mailbox is the recipient's; this is ours: the sent queue row
+// keeps its delivery record for the Email Centre's stats, but the encrypted
+// body holding the code is replaced with an empty one. Expired challenge
+// hashes go too, after the dashboard's reporting window.
+async function sweepExpiredOtpEmails(){
+  await ensureEmailSchema();
+  const redacted=encrypt(JSON.stringify({html:"",text:""}));
+  const {rowCount}=await pool.query(
+    `UPDATE email_queue SET encrypted_content=$1, metadata=COALESCE(metadata,'{}'::jsonb)||'{"otpContentRedacted":true}'::jsonb
+      WHERE template_key IN ('email_otp','password_change_otp') AND status='sent'
+        AND sent_at < NOW() - INTERVAL '1 hour'
+        AND COALESCE(metadata->>'otpContentRedacted','') <> 'true'`,[redacted]);
+  const {rowCount:purged}=await pool.query(
+    "DELETE FROM otp_codes WHERE expires_at < NOW() - INTERVAL '7 days'");
+  return {redacted:rowCount,purged};
+}
+module.exports={EMAIL_PERMISSIONS,sweepExpiredOtpEmails,seedDefaultTemplates,ALLOWED_VARIABLES,DEFAULT_TEMPLATES,ensureEmailSchema,escapeHtml,stripDangerousMarkup,interpolate,renderTemplate,getSettings,updateSettings,listTemplates,getTemplate,saveTemplate,deleteTemplate,queueEmail,queueWelcomeEmail,welcomeTemplateKeyForAccountType,isWelcomeTemplateKey,queueRawEmail,createVerificationForUser,verifyEmailToken,resendVerification,requestEmailPasswordReset,confirmEmailPasswordReset,listQueue,queueDetail,manageQueue,listLogs,logDetail,dashboard,analytics,claimJobs,processJob,requeueRetryable,providerTest,processWebhook,maskSecrets,safePayload,sanitiseError};

@@ -486,3 +486,26 @@ test("PWA renames only the customer tickets tile to Event Tickets", () => {
   // matters here.
   assert.match(app,/if \(service\.type === "tickets" \|\| service\.action === "tickets"\) \{\s*\n\s*state\.currentModalAction = "my-tickets";\s*\n\s*return openPersonalTicketsDashboard\(\);/);
 });
+
+test("verification codes are disposable: expiry header, one thread, and a database sweep", () => {
+  // A sender cannot delete delivered mail, so this holds everything a sender
+  // honestly can do: the message declares its own expiry (Outlook and
+  // Exchange act on Expiry-Date), every code for one person threads into a
+  // single conversation in Gmail, and once expired the code stops existing in
+  // readable form in OUR database.
+  const service = fs.readFileSync(path.join(root, "src/services/email-centre-service.js"), "utf8");
+  assert.match(service, /"Expiry-Date":new Date\(Date\.now\(\)\+otpExpiryMinutes\*60000\)\.toUTCString\(\)/);
+  assert.match(service, /inReplyTo:otpThreadId,references:otpThreadId/);
+  assert.match(service, /template_key==="email_otp"\|\|job\.template_key==="password_change_otp"/);
+  assert.match(service, /async function sweepExpiredOtpEmails/);
+  assert.match(service, /otpContentRedacted/, "sent rows keep their stats but lose the code");
+  assert.match(service, /DELETE FROM otp_codes WHERE expires_at < NOW\(\) - INTERVAL '7 days'/);
+
+  const worker = fs.readFileSync(path.join(root, "src/email-worker.js"), "utf8");
+  assert.match(worker, /sweepExpiredOtpEmails/, "the worker actually runs the sweep");
+
+  // The email says when it dies, from the real setting rather than a guess.
+  const otp = fs.readFileSync(path.join(root, "src/services/email-otp-service.js"), "utf8");
+  assert.equal((otp.match(/expiryMinutes:String\(settings\.email_otp_expiry_minutes\)/g) || []).length, 2);
+  assert.match(service, /This code expires in \{\{expiryMinutes\}\} minutes and can only be used once/);
+});
