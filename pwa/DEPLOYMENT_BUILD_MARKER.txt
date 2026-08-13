@@ -1,9 +1,12 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v338 (titopay-pwa-v338)
+PWA bundle: v339 (titopay-pwa-v339)
 Admin console: admin-console-v81
 
 This build:
+  - Tour: the ghost close bubble is gone for real. It was the sheet the
+    tour was opened FROM bleeding through — the tour now removes any
+    layer beneath it and sits on a fully opaque ground above everything.
   - Tour layout uses the whole screen: header at the top, the step card
     stretches to fill the middle with larger type (27px titles, 16.5px
     body, bigger icon and hint pill), Back/Next pinned at the bottom.

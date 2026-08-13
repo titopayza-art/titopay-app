@@ -19670,6 +19670,11 @@ function howItWorksSteps() {
 }
 function openHowItWorksModal() {
   const steps = howItWorksSteps();
+  // The tour owns the screen. Any sheet it was opened from is removed
+  // outright first — a stale layer underneath used to bleed its close
+  // button through the top of the tour.
+  document.querySelectorAll(".modal-backdrop").forEach((element) => element.remove());
+  state.modalActionStack = [];
   openModal(`
     <div class="guide" data-guide data-guide-step="0" style="border-radius:0;padding:24px 22px 20px;position:relative;overflow:hidden">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -19700,6 +19705,13 @@ function openHowItWorksModal() {
     tourCard.style.width = "100%";
     tourCard.style.margin = "0";
     tourCard.style.borderRadius = "0";
+    tourCard.style.background = "var(--soft, #eef4fe)";
+    const backdrop = tourCard.closest(".modal-backdrop");
+    if (backdrop) {
+      backdrop.style.background = "var(--soft, #eef4fe)";
+      backdrop.style.backdropFilter = "none";
+      backdrop.style.zIndex = "75";
+    }
     const guide = tourCard.querySelector("[data-guide]");
     if (guide) {
       guide.style.minHeight = "100dvh";
