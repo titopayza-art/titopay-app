@@ -72,9 +72,14 @@ test("tier 1 is a validated SA ID stored only as a hash", () => {
 test("the wallet card shows status, not tier arithmetic, with one door", () => {
   const row = APP.slice(APP.indexOf("function walletVerificationRow("));
   const body = row.slice(0, row.indexOf("\n}") + 2);
-  assert.match(body, /Verified/);
+  assert.match(body, /Fully Verified/);
+  assert.match(body, /Basic Verified/);
+  assert.match(body, /Verify Identity/, "tier 0 shows a call to action, not a shaming label");
   assert.match(body, /Limits &amp; Verification/);
   assert.doesNotMatch(body, /Tier \d/, "no tier numbers on the card");
+  // Fully Verified must never read as unlimited.
+  assert.doesNotMatch(APP, /[Uu]nlimited transactions/);
+  assert.doesNotMatch(APP, /No standing limit/, "limit copy says monitored, not limitless");
   assert.match(APP, /function openLimitsVerificationModal/);
   // Inside the door: usage bars, the three levels, EDD explained, and the
   // instant tier 1 form plus the FICA door.

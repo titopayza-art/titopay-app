@@ -47,7 +47,7 @@ const DEFAULT_CONFIG = {
     },
     2: {
       label: "Fully verified",
-      description: "Full FICA verification. No standing limits, subject to ongoing monitoring.",
+      description: "Full FICA verification for higher balances, larger payments and withdrawals. Activity stays subject to ongoing monitoring.",
       monthlyReceive: null,
       monthlySend: null,
       singleTransaction: null

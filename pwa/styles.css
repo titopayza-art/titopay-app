@@ -1689,7 +1689,7 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.82rem;
+  font-size: 0.76rem;
 }
 
 .frequent-card small {
@@ -2732,7 +2732,7 @@ body.landing-static .landing-flow.auth-screen {
 
 .otp-delivery-confirmation {
   margin: 0;
-  padding: 10px 12px;
+  padding: 9px 10px;
   color: var(--navy);
   background: #f3f7ff;
   border: 1px solid var(--line);
@@ -13419,12 +13419,13 @@ img {
 /* The wallet card's one quiet line: status pill left, door right. */
 .wallet-verification {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 6px 8px;
   width: 100%;
   margin: 10px 0 2px;
-  padding: 10px 12px;
+  padding: 9px 10px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: var(--radius-control);
   background: rgba(255, 255, 255, 0.08);
@@ -13434,11 +13435,12 @@ img {
 }
 
 .wv-status {
-  padding: 3px 10px;
+  white-space: nowrap;
+  padding: 3px 7px;
   border-radius: 999px;
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   background: rgba(255, 255, 255, 0.16);
 }
 
@@ -13447,7 +13449,8 @@ img {
 .wv-status.warn { background: #ffe9d6; color: #a8560f; }
 
 .wv-link {
-  font-size: 0.82rem;
+  white-space: nowrap;
+  font-size: 0.76rem;
   font-weight: 700;
   opacity: 0.92;
 }

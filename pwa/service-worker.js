@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v383-progressive-kyc";
+const CACHE_NAME = "titopay-pwa-v384-status-labels";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=383",
-  "./app.min.js?v=383",
+  "./styles.min.css?v=384",
+  "./app.min.js?v=384",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

@@ -952,9 +952,9 @@ function walletVerificationRow() {
   const c = state.compliance;
   const status = !c ? ["", "Verification"]
     : c.eddActive ? ["warn", "Review required"]
-      : c.verified ? ["ok", "\u2713 Verified"]
-        : c.tier === 1 ? ["mid", "Basic verified"]
-          : ["warn", "Unverified"];
+      : c.verified ? ["ok", "\u2713 Fully Verified"]
+        : c.tier === 1 ? ["mid", "\u2713 Basic Verified"]
+          : ["warn", "Verify Identity"];
   return `
     <button class="wallet-verification" type="button" data-action="limits-verification" aria-label="Limits and verification">
       <span class="wv-status ${status[0]}">${esc(status[1])}</span>
@@ -980,7 +980,7 @@ async function loadComplianceStatus({ silent = true } = {}) {
 }
 function limitBar(label, used, limit, percent) {
   if (limit === null || limit === undefined) {
-    return `<div class="limit-line"><span>${esc(label)}</span><strong>No standing limit</strong></div>`;
+    return `<div class="limit-line"><span>${esc(label)}</span><strong>No fixed monthly limit</strong></div>`;
   }
   return `
     <div class="limit-line">
@@ -995,7 +995,7 @@ function complianceTierCard(entry, status) {
   const chip = current ? '<span class="sv-chip warn">Your level</span>'
     : achieved ? '<span class="sv-chip settled">Complete</span>' : "";
   const limits = entry.monthlyReceive === null
-    ? "No standing limits, with ongoing monitoring."
+    ? "No fixed monthly limits. Activity stays monitored, and high value payments may be reviewed."
     : `Receive up to ${money(entry.monthlyReceive)} and send up to ${money(entry.monthlySend)} a month, ${money(entry.singleTransaction)} per payment.`;
   let unlock = "";
   if (!current && !achieved) {
@@ -1040,7 +1040,7 @@ async function openLimitsVerificationModal() {
     <div class="modal-head">
       <div><p class="eyebrow">Your Wallet</p><h2>Limits &amp; Verification</h2>
         <p class="lead">${status.verified
-          ? "Your identity is fully verified. Your wallet has no standing limits, with routine monitoring that protects everyone on TitoPay."
+          ? "Your identity is fully verified. Your wallet has full access without fixed monthly limits, and routine monitoring keeps every wallet on TitoPay safe."
           : "Your limits grow with your verification. Each step takes minutes, and the app tells you before you get near a limit."}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
