@@ -2531,6 +2531,26 @@ async function onClick(event) {
       .catch((error) => showToast(friendlyFormError(error, "titokids"), "error"));
     return;
   }
+  const tkManagerAdd = event.target.closest("[data-tk-manager-add]");
+  if (tkManagerAdd) {
+    await inviteTitoKidsManager(tkManagerAdd.dataset.tkManagerAdd);
+    return;
+  }
+  const tkManagerRemove = event.target.closest("[data-tk-manager-remove]");
+  if (tkManagerRemove) {
+    await removeTitoKidsManager(tkManagerRemove.dataset.tkManagerRemove, tkManagerRemove.dataset.tkManagerName || "This person");
+    return;
+  }
+  const tkInviteAccept = event.target.closest("[data-tk-invite-accept]");
+  if (tkInviteAccept) {
+    await respondToTitoKidsInvite(tkInviteAccept.dataset.tkInviteAccept, true);
+    return;
+  }
+  const tkInviteDecline = event.target.closest("[data-tk-invite-decline]");
+  if (tkInviteDecline) {
+    await respondToTitoKidsInvite(tkInviteDecline.dataset.tkInviteDecline, false);
+    return;
+  }
   const tkRemove = event.target.closest("[data-tk-remove]");
   if (tkRemove) {
     if (!await askToConfirm({
@@ -13215,16 +13235,28 @@ async function refreshTitoKidsHome() {
     // One family door. A parent sees the children they manage; a linked child
     // sees their own wallet and can ask for money; somebody who is both sees
     // both, in that order - your own money first.
-    const [result, family] = await Promise.all([
+    const [result, family, invitations] = await Promise.all([
       api("/v1/tito-kids"),
-      api("/v1/tito-kids/family").catch(() => ({ items: [], categories: {} }))
+      api("/v1/tito-kids/family").catch(() => ({ items: [], categories: {} })),
+      api("/v1/tito-kids/invitations").catch(() => ({ items: [] }))
     ]);
     state.titoKids = result;
     state.myFamilyCategories = family.categories || {};
     const children = result.children || [];
     const approvals = result.approvals || [];
     const families = family.items || [];
+    const invites = invitations.items || [];
     host.innerHTML = `
+      ${invites.map((invite) => `
+        <section class="tk-card tk-approval">
+          <p class="tk-sub">Invitation</p>
+          <p style="margin:4px 0"><strong>${esc(invite.invitedByName)}</strong> asked you to help manage <strong>${esc(invite.childName)}</strong>’s money.</p>
+          <p class="field-hint" style="margin:0 0 8px">If you accept, you can add money from your own wallet, pay for needs, set limits and answer their requests. You can never spend ${esc(invite.invitedByName)}’s money.</p>
+          <div class="auth-actions">
+            <button class="btn primary" type="button" data-tk-invite-accept="${esc(invite.id)}">${icon("check-circle")} Accept</button>
+            <button class="btn secondary" type="button" data-tk-invite-decline="${esc(invite.id)}">Decline</button>
+          </div>
+        </section>`).join("")}
       ${titoKidsFamilyMarkup(families)}
       ${approvals.map((request) => `
         <section class="tk-card tk-approval">
@@ -13246,14 +13278,14 @@ async function refreshTitoKidsHome() {
           </span>
           <span aria-hidden="true">${icon("arrow-right")}</span>
         </button>`).join("")
-      : families.length ? "" : `
+      : (families.length || invites.length) ? "" : `
         <section class="empty-state compact-state">
           ${icon("contacts")}
           <strong>No children yet</strong>
           <p>Add your first child to start managing their money with TitoKids — a real ring-fenced wallet, limits you control, and approvals in your pocket.</p>
         </section>`}
       <div class="auth-actions" style="margin-top:10px">
-        <button class="btn ${children.length || families.length ? "secondary" : "primary"}" type="button" data-action="titokids-add">${icon("send")} Add Child</button>
+        <button class="btn ${children.length || families.length || invites.length ? "secondary" : "primary"}" type="button" data-action="titokids-add">${icon("send")} Add Child</button>
       </div>`;
   } catch (error) {
     host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
@@ -13365,12 +13397,89 @@ async function refreshTitoKidsChild(childId) {
             <span class="${item.direction === "in" ? "tk-in" : "tk-out"}">${item.direction === "in" ? "+" : "-"}${esc(money(item.amount))}</span>
           </div>`).join("") : `<p class="field-hint">No activity yet.</p>`}
       </section>
+      <section class="tk-card" data-tk-managers></section>
       <div class="auth-actions">
         <button class="btn ghost" type="button" data-tk-remove="${esc(child.id)}">Remove ${esc(child.fullName)} from TitoKids</button>
       </div>`;
+    await refreshTitoKidsManagers(child.id);
   } catch (error) {
     host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
   }
+}
+/* Co-parents. Raising a child is rarely a solo job, and neither is paying for
+   one. A second adult can be invited to help manage ONE child's wallet — and
+   the money question everyone asks first has a firm answer, said plainly on
+   the screen: they fund from THEIR wallet, never yours. */
+async function refreshTitoKidsManagers(childId) {
+  const host = document.querySelector("[data-tk-managers]");
+  if (!host) return;
+  try {
+    const result = await api(`/v1/tito-kids/children/${encodeURIComponent(childId)}/managers`);
+    const items = result.items || [];
+    const child = state.titoKidsChild || {};
+    host.innerHTML = `
+      <p class="tk-sub"><strong style="color:var(--text)">Who manages this wallet</strong></p>
+      <div class="tk-line">
+        <span>${esc(result.owner?.fullName || "You")}${result.isOwner ? " (you)" : ""}<br><small class="tk-sub">Set up the wallet · full control</small></span>
+      </div>
+      ${items.map((person) => `
+        <div class="tk-line">
+          <span>${esc(person.fullName || `@${person.username}`)}<br><small class="tk-sub">${esc(person.relationship)}${person.status === "invited" ? " · invited, waiting for them to accept" : " · can add money, pay and set limits"}</small></span>
+          <button class="btn ghost mini" type="button" data-tk-manager-remove="${esc(person.id)}" data-tk-manager-name="${esc(person.fullName || person.username || "this person")}">Remove</button>
+        </div>`).join("")}
+      ${result.isOwner ? `
+        <div class="auth-actions" style="margin-top:8px">
+          <button class="btn secondary" type="button" data-tk-manager-add="${esc(childId)}">${icon("contacts")} Add a co-parent</button>
+        </div>
+        <p class="field-hint" style="margin-top:6px">A co-parent can add money from <strong>their own</strong> wallet, pay for needs, set limits and answer ${esc(child.fullName || "the child")}’s requests. They can never spend your money, remove ${esc(child.fullName || "the child")}, or invite anyone else.</p>
+      ` : `<p class="field-hint" style="margin-top:6px">You help manage this wallet. Money you add comes from your own wallet.</p>`}`;
+  } catch (error) {
+    host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "titokids"))}</p>`;
+  }
+}
+async function inviteTitoKidsManager(childId) {
+  const child = state.titoKidsChild || {};
+  const contact = await askForValue({
+    title: "Add a co-parent",
+    body: `Who else should help manage ${child.fullName || "this child"}’s money? They need their own TitoPay account, and they choose whether to accept.`,
+    label: "Their @username, cellphone or email",
+    placeholder: "@username",
+    hint: "They add money from their own wallet — never from yours.",
+    confirmLabel: "Send invitation"
+  });
+  if (contact === null || !String(contact).trim()) return;
+  try {
+    const result = await api(`/v1/tito-kids/children/${encodeURIComponent(childId)}/managers`, {
+      method: "POST", body: { contact: String(contact).trim() }
+    });
+    showToast(result.message || "Invitation sent.");
+  } catch (error) {
+    showToast(friendlyFormError(error, "titokids"), "error");
+  }
+  await refreshTitoKidsManagers(childId);
+}
+async function removeTitoKidsManager(managerId, name) {
+  if (!await askToConfirm({
+    title: "Remove co-parent",
+    body: `${name} will no longer be able to add money, pay or set limits for this child. Everything they have already done stays on the record.`,
+    confirmLabel: "Remove", tone: "danger"
+  })) return;
+  try {
+    await api(`/v1/tito-kids/managers/${encodeURIComponent(managerId)}`, { method: "DELETE" });
+    showToast(`${name} was removed.`);
+  } catch (error) {
+    showToast(friendlyFormError(error, "titokids"), "error");
+  }
+  if (state.titoKidsChild?.id) await refreshTitoKidsManagers(state.titoKidsChild.id);
+}
+async function respondToTitoKidsInvite(inviteId, accept) {
+  try {
+    const result = await api(`/v1/tito-kids/invitations/${encodeURIComponent(inviteId)}/${accept ? "accept" : "decline"}`, { method: "POST", body: {} });
+    showToast(accept ? `You now help manage ${result.childName}’s money.` : "Invitation declined.");
+  } catch (error) {
+    showToast(friendlyFormError(error, "titokids"), "error");
+  }
+  await refreshTitoKidsHome();
 }
 function openTitoKidsFundModal(childId) {
   const child = state.titoKidsChild || {};

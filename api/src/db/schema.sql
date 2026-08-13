@@ -1568,6 +1568,21 @@ CREATE TABLE IF NOT EXISTS titokids_requests (
   decided_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- A co-parent, guardian or grandparent who helps manage ONE child's wallet.
+-- Per child, never per family, and only after the invitation is accepted.
+CREATE TABLE IF NOT EXISTS titokids_guardians (
+  id UUID PRIMARY KEY,
+  child_id UUID NOT NULL REFERENCES titokids_children(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  invited_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  relationship TEXT NOT NULL DEFAULT 'co-parent',
+  status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited','active','declined','removed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  responded_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_titokids_guardian
+  ON titokids_guardians (child_id, user_id)
+  WHERE status IN ('invited','active');
 CREATE TABLE IF NOT EXISTS titokids_goals (
   id UUID PRIMARY KEY,
   child_id UUID NOT NULL REFERENCES titokids_children(id) ON DELETE CASCADE,

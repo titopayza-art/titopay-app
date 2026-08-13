@@ -1,63 +1,47 @@
 TitoPay deployment build — 2026-08-13 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v346 (titopay-pwa-v346)
+PWA bundle: v347 (titopay-pwa-v347)
 Admin console: admin-console-v81
 
-This build — TitoKids polish, and "I added them as a manager and nothing
-appears":
+This build — TitoKids gains co-parents:
 
-  TITOKIDS. Three things a parent meets on the first screen after adding
-  a child:
-  - The chevron on a child's card pointed LEFT — back the way you came —
-    on a row you tap into. It points right now, and there is a proper
-    arrow-right icon rather than a reversed back arrow.
-  - A child whose wallet is still empty now says what to do instead of
-    only what is true: "Tap to add money and set their limits".
-  - The spending categories could render as raw database keys
-    ("airtime_data", "pocket_money") whenever the child sheet was drawn
-    without the family payload in hand — a refresh inside the sheet, or
-    an offline open. They now always read as words.
+  Raising a child is rarely a solo job, and neither is paying for one. A
+  parent can now invite another adult — the other parent, a guardian, a
+  grandparent — to help manage ONE child's wallet. It is per child, never
+  per family: being trusted with one child's money says nothing about
+  another's.
 
+  THE MONEY ANSWER, said plainly on the screen: a co-parent adds money
+  from THEIR OWN wallet. They can never spend the parent's. This is not a
+  policy in code comments — funding debits whoever performs it, and the
+  live harness proves the owner's balance does not move when a co-parent
+  funds.
 
-  THE CAUSE. A staff member only reaches a person when the contact typed
-  matches an ACTIVE TitoPay account. When it does not, the entry is still
-  saved — deliberately, a business may list someone before they join —
-  but nothing is sent and My Workplaces stays empty on their phone. The
-  only sign of it was one toast at the moment of adding, and the register
-  afterwards looked identical either way. The owner believed the person
-  was added; the person saw an empty screen; nobody could see why.
+  What a co-parent can do: add money from their own wallet, pay for a
+  need, set limits and category switches, and answer the child's requests
+  (approving funds it from their own wallet). Both approvers are alerted
+  when a child asks; whoever answers first settles it.
 
-  THE FIX.
-  - The Staff register now SHOWS the state on every row: "Linked to
-    @username — can sell for you", or an amber row reading "Not linked —
-    no TitoPay account matches this contact, so they were not notified
-    and cannot sell yet".
-  - Unlinked rows carry a Link button. It retries on the stored contact
-    or a corrected one, and is also the flow for "they have joined
-    TitoPay since I added them". A wrong contact is refused with the
-    reason and the attempt is remembered, so nobody retypes it.
-    Linking notifies the person immediately and they can sell at once.
-  - A contact that is already on the register under another name is
-    refused with that name, instead of failing on a database constraint.
-  - My Workplaces, when empty, now tells the staff member exactly what to
-    do: send the business your @username (shown, so it can be copied) and
-    ask them to tap Link next to your name.
+  What stays with the parent who set the wallet up: inviting and removing
+  co-parents, and removing the child.
 
-  SECURITY (api.zip): node-forge 1.3.1 -> 1.4.0, clearing the one
-  high-severity advisory npm audit reported. It signs Apple Wallet
-  passes, so it was verified rather than assumed — the pass tests build a
-  real certificate, run the real signing pipeline and parse the PKCS#7
-  back. npm audit now reports 0 vulnerabilities.
+  An invitation must be ACCEPTED. Until then it grants nothing — the
+  child stays invisible to the invitee. Invitations appear at the top of
+  TitoKids with Accept and Decline, and arrive by in-app alert and email.
+  Either side can end the arrangement, and access stops immediately.
+  The child can never be made a manager of their own limits.
 
-Proven: verification/business-staff-live.js 10/10 — including the repair
-end to end: unlinked entry, wrong contact refused with a reason and
-remembered, right contact links and notifies, the workplace appears, the
-newly linked person takes a real sale, and relinking again is a no-op
-rather than a second notification. Full API suite 466/466, bundle boots
-clean, dialog contract 12/12.
+Proven: verification/titokids-live.js 15/15, six of them new — strangers
+refused, an unaccepted invitation grants nothing, the child cannot manage
+themselves, a co-parent funds from their own wallet while the owner's
+balance is untouched and the transaction is recorded against them, limits
+and request approvals work with both approvers alerted, removing the
+child and inviting others are refused to a co-parent, and removal stops
+access and money movement at once. Full API suite 466/466, bundle boots
+clean, the managers panel rendered in a browser.
 
-Migrations to run: none — tables create themselves on first use (also in
-schema.sql for fresh installs).
+Migrations to run: none — titokids_guardians creates itself on first use
+(also in schema.sql for fresh installs).
 
 Operational reminders:
   npm i --omit=dev after extracting api.zip, then

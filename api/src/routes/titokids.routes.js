@@ -37,6 +37,20 @@ router.post("/family/:childId/requests", run(async (req, res) => {
   res.status(201).json({ ok: true, request: await kids.createRequest(req.auth.userId, requireUuid(req.params.childId, "Child ID"), req.body || {}) });
 }));
 
+// Co-parents. Declared before /children/:id for the same reason "family" is.
+router.get("/invitations", run(async (req, res) => {
+  res.json({ ok: true, items: await kids.listGuardianInvites(req.auth.userId) });
+}));
+router.post("/invitations/:id/accept", run(async (req, res) => {
+  res.json({ ok: true, ...(await kids.respondToGuardianInvite(req.auth.userId, requireUuid(req.params.id, "Invitation ID"), true)) });
+}));
+router.post("/invitations/:id/decline", run(async (req, res) => {
+  res.json({ ok: true, ...(await kids.respondToGuardianInvite(req.auth.userId, requireUuid(req.params.id, "Invitation ID"), false)) });
+}));
+router.delete("/managers/:id", run(async (req, res) => {
+  res.json({ ok: true, ...(await kids.removeGuardian(req.auth.userId, requireUuid(req.params.id, "Manager ID"))) });
+}));
+
 router.get("/approvals", run(async (req, res) => {
   res.json({ ok: true, items: await kids.listApprovals(req.auth.userId) });
 }));
@@ -65,6 +79,12 @@ router.get("/children/:id/limits", run(async (req, res) => {
 }));
 router.patch("/children/:id/limits", run(async (req, res) => {
   res.json({ ok: true, limits: await kids.setLimits(req.auth.userId, requireUuid(req.params.id, "Child ID"), req.body || {}) });
+}));
+router.get("/children/:id/managers", run(async (req, res) => {
+  res.json({ ok: true, ...(await kids.listGuardians(req.auth.userId, requireUuid(req.params.id, "Child ID"))) });
+}));
+router.post("/children/:id/managers", run(async (req, res) => {
+  res.status(201).json({ ok: true, ...(await kids.inviteGuardian(req.auth.userId, requireUuid(req.params.id, "Child ID"), req.body || {})) });
 }));
 router.post("/children/:id/goals", run(async (req, res) => {
   res.status(201).json({ ok: true, goal: await kids.createGoal(req.auth.userId, requireUuid(req.params.id, "Child ID"), req.body || {}) });

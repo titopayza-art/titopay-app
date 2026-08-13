@@ -75,6 +75,26 @@ function ensureTitoKidsSchema() {
           decided_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`);
+      // A co-parent, guardian or grandparent who helps manage ONE child. It is
+      // per child, never per family: being trusted with one child's money says
+      // nothing about another's. An invitation must be accepted before it gives
+      // anybody access.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS titokids_guardians (
+          id UUID PRIMARY KEY,
+          child_id UUID NOT NULL REFERENCES titokids_children(id) ON DELETE CASCADE,
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          invited_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          relationship TEXT NOT NULL DEFAULT 'co-parent',
+          status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited','active','declined','removed')),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          responded_at TIMESTAMPTZ
+        )`);
+      await pool.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS uq_titokids_guardian
+         ON titokids_guardians (child_id, user_id)
+         WHERE status IN ('invited','active')`
+      );
       await pool.query(`
         CREATE TABLE IF NOT EXISTS titokids_goals (
           id UUID PRIMARY KEY,
@@ -92,18 +112,37 @@ function ensureTitoKidsSchema() {
   return schemaReady;
 }
 
-async function loadOwnChild(parentUserId, childId, { forUpdate = false, client = pool } = {}) {
+// THE ONE PLACE THAT DECIDES WHO MAY TOUCH A CHILD'S MONEY.
+//
+// The owner is whoever added the child. An accepted co-parent gets the same
+// day-to-day reach — fund, pay, set limits, answer requests — because half a
+// guardian is no use when the school asks for money on a Tuesday. What stays
+// with the owner alone is the shape of the arrangement itself: inviting and
+// removing guardians, and removing the child. Those checks are `is_owner`.
+//
+// Funding is safe by construction: fundChild debits the wallet of whoever
+// calls it, so a co-parent always spends their OWN money, never the owner's.
+async function loadOwnChild(actorUserId, childId, { forUpdate = false, client = pool } = {}) {
   const { rows } = await client.query(
-    `SELECT c.*, u.username AS child_username, u.full_name AS child_account_name, u.email AS child_email
+    `SELECT c.*, u.username AS child_username, u.full_name AS child_account_name, u.email AS child_email,
+            (c.parent_user_id = $2) AS is_owner
      FROM titokids_children c
      LEFT JOIN users u ON u.id = c.child_user_id
-     WHERE c.id = $1 AND c.parent_user_id = $2 AND c.status = 'active'
+     WHERE c.id = $1 AND c.status = 'active'
+       AND (c.parent_user_id = $2 OR EXISTS (
+         SELECT 1 FROM titokids_guardians g
+         WHERE g.child_id = c.id AND g.user_id = $2 AND g.status = 'active'))
      LIMIT 1${forUpdate ? " FOR UPDATE OF c" : ""}`,
-    [childId, parentUserId]
+    [childId, actorUserId]
   );
   if (!rows[0]) throw new AppError(404, "Child not found");
   return rows[0];
 }
+
+// Reused by every list: "children I own, plus children I help manage".
+const CHILD_ACCESS_SQL = `(c.parent_user_id = $1 OR EXISTS (
+  SELECT 1 FROM titokids_guardians g
+  WHERE g.child_id = c.id AND g.user_id = $1 AND g.status = 'active'))`;
 
 async function walletBalance(walletId) {
   const { rows } = await pool.query("SELECT available_balance FROM wallets WHERE id = $1", [walletId]);
@@ -191,7 +230,7 @@ async function listChildren(parentUserId) {
      FROM titokids_children c
      LEFT JOIN users u ON u.id = c.child_user_id
      JOIN wallets w ON w.id = c.wallet_id
-     WHERE c.parent_user_id = $1 AND c.status = 'active'
+     WHERE ${CHILD_ACCESS_SQL} AND c.status = 'active'
      ORDER BY c.created_at ASC
      LIMIT 20`,
     [parentUserId]
@@ -199,7 +238,7 @@ async function listChildren(parentUserId) {
   const { rows: pending } = await pool.query(
     `SELECT r.child_id, COUNT(*)::int AS count
      FROM titokids_requests r
-     JOIN titokids_children c ON c.id = r.child_id AND c.parent_user_id = $1
+     JOIN titokids_children c ON c.id = r.child_id AND ${CHILD_ACCESS_SQL}
      WHERE r.status = 'requested'
      GROUP BY r.child_id`,
     [parentUserId]
@@ -311,14 +350,20 @@ async function updateChild(parentUserId, childId, payload = {}) {
   const relationship = payload.relationship !== undefined && RELATIONSHIPS.includes(String(payload.relationship)) ? String(payload.relationship) : child.relationship;
   let status = child.status;
   if (payload.status === "removed") {
+    // A co-parent helps manage the money; ending the arrangement is the
+    // owner's decision alone.
+    if (!child.is_owner) throw new AppError(403, "Only the parent who set up this TitoKids wallet can remove the child.");
     const balance = await walletBalance(child.wallet_id);
     if (balance > 0) throw new AppError(409, `The child's wallet still holds R${balance.toFixed(2)}. Pay it out or move it back before removing.`);
     status = "removed";
   }
+  // Keyed on the child, not the caller: loadOwnChild above has already decided
+  // whether this person may be here at all, and a co-parent's rename must not
+  // silently do nothing.
   const { rows } = await pool.query(
-    `UPDATE titokids_children SET full_name = $3, relationship = $4, status = $5, updated_at = NOW()
-     WHERE id = $1 AND parent_user_id = $2 RETURNING *`,
-    [childId, parentUserId, fullName, relationship, status]
+    `UPDATE titokids_children SET full_name = $2, relationship = $3, status = $4, updated_at = NOW()
+     WHERE id = $1 RETURNING *`,
+    [childId, fullName, relationship, status]
   );
   await writeAuditLog({
     actorType: "customer", actorId: parentUserId, action: status === "removed" ? "titokids_child_removed" : "titokids_child_updated",
@@ -604,6 +649,206 @@ async function myFamily(childUserId) {
   return output;
 }
 
+/* ---- Co-parents ----------------------------------------------------------
+   Adding somebody to a child's wallet is not a setting, it is a relationship
+   between two adults about a third person's money. So: the owner invites, the
+   other adult ACCEPTS, and either side can end it. Nobody is given reach over
+   a child's money without having agreed to hold it. */
+async function listGuardians(actorUserId, childId) {
+  await ensureTitoKidsSchema();
+  const child = await loadOwnChild(actorUserId, childId);
+  const { rows } = await pool.query(
+    `SELECT g.*, u.full_name, u.username, u.email
+     FROM titokids_guardians g
+     JOIN users u ON u.id = g.user_id
+     WHERE g.child_id = $1 AND g.status IN ('invited','active')
+     ORDER BY g.created_at ASC`,
+    [childId]
+  );
+  const { rows: owner } = await pool.query(
+    "SELECT id, full_name, username FROM users WHERE id = $1", [child.parent_user_id]);
+  return {
+    isOwner: Boolean(child.is_owner),
+    owner: owner[0] ? { userId: owner[0].id, fullName: owner[0].full_name, username: owner[0].username } : null,
+    items: rows.map((row) => ({
+      id: row.id, userId: row.user_id, fullName: row.full_name, username: row.username,
+      relationship: row.relationship, status: row.status, invitedAt: row.created_at, respondedAt: row.responded_at
+    }))
+  };
+}
+
+async function inviteGuardian(ownerUserId, childId, payload = {}) {
+  await ensureTitoKidsSchema();
+  const child = await loadOwnChild(ownerUserId, childId);
+  if (!child.is_owner) throw new AppError(403, "Only the parent who set up this TitoKids wallet can invite someone else to help manage it.");
+  const contact = boundedText(payload.contact, "Their TitoPay details", { min: 3, max: 120 });
+  const relationship = boundedText(payload.relationship || "co-parent", "Relationship", { min: 2, max: 40 });
+  // Same resolver the staff register uses: @username, email or phone -> an
+  // active TitoPay account, or nothing.
+  const { resolveStaffUser } = require("./business-staff-service");
+  const person = await resolveStaffUser(contact);
+  if (!person) {
+    throw new AppError(404, `No active TitoPay account matches "${contact}". Their exact @username is the most reliable — they need a TitoPay account before they can help manage ${child.full_name}'s wallet.`);
+  }
+  if (person.id === ownerUserId) throw new AppError(400, "You already manage this wallet.");
+  if (child.child_user_id && person.id === child.child_user_id) {
+    throw new AppError(400, `${child.full_name} cannot be a manager of their own wallet — that would put the limits in their hands.`);
+  }
+  const { rows: existing } = await pool.query(
+    "SELECT * FROM titokids_guardians WHERE child_id = $1 AND user_id = $2 AND status IN ('invited','active') LIMIT 1",
+    [childId, person.id]
+  );
+  if (existing[0]) {
+    throw new AppError(409, existing[0].status === "active"
+      ? `@${person.username} already helps manage ${child.full_name}'s wallet.`
+      : `@${person.username} has already been invited — they still need to accept.`);
+  }
+  const id = uuidv4();
+  await pool.query(
+    "INSERT INTO titokids_guardians (id, child_id, user_id, invited_by, relationship) VALUES ($1,$2,$3,$4,$5)",
+    [id, childId, person.id, ownerUserId, relationship]
+  );
+  const { rows: inviter } = await pool.query("SELECT full_name FROM users WHERE id = $1", [ownerUserId]);
+  const inviterName = inviter[0]?.full_name || "A TitoPay parent";
+  await createNotification({
+    user: { id: person.id, user_type: "customer" },
+    channel: "in_app", notificationType: "titokids_guardian_invite", provider: "in_app",
+    title: `${inviterName} asked you to help manage ${child.full_name}'s money`,
+    body: `Accept in TitoKids and you can add money from your own wallet, pay for needs, set limits and answer ${child.full_name}'s requests. You will never be able to spend ${inviterName}'s money — funding always comes from your own wallet.`,
+    metadata: { childId, guardianId: id, clientNotificationId: `titokids-guardian-invite-${id}` }
+  }).catch(() => {});
+  if (person.email) {
+    try {
+      const emailCentre = require("./email-centre-service");
+      await emailCentre.queueRawEmail({
+        recipient: person.email,
+        subject: `${inviterName} asked you to help manage ${child.full_name}'s TitoKids wallet`,
+        textBody: [
+          `Hi ${person.full_name || "there"},`,
+          "",
+          `${inviterName} has asked you to help manage ${child.full_name}'s TitoKids wallet on TitoPay.`,
+          "",
+          "If you accept, you can add money from your own wallet, pay for needs like school or transport, set spending limits and answer requests.",
+          "Money you add always comes out of YOUR wallet, never anyone else's.",
+          "",
+          "Open TitoPay and go to TitoKids to accept or decline.",
+          "",
+          "TitoPay"
+        ].join("\n"),
+        userId: person.id,
+        idempotencyKey: `titokids-guardian-invite-${id}`,
+        metadata: { childId, guardianId: id }
+      });
+    } catch (error) {
+      console.error("[titokids] guardian invite email failed", { guardianId: id, message: error.message });
+    }
+  }
+  return {
+    guardian: { id, userId: person.id, fullName: person.full_name, username: person.username, relationship, status: "invited" },
+    message: `${person.full_name || `@${person.username}`} was invited — they help manage ${child.full_name}'s wallet as soon as they accept.`
+  };
+}
+
+// The invitations waiting for me, shown wherever TitoKids opens.
+async function listGuardianInvites(userId) {
+  await ensureTitoKidsSchema();
+  const { rows } = await pool.query(
+    `SELECT g.id, g.child_id, g.relationship, g.created_at, c.full_name AS child_name, u.full_name AS invited_by_name
+     FROM titokids_guardians g
+     JOIN titokids_children c ON c.id = g.child_id AND c.status = 'active'
+     JOIN users u ON u.id = g.invited_by
+     WHERE g.user_id = $1 AND g.status = 'invited'
+     ORDER BY g.created_at ASC
+     LIMIT 20`,
+    [userId]
+  );
+  return rows.map((row) => ({
+    id: row.id, childId: row.child_id, childName: row.child_name,
+    invitedByName: row.invited_by_name, relationship: row.relationship, invitedAt: row.created_at
+  }));
+}
+
+async function respondToGuardianInvite(userId, guardianId, accept) {
+  await ensureTitoKidsSchema();
+  const { rows } = await pool.query(
+    `SELECT g.*, c.full_name AS child_name, c.parent_user_id
+     FROM titokids_guardians g
+     JOIN titokids_children c ON c.id = g.child_id
+     WHERE g.id = $1 AND g.user_id = $2 LIMIT 1`,
+    [guardianId, userId]
+  );
+  const invite = rows[0];
+  if (!invite) throw new AppError(404, "Invitation not found");
+  if (invite.status !== "invited") throw new AppError(409, `That invitation was already ${invite.status}`);
+  await pool.query(
+    "UPDATE titokids_guardians SET status = $2, responded_at = NOW() WHERE id = $1",
+    [guardianId, accept ? "active" : "declined"]
+  );
+  const { rows: me } = await pool.query("SELECT full_name, username FROM users WHERE id = $1", [userId]);
+  const myName = me[0]?.full_name || `@${me[0]?.username || "Someone"}`;
+  await createNotification({
+    user: { id: invite.parent_user_id, user_type: "customer" },
+    channel: "in_app", notificationType: "titokids_guardian_response", provider: "in_app",
+    title: accept ? `${myName} now helps manage ${invite.child_name}'s money` : `${myName} declined`,
+    body: accept
+      ? `${myName} can add money from their own wallet, pay for needs, set limits and answer ${invite.child_name}'s requests.`
+      : `${myName} declined the invitation to help manage ${invite.child_name}'s wallet.`,
+    metadata: { childId: invite.child_id, guardianId, clientNotificationId: `titokids-guardian-response-${guardianId}` }
+  }).catch(() => {});
+  await writeAuditLog({
+    actorType: "customer", actorId: userId,
+    action: accept ? "titokids_guardian_accepted" : "titokids_guardian_declined",
+    entityType: "titokids_guardian", entityId: guardianId, metadata: { childId: invite.child_id }
+  }).catch(() => {});
+  return { status: accept ? "active" : "declined", childId: invite.child_id, childName: invite.child_name };
+}
+
+// Either side can end it: the owner removes a co-parent, a co-parent steps
+// down. Nobody is held to it.
+async function removeGuardian(actorUserId, guardianId) {
+  await ensureTitoKidsSchema();
+  const { rows } = await pool.query(
+    `SELECT g.*, c.parent_user_id, c.full_name AS child_name
+     FROM titokids_guardians g
+     JOIN titokids_children c ON c.id = g.child_id
+     WHERE g.id = $1 AND g.status IN ('invited','active') LIMIT 1`,
+    [guardianId]
+  );
+  const guardian = rows[0];
+  if (!guardian) throw new AppError(404, "That person does not help manage this wallet");
+  const isOwner = guardian.parent_user_id === actorUserId;
+  const isSelf = guardian.user_id === actorUserId;
+  if (!isOwner && !isSelf) throw new AppError(404, "That person does not help manage this wallet");
+  await pool.query("UPDATE titokids_guardians SET status = 'removed', responded_at = NOW() WHERE id = $1", [guardianId]);
+  const tellUserId = isOwner ? guardian.user_id : guardian.parent_user_id;
+  await createNotification({
+    user: { id: tellUserId, user_type: "customer" },
+    channel: "in_app", notificationType: "titokids_guardian_removed", provider: "in_app",
+    title: `TitoKids: ${guardian.child_name}`,
+    body: isOwner
+      ? `You no longer help manage ${guardian.child_name}'s TitoKids wallet.`
+      : `Someone stepped down from helping manage ${guardian.child_name}'s TitoKids wallet.`,
+    metadata: { childId: guardian.child_id, guardianId, clientNotificationId: `titokids-guardian-removed-${guardianId}` }
+  }).catch(() => {});
+  await writeAuditLog({
+    actorType: "customer", actorId: actorUserId, action: "titokids_guardian_removed",
+    entityType: "titokids_guardian", entityId: guardianId, metadata: { childId: guardian.child_id, byOwner: isOwner }
+  }).catch(() => {});
+  return { removed: true };
+}
+
+// Everyone who should hear that a child asked for money: the owner and every
+// accepted co-parent. Whoever answers first settles it.
+async function childApprovers(childId) {
+  const { rows } = await pool.query(
+    `SELECT c.parent_user_id AS user_id FROM titokids_children c WHERE c.id = $1
+     UNION
+     SELECT g.user_id FROM titokids_guardians g WHERE g.child_id = $1 AND g.status = 'active'`,
+    [childId]
+  );
+  return rows.map((row) => row.user_id);
+}
+
 async function createRequest(childUserId, childId, payload = {}) {
   await ensureTitoKidsSchema();
   const { rows } = await pool.query(
@@ -627,13 +872,15 @@ async function createRequest(childUserId, childId, payload = {}) {
      VALUES ($1,$2,$3,$4,$5,$6)`,
     [id, childId, childUserId, amount, category, note]
   );
-  await createNotification({
-    user: { id: child.parent_user_id, user_type: "customer" },
-    channel: "in_app", notificationType: "titokids_request", provider: "in_app",
-    title: "TitoKids approval needed",
-    body: `${child.full_name} is asking for R${amount.toFixed(2)} (${CATEGORY_LABELS[category]})${note ? ` — "${note}"` : ""}.`,
-    metadata: { childId, requestId: id, clientNotificationId: `titokids-request-${id}` }
-  }).catch(() => {});
+  for (const approverId of await childApprovers(childId)) {
+    await createNotification({
+      user: { id: approverId, user_type: "customer" },
+      channel: "in_app", notificationType: "titokids_request", provider: "in_app",
+      title: "TitoKids approval needed",
+      body: `${child.full_name} is asking for R${amount.toFixed(2)} (${CATEGORY_LABELS[category]})${note ? ` — "${note}"` : ""}.`,
+      metadata: { childId, requestId: id, clientNotificationId: `titokids-request-${id}-${approverId}` }
+    }).catch(() => {});
+  }
   return { id, status: "requested" };
 }
 
@@ -642,7 +889,7 @@ async function listApprovals(parentUserId) {
   const { rows } = await pool.query(
     `SELECT r.*, c.full_name AS child_name
      FROM titokids_requests r
-     JOIN titokids_children c ON c.id = r.child_id AND c.parent_user_id = $1 AND c.status = 'active'
+     JOIN titokids_children c ON c.id = r.child_id AND ${CHILD_ACCESS_SQL} AND c.status = 'active'
      WHERE r.status = 'requested'
      ORDER BY r.created_at ASC
      LIMIT 50`,
@@ -666,7 +913,10 @@ async function decideRequest(parentUserId, requestId, approve) {
     [requestId]
   );
   const request = rows[0];
-  if (!request || request.parent_user_id !== parentUserId) throw new AppError(404, "Request not found");
+  if (!request) throw new AppError(404, "Request not found");
+  // Owner or accepted co-parent. loadOwnChild is the single access rule, and
+  // it throws 404 for anybody else — a stranger learns nothing.
+  await loadOwnChild(parentUserId, request.child_id);
   if (request.status !== "requested") throw new AppError(409, `That request was already ${request.status}`);
   let funded = null;
   if (approve) {
@@ -696,6 +946,11 @@ async function decideRequest(parentUserId, requestId, approve) {
 }
 
 module.exports = {
+  listGuardians,
+  inviteGuardian,
+  listGuardianInvites,
+  respondToGuardianInvite,
+  removeGuardian,
   ensureTitoKidsSchema,
   CATEGORIES,
   CATEGORY_LABELS,

@@ -28,6 +28,7 @@ const ids = {
   parent: randomUUID(), parentWallet: randomUUID(),
   childUser: randomUUID(), childUserWallet: randomUUID(),
   shop: randomUUID(), shopWallet: randomUUID(),
+  coparent: randomUUID(), coparentWallet: randomUUID(),
   stranger: randomUUID()
 };
 const money = (v) => Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
@@ -43,22 +44,25 @@ async function seed() {
      VALUES ($1,'personal','${TAG} Parent','${TAG}_parent','${TAG}_parent@example.invalid','27110001101','x','active',FALSE,'approved'),
             ($2,'personal','${TAG} Aiden','${TAG}_aiden','${TAG}_aiden@example.invalid','27110001102','x','active',FALSE,'pending'),
             ($3,'business','${TAG} School Shop','${TAG}_shop','${TAG}_shop@example.invalid','27110001103','x','active',FALSE,'approved'),
-            ($4,'personal','${TAG} Stranger','${TAG}_stranger','${TAG}_stranger@example.invalid','27110001104','x','active',FALSE,'pending')`,
-    [ids.parent, ids.childUser, ids.shop, ids.stranger]
+            ($4,'personal','${TAG} Stranger','${TAG}_stranger','${TAG}_stranger@example.invalid','27110001104','x','active',FALSE,'pending'),
+            ($5,'personal','${TAG} CoParent','${TAG}_coparent','${TAG}_coparent@example.invalid','27110001105','x','active',FALSE,'approved')`,
+    [ids.parent, ids.childUser, ids.shop, ids.stranger, ids.coparent]
   );
   await pool.query(
     `INSERT INTO wallets (id, wallet_number, user_id, kind, currency, available_balance, reserved_balance, status)
      VALUES ($1,$2,$3,'personal','ZAR',2000,0,'active'),
             ($4,$5,$6,'personal','ZAR',0,0,'active'),
-            ($7,$8,$9,'business','ZAR',0,0,'active')`,
+            ($7,$8,$9,'business','ZAR',0,0,'active'),
+            ($10,$11,$12,'personal','ZAR',500,0,'active')`,
     [ids.parentWallet, String(Date.now()).slice(-9), ids.parent,
      ids.childUserWallet, String(Date.now() + 3).slice(-9), ids.childUser,
-     ids.shopWallet, String(Date.now() + 7).slice(-9), ids.shop]
+     ids.shopWallet, String(Date.now() + 7).slice(-9), ids.shop,
+     ids.coparentWallet, String(Date.now() + 11).slice(-9), ids.coparent]
   );
 }
 
 async function cleanup() {
-  const users = [ids.parent, ids.childUser, ids.shop, ids.stranger];
+  const users = [ids.parent, ids.childUser, ids.shop, ids.stranger, ids.coparent];
   await pool.query("DELETE FROM notifications WHERE user_id = ANY($1)", [users]).catch(() => {});
   const { rows: children } = await pool.query("SELECT id, wallet_id FROM titokids_children WHERE parent_user_id = $1", [ids.parent]).catch(() => ({ rows: [] }));
   for (const table of ["titokids_requests", "titokids_goals", "titokids_limits", "titokids_children"]) {
@@ -183,6 +187,94 @@ async function cleanup() {
     catch (e) { removeBlocked = e.statusCode === 409 && /still holds/i.test(e.message); }
     assert.ok(removeBlocked, "removal refuses while money remains");
     ok("a child with money in the wallet cannot be silently removed");
+
+    // ---- CO-PARENTS -------------------------------------------------------
+    // The whole point: a second adult helps manage ONE child's money, after
+    // agreeing to. The money question is the one that matters — a co-parent
+    // must spend their OWN wallet, never the owner's.
+    const balOf = async (walletId) => money((await pool.query(
+      "SELECT available_balance FROM wallets WHERE id = $1", [walletId])).rows[0].available_balance);
+
+    // A stranger cannot invite themselves, and an invitation must be accepted.
+    let strangerBlocked = false;
+    try { await kids.inviteGuardian(ids.stranger, aiden.id, { contact: `@${TAG}_stranger` }); }
+    catch (e) { strangerBlocked = e.statusCode === 404; }
+    assert.ok(strangerBlocked, "a stranger cannot invite anyone to a wallet they cannot see");
+
+    const invited = await kids.inviteGuardian(ids.parent, aiden.id, { contact: `@${TAG}_coparent` });
+    assert.equal(invited.guardian.status, "invited");
+    assert.equal((await kids.listChildren(ids.coparent)).length, 0, "an invitation alone grants nothing");
+    let beforeAccept = false;
+    try { await kids.getChild(ids.coparent, aiden.id); }
+    catch (e) { beforeAccept = e.statusCode === 404; }
+    assert.ok(beforeAccept, "the child stays invisible until the invitation is accepted");
+    ok("invite: strangers refused, and an unaccepted invitation grants nothing");
+
+    // The child may not be made a manager of their own limits.
+    let childBlocked = false;
+    try { await kids.inviteGuardian(ids.parent, aiden.id, { contact: `@${TAG}_aiden` }); }
+    catch (e) { childBlocked = e.statusCode === 400 && /own wallet/i.test(e.message); }
+    assert.ok(childBlocked, "the child cannot be a manager of their own wallet");
+
+    const invites = await kids.listGuardianInvites(ids.coparent);
+    assert.equal(invites.length, 1, "the invitation is waiting for them");
+    assert.equal(invites[0].childName, "Aiden");
+    await kids.respondToGuardianInvite(ids.coparent, invited.guardian.id, true);
+    assert.equal((await kids.listChildren(ids.coparent)).length, 1, "after accepting, the child appears");
+    ok("accept: the invitation is visible, and accepting opens the wallet");
+
+    // THE MONEY RULE. The co-parent funds from their own R500.
+    const ownerBefore = await balOf(ids.parentWallet);
+    const coparentBefore = await balOf(ids.coparentWallet);
+    const childBefore = money((await kids.getChild(ids.parent, aiden.id)).balance);
+    await kids.fundChild(ids.coparent, aiden.id, { amount: 120, note: "From the co-parent" });
+    assert.equal(await balOf(ids.parentWallet), ownerBefore, "the owner's wallet is untouched");
+    assert.equal(await balOf(ids.coparentWallet), money(coparentBefore - 120), "the co-parent paid it themselves");
+    assert.equal(money((await kids.getChild(ids.parent, aiden.id)).balance), money(childBefore + 120), "the child received it");
+    const { rows: audit } = await pool.query(
+      "SELECT user_id FROM transactions WHERE user_id = $1 AND metadata->>'childId' = $2", [ids.coparent, aiden.id]);
+    assert.equal(audit.length, 1, "the transaction is recorded against the co-parent, not the owner");
+    ok("a co-parent funds from THEIR OWN wallet — the owner's balance never moves");
+
+    // Day-to-day reach: limits and answering the child's requests.
+    await kids.setLimits(ids.coparent, aiden.id, { dailyLimit: 300 });
+    assert.equal(money((await kids.childLimits(aiden.id)).dailyLimit), 300, "a co-parent can set limits");
+    const ask = await kids.createRequest(ids.childUser, aiden.id, { amount: 40, category: "food", note: "Bread" });
+    const coparentSees = await kids.listApprovals(ids.coparent);
+    assert.ok(coparentSees.some((row) => row.id === ask.id), "the request reaches the co-parent too");
+    // Scoped to THIS request: an earlier one in this run also alerted the owner.
+    const { rows: alerted } = await pool.query(
+      `SELECT user_id FROM notifications
+       WHERE notification_type = 'titokids_request' AND metadata->>'requestId' = $1`, [ask.id]);
+    assert.deepEqual([...alerted.map((r) => r.user_id)].sort(), [ids.parent, ids.coparent].sort(),
+      "both approvers are told, not just the owner");
+    const coBefore = await balOf(ids.coparentWallet);
+    await kids.decideRequest(ids.coparent, ask.id, true);
+    assert.equal(await balOf(ids.coparentWallet), money(coBefore - 40), "the approver's own wallet funds their approval");
+    ok("a co-parent sets limits, is alerted, and answers requests from their own wallet");
+
+    // What stays with the owner alone.
+    let coRemoveBlocked = false;
+    try { await kids.updateChild(ids.coparent, aiden.id, { status: "removed" }); }
+    catch (e) { coRemoveBlocked = e.statusCode === 403; }
+    assert.ok(coRemoveBlocked, "a co-parent cannot remove the child");
+    let coInviteBlocked = false;
+    try { await kids.inviteGuardian(ids.coparent, aiden.id, { contact: `@${TAG}_stranger` }); }
+    catch (e) { coInviteBlocked = e.statusCode === 403; }
+    assert.ok(coInviteBlocked, "a co-parent cannot invite further managers");
+    ok("removing the child and inviting others stay with the owner alone");
+
+    // Either side can end it, and access stops immediately.
+    const managers = await kids.listGuardians(ids.parent, aiden.id);
+    assert.equal(managers.isOwner, true);
+    assert.equal(managers.items.length, 1);
+    await kids.removeGuardian(ids.parent, managers.items[0].id);
+    assert.equal((await kids.listChildren(ids.coparent)).length, 0, "the wallet disappears the moment they are removed");
+    let afterRemoval = false;
+    try { await kids.fundChild(ids.coparent, aiden.id, { amount: 5 }); }
+    catch (e) { afterRemoval = e.statusCode === 404; }
+    assert.ok(afterRemoval, "a removed co-parent can no longer move money");
+    ok("removal: access and the ability to move money stop at once");
 
     console.log("\n" + "=".repeat(80));
     console.log(`  ALL ${passed} CHECKS PASSED — TitoKids moves real money with real guardrails.`);
