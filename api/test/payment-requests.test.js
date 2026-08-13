@@ -68,10 +68,21 @@ test("a request can only be answered by its payer and cancelled by its requester
     "cancel is requester-scoped and pending-only");
 });
 
-test("the requester is FICA-gated at creation, matching the receiving rails", () => {
+test("the requester is held to the R200 000 monthly receiving rule, matching the rails", () => {
+  // FICA is a monthly receiving limit, not a wall at the door: an unverified
+  // account may receive up to R200 000 a calendar month, and only a request
+  // that would pass that line is refused. Both the request service and the
+  // transfer rails read the same constant and the same ledger-derived total.
   assert.match(SERVICE, /assertRequesterCanReceive/);
-  assert.match(SERVICE, /isVerifiedTitoPayUser/);
-  assert.match(SERVICE, /A business cannot receive money before its FICA verification/);
+  assert.match(SERVICE, /UNVERIFIED_MONTHLY_RECEIVE_LIMIT/);
+  assert.match(SERVICE, /monthlyReceivedTotal/);
+  assert.match(TX_SERVICE, /const UNVERIFIED_MONTHLY_RECEIVE_LIMIT = 200000/);
+  assert.match(TX_SERVICE, /assertUnverifiedReceiveWithinLimit/);
+  assert.doesNotMatch(TX_SERVICE, /Recipient must be a verified TitoPay user/,
+    "the old hard gate must stay gone");
+  // The limit is derived from the wallet ledger's own credit entries, never a
+  // separate tally that can drift.
+  assert.match(TX_SERVICE, /entry_type = 'credit'[\s\S]{0,80}DATE_TRUNC\('month', NOW\(\)\)/);
 });
 
 test("payment request notices travel the feed the app already reads", () => {

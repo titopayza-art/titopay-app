@@ -91,11 +91,12 @@ function isoDay(value) {
   return String(value).slice(0, 10);
 }
 
-// The requester RECEIVES the money, and the transfer rails refuse an
-// unverified recipient at payment time. Checking here means a request that can
-// never be paid is refused when it is made, not days later when someone tries
-// to honour it.
-async function assertRequesterCanReceive(userId) {
+// The requester RECEIVES the money, and the receiving rule is the R200 000
+// one: an unverified account may receive up to R200 000 in a calendar month,
+// and only a request that would take it past that line needs FICA first.
+// Checking here means a request that could never be paid is refused when it
+// is made, not days later when someone tries to honour it.
+async function assertRequesterCanReceive(userId, amount = 0) {
   const { rows } = await pool.query(
     "SELECT id, account_type, status, fica_status, username, full_name, email, phone FROM users WHERE id = $1",
     [userId]
@@ -103,9 +104,12 @@ async function assertRequesterCanReceive(userId) {
   const requester = rows[0];
   if (!requester) throw new AppError(404, "Account not found.");
   if (!isVerifiedTitoPayUser(requester)) {
-    throw new AppError(403, requester.account_type === "business"
-      ? "A business cannot receive money before its FICA verification is approved. Complete FICA under Profile first."
-      : "Complete your FICA verification under Profile before requesting money.");
+    const { monthlyReceivedTotal, UNVERIFIED_MONTHLY_RECEIVE_LIMIT } = require("./transaction-service");
+    const received = await monthlyReceivedTotal(userId);
+    if (received + Number(amount || 0) > UNVERIFIED_MONTHLY_RECEIVE_LIMIT) {
+      throw new AppError(403,
+        `You have received R${received.toFixed(2)} this month. An unverified account can receive up to R${UNVERIFIED_MONTHLY_RECEIVE_LIMIT.toFixed(2)} a month, and this request would go past that. Complete FICA verification under Profile to keep receiving.`);
+    }
   }
   return requester;
 }
@@ -253,8 +257,8 @@ async function insertRequest(fields) {
 
 async function createRequest(actor, payload = {}) {
   await ensurePaymentRequests();
-  const requester = await assertRequesterCanReceive(actor.userId);
   const amount = cleanAmount(payload.amount);
+  const requester = await assertRequesterCanReceive(actor.userId, amount);
   const description = String(payload.description || "").trim().slice(0, 240);
   const dueDate = cleanDate(payload.dueDate, "Due date");
   const recurring = /recur/i.test(String(payload.requestType || ""));
@@ -285,10 +289,10 @@ async function createRequest(actor, payload = {}) {
 
 async function createSplit(actor, payload = {}) {
   await ensurePaymentRequests();
-  const requester = await assertRequesterCanReceive(actor.userId);
   const label = String(payload.reference || payload.label || "").trim().slice(0, 120);
   if (!label) throw new AppError(400, "Say what the bill is for. Every participant sees it.");
   const total = cleanAmount(payload.amount || payload.total);
+  const requester = await assertRequesterCanReceive(actor.userId, total);
   const rawParticipants = Array.isArray(payload.participants) ? payload.participants : [];
   if (!rawParticipants.length) throw new AppError(400, "Add at least one participant.");
   if (rawParticipants.length > MAX_SPLIT_PARTICIPANTS) {

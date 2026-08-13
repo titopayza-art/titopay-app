@@ -7,7 +7,8 @@
  * as Send Money, and can be declined or cancelled with nothing moving at all.
  *
  * Checks:
- *   1.  An unverified requester is refused: no FICA, no receiving.
+ *   1.  An unverified requester may request under R200 000 a month and is
+ *       refused only when a request would pass the line.
  *   2.  Creating a request notifies the payer through the notification feed.
  *   3.  The payer sees it under incoming; the requester under outgoing.
  *   4.  A stranger can neither pay nor decline someone else's request.
@@ -96,12 +97,25 @@ async function balanceOf(userId) {
     const sipho = await seedUser("sipho", { balance: 50 });
     const unverified = await seedUser("newbie", { fica: "pending", accountType: "business" });
 
-    // 1. No FICA, no receiving.
-    const refused = await call(unverified.token, "POST", "/v1/payments/requests",
+    // 1. The R200 000 rule: an unverified account requests freely under the
+    //    line, and is refused only when a request would pass it.
+    const allowed = await call(unverified.token, "POST", "/v1/payments/requests",
       { recipient: `@${thuso.username}`, amount: 100 });
-    assert.equal(refused.status, 403);
-    assert.match(String(refused.data.error || ""), /FICA/i);
-    ok("an unverified business is refused: FICA before receiving, exactly as the rails demand");
+    assert.equal(allowed.status, 200, JSON.stringify(allowed.data));
+    const overLimit = await call(unverified.token, "POST", "/v1/payments/requests",
+      { recipient: `@${thuso.username}`, amount: 250000 });
+    assert.equal(overLimit.status, 403);
+    assert.match(String(overLimit.data.error || ""), /200 ?000/);
+    assert.match(String(overLimit.data.error || ""), /FICA/i);
+    ok("an unverified account requests freely under R200 000 a month and is refused only past the line");
+
+    // The transfer rails obey the same rule: money can be SENT to an
+    // unverified account under the line.
+    const sendToUnverified = await call(thuso.token, "POST", "/v1/transactions",
+      { serviceCode: "wallet_transfer", amount: 50, recipient: `@${unverified.username}` });
+    assert.ok([200, 201].includes(sendToUnverified.status), JSON.stringify(sendToUnverified.data));
+    assert.equal(await balanceOf(unverified.id), 50, "the unverified account received the money");
+    ok("sending money to an unverified account works under the R200 000 line");
 
     // 11. No asking yourself.
     const selfish = await call(thuso.token, "POST", "/v1/payments/requests",

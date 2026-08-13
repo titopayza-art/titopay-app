@@ -7491,13 +7491,21 @@ function paymentErrorMessage(error) {
   if (PAYMENT_ERROR_MESSAGES[code]) return PAYMENT_ERROR_MESSAGES[code];
 
   const status = Number(error?.status || 0);
-  if (error?.fromSessionRefresh || status === 401 || status === 403) {
+  if (error?.fromSessionRefresh || status === 401) {
     // A signed-out session stops the payment before it starts. Say so, because
     // a customer who is not told this assumes the money left anyway.
     return "Your session has expired. Please sign in again. Your wallet and money are unaffected.";
   }
   if (status === 423) return "Your wallet is locked. Unlock it and try again.";
   if (status === 429) return "Too many attempts. Please wait a few minutes and try again.";
+  // A 4xx from TitoPay's own API carries a sentence written for the customer,
+  // like the R200 000 receiving limit. Hiding it behind the generic fallback
+  // (or worse, "session expired" for every 403) turned clear refusals into
+  // mystery failures.
+  const serverMessage = String(error?.message || "").trim();
+  if ([400, 402, 403, 404, 409].includes(status) && serverMessage.length > 12 && !/^https?:/i.test(serverMessage)) {
+    return serverMessage;
+  }
   if (error?.timedOut || status === 408) {
     return "This is taking longer than usual. Check Activity before trying again. If it appears there, it went through.";
   }
