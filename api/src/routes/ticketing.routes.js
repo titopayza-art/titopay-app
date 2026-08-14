@@ -35,6 +35,7 @@ const {
   listMyTickets,
   claimTicketByCode,
   canManageEventTicketing,
+  EVENT_CATEGORIES,
   listEventCoupons,
   createEventCoupon,
   updateEventCoupon,
@@ -71,12 +72,26 @@ function meta(req) {
   return { ipAddress: req.ip, userAgent: req.get("user-agent") };
 }
 
-router.get("/public/events", async (_req, res, next) => {
+// Public, unauthenticated: this is the shop window. `items` keeps the shape it
+// has always had, so an older app that ignores the new fields still works;
+// `categories` and `search` are additive.
+router.get("/public/events", async (req, res, next) => {
   try {
-    res.json({ ok: true, items: await listPublicApprovedEvents() });
+    const result = await listPublicApprovedEvents({
+      search: req.query.search || req.query.q || "",
+      category: req.query.category || "",
+      limit: req.query.limit
+    });
+    res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }
+});
+
+// The category vocabulary, so the organiser's form and the buyer's chips are
+// filled from one list rather than two that can drift apart.
+router.get("/public/event-categories", (_req, res) => {
+  res.json({ ok: true, categories: EVENT_CATEGORIES });
 });
 
 router.get("/public/events/:slug", async (req, res, next) => {

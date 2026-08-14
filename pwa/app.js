@@ -2695,6 +2695,7 @@ function icon(name) {
     bank: `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M6 10v8"/><path d="M10 10v8"/><path d="M14 10v8"/><path d="M18 10v8"/><path d="M4 18h16"/><path d="M3 22h18"/>`,
     bill: `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/>`,
     "bill-pay": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="m9.3 13.7 1.9 1.9 3.5-3.9"/>`,
+    calendar: `<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18"/><path d="M8 2.5v4"/><path d="M16 2.5v4"/>`,
     ticket: `<path d="M2 9a3 3 0 0 0 0 6v3a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3a3 3 0 0 0 0-6V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M13 5v14"/>`,
     ticketing: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M9 9h6"/><path d="M9 13h4"/><path d="M17 8v8"/>`,
     health: `<rect x="4" y="4" width="16" height="16" rx="4.5"/><path d="M12 8.8v6.4"/><path d="M8.8 12h6.4"/>`,
@@ -3289,6 +3290,24 @@ async function onClick(event) {
     await refreshPublicTickets();
     return;
   }
+  const categoryChip = event.target.closest("[data-event-category]");
+  if (categoryChip) {
+    const chosen = categoryChip.dataset.eventCategory || "";
+    // Tapping the chip that is already on turns it off, which is how a filter
+    // people expect to be able to undo behaves.
+    state.ticketing.category = state.ticketing.category === chosen ? "" : chosen;
+    await refreshPublicTickets({ reset: false });
+    return;
+  }
+  const searchClear = event.target.closest("[data-ticket-search-clear]");
+  if (searchClear) {
+    const input = document.querySelector("[data-ticket-search]");
+    if (input) input.value = "";
+    state.ticketing.search = "";
+    searchClear.hidden = true;
+    await refreshPublicTickets({ reset: false });
+    return;
+  }
   const stockvelInviteAccept = event.target.closest("[data-stockvel-invite-accept]");
   if (stockvelInviteAccept) {
     await respondToStockvelInvitation(stockvelInviteAccept.dataset.stockvelInviteAccept, true);
@@ -3585,13 +3604,17 @@ function onInput(event) {
   }
   const ticketSearch = event.target.closest("[data-ticket-search]");
   if (ticketSearch) {
+    // Search is answered by the server now, so it is debounced: one request
+    // when typing pauses rather than one per keystroke. The input itself is
+    // never re-rendered, so the caret and the phone keyboard stay put and the
+    // old refocus hack is no longer needed.
     state.ticketing.search = ticketSearch.value;
-    renderPublicTickets();
-    const refocus = document.querySelector("[data-ticket-search]");
-    if (refocus) {
-      refocus.focus();
-      refocus.setSelectionRange(refocus.value.length, refocus.value.length);
-    }
+    const clear = document.querySelector("[data-ticket-search-clear]");
+    if (clear) clear.hidden = !String(ticketSearch.value || "").trim();
+    clearTimeout(state.ticketing.searchTimer);
+    state.ticketing.searchTimer = setTimeout(() => {
+      refreshPublicTickets({ reset: false });
+    }, 280);
     return;
   }
   const documentField = event.target.closest("[data-doc-desc], [data-doc-qty], [data-doc-unit], [data-doc-issue], [data-doc-due]");
@@ -4016,6 +4039,18 @@ async function handleAction(action, actionElement = null) {
   if (String(action || "").startsWith("vendor-revoke:")) {
     const parts = action.split(":");
     await revokeTicketingVendor(parts[1], parts[2]);
+    return;
+  }
+  if (String(action || "").startsWith("event-share:")) {
+    await shareTicketingEvent(action.slice("event-share:".length));
+    return;
+  }
+  if (action === "event-filter-clear") {
+    state.ticketing.search = "";
+    state.ticketing.category = "";
+    const input = document.querySelector("[data-ticket-search]");
+    if (input) input.value = "";
+    await refreshPublicTickets({ reset: false });
     return;
   }
   if (String(action || "").startsWith("coupon-disable:")) {
@@ -16628,10 +16663,18 @@ async function openPersonalTicketsDashboard() {
     </div>
     <button class="btn secondary" type="button" data-action="my-tickets">${icon("ticket")} My Tickets</button>
     <div data-staff-scan-entry></div>
-    <section class="ticket-list" data-ticket-list aria-live="polite">
-      ${[0, 1, 2].map(() => `<div class="ticket-card is-loading" aria-hidden="true">
-        <span class="skeleton skeleton-circle"></span>
-        <div><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span></div>
+    <div class="event-search-bar">
+      <label class="visually-hidden" for="ticket-search">Search events</label>
+      <span class="event-search-icon" aria-hidden="true">${icon("search")}</span>
+      <input id="ticket-search" class="event-search-input" type="search" autocomplete="off" enterkeyhint="search"
+        data-ticket-search placeholder="Search events, artists, venues or cities">
+      <button class="event-search-clear" type="button" data-ticket-search-clear aria-label="Clear search" hidden>${icon("x")}</button>
+    </div>
+    <div class="event-chip-row" data-event-categories></div>
+    <section class="event-list" data-ticket-list aria-live="polite">
+      ${[0, 1, 2].map(() => `<div class="event-card is-loading" aria-hidden="true">
+        <span class="skeleton skeleton-poster"></span>
+        <div class="event-card-body"><span class="skeleton skeleton-line"></span><span class="skeleton skeleton-line short"></span></div>
       </div>`).join("")}
     </section>
   `);
@@ -16652,13 +16695,26 @@ async function openPersonalTicketsDashboard() {
   }
   await refreshPublicTickets();
 }
-async function refreshPublicTickets() {
+// Search and category filtering are answered by the server, so a search covers
+// every approved event rather than only the batch this phone happens to hold.
+// `reset` is for the first open; a search or a chip tap keeps what is typed.
+async function refreshPublicTickets({ reset = true } = {}) {
   const host = document.querySelector("[data-ticket-list]");
   if (!host) return;
-  try {
-    const result = await api("/v1/ticketing/public/events", { auth: false });
-    state.ticketing.events = Array.isArray(result.items) ? result.items : [];
+  if (reset) {
     state.ticketing.search = "";
+    state.ticketing.category = "";
+  }
+  const params = new URLSearchParams();
+  if (state.ticketing.search) params.set("search", state.ticketing.search);
+  if (state.ticketing.category) params.set("category", state.ticketing.category);
+  const query = params.toString();
+  try {
+    const result = await api(`/v1/ticketing/public/events${query ? `?${query}` : ""}`, { auth: false });
+    state.ticketing.events = Array.isArray(result.items) ? result.items : [];
+    // The chip row is built from the whole catalogue, so it survives a filter
+    // that returns nothing and the buyer always has a way back out.
+    if (Array.isArray(result.categories)) state.ticketing.categories = result.categories;
     renderPublicTickets();
   } catch (error) {
     const current = document.querySelector("[data-ticket-list]");
@@ -16677,29 +16733,60 @@ function renderPublicTickets() {
   const host = document.querySelector("[data-ticket-list]");
   if (!host) return;
   const events = state.ticketing.events || [];
-  const needle = String(state.ticketing.search || "").trim().toLowerCase();
-  const matches = events.filter((event) => !needle || [event.eventName, event.venueName, event.city, event.category]
-    .filter(Boolean).some((value) => String(value).toLowerCase().includes(needle)));
+  const search = String(state.ticketing.search || "").trim();
+  const category = state.ticketing.category || "";
+  renderEventCategoryChips();
+
+  // The search box is NOT re-rendered on every keystroke: rewriting the input
+  // the buyer is typing into is what makes a search field lose its cursor and
+  // its keyboard on a phone. Only the results below it change.
+  const clear = document.querySelector("[data-ticket-search-clear]");
+  if (clear) clear.hidden = !search;
 
   if (!events.length) {
+    const filtered = Boolean(search || category);
     host.innerHTML = `
       <section class="empty-state compact-state">
         ${icon("ticket")}
-        <strong>No events on sale yet</strong>
-        <p>Approved TitoPay events appear here as soon as ticket sales open. Check back soon.</p>
-        <button class="btn secondary" type="button" data-ticket-refresh="1">${icon("refresh")} Refresh</button>
+        <strong>${filtered ? "Nothing matches that yet" : "No events on sale yet"}</strong>
+        <p>${filtered
+          ? `We could not find an event for ${search ? `"${esc(search)}"` : "that category"}. Try a different word, or browse everything.`
+          : "Approved TitoPay events appear here as soon as ticket sales open. Check back soon."}</p>
+        <button class="btn secondary" type="button" data-action="${filtered ? "event-filter-clear" : ""}"${filtered ? "" : ' data-ticket-refresh="1"'}>
+          ${filtered ? `${icon("refresh")} Show all events` : `${icon("refresh")} Refresh`}
+        </button>
       </section>`;
     return;
   }
-
   host.innerHTML = `
-    ${events.length > 4 ? `<div class="ticket-search">
-      <label class="visually-hidden" for="ticket-search">Search events</label>
-      <input id="ticket-search" class="vas-search-input" type="search" autocomplete="off" data-ticket-search placeholder="Search events, venues or cities" value="${esc(state.ticketing.search || "")}">
-    </div>` : ""}
-    ${matches.length
-      ? matches.map(ticketingPublicEventRow).join("")
-      : `<section class="empty-state compact-state"><strong>No match</strong><p>Nothing matches "${esc(state.ticketing.search)}".</p></section>`}`;
+    <p class="event-result-count">${events.length} event${events.length === 1 ? "" : "s"}${category ? ` in ${esc(category)}` : ""}${search ? ` for "${esc(search)}"` : ""}</p>
+    ${events.map(ticketingPublicEventRow).join("")}`;
+}
+// The category chips. Only categories that actually have an approved event
+// appear, so a buyer never taps into an empty room.
+function renderEventCategoryChips() {
+  const host = document.querySelector("[data-event-categories]");
+  if (!host) return;
+  const categories = state.ticketing.categories || [];
+  if (!categories.length) { host.innerHTML = ""; return; }
+  const active = state.ticketing.category || "";
+  // Remember where the row was scrolled to. Re-rendering the chips resets it,
+  // which would silently jump the buyer back to "All" after every tap.
+  const previousScroll = host.scrollLeft;
+  host.innerHTML = `
+    <button class="event-chip${active ? "" : " is-active"}" type="button" data-event-category="" aria-pressed="${active ? "false" : "true"}">All</button>
+    ${categories.map((entry) => `
+      <button class="event-chip${active === entry.category ? " is-active" : ""}" type="button"
+        data-event-category="${esc(entry.category)}" aria-pressed="${active === entry.category ? "true" : "false"}">
+        ${esc(entry.category)} <span class="event-chip-count">${esc(String(entry.count))}</span>
+      </button>`).join("")}`;
+  host.scrollLeft = previousScroll;
+  // A chosen chip that sits off the edge of the row reads as though the tap
+  // did nothing, so it is brought into view.
+  const activeChip = host.querySelector(".event-chip.is-active");
+  if (activeChip && active) {
+    activeChip.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+  }
 }
 function ticketingPublicEventRow(event = {}) {
   const tickets = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
@@ -16709,24 +16796,87 @@ function ticketingPublicEventRow(event = {}) {
   const date = event.eventDate ? new Date(event.eventDate) : null;
   const validDate = date && !Number.isNaN(date.getTime());
   const soldOut = tickets.length > 0 && available === 0;
+  const free = tickets.length > 0 && prices.length > 0 && lowestPrice === 0;
+  const poster = String(event.eventBannerUrl || "").trim();
+  // Scarcity is only shown when it is true and useful. "412 available" is
+  // noise; "9 left" is the reason somebody buys tonight instead of forgetting.
+  const scarce = !soldOut && available > 0 && available <= 20;
+  const when = validDate
+    ? date.toLocaleDateString("en-ZA", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
+    : "Date to be confirmed";
+  const where = [event.venueName, event.city].filter(Boolean).join(", ") || "Venue to be confirmed";
   return `
-    <article class="ticket-card${soldOut ? " is-sold-out" : ""}">
-      <div class="ticket-date" aria-hidden="true">
-        <span>${esc(validDate ? date.toLocaleDateString("en-ZA", { month: "short" }) : "TBC")}</span>
-        <strong>${esc(validDate ? String(date.getDate()) : "--")}</strong>
-      </div>
-      <div class="ticket-body">
-        <strong>${esc(event.eventName || "TitoPay Event")}</strong>
-        <small>${esc(validDate ? date.toLocaleDateString("en-ZA", { weekday: "short", day: "2-digit", month: "long", year: "numeric" }) : "Date to be confirmed")}</small>
-        <small>${icon("globe")} ${esc([event.venueName, event.city].filter(Boolean).join(", ") || "Venue to be confirmed")}</small>
-        <div class="ticket-meta">
-          <span class="ticket-price">${prices.length ? `From ${esc(money(lowestPrice))}` : "Price to be confirmed"}</span>
-          ${soldOut ? `<em class="sv-chip failed">Sold out</em>` : available ? `<em class="sv-chip settled">${available} available</em>` : ""}
+    <article class="event-card${soldOut ? " is-sold-out" : ""}">
+      <button class="event-card-open" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}"
+        aria-label="${esc(event.eventName || "TitoPay Event")}, ${esc(when)}, ${esc(where)}">
+        <div class="event-poster${poster ? "" : " is-placeholder"}"${poster ? ` style="background-image:url('${esc(poster)}')"` : ""}>
+          ${poster ? "" : `<span class="event-poster-mark" aria-hidden="true">${icon("ticket")}</span>`}
+          <span class="event-date-badge" aria-hidden="true">
+            <span>${esc(validDate ? date.toLocaleDateString("en-ZA", { month: "short" }).toUpperCase() : "TBC")}</span>
+            <strong>${esc(validDate ? String(date.getDate()) : "--")}</strong>
+          </span>
+          ${event.category ? `<span class="event-category-pill">${esc(event.category)}</span>` : ""}
+          ${soldOut ? `<span class="event-status-pill is-sold-out">Sold out</span>`
+            : scarce ? `<span class="event-status-pill is-scarce">${available} left</span>` : ""}
         </div>
+        <div class="event-card-body">
+          <h3 class="event-card-title">${esc(event.eventName || "TitoPay Event")}</h3>
+          <p class="event-card-line">${icon("calendar")} ${esc(when)}${event.startTime ? ` · ${esc(event.startTime)}` : ""}</p>
+          <p class="event-card-line">${icon("globe")} ${esc(where)}</p>
+          <p class="event-card-price">
+            ${event.registrationMode ? "Free registration"
+              : free ? "Free entry"
+              : prices.length ? `From <strong>${esc(money(lowestPrice))}</strong>`
+              : "Price to be confirmed"}
+          </p>
+        </div>
+      </button>
+      <div class="event-card-actions">
+        <button class="btn secondary event-card-cta" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}"${soldOut ? " disabled" : ""}>
+          ${soldOut ? "Sold out" : event.registrationMode ? "Register" : "Get tickets"}
+        </button>
+        <button class="icon-btn event-share-btn" type="button" data-action="event-share:${esc(event.slug || "")}"
+          aria-label="Share ${esc(event.eventName || "this event")}" title="Share this event">${icon("share")}</button>
       </div>
-      <button class="btn secondary ticket-cta" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}"${soldOut ? " disabled" : ""}>${soldOut ? "Sold out" : "View"}</button>
     </article>
   `;
+}
+// SHARING AN EVENT.
+//
+// The organiser's whole reason for using TitoPay is that people bring people.
+// This uses the phone's own share sheet where there is one, so the event goes
+// to WhatsApp with one tap, and falls back to the clipboard everywhere else.
+// The link is the public event page, which works for somebody who has never
+// heard of TitoPay: they can read the event before being asked to sign in.
+async function shareTicketingEvent(slug) {
+  const events = state.ticketing.events || [];
+  const event = events.find((item) => String(item.slug) === String(slug))
+    || (state.publicEvent && String(state.publicEvent.slug) === String(slug) ? state.publicEvent : null)
+    || { slug };
+  const url = event.marketingLink || `https://app.titopay.co.za/events/${encodeURIComponent(slug)}`;
+  const date = event.eventDate ? new Date(event.eventDate) : null;
+  const when = date && !Number.isNaN(date.getTime())
+    ? date.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+    : "";
+  const where = [event.venueName, event.city].filter(Boolean).join(", ");
+  const text = [
+    event.eventName || "An event on TitoPay",
+    [when, where].filter(Boolean).join(" · "),
+    "Get your tickets on TitoPay:"
+  ].filter(Boolean).join("\n");
+
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: event.eventName || "TitoPay event", text, url });
+      return;
+    } catch (error) {
+      // A share sheet the person closed is not a failure, and must not be
+      // followed by a toast telling them something was copied.
+      if (error && error.name === "AbortError") return;
+    }
+  }
+  await copyTextValue(`${text}\n${url}`);
+  showToast("Event link copied. Paste it into a message.", "success");
 }
 async function openPublicTicketingEvent(slug) {
   if (!slug) return openPersonalTicketsDashboard();
@@ -16747,8 +16897,12 @@ function publicTicketingEventModal(event = {}) {
         <h2>${esc(event.eventName || "Event")}</h2>
         <p class="lead">${esc(event.description || "Secure TitoPay event ticketing.")}</p>
       </div>
+      <button class="icon-btn" type="button" data-action="event-share:${esc(event.slug || "")}"
+        aria-label="Share this event" title="Share this event">${icon("share")}</button>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${event.eventBannerUrl ? `<div class="event-hero" style="background-image:url('${esc(event.eventBannerUrl)}')" role="img" aria-label="${esc(event.eventName || "Event")} poster"></div>` : ""}
+    ${event.category ? `<p class="event-detail-category">${esc(event.category)}</p>` : ""}
     <div class="settings-list">
       ${settingsRow("Date", event.eventDate ? formatDate(event.eventDate).split(",")[0] : "To be confirmed", "calendar")}
       ${settingsRow("Venue", [event.venueName, event.city, event.province].filter(Boolean).join(", ") || "Online / to be confirmed", "store")}
@@ -19238,7 +19392,11 @@ function openTicketingEventForm() {
     <form class="form-grid" data-form="ticketing-event">
       <section class="section-head compact"><h2>Event details</h2></section>
       <label>Event name<input name="eventName" required></label>
-      <label>Category<input name="category" placeholder="Conference, concert, workshop"></label>
+      <label>Category<select name="category" required>
+        <option value="">Choose a category</option>
+        ${EVENT_CATEGORY_OPTIONS.map((option) => `<option value="${esc(option)}">${esc(option)}</option>`).join("")}
+      </select></label>
+      <p class="field-hint">Buyers browse by category, so this is how people who have never heard of your event find it.</p>
       <label>Description<textarea name="description" rows="3" placeholder="Tell attendees what to expect."></textarea></label>
 
       <section class="section-head compact"><h2>When</h2></section>
@@ -24201,6 +24359,24 @@ const PHASE_CHIPS = {
   sold_out: { label: "Sold out", tone: "" },
   closed: { label: "Closed", tone: "" }
 };
+// The same vocabulary the API holds in EVENT_CATEGORIES. Kept as a constant
+// rather than fetched so the Create Event form never renders an empty select
+// on a slow connection; the server is still the authority on what it accepts.
+const EVENT_CATEGORY_OPTIONS = [
+  "Music & Concerts",
+  "Festivals",
+  "Sports & Fitness",
+  "Conferences & Business",
+  "Workshops & Training",
+  "Food & Drink",
+  "Arts & Culture",
+  "Comedy & Theatre",
+  "Nightlife & Parties",
+  "Community & Faith",
+  "Family & Kids",
+  "Charity & Fundraising",
+  "Other"
+];
 const TICKETING_SECTIONS = [
   { key: "events", label: "My Events", icon: "ticket", hint: "Create events, submit for approval, track each one." },
   { key: "sales", label: "Sales", icon: "chart", hint: "Tickets sold and money taken, per event and per tier." },

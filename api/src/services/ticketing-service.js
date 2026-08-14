@@ -1166,12 +1166,93 @@ async function getBusinessEvent(userId, eventId) {
   return publicEvent(rows[0], await getTicketTypes(eventId), await getDocuments(eventId));
 }
 
-async function listPublicApprovedEvents() {
+/* ==========================================================================
+   BROWSING WHAT IS ON
+   ==========================================================================
+   Search and category filtering happen HERE rather than in the app. The old
+   screen pulled 100 events and filtered them in JavaScript, which meant the
+   101st event was invisible to search no matter what somebody typed, and a
+   phone on a slow connection paid for every event's poster to filter three of
+   them out. Doing it in SQL means search covers the whole catalogue and the
+   phone downloads only what it shows.
+   ========================================================================== */
+
+// The categories a buyer can filter by. Organisers pick from this list, which
+// is what makes the filter trustworthy: free text produced "Concert", "concert"
+// and "Live Music" as three separate things nobody could browse.
+//
+// Free text already stored on existing events is NOT rewritten. It still shows
+// on the event and is still searchable; it simply does not become a chip.
+const EVENT_CATEGORIES = [
+  "Music & Concerts",
+  "Festivals",
+  "Sports & Fitness",
+  "Conferences & Business",
+  "Workshops & Training",
+  "Food & Drink",
+  "Arts & Culture",
+  "Comedy & Theatre",
+  "Nightlife & Parties",
+  "Community & Faith",
+  "Family & Kids",
+  "Charity & Fundraising",
+  "Other"
+];
+
+async function listPublicApprovedEvents({ search = "", category = "", limit = 60 } = {}) {
   await ensureTicketingSchema();
-  const { rows } = await pool.query("SELECT * FROM events WHERE status = 'approved' ORDER BY event_date ASC NULLS LAST, approved_at DESC LIMIT 100");
+  const term = cleanText(search, 80).trim();
+  const chosenCategory = cleanText(category, 80).trim();
+  const capped = Math.max(1, Math.min(100, Number.parseInt(limit, 10) || 60));
+
+  const values = [];
+  const where = ["status = 'approved'"];
+  if (term) {
+    // One parameter, matched across the fields a person actually thinks in:
+    // the event, where it is, and what kind of thing it is. ILIKE with a
+    // parameter, never string building, so a search box can never become SQL.
+    values.push(`%${term}%`);
+    where.push(`(event_name ILIKE $${values.length}
+              OR venue_name ILIKE $${values.length}
+              OR city ILIKE $${values.length}
+              OR province ILIKE $${values.length}
+              OR category ILIKE $${values.length}
+              OR description ILIKE $${values.length})`);
+  }
+  if (chosenCategory) {
+    values.push(chosenCategory);
+    where.push(`category = $${values.length}`);
+  }
+  const clause = where.join(" AND ");
+
+  // The facet list is built from the WHOLE approved catalogue, not from the
+  // filtered rows: a category chip has to stay on screen after it is tapped,
+  // and a buyer needs to see the categories they could switch to.
+  const { rows: facetRows } = await pool.query(
+    `SELECT category, COUNT(*)::INT AS count
+       FROM events
+      WHERE status = 'approved' AND category IS NOT NULL AND category <> ''
+      GROUP BY category
+      ORDER BY count DESC, category ASC`
+  );
+
+  values.push(capped);
+  const { rows } = await pool.query(
+    `SELECT * FROM events
+      WHERE ${clause}
+      ORDER BY event_date ASC NULLS LAST, approved_at DESC
+      LIMIT $${values.length}`,
+    values
+  );
   const items = [];
   for (const row of rows) items.push(publicEvent(row, await getTicketTypes(row.id), []));
-  return items;
+  return {
+    items,
+    categories: facetRows.map((row) => ({ category: row.category, count: Number(row.count) })),
+    total: items.length,
+    search: term,
+    activeCategory: chosenCategory
+  };
 }
 
 async function getPublicApprovedEvent(slug) {
@@ -3757,6 +3838,7 @@ module.exports = {
   removeEventStaff,
   listEventStaff,
   listStaffScanEvents,
+  EVENT_CATEGORIES,
   listEventCoupons,
   createEventCoupon,
   updateEventCoupon,

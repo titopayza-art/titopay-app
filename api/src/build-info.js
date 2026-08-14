@@ -19,10 +19,15 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 22;
+const API_BUILD = 23;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  23: "Event discovery: search and category filtering answered in SQL over the " +
+      "whole approved catalogue instead of in the browser over one batch, with " +
+      "category counts built from the full catalogue so a filter can always be " +
+      "undone. One shared category vocabulary for the organiser's form and the " +
+      "buyer's chips. Browsing still needs no account.",
   22: "Ticket discount codes: organisers create a code with an expiry and " +
       "either a percentage or an amount off, optionally capped by total uses, " +
       "uses per person and ticket type. Buyers enter it at checkout. The " +
