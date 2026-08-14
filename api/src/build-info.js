@@ -19,10 +19,14 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 18;
+const API_BUILD = 19;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  19: "Fewer database round trips on the money path: the limit engine now " +
+      "returns the 24 hour debit count with the rest of its usage picture, " +
+      "and transaction monitoring reads it from there instead of asking the " +
+      "ledger the same two questions again. No rule, limit or number changed.",
   18: "Basic Verified limits set to the assurance TitoPay actually has: " +
       "R25 000 a month, R10 000 a payment, with the rest of the rung moved " +
       "to stay coherent. Raise them in the console the day an identity " +

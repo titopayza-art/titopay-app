@@ -221,7 +221,17 @@ async function capacityFor(userId, { serviceCode = null, includeWithdrawal = fal
   return {
     limits,
     basis,
-    usage: { received: usage.received, sent: usage.sent, sentToday: today.sent, balance, withdrawnThisMonth: withdrawn },
+    // The full usage picture, including the 24 hour debit count, so callers
+    // that need it (transaction monitoring) read it from here instead of
+    // asking the database the same two questions over again.
+    usage: {
+      received: usage.received,
+      sent: usage.sent,
+      sentToday: today.sent,
+      debitCount24h: today.debitCount,
+      balance,
+      withdrawnThisMonth: withdrawn
+    },
     remaining: {
       monthlyReceive: left(limits.monthlyReceive, usage.received),
       monthlySend: left(limits.monthlySend, usage.sent),

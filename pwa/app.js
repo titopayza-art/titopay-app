@@ -1169,9 +1169,17 @@ async function openLimitsVerificationModal() {
       <div><p class="eyebrow">Your Wallet</p><h2>Limits &amp; Verification</h2><p class="lead">Loading your limits…</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>`);
+  // All three reads at once. None of them depends on the others, and on a
+  // mobile connection a second round trip costs more than the queries do.
   let status;
+  let capacity = null;
+  let held = null;
   try {
-    status = await api("/v1/compliance/status");
+    [status, capacity, held] = await Promise.all([
+      api("/v1/compliance/status"),
+      api("/v1/compliance/capacity").catch(() => null),
+      api("/v1/compliance/pending-credits").catch(() => null)
+    ]);
     state.compliance = status;
   } catch (error) {
     showToast(friendlyFormError(error, "compliance"), "error");
@@ -1179,10 +1187,6 @@ async function openLimitsVerificationModal() {
   }
   const l = status.limits || {};
   const u = status.usage || {};
-  const [capacity, held] = await Promise.all([
-    api("/v1/compliance/capacity").catch(() => null),
-    api("/v1/compliance/pending-credits").catch(() => null)
-  ]);
   // Remaining always comes from the engine, and never from arithmetic done
   // here: one source of truth means the screen cannot contradict itself.
   const rem = capacity?.remaining || {};

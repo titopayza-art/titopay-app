@@ -575,8 +575,15 @@ async function reviewForEdd(userId, amount, serviceCode) {
     // the level's headline number.
     const effective = await require("./limit-engine").capacityFor(userId, { serviceCode });
     const tierConfig = effective?.limits || config.tiers[String(tier)] || {};
-    const usage = await monthUsage(userId);
-    const today = await dayUsage(userId);
+    // capacityFor has already asked the ledger for this customer's month and
+    // day. Reuse its answer rather than asking twice; fall back to a fresh
+    // read only if capacity could not be built at all.
+    const usage = effective?.usage
+      ? { received: effective.usage.received, sent: effective.usage.sent }
+      : await monthUsage(userId);
+    const today = effective?.usage
+      ? { sent: effective.usage.sentToday, debitCount: effective.usage.debitCount24h }
+      : await dayUsage(userId);
 
     // OPTIONAL value marks raise EDD, once while a review is open. A null
     // mark means no value trigger at all: EDD then rests entirely on risk
