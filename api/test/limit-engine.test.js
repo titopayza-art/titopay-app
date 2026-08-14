@@ -177,7 +177,14 @@ test("the customer can see what they can still do", () => {
   assert.match(ROUTES, /router\.get\("\/capacity"/);
   assert.match(ROUTES, /internal reasoning \(risk band, multipliers\) stays out of the customer/i);
   assert.match(APP, /What you can do right now/);
-  assert.match(APP, /Your current wallet limits/);
+  // One panel, each number once: the old screen said the same limit three
+  // ways (a usage bar, a remaining figure and a ceiling) and the level
+  // cards repeated it a fourth time.
+  assert.match(APP, /ONE PANEL, EACH NUMBER ONCE/);
+  assert.doesNotMatch(APP, /Your current wallet limits/,
+    "the separate ceilings panel is merged into the capacity rows");
+  assert.match(APP, /const limits = current \? ""/,
+    "your own level does not repeat the numbers stated above it");
   assert.doesNotMatch(APP, /Your FICA limits/);
 });
 

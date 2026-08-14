@@ -1029,9 +1029,14 @@ function limitBar(label, used, limit, percent) {
 function complianceTierCard(entry, status) {
   const current = entry.tier === status.tier;
   const achieved = entry.tier < status.tier;
+  // "Unverified: Complete" reads like an achievement nobody wanted. A level
+  // you have simply passed needs no badge; only your own level is marked.
   const chip = current ? '<span class="sv-chip warn">Your level</span>'
-    : achieved ? '<span class="sv-chip settled">Complete</span>' : "";
-  const limits = entry.monthlyReceive === null
+    : achieved && entry.tier > 0 ? '<span class="sv-chip settled">Done</span>' : "";
+  // The limits line is the reason to move UP a level, so it belongs on the
+  // levels you are not on. Your own numbers are stated once, in full, in
+  // the panel above.
+  const limits = current ? "" : entry.monthlyReceive === null
     ? "No fixed monthly limits. Activity stays monitored, and high value payments may be reviewed."
     : `Receive up to ${money(entry.monthlyReceive)} and send up to ${money(entry.monthlySend)} a month, ${money(entry.singleTransaction)} per payment.`;
   let unlock = "";
@@ -1086,7 +1091,7 @@ function complianceTierCard(entry, status) {
     <section class="panel tier-card${current ? " tier-current" : ""}">
       <div class="tier-head"><strong>${esc(entry.label)}</strong>${chip}</div>
       <p class="field-hint">${esc(entry.description || "")}</p>
-      <p class="tier-limits">${esc(limits)}</p>
+      ${limits ? `<p class="tier-limits">${esc(limits)}</p>` : ""}
       ${documentLine}
       ${unlock}
     </section>`;
@@ -1107,16 +1112,33 @@ async function openLimitsVerificationModal() {
   }
   const u = status.usage || {};
   const l = status.limits || {};
-  const fixedLimit = (label, value) => `<div class="limit-line"><span>${esc(label)}</span><strong>${value === null || value === undefined ? "No fixed limit" : esc(money(value))}</strong></div>`;
-  // What the customer can still do right now, and any money held for them.
-  // Capacity is the number that actually helps: "no fixed limit" is not an
-  // answer to "how much can I send".
+  // ONE PANEL, EACH NUMBER ONCE. This screen used to say the same thing
+  // three ways: a usage bar, a remaining figure and a ceiling, all for the
+  // same limit, and then the level cards said it a fourth time. A row now
+  // carries the whole story: what is left, out of what, and how far along.
   const [capacity, held] = await Promise.all([
     api("/v1/compliance/capacity").catch(() => null),
     api("/v1/compliance/pending-credits").catch(() => null)
   ]);
   const rem = capacity?.remaining || {};
-  const capacityLine = (label, value) => `<div class="limit-line"><span>${esc(label)}</span><strong>${value === null || value === undefined ? "No fixed limit" : esc(money(value))}</strong></div>`;
+  const capacityRow = (label, left, ceiling, { bar = false } = {}) => {
+    if (ceiling === null || ceiling === undefined) {
+      return `<div class="limit-line"><span>${esc(label)}</span><strong>No fixed limit</strong></div>`;
+    }
+    const remaining = Number(left ?? ceiling);
+    const used = Math.max(0, Number(ceiling) - remaining);
+    const percent = Number(ceiling) > 0 ? Math.min(100, Math.round((used / Number(ceiling)) * 100)) : 0;
+    // "R10 000 of R10 000" is noise. The ceiling only earns its place once
+    // some of it has been spent, which is also the only time a bar means
+    // anything.
+    const spent = used > 0;
+    return `
+      <div class="limit-line">
+        <span>${esc(label)}</span>
+        <strong>${esc(money(remaining))}${spent ? `<small class="limit-of">of ${esc(money(ceiling))}</small>` : ""}</strong>
+      </div>
+      ${bar && spent ? `<div class="limit-bar" role="img" aria-label="${esc(label)}: ${percent}% used"><i style="width:${Math.min(100, Math.max(2, percent))}%"${percent >= 80 ? ' class="hot"' : ""}></i></div>` : ""}`;
+  };
   const heldItems = held?.items || [];
   const heldTotal = heldItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   // A quiet, customer-safe note for the states that need one. Internal risk
@@ -1143,11 +1165,6 @@ async function openLimitsVerificationModal() {
       <section class="integration-note" aria-label="Enhanced due diligence">
         <p>${icon("shield")} <span><strong>A routine compliance review is open on your account.</strong> Please send proof of source of funds or income, and for a business the beneficial owner details, to compliance@titopay.co.za or through Support. Your account keeps working while the team reviews.</span></p>
       </section>` : ""}
-    <section class="panel">
-      <h3 class="tier-section-label">This month</h3>
-      ${limitBar("Received", u.received || 0, l.monthlyReceive ?? null, u.receivePercent || 0)}
-      ${limitBar("Sent", u.sent || 0, l.monthlySend ?? null, u.sendPercent || 0)}
-    </section>
     ${heldItems.length ? `
       <section class="panel tier-card tier-current" aria-label="Money waiting for you">
         <div class="tier-head"><strong>${esc(money(heldTotal))} is waiting for you</strong><span class="sv-chip warn">Held</span></div>
@@ -1158,22 +1175,15 @@ async function openLimitsVerificationModal() {
       </section>` : ""}
     <section class="panel">
       <h3 class="tier-section-label">What you can do right now</h3>
-      ${capacityLine("Send in one payment", rem.singleTransaction ?? l.singleTransaction ?? null)}
-      ${capacityLine("Left to send today", rem.dailySend ?? null)}
-      ${capacityLine("Left to send this month", rem.monthlySend ?? null)}
-      ${capacityLine("Left to receive this month", rem.monthlyReceive ?? null)}
-      ${capacityLine("Left to withdraw this month", rem.monthlyWithdraw ?? null)}
-      ${capacityLine("Room left in your wallet", rem.walletBalance ?? null)}
+      ${capacityRow("Per payment", l.singleTransaction ?? null, l.singleTransaction ?? null)}
+      ${capacityRow("Send today", rem.dailySend, l.dailySend ?? null)}
+      ${capacityRow("Send this month", rem.monthlySend, l.monthlySend ?? null, { bar: true })}
+      ${capacityRow("Receive this month", rem.monthlyReceive, l.monthlyReceive ?? null, { bar: true })}
+      ${capacityRow("Per withdrawal", l.singleWithdrawal ?? null, l.singleWithdrawal ?? null)}
+      ${capacityRow("Withdraw this month", rem.monthlyWithdraw, l.monthlyWithdraw ?? null)}
+      ${capacityRow("Wallet can hold", rem.walletBalance, l.maxBalance ?? null)}
+      <p class="field-hint">${esc(status.disclaimer || "")}</p>
     </section>
-    <section class="panel">
-      <h3 class="tier-section-label">Your current wallet limits</h3>
-      ${fixedLimit("Per payment", l.singleTransaction ?? null)}
-      ${fixedLimit("Sending per day", l.dailySend ?? null)}
-      ${fixedLimit("Per withdrawal", l.singleWithdrawal ?? null)}
-      ${fixedLimit("Withdrawals per month", l.monthlyWithdraw ?? null)}
-      ${fixedLimit("Wallet balance", l.maxBalance ?? null)}
-    </section>
-    <p class="field-hint">${esc(status.disclaimer || "")}</p>
     <h3 class="tier-section-label">Verification levels</h3>
     ${(status.tiers || []).map((entry) => complianceTierCard(entry, status)).join("")}
     <section class="panel tier-card">
