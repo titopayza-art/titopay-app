@@ -110,12 +110,11 @@ test("the nine verification states exist and drive the wallet badge", () => {
 });
 
 test("the limits screen shows the full limit set with the approved copy", () => {
-  assert.match(APP, /Your limits grow with your verification\. Your available limits depend on your verification status, risk profile and applicable TitoPay compliance requirements\./);
-  // Every limit type is on screen, each stated once as remaining out of
-  // its ceiling rather than split across a usage panel and a limits panel.
-  for (const row of ["Per payment", "Send today", "Send this month", "Receive this month",
-    "Per withdrawal", "Withdraw this month", "Wallet can hold"]) {
-    assert.ok(APP.includes(row), `the limits screen shows ${row}`);
+  assert.match(APP, /Your limits depend on your verification status, risk profile and applicable TitoPay compliance requirements\./);
+  // Every limit type is stated once, as a ceiling, in the primary card.
+  for (const row of ["Send per payment", "Send per day", "Send per month", "Receive per month",
+    "Withdraw per payment", "Withdraw per month", "Maximum wallet balance"]) {
+    assert.ok(APP.includes(row), `the limits card shows ${row}`);
   }
 });
 

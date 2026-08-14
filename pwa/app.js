@@ -1015,91 +1015,158 @@ function kycCountryOptions(selected) {
   return `<option value="">Select country</option>${KYC_COUNTRIES.map(([code, name]) =>
     `<option value="${code}"${code === selected ? " selected" : ""}>${esc(name)}</option>`).join("")}`;
 }
-function limitBar(label, used, limit, percent) {
-  if (limit === null || limit === undefined) {
-    return `<div class="limit-line"><span>${esc(label)}</span><strong>No fixed monthly limit</strong></div>`;
-  }
+// LIMITS AND VERIFICATION, IN THE ORDER A PERSON ASKS.
+//
+// What are my limits, how much have I used, what is left, and how do I get
+// more? Four questions, four sections, each number stated once. Everything
+// a compliance officer needs is still here; it simply sits behind the
+// answer instead of in front of it.
+
+// A ceiling. Where a level carries no preset number the row says so without
+// ever implying that anything is unlimited.
+function limitRow(label, value) {
+  const known = value !== null && value !== undefined;
   return `
-    <div class="limit-line">
+    <div class="limit-row">
       <span>${esc(label)}</span>
-      <strong>${esc(money(used))} of ${esc(money(limit))}</strong>
-    </div>
-    <div class="limit-bar" role="img" aria-label="${esc(label)}: ${percent}% used"><i style="width:${Math.min(100, Math.max(2, percent))}%"${percent >= 80 ? ' class="hot"' : ""}></i></div>`;
+      <strong${known ? "" : ' class="limit-open"'}>${known ? esc(money(value)) : "Reviewed individually"}</strong>
+    </div>`;
 }
-function complianceTierCard(entry, status) {
-  const current = entry.tier === status.tier;
-  const achieved = entry.tier < status.tier;
-  // "Unverified: Complete" reads like an achievement nobody wanted. A level
-  // you have simply passed needs no badge; only your own level is marked.
-  const chip = current ? '<span class="sv-chip warn">Your level</span>'
-    : achieved && entry.tier > 0 ? '<span class="sv-chip settled">Done</span>' : "";
-  // The limits line is the reason to move UP a level, so it belongs on the
-  // levels you are not on. Your own numbers are stated once, in full, in
-  // the panel above.
-  const limits = current ? "" : entry.monthlyReceive === null
-    ? "No fixed monthly limits. Activity stays monitored, and high value payments may be reviewed."
-    : `Receive up to ${money(entry.monthlyReceive)} and send up to ${money(entry.monthlySend)} a month, ${money(entry.singleTransaction)} per payment.`;
-  let unlock = "";
-  if (!current && !achieved) {
-    if (entry.tier === 1) {
-      unlock = `
-        <form class="form-grid" data-form="basic-verify">
-          <div class="field">
-            <label for="bv-doc">Identity document</label>
-            <select id="bv-doc" name="documentType">
-              <option value="sa_id">South African ID</option>
-              <option value="passport">Passport</option>
-              <option value="other">Other approved identity document</option>
-            </select>
-            <small class="field-hint">No South African ID? Verify with your passport or another approved identity document instead.</small>
-          </div>
-          <div class="field" data-doc-field="sa_id">
-            <label for="bv-id">SA ID number</label>
-            <input id="bv-id" name="idNumber" inputmode="numeric" maxlength="13" placeholder="13 digits">
-            <small class="field-hint">Checked instantly. Stored only as a one way fingerprint, never as the number itself.</small>
-          </div>
-          <div class="field" data-doc-field="intl" hidden>
-            <label for="bv-num">Document number</label>
-            <input id="bv-num" name="documentNumber" autocomplete="off" maxlength="20" placeholder="As printed on the document">
-            <small class="field-hint">Stored only as a one way fingerprint, never as the number itself, and never shown in the app.</small>
-          </div>
-          <div class="field" data-doc-field="intl" hidden>
-            <label for="bv-country">Issuing country</label>
-            <select id="bv-country" name="issuingCountry">${kycCountryOptions("")}</select>
-          </div>
-          <div class="field" data-doc-field="intl" hidden>
-            <label for="bv-dob">Date of birth</label>
-            <input id="bv-dob" name="dateOfBirth" type="date" autocomplete="bday">
-            <small class="field-hint">As it appears on the document.</small>
-          </div>
-          <button class="btn primary" type="submit">${icon("shield")} Verify my identity</button>
-        </form>`;
-    } else if (entry.tier === 2) {
-      unlock = `<button class="btn primary" type="button" data-action="fica-verification">${icon("shield")} Start full FICA verification</button>`;
-    }
+
+// Usage against a ceiling, with the bar that makes it readable at a glance.
+function usageRow(label, used, limit) {
+  if (limit === null || limit === undefined) {
+    return `<div class="limit-row"><span>${esc(label)}</span><strong>${esc(money(used))}</strong></div>`;
   }
-  // Which document proved the identity, on the achieved level. The document
-  // number itself is never stored, so it can never be shown.
+  const percent = Number(limit) > 0 ? Math.min(100, Math.round((Number(used) / Number(limit)) * 100)) : 0;
+  return `
+    <div class="usage-row">
+      <div class="limit-row">
+        <span>${esc(label)}</span>
+        <strong>${esc(money(used))} <small class="limit-of">of ${esc(money(limit))}</small></strong>
+      </div>
+      <div class="limit-bar" role="img" aria-label="${esc(label)}: ${percent}% of the limit used"><i style="width:${Math.min(100, Math.max(2, percent))}%"${percent >= 80 ? ' class="hot"' : ""}></i></div>
+    </div>`;
+}
+
+// Remaining capacity, as a compact tile: the label is small and quiet, the
+// number is the thing being answered.
+function remainingTile(label, value, { wide = false } = {}) {
+  const known = value !== null && value !== undefined;
+  return `
+    <div class="still-tile${wide ? " still-wide" : ""}">
+      <small>${esc(label)}</small>
+      <strong${known ? "" : ' class="limit-open"'}>${known ? esc(money(value)) : "Reviewed individually"}</strong>
+    </div>`;
+}
+
+// The verification levels, moved off the main screen into their own view.
+// Informational, calm, and honest that enhanced due diligence is a process
+// that may be triggered, not a tier anyone opts into.
+function verificationLevelBlock(entry, status) {
+  const current = entry.tier === status.tier;
+  const passed = entry.tier < status.tier;
+  const chip = current ? '<span class="sv-chip warn">Your level</span>'
+    : passed ? '<span class="sv-chip settled">Done</span>' : "";
   let documentLine = "";
-  if (entry.tier === 1 && (current || achieved) && status.document) {
+  if (entry.tier === 1 && (current || passed) && status.document) {
     const names = { sa_id: "South African ID", passport: "Passport", other: "Approved identity document" };
     const base = names[status.document.type] || "Identity document";
-    const country = status.document.type === "sa_id" ? "" : (kycCountryName(status.document.issuingCountry) ? `, issued in ${kycCountryName(status.document.issuingCountry)}` : "");
-    documentLine = `<p class="field-hint">Verified with: ${esc(base + country)}.</p>`;
+    const country = status.document.type === "sa_id" ? ""
+      : (kycCountryName(status.document.issuingCountry) ? `, issued in ${kycCountryName(status.document.issuingCountry)}` : "");
+    documentLine = `<p class="level-note">Verified with: ${esc(base + country)}.</p>`;
   }
+  // Never "no fixed limits": higher capability is possible, not promised,
+  // and it is never unlimited.
+  const limits = entry.monthlyReceive === null
+    ? "Higher limits may be available after full verification, subject to risk assessment, transaction monitoring and applicable compliance requirements."
+    : `Receive up to ${money(entry.monthlyReceive)} and send up to ${money(entry.monthlySend)} a month, ${money(entry.singleTransaction)} per payment.`;
   return `
-    <section class="panel tier-card${current ? " tier-current" : ""}">
-      <div class="tier-head"><strong>${esc(entry.label)}</strong>${chip}</div>
-      <p class="field-hint">${esc(entry.description || "")}</p>
-      ${limits ? `<p class="tier-limits">${esc(limits)}</p>` : ""}
+    <section class="level-block${current ? " level-current" : ""}">
+      <div class="level-head"><strong>${esc(entry.label)}</strong>${chip}</div>
+      <p class="level-note">${esc(entry.description || "")}</p>
+      <p class="level-limits">${esc(limits)}</p>
       ${documentLine}
-      ${unlock}
     </section>`;
 }
+
+async function openVerificationLevelsModal() {
+  const status = state.compliance || await api("/v1/compliance/status").catch(() => null);
+  if (!status) { showToast("Unable to load verification levels just now.", "error"); return; }
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Limits &amp; Verification</p><h2>Verification levels</h2>
+        <p class="lead">What each level means, and what may be asked for along the way.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${(status.tiers || []).map((entry) => verificationLevelBlock(entry, status)).join("")}
+    <section class="level-block">
+      <div class="level-head"><strong>Enhanced due diligence</strong>${status.eddActive ? '<span class="sv-chip warn">Active on your account</span>' : ""}</div>
+      <p class="level-note">Not a level you choose. For unusual or higher value activity, TitoPay may ask for extra information, such as proof of source of funds or income, and beneficial owner details for a business. You are told in the app if it applies, and your account keeps working while the compliance team reviews.</p>
+    </section>
+    <p class="level-fineprint">${esc(status.disclaimer || "")}</p>
+  `);
+}
+
+// The one action: whatever raises this customer's limits next.
+function increaseLimitsCta(status) {
+  if (status.tier >= 2) {
+    return `<p class="verify-hint">You are at TitoPay's highest verification level. Higher capability may still be reviewed against your risk profile and ongoing monitoring.</p>`;
+  }
+  const label = status.tier === 1 ? "Increase your limits" : "Verify your identity";
+  return `
+    <button class="btn primary verify-cta" type="button" data-action="${status.tier === 1 ? "fica-verification" : "identity-verification"}">${icon("shield")} ${label}</button>
+    <p class="verify-hint">${status.tier === 1
+      ? "Complete full verification to become eligible for higher limits, subject to TitoPay's risk and compliance requirements."
+      : "Verifying your identity takes a couple of minutes and raises your everyday limits."}</p>`;
+}
+
+// The identity document form, on its own screen now rather than buried in a
+// levels card. Reached from the one call to action.
+async function openIdentityVerificationModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Limits &amp; Verification</p><h2>Verify your identity</h2>
+        <p class="lead">Use your South African ID, your passport, or another approved identity document.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="basic-verify">
+      <div class="field">
+        <label for="bv-doc">Identity document</label>
+        <select id="bv-doc" name="documentType">
+          <option value="sa_id">South African ID</option>
+          <option value="passport">Passport</option>
+          <option value="other">Other approved identity document</option>
+        </select>
+        <small class="field-hint">No South African ID? Verify with your passport or another approved identity document instead.</small>
+      </div>
+      <div class="field" data-doc-field="sa_id">
+        <label for="bv-id">SA ID number</label>
+        <input id="bv-id" name="idNumber" inputmode="numeric" maxlength="13" placeholder="13 digits">
+        <small class="field-hint">Checked instantly. Stored only as a one way fingerprint, never as the number itself.</small>
+      </div>
+      <div class="field" data-doc-field="intl" hidden>
+        <label for="bv-num">Document number</label>
+        <input id="bv-num" name="documentNumber" autocomplete="off" maxlength="20" placeholder="As printed on the document">
+        <small class="field-hint">Stored only as a one way fingerprint, never as the number itself, and never shown in the app.</small>
+      </div>
+      <div class="field" data-doc-field="intl" hidden>
+        <label for="bv-country">Issuing country</label>
+        <select id="bv-country" name="issuingCountry">${kycCountryOptions("")}</select>
+      </div>
+      <div class="field" data-doc-field="intl" hidden>
+        <label for="bv-dob">Date of birth</label>
+        <input id="bv-dob" name="dateOfBirth" type="date" autocomplete="bday">
+        <small class="field-hint">As it appears on the document.</small>
+      </div>
+      <button class="btn primary" type="submit">${icon("shield")} Verify my identity</button>
+    </form>`);
+}
+
 async function openLimitsVerificationModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Your Wallet</p><h2>Limits &amp; Verification</h2><p class="lead">Loading your verification status\u2026</p></div>
+      <div><p class="eyebrow">Your Wallet</p><h2>Limits &amp; Verification</h2><p class="lead">Loading your limits…</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>`);
   let status;
@@ -1110,85 +1177,83 @@ async function openLimitsVerificationModal() {
     showToast(friendlyFormError(error, "compliance"), "error");
     return;
   }
-  const u = status.usage || {};
   const l = status.limits || {};
-  // ONE PANEL, EACH NUMBER ONCE. This screen used to say the same thing
-  // three ways: a usage bar, a remaining figure and a ceiling, all for the
-  // same limit, and then the level cards said it a fourth time. A row now
-  // carries the whole story: what is left, out of what, and how far along.
+  const u = status.usage || {};
   const [capacity, held] = await Promise.all([
     api("/v1/compliance/capacity").catch(() => null),
     api("/v1/compliance/pending-credits").catch(() => null)
   ]);
+  // Remaining always comes from the engine, and never from arithmetic done
+  // here: one source of truth means the screen cannot contradict itself.
   const rem = capacity?.remaining || {};
-  const capacityRow = (label, left, ceiling, { bar = false } = {}) => {
-    if (ceiling === null || ceiling === undefined) {
-      return `<div class="limit-line"><span>${esc(label)}</span><strong>No fixed limit</strong></div>`;
-    }
-    const remaining = Number(left ?? ceiling);
-    const used = Math.max(0, Number(ceiling) - remaining);
-    const percent = Number(ceiling) > 0 ? Math.min(100, Math.round((used / Number(ceiling)) * 100)) : 0;
-    // "R10 000 of R10 000" is noise. The ceiling only earns its place once
-    // some of it has been spent, which is also the only time a bar means
-    // anything.
-    const spent = used > 0;
-    return `
-      <div class="limit-line">
-        <span>${esc(label)}</span>
-        <strong>${esc(money(remaining))}${spent ? `<small class="limit-of">of ${esc(money(ceiling))}</small>` : ""}</strong>
-      </div>
-      ${bar && spent ? `<div class="limit-bar" role="img" aria-label="${esc(label)}: ${percent}% used"><i style="width:${Math.min(100, Math.max(2, percent))}%"${percent >= 80 ? ' class="hot"' : ""}></i></div>` : ""}`;
-  };
   const heldItems = held?.items || [];
   const heldTotal = heldItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  // A quiet, customer-safe note for the states that need one. Internal risk
-  // ratings never appear here.
   const stateNote = {
     verification_in_progress: "Your documents are with the verification team. You will be told in the app the moment the review completes.",
-    verification_required: "Please verify your identity again to keep full access to your wallet. It only takes a few minutes below.",
-    verification_failed: "Your last verification could not be completed. Check your details and try again below, or contact Support.",
-    restricted: "Your account is currently restricted. Contact TitoPay support to restore access."
+    verification_required: "Please verify your identity again to keep full access to your wallet.",
+    verification_failed: "Your last verification could not be completed. Check your details and try again, or contact Support.",
+    restricted: "Your account is currently restricted. Contact TitoPay support to restore access.",
+    suspended: "Your account is currently suspended. Contact TitoPay support."
   }[status.verificationState] || "";
+  const statusChip = status.verified ? ["ok", "✓ Fully verified"]
+    : status.tier === 1 ? ["ok", "✓ Identity verified"]
+      : ["warn", "Not verified yet"];
+
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Your Wallet</p><h2>Limits &amp; Verification</h2>
-        <p class="lead">${status.verified
-          ? "Your identity is fully verified. Your available limits depend on your verification status, risk profile and applicable TitoPay compliance requirements."
-          : "Your limits grow with your verification. Your available limits depend on your verification status, risk profile and applicable TitoPay compliance requirements."}</p></div>
+        <p class="lead">Your limits depend on your verification status, risk profile and applicable TitoPay compliance requirements.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    ${stateNote ? `
-      <section class="integration-note" aria-label="Verification status">
-        <p>${icon("shield")} <span>${esc(stateNote)}</span></p>
-      </section>` : ""}
-    ${status.eddActive ? `
-      <section class="integration-note" aria-label="Enhanced due diligence">
-        <p>${icon("shield")} <span><strong>A routine compliance review is open on your account.</strong> Please send proof of source of funds or income, and for a business the beneficial owner details, to compliance@titopay.co.za or through Support. Your account keeps working while the team reviews.</span></p>
-      </section>` : ""}
     ${heldItems.length ? `
-      <section class="panel tier-card tier-current" aria-label="Money waiting for you">
-        <div class="tier-head"><strong>${esc(money(heldTotal))} is waiting for you</strong><span class="sv-chip warn">Held</span></div>
-        <p class="field-hint">${heldItems.length === 1
+      <section class="panel held-card" aria-label="Money waiting for you">
+        <div class="level-head"><strong>${esc(money(heldTotal))} is waiting for you</strong><span class="sv-chip warn">Held</span></div>
+        <p class="level-note">${heldItems.length === 1
           ? `${esc(heldItems[0].from)} sent you ${esc(money(heldItems[0].amount))}. It is held safely until your wallet can receive it.`
-          : `${heldItems.length} payments are held safely until your wallet can receive them.`} Verify your identity below to release it. Anything not claimed goes back to the sender in full.</p>
+          : `${heldItems.length} payments are held safely until your wallet can receive them.`} Verifying your identity releases it. Anything not claimed goes back to the sender in full.</p>
         <button class="btn primary" type="button" data-action="claim-pending-credits">${icon("wallet")} Claim my money</button>
       </section>` : ""}
-    <section class="panel">
-      <h3 class="tier-section-label">What you can do right now</h3>
-      ${capacityRow("Per payment", l.singleTransaction ?? null, l.singleTransaction ?? null)}
-      ${capacityRow("Send today", rem.dailySend, l.dailySend ?? null)}
-      ${capacityRow("Send this month", rem.monthlySend, l.monthlySend ?? null, { bar: true })}
-      ${capacityRow("Receive this month", rem.monthlyReceive, l.monthlyReceive ?? null, { bar: true })}
-      ${capacityRow("Per withdrawal", l.singleWithdrawal ?? null, l.singleWithdrawal ?? null)}
-      ${capacityRow("Withdraw this month", rem.monthlyWithdraw, l.monthlyWithdraw ?? null)}
-      ${capacityRow("Wallet can hold", rem.walletBalance, l.maxBalance ?? null)}
-      <p class="field-hint">${esc(status.disclaimer || "")}</p>
+    ${stateNote ? `<section class="integration-note" aria-label="Verification status"><p>${icon("shield")} <span>${esc(stateNote)}</span></p></section>` : ""}
+    ${status.eddActive ? `
+      <section class="integration-note" aria-label="Compliance review">
+        <p>${icon("shield")} <span><strong>A routine compliance review is open on your account.</strong> Please send proof of source of funds or income, and for a business the beneficial owner details, to compliance@titopay.co.za or through Support. Your account keeps working while the team reviews.</span></p>
+      </section>` : ""}
+
+    <section class="panel limits-card">
+      <h3 class="tier-section-label">Your current limits</h3>
+      ${limitRow("Send per payment", l.singleTransaction ?? null)}
+      ${limitRow("Send per day", l.dailySend ?? null)}
+      ${limitRow("Send per month", l.monthlySend ?? null)}
+      ${limitRow("Receive per month", l.monthlyReceive ?? null)}
+      ${limitRow("Withdraw per payment", l.singleWithdrawal ?? null)}
+      ${limitRow("Withdraw per month", l.monthlyWithdraw ?? null)}
+      ${limitRow("Maximum wallet balance", l.maxBalance ?? null)}
+      <p class="limits-fineprint">${esc(status.disclaimer || "")}</p>
     </section>
-    <h3 class="tier-section-label">Verification levels</h3>
-    ${(status.tiers || []).map((entry) => complianceTierCard(entry, status)).join("")}
-    <section class="panel tier-card">
-      <div class="tier-head"><strong>Enhanced due diligence</strong>${status.eddActive ? '<span class="sv-chip warn">Active</span>' : ""}</div>
-      <p class="field-hint">For unusual or high value activity, TitoPay may ask for proof of source of funds or income, and beneficial owner details for a business. This happens automatically, you are told in the app the moment it does, and your account keeps working while the compliance team reviews.</p>
+
+    <h3 class="tier-section-label section-gap">This month</h3>
+    <div class="usage-block">
+      ${usageRow("Sent", u.sent || 0, l.monthlySend ?? null)}
+      ${usageRow("Received", u.received || 0, l.monthlyReceive ?? null)}
+    </div>
+
+    <h3 class="tier-section-label section-gap">You can still</h3>
+    <div class="still-grid">
+      ${remainingTile("Send today", rem.dailySend ?? null)}
+      ${remainingTile("Send this month", rem.monthlySend ?? null)}
+      ${remainingTile("Receive this month", rem.monthlyReceive ?? null)}
+      ${remainingTile("Withdraw this month", rem.monthlyWithdraw ?? null)}
+      ${remainingTile("Wallet space", rem.walletBalance ?? null, { wide: true })}
+    </div>
+
+    <section class="panel verify-card">
+      <div class="level-head">
+        <strong>${esc(status.label || "Verification")}</strong>
+        <span class="sv-chip ${statusChip[0]}">${esc(statusChip[1])}</span>
+      </div>
+      <p class="level-note">Your current wallet limits are based on your verification level.</p>
+      ${increaseLimitsCta(status)}
+      <button class="link-btn" type="button" data-action="verification-levels">View verification levels →</button>
     </section>
   `);
 }
@@ -4506,6 +4571,12 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "limits-verification") {
     await openLimitsVerificationModal();
+  }
+  if (action === "verification-levels") {
+    await openVerificationLevelsModal();
+  }
+  if (action === "identity-verification") {
+    await openIdentityVerificationModal();
   }
   if (action === "claim-pending-credits") {
     try {
@@ -23920,7 +23991,8 @@ const TICKETING_SECTIONS = [
 const MODAL_STACK_ACTIONS = new Set([
   "security-centre", "device-management", "active-sessions", "login-history",
   "biometric-info", "privacy-controls", "security-tips", "report-fraud",
-  "why-trust-titopay", "notifications", "payment-requests", "limits-verification", "preview-sms-notifications",
+  "why-trust-titopay", "notifications", "payment-requests", "limits-verification",
+  "verification-levels", "identity-verification", "preview-sms-notifications",
   "preview-email-notifications", "authentication-preference", "change-password",
   "fica-verification", "profile-verification", "saved-beneficiaries",
   "proof-of-account", "app-search", "support",

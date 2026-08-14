@@ -13539,21 +13539,92 @@ img {
   .home-summary-card { padding: 14px 14px 12px; }
 }
 
-/* The remaining figure leads; its ceiling sits under it, quieter, and only
-   when some of the allowance has actually been used. */
-.limit-line span { flex: 1 1 auto; min-width: 0; }
-.limit-line strong {
+
+/* ============================================================
+   Limits & Verification: four questions, four sections.
+   Cards are used sparingly - the limits themselves and the one
+   verification action earn a border; usage and remaining
+   capacity sit lighter on the page so it reads calm.
+   ============================================================ */
+.tier-section-label.section-gap { margin-top: 22px; }
+
+.limits-card, .verify-card, .held-card { padding: 18px 16px 14px; }
+
+.limit-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(223, 231, 245, 0.7);
+  font-size: 0.92rem;
+}
+.limit-row:last-of-type { border-bottom: 0; }
+.limit-row span { flex: 1 1 auto; min-width: 0; color: var(--navy); }
+.limit-row strong {
+  flex: 0 0 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+.limit-row strong.limit-open { font-size: 0.82rem; font-weight: 700; color: var(--muted); }
+.limit-of { display: block; font-weight: 600; font-size: 0.8em; color: var(--muted); white-space: nowrap; }
+
+.limits-fineprint, .level-fineprint {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.usage-block { display: grid; gap: 14px; }
+.usage-row .limit-row { border-bottom: 0; padding-bottom: 4px; }
+
+.still-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.still-tile {
+  /* Label top, figure bottom: a label that wraps to two lines must not
+     push its number out of line with the tile beside it. */
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  flex: 0 0 auto;
-  line-height: 1.25;
-  text-align: right;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 78px;
+  padding: 12px 14px;
+  background: var(--soft-blue);
+  border-radius: 16px;
 }
-.limit-of {
-  display: block;
-  font-weight: 600;
-  font-size: 0.82em;
-  color: var(--muted);
-  white-space: nowrap;
+.still-tile.still-wide { grid-column: 1 / -1; }
+.still-tile small { color: var(--muted); font-size: 0.74rem; font-weight: 600; }
+.still-tile strong {
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--navy);
+}
+.still-tile strong.limit-open { font-size: 0.82rem; color: var(--muted); }
+
+.verify-card { margin-top: 22px; }
+.level-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.level-head strong { font-size: 1.02rem; }
+.level-note { margin: 8px 0 0; color: var(--muted); font-size: 0.86rem; line-height: 1.5; }
+.verify-cta { width: 100%; margin-top: 14px; min-height: 52px; }
+.verify-hint { margin: 10px 0 0; color: var(--muted); font-size: 0.78rem; line-height: 1.5; }
+.verify-card .link-btn { margin-top: 12px; font-size: 0.86rem; font-weight: 700; }
+
+.level-block {
+  padding: 16px 0;
+  border-bottom: 1px solid rgba(223, 231, 245, 0.9);
+}
+.level-block:last-of-type { border-bottom: 0; }
+.level-current { padding-left: 12px; border-left: 3px solid var(--blue); border-radius: 2px; }
+.level-limits { margin: 8px 0 0; font-size: 0.86rem; line-height: 1.5; color: var(--navy); }
+
+@media (max-width: 360px) {
+  .still-grid { grid-template-columns: 1fr; }
+  .still-tile.still-wide { grid-column: auto; }
 }

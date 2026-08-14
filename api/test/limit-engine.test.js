@@ -176,15 +176,23 @@ test("money is held for verification, never lost, and never spendable early", ()
 test("the customer can see what they can still do", () => {
   assert.match(ROUTES, /router\.get\("\/capacity"/);
   assert.match(ROUTES, /internal reasoning \(risk band, multipliers\) stays out of the customer/i);
-  assert.match(APP, /What you can do right now/);
-  // One panel, each number once: the old screen said the same limit three
-  // ways (a usage bar, a remaining figure and a ceiling) and the level
-  // cards repeated it a fourth time.
-  assert.match(APP, /ONE PANEL, EACH NUMBER ONCE/);
-  assert.doesNotMatch(APP, /Your current wallet limits/,
-    "the separate ceilings panel is merged into the capacity rows");
-  assert.match(APP, /const limits = current \? ""/,
-    "your own level does not repeat the numbers stated above it");
+  // Four questions in the order a person asks them: what are my limits,
+  // what have I used, what is left, and how do I get more.
+  assert.match(APP, /LIMITS AND VERIFICATION, IN THE ORDER A PERSON ASKS/);
+  assert.match(APP, /Your current limits/);
+  assert.match(APP, /This month/);
+  assert.match(APP, /You can still/);
+  // A limit and remaining capacity are visibly different things.
+  assert.match(APP, /function limitRow/);
+  assert.match(APP, /function remainingTile/);
+  // One call to action, and the detail moved behind its own door.
+  assert.match(APP, /verify-cta/);
+  assert.match(APP, /data-action="verification-levels"/);
+  assert.match(APP, /async function openVerificationLevelsModal/);
+  // Never unlimited, never a promise of a specific higher limit.
+  assert.doesNotMatch(APP, /No fixed monthly limits/);
+  assert.match(APP, /Higher limits may be available after full verification/);
+  assert.match(APP, /Not a level you choose/, "enhanced due diligence is a process, not a tier");
   assert.doesNotMatch(APP, /Your FICA limits/);
 });
 
