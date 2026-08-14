@@ -34,7 +34,11 @@ const {
   eventSalesReport,
   listMyTickets,
   claimTicketByCode,
-  canManageEventTicketing
+  canManageEventTicketing,
+  listEventCoupons,
+  createEventCoupon,
+  updateEventCoupon,
+  deleteEventCoupon
 } = require("../services/ticketing-service");
 const campaigns = require("../services/event-campaign-service");
 const eventTags = require("../services/event-tag-service");
@@ -501,6 +505,46 @@ router.post("/business/events/:id/cashless", requireAuth, async (req, res, next)
       ok: true,
       cashless: await eventTags.setEventCashless(req.auth, eventId, req.body?.enabled, req.body?.settings || {})
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// DISCOUNT CODES. Every one of these goes through requireEventOwner first, so
+// an organiser can only ever see or change codes on an event that is theirs;
+// a code on somebody else's event answers 404, exactly like the event itself.
+router.get("/business/events/:id/coupons", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listEventCoupons(await requireEventOwner(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/business/events/:id/coupons", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    res.status(201).json({ ok: true, coupon: await createEventCoupon(req.auth, eventId, req.body || {}, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/business/events/:id/coupons/:couponId", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    const couponId = requireUuid(req.params.couponId, "Discount code ID");
+    res.json({ ok: true, coupon: await updateEventCoupon(req.auth, eventId, couponId, req.body || {}, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/business/events/:id/coupons/:couponId", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    const couponId = requireUuid(req.params.couponId, "Discount code ID");
+    res.json({ ok: true, ...(await deleteEventCoupon(req.auth, eventId, couponId, meta(req))) });
   } catch (error) {
     next(error);
   }

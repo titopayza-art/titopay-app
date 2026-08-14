@@ -2893,6 +2893,7 @@ async function onSubmit(event) {
       acceptEventTagCredential(typed);
     }
     if (form.dataset.form === "ticketing-cashless") await submitTicketingCashless(data);
+    if (form.dataset.form === "ticketing-coupon") await submitTicketingCoupon(data);
     if (form.dataset.form === "ticketing-vendor") await submitTicketingVendor(data, form);
     if (form.dataset.form === "ticketing-tag-issue") await submitTicketingTagIssue(data);
     if (form.dataset.form === "ticketing-tag-assign") await submitTicketingTagAssign(data);
@@ -3794,6 +3795,24 @@ function onChange(event) {
   if (staffEventPick) refreshEventStaffList(staffEventPick.value);
   const vendorEventPick = event.target.closest("select[data-vendor-event-pick]");
   if (vendorEventPick) refreshEventVendorList(vendorEventPick.value);
+  const couponEventPick = event.target.closest("select[data-coupon-event-pick]");
+  if (couponEventPick) refreshEventCouponList(couponEventPick.value);
+  // Percentage and amount need different words next to the same box, or an
+  // organiser types 25 meaning rands and gives away a quarter of the ticket.
+  const couponType = event.target.closest("select[data-coupon-type]");
+  if (couponType) {
+    const isPercent = couponType.value === "percentage";
+    const label = document.querySelector("[data-coupon-value-label]");
+    const hint = document.querySelector("[data-coupon-value-hint]");
+    const input = couponType.closest("form")?.querySelector('[name="discountValue"]');
+    if (label) label.textContent = isPercent ? "Percentage off" : "Rands off the order";
+    if (hint) {
+      hint.textContent = isPercent
+        ? "A percentage of the ticket price, up to 100%."
+        : "A flat amount off the whole order. It can never take more off than the tickets cost.";
+    }
+    if (input) input.placeholder = isPercent ? "25" : "50";
+  }
   const changeRequestType = event.target.closest("select[data-change-request-type]");
   if (changeRequestType) syncChangeRequestFields(changeRequestType);
   const tierNameInput = event.target.closest("input[data-tier-name]");
@@ -3997,6 +4016,21 @@ async function handleAction(action, actionElement = null) {
   if (String(action || "").startsWith("vendor-revoke:")) {
     const parts = action.split(":");
     await revokeTicketingVendor(parts[1], parts[2]);
+    return;
+  }
+  if (String(action || "").startsWith("coupon-disable:")) {
+    const parts = action.split(":");
+    await setTicketingCouponStatus(parts[1], parts[2], "disabled");
+    return;
+  }
+  if (String(action || "").startsWith("coupon-enable:")) {
+    const parts = action.split(":");
+    await setTicketingCouponStatus(parts[1], parts[2], "active");
+    return;
+  }
+  if (String(action || "").startsWith("coupon-delete:")) {
+    const parts = action.split(":");
+    await deleteTicketingCoupon(parts[1], parts[2]);
     return;
   }
   if (String(action || "").startsWith("staff-remove:") && action.split(":").length === 3) {
@@ -16873,6 +16907,12 @@ function publicTicketingEventView(event = {}) {
               <input name="quantity" type="number" min="1" max="${esc(firstTicket.perCustomerPurchaseLimit || firstTicket.maxPurchaseQuantity || 10)}" value="1" required>
             </label>
             ${firstTicket.perCustomerPurchaseLimit ? `<p class="field-hint">Limit of ${esc(String(firstTicket.perCustomerPurchaseLimit))} per person for ${esc(firstTicket.ticketName)}.</p>` : ""}
+            ${registrationMode ? "" : `
+              <label>Discount code <span class="muted">(optional)</span>
+                <input name="couponCode" placeholder="Have a code? Enter it here" autocomplete="off" maxlength="32" spellcheck="false">
+              </label>
+              <p class="field-hint">If the organiser gave you a code, the discount is applied on the next screen before you pay anything.</p>
+            `}
             <button class="btn primary" type="submit">${icon("ticket")} ${esc(actionWord)}</button>
           </form>
         ` : state.auth?.accessToken ? "" : `
@@ -16907,22 +16947,39 @@ async function openTicketingPurchaseReview(data) {
   let subtotal = money(unit * quantity);
   let buyerFee = 0;
   let total = subtotal;
+  let listSubtotal = subtotal;
+  let discount = 0;
+  // The code the buyer typed is only carried into the payment if the server
+  // actually applied it. A code that did not work must never travel silently
+  // to the purchase call, where it would refuse the whole payment.
+  let appliedCode = null;
+  const requestedCode = String(data.couponCode || "").trim();
   try {
     const previewResult = await api(`/v1/ticketing/public/events/${encodeURIComponent(data.eventSlug)}/purchase-preview`, {
       method: "POST",
-      body: { ticketTypeId: data.ticketTypeId, quantity }
+      body: { ticketTypeId: data.ticketTypeId, quantity, couponCode: requestedCode || undefined }
     });
     const preview = previewResult.preview || previewResult || {};
     subtotal = Number(preview.subtotal ?? subtotal);
     buyerFee = Number(preview.buyerFee ?? 0);
     total = Number(preview.total ?? (subtotal + buyerFee));
+    listSubtotal = Number(preview.listSubtotal ?? subtotal);
+    discount = Number(preview.discount ?? 0);
+    appliedCode = preview.couponCode || null;
   } catch (error) {
-    // Fall back to the client estimate so the flow still works; the server
-    // re-checks the true total at purchase, so a stale estimate can never
-    // overcharge — it would be refused, not silently charged more.
+    // A code that the server refused is the buyer's to fix, so it is said
+    // plainly and the review is abandoned rather than quietly showing the full
+    // price as though they had never typed anything.
+    if (requestedCode) {
+      showToast(friendlyFormError(error, "ticketing"), "error");
+      return;
+    }
+    // No code involved: fall back to the client estimate so the flow still
+    // works; the server re-checks the true total at purchase, so a stale
+    // estimate can never overcharge — it would be refused, not charged more.
     showToast(friendlyFormError(error, "ticketing"), "error");
   }
-  state.pendingTicketPurchase = { data, quantity, unit, total, ticketName: chosen.ticketName || "Ticket", eventName: event.eventName || "TitoPay event" };
+  state.pendingTicketPurchase = { data, quantity, unit, total, appliedCode, ticketName: chosen.ticketName || "Ticket", eventName: event.eventName || "TitoPay event" };
   openModal(`
     <div class="modal-head">
       <div>
@@ -16937,10 +16994,13 @@ async function openTicketingPurchaseReview(data) {
       ${settingsRow("Ticket", state.pendingTicketPurchase.ticketName, "ticket")}
       ${settingsRow("Quantity", String(quantity), "list")}
       ${settingsRow("Price each", money(unit), "wallet")}
-      ${settingsRow("Subtotal", money(subtotal), "wallet")}
+      ${discount > 0 ? settingsRow("Subtotal", money(listSubtotal), "wallet") : ""}
+      ${discount > 0 ? settingsRow(`Discount${appliedCode ? ` (${appliedCode})` : ""}`, `- ${money(discount)}`, "ticket") : ""}
+      ${settingsRow(discount > 0 ? "Subtotal after discount" : "Subtotal", money(subtotal), "wallet")}
       ${buyerFee > 0 ? settingsRow("Service fee", money(buyerFee), "wallet") : ""}
       ${settingsRow("Total to pay", money(total), "wallet")}
     </section>
+    ${discount > 0 ? `<p class="field-hint">Your code took ${esc(money(discount))} off this order.</p>` : ""}
     <p class="field-hint">${buyerFee > 0 ? "Includes a flat TitoPay service fee. " : ""}Paid from your TitoPay wallet. Tickets are issued by the organiser once payment succeeds.</p>
     <div class="auth-actions">
       <button class="btn secondary" type="button" data-action="cancel-ticket-purchase">Cancel</button>
@@ -16966,6 +17026,10 @@ async function confirmTicketingPurchase() {
       body: {
         ticketTypeId: data.ticketTypeId,
         quantity: Number(data.quantity || 1),
+        // Only the code the preview actually applied. The server checks it
+        // again under a lock before charging anything, and refuses rather than
+        // charging the undiscounted price if it has since expired or run out.
+        couponCode: context.appliedCode || undefined,
         buyerDetails: {
           name: state.user?.fullName || state.user?.full_name || "",
           phone: state.user?.phone || "",
@@ -18125,6 +18189,7 @@ function openTicketingSection(key) {
   const approved = events.filter((event) => event.status === "approved");
   const body = key === "events" ? ticketingEventsSection(events)
     : key === "sales" ? ticketingSalesSection(events)
+    : key === "coupons" ? ticketingCouponsSection(approved)
     : key === "vendors" ? ticketingVendorsSection(approved)
     : key === "campaigns" ? ticketingCampaignsSection(approved)
     : ticketingTagsSection(approved);
@@ -18139,6 +18204,10 @@ function openTicketingSection(key) {
   if (key === "vendors") {
     const vendorPick = document.querySelector("select[data-vendor-event-pick]");
     if (vendorPick && vendorPick.value) refreshEventVendorList(vendorPick.value);
+  }
+  if (key === "coupons") {
+    const couponPick = document.querySelector("select[data-coupon-event-pick]");
+    if (couponPick && couponPick.value) refreshEventCouponList(couponPick.value);
   }
 }
 // After a save inside a door, re-read and re-render THAT door — never the whole
@@ -18216,6 +18285,153 @@ function ticketingSalesSection(events) {
       ${metricCard("Money taken", money(totalRevenue))}
     </div>
     ${cards}`;
+}
+/* ---- DISCOUNT CODES, FROM THE ORGANISER'S SIDE -----------------------------
+   A code is the organiser's own promotion, so the screen says plainly whose
+   money pays for it. There is no control here for editing what a code is
+   worth: people are already holding the ones handed out, and changing the
+   value under them would be a different code wearing the same name. An
+   organiser who wants different terms issues a new code and switches this one
+   off, which is one tap away. */
+function ticketingCouponsSection(approved) {
+  if (!approved.length) {
+    return `<section class="empty-state compact-state">${icon("ticket")}<strong>No approved event yet</strong><p>Discount codes open as soon as one of your events is approved, so there is always something to sell.</p></section>`;
+  }
+  const options = approved.map((event) =>
+    `<option value="${esc(event.id)}">${esc(event.eventName)}</option>`).join("");
+  const first = approved[0] || {};
+  const typeOptions = (Array.isArray(first.ticketTypes) ? first.ticketTypes : [])
+    .map((type) => `<option value="${esc(type.id)}">${esc(type.ticketName)}</option>`).join("");
+  return `
+    <section class="panel inner-panel">
+      <h3>Create a discount code</h3>
+      <p class="muted">The discount comes off your ticket price, so it is funded by you. TitoPay's commission is charged on what the buyer actually pays, never on the part you gave away.</p>
+      <form class="form-grid" data-form="ticketing-coupon">
+        <label>Event<select name="eventId" data-coupon-event-pick>${options}</select></label>
+        <label>Code<input name="code" placeholder="SUMMER25" required autocomplete="off" maxlength="32"></label>
+        <p class="field-hint">Letters and numbers only. This is what people type at checkout, so keep it short and easy to read off a poster.</p>
+        <label>Discount type
+          <select name="discountType" data-coupon-type>
+            <option value="percentage">Percentage off</option>
+            <option value="amount">Amount off the order</option>
+          </select>
+        </label>
+        <label><span data-coupon-value-label>Percentage off</span>
+          <input name="discountValue" type="number" min="1" step="0.01" placeholder="25" required>
+        </label>
+        <p class="field-hint" data-coupon-value-hint>A percentage of the ticket price, up to 100%.</p>
+        <label>Expires on<input name="expiresAt" type="date"></label>
+        <p class="field-hint">Leave the date empty for a code that runs until you switch it off.</p>
+        <label>Total uses<input name="maxRedemptions" type="number" min="1" placeholder="Leave empty for unlimited"></label>
+        <label>Uses per person<input name="maxPerCustomer" type="number" min="1" value="1"></label>
+        ${typeOptions ? `<label>Applies to<select name="ticketTypeId"><option value="">Every ticket type</option>${typeOptions}</select></label>` : ""}
+        <button class="btn secondary" type="submit">${icon("ticket")} Create code</button>
+      </form>
+    </section>
+    <section class="panel inner-panel">
+      <h3>Your codes</h3>
+      <div data-coupon-list><p class="muted">Loading discount codes…</p></div>
+    </section>`;
+}
+// The organiser's list. Every code says what it is worth, what state it is in
+// and how much of the promotion has actually been taken, so "why is nobody
+// using this?" is answerable from the screen.
+async function refreshEventCouponList(eventId) {
+  const host = document.querySelector("[data-coupon-list]");
+  if (!host || !eventId) return;
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/coupons`);
+    const coupons = result.items || [];
+    if (!coupons.length) {
+      host.innerHTML = `<p class="muted">No discount codes on this event yet. Create one above.</p>`;
+      return;
+    }
+    const stateLabel = {
+      active: "Active", scheduled: "Starts later", expired: "Expired",
+      used_up: "Fully redeemed", disabled: "Switched off"
+    };
+    host.innerHTML = `
+      <div class="settings-list">
+        ${coupons.map((coupon) => {
+          const worth = coupon.discountType === "percentage"
+            ? `${Number(coupon.discountValue)}% off`
+            : `${money(coupon.discountValue)} off`;
+          const uses = coupon.maxRedemptions
+            ? `${coupon.redeemedCount} of ${coupon.maxRedemptions} used`
+            : `${coupon.redeemedCount} used`;
+          const expiry = coupon.expiresAt ? ` · expires ${friendlyDate(coupon.expiresAt)}` : " · no expiry";
+          return `
+            <article class="settings-row">
+              <span class="icon-bubble">${icon("ticket")}</span>
+              <div>
+                <strong>${esc(coupon.code)}</strong>
+                <small>${esc(worth)} · ${esc(stateLabel[coupon.state] || coupon.state)} · ${esc(uses)}${esc(expiry)}</small>
+              </div>
+              <div class="row-actions">
+                ${coupon.status === "active"
+                  ? `<button class="btn ghost mini" type="button" data-action="coupon-disable:${esc(eventId)}:${esc(coupon.id)}">${icon("x")} Switch off</button>`
+                  : `<button class="btn ghost mini" type="button" data-action="coupon-enable:${esc(eventId)}:${esc(coupon.id)}">${icon("refresh")} Switch on</button>`}
+                ${coupon.redeemedCount === 0
+                  ? `<button class="btn ghost mini" type="button" data-action="coupon-delete:${esc(eventId)}:${esc(coupon.id)}">${icon("trash")} Delete</button>`
+                  : ""}
+              </div>
+            </article>`;
+        }).join("")}
+      </div>
+      <p class="field-hint">Total given away so far: ${esc(money(coupons.reduce((sum, coupon) => sum + Number(coupon.discountGiven || 0), 0)))}.</p>`;
+  } catch (error) {
+    host.innerHTML = `<p class="muted">${esc(friendlyFormError(error, "ticketing"))}</p>`;
+  }
+}
+async function submitTicketingCoupon(data) {
+  const body = {
+    code: data.code,
+    discountType: data.discountType,
+    discountValue: data.discountValue,
+    expiresAt: data.expiresAt || null,
+    maxRedemptions: data.maxRedemptions || null,
+    maxPerCustomer: data.maxPerCustomer || 1,
+    ticketTypeId: data.ticketTypeId || null
+  };
+  const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/coupons`, {
+    method: "POST",
+    body
+  });
+  showToast(`${result.coupon.code} is ready to share.`, "success");
+  const form = document.querySelector('[data-form="ticketing-coupon"]');
+  if (form) {
+    form.querySelector('[name="code"]').value = "";
+    form.querySelector('[name="discountValue"]').value = "";
+  }
+  await refreshEventCouponList(data.eventId);
+}
+async function setTicketingCouponStatus(eventId, couponId, status) {
+  try {
+    await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/coupons/${encodeURIComponent(couponId)}`, {
+      method: "PUT",
+      body: { status }
+    });
+    showToast(status === "active" ? "Code switched on." : "Code switched off.", "success");
+    await refreshEventCouponList(eventId);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
+async function deleteTicketingCoupon(eventId, couponId) {
+  if (!await askToConfirm({
+    title: "Delete this code",
+    body: "Nobody has used it yet, so it can be removed completely. Anyone holding it will be told it is not valid.",
+    confirmLabel: "Delete code"
+  })) return;
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/coupons/${encodeURIComponent(couponId)}`, {
+      method: "DELETE"
+    });
+    showToast(result.message || "Code deleted.", "success");
+    await refreshEventCouponList(eventId);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
 }
 function ticketingVendorsSection(approved) {
   if (!approved.length) {
@@ -23988,6 +24204,7 @@ const PHASE_CHIPS = {
 const TICKETING_SECTIONS = [
   { key: "events", label: "My Events", icon: "ticket", hint: "Create events, submit for approval, track each one." },
   { key: "sales", label: "Sales", icon: "chart", hint: "Tickets sold and money taken, per event and per tier." },
+  { key: "coupons", label: "Discount Codes", icon: "ticket", hint: "Run a promotion: a percentage or an amount off, with an expiry date." },
   { key: "vendors", label: "Vendors & Door", icon: "contacts", hint: "Who may take Event Tag payments, and who scans at the door." },
   { key: "tags", label: "Event Tags", icon: "shield", hint: "Cashless on or off, issue blank tags, assign one to a ticket." },
   { key: "campaigns", label: "Campaign Tools", icon: "send", hint: "Email and SMS your patrons about your event." }

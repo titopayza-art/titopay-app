@@ -408,6 +408,66 @@ async function ensureTicketingSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_event_tag_events_tag ON event_tag_events (tag_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_event_tag_events_event ON event_tag_events (event_id, created_at DESC);
+
+    -- DISCOUNT CODES, THE ORGANISER'S OWN PROMOTION.
+    --
+    -- A coupon reduces the ticket price, so the organiser earns less on that
+    -- sale. TitoPay's commission is charged on what the organiser actually
+    -- received, never on the money the discount gave away, which is why the
+    -- fees are recomputed on the discounted subtotal rather than the list one.
+    --
+    -- redeemed_count is a counter on the row rather than a COUNT over the
+    -- redemptions table so that "is there one left?" can be answered under a
+    -- single row lock inside the purchase transaction. The redemptions table
+    -- is the audit trail and the per-customer tally.
+    CREATE TABLE IF NOT EXISTS ticket_coupons (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      -- NULL means the code works on every ticket type for this event.
+      ticket_type_id UUID REFERENCES event_ticket_types(id) ON DELETE CASCADE,
+      code TEXT NOT NULL,
+      discount_type TEXT NOT NULL DEFAULT 'percentage',
+      discount_value NUMERIC(18,2) NOT NULL DEFAULT 0,
+      -- NULL expiry means the code runs until the organiser turns it off.
+      starts_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      -- NULL means unlimited.
+      max_redemptions INTEGER,
+      max_per_customer INTEGER NOT NULL DEFAULT 1,
+      redeemed_count INTEGER NOT NULL DEFAULT 0,
+      discount_given NUMERIC(18,2) NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      description TEXT NOT NULL DEFAULT '',
+      created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    -- One meaning per code per event. Two organisers may both run SUMMER20.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_coupons_event_code ON ticket_coupons (event_id, code);
+    CREATE INDEX IF NOT EXISTS idx_ticket_coupons_event ON ticket_coupons (event_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ticket_coupon_redemptions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      coupon_id UUID NOT NULL REFERENCES ticket_coupons(id) ON DELETE CASCADE,
+      order_id UUID NOT NULL REFERENCES ticket_orders(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      discount_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+      -- Set when the order is refunded: the redemption stops counting against
+      -- the coupon's remaining uses, because the sale did not stand.
+      released_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_coupon_redemptions_coupon ON ticket_coupon_redemptions (coupon_id, released_at);
+    CREATE INDEX IF NOT EXISTS idx_ticket_coupon_redemptions_user ON ticket_coupon_redemptions (coupon_id, user_id, released_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_coupon_redemptions_order ON ticket_coupon_redemptions (order_id);
+
+    -- Nullable with a zero default, so every order written before discount
+    -- codes existed stays exactly as valid as it was. subtotal continues to
+    -- hold what the buyer was actually charged for the tickets; this records
+    -- what came off the list price to get there.
+    ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS coupon_id UUID;
+    ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(18,2) NOT NULL DEFAULT 0;
   `);
   await ensureDefaultPricingRule("ticket_purchase");
   await ensureDefaultPricingRule("ticket_business_commission");
@@ -1488,6 +1548,296 @@ async function ticketsAlreadyHeld(buyerUserId, ticketTypeId) {
   return Number(rows[0]?.held || 0);
 }
 
+/* ==========================================================================
+   DISCOUNT CODES
+   ==========================================================================
+   An organiser's own promotion. Three rules hold the money straight:
+
+   1. The discount comes off the SUBTOTAL, so the organiser funds it. Fees are
+      then recomputed on what was actually charged, which means TitoPay never
+      takes commission on money the organiser gave away.
+   2. A discount can never exceed the subtotal. There is no such thing as a
+      negative ticket price, and a coupon must never turn a sale into a payout.
+   3. The code is resolved TWICE: once for the preview the buyer sees, and
+      again inside the purchase transaction under a row lock. The second one
+      is the one that counts, because a code can expire or run out between the
+      two. If it fails there, the purchase is REFUSED rather than quietly
+      charged at full price: a buyer must never pay more than they were shown.
+   ========================================================================== */
+
+const COUPON_TYPES = new Set(["percentage", "amount"]);
+
+// Codes are what a person types off a poster, so they are stored and compared
+// in one shape: upper case, no spaces, letters digits dash underscore only.
+function normalizeCouponCode(value = "") {
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 32);
+}
+
+function couponResponse(row = {}) {
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    ticketTypeId: row.ticket_type_id || null,
+    code: row.code,
+    discountType: row.discount_type,
+    discountValue: money(row.discount_value),
+    startsAt: row.starts_at || null,
+    expiresAt: row.expires_at || null,
+    maxRedemptions: row.max_redemptions === null || row.max_redemptions === undefined ? null : Number(row.max_redemptions),
+    maxPerCustomer: Number(row.max_per_customer || 1),
+    redeemedCount: Number(row.redeemed_count || 0),
+    discountGiven: money(row.discount_given),
+    remaining: row.max_redemptions === null || row.max_redemptions === undefined
+      ? null
+      : Math.max(0, Number(row.max_redemptions) - Number(row.redeemed_count || 0)),
+    status: row.status,
+    description: row.description || "",
+    // Computed for the organiser's list so an expired code reads as expired
+    // without them having to compare dates themselves.
+    state: couponState(row),
+    createdAt: row.created_at
+  };
+}
+
+function couponState(row = {}, now = new Date()) {
+  if (String(row.status) !== "active") return "disabled";
+  if (row.starts_at && new Date(row.starts_at).getTime() > now.getTime()) return "scheduled";
+  if (row.expires_at && new Date(row.expires_at).getTime() <= now.getTime()) return "expired";
+  const max = row.max_redemptions;
+  if (max !== null && max !== undefined && Number(row.redeemed_count || 0) >= Number(max)) return "used_up";
+  return "active";
+}
+
+// What a discount is worth against a given subtotal. Kept separate from the
+// lookup so the same arithmetic serves the preview, the purchase and the tests.
+function couponDiscountFor(coupon, subtotal) {
+  const base = money(subtotal);
+  if (base <= 0) return 0;
+  const value = money(coupon.discount_value);
+  if (value <= 0) return 0;
+  const raw = String(coupon.discount_type) === "percentage"
+    ? base * (Math.min(100, value) / 100)
+    : value;
+  // Never more than the tickets cost. A R500 code against a R100 order takes
+  // R100 off, not R500, and certainly never leaves TitoPay owing the buyer.
+  return money(Math.max(0, Math.min(base, raw)));
+}
+
+// Look up and validate a code. `db` is a pool or a transaction client; pass
+// lock: true inside a transaction so two buyers cannot both take the last one.
+// Returns null when no code was supplied. Throws a customer-safe AppError when
+// a code was supplied and cannot be used.
+async function resolveCoupon(db, { eventId, ticketTypeId, code, userId, subtotal, lock = false }) {
+  const normalized = normalizeCouponCode(code);
+  if (!normalized) return null;
+  const { rows } = await db.query(
+    `SELECT * FROM ticket_coupons WHERE event_id = $1 AND code = $2 LIMIT 1${lock ? " FOR UPDATE" : ""}`,
+    [eventId, normalized]
+  );
+  const coupon = rows[0];
+  // A wrong code and a code belonging to another event read the same way, so
+  // this never confirms that somebody else's code exists.
+  if (!coupon) throw new AppError(404, "That discount code is not valid for this event.");
+
+  const state = couponState(coupon);
+  if (state === "disabled") throw new AppError(409, "That discount code is no longer active.");
+  if (state === "scheduled") throw new AppError(409, "That discount code is not available yet.");
+  if (state === "expired") throw new AppError(409, "That discount code has expired.");
+  if (state === "used_up") throw new AppError(409, "That discount code has been fully redeemed.");
+  if (coupon.ticket_type_id && String(coupon.ticket_type_id) !== String(ticketTypeId)) {
+    throw new AppError(409, "That discount code does not apply to this ticket type.");
+  }
+
+  if (userId && Number(coupon.max_per_customer || 0) > 0) {
+    const { rows: usedRows } = await db.query(
+      `SELECT COUNT(*)::INT AS used
+         FROM ticket_coupon_redemptions
+        WHERE coupon_id = $1 AND user_id = $2 AND released_at IS NULL`,
+      [coupon.id, userId]
+    );
+    if (Number(usedRows[0]?.used || 0) >= Number(coupon.max_per_customer)) {
+      throw new AppError(409, "You have already used this discount code.");
+    }
+  }
+
+  const discount = couponDiscountFor(coupon, subtotal);
+  if (discount <= 0) throw new AppError(409, "That discount code takes nothing off this order.");
+  return { coupon, discount, code: normalized };
+}
+
+async function listEventCoupons(eventId) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    "SELECT * FROM ticket_coupons WHERE event_id = $1 ORDER BY created_at DESC",
+    [eventId]
+  );
+  return rows.map(couponResponse);
+}
+
+function couponPayload(payload = {}) {
+  const code = normalizeCouponCode(payload.code);
+  if (code.length < 3) throw new AppError(400, "A discount code needs at least 3 letters or numbers.");
+  const discountType = String(payload.discountType || payload.discount_type || "percentage").toLowerCase();
+  if (!COUPON_TYPES.has(discountType)) throw new AppError(400, "Choose a percentage or an amount off.");
+  const discountValue = money(payload.discountValue ?? payload.discount_value ?? 0);
+  if (discountValue <= 0) throw new AppError(400, "Enter how much the code takes off.");
+  if (discountType === "percentage" && discountValue > 100) {
+    throw new AppError(400, "A percentage discount cannot be more than 100%.");
+  }
+  const parseDate = (value, label) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) throw new AppError(400, `${label} is not a valid date.`);
+    return parsed;
+  };
+  const startsAt = parseDate(payload.startsAt || payload.starts_at, "Start date");
+  const expiresAt = parseDate(payload.expiresAt || payload.expires_at, "Expiry date");
+  if (startsAt && expiresAt && expiresAt.getTime() <= startsAt.getTime()) {
+    throw new AppError(400, "The expiry date must be after the start date.");
+  }
+  // An expiry already in the past would create a code that can never be used,
+  // which reads as a bug to the organiser rather than as their own typo.
+  if (expiresAt && expiresAt.getTime() <= Date.now()) {
+    throw new AppError(400, "The expiry date must be in the future.");
+  }
+  const wholeOrNull = (value, label) => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) throw new AppError(400, `${label} must be 1 or more.`);
+    return parsed;
+  };
+  return {
+    code,
+    discountType,
+    discountValue,
+    startsAt,
+    expiresAt,
+    maxRedemptions: wholeOrNull(payload.maxRedemptions ?? payload.max_redemptions, "Total uses"),
+    maxPerCustomer: wholeOrNull(payload.maxPerCustomer ?? payload.max_per_customer, "Uses per person") || 1,
+    ticketTypeId: cleanText(payload.ticketTypeId || payload.ticket_type_id, 80) || null,
+    description: cleanText(payload.description, 200)
+  };
+}
+
+async function createEventCoupon(actor, eventId, payload = {}, meta = {}) {
+  await ensureTicketingSchema();
+  const input = couponPayload(payload);
+  if (input.ticketTypeId) {
+    const { rows } = await pool.query(
+      "SELECT id FROM event_ticket_types WHERE id = $1 AND event_id = $2 LIMIT 1",
+      [input.ticketTypeId, eventId]
+    );
+    if (!rows[0]) throw new AppError(404, "That ticket type does not belong to this event.");
+  }
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `INSERT INTO ticket_coupons
+        (id, event_id, ticket_type_id, code, discount_type, discount_value, starts_at, expires_at,
+         max_redemptions, max_per_customer, description, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING *`,
+      [randomUUID(), eventId, input.ticketTypeId, input.code, input.discountType, input.discountValue,
+        input.startsAt, input.expiresAt, input.maxRedemptions, input.maxPerCustomer,
+        input.description, actor.userId]
+    ));
+  } catch (error) {
+    if (error?.code === "23505") throw new AppError(409, `You already have a code called ${input.code} on this event.`);
+    throw error;
+  }
+  await eventAudit({
+    eventId, actorType: "customer", actorId: actor.userId, action: "coupon_created",
+    metadata: { code: input.code, discountType: input.discountType, discountValue: input.discountValue },
+    ipAddress: meta.ipAddress, userAgent: meta.userAgent
+  });
+  return couponResponse(rows[0]);
+}
+
+// Editing is deliberately narrow. A code people already hold must not change
+// its value under them, so only the things that can be safely tightened or
+// extended are editable: turn it off, move the expiry, change how many uses
+// remain. Changing the discount itself means issuing a new code.
+async function updateEventCoupon(actor, eventId, couponId, payload = {}, meta = {}) {
+  await ensureTicketingSchema();
+  const { rows: existing } = await pool.query(
+    "SELECT * FROM ticket_coupons WHERE id = $1 AND event_id = $2 LIMIT 1",
+    [couponId, eventId]
+  );
+  const coupon = existing[0];
+  if (!coupon) throw new AppError(404, "Discount code not found");
+
+  const sets = [];
+  const values = [];
+  const addSet = (column, value) => { values.push(value); sets.push(`${column} = $${values.length}`); };
+
+  if (payload.status !== undefined) {
+    const status = String(payload.status).toLowerCase();
+    if (!["active", "disabled"].includes(status)) throw new AppError(400, "A discount code is either active or disabled.");
+    addSet("status", status);
+  }
+  if (payload.expiresAt !== undefined || payload.expires_at !== undefined) {
+    const raw = payload.expiresAt ?? payload.expires_at;
+    if (!raw) addSet("expires_at", null);
+    else {
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) throw new AppError(400, "Expiry date is not a valid date.");
+      addSet("expires_at", parsed);
+    }
+  }
+  if (payload.maxRedemptions !== undefined || payload.max_redemptions !== undefined) {
+    const raw = payload.maxRedemptions ?? payload.max_redemptions;
+    if (raw === null || raw === "") addSet("max_redemptions", null);
+    else {
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed < 1) throw new AppError(400, "Total uses must be 1 or more.");
+      // Below what has already been taken would silently invalidate codes
+      // people are holding, so it is refused with the real number.
+      if (parsed < Number(coupon.redeemed_count || 0)) {
+        throw new AppError(409, `This code has already been used ${coupon.redeemed_count} times, so the total cannot be lower than that.`);
+      }
+      addSet("max_redemptions", parsed);
+    }
+  }
+  if (payload.description !== undefined) addSet("description", cleanText(payload.description, 200));
+  if (!sets.length) return couponResponse(coupon);
+
+  values.push(couponId);
+  const { rows } = await pool.query(
+    `UPDATE ticket_coupons SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${values.length} RETURNING *`,
+    values
+  );
+  await eventAudit({
+    eventId, actorType: "customer", actorId: actor.userId, action: "coupon_updated",
+    metadata: { code: coupon.code, changes: Object.keys(payload) },
+    ipAddress: meta.ipAddress, userAgent: meta.userAgent
+  });
+  return couponResponse(rows[0]);
+}
+
+// A code that has never been used can be removed outright. One that has been
+// used is disabled instead, because deleting it would take its redemptions,
+// and therefore the record of the discount on real orders, with it.
+async function deleteEventCoupon(actor, eventId, couponId, meta = {}) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    "SELECT * FROM ticket_coupons WHERE id = $1 AND event_id = $2 LIMIT 1",
+    [couponId, eventId]
+  );
+  const coupon = rows[0];
+  if (!coupon) throw new AppError(404, "Discount code not found");
+  if (Number(coupon.redeemed_count || 0) > 0) {
+    const disabled = await updateEventCoupon(actor, eventId, couponId, { status: "disabled" }, meta);
+    return { deleted: false, coupon: disabled,
+      message: `${coupon.code} has already been used, so it was switched off instead of deleted. Its record stays with the orders that used it.` };
+  }
+  await pool.query("DELETE FROM ticket_coupons WHERE id = $1", [couponId]);
+  await eventAudit({
+    eventId, actorType: "customer", actorId: actor.userId, action: "coupon_deleted",
+    metadata: { code: coupon.code }, ipAddress: meta.ipAddress, userAgent: meta.userAgent
+  });
+  return { deleted: true, message: `${coupon.code} was deleted.` };
+}
+
 async function ticketPurchasePreview(slug, payload = {}, buyerUserId = null) {
   await ensureTicketingSchema();
   const quantity = Math.max(1, Math.min(20, Number.parseInt(payload.quantity || 1, 10) || 1));
@@ -1525,11 +1875,24 @@ async function ticketPurchasePreview(slug, payload = {}, buyerUserId = null) {
         : `You may buy ${limit - held} more of ${row.ticket_name}, up to ${limit} per person.`);
     }
   }
-  const subtotal = money(Number(row.price || 0) * quantity);
+  const listSubtotal = money(Number(row.price || 0) * quantity);
+  // The organiser's discount comes off before anything else is worked out, so
+  // every number below - fee, commission, what the organiser banks - is based
+  // on what the buyer is actually being charged.
+  const applied = await resolveCoupon(pool, {
+    eventId: row.id,
+    ticketTypeId: row.ticket_type_id,
+    code: payload.couponCode || payload.coupon_code,
+    userId: buyerUserId,
+    subtotal: listSubtotal
+  });
+  const discount = applied ? applied.discount : 0;
+  const subtotal = money(listSubtotal - discount);
   // A free ticket is free all the way through. The buyer service fee is a flat
   // R10, so without this a "free" ticket would still charge the buyer R10 and
   // demand they hold a balance — which is not a free ticket. No subtotal means
-  // no fee, no commission, and nothing to move.
+  // no fee, no commission, and nothing to move. A discount that takes the price
+  // all the way to zero lands here too, and is free on exactly the same terms.
   const isFree = subtotal <= 0;
   const buyerFee = isFree ? 0 : (await calculateFee("ticket_buyer_service_fee", subtotal)).fee;
   const businessCommission = isFree ? 0 : (await calculateFee("ticket_business_commission", subtotal)).fee;
@@ -1540,6 +1903,10 @@ async function ticketPurchasePreview(slug, payload = {}, buyerUserId = null) {
     ticketName: row.ticket_name,
     quantity,
     available,
+    listSubtotal,
+    discount,
+    couponCode: applied ? applied.code : null,
+    couponId: applied ? applied.coupon.id : null,
     subtotal,
     buyerFee,
     businessCommission,
@@ -1827,6 +2194,16 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
   // Hoisted: the confirmation response after the transaction reads the event's
   // name/date/venue from this locked row.
   let locked;
+  // Hoisted for the same reason. These are settled inside the transaction from
+  // the LOCKED ticket row and the locked coupon, and the audit entry written
+  // after it must report the figures that were actually charged.
+  let applied = null;
+  let discount = 0;
+  let subtotal = 0;
+  let buyerFee = 0;
+  let businessCommission = 0;
+  let businessNet = 0;
+  let total = 0;
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
@@ -1861,23 +2238,56 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
       }
     }
 
+    // THE DISCOUNT IS RE-RESOLVED HERE, UNDER A ROW LOCK, AND THIS IS THE ONE
+    // THAT COUNTS. The preview ran outside any transaction, so between it and
+    // now the code could have expired, been switched off, or had its last use
+    // taken by somebody else. The lock is what stops two buyers both taking a
+    // one-use code.
+    //
+    // If it fails now the whole purchase is refused. That is deliberate: the
+    // alternative is charging the buyer full price for something they were
+    // shown at a discount, and a payment that costs more than the screen said
+    // is worse than a payment that does not happen.
+    const listSubtotal = money(Number(locked.price || 0) * preview.quantity);
+    applied = await resolveCoupon(client, {
+      eventId: preview.eventId,
+      ticketTypeId: preview.ticketTypeId,
+      code: payload.couponCode || payload.coupon_code,
+      userId: actor.userId,
+      subtotal: listSubtotal,
+      lock: true
+    });
+    // Everything from here uses the locked figures, never the preview's.
+    discount = applied ? applied.discount : 0;
+    subtotal = money(listSubtotal - discount);
+    const isFree = subtotal <= 0;
+    buyerFee = isFree ? 0 : (await calculateFee("ticket_buyer_service_fee", subtotal)).fee;
+    businessCommission = isFree ? 0 : (await calculateFee("ticket_business_commission", subtotal)).fee;
+    businessNet = money(subtotal - businessCommission);
+    total = money(subtotal + buyerFee);
+    // A buyer who saw one price must never be charged a higher one. Prices can
+    // only ever move in the buyer's favour between preview and payment.
+    if (total > money(preview.total)) {
+      throw new AppError(409, "The price of these tickets changed while you were checking out. Please review it again.");
+    }
+
     const buyerWallet = await loadWalletForUpdate(client, actor.userId);
     if (!buyerWallet) throw new AppError(404, "Buyer wallet not found");
     // A free ticket has total 0, so this correctly asks nothing of the buyer's
     // balance; the guard only bites when there is something to pay.
-    if (preview.total > 0 && Number(buyerWallet.available_balance || 0) < preview.total) {
+    if (total > 0 && Number(buyerWallet.available_balance || 0) < total) {
       throw new AppError(400, "Insufficient balance");
     }
     // The business wallet is only needed when there is money to settle into it.
     // A free event never credits the business, so a missing wallet must not stop
     // a free ticket being issued.
     const businessWallet = await loadWalletForUpdate(client, locked.business_user_id, "business") || await loadWalletForUpdate(client, locked.business_user_id);
-    if (preview.businessNet > 0 && !businessWallet) throw new AppError(404, "Event business wallet not found");
+    if (businessNet > 0 && !businessWallet) throw new AppError(404, "Event business wallet not found");
     // The revenue wallet only collects platform fees. A free ticket charges no
     // fee, so it must never be required — loading it unconditionally made every
     // purchase (free included) 500 on an environment where no revenue wallet is
     // configured. Load it only when there is a fee to bank.
-    const hasFees = money(preview.buyerFee + preview.businessCommission) > 0;
+    const hasFees = money(buyerFee + businessCommission) > 0;
     const revenueWallet = hasFees ? await loadRevenueWalletForUpdate(client) : null;
 
     await client.query(
@@ -1896,32 +2306,32 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
         actor.userId,
         buyerWallet.id,
         locked.merchant_uuid || null,
-        preview.subtotal,
-        money(preview.buyerFee + preview.businessCommission),
-        preview.total,
+        subtotal,
+        money(buyerFee + businessCommission),
+        total,
         reference,
         locked.event_name,
-        JSON.stringify({ eventId: preview.eventId, ticketTypeId: preview.ticketTypeId, orderId, orderReference, businessNet: preview.businessNet })
+        JSON.stringify({ eventId: preview.eventId, ticketTypeId: preview.ticketTypeId, orderId, orderReference, businessNet: businessNet })
       ]
     );
     // applyWalletMovement refuses a zero amount by design, so every movement
     // below is guarded — a free ticket moves no money and simply skips them.
-    if (preview.total > 0) {
+    if (total > 0) {
       await applyWalletMovement(client, {
         walletId: buyerWallet.id,
         transactionId: txId,
         entryType: "debit",
-        amount: preview.total,
+        amount: total,
         reference,
         metadata: { serviceCode: "ticket_purchase", orderId, eventId: preview.eventId }
       });
     }
-    if (businessWallet && preview.businessNet > 0) {
+    if (businessWallet && businessNet > 0) {
       await applyWalletMovement(client, {
         walletId: businessWallet.id,
         transactionId: txId,
         entryType: "credit",
-        amount: preview.businessNet,
+        amount: businessNet,
         reference,
         metadata: { serviceCode: "ticket_purchase", orderId, eventId: preview.eventId, settlement: "instant_wallet_credit" }
       });
@@ -1931,21 +2341,21 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
         walletId: revenueWallet.id,
         transactionId: txId,
         entryType: "credit",
-        amount: money(preview.buyerFee + preview.businessCommission),
+        amount: money(buyerFee + businessCommission),
         reference,
         metadata: { serviceCode: "ticket_purchase", source: "ticket_fees", orderId, eventId: preview.eventId }
       });
       await client.query(
         `INSERT INTO revenue_ledger (id, transaction_id, service_code, fee_collected, revenue_wallet_id)
          VALUES ($1,$2,'ticket_purchase',$3,$4)`,
-        [randomUUID(), txId, money(preview.buyerFee + preview.businessCommission), revenueWallet.id]
+        [randomUUID(), txId, money(buyerFee + businessCommission), revenueWallet.id]
       );
     }
 
     await client.query(
       `INSERT INTO ticket_orders
-        (id, event_id, ticket_type_id, buyer_user_id, merchant_id, transaction_id, order_reference, quantity, subtotal, buyer_fee, business_commission, business_net, total, status, delivery_status, buyer_details, metadata, paid_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'paid','queued',$14::JSONB,$15::JSONB,NOW())`,
+        (id, event_id, ticket_type_id, buyer_user_id, merchant_id, transaction_id, order_reference, quantity, subtotal, buyer_fee, business_commission, business_net, total, status, delivery_status, buyer_details, metadata, paid_at, coupon_id, discount_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'paid','queued',$14::JSONB,$15::JSONB,NOW(),$16,$17)`,
       [
         orderId,
         preview.eventId,
@@ -1955,15 +2365,37 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
         txId,
         orderReference,
         preview.quantity,
-        preview.subtotal,
-        preview.buyerFee,
-        preview.businessCommission,
-        preview.businessNet,
-        preview.total,
+        subtotal,
+        buyerFee,
+        businessCommission,
+        businessNet,
+        total,
         JSON.stringify(payload.buyerDetails || {}),
-        JSON.stringify({ source: "pwa", paymentMethod: "titopay_wallet" })
+        JSON.stringify({ source: "pwa", paymentMethod: "titopay_wallet" }),
+        applied ? applied.coupon.id : null,
+        discount
       ]
     );
+
+    // The redemption is taken inside the same transaction as the money. If
+    // anything below fails, the code goes back on the shelf along with the
+    // payment; there is no state where a buyer paid nothing but burned a use,
+    // or used a code and left no record of it.
+    if (applied) {
+      await client.query(
+        `UPDATE ticket_coupons
+            SET redeemed_count = redeemed_count + 1,
+                discount_given = discount_given + $2,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [applied.coupon.id, discount]
+      );
+      await client.query(
+        `INSERT INTO ticket_coupon_redemptions (id, coupon_id, order_id, user_id, quantity, discount_amount)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [randomUUID(), applied.coupon.id, orderId, actor.userId, preview.quantity, discount]
+      );
+    }
 
     for (let index = 0; index < preview.quantity; index += 1) {
       const ticketId = randomUUID();
@@ -2002,7 +2434,7 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
     actorType: "customer",
     actorId: actor.userId,
     action: "tickets_purchased",
-    metadata: { orderId, orderReference, quantity: preview.quantity, total: preview.total },
+    metadata: { orderId, orderReference, quantity: preview.quantity, total: total },
     ...meta
   });
   deliverTicketOrder(orderId).catch((error) => console.error("[ticket-delivery-failed]", { orderId, message: error.message }));
@@ -2765,6 +3197,28 @@ async function processTicketRefund(refundId, payload = {}, actor, meta = {}) {
         );
       }
       await client.query("UPDATE ticket_orders SET status = 'refunded', updated_at = NOW() WHERE id = $1", [refund.order_id]);
+      // A refunded sale gives the discount code back. The organiser capped the
+      // promotion at a number of real sales, and this one did not stand, so it
+      // must not keep consuming a use or count against the buyer's own limit.
+      // Scoped to redemptions not already released, so a second pass over the
+      // same order can never drive the counter below zero.
+      const { rows: releasedRows } = await client.query(
+        `UPDATE ticket_coupon_redemptions
+            SET released_at = NOW()
+          WHERE order_id = $1 AND released_at IS NULL
+          RETURNING coupon_id, discount_amount`,
+        [refund.order_id]
+      );
+      for (const released of releasedRows) {
+        await client.query(
+          `UPDATE ticket_coupons
+              SET redeemed_count = GREATEST(0, redeemed_count - 1),
+                  discount_given = GREATEST(0, discount_given - $2),
+                  updated_at = NOW()
+            WHERE id = $1`,
+          [released.coupon_id, money(released.discount_amount)]
+        );
+      }
       await client.query("UPDATE tickets SET status = 'refunded', refunded_at = NOW(), updated_at = NOW() WHERE order_id = $1 AND status <> 'scanned'", [refund.order_id]);
       await client.query(
         `UPDATE event_ticket_types
@@ -3303,6 +3757,14 @@ module.exports = {
   removeEventStaff,
   listEventStaff,
   listStaffScanEvents,
+  listEventCoupons,
+  createEventCoupon,
+  updateEventCoupon,
+  deleteEventCoupon,
+  // Exported for the tests: the discount arithmetic is the part that must
+  // never drift, so it is checkable without standing up an event.
+  couponDiscountFor,
+  normalizeCouponCode,
   requestTicketRefund,
   listTicketRefunds,
   processTicketRefund,

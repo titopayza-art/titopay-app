@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 21;
+const API_BUILD = 22;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  22: "Ticket discount codes: organisers create a code with an expiry and " +
+      "either a percentage or an amount off, optionally capped by total uses, " +
+      "uses per person and ticket type. Buyers enter it at checkout. The " +
+      "discount comes off the subtotal so the organiser funds it, and TitoPay " +
+      "charges commission on what was paid, never on the money given away. " +
+      "Schema is additive; orders written before this are untouched.",
   21: "Sign out now revokes the session the server already proved, instead of " +
       "matching a refresh token hash from the request body and reporting " +
       "success whether or not anything was revoked. A refresh token is still " +

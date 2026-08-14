@@ -153,21 +153,26 @@ test("merchant profile and business registration gate PAID tickets, not free eve
   assert.match(structuralPart, /profile_locked/);
 });
 
+// NOTE ON THE NAMES: these figures used to be read straight off the preview
+// object. Discount codes made the purchase transaction settle its own prices
+// under a row lock, so they are now locals computed inside it. The guards
+// themselves are unchanged, and a fully discounted ticket lands in exactly
+// the same free path as a zero-priced one.
 test("a free ticket is charged nothing, and moves no money", () => {
   // The buyer service fee is a flat R10, so 'free' has to be made free on
   // purpose — a percentage-only fee would have been zero by itself. These are
   // source assertions because the fee and the ledger both need a database; the
   // running proof is verification/free-ticketing-live.js.
   assert.match(SOURCE, /const isFree = subtotal <= 0;/);
-  assert.match(SOURCE, /const buyerFee = isFree \? 0 :/);
-  assert.match(SOURCE, /const businessCommission = isFree \? 0 :/);
+  assert.match(SOURCE, /buyerFee = isFree \? 0 :/);
+  assert.match(SOURCE, /businessCommission = isFree \? 0 :/);
 
   // applyWalletMovement throws on a zero amount, so every movement is guarded.
-  assert.match(SOURCE, /if \(preview\.total > 0\) \{\s*\n\s*await applyWalletMovement/,
+  assert.match(SOURCE, /if \(total > 0\) \{\s*\n\s*await applyWalletMovement/,
     "the buyer debit must be skipped when there is nothing to pay");
-  assert.match(SOURCE, /if \(businessWallet && preview\.businessNet > 0\) \{\s*\n\s*await applyWalletMovement/,
+  assert.match(SOURCE, /if \(businessWallet && businessNet > 0\) \{\s*\n\s*await applyWalletMovement/,
     "the business credit must be skipped when there is nothing to settle");
-  assert.match(SOURCE, /if \(preview\.businessNet > 0 && !businessWallet\) throw/,
+  assert.match(SOURCE, /if \(businessNet > 0 && !businessWallet\) throw/,
     "a missing business wallet must only stop a paid ticket, never a free one");
 });
 
@@ -180,7 +185,7 @@ test("a free purchase never requires the platform revenue wallet", () => {
   // verification/free-ticketing-live.js with the revenue wallet hidden.
   assert.doesNotMatch(SOURCE, /const revenueWallet = await loadRevenueWalletForUpdate\(client\);/,
     "the revenue wallet must NOT be loaded unconditionally in a purchase");
-  assert.match(SOURCE, /const hasFees = money\(preview\.buyerFee \+ preview\.businessCommission\) > 0;/,
+  assert.match(SOURCE, /const hasFees = money\(buyerFee \+ businessCommission\) > 0;/,
     "a purchase must decide up front whether any fee is owed");
   assert.match(SOURCE, /const revenueWallet = hasFees \? await loadRevenueWalletForUpdate\(client\) : null;/,
     "the revenue wallet must be loaded only when a fee is actually owed");
