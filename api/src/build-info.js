@@ -19,10 +19,14 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 16;
+const API_BUILD = 17;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  17: "Held money now lives in a suspense wallet so every leg balances; both " +
+      "sender and recipient are told about a hold (in-app only, never a " +
+      "claim-by-link message); hold window 7 days; earned capacity counts " +
+      "distinct real counterparties, so it cannot be farmed by self-payment.",
   16: "Limit engine: verification x product x earned standing x risk, risk last. " +
       "Refusals quote remaining capacity, never the law. Money beyond a recipient's " +
       "capacity is held for them to claim, released on verification, returned in " +

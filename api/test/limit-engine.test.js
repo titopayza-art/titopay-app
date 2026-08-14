@@ -109,6 +109,38 @@ test("a recipient's limits are never disclosed to a sender", () => {
   assert.match(COMPLIANCE, /This payment cannot be completed to that account right now/);
 });
 
+test("held money lives in the suspense wallet, so the ledger always balances", () => {
+  const WALLET = read("src", "services", "wallet-service.js");
+  assert.match(WALLET, /async function getSuspenseWallet/);
+  assert.match(WALLET, /THE SUSPENSE WALLET/);
+  // Hold credits it, release and return debit it: every leg has a pair.
+  assert.match(PENDING, /getSuspenseWallet\(client\)[\s\S]{0,400}entryType: "credit"/);
+  assert.match(PENDING, /Out of suspense, into the recipient/);
+  assert.match(PENDING, /Out of suspense, back to the sender/);
+  assert.match(read("src", "db", "schema.sql"), /'9000000001', NULL, 'system'/);
+});
+
+test("both sides are told, and the notice never becomes a phishing template", () => {
+  // The sender's money left without arriving; they hear about it.
+  assert.match(PENDING, /title: `\$\{value\} is on hold for/);
+  assert.match(PENDING, /has been delivered/);
+  // In-app only, deliberately, and the copy inoculates against the scam
+  // that shares its shape.
+  assert.match(PENDING, /IN-APP ONLY, DELIBERATELY/);
+  assert.match(PENDING, /never ask you to claim money through a link/);
+  assert.doesNotMatch(PENDING, /queueEmail|queueRawEmail/,
+    "no email template exists for a claim-your-money notice");
+});
+
+test("earned capacity cannot be farmed by paying yourself", () => {
+  assert.match(ENGINE, /minDistinctCounterparties/);
+  assert.match(ENGINE, /minTransactionValue/);
+  assert.match(ENGINE, /COUNT\(DISTINCT t\.metadata->>'recipientWalletId'\)/);
+  assert.match(ENGINE, /Paying yourself proves nothing/);
+  assert.doesNotMatch(ENGINE, /minCompletedTransactions/,
+    "a raw transaction count is farmable and is gone");
+});
+
 test("money is held for verification, never lost, and never spendable early", () => {
   assert.match(TX, /holdForVerification/);
   assert.match(TX, /createHold/);
@@ -146,7 +178,7 @@ test("risk bands, products, earned capacity and holding are all configuration", 
   assert.match(COMPLIANCE, /riskBands: require\("\.\/limit-engine"\)\.DEFAULT_RISK_BANDS/);
   assert.match(COMPLIANCE, /earnedCapacity: require\("\.\/limit-engine"\)\.DEFAULT_EARNED_CAPACITY/);
   assert.match(COMPLIANCE, /holdForVerification: true/);
-  assert.match(COMPLIANCE, /holdDays: 14/);
+  assert.match(COMPLIANCE, /holdDays: 7/);
   // The engine reads config on every decision; nothing is captured at boot.
   assert.match(ENGINE, /loadComplianceConfig\(\)/);
 });

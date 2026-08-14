@@ -64,12 +64,19 @@ const DEFAULT_RISK_BANDS = {
 };
 
 // Capacity a customer earns by simply being a good customer: an account
-// that has been here a while, has moved money without incident and carries
-// no open compliance flag. Applied as a multiplier on fixed limits, capped.
+// that has been here a while, has moved real money to real people without
+// incident, and carries no open compliance flag.
+//
+// COUNTED CAREFULLY, because a raw transaction count is farmable: two
+// accounts pushing a rand back and forth ten times would earn an uplift.
+// So the count is of DISTINCT COUNTERPARTIES, each payment must clear a
+// minimum value, and payments to the customer's own other wallets do not
+// count at all.
 const DEFAULT_EARNED_CAPACITY = {
   enabled: true,
   minAccountAgeDays: 60,
-  minCompletedTransactions: 10,
+  minDistinctCounterparties: 5,
+  minTransactionValue: 50,
   multiplier: 1.5,
   // Never earned by an unverified account: capability follows identity
   // first, behaviour second.
@@ -152,17 +159,29 @@ async function earnedStanding(userId, config, tier) {
   const { rows } = await pool.query(
     `SELECT
        (SELECT created_at FROM users WHERE id = $1) AS created_at,
-       (SELECT COUNT(*)::INT FROM transactions WHERE user_id = $1 AND status = 'completed') AS completed,
+       (SELECT COUNT(DISTINCT t.metadata->>'recipientWalletId')::INT
+          FROM transactions t
+         WHERE t.user_id = $1
+           AND t.status = 'completed'
+           AND t.direction = 'debit'
+           AND t.amount >= $2
+           AND t.metadata->>'recipientWalletId' IS NOT NULL
+           -- Paying yourself proves nothing, so a wallet this customer
+           -- also owns is not a counterparty.
+           AND t.metadata->>'recipientWalletId' NOT IN (
+             SELECT w.id::TEXT FROM wallets w WHERE w.user_id = $1
+           )) AS counterparties,
        (SELECT COUNT(*)::INT FROM compliance_flags WHERE user_id = $1 AND status = 'open') AS open_flags`,
-    [userId]
+    [userId, Number(rules.minTransactionValue) || 0]
   ).catch(() => ({ rows: [] }));
   const row = rows[0];
   if (!row || !row.created_at) return { applies: false, multiplier: 1, rules };
   const ageDays = (Date.now() - new Date(row.created_at).getTime()) / 86400000;
+  const counterparties = Number(row.counterparties || 0);
   const applies = ageDays >= Number(rules.minAccountAgeDays)
-    && Number(row.completed) >= Number(rules.minCompletedTransactions)
+    && counterparties >= Number(rules.minDistinctCounterparties)
     && Number(row.open_flags) === 0;
-  return { applies, multiplier: applies ? Number(rules.multiplier) : 1, rules, ageDays, completed: Number(row.completed) };
+  return { applies, multiplier: applies ? Number(rules.multiplier) : 1, rules, ageDays, counterparties };
 }
 
 async function monthlyWithdrawn(userId) {

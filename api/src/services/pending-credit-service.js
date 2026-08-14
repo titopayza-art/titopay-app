@@ -77,11 +77,24 @@ async function holdApplies(serviceCode) {
 }
 
 // Called by the transaction rail INSIDE the money transaction, after the
-// sender has been debited and instead of crediting the recipient.
+// sender has been debited and instead of crediting the recipient. The money
+// is credited to the SUSPENSE WALLET, so the transfer still balances and
+// the held value is visible in the ledger rather than living as an implicit
+// float.
 async function createHold(client, { transactionId, senderUserId, recipientUserId, amount, serviceCode, reason = "receiving_capacity", metadata = {} }) {
   await ensurePendingCreditSchema();
   const policy = await receivingPolicy();
+  const { applyWalletMovement, getSuspenseWallet } = require("./wallet-service");
+  const suspense = await getSuspenseWallet(client);
   const id = crypto.randomUUID();
+  await applyWalletMovement(client, {
+    walletId: suspense.id,
+    transactionId,
+    entryType: "credit",
+    amount: Number(amount),
+    reference: `pending-hold:${id}`,
+    metadata: { pendingCreditId: id, heldFor: recipientUserId, serviceCode }
+  });
   await client.query(
     `INSERT INTO pending_credits
        (id, transaction_id, sender_user_id, recipient_user_id, amount, service_code, reason, metadata, expires_at)
@@ -93,17 +106,37 @@ async function createHold(client, { transactionId, senderUserId, recipientUserId
 }
 
 // Told after the money transaction commits, so a notification failure can
-// never roll back a payment.
-async function notifyHold({ id, recipientUserId, senderName, amount, holdDays }) {
+// never roll back a payment. BOTH sides hear: the recipient because there
+// is money waiting, and the sender because their money has left their
+// wallet without arriving, which they would otherwise discover as a
+// mystery.
+//
+// IN-APP ONLY, DELIBERATELY. "You have money waiting, verify to claim" is
+// the exact shape of the phishing message South Africans are targeted with
+// every day. Behind an authenticated app it is safe. Sent as an email or
+// SMS carrying a link, it would teach customers to trust the fraudulent
+// version. Do not add an email template for this notice.
+async function notifyHold({ id, recipientUserId, senderUserId, recipientName, senderName, amount, holdDays }) {
   const { createNotification } = require("./notification-service");
+  const value = `R${Number(amount).toFixed(2)}`;
   await createNotification({
     user: { id: recipientUserId, user_type: "customer" },
     channel: "in_app",
     notificationType: "pending_credit",
     provider: "in_app",
-    title: `R${Number(amount).toFixed(2)} is waiting for you`,
-    body: `${senderName || "Someone"} sent you R${Number(amount).toFixed(2)}. Verify your identity under Limits and Verification in your wallet to receive it. It is held safely for ${holdDays} days, and returns to the sender if it is not claimed.`,
+    title: `${value} is waiting for you`,
+    body: `${senderName || "Someone"} sent you ${value}. Verify your identity under Limits and Verification in your wallet to receive it. It is held safely for ${holdDays} days, and returns to the sender if it is not claimed. TitoPay will never ask you to claim money through a link in a message.`,
     metadata: { clientNotificationId: `pending-credit-${id}`, pendingCreditId: id }
+  }).catch(() => {});
+  if (!senderUserId) return;
+  await createNotification({
+    user: { id: senderUserId, user_type: "customer" },
+    channel: "in_app",
+    notificationType: "pending_credit",
+    provider: "in_app",
+    title: `${value} is on hold for ${recipientName || "the person you paid"}`,
+    body: `Your payment of ${value} left your wallet, but ${recipientName || "the recipient"} needs to verify their identity before it can land. They have been told. If they do not claim it within ${holdDays} days, the full amount, including the fee, comes back to you automatically.`,
+    metadata: { clientNotificationId: `pending-credit-sender-${id}`, pendingCreditId: id }
   }).catch(() => {});
 }
 
@@ -145,6 +178,17 @@ async function releaseHold(pendingId, { actorId = null, note = null } = {}) {
     const { rows: wallets } = await client.query(
       "SELECT id FROM wallets WHERE user_id = $1 ORDER BY created_at LIMIT 1", [hold.recipient_user_id]);
     if (!wallets[0]) throw new AppError(404, "The recipient has no wallet to receive into.");
+    // Out of suspense, into the recipient: two legs, so the release balances
+    // and the suspense wallet always equals the value of the open holds.
+    const suspense = await require("./wallet-service").getSuspenseWallet(client);
+    await applyWalletMovement(client, {
+      walletId: suspense.id,
+      transactionId: hold.transaction_id,
+      entryType: "debit",
+      amount: Number(hold.amount),
+      reference: `pending-release:${hold.id}`,
+      metadata: { pendingCreditId: hold.id, releasedTo: hold.recipient_user_id }
+    });
     await applyWalletMovement(client, {
       walletId: wallets[0].id,
       transactionId: hold.transaction_id,
@@ -177,6 +221,15 @@ async function releaseHold(pendingId, { actorId = null, note = null } = {}) {
       body: "The payment that was waiting for you has been released into your wallet.",
       metadata: { clientNotificationId: `pending-credit-released-${pendingId}` }
     }).catch(() => {});
+    // The sender was told their money was on hold, so they are told when it
+    // finally lands. An open loop is what turns into a support ticket.
+    await createNotification({
+      user: { id: hold.sender_user_id, user_type: "customer" },
+      channel: "in_app", notificationType: "pending_credit", provider: "in_app",
+      title: `Your R${Number(hold.amount).toFixed(2)} payment has been delivered`,
+      body: "The person you paid completed their verification, so the payment that was on hold has landed in their wallet.",
+      metadata: { clientNotificationId: `pending-credit-delivered-${pendingId}` }
+    }).catch(() => {});
     return { id: pendingId, amount: Number(hold.amount), status: "released" };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
@@ -203,6 +256,16 @@ async function returnHold(pendingId, { actorId = null, note = "expired" } = {}) 
     const { rows: wallets } = await client.query(
       "SELECT id FROM wallets WHERE user_id = $1 ORDER BY created_at LIMIT 1", [hold.sender_user_id]);
     if (!wallets[0]) throw new AppError(404, "The sender has no wallet to return to.");
+    // Out of suspense, back to the sender: the return balances the hold.
+    const suspense = await require("./wallet-service").getSuspenseWallet(client);
+    await applyWalletMovement(client, {
+      walletId: suspense.id,
+      transactionId: hold.transaction_id,
+      entryType: "debit",
+      amount: Number(hold.amount),
+      reference: `pending-return:${hold.id}`,
+      metadata: { pendingCreditId: hold.id, returnedTo: hold.sender_user_id }
+    });
     await applyWalletMovement(client, {
       walletId: wallets[0].id,
       transactionId: hold.transaction_id,

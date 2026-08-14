@@ -176,7 +176,18 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     const feed = await call(newcomer.token, "GET", "/v1/chat/notifications");
     assert.ok((feed.data.notifications || []).some((n) => n.notification_type === "pending_credit"),
       "the recipient is told money is waiting");
-    ok("a payment beyond the recipient's capacity is held for them, not refused, and never spendable");
+    // The sender is told too: their money left without arriving, and they
+    // would otherwise discover that as a mystery.
+    const senderFeed = await call(spender.token, "GET", "/v1/chat/notifications");
+    assert.ok((senderFeed.data.notifications || []).some((n) =>
+      n.notification_type === "pending_credit" && /on hold/i.test(String(n.title || ""))),
+      "the sender is told their payment is on hold");
+    // And the money is IN THE LEDGER, in the suspense wallet, not floating
+    // as an implicit liability.
+    const { rows: [suspense] } = await pool.query(
+      "SELECT available_balance FROM wallets WHERE wallet_number = '9000000001'");
+    assert.equal(Number(suspense.available_balance), 400, "the suspense wallet holds exactly the held value");
+    ok("a payment beyond the recipient's capacity is held in the suspense wallet, both sides are told, and it is never spendable");
 
     // 7. VERIFYING RELEASES HELD MONEY, ONCE.
     const verify = await call(newcomer.token, "POST", "/v1/compliance/basic-verify",
@@ -188,6 +199,9 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     assert.equal(Number(afterRelease.available_balance), 5200, "the held amount landed exactly once");
     const again = await call(newcomer.token, "POST", "/v1/compliance/pending-credits/claim", {});
     assert.equal((again.data.released || []).length, 0, "a second claim releases nothing");
+    const { rows: [emptied] } = await pool.query(
+      "SELECT available_balance FROM wallets WHERE wallet_number = '9000000001'");
+    assert.equal(Number(emptied.available_balance), 0, "the suspense wallet empties on release");
     ok("verifying releases held money into the wallet exactly once");
 
     // 8. AN UNCLAIMED HOLD RETURNS TO THE SENDER, IN FULL, ONCE.

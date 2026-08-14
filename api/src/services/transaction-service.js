@@ -570,6 +570,8 @@ async function createTransaction(actor, payload) {
     require("./pending-credit-service").notifyHold({
       id: pendingHold.id,
       recipientUserId: recipientWallet.user_id,
+      senderUserId: actor.userId,
+      recipientName: recipientWallet.full_name || recipientWallet.username || null,
       senderName: actor.fullName || actor.username || null,
       amount: netAmount,
       holdDays: pendingHold.holdDays

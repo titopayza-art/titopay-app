@@ -118,7 +118,9 @@ const DEFAULT_CONFIG = {
   // to refuse instead, per the approved compliance framework.
   receiving: {
     holdForVerification: true,
-    holdDays: 14,
+    // A week is long enough for someone to notice and verify, and short
+    // enough that a sender's money is not in limbo for half a month.
+    holdDays: 7,
     // Rails where a hold makes sense. Card top-ups and merchant settlement
     // are excluded: those answer to the provider, not to a claim.
     services: ["wallet_transfer", "send_gift", "send_money", "payment_request", "stockvel_contribution"]

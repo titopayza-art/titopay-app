@@ -30,6 +30,42 @@ async function getRevenueWallet() {
   return rows[0];
 }
 
+// THE SUSPENSE WALLET. Money held for a recipient who cannot yet receive it
+// has to BE somewhere: it has left the sender, it does not belong to the
+// recipient, and "implicitly TitoPay's float" is not an answer double-entry
+// accepts. Every held payment credits this wallet and every release or
+// return debits it, so the balance here is, at any moment, exactly the
+// value of the open holds, and a reconciler can prove it in one query.
+//
+// It is a system wallet (no owner), so it never enters a customer's limits
+// or statements.
+let suspenseWalletPromise = null;
+async function getSuspenseWallet(client = pool) {
+  const find = async (db) => {
+    const { rows } = await db.query(
+      "SELECT * FROM wallets WHERE kind = 'system' AND user_id IS NULL AND wallet_number = '9000000001' LIMIT 1");
+    return rows[0] || null;
+  };
+  const existing = await find(client);
+  if (existing) return existing;
+  // Created once, idempotently: a concurrent creator loses the unique index
+  // race harmlessly and both end up with the same wallet.
+  // The unique index on wallet_number is partial, so ON CONFLICT cannot
+  // target it. Guard on absence, and treat a lost race (unique violation)
+  // as success, because the other writer created exactly what we wanted.
+  suspenseWalletPromise ||= (async () => {
+    await pool.query(
+      `INSERT INTO wallets (id, wallet_number, user_id, kind, currency, available_balance)
+       SELECT gen_random_uuid(), '9000000001', NULL, 'system', 'ZAR', 0
+       WHERE NOT EXISTS (SELECT 1 FROM wallets WHERE wallet_number = '9000000001')`
+    ).catch((error) => { if (error.code !== "23505") throw error; });
+  })().catch((error) => { suspenseWalletPromise = null; throw error; });
+  await suspenseWalletPromise;
+  const created = await find(client);
+  if (!created) throw new AppError(500, "TitoPay suspense wallet is not configured");
+  return created;
+}
+
 async function listWalletsForUser(userId) {
   await ensureWalletNumbersForAllWallets(pool);
   const { rows } = await pool.query(
@@ -404,6 +440,7 @@ module.exports = {
   ensureWalletNumbersForAllWallets,
   getPrimaryWalletForUser,
   getRevenueWallet,
+  getSuspenseWallet,
   createWalletForUser,
   listWalletsForUser,
   listWalletStatement,

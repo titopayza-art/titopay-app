@@ -1865,3 +1865,11 @@ CREATE TABLE IF NOT EXISTS compliance_config_versions (
 
 CREATE INDEX IF NOT EXISTS compliance_config_versions_key_idx
   ON compliance_config_versions (config_key, created_at DESC);
+
+-- The suspense wallet. Money held for a recipient who cannot yet receive it
+-- has to be somewhere: it credits here on hold and debits here on release
+-- or return, so this balance is always exactly the value of the open holds.
+-- A system wallet with no owner: it never enters a customer's limits.
+INSERT INTO wallets (id, wallet_number, user_id, kind, currency, available_balance)
+SELECT gen_random_uuid(), '9000000001', NULL, 'system', 'ZAR', 0
+WHERE NOT EXISTS (SELECT 1 FROM wallets WHERE wallet_number = '9000000001');
