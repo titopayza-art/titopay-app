@@ -3386,6 +3386,50 @@ router.put("/compliance/limits", requireAdminPermission("services"), async (req,
   } catch (error) { next(error); }
 });
 
+// Limit configuration history: every version, and a reversal path.
+router.get("/compliance/limits/versions", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const compliance = require("../services/compliance-service");
+    res.json({ ok: true, versions: await compliance.listComplianceConfigVersions(50) });
+  } catch (error) { next(error); }
+});
+
+router.post("/compliance/limits/versions/:id/restore", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const compliance = require("../services/compliance-service");
+    const config = await compliance.restoreComplianceConfigVersion(req.auth, req.params.id, req.body?.reason);
+    res.json({ ok: true, config });
+  } catch (error) { next(error); }
+});
+
+// Held payments: what is waiting, and the compliance decision to release or
+// return one. Both paths post real ledger movements and are audit-logged.
+router.get("/compliance/pending-credits", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    await require("../services/pending-credit-service").ensurePendingCreditSchema();
+    const { rows } = await pool.query(
+      `SELECT pc.*, s.full_name AS sender_name, r.full_name AS recipient_name, r.username AS recipient_username
+       FROM pending_credits pc
+       LEFT JOIN users s ON s.id = pc.sender_user_id
+       LEFT JOIN users r ON r.id = pc.recipient_user_id
+       ORDER BY (pc.status = 'awaiting_verification') DESC, pc.created_at DESC LIMIT 300`);
+    res.json({ ok: true, items: rows });
+  } catch (error) { next(error); }
+});
+
+router.post("/compliance/pending-credits/:id/:action", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const pending = require("../services/pending-credit-service");
+    const note = String(req.body?.note || "").trim();
+    if (!note) throw new AppError(400, "State the reason for this decision. It becomes part of the record.");
+    const action = requireEnum(req.params.action, "action", ["release", "return"]);
+    const result = action === "release"
+      ? await pending.releaseHold(req.params.id, { actorId: req.auth.userId, note })
+      : await pending.returnHold(req.params.id, { actorId: req.auth.userId, note });
+    res.json({ ok: true, ...result });
+  } catch (error) { next(error); }
+});
+
 router.get("/compliance/flags", requireAdminPermission("services"), async (req, res, next) => {
   try {
     await require("../services/compliance-service").ensureComplianceSchema();

@@ -19,10 +19,14 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 15;
+const API_BUILD = 16;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  16: "Limit engine: verification x product x earned standing x risk, risk last. " +
+      "Refusals quote remaining capacity, never the law. Money beyond a recipient's " +
+      "capacity is held for them to claim, released on verification, returned in " +
+      "full (fee included) if unclaimed. Limit config versioned and reversible.",
   15: "Money Integrity Engine: ledger-vs-balance sweeps, duplicate/orphan/" +
       "unbalanced detection, transaction status history by trigger, provider " +
       "reconciliation with exception queues, compliance case management, " +

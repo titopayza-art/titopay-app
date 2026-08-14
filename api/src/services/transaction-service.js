@@ -299,11 +299,21 @@ async function feePreview(payload) {
         throw new AppError(404, status.message, { invite: status.invite, recipient });
       }
       assertRecipientCanReceive(status.recipient);
-      // Tier-based receive limit, from config, derived from the ledger.
+      // The recipient's own capacity, from config, derived from the ledger.
+      // A payment that fails ONLY on that capacity is not refused: it is
+      // held for the recipient to claim by verifying, so the sender is
+      // never blocked by someone else's paperwork and no money is lost.
+      let holdForVerification = false;
       if (status.recipient?.userId) {
-        await require("./compliance-service").assertCanReceiveAmount(status.recipient.userId, amount);
+        try {
+          await require("./compliance-service").assertCanReceiveAmount(status.recipient.userId, amount, { serviceCode: normalizedServiceCode });
+        } catch (error) {
+          if (!error.recipientCapacityOnly) throw error;
+          if (!(await require("./pending-credit-service").holdApplies(normalizedServiceCode))) throw error;
+          holdForVerification = true;
+        }
       }
-      verifiedRecipients.push({ identifier: recipient, ...status });
+      verifiedRecipients.push({ identifier: recipient, ...status, holdForVerification });
     }
     recipientStatus = verifiedRecipients.length === 1 ? verifiedRecipients[0] : { registered: true, recipients: verifiedRecipients };
   }
@@ -387,7 +397,7 @@ async function createTransaction(actor, payload) {
   // The sender's own tier limits, from config: single transaction and
   // monthly send. Checked before any wallet work so the refusal is clean.
   if (!feeOnly) {
-    await require("./compliance-service").assertCanSendAmount(actor.userId, amount);
+    await require("./compliance-service").assertCanSendAmount(actor.userId, amount, { serviceCode: normalizedServiceCode });
   }
   const preview = await feePreview({
     serviceCode: normalizedServiceCode,
@@ -413,6 +423,9 @@ async function createTransaction(actor, payload) {
   // says amount 0, fee 2.50, total 2.50, and the debit follows the preview.
   const chargedAmount = roundMoney(preview.amount);
   const netAmount = roundMoney(payload.merchantReceivesFee ? chargedAmount - preview.fee : chargedAmount);
+  // Set inside the money transaction when the recipient's credit is held
+  // for verification; read after commit to tell them about it.
+  let pendingHold = null;
   const debitTotal = payload.merchantReceivesFee ? chargedAmount : preview.total;
 
   if (Number(wallet.available_balance) < debitTotal) throw new AppError(400, "Insufficient balance");
@@ -491,7 +504,24 @@ async function createTransaction(actor, payload) {
       reference,
       metadata: { serviceCode: normalizedServiceCode }
     });
-    if (recipientWallet) {
+    // The recipient is credited unless their capacity says the money must
+    // wait for them to verify. A held credit posts nothing to their wallet:
+    // it is a liability record against the sender's debit, released or
+    // returned in full later, never a spendable balance that gets frozen.
+    const holdForVerification = Boolean(preview.recipientStatus?.holdForVerification);
+    if (recipientWallet && holdForVerification) {
+      pendingHold = await require("./pending-credit-service").createHold(client, {
+        transactionId: txId,
+        senderUserId: actor.userId,
+        recipientUserId: recipientWallet.user_id,
+        amount: netAmount,
+        serviceCode: normalizedServiceCode,
+        // The fee travels with the hold: a payment that is never delivered
+        // is refunded in full, service fee included, so nobody pays for a
+        // transfer that did not happen.
+        metadata: { reference, senderName: actor.fullName || null, fee: preview.fee, serviceCode: normalizedServiceCode }
+      });
+    } else if (recipientWallet) {
       await applyWalletMovement(client, {
         walletId: recipientWallet.id,
         transactionId: txId,
@@ -529,8 +559,21 @@ async function createTransaction(actor, payload) {
   }
 
   require("./compliance-service").reviewForEdd(actor.userId, chargedAmount, normalizedServiceCode);
-  if (recipientWallet?.user_id) {
+  // Monitoring follows the money. A held credit has not reached the
+  // recipient, so their review happens when it is released, not now.
+  if (recipientWallet?.user_id && !pendingHold) {
     require("./compliance-service").reviewForEdd(recipientWallet.user_id, netAmount, normalizedServiceCode);
+  }
+  // The held payment is announced after the money is committed, so a
+  // notification failure can never undo a transfer.
+  if (pendingHold && recipientWallet?.user_id) {
+    require("./pending-credit-service").notifyHold({
+      id: pendingHold.id,
+      recipientUserId: recipientWallet.user_id,
+      senderName: actor.fullName || actor.username || null,
+      amount: netAmount,
+      holdDays: pendingHold.holdDays
+    }).catch(() => {});
   }
   await writeAuditLog({
     actorType: actor.userType,

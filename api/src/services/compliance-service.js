@@ -51,6 +51,14 @@ const { writeAuditLog } = require("./audit-service");
 
 const DEFAULT_CONFIG = {
   // null means no standing limit at that tier.
+  //
+  // THE LADDER IS A PRODUCT DECISION, NOT A LEGAL ONE. Unverified is
+  // deliberately narrow because nothing is known about the customer, and
+  // money sent to an unverified wallet is held for claim rather than
+  // refused, so nobody loses a payment to it. Basic verified is a genuinely
+  // usable everyday wallet: salary, rent, gifts and shopping fit inside it
+  // without a customer meeting a wall every month. Fully verified carries
+  // no fixed limits, only monitoring.
   tiers: {
     0: {
       label: "Unverified",
@@ -61,18 +69,23 @@ const DEFAULT_CONFIG = {
       dailySend: 4000,
       singleWithdrawal: 1000,
       monthlyWithdraw: 3000,
-      maxBalance: 25000
+      // Coherent with the receive limit: an unverified wallet that can take
+      // in R5000 a month has no business holding five months of it, and the
+      // card top-up rail is the only way it could.
+      maxBalance: 10000
     },
     1: {
       label: "Basic verified",
       description: "Identity verified. Everyday wallet limits.",
-      monthlyReceive: 50000,
-      monthlySend: 50000,
+      monthlyReceive: 100000,
+      monthlySend: 100000,
+      // Per-payment stays the deliberate friction: it is the control that
+      // costs honest customers the least and fraud the most.
       singleTransaction: 25000,
-      dailySend: 20000,
-      singleWithdrawal: 10000,
-      monthlyWithdraw: 40000,
-      maxBalance: 100000
+      dailySend: 50000,
+      singleWithdrawal: 25000,
+      monthlyWithdraw: 100000,
+      maxBalance: 250000
     },
     2: {
       label: "Fully verified",
@@ -91,6 +104,24 @@ const DEFAULT_CONFIG = {
   // issuing country and date of birth.
   identity: {
     documentTypes: ["sa_id", "passport", "other"]
+  },
+  // Per-product narrowing, risk bands and earned capacity. The limit engine
+  // owns the defaults; anything set here overrides them.
+  products: require("./limit-engine").DEFAULT_PRODUCT_LIMITS,
+  riskBands: require("./limit-engine").DEFAULT_RISK_BANDS,
+  earnedCapacity: require("./limit-engine").DEFAULT_EARNED_CAPACITY,
+  // RECEIVING. A payment that only fails because the recipient has no
+  // receiving capacity left is held for them to claim by verifying, rather
+  // than refused: the money is never lost, the sender is never blocked by
+  // someone else's paperwork, and the funds never touch a spendable
+  // balance until the recipient is entitled to them. Set enabled to false
+  // to refuse instead, per the approved compliance framework.
+  receiving: {
+    holdForVerification: true,
+    holdDays: 14,
+    // Rails where a hold makes sense. Card top-ups and merchant settlement
+    // are excluded: those answer to the provider, not to a claim.
+    services: ["wallet_transfer", "send_gift", "send_money", "payment_request", "stockvel_contribution"]
   },
   edd: {
     // OPTIONAL value marks. Activity at or past these marks raises an
@@ -211,6 +242,10 @@ function mergeConfig(stored) {
       }
     }
     if (stored.identity && typeof stored.identity === "object") merged.identity = { ...merged.identity, ...stored.identity };
+    if (stored.products && typeof stored.products === "object") merged.products = { ...merged.products, ...stored.products };
+    if (stored.riskBands && typeof stored.riskBands === "object") merged.riskBands = { ...merged.riskBands, ...stored.riskBands };
+    if (stored.earnedCapacity && typeof stored.earnedCapacity === "object") merged.earnedCapacity = { ...merged.earnedCapacity, ...stored.earnedCapacity };
+    if (stored.receiving && typeof stored.receiving === "object") merged.receiving = { ...merged.receiving, ...stored.receiving };
     if (stored.edd && typeof stored.edd === "object") merged.edd = { ...merged.edd, ...stored.edd };
     if (stored.monitoring && typeof stored.monitoring === "object") merged.monitoring = { ...merged.monitoring, ...stored.monitoring };
     if (stored.cdd && typeof stored.cdd === "object") merged.cdd = { ...merged.cdd, ...stored.cdd };
@@ -246,6 +281,22 @@ async function saveComplianceConfig(actor, value, { reason = null } = {}) {
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
     [JSON.stringify(merged)]
   );
+  // Versioned, so a change can be reviewed and reversed rather than only
+  // overwritten. Restoring writes a new version of its own: history is
+  // append-only.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS compliance_config_versions (
+      id UUID PRIMARY KEY,
+      config_key TEXT NOT NULL,
+      value JSONB NOT NULL,
+      reason TEXT,
+      created_by UUID,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  await pool.query(
+    "INSERT INTO compliance_config_versions (id, config_key, value, reason, created_by) VALUES ($1, 'compliance_tier_limits', $2::JSONB, $3, $4)",
+    [crypto.randomUUID(), JSON.stringify(merged), reason, actor?.userId || null]
+  ).catch(() => {});
   await writeAuditLog({
     actorType: "admin",
     actorId: actor?.userId || null,
@@ -257,6 +308,28 @@ async function saveComplianceConfig(actor, value, { reason = null } = {}) {
     metadata: { reason, previous, config: merged }
   });
   return merged;
+}
+
+async function listComplianceConfigVersions(limit = 50) {
+  await ensureComplianceSchema();
+  const { rows } = await pool.query(
+    `SELECT v.id, v.reason, v.created_at, v.created_by, u.full_name AS created_by_name
+     FROM compliance_config_versions v
+     LEFT JOIN users u ON u.id = v.created_by
+     WHERE v.config_key = 'compliance_tier_limits'
+     ORDER BY v.created_at DESC LIMIT $1`, [Math.min(200, Number(limit) || 50)]
+  ).catch(() => ({ rows: [] }));
+  return rows;
+}
+
+async function restoreComplianceConfigVersion(actor, versionId, reason) {
+  await ensureComplianceSchema();
+  const stated = String(reason || "").trim();
+  if (!stated) throw new AppError(400, "State why this version is being restored. It becomes part of the audit record.");
+  const { rows } = await pool.query(
+    "SELECT value FROM compliance_config_versions WHERE id = $1 AND config_key = 'compliance_tier_limits'", [versionId]);
+  if (!rows[0]) throw new AppError(404, "That configuration version was not found.");
+  return saveComplianceConfig(actor, rows[0].value, { reason: `restore:${versionId}: ${stated}` });
 }
 
 const VERIFIED_FICA = new Set(["verified", "approved", "complete", "completed"]);
@@ -309,15 +382,16 @@ async function walletBalanceOf(userId) {
   return Number(rows[0]?.balance || 0);
 }
 
-function upgradeSentence(tier) {
-  return tier === 0
-    ? "Verifying your identity under Limits and Verification takes two minutes and raises your limits."
-    : "Completing full FICA verification under Limits and Verification removes standing limits.";
-}
-
-// Receiving: refused only when the payment would pass the recipient's
-// monthly receive limit for their tier. Tier 2 has no standing limit.
-async function assertCanReceiveAmount(recipientUserId, amount, { selfView = false } = {}) {
+// The four enforcement doors. Each one asks the limit engine and turns its
+// decision into either silence or a refusal that states the remaining
+// capacity. A refusal here is a TitoPay product limit, never a legal
+// threshold, and the wording never suggests otherwise.
+//
+// RECEIVING is special: a payment that only fails on the recipient's
+// capacity is not the sender's problem to solve, so the transaction rail
+// holds it for claim instead (see assertCanReceiveAmount's throw shape and
+// pending-credit-service). Blocked accounts are refused outright.
+async function assertCanReceiveAmount(recipientUserId, amount, { selfView = false, serviceCode = null } = {}) {
   const user = await loadUserComplianceRow(recipientUserId);
   if (!user) return;
   if (BLOCKED_ACCOUNT_STATUSES.has(String(user.status || "").toLowerCase())) {
@@ -325,100 +399,37 @@ async function assertCanReceiveAmount(recipientUserId, amount, { selfView = fals
       ? "Your account cannot receive money at the moment. Contact TitoPay support."
       : "This account cannot receive money at the moment. The recipient should contact TitoPay support.");
   }
-  const config = await loadComplianceConfig();
-  const tier = tierForUserRow(user);
-  const limit = config.tiers[String(tier)]?.monthlyReceive;
-  if (limit === null || limit === undefined) return;
-  const usage = await monthUsage(recipientUserId);
-  if (usage.received + Number(amount || 0) > Number(limit)) {
-    throw new AppError(403, selfView
-      ? `Your account can receive up to R${Number(limit).toFixed(2)} a month at its current verification level, and this request would go past that. Raise your limits under Limits and Verification.`
-      : `This recipient's account can receive up to R${Number(limit).toFixed(2)} a month at its current verification level, and this payment would go past that. They can raise the limit under Limits and Verification in their app.`);
-  }
-  const maxBalance = config.tiers[String(tier)]?.maxBalance;
-  if (maxBalance !== null && maxBalance !== undefined) {
-    const balance = await walletBalanceOf(recipientUserId);
-    if (balance + Number(amount || 0) > Number(maxBalance)) {
-      throw new AppError(403, selfView
-        ? `Your wallet can hold up to R${Number(maxBalance).toFixed(2)} at its current verification level. Raise the limit under Limits and Verification.`
-        : `This recipient's wallet can hold up to R${Number(maxBalance).toFixed(2)} at its current verification level, and this payment would go past that.`);
-    }
-  }
+  const outcome = await require("./limit-engine").evaluateReceive(recipientUserId, amount, { serviceCode });
+  if (outcome.decision === "approve") return;
+  // Self view quotes the customer's own capacity. The third-party view
+  // never discloses another account's numbers or verification state: what
+  // a recipient can receive is their business, not the sender's.
+  const error = new AppError(403, selfView
+    ? outcome.message
+    : "This payment cannot be completed to that account right now. Try a smaller amount, or ask them to check Limits and Verification in their app.");
+  error.limitRule = outcome.rule;
+  error.limitRemaining = outcome.remaining;
+  error.recipientCapacityOnly = true;
+  throw error;
 }
 
 // Wallet balance cap for credits that do not pass through the transfer rails
 // (card top-ups). Checked before the customer is sent to the card page.
 async function assertBalanceHeadroom(userId, amount) {
-  const user = await loadUserComplianceRow(userId);
-  if (!user) return;
-  const config = await loadComplianceConfig();
-  const maxBalance = config.tiers[String(tierForUserRow(user))]?.maxBalance;
-  if (maxBalance === null || maxBalance === undefined) return;
-  const balance = await walletBalanceOf(userId);
-  if (balance + Number(amount || 0) > Number(maxBalance)) {
-    throw new AppError(403,
-      `Your wallet can hold up to R${Number(maxBalance).toFixed(2)} at its current verification level, and this top up would go past that. Raise the limit under Limits and Verification.`);
-  }
+  const outcome = await require("./limit-engine").evaluateBalanceHeadroom(userId, amount);
+  if (outcome.decision !== "approve") throw new AppError(403, outcome.message);
 }
 
-// Withdrawal limits for the actor's tier: per withdrawal and per month.
+// Withdrawal limits: per withdrawal and per month.
 async function assertCanWithdraw(userId, amount) {
-  const user = await loadUserComplianceRow(userId);
-  if (!user) return;
-  const config = await loadComplianceConfig();
-  const tier = tierForUserRow(user);
-  const tierConfig = config.tiers[String(tier)] || {};
-  const value = Number(amount || 0);
-  if (tierConfig.singleWithdrawal !== null && tierConfig.singleWithdrawal !== undefined
-      && value > Number(tierConfig.singleWithdrawal)) {
-    throw new AppError(403,
-      `A single withdrawal at your verification level can be up to R${Number(tierConfig.singleWithdrawal).toFixed(2)}. ${upgradeSentence(tier)}`);
-  }
-  if (tierConfig.monthlyWithdraw !== null && tierConfig.monthlyWithdraw !== undefined) {
-    const { rows } = await pool.query(
-      `SELECT COALESCE(SUM(ABS(wl.amount)), 0) AS withdrawn
-       FROM wallet_ledger wl
-       JOIN wallets w ON w.id = wl.wallet_id
-       JOIN transactions t ON t.id = wl.transaction_id
-       WHERE w.user_id = $1 AND wl.entry_type = 'debit'
-         AND t.service_code IN ('withdraw', 'withdraw_money_to_bank', 'bank_withdrawal', 'payouts', 'business_payout', 'merchant_payout')
-         AND wl.created_at >= DATE_TRUNC('month', NOW())`,
-      [userId]
-    );
-    if (Number(rows[0].withdrawn) + value > Number(tierConfig.monthlyWithdraw)) {
-      throw new AppError(403,
-        `You have withdrawn R${Number(rows[0].withdrawn).toFixed(2)} this month, and your verification level allows up to R${Number(tierConfig.monthlyWithdraw).toFixed(2)}. ${upgradeSentence(tier)}`);
-    }
-  }
+  const outcome = await require("./limit-engine").evaluateWithdrawal(userId, amount);
+  if (outcome.decision !== "approve") throw new AppError(403, outcome.message);
 }
 
-// Sending: single-transaction and monthly-send limits for the actor's tier.
-async function assertCanSendAmount(userId, amount) {
-  const user = await loadUserComplianceRow(userId);
-  if (!user) return;
-  const config = await loadComplianceConfig();
-  const tier = tierForUserRow(user);
-  const tierConfig = config.tiers[String(tier)] || {};
-  const value = Number(amount || 0);
-  if (tierConfig.singleTransaction !== null && tierConfig.singleTransaction !== undefined
-      && value > Number(tierConfig.singleTransaction)) {
-    throw new AppError(403,
-      `A single payment at your verification level can be up to R${Number(tierConfig.singleTransaction).toFixed(2)}. ${upgradeSentence(tier)}`);
-  }
-  if (tierConfig.dailySend !== null && tierConfig.dailySend !== undefined) {
-    const today = await dayUsage(userId);
-    if (today.sent + value > Number(tierConfig.dailySend)) {
-      throw new AppError(403,
-        `You have sent R${today.sent.toFixed(2)} in the last 24 hours, and your verification level allows up to R${Number(tierConfig.dailySend).toFixed(2)} a day. ${upgradeSentence(tier)}`);
-    }
-  }
-  if (tierConfig.monthlySend !== null && tierConfig.monthlySend !== undefined) {
-    const usage = await monthUsage(userId);
-    if (usage.sent + value > Number(tierConfig.monthlySend)) {
-      throw new AppError(403,
-        `You have sent R${usage.sent.toFixed(2)} this month, and your verification level allows up to R${Number(tierConfig.monthlySend).toFixed(2)}. ${upgradeSentence(tier)}`);
-    }
-  }
+// Sending: per payment, per day and per month.
+async function assertCanSendAmount(userId, amount, { serviceCode = null } = {}) {
+  const outcome = await require("./limit-engine").evaluateSend(userId, amount, { serviceCode });
+  if (outcome.decision !== "approve") throw new AppError(403, outcome.message);
 }
 
 // THE RISK ENGINE. Risk status is a separate axis from KYC: it moves on
@@ -543,7 +554,11 @@ async function reviewForEdd(userId, amount, serviceCode) {
     if (!user) return;
     const config = await loadComplianceConfig();
     const tier = tierForUserRow(user);
-    const tierConfig = config.tiers[String(tier)] || {};
+    // Monitoring reads the limits the customer ACTUALLY faces, from the one
+    // engine, so structuring detection follows a narrowed limit rather than
+    // the level's headline number.
+    const effective = await require("./limit-engine").capacityFor(userId, { serviceCode });
+    const tierConfig = effective?.limits || config.tiers[String(tier)] || {};
     const usage = await monthUsage(userId);
     const today = await dayUsage(userId);
 
@@ -891,8 +906,15 @@ module.exports = {
   RISK_ORDER,
   loadComplianceConfig,
   saveComplianceConfig,
+  listComplianceConfigVersions,
+  restoreComplianceConfigVersion,
   tierForUserRow,
   monthUsage,
+  // Shared with the limit engine, which builds every effective limit from
+  // these primitives rather than re-deriving usage of its own.
+  loadUserComplianceRow,
+  dayUsage,
+  walletBalanceOf,
   assertCanReceiveAmount,
   assertCanSendAmount,
   reviewForEdd,

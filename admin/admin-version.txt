@@ -1,6 +1,20 @@
 TitoPay Admin
-Build: admin-console-v82
-Date: 2026-08-13
+Build: admin-console-v83
+Date: 2026-08-14
+
+v83 - Limits & Risk, and Held Payments.
+
+  - "Risk Framework Limits" becomes "Limits & Risk": the one document now
+    holds the level ladder, per-product narrowing, risk bands, earned
+    capacity and the receiving-hold policy. Capability is verification,
+    then product, then earned standing, then risk - risk applied last and
+    always winning.
+  - Change history with one-click Restore: every save is versioned, and a
+    restore states its reason and is itself versioned.
+  - New "Held Payments" panel: money sent to a customer with no receiving
+    capacity is held, never lost. Release or Return it with a note; both
+    post real ledger movements and are audit-logged.
+  - Requires API build 16.
 
 v82 - Compliance page becomes the compliance and money integrity console.
 
@@ -535,5 +549,5 @@ RBAC editing needs the API package of the same date: it adds the
 admin_role_permissions table and the role endpoints. Without it the page still
 renders read-only and the console behaves exactly as before.
 
-Assets are versioned ?v=admin-console-v82; hard refresh (Ctrl+F5 /
+Assets are versioned ?v=admin-console-v83; hard refresh (Ctrl+F5 /
 Cmd+Shift+R) if an old layout persists.

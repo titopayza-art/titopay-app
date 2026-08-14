@@ -107,7 +107,7 @@ async function balanceOf(userId) {
     const bigRefused = await call(unverified.token, "POST", "/v1/payments/requests",
       { recipient: `@${thuso.username}`, amount: 250000 });
     assert.equal(bigRefused.status, 403, JSON.stringify(bigRefused.data));
-    assert.match(String(bigRefused.data.error || ""), /verification level/i);
+    assert.match(String(bigRefused.data.error || ""), /capacity left|right now is/i);
     const blocked = await seedUser("blocked", { fica: "pending" });
     await pool.query("UPDATE users SET status = 'blocked' WHERE id = $1", [blocked.id]);
     const refusedBlocked = await call(blocked.token, "POST", "/v1/payments/requests",

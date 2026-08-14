@@ -1,7 +1,40 @@
 # TitoPay Compliance & Money Integrity Readiness Report
 
-Date: 13 August 2026 · API build 15 · App v389
+Date: 14 August 2026 · API build 16 · App v390 · Console v83
 Status: engineering controls implemented and verified; legal and compliance decisions outstanding as listed in section 4.
+
+## 0. What changed in build 16 (the limit engine)
+
+Limits are no longer a substitute for knowing the customer. One engine
+(`limit-engine.js`) builds every effective limit in a fixed order:
+**verification → product → earned standing → risk**, with risk applied last
+so it always wins. A level with no fixed limit still gains real boundaries
+under high risk; a product profile can only narrow, never widen.
+
+- **Basic Verified is now a genuinely usable everyday wallet** (R100,000 a
+  month in and out, R25,000 per payment by default), while per-payment
+  friction — the control that costs honest customers least and fraud most —
+  is kept.
+- **Unverified is coherent**: the wallet balance cap no longer exceeds what
+  the account may receive.
+- **Earned capacity**: account age plus a clean record plus no open case
+  lifts fixed limits by a configured multiple, so regulars stop living
+  against a wall.
+- **Refusals quote remaining capacity** ("The most you can send in one
+  payment right now is R25,000.00") and never invoke FICA, SARB or "the
+  law". A test enforces this, with word boundaries, because *Verification*
+  itself contains the letters f-i-c-a.
+- **A recipient's limits are never disclosed to a sender.** Instead:
+- **Money is held, not lost.** A payment that fails only on the recipient's
+  receiving capacity completes for the sender and is **held** for the
+  recipient: never credited to a spendable balance, released the moment
+  they verify, and returned to the sender **in full including the service
+  fee** if unclaimed within the configured window. Release and return each
+  happen exactly once under a row lock.
+- **Monitoring follows the money**: a held credit does not enter the
+  recipient's transaction monitoring until it is actually released.
+- **Configuration is versioned and reversible** from the console, with a
+  reason on every change and one-click restore.
 
 This report does NOT declare TitoPay "FICA compliant" or "SARB compliant". It records which controls exist in the software, which are configuration awaiting the compliance team's values, which decisions belong to legal and compliance, and what remains to remediate. Regulatory applicability depends on TitoPay's actual regulatory classification, products, payment flows and regulated partners, which this document does not assume.
 

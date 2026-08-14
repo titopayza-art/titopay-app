@@ -1108,6 +1108,17 @@ async function openLimitsVerificationModal() {
   const u = status.usage || {};
   const l = status.limits || {};
   const fixedLimit = (label, value) => `<div class="limit-line"><span>${esc(label)}</span><strong>${value === null || value === undefined ? "No fixed limit" : esc(money(value))}</strong></div>`;
+  // What the customer can still do right now, and any money held for them.
+  // Capacity is the number that actually helps: "no fixed limit" is not an
+  // answer to "how much can I send".
+  const [capacity, held] = await Promise.all([
+    api("/v1/compliance/capacity").catch(() => null),
+    api("/v1/compliance/pending-credits").catch(() => null)
+  ]);
+  const rem = capacity?.remaining || {};
+  const capacityLine = (label, value) => `<div class="limit-line"><span>${esc(label)}</span><strong>${value === null || value === undefined ? "No fixed limit" : esc(money(value))}</strong></div>`;
+  const heldItems = held?.items || [];
+  const heldTotal = heldItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   // A quiet, customer-safe note for the states that need one. Internal risk
   // ratings never appear here.
   const stateNote = {
@@ -1137,8 +1148,25 @@ async function openLimitsVerificationModal() {
       ${limitBar("Received", u.received || 0, l.monthlyReceive ?? null, u.receivePercent || 0)}
       ${limitBar("Sent", u.sent || 0, l.monthlySend ?? null, u.sendPercent || 0)}
     </section>
+    ${heldItems.length ? `
+      <section class="panel tier-card tier-current" aria-label="Money waiting for you">
+        <div class="tier-head"><strong>${esc(money(heldTotal))} is waiting for you</strong><span class="sv-chip warn">Held</span></div>
+        <p class="field-hint">${heldItems.length === 1
+          ? `${esc(heldItems[0].from)} sent you ${esc(money(heldItems[0].amount))}. It is held safely until your wallet can receive it.`
+          : `${heldItems.length} payments are held safely until your wallet can receive them.`} Verify your identity below to release it. Anything not claimed goes back to the sender in full.</p>
+        <button class="btn primary" type="button" data-action="claim-pending-credits">${icon("wallet")} Claim my money</button>
+      </section>` : ""}
     <section class="panel">
-      <h3 class="tier-section-label">Your current limits</h3>
+      <h3 class="tier-section-label">What you can do right now</h3>
+      ${capacityLine("Send in one payment", rem.singleTransaction ?? l.singleTransaction ?? null)}
+      ${capacityLine("Left to send today", rem.dailySend ?? null)}
+      ${capacityLine("Left to send this month", rem.monthlySend ?? null)}
+      ${capacityLine("Left to receive this month", rem.monthlyReceive ?? null)}
+      ${capacityLine("Left to withdraw this month", rem.monthlyWithdraw ?? null)}
+      ${capacityLine("Room left in your wallet", rem.walletBalance ?? null)}
+    </section>
+    <section class="panel">
+      <h3 class="tier-section-label">Your current wallet limits</h3>
       ${fixedLimit("Per payment", l.singleTransaction ?? null)}
       ${fixedLimit("Sending per day", l.dailySend ?? null)}
       ${fixedLimit("Per withdrawal", l.singleWithdrawal ?? null)}
@@ -4468,6 +4496,16 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "limits-verification") {
     await openLimitsVerificationModal();
+  }
+  if (action === "claim-pending-credits") {
+    try {
+      const result = await api("/v1/compliance/pending-credits/claim", { method: "POST", body: {} });
+      showToast(result.message || "Claim attempted.");
+      await refreshData();
+      await openLimitsVerificationModal();
+    } catch (error) {
+      showToast(paymentErrorMessage(error), "error");
+    }
   }
   if (action.startsWith("payreq-pay:")) {
     await answerPaymentRequest(action.slice("payreq-pay:".length), "pay");
@@ -22729,6 +22767,9 @@ function notificationCategory(item = {}) {
   // Payments, and tapping it should lead to the Requests screen.
   if (serverType.startsWith("payment_request")) return "payments";
   if (serverType === "gift_received") return "payments";
+  // Money held for verification is money: it belongs with Payments, where
+  // someone looks when they are waiting for a payment to arrive.
+  if (serverType === "pending_credit") return "payments";
   if (serverType.startsWith("compliance_")) return "account";
   if (item.critical || SECURITY_NOTIFICATION.test(serverType)) return "security";
   if (/chat|support|message/.test(serverType) || metadata.ticketRef) return "messages";

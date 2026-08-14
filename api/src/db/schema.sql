@@ -1824,3 +1824,44 @@ CREATE INDEX IF NOT EXISTS idx_transactions_checkout_ref
   ON transactions ((metadata->>'checkoutId')) WHERE metadata ? 'checkoutId';
 CREATE INDEX IF NOT EXISTS idx_transactions_payout_ref
   ON transactions ((metadata->>'payoutId')) WHERE metadata ? 'payoutId';
+
+-- HELD CREDITS. A payment that fails only on the recipient's receiving
+-- capacity is held rather than refused: the sender's debit is real, the
+-- recipient is told money is waiting, verifying releases it, and anything
+-- unclaimed returns to the sender in full. Nothing is ever credited to a
+-- spendable balance before release.
+CREATE TABLE IF NOT EXISTS pending_credits (
+  id UUID PRIMARY KEY,
+  transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+  sender_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount NUMERIC(18,2) NOT NULL,
+  service_code TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'receiving_capacity',
+  status TEXT NOT NULL DEFAULT 'awaiting_verification',
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  released_at TIMESTAMPTZ,
+  returned_at TIMESTAMPTZ,
+  resolution_note TEXT
+);
+
+CREATE INDEX IF NOT EXISTS pending_credits_recipient_idx
+  ON pending_credits (recipient_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS pending_credits_open_idx
+  ON pending_credits (status, expires_at);
+
+-- Configuration history: every limit and risk change is versioned, so a
+-- change can be reviewed and reversed rather than only overwritten.
+CREATE TABLE IF NOT EXISTS compliance_config_versions (
+  id UUID PRIMARY KEY,
+  config_key TEXT NOT NULL,
+  value JSONB NOT NULL,
+  reason TEXT,
+  created_by UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS compliance_config_versions_key_idx
+  ON compliance_config_versions (config_key, created_at DESC);

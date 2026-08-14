@@ -65,6 +65,10 @@ async function cycle() {
       const audit = await require("./services/money-integrity-service").runIntegritySweep({})
         .catch((error) => { console.error("[email-worker] integrity sweep failed", { message: error.message }); return null; });
       if (audit && audit.exceptionCount) console.warn("[email-worker] integrity sweep found issues", audit);
+      // Held payments nobody claimed go back to the sender, in full.
+      const returned = await require("./services/pending-credit-service").returnExpiredHolds()
+        .catch((error) => { console.error("[email-worker] pending credit sweep failed", { message: error.message }); return []; });
+      if (returned.length) console.info("[email-worker] returned unclaimed payments", { count: returned.length });
     }
     const settings = await getSettings();
     const jobs = await claimJobs(workerId, settings.worker_concurrency);

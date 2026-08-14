@@ -1,4 +1,4 @@
-TitoPay Admin build: admin-console-v82-20260812
+TitoPay Admin build: admin-console-v83-20260812
 
 This build:
   - Ticketing module: new "Change Request Queue" — approve/apply or decline

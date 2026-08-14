@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v82";
+  return "admin-console-v83";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -2605,7 +2605,7 @@ async function renderTransactions() {
 // if the API predates it, so the queue keeps working against any build.
 async function renderCompliance() {
   const quiet = (path) => apiFetch(path).catch(() => null);
-  const [result, overview, alerts, recon, cases, limitsConfig, integrityConfig, screening, reports] = await Promise.all([
+  const [result, overview, alerts, recon, cases, limitsConfig, integrityConfig, screening, reports, versions, holds] = await Promise.all([
     apiFetch("/admin/compliance/queue"),
     quiet("/admin/compliance/overview"),
     quiet("/admin/integrity/alerts"),
@@ -2614,7 +2614,9 @@ async function renderCompliance() {
     quiet("/admin/compliance/limits"),
     quiet("/admin/integrity/config"),
     quiet("/admin/compliance/screening"),
-    quiet("/admin/compliance/reports")
+    quiet("/admin/compliance/reports"),
+    quiet("/admin/compliance/limits/versions"),
+    quiet("/admin/compliance/pending-credits")
   ]);
   PAGE_EXPORTS.compliance = result.items;
   const needsApi = `<div class="empty"><strong>Requires API build 15</strong><small>Deploy the current api.zip and this panel comes alive.</small></div>`;
@@ -2655,14 +2657,34 @@ async function renderCompliance() {
       <button data-case-decide="${escapeHtml(row.id)}">Decide</button>
     `) : needsApi;
 
+  // LIMITS & RISK. One document holds the whole framework: the level
+  // ladder, per-product narrowing, risk bands, earned capacity and the
+  // receiving-hold policy. Every save is versioned and reversible.
   const limitsHtml = limitsConfig ? `
     <div class="form-grid">
-      <label for="limits-json">Limit configuration (JSON)</label>
-      <textarea id="limits-json" rows="14" spellcheck="false">${escapeHtml(JSON.stringify(limitsConfig.config, null, 2))}</textarea>
+      <label for="limits-json">Limits, products, risk bands and earned capacity (JSON)</label>
+      <textarea id="limits-json" rows="18" spellcheck="false">${escapeHtml(JSON.stringify(limitsConfig.config, null, 2))}</textarea>
       <label for="limits-reason">Reason for this change</label>
       <input id="limits-reason" type="text" maxlength="300" placeholder="Why these values, per the approved RMCP">
-      <div class="action-row"><button data-limits-save>Save limit configuration</button></div>
-    </div>` : needsApi;
+      <div class="action-row"><button data-limits-save>Save limits and risk configuration</button></div>
+    </div>
+    ${versions?.versions?.length ? `
+      <h3 class="tier-section-label">Change history</h3>
+      ${renderRows(versions.versions, [
+        { label: "When", render: (row) => escapeHtml(new Date(row.created_at).toLocaleString()) },
+        { label: "Reason", render: (row) => `<small>${escapeHtml(String(row.reason || "-").slice(0, 120))}</small>` },
+        { label: "By", render: (row) => escapeHtml(row.created_by_name || "-") }
+      ], (row) => `<button data-limits-restore="${escapeHtml(row.id)}">Restore</button>`)}` : ""}` : needsApi;
+
+  const holdsHtml = holds ? renderRows(holds.items || [], [
+    { label: "Amount", render: (row) => `<strong>R ${Number(row.amount).toFixed(2)}</strong>` },
+    { label: "From", render: (row) => escapeHtml(row.sender_name || "-") },
+    { label: "Waiting for", render: (row) => `${escapeHtml(row.recipient_name || "-")}<br><small>${escapeHtml(row.recipient_username || "")}</small>` },
+    { label: "Status", render: (row) => `<span class="chip ${row.status === "awaiting_verification" ? "orange" : row.status === "released" ? "green" : "blue"}">${escapeHtml(row.status.replace(/_/g, " "))}</span>` },
+    { label: "Expires", render: (row) => escapeHtml(new Date(row.expires_at).toLocaleDateString()) }
+  ], (row) => row.status === "awaiting_verification" ? `
+      <button data-hold-action="release" data-hold-id="${escapeHtml(row.id)}">Release</button>
+      <button data-hold-action="return" data-hold-id="${escapeHtml(row.id)}">Return</button>` : "") : needsApi;
 
   const ic = integrityConfig?.config || {};
   const integrityHtml = integrityConfig ? `
@@ -2730,7 +2752,8 @@ async function renderCompliance() {
       "The sweep runs automatically about every 30 minutes. Resolving requires a note; a recurring condition re-opens its alert.")}
     ${tableCard("Reconciliation", exceptionsHtml, "Provider statement disagreements. Nothing is auto-corrected; each exception carries its investigation to resolution.")}
     ${tableCard("Compliance Cases", casesHtml, "Open risk and EDD cases. Deciding the last open case for a customer clears their review state.")}
-    ${tableCard("Risk Framework Limits", limitsHtml, "TitoPay operational limits under the approved RMCP, not statutory amounts. Every change requires a reason and is audit-logged with previous and new values.")}
+    ${tableCard("Limits & Risk", limitsHtml, "TitoPay operational limits under the approved RMCP, not statutory amounts. Capability is verification, then product, then earned standing, then risk, which is applied last and always wins. Every change requires a reason, is audit-logged with previous and new values, and can be restored.")}
+    ${tableCard("Held Payments", holdsHtml, "Money sent to a customer who had no receiving capacity. It is never spendable until released, and returns to the sender in full, service fee included, if it is not claimed in time.")}
     ${tableCard("Integrity Settings", integrityHtml, "How the money integrity sweep behaves, and where high and critical alerts escalate.")}
     ${tableCard("Sanctions Screening", screeningHtml, "Compliance-maintained designations. Matches raise a high-risk flag; the sweep screens up to 5000 active accounts.")}
     ${tableCard("Regulatory Report Evidence", reportsHtml, "Trigger, review, decision and submission reference per event. Which reports apply is determined by TitoPay's compliance framework.")}
@@ -7768,6 +7791,37 @@ document.addEventListener("click", async (event) => {
     try {
       await apiFetch("/admin/compliance/limits", { method: "PUT", body: JSON.stringify({ config, reason }) });
       showToast("Limit configuration saved and audit-logged");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const limitsRestore = event.target.closest("[data-limits-restore]");
+  if (limitsRestore) {
+    const reason = window.prompt("Why is this configuration version being restored?");
+    if (!reason) return;
+    try {
+      await apiFetch(`/admin/compliance/limits/versions/${limitsRestore.dataset.limitsRestore}/restore`, {
+        method: "POST", body: JSON.stringify({ reason })
+      });
+      showToast("Configuration restored and audit-logged");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const holdAction = event.target.closest("[data-hold-action]");
+  if (holdAction) {
+    const action = holdAction.dataset.holdAction;
+    const note = window.prompt(action === "release"
+      ? "Why is this held payment being released? The note becomes part of the record:"
+      : "Why is this held payment being returned to the sender? The note becomes part of the record:");
+    if (!note) return;
+    try {
+      await apiFetch(`/admin/compliance/pending-credits/${holdAction.dataset.holdId}/${action}`, {
+        method: "POST", body: JSON.stringify({ note })
+      });
+      showToast(action === "release" ? "Payment released to the recipient" : "Payment returned to the sender");
       await renderCompliance();
     } catch (error) {
       showToast(adminErrorMessage(error.message));

@@ -97,7 +97,8 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     const bigSingle = await call(newbie.token, "POST", "/v1/transactions",
       { serviceCode: "wallet_transfer", amount: 3000, recipient: `@${friend.username}` });
     assert.equal(bigSingle.status, 403);
-    assert.match(String(bigSingle.data.error || ""), /single payment.*R2500\.00/i);
+    // The refusal states what IS possible, and never invokes the law.
+    assert.match(String(bigSingle.data.error || ""), /one payment right now is R2500\.00/i);
     const okSend = await call(newbie.token, "POST", "/v1/transactions",
       { serviceCode: "wallet_transfer", amount: 2000, recipient: `@${friend.username}` });
     assert.ok([200, 201].includes(okSend.status), JSON.stringify(okSend.data));
@@ -107,7 +108,7 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     const overDaily = await call(newbie.token, "POST", "/v1/transactions",
       { serviceCode: "wallet_transfer", amount: 500, recipient: `@${friend.username}`, idempotencyKey: `c-${TAG}` });
     assert.equal(overDaily.status, 403, JSON.stringify(overDaily.data));
-    assert.match(String(overDaily.data.error || ""), /R4000\.00 a day/);
+    assert.match(String(overDaily.data.error || ""), /today's sending capacity left/i);
     ok("tier 0 binds: the single payment and daily send limits both refuse with the numbers spelled out");
 
     // 2. Basic verify upgrades instantly and blocks ID reuse.
@@ -135,11 +136,16 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     const bigVerified = await call(friend.token, "POST", "/v1/transactions",
       { serviceCode: "wallet_transfer", amount: 60000, recipient: `@${rich.username}`, idempotencyKey: `e-${TAG}` });
     assert.ok([200, 201].includes(bigVerified.status), JSON.stringify(bigVerified.data));
+    // A recipient at their receiving capacity no longer refuses the sender:
+    // the payment is held for the recipient to claim, and the sender is
+    // never told another account's numbers or verification state.
     const overReceive = await call(friend.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 55000, recipient: `@${newbie.username}`, idempotencyKey: `e2-${TAG}` });
-    assert.equal(overReceive.status, 403, "the tier 1 recipient's receive limit binds");
-    assert.match(String(overReceive.data.error || ""), /can receive up to R50000\.00/);
-    ok("tier 2 has no standing limits, and receive limits protect lower tier recipients");
+      { serviceCode: "wallet_transfer", amount: 120000, recipient: `@${newbie.username}`, idempotencyKey: `e2-${TAG}` });
+    assert.ok([200, 201].includes(overReceive.status), JSON.stringify(overReceive.data));
+    const { rows: heldRows } = await pool.query(
+      "SELECT amount FROM pending_credits WHERE recipient_user_id = $1 AND status = 'awaiting_verification'", [newbie.id]);
+    assert.ok(heldRows[0], "the payment is held for the recipient rather than refused");
+    ok("tier 2 has no standing limits, and a recipient at capacity has money held for them, not lost");
 
     // 4. The numbers are config. Change them, and enforcement changes NOW.
     await pool.query(
@@ -211,9 +217,9 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
 
     // 9. The withdrawal gate binds per tier.
     const bigWithdrawal = await call(newbie.token, "POST", "/v1/payouts/withdrawals",
-      { amount: 15000, idempotencyKey: `w-${TAG}`, bankAccountNumber: "1234567890", bankCode: "250655", accountHolder: "Newbie Harness" });
+      { amount: 30000, idempotencyKey: `w-${TAG}`, bankAccountNumber: "1234567890", bankCode: "250655", accountHolder: "Newbie Harness" });
     assert.equal(bigWithdrawal.status, 403, JSON.stringify(bigWithdrawal.data));
-    assert.match(String(bigWithdrawal.data.error || ""), /single withdrawal.*R10000\.00/i);
+    assert.match(String(bigWithdrawal.data.error || ""), /withdraw at once right now is R25000\.00/i);
     ok("withdrawal limits bind by tier before any wallet or provider work");
 
     // 10. The pre-limit nudge is a real notification.

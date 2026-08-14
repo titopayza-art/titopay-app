@@ -21,9 +21,13 @@ const ADMIN = read("src", "routes", "admin.routes.js");
 const APP = fs.readFileSync(path.join(__dirname, "..", "..", "pwa", "app.js"), "utf8");
 
 test("limits come from configuration, never from the enforcement path", () => {
-  // Every enforcement decision reads the merged config...
-  assert.match(COMPLIANCE, /async function assertCanReceiveAmount[\s\S]{0,600}loadComplianceConfig\(\)/);
-  assert.match(COMPLIANCE, /async function assertCanSendAmount[\s\S]{0,600}loadComplianceConfig\(\)/);
+  // Every enforcement decision goes through the limit engine, which reads
+  // the merged config on every call (see limit-engine.test.js for the
+  // layering contract)...
+  const ENGINE = read("src", "services", "limit-engine.js");
+  assert.match(ENGINE, /async function capacityFor[\s\S]{0,600}loadComplianceConfig\(\)/);
+  assert.match(COMPLIANCE, /async function assertCanReceiveAmount[\s\S]{0,900}evaluateReceive/);
+  assert.match(COMPLIANCE, /async function assertCanSendAmount[\s\S]{0,400}evaluateSend/);
   // ...which is DEFAULTS merged under platform_settings, admin-editable and
   // audit-logged on every change.
   assert.match(COMPLIANCE, /compliance_tier_limits/);
@@ -44,8 +48,8 @@ test("the four levels exist and usage is ledger-derived", () => {
 });
 
 test("enforcement rides the one transaction rail", () => {
-  assert.match(TX, /assertCanSendAmount\(actor\.userId, amount\)/);
-  assert.match(TX, /assertCanReceiveAmount\(status\.recipient\.userId, amount\)/);
+  assert.match(TX, /assertCanSendAmount\(actor\.userId, amount, \{ serviceCode/);
+  assert.match(TX, /assertCanReceiveAmount\(status\.recipient\.userId, amount, \{ serviceCode/);
   assert.match(TX, /reviewForEdd\(actor\.userId/);
 });
 
