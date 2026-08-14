@@ -19,10 +19,15 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 20;
+const API_BUILD = 21;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  21: "Sign out now revokes the session the server already proved, instead of " +
+      "matching a refresh token hash from the request body and reporting " +
+      "success whether or not anything was revoked. A refresh token is still " +
+      "honoured when sent, scoped to the caller's own account, so it can no " +
+      "longer sign a stranger out. Other devices are unaffected.",
   20: "Two holes a live probe opened, closed. The API enforced no password " +
       "rule at all and accepted the password 'a'; it now applies a policy at " +
       "registration and reset, and NEVER at sign-in, so no existing customer " +

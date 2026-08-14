@@ -83,6 +83,21 @@ test("a locked account answers the same way whatever the password is", () => {
   assert.match(body, /throw new AppError\(423/);
 });
 
+test("signing out revokes the session the server proved, not one the client names", () => {
+  const fn = AUTH.slice(AUTH.indexOf("async function logout("));
+  const body = fn.slice(0, fn.indexOf("\nasync function "));
+  // The session id from the validated token is what gets revoked...
+  assert.match(body, /id = \$1/);
+  assert.match(body, /actor\.sessionId/);
+  // ...a refresh token is only an additional match, never the only one, and
+  // never one that could reach another customer's session.
+  assert.match(body, /user_type = \$2[\s\S]{0,60}user_id = \$3/);
+  // ...and hashing an absent token must not silently match nothing while the
+  // customer is told they were signed out.
+  assert.match(body, /refreshToken\s*\?\s*sha256\(refreshToken\)\s*:\s*null/);
+  assert.match(body, /sessionsRevoked/, "the audit log records whether anything was actually revoked");
+});
+
 test("the HR portal keeps the ordering it always had", () => {
   // hr-service was the house style this fix follows. If it ever regresses,
   // the same oracle reopens on the staff portal.

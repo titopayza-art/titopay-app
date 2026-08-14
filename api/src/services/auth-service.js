@@ -1317,9 +1317,30 @@ async function refreshTokens(payload, meta) {
 }
 
 async function logout(refreshToken, actor) {
-  await pool.query(
-    "UPDATE sessions SET revoked_at = NOW(), revoked_reason = 'logout' WHERE refresh_token_hash = $1",
-    [sha256(refreshToken)]
+  // SIGN OUT REVOKES THE SESSION THE SERVER ALREADY PROVED, NOT ONE THE CLIENT
+  // NAMES.
+  //
+  // This used to match on the hash of a refresh token supplied in the request
+  // body, and then answer {ok: true} whether or not it had revoked anything. A
+  // probe signed out without a body and kept using the access token: the query
+  // hashed `undefined`, matched no row, and the customer was told they had
+  // been signed out. requireAuth has already validated this request's session
+  // and put its id on req.auth, so that id is the honest thing to revoke.
+  //
+  // The refresh token is still honoured when one is sent, because the app does
+  // send it and a customer may be signing a session out from another tab. It
+  // is now scoped to the caller's own account, so a leaked refresh token can
+  // never be used to sign a stranger out.
+  const refreshHash = typeof refreshToken === "string" && refreshToken ? sha256(refreshToken) : null;
+  const revoked = await pool.query(
+    `UPDATE sessions
+        SET revoked_at = NOW(), revoked_reason = 'logout'
+      WHERE revoked_at IS NULL
+        AND user_type = $2
+        AND user_id = $3
+        AND (id = $1 OR ($4::text IS NOT NULL AND refresh_token_hash = $4))
+      RETURNING id`,
+    [actor.sessionId || null, actor.userType, actor.userId, refreshHash]
   );
   await safeAuditLog({
     actorType: actor.userType,
@@ -1328,7 +1349,9 @@ async function logout(refreshToken, actor) {
     entityType: "session",
     ipAddress: actor.ipAddress,
     userAgent: actor.userAgent,
-    metadata: {}
+    // Recorded so that "sign out did nothing" is answerable from the log
+    // rather than from an investigation, which is how this was found.
+    metadata: { sessionsRevoked: revoked.rowCount }
   });
 }
 
