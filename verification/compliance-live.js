@@ -219,7 +219,7 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     const bigWithdrawal = await call(newbie.token, "POST", "/v1/payouts/withdrawals",
       { amount: 30000, idempotencyKey: `w-${TAG}`, bankAccountNumber: "1234567890", bankCode: "250655", accountHolder: "Newbie Harness" });
     assert.equal(bigWithdrawal.status, 403, JSON.stringify(bigWithdrawal.data));
-    assert.match(String(bigWithdrawal.data.error || ""), /withdraw at once right now is R25000\.00/i);
+    assert.match(String(bigWithdrawal.data.error || ""), /withdraw at once right now is R10000\.00/i);
     ok("withdrawal limits bind by tier before any wallet or provider work");
 
     // 10. The pre-limit nudge is a real notification.

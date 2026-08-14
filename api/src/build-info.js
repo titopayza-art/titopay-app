@@ -19,10 +19,14 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 17;
+const API_BUILD = 18;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  18: "Basic Verified limits set to the assurance TitoPay actually has: " +
+      "R25 000 a month, R10 000 a payment, with the rest of the rung moved " +
+      "to stay coherent. Raise them in the console the day an identity " +
+      "verification provider is wired in.",
   17: "Held money now lives in a suspense wallet so every leg balances; both " +
       "sender and recipient are told about a hold (in-app only, never a " +
       "claim-by-link message); hold window 7 days; earned capacity counts " +

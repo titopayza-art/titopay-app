@@ -109,7 +109,7 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     let everyday = 0;
     for (let i = 0; i < 12; i += 1) {
       const result = await call(spender.token, "POST", "/v1/transactions",
-        { serviceCode: "wallet_transfer", amount: 350, recipient: `@${shop.username}`, idempotencyKey: `day-${TAG}-${i}` });
+        { serviceCode: "wallet_transfer", amount: 150, recipient: `@${shop.username}`, idempotencyKey: `day-${TAG}-${i}` });
       assert.ok([200, 201].includes(result.status), `payment ${i} refused: ${JSON.stringify(result.data)}`);
       everyday += 1;
     }
@@ -118,13 +118,13 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
 
     // 2. A LARGE LEGITIMATE PAYMENT GOES. Rent, at basic verified.
     const rent = await call(spender.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 18000, recipient: `@${shop.username}`, idempotencyKey: `rent-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 9000, recipient: `@${shop.username}`, idempotencyKey: `rent-${TAG}` });
     assert.ok([200, 201].includes(rent.status), JSON.stringify(rent.data));
-    ok("a large legitimate payment (R18 000) clears at basic verified: this is a real everyday wallet");
+    ok("a full rent payment (R9 000) clears at basic verified: this is a real everyday wallet");
 
     // 3. A REFUSAL STATES REMAINING CAPACITY, NEVER A LEGAL THRESHOLD.
     const tooBig = await call(spender.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 26000, recipient: `@${shop.username}`, idempotencyKey: `big-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 12000, recipient: `@${shop.username}`, idempotencyKey: `big-${TAG}` });
     assert.equal(tooBig.status, 403);
     const message = String(tooBig.data.error || "");
     assert.match(message, /most you can send in one payment right now/i);
@@ -132,16 +132,16 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     // the letters f-i-c-a, and a naive test would fail on correct copy.
     assert.doesNotMatch(message, /\bFICA\b|\bSARB\b|statutory|legally required|required by law/i,
       "a refusal never invokes the law");
-    assert.match(message, /R25000\.00|R25 000/, "the refusal quotes what IS possible");
+    assert.match(message, /R10000\.00|R10 000/, "the refusal quotes what IS possible");
     ok("a refusal states the remaining capacity and never claims a legal threshold");
 
     // 4. PRODUCT RULES NARROW ONE RAIL ONLY. A gift is capped tighter than
     //    a transfer of the same amount by the same customer.
     const bigGift = await call(spender.token, "POST", "/v1/transactions",
-      { serviceCode: "send_gift", amount: 8000, recipient: `@${shop.username}`, idempotencyKey: `gift-${TAG}` });
+      { serviceCode: "send_gift", amount: 6000, recipient: `@${shop.username}`, idempotencyKey: `gift-${TAG}` });
     assert.equal(bigGift.status, 403, JSON.stringify(bigGift.data));
     const sameByTransfer = await call(spender.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 8000, recipient: `@${shop.username}`, idempotencyKey: `xfer-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 6000, recipient: `@${shop.username}`, idempotencyKey: `xfer-${TAG}` });
     assert.ok([200, 201].includes(sameByTransfer.status), "the same amount is fine on the transfer rail");
     ok("a product rule narrows the gift rail without touching transfers");
 
@@ -163,6 +163,12 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
       `INSERT INTO wallet_ledger (id, wallet_id, transaction_id, entry_type, amount, balance_after, reference, metadata)
        VALUES ($1,$2,NULL,'credit',4800,4800,$3,'{}'::JSONB)`,
       [crypto.randomUUID(), newcomer.walletId, `PRIOR-${TAG}`]);
+    // Measured as a delta, not an absolute: other harnesses share this
+    // database, and the invariant that matters is that a hold moves exactly
+    // its own value into suspense and takes exactly that back out again.
+    const { rows: [suspenseStart] } = await pool.query(
+      "SELECT available_balance FROM wallets WHERE wallet_number = '9000000001'");
+    const suspenseBefore = Number(suspenseStart?.available_balance || 0);
     const gift = await call(spender.token, "POST", "/v1/transactions",
       { serviceCode: "send_gift", amount: 400, recipient: `@${newcomer.username}`, idempotencyKey: `held-${TAG}` });
     assert.ok([200, 201].includes(gift.status), `the sender is never blocked: ${JSON.stringify(gift.data)}`);
@@ -186,7 +192,8 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     // as an implicit liability.
     const { rows: [suspense] } = await pool.query(
       "SELECT available_balance FROM wallets WHERE wallet_number = '9000000001'");
-    assert.equal(Number(suspense.available_balance), 400, "the suspense wallet holds exactly the held value");
+    assert.equal(Number(suspense.available_balance) - suspenseBefore, 400,
+      "the suspense wallet holds exactly the held value");
     ok("a payment beyond the recipient's capacity is held in the suspense wallet, both sides are told, and it is never spendable");
 
     // 7. VERIFYING RELEASES HELD MONEY, ONCE.
@@ -201,7 +208,8 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     assert.equal((again.data.released || []).length, 0, "a second claim releases nothing");
     const { rows: [emptied] } = await pool.query(
       "SELECT available_balance FROM wallets WHERE wallet_number = '9000000001'");
-    assert.equal(Number(emptied.available_balance), 0, "the suspense wallet empties on release");
+    assert.equal(Number(emptied.available_balance), suspenseBefore,
+      "releasing takes exactly the held value back out of suspense");
     ok("verifying releases held money into the wallet exactly once");
 
     // 8. AN UNCLAIMED HOLD RETURNS TO THE SENDER, IN FULL, ONCE.

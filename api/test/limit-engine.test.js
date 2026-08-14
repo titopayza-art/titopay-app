@@ -76,16 +76,33 @@ test("product rules can only narrow, never widen", () => {
     "a product profile cannot open the platform up by accident");
 });
 
-test("basic verified is a genuinely usable everyday wallet", () => {
+test("every level's ladder is internally coherent", () => {
+  // A ladder fails quietly when its rungs disagree: a wallet that may hold
+  // five months of what it can receive, or a daily limit above the monthly
+  // one, is a configuration mistake nobody notices until it is exploited.
+  for (const level of ["0", "1"]) {
+    const t = DEFAULT_CONFIG.tiers[level];
+    assert.ok(t.dailySend <= t.monthlySend, `tier ${level}: a day cannot allow more than a month`);
+    assert.ok(t.singleTransaction <= t.dailySend, `tier ${level}: one payment cannot exceed a day`);
+    assert.ok(t.singleWithdrawal <= t.singleTransaction, `tier ${level}: cash out is never looser than paying`);
+    assert.ok(t.monthlyWithdraw <= t.monthlySend, `tier ${level}: withdrawals cannot exceed sending`);
+    assert.ok(t.maxBalance <= t.monthlyReceive * 2,
+      `tier ${level}: a wallet cannot hold many months of its own receiving limit`);
+  }
+});
+
+test("basic verified still fits an ordinary South African month", () => {
   const tier1 = DEFAULT_CONFIG.tiers["1"];
-  assert.ok(tier1.monthlyReceive >= 50000, "an everyday wallet accepts an everyday month");
-  assert.ok(tier1.monthlySend >= 50000);
-  assert.ok(tier1.singleTransaction >= 20000, "rent and a car payment fit in one payment");
-  // And unverified stays coherent: the balance cap cannot exceed what the
-  // account is allowed to take in.
-  const tier0 = DEFAULT_CONFIG.tiers["0"];
-  assert.ok(tier0.maxBalance <= tier0.monthlyReceive * 2,
-    "an unverified wallet cannot hold many months of its own receiving limit");
+  // The ladder is set to the assurance TitoPay actually has, but everyday
+  // life must still fit: a salary in, rent out, groceries and gifts.
+  assert.ok(tier1.monthlyReceive >= 20000, "a month's income lands without a wall");
+  assert.ok(tier1.singleTransaction >= 8000, "rent goes in one payment");
+  // And it is not written for an assurance level that does not exist: until
+  // an identity provider is wired in, this level stays modest.
+  assert.ok(tier1.monthlySend <= 50000,
+    "basic verification proves a well-formed number, and the limits say so");
+  assert.match(read("src", "services", "compliance-service.js"),
+    /THESE NUMBERS MATCH THE ASSURANCE, NOT THE AMBITION/);
 });
 
 test("refusals quote remaining capacity and never invoke the law", () => {

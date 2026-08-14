@@ -77,15 +77,29 @@ const DEFAULT_CONFIG = {
     1: {
       label: "Basic verified",
       description: "Identity verified. Everyday wallet limits.",
-      monthlyReceive: 100000,
-      monthlySend: 100000,
+      // THESE NUMBERS MATCH THE ASSURANCE, NOT THE AMBITION. Basic
+      // verification today proves that someone entered a well-formed
+      // document number no other account is using. It does not prove who
+      // they are: there is no Home Affairs match, no document image and no
+      // liveness check. So this level carries what TitoPay can afford to
+      // lose to a single fabricated identity, and everyday life still fits
+      // inside it: a salary in, rent out, groceries, gifts.
+      //
+      // When an identity verification provider is wired in, these are the
+      // numbers to raise, in the console, without a deploy. Until then
+      // raising them would be pricing a risk TitoPay has not measured.
+      monthlyReceive: 25000,
+      monthlySend: 25000,
       // Per-payment stays the deliberate friction: it is the control that
       // costs honest customers the least and fraud the most.
-      singleTransaction: 25000,
-      dailySend: 50000,
-      singleWithdrawal: 25000,
-      monthlyWithdraw: 100000,
-      maxBalance: 250000
+      singleTransaction: 10000,
+      dailySend: 20000,
+      singleWithdrawal: 10000,
+      monthlyWithdraw: 25000,
+      // Two months of receiving, on the same coherence rule as Tier 0: a
+      // wallet should never be able to hold many months of what it is
+      // allowed to take in.
+      maxBalance: 50000
     },
     2: {
       label: "Fully verified",
