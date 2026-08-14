@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v394-fewer-round-trips";
+const CACHE_NAME = "titopay-pwa-v395-password-policy";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=394",
-  "./app.min.js?v=394",
+  "./styles.min.css?v=395",
+  "./app.min.js?v=395",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

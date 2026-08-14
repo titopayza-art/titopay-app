@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 19;
+const API_BUILD = 20;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  20: "Two holes a live probe opened, closed. The API enforced no password " +
+      "rule at all and accepted the password 'a'; it now applies a policy at " +
+      "registration and reset, and NEVER at sign-in, so no existing customer " +
+      "is locked out. Account lockout is checked before the password is " +
+      "verified, so a correct guess against a locked account no longer looks " +
+      "different from a wrong one.",
   19: "Fewer database round trips on the money path: the limit engine now " +
       "returns the 24 hour debit count with the rest of its usage picture, " +
       "and transaction monitoring reads it from there instead of asking the " +

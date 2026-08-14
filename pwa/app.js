@@ -4939,11 +4939,14 @@ function registerForm() {
       </div>
       <div class="field">
         <label>${isBusiness ? "Password" : "PIN or password"}</label>
-        <input name="password" aria-label="${isBusiness ? "Password" : "PIN or password"}" type="password" autocomplete="new-password" minlength="4" required>
+        <input name="password" aria-label="${isBusiness ? "Password" : "PIN or password"}" type="password" autocomplete="new-password" minlength="${isBusiness ? 8 : 4}" required>
+        <p class="field-hint">${isBusiness
+          ? "At least 8 characters."
+          : "At least 4 characters. Avoid a PIN like 1234 or 0000."}</p>
       </div>
       <div class="field">
         <label>Confirm ${isBusiness ? "password" : "PIN or password"}</label>
-        <input name="confirmPassword" aria-label="Confirm ${isBusiness ? "password" : "PIN or password"}" type="password" autocomplete="new-password" minlength="4" required>
+        <input name="confirmPassword" aria-label="Confirm ${isBusiness ? "password" : "PIN or password"}" type="password" autocomplete="new-password" minlength="${isBusiness ? 8 : 4}" required>
       </div>
       <label class="terms-agreement">
         <input name="termsAccepted" type="checkbox" value="yes" required aria-label="Agree to TitoPay Terms and Conditions">
@@ -5058,7 +5061,7 @@ async function requestReset(data) {
     <form class="form-grid" data-form="reset-confirm">
       <p class="field-hint otp-delivery-confirmation">Enter the ${esc(channelLabel)} sent${esc(destination)}.</p>
       <div class="field"><label>OTP code</label><input name="otp" aria-label="OTP code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" required></div>
-      <div class="field"><label>New PIN or password</label><input name="newPassword" aria-label="New PIN or password" type="password" minlength="4" required></div>
+      <div class="field"><label>New PIN or password</label><input name="newPassword" aria-label="New PIN or password" type="password" minlength="4" required><p class="field-hint">At least 4 characters. Avoid a PIN like 1234 or 0000.</p></div>
       <div class="field"><label>Confirm PIN or password</label><input name="confirmNewPassword" aria-label="Confirm PIN or password" type="password" minlength="4" required></div>
       <button class="btn primary" type="submit">${icon("shield")} Reset PIN or password</button>
     </form>`;

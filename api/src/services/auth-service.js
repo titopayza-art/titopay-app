@@ -4,6 +4,7 @@ const { config } = require("../config/env");
 const { AppError } = require("../lib/errors");
 const { sha256, sixDigitOtp } = require("../lib/crypto");
 const { hashPassword, verifyPassword } = require("../lib/passwords");
+const { passwordPolicyProblem } = require("../lib/password-policy");
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require("../lib/jwt");
 const { generateUniqueWalletNumber } = require("../lib/wallet-id");
 const { isMissingDbObjectError, logDbCompatibilityWarning } = require("../lib/db-safe");
@@ -674,6 +675,14 @@ async function register(payload, meta) {
   if (!payload.password) {
     throw new AppError(400, accountType === "business" ? "password is required" : "PIN is required");
   }
+  // The app's minlength="4" is a browser hint. This is the rule. Registration
+  // and password change only: see src/lib/password-policy.js for why it must
+  // never be applied at sign-in.
+  const policyProblem = passwordPolicyProblem(payload.password, {
+    accountType,
+    identifiers: [email, phone, payload.username]
+  });
+  if (policyProblem) throw new AppError(400, policyProblem);
   const usernameFallback = email ? email.split("@")[0] : `user${phone.replace(/\D/g, "").slice(-9)}`;
   const username = normalizePublicUsername(payload.username, usernameFallback);
   const conflicts = await findCustomerRegistrationConflicts({ username, email, phone });
@@ -931,6 +940,24 @@ async function login(payload, meta) {
     throw new AppError(400, "Identifier and password are required");
   }
   const user = await getUserByIdentifier(identifier, scope);
+  // A LOCKED ACCOUNT ANSWERS THE SAME WAY WHATEVER THE PASSWORD IS.
+  //
+  // This check used to sit below, after the password had been verified. The
+  // effect was that a wrong guess against a locked account returned 401 and a
+  // RIGHT guess returned 423, so the response told an attacker the moment they
+  // found the password. Lockout then delayed the use of that password by
+  // fifteen minutes rather than preventing its discovery, which is not what
+  // lockout is for. Proven live: fifteen wrong guesses all returned 401, and
+  // the correct one returned 423.
+  //
+  // Checking first also stops spending a bcrypt comparison, the most expensive
+  // thing this process does, on an account that cannot sign in anyway.
+  //
+  // hr-service.js has always done it in this order. This brings customer and
+  // admin sign-in into line with it.
+  if (user?.locked_until && new Date(user.locked_until).getTime() > Date.now()) {
+    throw new AppError(423, `Account locked until ${user.locked_until}`);
+  }
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     await markFailedLogin(user, identifier, meta.ipAddress, meta.userAgent);
     throw new AppError(401, "Invalid credentials");
@@ -1049,9 +1076,12 @@ async function requestPasswordReset(payload, meta) {
 
 async function confirmPasswordReset(payload, meta) {
   const newPassword = typeof payload.newPassword === "string" ? payload.newPassword : "";
-  if (newPassword.length < 4) {
-    throw new AppError(400, "Enter a new PIN or password with at least 4 characters");
-  }
+  // Same rule as registration. A reset is the other door into a password, and
+  // a policy that only guards one of the two doors guards neither.
+  const resetPolicyProblem = passwordPolicyProblem(newPassword, {
+    accountType: payload.accountType === "business" ? "business" : "personal"
+  });
+  if (resetPolicyProblem) throw new AppError(400, resetPolicyProblem);
   const challengeId = payload.challengeId || await getLatestOtpChallengeId({
     userType: payload.userType === "admin" || payload.scope === "admin" ? "admin" : "customer",
     userId: payload.accountId || payload.userId,
