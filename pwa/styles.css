@@ -14394,3 +14394,203 @@ img {
   width: 15px;
   height: 15px;
 }
+
+/* ==========================================================================
+   FORM FIELDS INSIDE A BARE LABEL
+   ==========================================================================
+   The app styles its inputs through .field input, which needs a
+   <div class="field"> wrapper. Thirty seven places write the shorter
+   <label>Text<input></label> inside a .form-grid instead, and every one of
+   those has been rendering the BROWSER'S default control: 25px tall, square
+   corners, inset grey border, no focus ring. Next to a .field input at 58px
+   it reads as a different application, and a 25px control is far below the
+   44px a finger can reliably hit.
+
+   This gives the label form the same treatment the wrapper form already had,
+   so both spellings produce the same control. Nothing about .field changes.
+   ========================================================================== */
+
+.form-grid label > input:not([type="checkbox"]):not([type="radio"]),
+.form-grid label > select,
+.form-grid label > textarea,
+.form-grid label > .unit-field > input {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 58px;
+  padding: 0 16px;
+  color: var(--navy);
+  background: #fbfdff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  box-sizing: border-box;
+  transition:
+    border-color 160ms var(--ease-premium),
+    box-shadow 160ms var(--ease-premium),
+    background 160ms var(--ease-premium);
+}
+
+.form-grid label > textarea {
+  padding: 14px 16px;
+  min-height: 96px;
+}
+
+.form-grid label > input:focus,
+.form-grid label > select:focus,
+.form-grid label > textarea:focus,
+.form-grid label > .unit-field > input:focus {
+  outline: none;
+  border-color: var(--blue);
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(10, 77, 255, 0.12);
+}
+
+/* The value field keeps room for its unit on the right. */
+.form-grid label > .unit-field > input { padding-right: 38px; }
+
+/* Date and time controls will not shrink on their own: Safari gives them an
+   intrinsic width from their internal value element, which never wraps, and as
+   a grid item that becomes the row's minimum. Same clamps .field already uses. */
+.form-grid label > input[type="date"],
+.form-grid label > input[type="time"],
+.form-grid label > input[type="datetime-local"],
+.form-grid label > input[type="month"] {
+  max-width: 100%;
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  overflow: hidden;
+}
+
+.form-grid label > input[type="date"]::-webkit-date-and-time-value,
+.form-grid label > input[type="time"]::-webkit-date-and-time-value,
+.form-grid label > input[type="datetime-local"]::-webkit-date-and-time-value,
+.form-grid label > input[type="month"]::-webkit-date-and-time-value {
+  margin: 0;
+  text-align: left;
+}
+
+.form-grid label > input[type="date"]::-webkit-calendar-picker-indicator,
+.form-grid label > input[type="time"]::-webkit-calendar-picker-indicator,
+.form-grid label > input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+.form-grid label > input[type="month"]::-webkit-calendar-picker-indicator {
+  margin-inline-start: auto;
+}
+
+/* A label wrapping a control is a stacked pair, not a sentence. */
+.form-grid > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The after-sale picker is a bare label in a panel rather than in a form-grid,
+   so the rule above does not reach it. Same control, same treatment. */
+.aftersale-picker > select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 58px;
+  padding: 0 16px;
+  color: var(--navy);
+  background: #fbfdff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  box-sizing: border-box;
+}
+
+.aftersale-picker > select:focus {
+  outline: none;
+  border-color: var(--blue);
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(10, 77, 255, 0.12);
+}
+
+/* A disclosure is a control, so it obeys the same 44px floor as a button. */
+.advanced-options > summary {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 14px;
+}
+
+.advanced-options > summary::after { float: none; margin-left: auto; margin-top: 0; }
+.advanced-options[open] > summary::after { margin-top: 4px; }
+
+/* A bare label holding a control directly inside a panel, which is the third
+   spelling used in this codebase (after <div class="field"> and a label inside
+   a .form-grid). Campaign Tools and the after-sale picker both use it. Covered
+   here so all three spellings produce the same control instead of three
+   different ones, and so the next screen written this way is styled already. */
+.panel > label > select,
+.panel > label > input:not([type="checkbox"]):not([type="radio"]),
+.panel > label > textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 58px;
+  padding: 0 16px;
+  color: var(--navy);
+  background: #fbfdff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  box-sizing: border-box;
+}
+
+.panel > label > select:focus,
+.panel > label > input:focus,
+.panel > label > textarea:focus {
+  outline: none;
+  border-color: var(--blue);
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(10, 77, 255, 0.12);
+}
+
+.panel > label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* THE CANONICAL LABELLED CONTROL.
+   This codebase has three spellings for a form field: <div class="field">, a
+   label inside a .form-grid, and a bare label floating in a fragment. The
+   third had no styling at all, and adding a selector per location was turning
+   into a game of catch-up. .panel-field is the name to use from now on. */
+.panel-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.panel-field > select,
+.panel-field > input:not([type="checkbox"]):not([type="radio"]),
+.panel-field > textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 58px;
+  padding: 0 16px;
+  color: var(--navy);
+  background: #fbfdff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  box-sizing: border-box;
+}
+
+.panel-field > select:focus,
+.panel-field > input:focus,
+.panel-field > textarea:focus {
+  outline: none;
+  border-color: var(--blue);
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(10, 77, 255, 0.12);
+}
+
+/* A select's own dropdown arrow sits inside its box, so 16px of right padding
+   leaves the last characters of a long option running underneath it. */
+.form-grid label > select,
+.panel-field > select,
+.aftersale-picker > select {
+  padding-right: 40px;
+}

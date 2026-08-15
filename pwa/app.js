@@ -18747,7 +18747,7 @@ function aftersalesPanels(approved) {
   return `
     <section class="panel inner-panel aftersale-panel">
       <h3>After the sale</h3>
-      <label class="aftersale-picker">Event<select data-sales-event-pick>${options}</select></label>
+      <label class="panel-field aftersale-picker">Event<select data-sales-event-pick>${options}</select></label>
 
       <div class="aftersale-block">
         <p class="eyebrow">Refund requests</p>
@@ -19001,7 +19001,7 @@ function ticketingCampaignsSection(approved) {
         </article>
       </div>
     </section>
-    <label>Event
+    <label class="panel-field">Event
       <select data-campaign-event>${options}</select>
     </label>
     <button class="btn secondary" type="button" data-action="campaign-load">${icon("refresh")} Show my audience and prices</button>
