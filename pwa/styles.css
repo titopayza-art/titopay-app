@@ -12582,7 +12582,21 @@ button,
    Auth is excluded on purpose: it has its own visual-viewport handling for the
    software keyboard, and that is not a thing to disturb from here. */
 
-@media (max-width: 519px) {
+/* WHY THIS IS NOT JUST A WIDTH.
+
+   A width threshold cannot tell a phone from a small desktop window, and it
+   gets phones wrong: a large handset with display zoom off, an unfolded
+   foldable, or iOS "Request Desktop Website" all report more than 519px. On
+   those the sheet stopped going full screen and floated in the middle instead,
+   with a third of the screen blank above it and the content running off the
+   bottom -- which is exactly the "not a real app" feeling, and it was reported
+   from a real phone, not found in a test.
+
+   (pointer: coarse) asks the device what it IS rather than how wide it claims
+   to be, and is true on every phone and tablet whatever they report. The width
+   clause stays so a narrow desktop window still behaves. The 950px ceiling
+   keeps a desktop with a touchscreen out of it. */
+@media (max-width: 519px), (pointer: coarse) and (max-width: 950px) {
   .modal-backdrop:not(.auth-modal-backdrop) {
     align-items: stretch;
     padding: 0;
@@ -12630,7 +12644,7 @@ button,
    row. Every child is pinned to flex:0 0 auto, which reproduces block sizing
    exactly — without it, flex would shrink children that currently rely on
    their natural height, and forty screens would subtly change shape. */
-@media (max-width: 519px) {
+@media (max-width: 519px), (pointer: coarse) and (max-width: 950px) {
   .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:not(.fullscreen-modal):not(.chatbot-fullscreen-modal) {
     display: flex;
     flex-direction: column;
@@ -14748,7 +14762,7 @@ img {
    no padding at this width, so 100% of it IS the viewport, exactly, with no
    unit that can drift. Specificity has to beat the full-bleed rule, hence the
    long selector. */
-@media (max-width: 519px) {
+@media (max-width: 519px), (pointer: coarse) and (max-width: 950px) {
   /* The selector mirrors the full-bleed sheet rule above, plus :has(), because
      that rule turns every service modal into a flex column at a weight this one
      has to exceed to stay a frame. Same reason `height` is restated: 100dvh

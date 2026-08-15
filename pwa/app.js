@@ -11449,8 +11449,16 @@ function vasCatalogueNotice(config, catalogue) {
   }
   return {
     head: "Product list not available yet",
-    body: `TitoPay does not yet publish a ${config.productLabel.toLowerCase()} list for this service. Choose the ${config.providerLabel.toLowerCase()} and enter the ${config.amountLabel.toLowerCase()} to continue.`
+    // "a airtime product list" -- the label is interpolated, so the article has
+    // to be chosen from the word that lands here rather than written into the
+    // sentence.
+    body: `TitoPay does not yet publish ${indefiniteArticle(config.productLabel)} ${config.productLabel.toLowerCase()} list for this service. Choose the ${config.providerLabel.toLowerCase()} and enter the ${config.amountLabel.toLowerCase()} to continue.`
   };
+}
+// "an airtime list", "a data list". Only the vowel rule, because these labels
+// are ordinary product words and there is no need to guess at the exceptions.
+function indefiniteArticle(word) {
+  return /^[aeiou]/i.test(String(word || "").trim()) ? "an" : "a";
 }
 function vasProductPriceText(product) {
   if (product.amount) return money(product.amount);

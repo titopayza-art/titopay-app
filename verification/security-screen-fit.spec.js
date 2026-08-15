@@ -39,7 +39,15 @@ const DEVICES = [
   console.log("device                viewport   page  card  body-needs/has  button   verdict");
   const rows = [];
   for (const [name, w, h] of DEVICES) {
-    const ctx = await b.newContext({ viewport: { width: w, height: h }, serviceWorkers: "block" }); const p = await ctx.newPage();
+    // A phone is a touch device, and the full-screen sheet keys off that rather
+    // than off width. Measuring these as mouse devices measured a layout no
+    // customer is served.
+    const touch = w <= 950;
+    const ctx = await b.newContext({
+      viewport: { width: w, height: h }, serviceWorkers: "block",
+      hasTouch: touch, isMobile: touch && w < 900
+    });
+    const p = await ctx.newPage();
     await p.goto("http://127.0.0.1:8099/", { waitUntil: "networkidle" });
     await p.evaluate(() => showSecurityTipModal());
     await p.waitForSelector(".security-screen", { timeout: 5000 });

@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v405-security-screen-no-scroll";
+const CACHE_NAME = "titopay-pwa-v406-full-screen-on-touch";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=405",
-  "./app.min.js?v=405",
+  "./styles.min.css?v=406",
+  "./app.min.js?v=406",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
