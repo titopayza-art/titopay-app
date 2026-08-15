@@ -14717,6 +14717,17 @@ img {
   height: clamp(16px, 4.4vw, 19px);
 }
 
+/* The tip's words are a <p> then a <small>, which stack as inline boxes and
+   leak about 20px of line-box slack per row -- 120px down a list of six, which
+   is more than the type tiers below were fighting to save. A grid removes it
+   without making a single letter smaller. */
+.security-screen .activity-item > div {
+  display: grid;
+  gap: 2px;
+  align-content: center;
+  min-width: 0;
+}
+
 .security-screen .activity-item strong {
   font-size: clamp(0.85rem, 2.8vw, 0.94rem);
 }
@@ -14803,4 +14814,509 @@ img {
 .security-screen-body.is-scrolled-to-end {
   -webkit-mask-image: none;
   mask-image: none;
+}
+
+/* NO SCROLL, ON ANY DEVICE.
+
+   Columns trade width for height, so they belong wherever HEIGHT is the binding
+   constraint -- not wherever the screen happens to be wide. A first attempt put
+   two columns on every phone and made things worse: inside a 560px card, more
+   columns mean narrower ones, more wrapping and MORE height. Two rules follow
+   from that, and they are the whole design.
+
+   One: when the screen is wide, widen the card before adding a column, so each
+   column is genuinely wide enough to stop the text wrapping. A desktop has the
+   room; the 560px cap was written for forms, not for this.
+
+   Two: when the screen is SHORT, add a column even though it costs wrapping,
+   because on a 568px phone height is the thing in shortest supply and a taller
+   narrow column is what breaks the layout. */
+
+/* Wide: widen the frame first, then split it. */
+@media (min-width: 620px) {
+  .modal-card:has(> .security-screen) {
+    max-width: min(100%, 860px);
+  }
+
+  .security-screen .activity-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+@media (min-width: 1100px) {
+  .modal-card:has(> .security-screen) {
+    max-width: min(100%, 1120px);
+  }
+
+  .security-screen .activity-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Short screens: columns are NOT the lever here. Inside a fixed-width card two
+   columns are two narrow columns, the text simply wraps taller, and the list
+   ends up exactly as tall as before -- measured at 360x640: 552px either way.
+   Width is what makes a column pay, and a phone has none to spare. So a phone
+   stays one column and buys its height from type, leading and padding instead,
+   in tiers, so a 932px phone never pays for what a 568px one needs. */
+@media (max-height: 820px) {
+  .security-screen .security-tip-card {
+    padding: 8px 10px;
+  }
+
+  .security-screen .security-tip-card h3 {
+    font-size: 0.93rem;
+  }
+
+  .security-screen .security-tip-card p {
+    font-size: 0.75rem;
+    line-height: 1.3;
+  }
+
+  .security-screen .modal-head h2 {
+    font-size: 1rem;
+  }
+
+  .security-screen .activity-list {
+    gap: 5px;
+  }
+
+  .security-screen .activity-item {
+    padding: 6px 8px;
+    gap: 8px;
+  }
+
+  .security-screen .icon-bubble {
+    width: 26px;
+    height: 26px;
+  }
+
+  .security-screen .icon-bubble svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .security-screen .activity-item strong {
+    font-size: 0.78rem;
+    line-height: 1.2;
+  }
+
+  .security-screen .activity-item small {
+    font-size: 0.68rem;
+    line-height: 1.26;
+  }
+
+  .security-screen > .btn.primary {
+    min-height: 42px;
+  }
+}
+
+@media (max-height: 700px) {
+  .security-screen .security-tip-card p {
+    font-size: 0.71rem;
+    line-height: 1.26;
+  }
+
+  .security-screen .activity-item small {
+    font-size: 0.65rem;
+    line-height: 1.24;
+  }
+
+  .security-screen .activity-item strong {
+    font-size: 0.75rem;
+  }
+
+  .security-screen .activity-item {
+    padding: 5px 7px;
+  }
+
+  .security-screen .icon-bubble {
+    width: 23px;
+    height: 23px;
+  }
+
+  .security-screen .icon-bubble svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .security-screen .activity-list {
+    gap: 4px;
+  }
+
+  .security-screen > .btn.primary {
+    min-height: 40px;
+  }
+}
+
+@media (max-height: 680px) {
+  .security-screen .security-tip-card {
+    padding: 7px 9px;
+  }
+
+  .security-screen .security-tip-card h3 {
+    font-size: 0.88rem;
+  }
+
+  .security-screen .security-tip-card p {
+    font-size: 0.67rem;
+    line-height: 1.22;
+  }
+
+  .security-screen .activity-item small {
+    font-size: 0.62rem;
+    line-height: 1.22;
+  }
+
+  .security-screen .activity-item strong {
+    font-size: 0.72rem;
+  }
+
+  .security-screen .activity-item {
+    padding: 4px 7px;
+  }
+
+  .security-screen .activity-list {
+    gap: 3px;
+  }
+
+  .security-screen {
+    gap: 7px;
+  }
+}
+
+/* A phone on its side is wide as well as short, so it can afford three. */
+@media (max-height: 480px) and (min-width: 640px) {
+  .security-screen .activity-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* A phone held sideways is wide and short, so stacking the warning above the
+   tips spends the one dimension it has none of. Side by side instead: the
+   warning takes a fixed left column and the tips fill the rest, which turns six
+   rows into three and is the difference between fitting and not. */
+@media (max-height: 500px) and (min-width: 640px) {
+  .security-screen-body {
+    grid-template-columns: minmax(0, 34%) minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: start;
+  }
+
+  .security-screen .security-tip-card {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .security-screen .security-tips-eyebrow {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .security-screen .activity-list {
+    grid-column: 2;
+    grid-row: 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .security-screen .modal-head h2 {
+    font-size: 0.95rem;
+  }
+}
+
+/* The smallest screen still in service. Everything gives up its last few
+   pixels here and nowhere else. */
+@media (max-height: 610px) {
+  .security-screen {
+    gap: 5px;
+  }
+
+  .security-screen-body {
+    gap: 6px;
+  }
+
+  .security-screen .modal-head h2 {
+    font-size: 0.94rem;
+  }
+
+  .security-screen .security-tip-card {
+    padding: 6px 8px;
+  }
+
+  .security-screen .security-tip-card h3 {
+    font-size: 0.82rem;
+  }
+
+  .security-screen .security-tip-card p {
+    font-size: 0.64rem;
+    line-height: 1.18;
+  }
+
+  .security-screen .activity-item {
+    padding: 3px 6px;
+  }
+
+  .security-screen .activity-item > div {
+    gap: 1px;
+  }
+
+  .security-screen .activity-item strong {
+    font-size: 0.69rem;
+  }
+
+  .security-screen .activity-item small {
+    font-size: 0.6rem;
+    line-height: 1.18;
+  }
+
+  .security-screen .activity-list {
+    gap: 2px;
+  }
+
+  .security-screen .icon-bubble {
+    width: 21px;
+    height: 21px;
+  }
+
+  .security-screen .icon-bubble svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .security-screen > .btn.primary {
+    min-height: 38px;
+  }
+}
+
+/* The last few pixels, taken only where they are actually needed. */
+@media (max-height: 500px) and (min-width: 640px) {
+  .security-screen-body {
+    grid-template-columns: minmax(0, 28%) minmax(0, 1fr);
+    row-gap: 4px;
+  }
+
+  .security-screen {
+    gap: 4px;
+  }
+
+  .security-screen .activity-item {
+    padding: 2px 6px;
+  }
+
+  .security-screen .activity-list {
+    gap: 2px;
+  }
+
+  .modal-card:has(> .security-screen) {
+    padding-bottom: 8px;
+  }
+}
+
+@media (max-height: 610px) and (max-width: 519px) {
+  .security-screen-body {
+    gap: 4px;
+  }
+
+  .security-screen .modal-head h2 {
+    font-size: 0.9rem;
+  }
+
+  .security-screen .modal-head .eyebrow {
+    margin-bottom: 0;
+    font-size: 0.68rem;
+  }
+
+  .security-screen .activity-list {
+    gap: 1px;
+  }
+
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:not(.fullscreen-modal):not(.chatbot-fullscreen-modal):has(> .security-screen) {
+    padding-bottom: calc(9px + var(--safe-bottom));
+  }
+}
+
+@media (max-height: 610px) and (max-width: 519px) {
+  .security-screen .activity-item {
+    padding: 2px 5px;
+  }
+}
+
+/* Two columns beat three here: at this card width a third column is a narrower
+   column, the text wraps further, and the list comes out taller than the row it
+   saved. Measured: 232px at two columns, 252px at three. So the last of the
+   height comes from leading and padding instead. */
+@media (max-height: 500px) and (min-width: 640px) {
+  .security-screen-body {
+    grid-template-columns: minmax(0, 24%) minmax(0, 1fr);
+  }
+
+  .security-screen .activity-item {
+    padding: 1px 6px;
+  }
+
+  .security-screen .activity-item small {
+    line-height: 1.14;
+  }
+
+  .security-screen .activity-list {
+    gap: 1px;
+  }
+
+  .security-screen .security-tip-card p {
+    line-height: 1.18;
+  }
+}
+
+/* A folded phone, or any screen under 340px. Width this narrow wraps every line
+   twice over, so it needs its own step down rather than a height tier. */
+@media (max-width: 339px) {
+  .security-screen .security-tip-card p {
+    font-size: 0.68rem;
+    line-height: 1.2;
+  }
+
+  .security-screen .security-tip-card h3 {
+    font-size: 0.85rem;
+  }
+
+  .security-screen .activity-item strong {
+    font-size: 0.7rem;
+    line-height: 1.18;
+  }
+
+  .security-screen .activity-item small {
+    font-size: 0.61rem;
+    line-height: 1.2;
+  }
+
+  .security-screen .activity-item {
+    padding: 3px 6px;
+    gap: 6px;
+  }
+
+  .security-screen .activity-list {
+    gap: 2px;
+  }
+
+  .security-screen .icon-bubble {
+    width: 20px;
+    height: 20px;
+  }
+
+  .security-screen .icon-bubble svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .security-screen .modal-head h2 {
+    font-size: 0.92rem;
+  }
+}
+
+/* The last two, each by a hair. */
+@media (max-width: 339px) {
+  .security-screen .activity-item {
+    padding: 2px 5px;
+  }
+
+  .security-screen .activity-list {
+    gap: 1px;
+  }
+
+  .security-screen .security-tip-card {
+    padding: 6px 8px;
+  }
+}
+
+@media (max-height: 420px) and (min-width: 640px) {
+  .security-screen-body {
+    grid-template-columns: minmax(0, 22%) minmax(0, 1fr);
+  }
+
+  .security-screen .activity-item {
+    padding: 0 5px;
+  }
+
+  .security-screen .activity-item small {
+    line-height: 1.12;
+  }
+
+  .security-screen .activity-item strong {
+    line-height: 1.15;
+  }
+}
+
+@media (max-width: 339px) {
+  .security-screen .activity-item {
+    padding: 1px 5px;
+  }
+}
+
+@media (max-height: 420px) and (min-width: 640px) {
+  .security-screen-body {
+    row-gap: 2px;
+  }
+
+  .security-screen .activity-list {
+    gap: 0;
+  }
+
+  .security-screen .security-tip-card p {
+    line-height: 1.1;
+  }
+
+  .security-screen .security-tip-card {
+    padding: 6px 8px;
+  }
+}
+
+/* 667x375 is the last one. Widening its warning column was tried first and
+   backfired: a wider warning is a narrower tips pane, the tips wrapped taller,
+   and the screen got 80px worse. The column stays narrow and the type comes
+   down instead. */
+@media (max-height: 420px) and (min-width: 640px) {
+  .security-screen .security-tip-card h3 {
+    font-size: 0.8rem;
+  }
+
+  .security-screen .security-tip-card p {
+    font-size: 0.63rem;
+  }
+
+  .security-screen .modal-head {
+    gap: 8px;
+  }
+
+  .security-screen .modal-head h2 {
+    font-size: 0.88rem;
+  }
+
+  .security-screen .activity-item small {
+    font-size: 0.58rem;
+  }
+
+  .security-screen .activity-item strong {
+    font-size: 0.7rem;
+  }
+}
+
+@media (max-height: 420px) and (min-width: 640px) {
+  .security-screen .activity-item {
+    padding: 0 4px;
+  }
+
+  .security-screen .icon-bubble {
+    width: 17px;
+    height: 17px;
+  }
+
+  .security-screen .icon-bubble svg {
+    width: 10px;
+    height: 10px;
+  }
+
+  .security-screen .activity-item > div {
+    gap: 0;
+  }
 }
