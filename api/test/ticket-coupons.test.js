@@ -153,10 +153,18 @@ test("the organiser's door exists and says whose money funds the discount", () =
   assert.match(APP, /key: "coupons", label: "Promotions"/);
   assert.match(APP, /function ticketingCouponsSection/);
   assert.match(APP, /function refreshEventCouponList/);
-  assert.match(APP, /Percentage off<\/option>/);
-  assert.match(APP, /Amount off the order<\/option>/);
+  // The option labels shortened when the unit moved inside the field: the
+  // select now says Percentage or Rand amount, and the field itself carries
+  // the % or R, so the label no longer has to repeat it.
+  assert.match(APP, /<option value="percentage">Percentage<\/option>/);
+  assert.match(APP, /<option value="amount">Rand amount<\/option>/);
+  assert.match(APP, /data-coupon-affix/, "the unit is shown inside the value field");
   assert.match(APP, /name="expiresAt"/);
-  assert.ok(APP.includes("funded by you"), "the screen states that the organiser funds the promotion");
+  // Wording tightened from "it is funded by you" when the intro was cut from
+  // five lines to one. The promise the test guards is unchanged: the screen
+  // must say plainly whose money pays for the discount.
+  assert.ok(APP.includes("You fund the discount"),
+    "the screen states that the organiser funds the promotion");
 });
 
 test("no customer-facing coupon copy uses an em dash", () => {

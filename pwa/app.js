@@ -3829,15 +3829,17 @@ function onChange(event) {
   if (couponType) {
     const isPercent = couponType.value === "percentage";
     const label = document.querySelector("[data-coupon-value-label]");
-    const hint = document.querySelector("[data-coupon-value-hint]");
+    const affix = document.querySelector("[data-coupon-affix]");
     const input = couponType.closest("form")?.querySelector('[name="discountValue"]');
-    if (label) label.textContent = isPercent ? "Percentage off" : "Rands off the order";
-    if (hint) {
-      hint.textContent = isPercent
-        ? "A percentage of the ticket price, up to 100%."
-        : "A flat amount off the whole order. It can never take more off than the tickets cost.";
+    // The unit sits inside the field rather than in a sentence underneath it,
+    // so somebody typing 25 can see whether they are giving away a quarter of
+    // the ticket or twenty five rand.
+    if (label) label.textContent = isPercent ? "How much" : "Amount off";
+    if (affix) affix.setAttribute("data-coupon-affix", isPercent ? "%" : "R");
+    if (input) {
+      input.placeholder = isPercent ? "25" : "50";
+      input.max = isPercent ? "100" : "";
     }
-    if (input) input.placeholder = isPercent ? "25" : "50";
   }
   const changeRequestType = event.target.closest("select[data-change-request-type]");
   if (changeRequestType) syncChangeRequestFields(changeRequestType);
@@ -17239,18 +17241,28 @@ async function openTicketingPurchaseReview(data) {
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <section class="review-transaction-list activity-list">
-      ${settingsRow("Event", state.pendingTicketPurchase.eventName, "ticket")}
-      ${settingsRow("Ticket", state.pendingTicketPurchase.ticketName, "ticket")}
-      ${settingsRow("Quantity", String(quantity), "list")}
-      ${settingsRow("Price each", money(unit), "wallet")}
-      ${discount > 0 ? settingsRow("Subtotal", money(listSubtotal), "wallet") : ""}
-      ${discount > 0 ? settingsRow(`Discount${appliedCode ? ` (${appliedCode})` : ""}`, `- ${money(discount)}`, "ticket") : ""}
-      ${settingsRow(discount > 0 ? "Subtotal after discount" : "Subtotal", money(subtotal), "wallet")}
-      ${buyerFee > 0 ? settingsRow("Service fee", money(buyerFee), "wallet") : ""}
-      ${settingsRow("Total to pay", money(total), "wallet")}
+    <!-- A RECEIPT, NOT A SETTINGS LIST.
+         This was eight full-width cards, each with its own icon bubble, which
+         pushed the total and the Pay button below the fold on a phone: the
+         buyer had to scroll past the detail to reach the decision. A checkout
+         summary is a short column of label and figure, with the one number
+         that matters set apart at the bottom. -->
+    <section class="checkout-summary">
+      <div class="checkout-event">
+        <strong>${esc(state.pendingTicketPurchase.eventName)}</strong>
+        <small>${esc(state.pendingTicketPurchase.ticketName)} · ${esc(String(quantity))} ticket${quantity === 1 ? "" : "s"}</small>
+      </div>
+      <dl class="checkout-lines">
+        <div><dt>Price each</dt><dd>${esc(money(unit))}</dd></div>
+        <div><dt>Subtotal</dt><dd>${esc(money(discount > 0 ? listSubtotal : subtotal))}</dd></div>
+        ${discount > 0 ? `<div class="is-discount"><dt>Discount${appliedCode ? ` · ${esc(appliedCode)}` : ""}</dt><dd>- ${esc(money(discount))}</dd></div>` : ""}
+        ${buyerFee > 0 ? `<div><dt>Service fee</dt><dd>${esc(money(buyerFee))}</dd></div>` : ""}
+      </dl>
+      <div class="checkout-total">
+        <span>Total to pay</span>
+        <strong>${esc(money(total))}</strong>
+      </div>
     </section>
-    ${discount > 0 ? `<p class="field-hint">Your code took ${esc(money(discount))} off this order.</p>` : ""}
     ${refundPolicy ? `
       <section class="refund-policy-note${refundPolicy.refundsAllowed ? "" : " is-final"}">
         <span class="icon-bubble">${icon(refundPolicy.refundsAllowed ? "refund-card" : "ban")}</span>
@@ -18569,28 +18581,41 @@ function ticketingCouponsSection(approved) {
   const typeOptions = (Array.isArray(first.ticketTypes) ? first.ticketTypes : [])
     .map((type) => `<option value="${esc(type.id)}">${esc(type.ticketName)}</option>`).join("");
   return `
+    <!-- FIVE FIELDS, NOT NINE.
+         Total uses, uses per person and ticket-type scoping are real controls
+         that most organisers never touch. Stacked in front of everyone they
+         made a nine-field wall on a phone before the button; behind a
+         disclosure they cost one tap for the people who want them. -->
     <section class="panel inner-panel">
       <h3>Create a discount code</h3>
-      <p class="muted">The discount comes off your ticket price, so it is funded by you. TitoPay's commission is charged on what the buyer actually pays, never on the part you gave away.</p>
+      <p class="muted">You fund the discount. TitoPay charges commission only on what the buyer actually pays.</p>
       <form class="form-grid" data-form="ticketing-coupon">
         <label>Event<select name="eventId" data-coupon-event-pick>${options}</select></label>
-        <label>Code<input name="code" placeholder="SUMMER25" required autocomplete="off" maxlength="32"></label>
-        <p class="field-hint">Letters and numbers only. This is what people type at checkout, so keep it short and easy to read off a poster.</p>
-        <label>Discount type
-          <select name="discountType" data-coupon-type>
-            <option value="percentage">Percentage off</option>
-            <option value="amount">Amount off the order</option>
-          </select>
-        </label>
-        <label><span data-coupon-value-label>Percentage off</span>
-          <input name="discountValue" type="number" min="1" step="0.01" placeholder="25" required>
-        </label>
-        <p class="field-hint" data-coupon-value-hint>A percentage of the ticket price, up to 100%.</p>
+        <label>Code<input name="code" placeholder="SUMMER25" required autocomplete="off" maxlength="32" spellcheck="false"></label>
+        <p class="field-hint">What people type at checkout. Keep it short enough to read off a poster.</p>
+        <div class="coupon-value-row">
+          <label>Discount
+            <select name="discountType" data-coupon-type>
+              <option value="percentage">Percentage</option>
+              <option value="amount">Rand amount</option>
+            </select>
+          </label>
+          <label><span data-coupon-value-label>How much</span>
+            <span class="unit-field" data-coupon-affix="%">
+              <input name="discountValue" type="number" min="1" step="0.01" placeholder="25" required inputmode="decimal">
+            </span>
+          </label>
+        </div>
         <label>Expires on<input name="expiresAt" type="date"></label>
-        <p class="field-hint">Leave the date empty for a code that runs until you switch it off.</p>
-        <label>Total uses<input name="maxRedemptions" type="number" min="1" placeholder="Leave empty for unlimited"></label>
-        <label>Uses per person<input name="maxPerCustomer" type="number" min="1" value="1"></label>
-        ${typeOptions ? `<label>Applies to<select name="ticketTypeId"><option value="">Every ticket type</option>${typeOptions}</select></label>` : ""}
+        <p class="field-hint">Leave empty for a code that runs until you switch it off.</p>
+        <details class="advanced-options">
+          <summary>Limit who can use it</summary>
+          <div class="form-grid">
+            <label>Total uses<input name="maxRedemptions" type="number" min="1" placeholder="Unlimited" inputmode="numeric"></label>
+            <label>Uses per person<input name="maxPerCustomer" type="number" min="1" value="1" inputmode="numeric"></label>
+            ${typeOptions ? `<label>Applies to<select name="ticketTypeId"><option value="">Every ticket type</option>${typeOptions}</select></label>` : ""}
+          </div>
+        </details>
         <button class="btn secondary" type="submit">${icon("ticket")} Create code</button>
       </form>
     </section>
@@ -18626,13 +18651,17 @@ async function refreshEventCouponList(eventId) {
           const uses = coupon.maxRedemptions
             ? `${coupon.redeemedCount} of ${coupon.maxRedemptions} used`
             : `${coupon.redeemedCount} used`;
-          const expiry = coupon.expiresAt ? ` · expires ${friendlyDate(coupon.expiresAt)}` : " · no expiry";
+          const expiry = coupon.expiresAt ? `expires ${friendlyDate(coupon.expiresAt)}` : "no expiry";
+          // Live and dead states read at a glance rather than being buried in
+          // the middle of a grey sentence.
+          const tone = coupon.state === "active" ? "settled"
+            : coupon.state === "scheduled" ? "warn" : "failed";
           return `
             <article class="settings-row">
               <span class="icon-bubble">${icon("ticket")}</span>
               <div>
-                <strong>${esc(coupon.code)}</strong>
-                <small>${esc(worth)} · ${esc(stateLabel[coupon.state] || coupon.state)} · ${esc(uses)}${esc(expiry)}</small>
+                <strong>${esc(coupon.code)} <em class="sv-chip ${tone}">${esc(stateLabel[coupon.state] || coupon.state)}</em></strong>
+                <small>${esc(worth)} · ${esc(uses)} · ${esc(expiry)}</small>
               </div>
               <div class="row-actions">
                 ${coupon.status === "active"
@@ -18711,20 +18740,26 @@ async function deleteTicketingCoupon(eventId, couponId) {
 function aftersalesPanels(approved) {
   const options = approved.map((event) =>
     `<option value="${esc(event.id)}">${esc(event.eventName)}</option>`).join("");
+  // ONE panel, not three. The picker used to sit alone in a panel of its own,
+  // which spent a whole card on a dropdown and separated the control from the
+  // two lists it drives. The sub-headings are eyebrows rather than headings,
+  // because h4 rendered identically to h3 and the hierarchy read as flat.
   return `
-    <section class="panel inner-panel">
+    <section class="panel inner-panel aftersale-panel">
       <h3>After the sale</h3>
-      <label>Event<select data-sales-event-pick>${options}</select></label>
-    </section>
-    <section class="panel inner-panel">
-      <h4>Refund requests</h4>
-      <p class="muted">Your customers and your money. Approving one returns the ticket price to the buyer from your wallet, cancels their ticket and puts the seat back on sale.</p>
-      <div data-refund-list><p class="muted">Loading refund requests…</p></div>
-    </section>
-    <section class="panel inner-panel">
-      <h4>Waiting list</h4>
-      <p class="muted">People who wanted in after the last ticket went. Nothing is held for them, so releasing capacity is your call.</p>
-      <div data-waitlist-list><p class="muted">Loading the waiting list…</p></div>
+      <label class="aftersale-picker">Event<select data-sales-event-pick>${options}</select></label>
+
+      <div class="aftersale-block">
+        <p class="eyebrow">Refund requests</p>
+        <p class="muted">Approving one returns the ticket price from your wallet and puts the seat back on sale.</p>
+        <div data-refund-list><p class="muted">Loading refund requests…</p></div>
+      </div>
+
+      <div class="aftersale-block">
+        <p class="eyebrow">Waiting list</p>
+        <p class="muted">People who wanted in after the last ticket went. Nothing is held for them.</p>
+        <div data-waitlist-list><p class="muted">Loading the waiting list…</p></div>
+      </div>
     </section>`;
 }
 function promoterPanel() {
@@ -18763,13 +18798,21 @@ async function refreshEventRefundList(eventId) {
     host.innerHTML = `
       ${open.length ? `<p class="field-hint"><strong>${open.length}</strong> waiting for your decision.</p>` : `<p class="field-hint">Nothing waiting for you.</p>`}
       <div class="settings-list">
-        ${items.map((item) => `
+        ${items.map((item) => {
+          // The amount leads, because that is the number the organiser is
+          // deciding about. The status is a chip rather than a word at the end
+          // of a grey sentence.
+          const tone = item.status === "approved" ? "settled"
+            : item.status === "rejected" ? "failed" : "warn";
+          const statusLabel = { requested: "Awaiting you", under_review: "In review",
+            approved: "Refunded", rejected: "Declined" }[item.status] || item.status;
+          return `
           <article class="settings-row">
             <span class="icon-bubble">${icon("refund-card")}</span>
             <div>
-              <strong>${esc(money(item.amount))} · ${esc(item.buyerName || "Buyer")}</strong>
-              <small>${esc(item.ticketName || "Ticket")} · order ${esc(item.orderReference)} · ${esc(item.status)}</small>
-              ${item.reason ? `<small>"${esc(item.reason)}"</small>` : ""}
+              <strong>${esc(money(item.amount))} <em class="sv-chip ${tone}">${esc(statusLabel)}</em></strong>
+              <small>${esc(item.buyerName || "Buyer")} · ${esc(item.ticketName || "Ticket")} · order ${esc(item.orderReference)}</small>
+              ${item.reason ? `<small class="quoted-reason">"${esc(item.reason)}"</small>` : ""}
               ${item.decisionNote ? `<small>Your note: ${esc(item.decisionNote)}</small>` : ""}
             </div>
             ${["requested", "under_review"].includes(item.status) ? `
@@ -18777,7 +18820,8 @@ async function refreshEventRefundList(eventId) {
                 <button class="btn ghost mini" type="button" data-action="refund-approve:${esc(eventId)}:${esc(item.id)}">${icon("check-circle")} Approve</button>
                 <button class="btn ghost mini" type="button" data-action="refund-reject:${esc(eventId)}:${esc(item.id)}">${icon("x")} Decline</button>
               </div>` : ""}
-          </article>`).join("")}
+          </article>`;
+        }).join("")}
       </div>`;
   } catch (error) {
     host.innerHTML = `<p class="muted">${esc(friendlyFormError(error, "ticketing"))}</p>`;
@@ -18820,8 +18864,8 @@ async function refreshEventWaitlist(eventId) {
           <article class="settings-row">
             <span class="icon-bubble">${icon("user")}</span>
             <div>
-              <strong>${esc(item.name || "Someone")}</strong>
-              <small>${esc(String(item.quantity))} ticket${item.quantity === 1 ? "" : "s"} · ${esc(item.ticketName)} · ${esc(item.status)}</small>
+              <strong>${esc(String(item.quantity))} ticket${item.quantity === 1 ? "" : "s"}${item.status === "notified" ? ` <em class="sv-chip settled">Told</em>` : ""}</strong>
+              <small>${esc(item.name || "Someone")} · ${esc(item.ticketName)}</small>
             </div>
           </article>`).join("")}
       </div>
