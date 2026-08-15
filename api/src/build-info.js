@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 23;
+const API_BUILD = 24;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  24: "Refund policy ENFORCED, not just stored: refunds_allowed, the cut-off " +
+      "and the conditions had never been read by anything, and the app sent " +
+      "every tier as refundable regardless. Buyers now see the terms before " +
+      "paying and organisers approve refunds themselves. Plus waitlists on " +
+      "sold-out events, promoter links that attribute sales, multi-day events, " +
+      "duplicate-an-event, and server-rendered Open Graph link previews.",
   23: "Event discovery: search and category filtering answered in SQL over the " +
       "whole approved catalogue instead of in the browser over one batch, with " +
       "category counts built from the full catalogue so a filter can always be " +

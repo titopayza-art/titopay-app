@@ -468,6 +468,70 @@ async function ensureTicketingSchema() {
     -- what came off the list price to get there.
     ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS coupon_id UUID;
     ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(18,2) NOT NULL DEFAULT 0;
+
+    -- WHO ACTIONED A REFUND.
+    --
+    -- processed_by points at admin_users, because refunds used to be a TitoPay
+    -- back-office job. An organiser is a customer, so their id cannot go in
+    -- that column without breaking the foreign key. These record the organiser
+    -- instead, and the role says which of the two acted.
+    ALTER TABLE ticket_refunds ADD COLUMN IF NOT EXISTS processed_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+    ALTER TABLE ticket_refunds ADD COLUMN IF NOT EXISTS processed_by_role TEXT;
+
+    -- A MULTI-DAY EVENT IS ONE EVENT WITH AN END DATE.
+    --
+    -- Deliberately not a recurrence engine. Every ticket, scan, report and
+    -- settlement in this system keys off a single events row, so a series of
+    -- occurrences would be a rewrite of the money path rather than a feature.
+    -- A festival that runs Friday to Sunday is one event with one inventory,
+    -- which is also how its organiser sells it.
+    ALTER TABLE events ADD COLUMN IF NOT EXISTS event_end_date DATE;
+
+    -- WAITLIST: DEMAND THAT ARRIVES AFTER THE LAST TICKET.
+    --
+    -- A sold-out event is currently a dead end for the buyer and invisible to
+    -- the organiser, who never learns that fifty more people wanted in. One
+    -- row per person per ticket type, so releasing capacity has an audience to
+    -- tell.
+    CREATE TABLE IF NOT EXISTS ticket_waitlist (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      ticket_type_id UUID REFERENCES event_ticket_types(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'waiting',
+      notified_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    -- One place in the queue per person per tier. Joining twice must not buy
+    -- somebody two places ahead of everybody else.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_waitlist_unique
+      ON ticket_waitlist (event_id, COALESCE(ticket_type_id, '00000000-0000-0000-0000-000000000000'::UUID), user_id);
+    CREATE INDEX IF NOT EXISTS idx_ticket_waitlist_event ON ticket_waitlist (event_id, status, created_at);
+
+    -- PROMOTER LINKS: WHO ACTUALLY SOLD THE TICKET.
+    --
+    -- An organiser hands each promoter a link carrying a code. The code rides
+    -- through to the order, so "who sold what" is answered from the ledger
+    -- rather than from an argument after the event. This is attribution only:
+    -- it moves no money and pays no commission, because paying promoters
+    -- automatically would need its own agreement and its own compliance story.
+    CREATE TABLE IF NOT EXISTS event_promoters (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      code TEXT NOT NULL,
+      promoter_name TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      clicks INTEGER NOT NULL DEFAULT 0,
+      created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_event_promoters_event_code ON event_promoters (event_id, code);
+    ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS promoter_id UUID;
+    CREATE INDEX IF NOT EXISTS idx_ticket_orders_promoter ON ticket_orders (promoter_id) WHERE promoter_id IS NOT NULL;
   `);
   await ensureDefaultPricingRule("ticket_purchase");
   await ensureDefaultPricingRule("ticket_business_commission");
@@ -1926,7 +1990,11 @@ async function ticketPurchasePreview(slug, payload = {}, buyerUserId = null) {
   const { rows } = await pool.query(
     `SELECT e.*, tt.id AS ticket_type_id, tt.ticket_name, tt.price, tt.quantity_available, tt.quantity_reserved, tt.quantity_sold,
             tt.min_purchase_quantity, tt.max_purchase_quantity, tt.sales_opening_at, tt.sales_closing_at,
-            tt.per_customer_purchase_limit
+            tt.per_customer_purchase_limit,
+            -- Selected so the preview can tell the buyer the refund terms
+            -- BEFORE they pay. Without these, refundPolicyFor reads undefined
+            -- and every ticket quietly previews as non-refundable.
+            tt.refunds_allowed, tt.refund_deadline, tt.refund_conditions
      FROM events e
      JOIN event_ticket_types tt ON tt.event_id = e.id
      WHERE e.slug = $1 AND e.status = 'approved'
@@ -1992,7 +2060,10 @@ async function ticketPurchasePreview(slug, payload = {}, buyerUserId = null) {
     buyerFee,
     businessCommission,
     businessNet: money(subtotal - businessCommission),
-    total: money(subtotal + buyerFee)
+    total: money(subtotal + buyerFee),
+    // Shown next to the Pay button. A buyer must be able to read the refund
+    // terms BEFORE they commit, not discover them when they ask for money back.
+    refundPolicy: refundPolicyFor(row, row)
   };
 }
 
@@ -2457,6 +2528,20 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
         discount
       ]
     );
+
+    // Attribution, resolved inside the transaction so it lands with the order
+    // or not at all. An unknown or switched-off code simply attributes nothing:
+    // a promoter link that has been retired must never fail somebody's payment.
+    const promoterCode = normalizeCouponCode(payload.promoterCode || payload.ref || "");
+    if (promoterCode) {
+      await client.query(
+        `UPDATE ticket_orders SET promoter_id = (
+            SELECT id FROM event_promoters
+             WHERE event_id = $2 AND code = $3 AND status = 'active' LIMIT 1
+         ) WHERE id = $1`,
+        [orderId, preview.eventId, promoterCode]
+      );
+    }
 
     // The redemption is taken inside the same transaction as the money. If
     // anything below fails, the code goes back on the shelf along with the
@@ -3058,16 +3143,145 @@ async function listEventStaff(actor, eventId) {
   return rows;
 }
 
+/* ==========================================================================
+   THE REFUND POLICY, ENFORCED
+   ==========================================================================
+   refunds_allowed, refund_deadline and refund_conditions have been stored on
+   every ticket type since ticketing shipped, and nothing has ever read them.
+   The app also hard-coded refundsAllowed: true on every tier it created, so
+   the organiser's stated policy was decoration twice over: they could not set
+   it, the buyer never saw it, and nothing enforced it.
+
+   ONE function answers "can this be refunded?", and both the buyer's screen
+   and the refund gate call it. A policy shown on the checkout screen and a
+   policy applied at the counter that could differ is worse than no policy.
+   ========================================================================== */
+
+// Describes the policy in the words a buyer needs BEFORE they pay. Pure: it
+// takes rows and returns a description, so the same call serves the purchase
+// preview, the public event page and the refund request.
+function refundPolicyFor(ticketTypeRow = {}, eventRow = {}) {
+  const allowed = Boolean(ticketTypeRow.refunds_allowed ?? ticketTypeRow.refundsAllowed);
+  const deadlineRaw = ticketTypeRow.refund_deadline ?? ticketTypeRow.refundDeadline ?? null;
+  const deadline = deadlineRaw ? new Date(deadlineRaw) : null;
+  const validDeadline = deadline && !Number.isNaN(deadline.getTime());
+  const conditions = cleanText(ticketTypeRow.refund_conditions ?? ticketTypeRow.refundConditions ?? "", 800);
+  const eventPolicy = eventRow.refund_policy || eventRow.refundPolicy || {};
+  const summary = cleanText(eventPolicy.summary || eventPolicy.conditions || "", 800);
+
+  // The single sentence that goes next to the Pay button. It has to be true
+  // whether or not the organiser wrote anything.
+  let headline;
+  if (!allowed) {
+    headline = "This ticket is non-refundable.";
+  } else if (validDeadline) {
+    headline = `Refundable until ${deadline.toLocaleDateString("en-ZA", {
+      day: "numeric", month: "long", year: "numeric"
+    })}.`;
+  } else {
+    headline = "Refundable while the organiser's refund window is open.";
+  }
+  return {
+    refundsAllowed: allowed,
+    deadline: validDeadline ? deadline.toISOString() : null,
+    headline,
+    conditions,
+    // The organiser's own words about the event as a whole, shown under the
+    // headline so a buyer reads the policy rather than being told one exists.
+    summary,
+    // A refund always costs the processing fee, and a buyer who is told
+    // "refundable" and then gets less back than they paid feels cheated.
+    feeNotice: allowed ? "A refund returns the ticket price. The TitoPay service fee and the refund processing fee are not returned." : ""
+  };
+}
+
+// Whether THIS order can be refunded right now, and if not, why not in words
+// that name the organiser's rule rather than an internal state.
+function refundEligibility(order = {}, ticketTypeRow = {}, eventRow = {}, { scannedCount = 0 } = {}) {
+  const policy = refundPolicyFor(ticketTypeRow, eventRow);
+  const refuse = (reason) => ({ ...policy, eligible: false, reason });
+
+  if (String(order.status) === "refunded") return refuse("This order has already been refunded.");
+  if (String(order.status) !== "paid") return refuse("This order is not eligible for a refund request.");
+  if (money(order.total || 0) <= 0) {
+    return refuse("This ticket was free, so there is nothing to refund. You can release your spot by not attending.");
+  }
+  if (scannedCount > 0) return refuse("A ticket that has already been scanned at the door cannot be refunded.");
+  if (!policy.refundsAllowed) {
+    return refuse(policy.conditions
+      ? `The organiser does not offer refunds on this ticket. ${policy.conditions}`
+      : "The organiser does not offer refunds on this ticket.");
+  }
+  if (policy.deadline && new Date(policy.deadline).getTime() < Date.now()) {
+    return refuse(`The refund window for this ticket closed on ${new Date(policy.deadline).toLocaleDateString("en-ZA", {
+      day: "numeric", month: "long", year: "numeric"
+    })}.`);
+  }
+  // An event that has already happened cannot be refunded whatever the policy
+  // says, or a no-show would be refundable for as long as the deadline column
+  // happened to be left empty.
+  const eventDate = eventRow.event_end_date || eventRow.event_date;
+  if (eventDate) {
+    const ends = new Date(eventDate);
+    ends.setHours(23, 59, 59, 999);
+    if (!Number.isNaN(ends.getTime()) && ends.getTime() < Date.now()) {
+      return refuse("This event has already taken place, so it can no longer be refunded.");
+    }
+  }
+  return { ...policy, eligible: true, reason: "" };
+}
+
+// Reads the policy for one order. Used by the app to decide whether to offer a
+// Request refund button at all, so a buyer is never invited to tap something
+// that is going to refuse them.
+async function ticketOrderRefundPolicy(actor, orderId) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `SELECT o.*, tt.refunds_allowed, tt.refund_deadline, tt.refund_conditions,
+            e.refund_policy, e.event_date, e.event_end_date, e.event_name,
+            (SELECT COUNT(*)::INT FROM tickets t WHERE t.order_id = o.id AND t.status = 'scanned') AS scanned
+       FROM ticket_orders o
+       JOIN event_ticket_types tt ON tt.id = o.ticket_type_id
+       JOIN events e ON e.id = o.event_id
+      WHERE o.id = $1 AND o.buyer_user_id = $2
+      LIMIT 1`,
+    [orderId, actor.userId]
+  );
+  const row = rows[0];
+  if (!row) throw new AppError(404, "Ticket order not found");
+  const { rows: openRows } = await pool.query(
+    "SELECT id, status FROM ticket_refunds WHERE order_id = $1 AND status IN ('requested','under_review') LIMIT 1",
+    [orderId]
+  );
+  return {
+    ...refundEligibility(row, row, row, { scannedCount: Number(row.scanned || 0) }),
+    orderId,
+    eventName: row.event_name,
+    alreadyRequested: Boolean(openRows[0]),
+    refundableAmount: money(row.subtotal)
+  };
+}
+
 async function requestTicketRefund(actor, orderId, payload = {}, meta = {}) {
   await ensureTicketingSchema();
-  const { rows } = await pool.query("SELECT * FROM ticket_orders WHERE id = $1 AND buyer_user_id = $2 LIMIT 1", [orderId, actor.userId]);
+  // THE POLICY IS CHECKED HERE, not just displayed. The same function answers
+  // the buyer's screen, so the button they were shown and the rule applied
+  // when they tap it can never disagree.
+  const { rows } = await pool.query(
+    `SELECT o.*, tt.refunds_allowed, tt.refund_deadline, tt.refund_conditions,
+            e.refund_policy, e.event_date, e.event_end_date,
+            (SELECT COUNT(*)::INT FROM tickets t WHERE t.order_id = o.id AND t.status = 'scanned') AS scanned
+       FROM ticket_orders o
+       JOIN event_ticket_types tt ON tt.id = o.ticket_type_id
+       JOIN events e ON e.id = o.event_id
+      WHERE o.id = $1 AND o.buyer_user_id = $2
+      LIMIT 1`,
+    [orderId, actor.userId]
+  );
   const order = rows[0];
   if (!order) throw new AppError(404, "Ticket order not found");
-  if (order.status !== "paid") throw new AppError(409, "This order is not eligible for refund request");
-  // A free ticket cost nothing, so there is nothing to refund. This also keeps
-  // the refund money path — which charges a R0.50 processing fee — off orders
-  // that never moved money.
-  if (money(order.total || 0) <= 0) throw new AppError(409, "This ticket was free, so there is nothing to refund. You can release your spot by not attending.");
+  const eligibility = refundEligibility(order, order, order, { scannedCount: Number(order.scanned || 0) });
+  if (!eligibility.eligible) throw new AppError(409, eligibility.reason);
   const { rows: existing } = await pool.query("SELECT * FROM ticket_refunds WHERE order_id = $1 AND status IN ('requested','under_review') LIMIT 1", [orderId]);
   if (existing[0]) return existing[0];
   const refundId = randomUUID();
@@ -3086,6 +3300,325 @@ async function requestTicketRefund(actor, orderId, payload = {}, meta = {}) {
     ...meta
   });
   return inserted[0];
+}
+
+// The organiser's own refund queue, scoped to one of their events. Same rows
+// the admin console sees, filtered to the event whose money is at stake.
+async function listEventRefunds(eventId, { status = "" } = {}) {
+  await ensureTicketingSchema();
+  const params = [eventId];
+  let clause = "r.event_id = $1";
+  if (status) { params.push(status); clause += ` AND r.status = $${params.length}`; }
+  const { rows } = await pool.query(
+    `SELECT r.*, o.order_reference, o.quantity, o.total AS order_total, o.subtotal AS order_subtotal,
+            u.full_name AS buyer_name, u.email AS buyer_email,
+            tt.ticket_name
+       FROM ticket_refunds r
+       JOIN ticket_orders o ON o.id = r.order_id
+       JOIN users u ON u.id = o.buyer_user_id
+       JOIN event_ticket_types tt ON tt.id = o.ticket_type_id
+      WHERE ${clause}
+      ORDER BY r.requested_at DESC
+      LIMIT 200`,
+    params
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    orderId: row.order_id,
+    orderReference: row.order_reference,
+    status: row.status,
+    reason: row.reason,
+    amount: money(row.amount),
+    orderTotal: money(row.order_total),
+    quantity: Number(row.quantity || 0),
+    ticketName: row.ticket_name,
+    buyerName: row.buyer_name,
+    buyerEmail: row.buyer_email,
+    decisionNote: row.decision_note || "",
+    processedByRole: row.processed_by_role || null,
+    requestedAt: row.requested_at,
+    processedAt: row.processed_at
+  }));
+}
+
+/* ==========================================================================
+   WAITLIST
+   ==========================================================================
+   A sold-out event is currently a dead end: the buyer leaves and the organiser
+   never learns that fifty more people wanted in. Joining the list is free and
+   reserves nothing. It is a signal, not a claim on a ticket, and the copy says
+   so, because a "waitlist" people believe is a reservation produces a worse
+   argument than no waitlist at all.
+   ========================================================================== */
+
+async function joinTicketWaitlist(actor, slug, payload = {}) {
+  await ensureTicketingSchema();
+  const quantity = Math.max(1, Math.min(20, Number.parseInt(payload.quantity || 1, 10) || 1));
+  const { rows } = await pool.query(
+    "SELECT id, event_name FROM events WHERE slug = $1 AND status = 'approved' LIMIT 1",
+    [slugify(slug)]
+  );
+  const event = rows[0];
+  if (!event) throw new AppError(404, "Event is not available");
+  const ticketTypeId = cleanText(payload.ticketTypeId || payload.ticket_type_id, 80) || null;
+  if (ticketTypeId) {
+    const { rows: typeRows } = await pool.query(
+      "SELECT id FROM event_ticket_types WHERE id = $1 AND event_id = $2 LIMIT 1", [ticketTypeId, event.id]);
+    if (!typeRows[0]) throw new AppError(404, "That ticket type does not belong to this event");
+  }
+  const { rows: saved } = await pool.query(
+    `INSERT INTO ticket_waitlist (id, event_id, ticket_type_id, user_id, quantity)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (event_id, COALESCE(ticket_type_id, '00000000-0000-0000-0000-000000000000'::UUID), user_id)
+     DO UPDATE SET quantity = EXCLUDED.quantity, status = 'waiting', updated_at = NOW()
+     RETURNING *`,
+    [randomUUID(), event.id, ticketTypeId, actor.userId, quantity]
+  );
+  const { rows: positionRows } = await pool.query(
+    `SELECT COUNT(*)::INT AS ahead FROM ticket_waitlist
+      WHERE event_id = $1 AND status = 'waiting' AND created_at < $2`,
+    [event.id, saved[0].created_at]
+  );
+  return {
+    id: saved[0].id,
+    eventName: event.event_name,
+    quantity: saved[0].quantity,
+    position: Number(positionRows[0]?.ahead || 0) + 1,
+    // Said plainly, because a waitlist that sounds like a reservation is a
+    // complaint waiting to happen.
+    message: "You are on the list. Nothing is reserved and nothing has been charged. We will tell you if tickets are released."
+  };
+}
+
+async function leaveTicketWaitlist(actor, slug) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query("SELECT id FROM events WHERE slug = $1 LIMIT 1", [slugify(slug)]);
+  if (!rows[0]) throw new AppError(404, "Event is not available");
+  await pool.query("DELETE FROM ticket_waitlist WHERE event_id = $1 AND user_id = $2", [rows[0].id, actor.userId]);
+  return { ok: true, message: "You have been taken off the waitlist." };
+}
+
+async function myWaitlistEntry(actor, slug) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `SELECT w.* FROM ticket_waitlist w
+       JOIN events e ON e.id = w.event_id
+      WHERE e.slug = $1 AND w.user_id = $2 LIMIT 1`,
+    [slugify(slug), actor.userId]
+  );
+  return rows[0] ? { onList: true, quantity: rows[0].quantity, status: rows[0].status } : { onList: false };
+}
+
+async function listEventWaitlist(eventId) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `SELECT w.*, u.full_name, u.email, tt.ticket_name
+       FROM ticket_waitlist w
+       JOIN users u ON u.id = w.user_id
+       LEFT JOIN event_ticket_types tt ON tt.id = w.ticket_type_id
+      WHERE w.event_id = $1
+      ORDER BY w.created_at ASC
+      LIMIT 500`,
+    [eventId]
+  );
+  const demand = rows.filter((row) => row.status === "waiting")
+    .reduce((total, row) => total + Number(row.quantity || 0), 0);
+  return {
+    demand,
+    waiting: rows.filter((row) => row.status === "waiting").length,
+    items: rows.map((row) => ({
+      id: row.id,
+      name: row.full_name,
+      email: row.email,
+      ticketName: row.ticket_name || "Any ticket",
+      quantity: Number(row.quantity || 0),
+      status: row.status,
+      notifiedAt: row.notified_at,
+      joinedAt: row.created_at
+    }))
+  };
+}
+
+// The organiser released more tickets and wants the queue told. In-app and
+// email, through the same queue every other notice uses, and never a
+// claim-by-link message.
+async function notifyEventWaitlist(actor, eventId, payload = {}) {
+  await ensureTicketingSchema();
+  const { rows: eventRows } = await pool.query("SELECT * FROM events WHERE id = $1 LIMIT 1", [eventId]);
+  const event = eventRows[0];
+  if (!event) throw new AppError(404, "Event not found");
+  const { rows } = await pool.query(
+    "SELECT w.*, u.id AS user_id FROM ticket_waitlist w JOIN users u ON u.id = w.user_id WHERE w.event_id = $1 AND w.status = 'waiting' ORDER BY w.created_at ASC LIMIT 500",
+    [eventId]
+  );
+  const note = cleanText(payload.message || "", 400);
+  const body = `${event.event_name}: tickets have been released. ${note || "Open TitoPay and get yours before they go again."}`;
+  let told = 0;
+  for (const entry of rows) {
+    try {
+      await createNotification({
+        user: { id: entry.user_id, user_type: "customer" },
+        channel: "in_app",
+        notificationType: "ticket_waitlist_released",
+        title: "Tickets released",
+        body,
+        provider: "in_app",
+        metadata: { eventId, slug: event.slug, clientNotificationId: `waitlist-${entry.id}-${Date.now()}` }
+      });
+      told += 1;
+    } catch (error) {
+      console.error("[waitlist-notify-failed]", { eventId, entryId: entry.id, message: error.message });
+    }
+  }
+  await pool.query(
+    "UPDATE ticket_waitlist SET status = 'notified', notified_at = NOW(), updated_at = NOW() WHERE event_id = $1 AND status = 'waiting'",
+    [eventId]
+  );
+  await eventAudit({
+    eventId, actorType: "customer", actorId: actor.userId, action: "waitlist_notified",
+    metadata: { told }
+  });
+  return { told, message: told ? `${told} ${told === 1 ? "person has" : "people have"} been told.` : "Nobody is waiting right now." };
+}
+
+/* ==========================================================================
+   PROMOTER LINKS
+   ==========================================================================
+   Attribution, and deliberately nothing more. The code rides from the link
+   through to the order, so "who actually sold this" is answered from the
+   ledger. TitoPay pays no commission on it: paying promoters automatically
+   would need its own agreement, its own tax treatment and its own compliance
+   story, and inventing that quietly inside a ticketing feature would be wrong.
+   ========================================================================== */
+
+async function listEventPromoters(eventId) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `SELECT p.*,
+            (SELECT COUNT(*)::INT FROM ticket_orders o WHERE o.promoter_id = p.id AND o.status = 'paid') AS orders,
+            (SELECT COALESCE(SUM(o.quantity), 0)::INT FROM ticket_orders o WHERE o.promoter_id = p.id AND o.status = 'paid') AS tickets,
+            (SELECT COALESCE(SUM(o.subtotal), 0) FROM ticket_orders o WHERE o.promoter_id = p.id AND o.status = 'paid') AS sales
+       FROM event_promoters p
+      WHERE p.event_id = $1
+      ORDER BY sales DESC, p.created_at DESC`,
+    [eventId]
+  );
+  const { rows: slugRows } = await pool.query("SELECT slug FROM events WHERE id = $1 LIMIT 1", [eventId]);
+  const slug = slugRows[0]?.slug || "";
+  return rows.map((row) => ({
+    id: row.id,
+    code: row.code,
+    promoterName: row.promoter_name,
+    status: row.status,
+    clicks: Number(row.clicks || 0),
+    orders: Number(row.orders || 0),
+    tickets: Number(row.tickets || 0),
+    sales: money(row.sales),
+    link: `https://app.titopay.co.za/events/${slug}?ref=${encodeURIComponent(row.code)}`,
+    createdAt: row.created_at
+  }));
+}
+
+async function createEventPromoter(actor, eventId, payload = {}) {
+  await ensureTicketingSchema();
+  const code = normalizeCouponCode(payload.code);
+  if (code.length < 3) throw new AppError(400, "A promoter code needs at least 3 letters or numbers.");
+  const promoterName = cleanText(payload.promoterName || payload.name || "", 120);
+  if (!promoterName) throw new AppError(400, "Give the promoter a name so you know who this link belongs to.");
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO event_promoters (id, event_id, code, promoter_name, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [randomUUID(), eventId, code, promoterName, cleanText(payload.notes, 300), actor.userId]
+    );
+    await eventAudit({ eventId, actorType: "customer", actorId: actor.userId, action: "promoter_created", metadata: { code } });
+    const list = await listEventPromoters(eventId);
+    return list.find((item) => item.id === rows[0].id) || list[0];
+  } catch (error) {
+    if (error?.code === "23505") throw new AppError(409, `You already have a promoter link called ${code} on this event.`);
+    throw error;
+  }
+}
+
+async function removeEventPromoter(actor, eventId, promoterId) {
+  await ensureTicketingSchema();
+  // Orders keep pointing at the row, so a link that has sold anything is
+  // switched off rather than deleted: deleting it would erase the answer to
+  // "who sold these tickets" from every order it brought in.
+  const { rows } = await pool.query(
+    "SELECT (SELECT COUNT(*)::INT FROM ticket_orders o WHERE o.promoter_id = $1) AS used, code FROM event_promoters WHERE id = $1 AND event_id = $2",
+    [promoterId, eventId]
+  );
+  if (!rows[0]) throw new AppError(404, "Promoter link not found");
+  if (Number(rows[0].used || 0) > 0) {
+    await pool.query("UPDATE event_promoters SET status = 'disabled', updated_at = NOW() WHERE id = $1", [promoterId]);
+    return { deleted: false, message: `${rows[0].code} has already sold tickets, so it was switched off. Its sales stay on your report.` };
+  }
+  await pool.query("DELETE FROM event_promoters WHERE id = $1", [promoterId]);
+  return { deleted: true, message: `${rows[0].code} was deleted.` };
+}
+
+// A promoter link was opened. Counted separately from sales so an organiser can
+// see the difference between reach and conversion. Best-effort by design: a
+// counter must never be the reason an event page fails to load.
+async function recordPromoterVisit(slug, code) {
+  const normalized = normalizeCouponCode(code);
+  if (!normalized) return;
+  await pool.query(
+    `UPDATE event_promoters SET clicks = clicks + 1, updated_at = NOW()
+      WHERE code = $1 AND event_id = (SELECT id FROM events WHERE slug = $2 LIMIT 1)`,
+    [normalized, slugify(slug)]
+  ).catch(() => {});
+}
+
+// Duplicating an event is how a weekly market or a tour actually gets made.
+// It copies the setup and NOTHING that belongs to the original's sales: no
+// tickets, no orders, no promoter links, no waitlist. The copy starts as a
+// draft and goes through approval like any other event.
+async function duplicateEvent(actor, eventId, payload = {}) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    "SELECT * FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1", [eventId, actor.userId]);
+  const source = rows[0];
+  if (!source) throw new AppError(404, "Event not found");
+  const eventDate = payload.eventDate ? new Date(payload.eventDate) : null;
+  if (!eventDate || Number.isNaN(eventDate.getTime())) throw new AppError(400, "Choose the date for the new event.");
+  const name = cleanText(payload.eventName, 180) || `${source.event_name} (copy)`;
+  const newId = randomUUID();
+  const slug = await uniqueSlug(name);
+  await pool.query(
+    `INSERT INTO events
+      (id, business_user_id, merchant_id, event_name, slug, status, category, description,
+       event_date, event_end_date, start_time, end_time, venue_name, full_venue_address, city, province, country,
+       event_mode, organiser_details, business_details, contact_email, contact_number,
+       event_banner_url, age_restriction, capacity, terms_conditions, refund_policy,
+       entry_rules, prohibited_items, accessibility_information, parking_information,
+       additional_instructions, social_links, registration_mode)
+     SELECT $1, business_user_id, merchant_id, $2, $3, 'draft', category, description,
+       $4, $5, start_time, end_time, venue_name, full_venue_address, city, province, country,
+       event_mode, organiser_details, business_details, contact_email, contact_number,
+       event_banner_url, age_restriction, capacity, terms_conditions, refund_policy,
+       entry_rules, prohibited_items, accessibility_information, parking_information,
+       additional_instructions, social_links, registration_mode
+     FROM events WHERE id = $6`,
+    [newId, name, slug, eventDate, payload.eventEndDate ? new Date(payload.eventEndDate) : null, eventId]
+  );
+  // Ticket types come across with their prices and capacity, and with their
+  // sales counters back at zero. A copy that inherited "quantity_sold" would
+  // open already sold out.
+  await pool.query(
+    `INSERT INTO event_ticket_types
+      (id, event_id, ticket_name, description, price, quantity_available, min_purchase_quantity,
+       max_purchase_quantity, per_customer_purchase_limit, attendee_details_required, transfer_allowed,
+       refunds_allowed, refund_conditions, sort_order)
+     SELECT gen_random_uuid(), $1, ticket_name, description, price, quantity_available, min_purchase_quantity,
+       max_purchase_quantity, per_customer_purchase_limit, attendee_details_required, transfer_allowed,
+       refunds_allowed, refund_conditions, sort_order
+     FROM event_ticket_types WHERE event_id = $2`,
+    [newId, eventId]
+  );
+  await eventAudit({ eventId: newId, actorType: "customer", actorId: actor.userId, action: "event_duplicated", metadata: { sourceEventId: eventId } });
+  return getBusinessEvent(actor.userId, newId);
 }
 
 async function listTicketRefunds({ status = "", limit = 100 } = {}) {
@@ -3116,15 +3649,23 @@ async function processTicketRefund(refundId, payload = {}, actor, meta = {}) {
   const action = String(payload.action || "approve").toLowerCase();
   const status = action === "reject" ? "rejected" : "approved";
   const decisionNote = cleanText(payload.note || payload.reason || "", 1000);
+  // An organiser is a customer, and processed_by is a foreign key into
+  // admin_users, so their id would break the insert. Whoever acted is recorded
+  // in the column that can actually hold them, and the role says which.
+  const isAdmin = String(actor?.userType || "admin") === "admin";
+  const adminId = isAdmin ? (actor?.userId || null) : null;
+  const organiserId = isAdmin ? null : (actor?.userId || null);
+  const actorRole = isAdmin ? "admin" : "organiser";
   let refund;
 
   if (status === "rejected") {
     const { rows } = await pool.query(
       `UPDATE ticket_refunds
-       SET status = 'rejected', processed_by = $2, processed_at = NOW(), decision_note = $3, updated_at = NOW()
+       SET status = 'rejected', processed_by = $2, processed_by_user_id = $4, processed_by_role = $5,
+           processed_at = NOW(), decision_note = $3, updated_at = NOW()
        WHERE id = $1 AND status IN ('requested','under_review')
        RETURNING *`,
-      [refundId, actor.userId || null, decisionNote]
+      [refundId, adminId, decisionNote, organiserId, actorRole]
     );
     refund = rows[0];
     if (!refund) throw new AppError(404, "Refund request not found");
@@ -3311,6 +3852,8 @@ async function processTicketRefund(refundId, payload = {}, actor, meta = {}) {
         `UPDATE ticket_refunds
          SET status = 'approved',
              processed_by = $2,
+             processed_by_user_id = $6,
+             processed_by_role = $7,
              processed_at = NOW(),
              decision_note = $3,
              transaction_id = $4,
@@ -3318,7 +3861,7 @@ async function processTicketRefund(refundId, payload = {}, actor, meta = {}) {
              updated_at = NOW()
          WHERE id = $1
          RETURNING *`,
-        [refundId, actor.userId || null, decisionNote, refundTxId, refundAmount]
+        [refundId, adminId, decisionNote, refundTxId, refundAmount, organiserId, actorRole]
       );
       refund = updatedRefundRows[0];
       await client.query("COMMIT");
@@ -3839,6 +4382,20 @@ module.exports = {
   listEventStaff,
   listStaffScanEvents,
   EVENT_CATEGORIES,
+  refundPolicyFor,
+  refundEligibility,
+  ticketOrderRefundPolicy,
+  listEventRefunds,
+  joinTicketWaitlist,
+  leaveTicketWaitlist,
+  myWaitlistEntry,
+  listEventWaitlist,
+  notifyEventWaitlist,
+  listEventPromoters,
+  createEventPromoter,
+  removeEventPromoter,
+  recordPromoterVisit,
+  duplicateEvent,
   listEventCoupons,
   createEventCoupon,
   updateEventCoupon,

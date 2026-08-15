@@ -122,10 +122,19 @@ test("every organiser coupon route is owner-scoped", () => {
   }
   // Each one resolves the event through requireEventOwner, which 404s on an
   // event the caller does not own.
-  const block = ROUTES.slice(ROUTES.indexOf('router.get("/business/events/:id/coupons"'),
-    ROUTES.indexOf('router.get("/business/events/:id/vendors"'));
-  assert.equal((block.match(/requireEventOwner\(req\)/g) || []).length, 4,
-    "all four coupon routes go through requireEventOwner");
+  // Checked per route rather than by counting matches inside a slice: the
+  // slice widened the moment other organiser routes were added between them.
+  for (const marker of [
+    'router.get("/business/events/:id/coupons"',
+    'router.post("/business/events/:id/coupons"',
+    'router.put("/business/events/:id/coupons/:couponId"',
+    'router.delete("/business/events/:id/coupons/:couponId"'
+  ]) {
+    const start = ROUTES.indexOf(marker);
+    assert.ok(start > -1, `${marker} exists`);
+    const handler = ROUTES.slice(start, ROUTES.indexOf("\n});", start));
+    assert.match(handler, /requireEventOwner\(req\)/, `${marker} goes through requireEventOwner`);
+  }
 });
 
 test("a code that did not apply never travels to the payment call", () => {
@@ -139,7 +148,9 @@ test("a code that did not apply never travels to the payment call", () => {
 });
 
 test("the organiser's door exists and says whose money funds the discount", () => {
-  assert.match(APP, /key: "coupons", label: "Discount Codes"/);
+  // The door was renamed to Promotions when promoter links joined discount
+  // codes under it, rather than adding a seventh tile to the hub.
+  assert.match(APP, /key: "coupons", label: "Promotions"/);
   assert.match(APP, /function ticketingCouponsSection/);
   assert.match(APP, /function refreshEventCouponList/);
   assert.match(APP, /Percentage off<\/option>/);

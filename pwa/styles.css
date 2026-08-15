@@ -13994,3 +13994,49 @@ img {
   .event-search-input { transition: none; }
   .event-card:hover { transform: none; }
 }
+
+/* The refund terms, shown next to the Pay button rather than discovered
+   afterwards. Deliberately visually distinct from a hint: this is the thing a
+   buyer will quote back to you. */
+.refund-policy-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  min-width: 0;
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft);
+}
+
+.refund-policy-note.is-final {
+  border-color: #f0d8d8;
+  background: #fdf4f4;
+}
+
+.refund-policy-note .icon-bubble {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+}
+
+.refund-policy-note.is-final .icon-bubble { color: var(--danger); }
+
+.refund-policy-note > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.refund-policy-note strong {
+  color: var(--navy);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.refund-policy-note small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}

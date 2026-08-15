@@ -36,6 +36,19 @@ const {
   claimTicketByCode,
   canManageEventTicketing,
   EVENT_CATEGORIES,
+  ticketOrderRefundPolicy,
+  listEventRefunds,
+  processTicketRefund,
+  joinTicketWaitlist,
+  leaveTicketWaitlist,
+  myWaitlistEntry,
+  listEventWaitlist,
+  notifyEventWaitlist,
+  listEventPromoters,
+  createEventPromoter,
+  removeEventPromoter,
+  recordPromoterVisit,
+  duplicateEvent,
   listEventCoupons,
   createEventCoupon,
   updateEventCoupon,
@@ -92,6 +105,115 @@ router.get("/public/events", async (req, res, next) => {
 // filled from one list rather than two that can drift apart.
 router.get("/public/event-categories", (_req, res) => {
   res.json({ ok: true, categories: EVENT_CATEGORIES });
+});
+
+/* LINK PREVIEWS.
+ *
+ * WhatsApp, Facebook, X, Slack and iMessage all fetch a URL and read its HTML
+ * <meta> tags. They do NOT run JavaScript. The customer app is a single HTML
+ * shell that renders itself on the phone, so a shared event link can only ever
+ * preview as "TitoPay" no matter what the app does after it loads.
+ *
+ * So the shareable link points HERE, at a small server-rendered page that
+ * carries the event's real title, description and poster, and then sends a
+ * human straight on to the app. The crawler gets its tags, the person gets the
+ * event, and the app itself needs no server-side rendering and no change to
+ * the .htaccess that serves it.
+ *
+ * A ?ref= promoter code is preserved through the redirect, so a promoter's
+ * link still attributes after the preview hop.
+ */
+function escapeHtmlAttribute(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+
+router.get("/public/events/:slug/preview", async (req, res, next) => {
+  try {
+    const event = await getPublicApprovedEvent(req.params.slug);
+    const ref = String(req.query.ref || "").slice(0, 32);
+    if (ref) recordPromoterVisit(req.params.slug, ref);
+    const appUrl = `https://app.titopay.co.za/events/${encodeURIComponent(event.slug)}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`;
+    const when = event.eventDate
+      ? new Date(event.eventDate).toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+      : "Date to be confirmed";
+    const where = [event.venueName, event.city].filter(Boolean).join(", ");
+    const description = [when, where].filter(Boolean).join(" · ")
+      + (event.description ? `. ${String(event.description).slice(0, 160)}` : "");
+    const title = `${event.eventName} | TitoPay Tickets`;
+    // A data: poster cannot be fetched by a crawler, so it is offered only
+    // when it is a real URL. A missing image previews as a link with a title,
+    // which is still far better than a bare URL.
+    const image = /^https?:\/\//i.test(String(event.eventBannerUrl || "")) ? event.eventBannerUrl : "";
+    res.set("Content-Type", "text/html; charset=utf-8");
+    res.set("Cache-Control", "public, max-age=300");
+    res.send(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtmlAttribute(title)}</title>
+<meta name="description" content="${escapeHtmlAttribute(description)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="TitoPay">
+<meta property="og:title" content="${escapeHtmlAttribute(event.eventName)}">
+<meta property="og:description" content="${escapeHtmlAttribute(description)}">
+<meta property="og:url" content="${escapeHtmlAttribute(appUrl)}">
+${image ? `<meta property="og:image" content="${escapeHtmlAttribute(image)}">` : ""}
+<meta name="twitter:card" content="${image ? "summary_large_image" : "summary"}">
+<meta name="twitter:title" content="${escapeHtmlAttribute(event.eventName)}">
+<meta name="twitter:description" content="${escapeHtmlAttribute(description)}">
+${image ? `<meta name="twitter:image" content="${escapeHtmlAttribute(image)}">` : ""}
+<link rel="canonical" href="${escapeHtmlAttribute(appUrl)}">
+<meta http-equiv="refresh" content="0; url=${escapeHtmlAttribute(appUrl)}">
+</head>
+<body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:40px 20px;text-align:center;color:#10203f">
+<h1 style="font-size:1.25rem;margin:0 0 8px">${escapeHtmlAttribute(event.eventName)}</h1>
+<p style="color:#62708a;margin:0 0 20px">${escapeHtmlAttribute([when, where].filter(Boolean).join(" · "))}</p>
+<p><a href="${escapeHtmlAttribute(appUrl)}" style="color:#0a4dff;font-weight:600">Open this event in TitoPay</a></p>
+<script>location.replace(${JSON.stringify(appUrl)});</script>
+</body>
+</html>`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// What a buyer may do about a refund on an order they own, and why. Read by
+// the app so it never offers a button that is going to refuse.
+router.get("/orders/:id/refund-policy", requireAuth, async (req, res, next) => {
+  try {
+    const orderId = requireUuid(req.params.id, "Order ID");
+    res.json({ ok: true, policy: await ticketOrderRefundPolicy(req.auth, orderId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// WAITLIST, from the buyer's side.
+router.post("/public/events/:slug/waitlist", requireAuth, async (req, res, next) => {
+  try {
+    res.status(201).json({ ok: true, waitlist: await joinTicketWaitlist(req.auth, req.params.slug, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/public/events/:slug/waitlist", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await leaveTicketWaitlist(req.auth, req.params.slug)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/public/events/:slug/waitlist/me", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, waitlist: await myWaitlistEntry(req.auth, req.params.slug) });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.get("/public/events/:slug", async (req, res, next) => {
@@ -560,6 +682,91 @@ router.delete("/business/events/:id/coupons/:couponId", requireAuth, async (req,
     const eventId = await requireEventOwner(req);
     const couponId = requireUuid(req.params.couponId, "Discount code ID");
     res.json({ ok: true, ...(await deleteEventCoupon(req.auth, eventId, couponId, meta(req))) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// THE ORGANISER'S REFUND DESK. Their event, their money going back, so they
+// decide. requireEventOwner is the whole authorisation story: a refund on an
+// event that is not theirs answers 404 like the event itself.
+router.get("/business/events/:id/refunds", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    res.json({ ok: true, items: await listEventRefunds(eventId, { status: req.query.status || "" }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/business/events/:id/refunds/:refundId/action", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    const refundId = requireUuid(req.params.refundId, "Refund ID");
+    // Belt and braces: the refund must belong to the event that was just
+    // proven to belong to the caller.
+    const { rows } = await pool.query("SELECT id FROM ticket_refunds WHERE id = $1 AND event_id = $2 LIMIT 1", [refundId, eventId]);
+    if (!rows[0]) throw new AppError(404, "Refund request not found");
+    const refund = await processTicketRefund(refundId, req.body || {},
+      { userId: req.auth.userId, userType: "customer" }, meta(req));
+    res.json({ ok: true, refund });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// WAITLIST, from the organiser's side.
+router.get("/business/events/:id/waitlist", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await listEventWaitlist(await requireEventOwner(req))) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/business/events/:id/waitlist/notify", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    res.json({ ok: true, ...(await notifyEventWaitlist(req.auth, eventId, req.body || {})) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PROMOTER LINKS.
+router.get("/business/events/:id/promoters", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await listEventPromoters(await requireEventOwner(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/business/events/:id/promoters", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    res.status(201).json({ ok: true, promoter: await createEventPromoter(req.auth, eventId, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/business/events/:id/promoters/:promoterId", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    const promoterId = requireUuid(req.params.promoterId, "Promoter ID");
+    res.json({ ok: true, ...(await removeEventPromoter(req.auth, eventId, promoterId)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Duplicate an event onto a new date. This is how a weekly market or a tour
+// gets made without a recurrence engine underneath the money path.
+router.post("/business/events/:id/duplicate", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    res.status(201).json({ ok: true, event: await duplicateEvent(req.auth, eventId, req.body || {}) });
   } catch (error) {
     next(error);
   }

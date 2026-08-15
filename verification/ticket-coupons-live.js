@@ -90,10 +90,14 @@ async function seedEvent(slug, types) {
   const made = {};
   for (const [index, type] of types.entries()) {
     const id = crypto.randomUUID();
+    // Refundable on purpose: check 10 refunds an order to prove the coupon use
+    // comes back. refunds_allowed now defaults to FALSE and is ENFORCED, so a
+    // ticket type seeded without it is genuinely non-refundable.
     await pool.query(
       `INSERT INTO event_ticket_types
-         (id, event_id, ticket_name, price, quantity_available, min_purchase_quantity, max_purchase_quantity, sort_order)
-       VALUES ($1,$2,$3,$4,$5,1,20,$6)`,
+         (id, event_id, ticket_name, price, quantity_available, min_purchase_quantity, max_purchase_quantity,
+          refunds_allowed, refund_deadline, sort_order)
+       VALUES ($1,$2,$3,$4,$5,1,20,TRUE, NOW() + INTERVAL '20 days', $6)`,
       [id, eventId, type.name, type.price, type.qty, (index + 1) * 10]);
     made[type.name] = id;
   }

@@ -48,9 +48,15 @@ test("the search box can never become SQL", () => {
 });
 
 test("browsing needs no account: this is the shop window", () => {
-  const block = ROUTES.slice(ROUTES.indexOf('router.get("/public/events"'),
-    ROUTES.indexOf('router.get("/public/events/:slug"'));
+  // Scoped to the handler itself rather than to everything before the next
+  // route: routes get inserted between them, and a slice that drifts would
+  // start asserting about somebody else's endpoint.
+  const start = ROUTES.indexOf('router.get("/public/events"');
+  const block = ROUTES.slice(start, ROUTES.indexOf("});", start));
   assert.doesNotMatch(block, /requireAuth/, "the public events list must not require a token");
+  const previewStart = ROUTES.indexOf('router.get("/public/events/:slug/preview"');
+  const preview = ROUTES.slice(previewStart, ROUTES.indexOf("});", previewStart));
+  assert.doesNotMatch(preview, /requireAuth/, "a link preview must be readable by a crawler");
   assert.match(ROUTES, /router\.get\("\/public\/event-categories"/);
 });
 

@@ -2895,6 +2895,7 @@ async function onSubmit(event) {
     }
     if (form.dataset.form === "ticketing-cashless") await submitTicketingCashless(data);
     if (form.dataset.form === "ticketing-coupon") await submitTicketingCoupon(data);
+    if (form.dataset.form === "ticketing-promoter") await submitTicketingPromoter(data);
     if (form.dataset.form === "ticketing-vendor") await submitTicketingVendor(data, form);
     if (form.dataset.form === "ticketing-tag-issue") await submitTicketingTagIssue(data);
     if (form.dataset.form === "ticketing-tag-assign") await submitTicketingTagAssign(data);
@@ -3819,7 +3820,9 @@ function onChange(event) {
   const vendorEventPick = event.target.closest("select[data-vendor-event-pick]");
   if (vendorEventPick) refreshEventVendorList(vendorEventPick.value);
   const couponEventPick = event.target.closest("select[data-coupon-event-pick]");
-  if (couponEventPick) refreshEventCouponList(couponEventPick.value);
+  if (couponEventPick) refreshEventPromotions(couponEventPick.value);
+  const salesEventPick = event.target.closest("select[data-sales-event-pick]");
+  if (salesEventPick) refreshEventAftersales(salesEventPick.value);
   // Percentage and amount need different words next to the same box, or an
   // organiser types 25 meaning rands and gives away a quarter of the ticket.
   const couponType = event.target.closest("select[data-coupon-type]");
@@ -4041,6 +4044,14 @@ async function handleAction(action, actionElement = null) {
     await revokeTicketingVendor(parts[1], parts[2]);
     return;
   }
+  if (String(action || "").startsWith("waitlist-join:")) {
+    await joinEventWaitlist(action.slice("waitlist-join:".length));
+    return;
+  }
+  if (String(action || "").startsWith("request-refund:")) {
+    await requestOrderRefund(action.slice("request-refund:".length));
+    return;
+  }
   if (String(action || "").startsWith("event-share:")) {
     await shareTicketingEvent(action.slice("event-share:".length));
     return;
@@ -4051,6 +4062,25 @@ async function handleAction(action, actionElement = null) {
     const input = document.querySelector("[data-ticket-search]");
     if (input) input.value = "";
     await refreshPublicTickets({ reset: false });
+    return;
+  }
+  if (String(action || "").startsWith("refund-approve:")) {
+    const parts = action.split(":");
+    await decideTicketRefund(parts[1], parts[2], "approve");
+    return;
+  }
+  if (String(action || "").startsWith("refund-reject:")) {
+    const parts = action.split(":");
+    await decideTicketRefund(parts[1], parts[2], "reject");
+    return;
+  }
+  if (String(action || "").startsWith("waitlist-notify:")) {
+    await notifyEventWaitlistFromApp(action.slice("waitlist-notify:".length));
+    return;
+  }
+  if (String(action || "").startsWith("promoter-remove:")) {
+    const parts = action.split(":");
+    await removeTicketingPromoter(parts[1], parts[2]);
     return;
   }
   if (String(action || "").startsWith("coupon-disable:")) {
@@ -16832,9 +16862,11 @@ function ticketingPublicEventRow(event = {}) {
         </div>
       </button>
       <div class="event-card-actions">
-        <button class="btn secondary event-card-cta" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}"${soldOut ? " disabled" : ""}>
-          ${soldOut ? "Sold out" : event.registrationMode ? "Register" : "Get tickets"}
-        </button>
+        ${soldOut
+          ? `<button class="btn secondary event-card-cta" type="button" data-action="waitlist-join:${esc(event.slug || "")}">${icon("bell")} Join the waiting list</button>`
+          : `<button class="btn secondary event-card-cta" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}">
+              ${event.registrationMode ? "Register" : "Get tickets"}
+            </button>`}
         <button class="icon-btn event-share-btn" type="button" data-action="event-share:${esc(event.slug || "")}"
           aria-label="Share ${esc(event.eventName || "this event")}" title="Share this event">${icon("share")}</button>
       </div>
@@ -16848,12 +16880,74 @@ function ticketingPublicEventRow(event = {}) {
 // to WhatsApp with one tap, and falls back to the clipboard everywhere else.
 // The link is the public event page, which works for somebody who has never
 // heard of TitoPay: they can read the event before being asked to sign in.
+// Joining the waiting list. Says plainly that nothing is held, because a
+// waitlist people read as a reservation produces a worse argument than none.
+async function joinEventWaitlist(slug) {
+  if (!state.auth?.accessToken) {
+    showToast("Sign in to join the waiting list.", "error");
+    return;
+  }
+  try {
+    const result = await api(`/v1/ticketing/public/events/${encodeURIComponent(slug)}/waitlist`, {
+      method: "POST",
+      body: { quantity: 1 }
+    });
+    openInfoModal("You are on the list",
+      `${result.waitlist.message} You are number ${result.waitlist.position} in the queue for ${result.waitlist.eventName}.`);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
+// Asking for money back. The server is asked FIRST what the policy allows, so
+// the buyer reads the organiser's actual terms before they commit to asking,
+// and is never invited to tap something that is going to refuse them.
+async function requestOrderRefund(orderId) {
+  let policy;
+  try {
+    const result = await api(`/v1/ticketing/orders/${encodeURIComponent(orderId)}/refund-policy`);
+    policy = result.policy || {};
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+    return;
+  }
+  if (policy.alreadyRequested) {
+    openInfoModal("Already requested",
+      "You have already asked for a refund on this order. The organiser will respond, and you will get a notification either way.");
+    return;
+  }
+  if (!policy.eligible) {
+    openInfoModal("Refund not available", policy.reason || "This ticket cannot be refunded.");
+    return;
+  }
+  const confirmed = await askToConfirm({
+    title: "Request a refund",
+    body: [
+      policy.headline,
+      policy.summary,
+      policy.feeNotice,
+      `You would get back ${money(policy.refundableAmount)}. The organiser reviews every request.`
+    ].filter(Boolean).join(" "),
+    confirmLabel: "Ask for a refund"
+  });
+  if (!confirmed) return;
+  try {
+    await api(`/v1/ticketing/orders/${encodeURIComponent(orderId)}/refund`, { method: "POST", body: {} });
+    showToast("Refund requested. The organiser will respond.", "success");
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
 async function shareTicketingEvent(slug) {
   const events = state.ticketing.events || [];
   const event = events.find((item) => String(item.slug) === String(slug))
     || (state.publicEvent && String(state.publicEvent.slug) === String(slug) ? state.publicEvent : null)
     || { slug };
-  const url = event.marketingLink || `https://app.titopay.co.za/events/${encodeURIComponent(slug)}`;
+  // The PREVIEW url, not the app one. WhatsApp, Facebook and iMessage read a
+  // page's meta tags and do not run JavaScript, so a link straight into the
+  // app can only ever paste as a bare "TitoPay". This link serves the event's
+  // real title, date and poster to the crawler and then sends a person on to
+  // the app. See the /preview route for why it lives on the API.
+  const url = `${API_BASE}/v1/ticketing/public/events/${encodeURIComponent(slug)}/preview`;
   const date = event.eventDate ? new Date(event.eventDate) : null;
   const when = date && !Number.isNaN(date.getTime())
     ? date.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
@@ -17107,6 +17201,7 @@ async function openTicketingPurchaseReview(data) {
   // actually applied it. A code that did not work must never travel silently
   // to the purchase call, where it would refuse the whole payment.
   let appliedCode = null;
+  let refundPolicy = null;
   const requestedCode = String(data.couponCode || "").trim();
   try {
     const previewResult = await api(`/v1/ticketing/public/events/${encodeURIComponent(data.eventSlug)}/purchase-preview`, {
@@ -17120,6 +17215,7 @@ async function openTicketingPurchaseReview(data) {
     listSubtotal = Number(preview.listSubtotal ?? subtotal);
     discount = Number(preview.discount ?? 0);
     appliedCode = preview.couponCode || null;
+    refundPolicy = preview.refundPolicy || null;
   } catch (error) {
     // A code that the server refused is the buyer's to fix, so it is said
     // plainly and the review is abandoned rather than quietly showing the full
@@ -17155,6 +17251,16 @@ async function openTicketingPurchaseReview(data) {
       ${settingsRow("Total to pay", money(total), "wallet")}
     </section>
     ${discount > 0 ? `<p class="field-hint">Your code took ${esc(money(discount))} off this order.</p>` : ""}
+    ${refundPolicy ? `
+      <section class="refund-policy-note${refundPolicy.refundsAllowed ? "" : " is-final"}">
+        <span class="icon-bubble">${icon(refundPolicy.refundsAllowed ? "refund-card" : "ban")}</span>
+        <div>
+          <strong>${esc(refundPolicy.headline)}</strong>
+          ${refundPolicy.summary ? `<small>${esc(refundPolicy.summary)}</small>` : ""}
+          ${refundPolicy.conditions && refundPolicy.conditions !== refundPolicy.summary ? `<small>${esc(refundPolicy.conditions)}</small>` : ""}
+          ${refundPolicy.feeNotice ? `<small>${esc(refundPolicy.feeNotice)}</small>` : ""}
+        </div>
+      </section>` : ""}
     <p class="field-hint">${buyerFee > 0 ? "Includes a flat TitoPay service fee. " : ""}Paid from your TitoPay wallet. Tickets are issued by the organiser once payment succeeds.</p>
     <div class="auth-actions">
       <button class="btn secondary" type="button" data-action="cancel-ticket-purchase">Cancel</button>
@@ -17311,6 +17417,7 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
         ${code ? `<button class="btn secondary ticket-email-btn" type="button" data-action="ticket-email:${esc(code)}">${icon("mail")} Email ticket</button>` : ""}
         ${ticketWalletControl(ticket)}
         ${linkableTicketId(ticket) ? `<button class="btn primary" type="button" data-action="event-tag-link:${esc(linkableTicketId(ticket))}">${icon("scan")} Link wristband</button>` : ""}
+        ${order.id || order.orderId ? `<button class="btn ghost" type="button" data-action="request-refund:${esc(order.id || order.orderId)}">${icon("refund-card")} Refund</button>` : ""}
       </div>
       <footer class="ticket-stub-foot">${ticketWristbandNote(ticket)}</footer>
     </article>`;
@@ -18342,7 +18449,7 @@ function openTicketingSection(key) {
   const events = state.ticketing.events || [];
   const approved = events.filter((event) => event.status === "approved");
   const body = key === "events" ? ticketingEventsSection(events)
-    : key === "sales" ? ticketingSalesSection(events)
+    : key === "sales" ? ticketingSalesSection(events, approved)
     : key === "coupons" ? ticketingCouponsSection(approved)
     : key === "vendors" ? ticketingVendorsSection(approved)
     : key === "campaigns" ? ticketingCampaignsSection(approved)
@@ -18361,7 +18468,11 @@ function openTicketingSection(key) {
   }
   if (key === "coupons") {
     const couponPick = document.querySelector("select[data-coupon-event-pick]");
-    if (couponPick && couponPick.value) refreshEventCouponList(couponPick.value);
+    if (couponPick && couponPick.value) refreshEventPromotions(couponPick.value);
+  }
+  if (key === "sales") {
+    const salesPick = document.querySelector("select[data-sales-event-pick]");
+    if (salesPick && salesPick.value) refreshEventAftersales(salesPick.value);
   }
 }
 // After a save inside a door, re-read and re-render THAT door — never the whole
@@ -18399,7 +18510,7 @@ function ticketingEventsSection(events) {
 }
 // Sales, read from the ticket types already loaded — the same numbers the event
 // rows carry, gathered in one place and totalled.
-function ticketingSalesSection(events) {
+function ticketingSalesSection(events, approved = []) {
   const selling = events.filter((event) => (Array.isArray(event.ticketTypes) ? event.ticketTypes : []).length);
   if (!selling.length) {
     return `<section class="empty-state compact-state">${icon("chart")}<strong>No ticket sales yet</strong><p>Sales appear here as soon as an event with ticket types starts selling.</p></section>`;
@@ -18438,7 +18549,8 @@ function ticketingSalesSection(events) {
       ${metricCard("Tickets sold", totalSold)}
       ${metricCard("Money taken", money(totalRevenue))}
     </div>
-    ${cards}`;
+    ${cards}
+    ${approved.length ? aftersalesPanels(approved) : ""}`;
 }
 /* ---- DISCOUNT CODES, FROM THE ORGANISER'S SIDE -----------------------------
    A code is the organiser's own promotion, so the screen says plainly whose
@@ -18485,7 +18597,8 @@ function ticketingCouponsSection(approved) {
     <section class="panel inner-panel">
       <h3>Your codes</h3>
       <div data-coupon-list><p class="muted">Loading discount codes…</p></div>
-    </section>`;
+    </section>
+    ${promoterPanel()}`;
 }
 // The organiser's list. Every code says what it is worth, what state it is in
 // and how much of the promotion has actually been taken, so "why is nobody
@@ -18583,6 +18696,201 @@ async function deleteTicketingCoupon(eventId, couponId) {
     });
     showToast(result.message || "Code deleted.", "success");
     await refreshEventCouponList(eventId);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
+/* ---- AFTER THE SALE, AND WHO SOLD IT --------------------------------------
+   Refunds and the waiting list live under Sales, because money in and money
+   out is one story: what an event took, who wants some back, and who could
+   not get in at all. Promoter links live under Promotions next to discount
+   codes, because both are a reason or a route to buy.
+
+   Neither got its own door. The hub's rule is that it stays a set of short
+   doors rather than a menu, and a seventh tile would have made it a menu. */
+function aftersalesPanels(approved) {
+  const options = approved.map((event) =>
+    `<option value="${esc(event.id)}">${esc(event.eventName)}</option>`).join("");
+  return `
+    <section class="panel inner-panel">
+      <h3>After the sale</h3>
+      <label>Event<select data-sales-event-pick>${options}</select></label>
+    </section>
+    <section class="panel inner-panel">
+      <h4>Refund requests</h4>
+      <p class="muted">Your customers and your money. Approving one returns the ticket price to the buyer from your wallet, cancels their ticket and puts the seat back on sale.</p>
+      <div data-refund-list><p class="muted">Loading refund requests…</p></div>
+    </section>
+    <section class="panel inner-panel">
+      <h4>Waiting list</h4>
+      <p class="muted">People who wanted in after the last ticket went. Nothing is held for them, so releasing capacity is your call.</p>
+      <div data-waitlist-list><p class="muted">Loading the waiting list…</p></div>
+    </section>`;
+}
+function promoterPanel() {
+  return `
+    <section class="panel inner-panel">
+      <h3>Promoter links</h3>
+      <p class="muted">Give each promoter their own link and see exactly what they sold. TitoPay pays no commission on these: what you agree with a promoter is between you and them.</p>
+      <form class="form-grid" data-form="ticketing-promoter">
+        <input type="hidden" name="eventId" data-growth-event-mirror>
+        <label>Promoter name<input name="promoterName" placeholder="Thabo M" required autocomplete="off"></label>
+        <label>Their code<input name="code" placeholder="THABO" required autocomplete="off" maxlength="32"></label>
+        <button class="btn secondary" type="submit">${icon("share")} Create link</button>
+      </form>
+      <div data-promoter-list><p class="muted">Loading promoter links…</p></div>
+    </section>`;
+}
+async function refreshEventAftersales(eventId) {
+  await Promise.all([refreshEventRefundList(eventId), refreshEventWaitlist(eventId)]);
+}
+async function refreshEventPromotions(eventId) {
+  const mirror = document.querySelector("[data-growth-event-mirror]");
+  if (mirror) mirror.value = eventId;
+  await Promise.all([refreshEventCouponList(eventId), refreshEventPromoters(eventId)]);
+}
+async function refreshEventRefundList(eventId) {
+  const host = document.querySelector("[data-refund-list]");
+  if (!host || !eventId) return;
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/refunds`);
+    const items = result.items || [];
+    const open = items.filter((item) => ["requested", "under_review"].includes(item.status));
+    if (!items.length) {
+      host.innerHTML = `<p class="muted">No refund requests on this event.</p>`;
+      return;
+    }
+    host.innerHTML = `
+      ${open.length ? `<p class="field-hint"><strong>${open.length}</strong> waiting for your decision.</p>` : `<p class="field-hint">Nothing waiting for you.</p>`}
+      <div class="settings-list">
+        ${items.map((item) => `
+          <article class="settings-row">
+            <span class="icon-bubble">${icon("refund-card")}</span>
+            <div>
+              <strong>${esc(money(item.amount))} · ${esc(item.buyerName || "Buyer")}</strong>
+              <small>${esc(item.ticketName || "Ticket")} · order ${esc(item.orderReference)} · ${esc(item.status)}</small>
+              ${item.reason ? `<small>"${esc(item.reason)}"</small>` : ""}
+              ${item.decisionNote ? `<small>Your note: ${esc(item.decisionNote)}</small>` : ""}
+            </div>
+            ${["requested", "under_review"].includes(item.status) ? `
+              <div class="row-actions">
+                <button class="btn ghost mini" type="button" data-action="refund-approve:${esc(eventId)}:${esc(item.id)}">${icon("check-circle")} Approve</button>
+                <button class="btn ghost mini" type="button" data-action="refund-reject:${esc(eventId)}:${esc(item.id)}">${icon("x")} Decline</button>
+              </div>` : ""}
+          </article>`).join("")}
+      </div>`;
+  } catch (error) {
+    host.innerHTML = `<p class="muted">${esc(friendlyFormError(error, "ticketing"))}</p>`;
+  }
+}
+async function decideTicketRefund(eventId, refundId, action) {
+  const approving = action === "approve";
+  if (!await askToConfirm({
+    title: approving ? "Approve this refund" : "Decline this refund",
+    body: approving
+      ? "The ticket price goes back to the buyer from your wallet, their ticket is cancelled and the seat goes back on sale. This cannot be undone."
+      : "The buyer keeps their ticket and is told the request was declined.",
+    confirmLabel: approving ? "Approve refund" : "Decline"
+  })) return;
+  try {
+    await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/refunds/${encodeURIComponent(refundId)}/action`, {
+      method: "POST",
+      body: { action: approving ? "approve" : "reject" }
+    });
+    showToast(approving ? "Refund approved and paid back." : "Refund declined.", "success");
+    await refreshEventRefundList(eventId);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
+async function refreshEventWaitlist(eventId) {
+  const host = document.querySelector("[data-waitlist-list]");
+  if (!host || !eventId) return;
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/waitlist`);
+    const items = result.items || [];
+    if (!items.length) {
+      host.innerHTML = `<p class="muted">Nobody is waiting. This list fills up when a ticket type sells out.</p>`;
+      return;
+    }
+    host.innerHTML = `
+      <p class="field-hint"><strong>${esc(String(result.demand))}</strong> more tickets wanted by <strong>${esc(String(result.waiting))}</strong> ${result.waiting === 1 ? "person" : "people"}.</p>
+      <div class="settings-list">
+        ${items.slice(0, 25).map((item) => `
+          <article class="settings-row">
+            <span class="icon-bubble">${icon("user")}</span>
+            <div>
+              <strong>${esc(item.name || "Someone")}</strong>
+              <small>${esc(String(item.quantity))} ticket${item.quantity === 1 ? "" : "s"} · ${esc(item.ticketName)} · ${esc(item.status)}</small>
+            </div>
+          </article>`).join("")}
+      </div>
+      ${items.length > 25 ? `<p class="field-hint">Showing the first 25 of ${esc(String(items.length))}.</p>` : ""}
+      <div class="auth-actions">
+        <button class="btn secondary" type="button" data-action="waitlist-notify:${esc(eventId)}">${icon("bell")} Tell them tickets are available</button>
+      </div>`;
+  } catch (error) {
+    host.innerHTML = `<p class="muted">${esc(friendlyFormError(error, "ticketing"))}</p>`;
+  }
+}
+async function notifyEventWaitlistFromApp(eventId) {
+  if (!await askToConfirm({
+    title: "Tell the waiting list",
+    body: "Everyone waiting gets a notification saying tickets are available. Only do this once you have actually released capacity.",
+    confirmLabel: "Send it"
+  })) return;
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/waitlist/notify`, { method: "POST", body: {} });
+    showToast(result.message || "The waiting list has been told.", "success");
+    await refreshEventWaitlist(eventId);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
+async function refreshEventPromoters(eventId) {
+  const host = document.querySelector("[data-promoter-list]");
+  if (!host || !eventId) return;
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/promoters`);
+    const items = result.items || [];
+    if (!items.length) {
+      host.innerHTML = `<p class="muted">No promoter links yet. Create one above and send it to them.</p>`;
+      return;
+    }
+    host.innerHTML = `
+      <div class="settings-list">
+        ${items.map((item) => `
+          <article class="settings-row">
+            <span class="icon-bubble">${icon("share")}</span>
+            <div>
+              <strong>${esc(item.promoterName)} · ${esc(item.code)}</strong>
+              <small>${esc(String(item.tickets))} ticket${item.tickets === 1 ? "" : "s"} · ${esc(money(item.sales))} · ${esc(String(item.clicks))} link opens${item.status !== "active" ? " · switched off" : ""}</small>
+            </div>
+            <div class="row-actions">
+              <button class="btn ghost mini" type="button" data-copy-value="${esc(item.link)}" data-copy-label="Promoter link">${icon("copy")} Copy link</button>
+              <button class="btn ghost mini" type="button" data-action="promoter-remove:${esc(eventId)}:${esc(item.id)}">${icon("x")} Remove</button>
+            </div>
+          </article>`).join("")}
+      </div>`;
+  } catch (error) {
+    host.innerHTML = `<p class="muted">${esc(friendlyFormError(error, "ticketing"))}</p>`;
+  }
+}
+async function submitTicketingPromoter(data) {
+  const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/promoters`, {
+    method: "POST",
+    body: { code: data.code, promoterName: data.promoterName }
+  });
+  showToast(`${result.promoter.code} is ready. Copy the link and send it to them.`, "success");
+  const form = document.querySelector('[data-form="ticketing-promoter"]');
+  if (form) { form.querySelector('[name="code"]').value = ""; form.querySelector('[name="promoterName"]').value = ""; }
+  await refreshEventPromoters(data.eventId);
+}
+async function removeTicketingPromoter(eventId, promoterId) {
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/promoters/${encodeURIComponent(promoterId)}`, { method: "DELETE" });
+    showToast(result.message || "Promoter link removed.", "success");
+    await refreshEventPromoters(eventId);
   } catch (error) {
     showToast(friendlyFormError(error, "ticketing"), "error");
   }
@@ -19442,7 +19750,17 @@ function openTicketingEventForm() {
 
       <section class="section-head compact"><h2>Policies</h2></section>
       <label>Terms and conditions<textarea name="termsConditions" rows="3"></textarea></label>
-      <label>Refund policy<textarea name="refundPolicySummary" rows="3"></textarea></label>
+      <label>Refunds
+        <select name="refundsAllowed">
+          <option value="yes">Allowed, up to a cut-off date</option>
+          <option value="no">Not allowed on this event</option>
+        </select>
+      </label>
+      <label>Refunds close this many days before the event
+        <input name="refundCutoffDays" type="number" min="0" max="365" value="7">
+      </label>
+      <p class="field-hint">Buyers see this before they pay, and TitoPay enforces it: a refund asked for after the cut-off is refused automatically.</p>
+      <label>Refund policy<textarea name="refundPolicySummary" rows="3" placeholder="Anything a buyer should know before they pay."></textarea></label>
 
       <div class="auth-actions">
         <button class="btn primary" type="submit">${icon("ticket")} Save draft</button>
@@ -19492,6 +19810,19 @@ function collectEventSocials(data = {}) {
 async function submitTicketingEventForm(data, form) {
   const tiers = collectTicketTiers();
   const registrationMode = data.registrationMode === "yes";
+  // The refund cut-off is expressed as days before the event, which is how an
+  // organiser thinks about it, and stored as the actual date, which is what
+  // can be enforced without recomputing anything later.
+  const refundsAllowed = String(data.refundsAllowed || "yes") !== "no";
+  const cutoffDays = Math.max(0, Math.min(365, Number.parseInt(data.refundCutoffDays, 10) || 0));
+  let refundDeadline = null;
+  if (refundsAllowed && data.eventDate) {
+    const eventDay = new Date(`${data.eventDate}T23:59:59`);
+    if (!Number.isNaN(eventDay.getTime())) {
+      eventDay.setDate(eventDay.getDate() - cutoffDays);
+      refundDeadline = eventDay.toISOString();
+    }
+  }
   const ticketTypes = tiers.map((tier) => ({
     ticketName: tier.name || "General Admission",
     // A registration event never charges. The server enforces this too; doing
@@ -19503,7 +19834,12 @@ async function submitTicketingEventForm(data, form) {
     salesOpeningAt: localDateTimeToIso(tier.opensAt),
     salesClosingAt: localDateTimeToIso(tier.closesAt),
     perCustomerPurchaseLimit: tier.perPerson,
-    refundsAllowed: true
+    // The organiser's answer, not a hard-coded yes. Every tier used to be sent
+    // as refundable whatever the organiser intended, and nothing enforced it
+    // afterwards, so the policy they wrote was decoration.
+    refundsAllowed,
+    refundDeadline,
+    refundConditions: data.refundPolicySummary || ""
   }));
   // A phase that closes before it opens would never sell a single ticket, and
   // the organiser would have no way of knowing why.
@@ -24380,7 +24716,7 @@ const EVENT_CATEGORY_OPTIONS = [
 const TICKETING_SECTIONS = [
   { key: "events", label: "My Events", icon: "ticket", hint: "Create events, submit for approval, track each one." },
   { key: "sales", label: "Sales", icon: "chart", hint: "Tickets sold and money taken, per event and per tier." },
-  { key: "coupons", label: "Discount Codes", icon: "ticket", hint: "Run a promotion: a percentage or an amount off, with an expiry date." },
+  { key: "coupons", label: "Promotions", icon: "ticket", hint: "Discount codes and promoter links, and what each one actually sold." },
   { key: "vendors", label: "Vendors & Door", icon: "contacts", hint: "Who may take Event Tag payments, and who scans at the door." },
   { key: "tags", label: "Event Tags", icon: "shield", hint: "Cashless on or off, issue blank tags, assign one to a ticket." },
   { key: "campaigns", label: "Campaign Tools", icon: "send", hint: "Email and SMS your patrons about your event." }
