@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v400-form-fields";
+const CACHE_NAME = "titopay-pwa-v401-security-content";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=400",
-  "./app.min.js?v=400",
+  "./styles.min.css?v=401",
+  "./app.min.js?v=401",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

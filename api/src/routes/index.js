@@ -19,6 +19,7 @@ const lookupRoutes = require("./lookup.routes");
 const servicesRoutes = require("./services.routes");
 const beneficiariesRoutes = require("./beneficiaries.routes");
 const securityRoutes = require("./security.routes");
+const securityContentRoutes = require("./security-content.routes");
 const kycRoutes = require("./kyc.routes");
 const chatbotRoutes = require("./chatbot.routes");
 const chatRoutes = require("./chat.routes");
@@ -126,6 +127,13 @@ function mountVersionedRoutes(prefix) {
   router.use(`${prefix}/services`, servicesRoutes);
   router.use(`${prefix}/beneficiaries`, beneficiariesRoutes);
   router.use(`${prefix}/security`, securityRoutes);
+  // Public, and it has to be mounted here rather than alongside the health
+  // routes. Those are mounted at "/", so a route added there answers on
+  // /security-content and never on /v1/security-content, which is how
+  // /v1/maintenance/public ended up unreachable. A "/security" mount does not
+  // swallow "/security-content": Express only matches a prefix at a segment
+  // boundary, so the two live side by side.
+  router.use(`${prefix}/security-content`, securityContentRoutes);
   router.use(`${prefix}/kyc`, kycRoutes);
   router.use(`${prefix}/chat`, chatRoutes);
   router.use(`${prefix}/chatbot`, chatbotRoutes);

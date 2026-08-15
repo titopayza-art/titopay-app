@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v83";
+  return "admin-console-v84";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -117,6 +117,7 @@ const NAV_GROUPS = [
     ["/integrations/", "integrations", "Integration Centre"],
     ["/feature-management/", "feature-management", "Feature Management"],
     ["/api-provider-settings/", "api-provider-settings", "API Provider Settings"],
+    ["/security-content/", "security-content", "Security Content"],
     ["/settings/", "settings", "Settings"],
   ]},
   { title: "Communications", items: [
@@ -202,6 +203,7 @@ const NAV_ICON_PATHS = {
   "integration-provider": "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
   "feature-management": "M5 8h9m2 0h3M5 16h3m2 0h9M14 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Zm-4 8a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z",
   "api-provider-settings": "M6 7h12M6 12h12M6 17h6M18 15v4m2-2h-4",
+  "security-content": "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm-3 6.5h6m-6 3h4",
   settings: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm7.4 3a7.4 7.4 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7.4 7.4 0 0 0-2-1.2L14.6 3H9.4L9 5.7a7.4 7.4 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5a7.4 7.4 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-1a7.4 7.4 0 0 0 2 1.2l.4 2.7h5.2l.4-2.7a7.4 7.4 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.07-.4.1-.8.1-1.2Z",
   support: "M4 12a8 8 0 0 1 16 0v5a2 2 0 0 1-2 2h-3M4 12v3a2 2 0 0 0 2 2h1v-5H4Zm16 0h-3v5h1a2 2 0 0 0 2-2v-3Z",
   "sms-analytics": "M4 5h16v11H9.5L5 19.5V16H4V5Zm4 3.5h8m-8 3h5M17 3v2m3 0V3",
@@ -217,6 +219,76 @@ const NAV_ICON_PATHS = {
   "database-health": "M12 4c4 0 7 1.1 7 2.5S16 9 12 9 5 7.9 5 6.5 8 4 12 4Zm7 2.5v11c0 1.4-3 2.5-7 2.5s-7-1.1-7-2.5v-11m14 5.5c0 1.4-3 2.5-7 2.5s-7-1.1-7-2.5",
   "staff-management": "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8v-1a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v1",
   "rbac-permissions": "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm0 6.5a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6Zm0 3.6V16",
+};
+/* Security Content — the customer-facing security copy, edited on the Security
+   Content page and stored in platform_settings under "security_content".
+
+   These defaults are the wording the TitoPay app shipped with, reproduced
+   verbatim. They are not a placeholder: they are the fallback for every field,
+   so an admin who clears a box gets today's copy back rather than a blank
+   security warning, and the console previews exactly what a customer sees
+   before anyone has ever saved. The PWA carries the same set independently, so
+   the warning still renders when the API cannot be reached.
+
+   Everything on this page is admin-authored text rendered into the customer
+   app, so it is escaped on the way out at both ends - escapeHtml here, esc()
+   in the PWA. It is never injected as markup. */
+const SECURITY_CONTENT_DEFAULTS = {
+  eyebrow: "Security Tip",
+  title: "Stay safe with TitoPay",
+  cardHeading: "Protect your account",
+  cardBody: "Never share your PIN, password or verification codes. TitoPay will never ask for those by phone, email, WhatsApp, SMS or social media.",
+  acknowledgeLabel: "I understand",
+  tipsEyebrow: "Security Tips",
+  tips: [
+    { title: "Never share codes", body: "TitoPay will never ask for your PIN, password or OTP, not by phone, SMS, email or WhatsApp.", icon: "lock" },
+    { title: "Check before you pay", body: "Read the verified recipient name and the fee preview before you press Confirm.", icon: "check-circle" },
+    { title: "Keep contact details current", body: "Your registered cellphone and email are how you recover access.", icon: "mail" },
+    { title: "Lock your wallet fast", body: "If something feels wrong, stop everything leaving from the Security Centre. Other people can still pay you.", icon: "shield" },
+    { title: "Beware of urgency", body: "Scammers rush you. TitoPay never pressures you to move money.", icon: "bell" },
+    { title: "Use your device lock", body: "A device PIN, fingerprint or face unlock protects TitoPay if your phone is lost.", icon: "phone" },
+  ],
+};
+const SECURITY_CONTENT_MAX_TIPS = 12;
+/* Length caps mirror the API's write validation, so the console cannot compose
+   a payload the API would silently truncate. maxlength on the inputs stops the
+   operator before they type past the limit rather than trimming it after. */
+const SECURITY_CONTENT_LIMITS = {
+  eyebrow: 40,
+  title: 80,
+  cardHeading: 80,
+  cardBody: 400,
+  acknowledgeLabel: 40,
+  tipsEyebrow: 40,
+  tipTitle: 80,
+  tipBody: 280,
+};
+/* Only names the PWA's icon() actually defines. An unknown name renders an
+   empty <svg> in the customer app, so the icon field is a select and never
+   free text; anything unrecognised falls back to "shield" at both ends. */
+const SECURITY_CONTENT_ICONS = [
+  "lock", "shield", "check-circle", "mail", "bell", "phone", "eye", "eye-off",
+  "refresh", "scan", "user", "zap", "star", "heart", "globe", "home",
+];
+/* Copied from the PWA's icon() registry so the preview draws the glyph the
+   customer actually gets instead of a stand-in. */
+const SECURITY_CONTENT_ICON_PATHS = {
+  lock: `<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>`,
+  shield: `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/>`,
+  "check-circle": `<circle cx="12" cy="12" r="9"/><path d="m8.5 12.4 2.3 2.3 4.9-5.2"/>`,
+  mail: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>`,
+  bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>`,
+  phone: `<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>`,
+  eye: `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="3"/>`,
+  "eye-off": `<path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.3A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17.5 17.5 0 0 1-3.1 4.1"/><path d="M6.1 6.1A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4.2-.8"/>`,
+  refresh: `<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>`,
+  scan: `<path d="M4 7V5a1 1 0 0 1 1-1h2"/><path d="M17 4h2a1 1 0 0 1 1 1v2"/><path d="M20 17v2a1 1 0 0 1-1 1h-2"/><path d="M7 20H5a1 1 0 0 1-1-1v-2"/><path d="M7 12h10"/>`,
+  user: `<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/>`,
+  zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
+  star: `<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>`,
+  heart: `<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>`,
+  globe: `<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>`,
+  home: `<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>`,
 };
 const ADMIN_RAIL_KEY = "titopay_admin_rail_v1";
 const ADMIN_THEME_KEY = "titopay_admin_theme_v1";
@@ -1020,6 +1092,9 @@ function renderSidebar(page, me) {
       "system-logs": "security",
       audit: "audit",
       settings: "engineering",
+      // Matches the API guard on this endpoint, requireAdminPermission("security"),
+      // so the rail never offers a page the save would be rejected from.
+      "security-content": "security",
       "email-centre": "EMAIL_VIEW",
       "email-analytics": "EMAIL_VIEW",
       "email-templates": "EMAIL_VIEW",
@@ -4206,6 +4281,255 @@ async function renderSettings() {
     }
   });
 }
+/* Security Content editor.
+
+   This page edits copy that a customer reads while they are being defrauded,
+   so two rules shape it. Nothing ever falls back to blank - a cleared field
+   returns to the wording in SECURITY_CONTENT_DEFAULTS, because a security
+   warning that silently empties is worse than one nobody edited. And the
+   preview is the point of the page rather than decoration: the operator sees
+   the customer's card, not a JSON blob, before they publish.
+
+   The preview renders the *normalised* draft, the same object the save posts,
+   so what is on screen is what the customer will get - including a default
+   reappearing in a box the operator just cleared. */
+function securityContentField(value, fallback, max) {
+  const text = String(value ?? "").trim().slice(0, max);
+  return text || fallback;
+}
+function securityContentIconName(value) {
+  return SECURITY_CONTENT_ICONS.includes(String(value || "")) ? String(value) : "shield";
+}
+/* One normaliser for the loaded content, the preview and the saved payload, so
+   the three can never disagree. `fillTips` is off while editing: an operator
+   who has cleared every row should see an empty list and the hint to add one,
+   not six defaults springing back mid-edit. It is on when loading, where an
+   absent or empty stored list genuinely means "show the shipped tips". */
+function normalizeSecurityContent(raw, fillTips = true) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const limits = SECURITY_CONTENT_LIMITS;
+  const tips = (Array.isArray(source.tips) ? source.tips : [])
+    .map((tip) => ({
+      title: String(tip?.title ?? "").trim().slice(0, limits.tipTitle),
+      body: String(tip?.body ?? "").trim().slice(0, limits.tipBody),
+      icon: securityContentIconName(tip?.icon),
+    }))
+    .filter((tip) => tip.title || tip.body)
+    .slice(0, SECURITY_CONTENT_MAX_TIPS);
+  return {
+    eyebrow: securityContentField(source.eyebrow, SECURITY_CONTENT_DEFAULTS.eyebrow, limits.eyebrow),
+    title: securityContentField(source.title, SECURITY_CONTENT_DEFAULTS.title, limits.title),
+    cardHeading: securityContentField(source.cardHeading, SECURITY_CONTENT_DEFAULTS.cardHeading, limits.cardHeading),
+    cardBody: securityContentField(source.cardBody, SECURITY_CONTENT_DEFAULTS.cardBody, limits.cardBody),
+    acknowledgeLabel: securityContentField(source.acknowledgeLabel, SECURITY_CONTENT_DEFAULTS.acknowledgeLabel, limits.acknowledgeLabel),
+    tipsEyebrow: securityContentField(source.tipsEyebrow, SECURITY_CONTENT_DEFAULTS.tipsEyebrow, limits.tipsEyebrow),
+    tips: tips.length || !fillTips ? tips : SECURITY_CONTENT_DEFAULTS.tips.map((tip) => ({ ...tip })),
+  };
+}
+function securityContentIconSvg(name) {
+  const paths = SECURITY_CONTENT_ICON_PATHS[securityContentIconName(name)];
+  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+}
+function securityTipRowHtml(tip = {}) {
+  const selected = securityContentIconName(tip.icon);
+  return `
+    <div class="sc-tip-row">
+      <input class="sc-tip-title" value="${escapeHtml(tip.title || "")}" maxlength="${SECURITY_CONTENT_LIMITS.tipTitle}" placeholder="Tip title" aria-label="Tip title">
+      <select class="sc-tip-icon" aria-label="Tip icon">
+        ${SECURITY_CONTENT_ICONS.map((name) => `<option value="${escapeHtml(name)}"${name === selected ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+      </select>
+      <button class="ghost-btn" type="button" data-sc-remove aria-label="Remove this tip">Remove</button>
+      <textarea class="sc-tip-body" rows="2" maxlength="${SECURITY_CONTENT_LIMITS.tipBody}" placeholder="What the customer should do" aria-label="Tip body">${escapeHtml(tip.body || "")}</textarea>
+    </div>
+  `;
+}
+/* Reads the form rather than a model. The tips cannot come from FormData -
+   it cannot express repeated structured groups - so the rows are harvested by
+   query, exactly as the quick-replies editor does. */
+function securityContentDraft() {
+  const fieldValue = (id) => document.getElementById(id)?.value || "";
+  const tips = Array.from(document.querySelectorAll("#sc-tip-editor .sc-tip-row")).map((row) => ({
+    title: String(row.querySelector(".sc-tip-title")?.value || "").trim(),
+    body: String(row.querySelector(".sc-tip-body")?.value || "").trim(),
+    icon: String(row.querySelector(".sc-tip-icon")?.value || "shield"),
+  }));
+  return {
+    eyebrow: fieldValue("sc-eyebrow"),
+    title: fieldValue("sc-title"),
+    cardHeading: fieldValue("sc-card-heading"),
+    cardBody: fieldValue("sc-card-body"),
+    acknowledgeLabel: fieldValue("sc-acknowledge"),
+    tipsEyebrow: fieldValue("sc-tips-eyebrow"),
+    tips,
+  };
+}
+/* Mirrors the PWA's modal: eyebrow and title, the security tip card, then the
+   tips list and the acknowledge button. Every value is escaped, the same way
+   the customer app escapes it. */
+function securityContentPreviewHtml(content) {
+  return `
+    <div class="sc-phone">
+      <div class="sc-phone-head">
+        <p class="sc-eyebrow">${escapeHtml(content.eyebrow)}</p>
+        <h4>${escapeHtml(content.title)}</h4>
+      </div>
+      <article class="sc-tip-card">
+        <h5>${escapeHtml(content.cardHeading)}</h5>
+        <p>${escapeHtml(content.cardBody)}</p>
+      </article>
+      <p class="sc-eyebrow">${escapeHtml(content.tipsEyebrow)}</p>
+      ${content.tips.length ? `
+        <div class="sc-tip-list">
+          ${content.tips.map((tip) => `
+            <article class="sc-tip-item">
+              <span class="sc-icon-bubble">${securityContentIconSvg(tip.icon)}</span>
+              <div>
+                <strong>${escapeHtml(tip.title)}</strong>
+                <small>${escapeHtml(tip.body)}</small>
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      ` : `<p class="sc-preview-empty">No tips yet. Add at least one before saving.</p>`}
+      <span class="sc-phone-cta">${escapeHtml(content.acknowledgeLabel)}</span>
+    </div>
+  `;
+}
+async function renderSecurityContent() {
+  /* A failed read must not become a silent overwrite. The page still opens on
+     the built-in copy so it is usable, but it says so, because saving over
+     content the console could not read would replace an admin's real wording
+     with defaults. */
+  let loadFailed = false;
+  const result = await apiFetch("/admin/security-content").catch(() => {
+    loadFailed = true;
+    return {};
+  });
+  const content = normalizeSecurityContent(result?.content ?? result);
+  PAGE_EXPORTS["security-content"] = [
+    { item: "eyebrow", title: content.eyebrow, body: "", icon: "" },
+    { item: "title", title: content.title, body: "", icon: "" },
+    { item: "cardHeading", title: content.cardHeading, body: "", icon: "" },
+    { item: "cardBody", title: "", body: content.cardBody, icon: "" },
+    { item: "acknowledgeLabel", title: content.acknowledgeLabel, body: "", icon: "" },
+    { item: "tipsEyebrow", title: content.tipsEyebrow, body: "", icon: "" },
+    ...content.tips.map((tip, index) => ({ item: `tip ${index + 1}`, title: tip.title, body: tip.body, icon: tip.icon })),
+  ];
+  const limits = SECURITY_CONTENT_LIMITS;
+  const page = document.getElementById("page-content");
+  page.innerHTML = `
+    <section class="panel-grid sc-grid">
+      <section class="panel">
+        <h3>Security Content</h3>
+        <p>The security warning and safety tips customers read inside the TitoPay app. Clearing a field restores its built-in wording, never a blank. Every change is audited.</p>
+        ${loadFailed ? `<p class="sc-warning" role="alert">The saved content could not be read from the API, so the built-in wording is shown below. Saving now would replace whatever is currently stored. Refresh before you edit.</p>` : ""}
+        <form id="sc-form" class="form-grid">
+          <div class="field"><label for="sc-eyebrow">Eyebrow</label><input id="sc-eyebrow" value="${escapeHtml(content.eyebrow)}" maxlength="${limits.eyebrow}" placeholder="${escapeHtml(SECURITY_CONTENT_DEFAULTS.eyebrow)}"></div>
+          <div class="field"><label for="sc-title">Title</label><input id="sc-title" value="${escapeHtml(content.title)}" maxlength="${limits.title}" placeholder="${escapeHtml(SECURITY_CONTENT_DEFAULTS.title)}"></div>
+          <div class="field"><label for="sc-card-heading">Card heading</label><input id="sc-card-heading" value="${escapeHtml(content.cardHeading)}" maxlength="${limits.cardHeading}" placeholder="${escapeHtml(SECURITY_CONTENT_DEFAULTS.cardHeading)}"></div>
+          <div class="field field-full"><label for="sc-card-body">Card body</label><textarea id="sc-card-body" rows="3" maxlength="${limits.cardBody}" placeholder="${escapeHtml(SECURITY_CONTENT_DEFAULTS.cardBody)}">${escapeHtml(content.cardBody)}</textarea><span class="field-hint">The main warning. It appears on the security tip card and in the tips modal.</span></div>
+          <div class="field"><label for="sc-tips-eyebrow">Tips heading</label><input id="sc-tips-eyebrow" value="${escapeHtml(content.tipsEyebrow)}" maxlength="${limits.tipsEyebrow}" placeholder="${escapeHtml(SECURITY_CONTENT_DEFAULTS.tipsEyebrow)}"></div>
+          <div class="field"><label for="sc-acknowledge">Acknowledge button</label><input id="sc-acknowledge" value="${escapeHtml(content.acknowledgeLabel)}" maxlength="${limits.acknowledgeLabel}" placeholder="${escapeHtml(SECURITY_CONTENT_DEFAULTS.acknowledgeLabel)}"></div>
+          <div class="sc-tips-block">
+            <div class="sc-tips-head">
+              <h4>Security tips</h4>
+              <small>Up to ${SECURITY_CONTENT_MAX_TIPS}. Each needs a title and a body. The icon list is limited to the glyphs the customer app can draw.</small>
+            </div>
+            <div class="sc-tip-editor" id="sc-tip-editor">
+              ${content.tips.map((tip) => securityTipRowHtml(tip)).join("")}
+            </div>
+          </div>
+          <div class="form-actions field-full">
+            <button class="primary-btn" type="submit">Save security content</button>
+            <button class="secondary-btn" type="button" data-sc-add>Add tip</button>
+            <button class="ghost-btn" type="button" data-sc-restore>Restore defaults</button>
+          </div>
+        </form>
+      </section>
+      <section class="panel sc-preview-panel">
+        <h3>Customer preview</h3>
+        <p>How the card reads in the TitoPay app. It updates as you type and shows the wording that will actually be saved.</p>
+        <div class="sc-preview" id="sc-preview">${securityContentPreviewHtml(content)}</div>
+      </section>
+    </section>
+  `;
+  const form = document.getElementById("sc-form");
+  const preview = document.getElementById("sc-preview");
+  const editor = document.getElementById("sc-tip-editor");
+  /* Bound after the markup on every render, the way this console binds every
+     other form: the old listeners die with the old DOM. */
+  const repaintPreview = () => {
+    if (preview) preview.innerHTML = securityContentPreviewHtml(normalizeSecurityContent(securityContentDraft(), false));
+  };
+  form?.addEventListener("input", repaintPreview);
+  form?.addEventListener("change", repaintPreview);
+  form?.addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-sc-remove]");
+    if (remove) {
+      remove.closest(".sc-tip-row")?.remove();
+      repaintPreview();
+      return;
+    }
+    if (event.target.closest("[data-sc-add]")) {
+      if (!editor) return;
+      if (editor.querySelectorAll(".sc-tip-row").length >= SECURITY_CONTENT_MAX_TIPS) {
+        showToast(`Keep ${SECURITY_CONTENT_MAX_TIPS} security tips or fewer.`);
+        return;
+      }
+      /* Appended rather than re-rendered, so edits in progress in the other
+         rows survive adding one. */
+      const row = document.createElement("div");
+      row.innerHTML = securityTipRowHtml();
+      const added = row.firstElementChild;
+      if (added) {
+        editor.appendChild(added);
+        added.querySelector(".sc-tip-title")?.focus();
+      }
+      repaintPreview();
+      return;
+    }
+    if (event.target.closest("[data-sc-restore]")) {
+      if (!window.confirm("Replace everything on this form with the built-in TitoPay security wording? Nothing is published until you press Save security content.")) return;
+      const defaults = normalizeSecurityContent({});
+      const setField = (id, value) => {
+        const node = document.getElementById(id);
+        if (node) node.value = value;
+      };
+      setField("sc-eyebrow", defaults.eyebrow);
+      setField("sc-title", defaults.title);
+      setField("sc-card-heading", defaults.cardHeading);
+      setField("sc-card-body", defaults.cardBody);
+      setField("sc-acknowledge", defaults.acknowledgeLabel);
+      setField("sc-tips-eyebrow", defaults.tipsEyebrow);
+      if (editor) editor.innerHTML = defaults.tips.map((tip) => securityTipRowHtml(tip)).join("");
+      repaintPreview();
+      showToast("Defaults loaded into the form. Press Save security content to publish them.");
+    }
+  });
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const draft = securityContentDraft();
+    /* Wholly blank rows are dropped, half-filled ones are refused. A tip with
+       a title and no body renders as an empty instruction in the app. */
+    const authored = draft.tips.filter((tip) => tip.title || tip.body);
+    if (authored.some((tip) => !tip.title || !tip.body)) {
+      showToast("Every security tip needs both a title and its body.");
+      return;
+    }
+    if (!authored.length) {
+      showToast("Keep at least one security tip, or use Restore defaults.");
+      return;
+    }
+    const payload = normalizeSecurityContent({ ...draft, tips: authored });
+    try {
+      await apiFetch("/admin/security-content", { method: "PUT", body: JSON.stringify(payload) });
+      showToast("Security content saved");
+      await renderSecurityContent();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  });
+}
 /* RBAC editor. Reading the matrix stays available to anyone with the
    engineering permission; editing is offered only when the API says this
    session may manage roles (owner, root, super_admin or developer). The API
@@ -6124,6 +6448,7 @@ function adminPageDescriptors() {
     "feature-management": ["Feature Management", "Enable or disable TitoPay platform modules from one Super Admin console."],
     "api-provider-settings": ["API Provider Settings", "Configure, test and monitor third-party providers through the TitoPay API."],
     settings: ["Platform Settings", "Review notification billing, provider abstraction and role visibility."],
+    "security-content": ["Security Content", "Edit the security warning and safety tips customers read inside the TitoPay app."],
     "qr-management": ["QR Management", "Create, export and monitor website, app, campaign and referral QR assets."],
     marketing: ["Marketing Centre", "Create campaign links, referral links, QR campaigns and conversion tracking."],
     "chatbot-escalations": ["Chatbot Escalations", "Review support escalations created from TitoPay chatbot and live assistance flows."],
@@ -6196,6 +6521,7 @@ function adminPageLoaders() {
     "feature-management": renderFeatureManagement,
     "api-provider-settings": renderIntegrations,
     settings: renderSettings,
+    "security-content": renderSecurityContent,
     "qr-management": renderQrManagement,
     marketing: renderMarketing,
     "chatbot-escalations": renderSupport,

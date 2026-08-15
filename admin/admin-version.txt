@@ -1,6 +1,30 @@
 TitoPay Admin
-Build: admin-console-v83
-Date: 2026-08-14
+Build: admin-console-v84
+Date: 2026-08-15
+
+v84 - Security Content becomes editable.
+
+  - New Platform page "Security Content": the security warning and safety
+    tips customers read inside the TitoPay app are now edited in the console
+    instead of being hardcoded in the PWA. Reads GET /admin/security-content
+    and writes PUT /admin/security-content; the setting is stored in
+    platform_settings under "security_content" and every save is audited.
+  - Friendly form, not a JSON box: labelled fields for the eyebrow, title,
+    card heading, card body, acknowledge button and tips heading, plus a
+    repeating tips editor with add and remove. The icon field is a select
+    limited to the glyphs the customer app can actually draw, because an
+    unknown name renders an empty icon on the customer's phone.
+  - Live customer preview beside the form, updating as you type. It renders
+    the normalised draft - the same object the save posts - so what is on
+    screen is what the customer gets.
+  - Nothing ever falls back to blank. Clearing a field restores its built-in
+    wording, since a security warning that silently empties is worse than one
+    nobody edited. "Restore defaults" reloads the shipped copy into the form
+    without publishing it.
+  - If the content cannot be read from the API the page opens on the built-in
+    copy and says so, so a failed read cannot become a silent overwrite.
+  - Gated on the "security" permission, matching the API guard.
+  - Requires the API to carry the security-content endpoints.
 
 v83 - Limits & Risk, and Held Payments.
 

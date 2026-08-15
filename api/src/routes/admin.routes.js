@@ -46,6 +46,11 @@ const {
   setPlatformSetting
 } = require("../services/platform-settings-service");
 const {
+  SECURITY_CONTENT_KEY,
+  getSecurityContent,
+  saveSecurityContent
+} = require("../services/security-content-service");
+const {
   listProfileChangeRequests,
   approveProfileChangeRequest,
   rejectProfileChangeRequest
@@ -2896,6 +2901,41 @@ router.put("/security/authentication-mode", requireAdminPermission("security"), 
       metadata: { mode: policy.mode, otpRequired: policy.otpRequired }
     });
     res.json({ ok: true, otpPolicy: policy });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The security wording customers read. The GET always returns a complete,
+// non-empty object, so the console edits real copy rather than empty boxes on a
+// platform that has never saved this setting. fallbackOnError is off here on
+// purpose: the console must never present the defaults as if they were the
+// saved copy, because the next Save would make that true.
+router.get("/security-content", requireAdminPermission("security"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, content: await getSecurityContent({ fallbackOnError: false }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/security-content", requireAdminPermission("security"), async (req, res, next) => {
+  try {
+    const content = await saveSecurityContent(req.body?.content ?? req.body, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "security_content_updated",
+      entityType: "platform_settings",
+      entityId: SECURITY_CONTENT_KEY,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      // The copy itself goes in the log, not just the fact that it changed.
+      // When a customer reports being told something odd by "the app", the
+      // question is what the app said on that day and who wrote it.
+      metadata: { title: content.title, cardHeading: content.cardHeading, cardBody: content.cardBody, tipCount: content.tips.length }
+    });
+    res.json({ ok: true, content });
   } catch (error) {
     next(error);
   }

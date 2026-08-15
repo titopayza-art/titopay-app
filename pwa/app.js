@@ -21,7 +21,7 @@
  *    5. Shared UI pieces                    25 functions
  *    6. Forms, inputs and event handling    14 functions
  *    7. Sign in, registration and OTP       38 functions
- *    8. Security, devices and the session   28 functions
+ *    8. Security, devices and the session   30 functions
  *    9. Profile, settings and preferences   33 functions
  *   10. Wallet, balances and activity       38 functions
  *   11. Top-up and withdrawal               29 functions
@@ -103,7 +103,33 @@ const QUICK_SERVICES_STORAGE_PREFIX = "titopay_quick_services_v1";
 const QUICK_SERVICES_LIMIT = 6;
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
 const SESSION_WARNING_MS = 60 * 1000;
-const SECURITY_TIP_TEXT = "Never share your PIN, password or verification codes. TitoPay will never ask for those by phone, email, WhatsApp, SMS or social media.";
+// THE SECURITY COPY, AND WHY IT STILL LIVES HERE.
+//
+// An admin can now rewrite this wording from the console, which matters when a
+// scam campaign is running and the warning needs to name it the same day. What
+// follows is NOT a placeholder: it is the copy that shipped, word for word, and
+// it stays in the bundle on purpose.
+//
+// A security warning is the one screen that must never be blank. If TitoPay
+// cannot be reached, if the request is slow, if a field was saved empty, the
+// customer still reads a real warning rather than an empty card. The stored
+// version is an override, never a dependency.
+const SECURITY_CONTENT_DEFAULTS = {
+  eyebrow: "Security Tip",
+  title: "Stay safe with TitoPay",
+  cardHeading: "Protect your account",
+  cardBody: "Never share your PIN, password or verification codes. TitoPay will never ask for those by phone, email, WhatsApp, SMS or social media.",
+  acknowledgeLabel: "I understand",
+  tipsEyebrow: "Security Tips",
+  tips: [
+    { title: "Never share codes", body: "TitoPay will never ask for your PIN, password or OTP, not by phone, SMS, email or WhatsApp.", icon: "lock" },
+    { title: "Check before you pay", body: "Read the verified recipient name and the fee preview before you press Confirm.", icon: "check-circle" },
+    { title: "Keep contact details current", body: "Your registered cellphone and email are how you recover access.", icon: "mail" },
+    { title: "Lock your wallet fast", body: "If something feels wrong, stop everything leaving from the Security Centre. Other people can still pay you.", icon: "shield" },
+    { title: "Beware of urgency", body: "Scammers rush you. TitoPay never pressures you to move money.", icon: "bell" },
+    { title: "Use your device lock", body: "A device PIN, fingerprint or face unlock protects TitoPay if your phone is lost.", icon: "phone" }
+  ]
+};
 // Fees quoted in copy come from here and are rendered through money(), so the
 // sentence beside an amount always reads the same as the amount itself. Written
 // out by hand they drifted: money() gives "R 0.10" (and "R 0,10" where the
@@ -173,6 +199,10 @@ const state = {
   maintenance: { pwa: { enabled: false, note: "", expectedBackAt: "" } },
   profileQr: null,
   securityCentre: null,
+  // The security copy an admin last saved, once it has been fetched. Null means
+  // "nothing fetched yet", which is also what a failed fetch leaves behind, and
+  // securityContent() reads both as "use the copy in SECURITY_CONTENT_DEFAULTS".
+  securityContent: null,
   apiOnline: false,
   accountType: "personal",
   authMode: "landing",
@@ -221,6 +251,10 @@ let titoPayIceServers = [{ urls: ["stun:stun.l.google.com:19302"] }];
 let titoPayPendingIceCandidates = [];
 let titoPayAccountSyncTimer = null;
 let authRefreshPromise = null;
+// One security-content fetch per session, tracked here rather than beside
+// loadSecurityContent() because every top-level declaration in this file has to
+// sit in one of the two order-sensitive blocks.
+let securityContentRequested = false;
 let defaultServicesPromise = null;
 let jsQrLoadPromise = null;
 let authKeyboardCleanup = null;
@@ -1516,6 +1550,9 @@ function landingMenuSection(section) {
   `;
 }
 function openLandingMenu() {
+  // This menu carries the security tip card, and a signed out visitor may never
+  // open any other screen that does, so the copy is refreshed from here too.
+  loadSecurityContent();
   const serviceNames = landingMenuServiceNames();
   const sections = [
     {
@@ -5902,24 +5939,82 @@ function readJsonFromSession(key) {
     return null;
   }
 }
+// The wording to render right now: whatever an admin last saved, falling back
+// field by field to the copy above. Never returns a blank string, so a screen
+// built from this can never be an empty security warning.
+function securityContent() {
+  const stored = state.securityContent && typeof state.securityContent === "object" ? state.securityContent : {};
+  const pick = (field) => {
+    const value = typeof stored[field] === "string" ? stored[field].trim() : "";
+    return value || SECURITY_CONTENT_DEFAULTS[field];
+  };
+  const tips = Array.isArray(stored.tips)
+    ? stored.tips
+      .map((tip) => ({
+        title: String(tip?.title || "").trim(),
+        body: String(tip?.body || "").trim(),
+        icon: String(tip?.icon || "shield").trim() || "shield"
+      }))
+      .filter((tip) => tip.title && tip.body)
+    : [];
+  return {
+    eyebrow: pick("eyebrow"),
+    title: pick("title"),
+    cardHeading: pick("cardHeading"),
+    cardBody: pick("cardBody"),
+    acknowledgeLabel: pick("acknowledgeLabel"),
+    tipsEyebrow: pick("tipsEyebrow"),
+    tips: tips.length ? tips : SECURITY_CONTENT_DEFAULTS.tips
+  };
+}
+// Fetched once per session, lazily, and deliberately NOT awaited by the screens
+// that use it. A security warning that waits on the network is a security
+// warning that sometimes is not there; the default renders immediately and a
+// newer version, if there is one, is in place the next time the screen opens.
+//
+// This is called when a screen carrying the copy opens, never from render(),
+// so an app that never shows a security screen never makes the request.
+function loadSecurityContent() {
+  if (securityContentRequested) return;
+  securityContentRequested = true;
+  api("/v1/security-content", { auth: false })
+    .then((result) => {
+      if (result && result.content && typeof result.content === "object") {
+        state.securityContent = result.content;
+      }
+    })
+    .catch(() => {
+      // A failed fetch must NOT mean this session never sees updated wording
+      // again. Reopening a security screen tries once more; the customer is
+      // reading a correct warning either way, so there is nothing to tell them
+      // and nothing that retries on a timer behind their back.
+      securityContentRequested = false;
+    });
+}
+// The heading stays a parameter because the landing menu titles this card
+// "Stay safe" while the security screens title it with the admin-editable
+// cardHeading. Both were literals before and both must read the same as they
+// did; only the warning itself moved into securityContent().
 function securityTipCard(heading = "Stay safe") {
   return `
     <article class="security-tip-card">
       <h3>${esc(heading)}</h3>
-      <p>${esc(SECURITY_TIP_TEXT)}</p>
+      <p>${esc(securityContent().cardBody)}</p>
     </article>
   `;
 }
 function showSecurityTipModal() {
-  // The dialog is already titled "Stay safe with TitoPay", so the card inside it
+  loadSecurityContent();
+  const content = securityContent();
+  // The dialog is already titled from the same content, so the card inside it
   // says what to do rather than repeating the title.
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Security Tip</p><h2>Stay safe with TitoPay</h2></div>
+      <div><p class="eyebrow">${esc(content.eyebrow)}</p><h2>${esc(content.title)}</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    ${securityTipCard("Protect your account")}
-    <button class="btn primary" type="button" data-close>I understand</button>
+    ${securityTipCard(content.cardHeading)}
+    <button class="btn primary" type="button" data-close>${esc(content.acknowledgeLabel)}</button>
   `);
 }
 // ---------------------------------------------------------------------------
@@ -6144,24 +6239,23 @@ function openActiveSessionsModal() {
   `);
 }
 function openSecurityTipsModal() {
+  loadSecurityContent();
+  const content = securityContent();
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Security Tips</p><h2>Stay safe with TitoPay</h2></div>
+      <div><p class="eyebrow">${esc(content.tipsEyebrow)}</p><h2>${esc(content.title)}</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    ${securityTipCard("Protect your account")}
+    ${securityTipCard(content.cardHeading)}
     <section class="activity-list">
-      ${settingsRow("Never share codes", "TitoPay will never ask for your PIN, password or OTP, not by phone, SMS, email or WhatsApp.", "lock")}
-      ${settingsRow("Check before you pay", "Read the verified recipient name and the fee preview before you press Confirm.", "check-circle")}
-      ${settingsRow("Keep contact details current", "Your registered cellphone and email are how you recover access.", "mail")}
-      ${settingsRow("Lock your wallet fast", "If something feels wrong, stop everything leaving from the Security Centre. Other people can still pay you.", "shield")}
-      ${settingsRow("Beware of urgency", "Scammers rush you. TitoPay never pressures you to move money.", "bell")}
-      ${settingsRow("Use your device lock", "A device PIN, fingerprint or face unlock protects TitoPay if your phone is lost.", "phone")}
+      ${content.tips.map((tip) => settingsRow(tip.title, tip.body, tip.icon)).join("")}
     </section>
-    <button class="btn primary" type="button" data-close>I understand</button>
+    <button class="btn primary" type="button" data-close>${esc(content.acknowledgeLabel)}</button>
   `);
 }
 function openWhyTrustModal() {
+  loadSecurityContent();
+  const content = securityContent();
   const signedIn = Boolean(state.auth?.accessToken);
   openModal(`
     <div class="modal-head">
@@ -6182,7 +6276,7 @@ function openWhyTrustModal() {
       ${settingsRow("Privacy commitment", "TitoPay asks only for the information needed to open and operate your wallet. Optional alerts are opt-in, and feedback contact details are shared only with your permission.", "user")}
     </section>
     <section class="section-head compact"><h2>Your part matters too</h2></section>
-    ${securityTipCard("Protect your account")}
+    ${securityTipCard(content.cardHeading)}
     <div class="auth-actions">
       ${signedIn ? `<button class="btn primary" type="button" data-action="security-centre">${icon("shield")} Open Security Centre</button>` : ""}
       <button class="btn ghost" type="button" data-close>Close</button>

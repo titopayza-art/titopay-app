@@ -5992,3 +5992,220 @@ html[data-theme="dark"] .auth-panel-mark {
 .mk-lead-card strong { font-size: 0.84rem; color: var(--tp-text-strong); }
 .mk-lead-card small { font-size: 0.74rem; color: var(--tp-muted); }
 .mk-move { font-size: 0.78rem; }
+
+/* Security Content: the editor form, the repeating tips rows and the customer
+   preview. Every colour is a token, so the dark theme is inherited rather than
+   re-specified. */
+
+.sc-grid {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .sc-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.sc-warning {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--tp-warning-line);
+  border-radius: var(--tp-radius);
+  background: var(--tp-warning-soft);
+  color: var(--tp-warning);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.sc-tips-block {
+  grid-column: 1 / -1;
+}
+
+.sc-tips-head {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.sc-tips-head h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--tp-text-strong);
+}
+
+.sc-tips-head small {
+  font-size: 0.75rem;
+  color: var(--tp-muted);
+}
+
+.sc-tip-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.sc-tip-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(130px, auto) auto;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface-sunken);
+}
+
+.sc-tip-row input,
+.sc-tip-row select {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  font-family: inherit;
+  font-size: 0.8125rem;
+}
+
+.sc-tip-row textarea {
+  grid-column: 1 / -1;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.sc-tip-row input:focus,
+.sc-tip-row select:focus,
+.sc-tip-row textarea:focus {
+  outline: none;
+  border-color: var(--tp-blue);
+  box-shadow: var(--tp-focus);
+}
+
+/* Preview. A narrow column with the app's own proportions, so the operator
+   reads the copy at roughly the width a customer does. */
+
+.sc-preview-panel { position: sticky; top: 16px; }
+
+@media (max-width: 1100px) {
+  .sc-preview-panel { position: static; }
+}
+
+.sc-preview {
+  padding: 14px;
+  border: 1px solid var(--tp-border);
+  border-radius: 14px;
+  background: var(--tp-surface-sunken);
+}
+
+.sc-phone {
+  display: grid;
+  gap: 10px;
+  max-width: 340px;
+  margin: 0 auto;
+  padding: 14px;
+  border: 1px solid var(--tp-border);
+  border-radius: 12px;
+  background: var(--tp-surface);
+  box-shadow: var(--tp-shadow-card);
+}
+
+.sc-phone-head { display: grid; gap: 2px; }
+
+.sc-phone-head h4 {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.3;
+  color: var(--tp-text-strong);
+}
+
+.sc-eyebrow {
+  margin: 0;
+  color: var(--tp-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.sc-tip-card {
+  padding: 12px;
+  border: 1px solid var(--tp-blue-line);
+  border-radius: 10px;
+  background: var(--tp-blue-soft);
+}
+
+.sc-tip-card h5 {
+  margin: 0 0 4px;
+  font-size: 0.875rem;
+  color: var(--tp-text-strong);
+}
+
+.sc-tip-card p {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--tp-text);
+}
+
+.sc-tip-list { display: grid; gap: 8px; }
+
+.sc-tip-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid var(--tp-border-soft);
+  border-radius: 10px;
+  background: var(--tp-surface);
+}
+
+.sc-icon-bubble {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--tp-blue-soft);
+  color: var(--tp-blue);
+}
+
+.sc-tip-item strong {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--tp-text-strong);
+}
+
+.sc-tip-item small {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--tp-muted);
+}
+
+.sc-preview-empty {
+  margin: 0;
+  padding: 14px 0;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--tp-faint);
+}
+
+/* Not a button: the preview is a picture of the app, never a control. */
+.sc-phone-cta {
+  display: block;
+  padding: 10px;
+  border-radius: 9px;
+  background: var(--tp-blue);
+  color: #ffffff;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: center;
+}

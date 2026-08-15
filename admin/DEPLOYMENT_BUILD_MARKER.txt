@@ -1,11 +1,21 @@
-TitoPay Admin build: admin-console-v83-20260812
+TitoPay Admin build: admin-console-v84-20260815
 
 This build:
-  - Ticketing module: new "Change Request Queue" — approve/apply or decline
-    organiser postpone/cancel/update/other requests. Approving a postpone moves
-    the date; approving a cancel notifies holders and opens refunds; a details
-    update never touches ticket types.
-  - Ticketing module: "Cancel" action added to approved/suspended events (the
-    backend already supported it; the button was missing). Cancel confirms and
-    captures a reason.
-  - "Pending Review" metric now includes events awaiting organiser information.
+  - New Platform page "Security Content" (/security-content/): edits the
+    security warning and safety tips shown inside the customer app. Reads
+    GET /admin/security-content, writes PUT /admin/security-content, stored
+    in platform_settings under "security_content" and audit-logged.
+  - Friendly form with a repeating tips editor (title, body, icon select)
+    and a live customer preview beside it. The icon list is restricted to
+    the glyphs the customer app can draw.
+  - No field ever saves blank: clearing one restores its built-in wording.
+    A failed read shows the built-in copy with a warning rather than
+    silently overwriting stored content on the next save.
+  - Visible to admins holding the "security" permission.
+
+Upload notes:
+  - Asset stamp moves from admin-console-v83 to admin-console-v84 across all
+    66 HTML files, so operators cannot be served a cached admin.js without
+    the new route.
+  - Ships a new directory: security-content/index.html.
+  - Needs the API build carrying the security-content endpoints.

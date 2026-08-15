@@ -19,10 +19,15 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 24;
+const API_BUILD = 25;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  25: "The customer security copy is admin-editable: the Stay safe with TitoPay " +
+      "card, its warning, the acknowledge button and the safety tips now live in " +
+      "platform_settings and are edited from the console with a live preview. " +
+      "Reading is public and never throws; the app keeps the same defaults so " +
+      "the warning still renders with no network at all.",
   24: "Refund policy ENFORCED, not just stored: refunds_allowed, the cut-off " +
       "and the conditions had never been read by anything, and the app sent " +
       "every tier as refundable regardless. Buyers now see the terms before " +
