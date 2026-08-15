@@ -204,12 +204,26 @@ async function seedAdmin(role, label) {
 
     console.log(`\n  ${passed}/${passed} security content checks passed\n`);
   } finally {
-    await pool.query("DELETE FROM audit_logs WHERE action = 'security_content_updated'");
-    await pool.query("DELETE FROM platform_settings WHERE key = $1", [SECURITY_CONTENT_KEY]);
+    // Every statement is independently guarded. A cleanup that throws half way
+    // strands the rest of it: the first run of this harness died on the audit
+    // delete and left two admin accounts behind, which the NEXT run then had to
+    // work around. A tidy-up must not need tidying up after.
+    const tidy = async (sql, params) => {
+      try {
+        await pool.query(sql, params);
+      } catch (error) {
+        console.error(`  cleanup failed: ${error.message}`);
+      }
+    };
+    // Only what this run created. Deleting by action alone would take real
+    // records with it if this were ever pointed at a live database, and an
+    // audit log a test script can empty is not an audit log.
+    await tidy("DELETE FROM platform_settings WHERE key = $1", [SECURITY_CONTENT_KEY]);
     for (const admin of created) {
       if (!admin) continue;
-      await pool.query("DELETE FROM sessions WHERE id = $1", [admin.sessionId]);
-      await pool.query("DELETE FROM admin_users WHERE id = $1", [admin.adminId]);
+      await tidy("DELETE FROM audit_logs WHERE actor_id = $1", [admin.adminId]);
+      await tidy("DELETE FROM sessions WHERE id = $1", [admin.sessionId]);
+      await tidy("DELETE FROM admin_users WHERE id = $1", [admin.adminId]);
     }
     server.close();
     await pool.end();
