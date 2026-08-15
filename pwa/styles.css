@@ -14601,3 +14601,206 @@ img {
 .aftersale-picker > select {
   padding-right: 40px;
 }
+
+/* ---------------------------------------------------------------------------
+   The security screen fits the screen.
+
+   This dialog opens uninvited after every sign-in and its whole job is to be
+   read, so it is the one modal that must not arrive as a long scroll. It was
+   1057px tall on a desktop and 1438px on a 320px phone, against 568px of room.
+
+   The card becomes a fixed frame: the heading and the acknowledgement are
+   pinned, and what sits between them is sized to the viewport rather than to
+   the text. Spacing and type are compacted enough that the six shipped tips fit
+   outright from 360x640 upwards, which is every mainstream phone. Where an
+   admin writes more than a screen can physically hold -- twelve tips are
+   allowed, and a landscape phone has about 330px of height -- only the middle
+   moves, so the button that dismisses this is never somewhere a customer has to
+   go looking for.
+   --------------------------------------------------------------------------- */
+/* Sized against the backdrop's own content box rather than a viewport unit.
+   svh does not always resolve to the space this card actually has -- the
+   backdrop carries padding and the device safe-area insets -- and a card set to
+   94svh came out exactly viewport-tall, which pushed the backdrop itself into
+   scrolling. max-height:100% on a grid item measures the grid area, which is
+   the viewport minus that padding, so it is right by construction. */
+.modal-card:has(> .security-screen) {
+  /* GRID, not flex, on purpose. The mobile sheet sets `flex: 0 0 auto` on every
+     direct child of a modal card at a specificity this rule cannot reach, which
+     stops the frame from ever shrinking to the viewport. Flex properties are
+     inert on a grid item, so making the card a grid sidesteps that instead of
+     escalating selector weight, and a single minmax(0, 1fr) row both stretches
+     the child and lets it shrink. */
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  max-width: min(100%, 560px);
+  max-height: 100%;
+  min-height: 0;
+  padding: clamp(12px, 3.2vw, 20px);
+  overflow: hidden;
+}
+
+.security-screen {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: clamp(8px, 2vw, 12px);
+  min-height: 0;
+}
+
+.security-screen .modal-head {
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+.security-screen .modal-head h2 {
+  font-size: clamp(1.05rem, 4.2vw, 1.3rem);
+  line-height: 1.15;
+}
+
+.security-screen .modal-head .eyebrow {
+  margin-bottom: 2px;
+}
+
+.security-screen-body {
+  display: grid;
+  gap: clamp(8px, 2vw, 12px);
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.security-screen .security-tip-card {
+  gap: 4px;
+  margin-bottom: 0;
+  padding: clamp(10px, 2.8vw, 15px);
+  border-radius: 16px;
+}
+
+.security-screen .security-tip-card h3 {
+  font-size: clamp(0.98rem, 3.4vw, 1.12rem);
+}
+
+.security-screen .security-tip-card p {
+  font-size: clamp(0.82rem, 2.7vw, 0.94rem);
+  line-height: 1.4;
+}
+
+.security-screen .security-tips-eyebrow {
+  margin: 0;
+}
+
+.security-screen .activity-list {
+  gap: clamp(6px, 1.6vw, 8px);
+}
+
+.security-screen .activity-item {
+  gap: 10px;
+  padding: clamp(8px, 2.2vw, 11px);
+  border-radius: 14px;
+}
+
+/* The lift on hover belongs to a list you browse, not to a warning you read. */
+.security-screen .activity-item:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.security-screen .icon-bubble {
+  width: clamp(30px, 8vw, 36px);
+  height: clamp(30px, 8vw, 36px);
+}
+
+.security-screen .icon-bubble svg {
+  width: clamp(16px, 4.4vw, 19px);
+  height: clamp(16px, 4.4vw, 19px);
+}
+
+.security-screen .activity-item strong {
+  font-size: clamp(0.85rem, 2.8vw, 0.94rem);
+}
+
+.security-screen .activity-item small {
+  font-size: clamp(0.76rem, 2.5vw, 0.85rem);
+  line-height: 1.35;
+}
+
+.security-screen > .btn.primary {
+  min-height: clamp(44px, 11vw, 50px);
+}
+
+/* Phones give service modals a full-bleed sheet at 100dvh. That is right for a
+   scrolling screen and wrong here: dvh tracks the browser's shrinking toolbar,
+   so the sheet is periodically taller than the space it sits in and the
+   backdrop scrolls by a few pixels. The backdrop is position:fixed inset:0 with
+   no padding at this width, so 100% of it IS the viewport, exactly, with no
+   unit that can drift. Specificity has to beat the full-bleed rule, hence the
+   long selector. */
+@media (max-width: 519px) {
+  /* The selector mirrors the full-bleed sheet rule above, plus :has(), because
+     that rule turns every service modal into a flex column at a weight this one
+     has to exceed to stay a frame. Same reason `height` is restated: 100dvh
+     tracks the browser's shrinking toolbar, so the sheet is intermittently
+     taller than the space it occupies and the backdrop scrolls a few pixels.
+     The backdrop is position:fixed inset:0 with no padding at this width, so
+     100% of it is the viewport exactly, with no unit that can drift. */
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:not(.fullscreen-modal):not(.chatbot-fullscreen-modal):has(> .security-screen) {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    height: 100%;
+    max-height: 100%;
+    padding: 0 16px calc(16px + var(--safe-bottom));
+  }
+
+  .security-screen .modal-head {
+    padding-top: var(--safe-top);
+  }
+}
+
+/* Wider than a phone, the tips read better in two columns than as one long
+   ribbon, and it halves the height they need: that alone is the difference
+   between fitting and not on a desktop, a landscape tablet and a phone held
+   sideways. Below 600px there is not enough width for two readable columns, so
+   it stays a single list. */
+@media (min-width: 600px) {
+  .security-screen .activity-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+/* Phones are where the height is scarcest, so the rows give up their remaining
+   slack here rather than everywhere. */
+@media (max-width: 599px) {
+  .security-screen .activity-list {
+    gap: 5px;
+  }
+
+  .security-screen .activity-item {
+    padding: 7px 9px;
+    gap: 9px;
+  }
+
+  .security-screen .activity-item small {
+    line-height: 1.3;
+  }
+
+  .security-screen .security-tip-card {
+    padding: 9px 11px;
+  }
+}
+
+/* When the tips do not all fit -- a small phone, a phone held sideways, or an
+   admin who wrote twelve of them -- the list must look scrollable rather than
+   cut off. The mask fades the last few pixels only while there is more below,
+   so a list that fits shows no fade at all. */
+.security-screen-body.is-scrollable {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent 100%);
+}
+
+.security-screen-body.is-scrolled-to-end {
+  -webkit-mask-image: none;
+  mask-image: none;
+}

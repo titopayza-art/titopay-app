@@ -6052,22 +6052,48 @@ function securityTipCard(heading = "Stay safe") {
 // both still mean something: one heads the screen, the other heads the list.
 function securityScreenMarkup(eyebrow) {
   const content = securityContent();
+  // Three rows, not one long column: the heading and the acknowledgement are
+  // pinned to the frame and only the middle can ever move. This dialog opens
+  // uninvited after every sign-in, so a customer must never have to scroll to
+  // find the button that dismisses it.
   return `
-    <div class="modal-head">
-      <div><p class="eyebrow">${esc(eyebrow)}</p><h2>${esc(content.title)}</h2></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    <div class="security-screen">
+      <div class="modal-head">
+        <div><p class="eyebrow">${esc(eyebrow)}</p><h2>${esc(content.title)}</h2></div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      <div class="security-screen-body">
+        ${securityTipCard(content.cardHeading)}
+        <p class="eyebrow security-tips-eyebrow">${esc(content.tipsEyebrow)}</p>
+        <section class="activity-list">
+          ${content.tips.map((tip) => settingsRow(tip.title, tip.body, tip.icon)).join("")}
+        </section>
+      </div>
+      <button class="btn primary" type="button" data-close>${esc(content.acknowledgeLabel)}</button>
     </div>
-    ${securityTipCard(content.cardHeading)}
-    <p class="eyebrow security-tips-eyebrow">${esc(content.tipsEyebrow)}</p>
-    <section class="activity-list">
-      ${content.tips.map((tip) => settingsRow(tip.title, tip.body, tip.icon)).join("")}
-    </section>
-    <button class="btn primary" type="button" data-close>${esc(content.acknowledgeLabel)}</button>
   `;
+}
+// Marks the tips area as scrollable only while it actually is, so the fade at
+// its bottom edge appears when there is more to read and never over a list that
+// already fits. Called after the markup is in the DOM, because it measures.
+function markSecurityScrollState() {
+  const body = document.querySelector(".security-screen-body");
+  if (!body) return;
+  const update = () => {
+    const scrollable = body.scrollHeight > body.clientHeight + 1;
+    body.classList.toggle("is-scrollable", scrollable);
+    body.classList.toggle("is-scrolled-to-end",
+      scrollable && body.scrollTop + body.clientHeight >= body.scrollHeight - 2);
+  };
+  update();
+  body.addEventListener("scroll", update, { passive: true });
+  // The tips rewrap when the phone turns, which changes whether they fit.
+  window.addEventListener("resize", update, { passive: true });
 }
 function showSecurityTipModal() {
   loadSecurityContent();
   openModal(securityScreenMarkup(securityContent().eyebrow));
+  markSecurityScrollState();
 }
 // ---------------------------------------------------------------------------
 // Security Centre and trust surfaces
@@ -6295,6 +6321,7 @@ function openActiveSessionsModal() {
 function openSecurityTipsModal() {
   loadSecurityContent();
   openModal(securityScreenMarkup(securityContent().tipsEyebrow));
+  markSecurityScrollState();
 }
 function openWhyTrustModal() {
   loadSecurityContent();
