@@ -1,21 +1,30 @@
-TitoPay Admin build: admin-console-v84-20260815
+TitoPay Admin build: admin-console-v85-20260815
 
-This build:
-  - New Platform page "Security Content" (/security-content/): edits the
-    security warning and safety tips shown inside the customer app. Reads
-    GET /admin/security-content, writes PUT /admin/security-content, stored
-    in platform_settings under "security_content" and audit-logged.
-  - Friendly form with a repeating tips editor (title, body, icon select)
-    and a live customer preview beside it. The icon list is restricted to
-    the glyphs the customer app can draw.
-  - No field ever saves blank: clearing one restores its built-in wording.
-    A failed read shows the built-in copy with a warning rather than
-    silently overwriting stored content on the next save.
-  - Visible to admins holding the "security" permission.
+This build hardens the Security Content page shipped in v84. Nothing else on
+the console changes.
+
+  - Save is DISABLED when the stored content could not be read. v84 showed a
+    warning next to a working Save button, so the guard against overwriting an
+    unread version was advice rather than a rule. A "Retry load" button takes
+    its place, and pressing Enter in a field is refused for the same reason.
+  - The icon picker offers exactly the icons the API accepts. v84 offered 16 of
+    them while the API accepted 84, so opening content whose icon came from
+    outside those 16 and pressing Save quietly rewrote it to "shield". Both
+    sides now carry the same curated list of 29, spelled out for the operator
+    ("Message Check" rather than "message-check"), and the API test suite fails
+    if the two lists drift apart.
+  - The page states whether it is showing saved copy or the wording TitoPay
+    ships with, and when a person last saved it and who. Those two states
+    looked identical on screen in v84, so an operator could not tell whether
+    they were revising a colleague's work or writing the first version.
 
 Upload notes:
-  - Asset stamp moves from admin-console-v83 to admin-console-v84 across all
-    66 HTML files, so operators cannot be served a cached admin.js without
-    the new route.
-  - Ships a new directory: security-content/index.html.
-  - Needs the API build carrying the security-content endpoints.
+  - REQUIRES api.zip build 26. v84 saves would store the copy and then answer
+    500, because the audit write put the settings key into a UUID column. The
+    console reported an error over a change that had in fact been made.
+  - Asset stamp moves from admin-console-v84 to admin-console-v85 across all
+    66 HTML files, so operators cannot be served a cached admin.js.
+  - No new directories and no new endpoints; /security-content/ already exists
+    from v84.
+  - Replace the whole admin directory as usual. Nothing under api/ or the
+    website bundle is touched.

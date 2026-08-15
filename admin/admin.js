@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v84";
+  return "admin-console-v85";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -263,32 +263,57 @@ const SECURITY_CONTENT_LIMITS = {
   tipTitle: 80,
   tipBody: 280,
 };
-/* Only names the PWA's icon() actually defines. An unknown name renders an
-   empty <svg> in the customer app, so the icon field is a select and never
-   free text; anything unrecognised falls back to "shield" at both ends. */
+/* The icons a security tip may carry. This list is the SAME list the API
+   accepts, in the same order, and a test in the API suite pins the two together
+   along with the paths below.
+
+   That pairing is the whole point. This picker used to offer sixteen names
+   while the API accepted eighty-odd, so content stored with an icon from
+   outside the sixteen was quietly rewritten to "shield" the next time an
+   operator opened this page and pressed Save. Adding an icon now means adding
+   the name in the API's SECURITY_TIP_ICONS and its path here, together. */
 const SECURITY_CONTENT_ICONS = [
-  "lock", "shield", "check-circle", "mail", "bell", "phone", "eye", "eye-off",
-  "refresh", "scan", "user", "zap", "star", "heart", "globe", "home",
+  "shield", "lock", "ban", "eye", "eye-off",
+  "scan", "qr", "check-circle",
+  "bell", "mail", "phone", "chat", "message-check", "contacts",
+  "user", "refresh", "search",
+  "wallet", "bank", "receipt-list", "chart",
+  "learn", "tip", "globe", "home", "share", "star", "heart", "zap",
 ];
 /* Copied from the PWA's icon() registry so the preview draws the glyph the
-   customer actually gets instead of a stand-in. */
+   customer actually gets instead of a stand-in. A name in the list above with
+   no path here would preview as an empty box, so the test asserts every one of
+   them resolves. */
 const SECURITY_CONTENT_ICON_PATHS = {
-  lock: `<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>`,
   shield: `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/>`,
-  "check-circle": `<circle cx="12" cy="12" r="9"/><path d="m8.5 12.4 2.3 2.3 4.9-5.2"/>`,
-  mail: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>`,
-  bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>`,
-  phone: `<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>`,
+  lock: `<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>`,
+  ban: `<circle cx="12" cy="12" r="9"/><path d="m5.9 5.9 12.2 12.2"/>`,
   eye: `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="3"/>`,
   "eye-off": `<path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.3A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17.5 17.5 0 0 1-3.1 4.1"/><path d="M6.1 6.1A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4.2-.8"/>`,
-  refresh: `<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>`,
   scan: `<path d="M4 7V5a1 1 0 0 1 1-1h2"/><path d="M17 4h2a1 1 0 0 1 1 1v2"/><path d="M20 17v2a1 1 0 0 1-1 1h-2"/><path d="M7 20H5a1 1 0 0 1-1-1v-2"/><path d="M7 12h10"/>`,
+  qr: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h2"/><path d="M20 14v2"/><path d="M16 18h4"/><path d="M14 20h2"/>`,
+  "check-circle": `<circle cx="12" cy="12" r="9"/><path d="m8.5 12.4 2.3 2.3 4.9-5.2"/>`,
+  bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>`,
+  mail: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>`,
+  phone: `<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>`,
+  chat: `<path d="M16 11.5V6.5A2.5 2.5 0 0 0 13.5 4h-8A2.5 2.5 0 0 0 3 6.5v5A2.5 2.5 0 0 0 5.5 14H7v3l3.4-3"/><path d="M10.5 11h8A2.5 2.5 0 0 1 21 13.5v4a2.5 2.5 0 0 1-2.5 2.5H17v2.2L13.6 20h-3.1A2.5 2.5 0 0 1 8 17.5v-4A2.5 2.5 0 0 1 10.5 11Z"/>`,
+  "message-check": `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="m9 12 2 2 4-5"/>`,
+  contacts: `<path d="M16 18a4 4 0 0 0-8 0"/><circle cx="12" cy="10" r="3"/><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M7 7h.01"/><path d="M17 7h.01"/>`,
   user: `<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/>`,
-  zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
-  star: `<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>`,
-  heart: `<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>`,
+  refresh: `<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>`,
+  search: `<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>`,
+  wallet: `<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a2 2 0 0 1 2 2v10.5a2.5 2.5 0 0 1-2.5 2.5h-12A2.5 2.5 0 0 1 3 17.5z"/><path d="M17 12h4v4h-4a2 2 0 0 1 0-4Z"/><path d="M6 5l9-2v2"/>`,
+  bank: `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M6 10v8"/><path d="M10 10v8"/><path d="M14 10v8"/><path d="M18 10v8"/><path d="M4 18h16"/><path d="M3 22h18"/>`,
+  "receipt-list": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h3"/>`,
+  chart: `<path d="M3 3v18h18"/><path d="M7 16v-5"/><path d="M12 16V8"/><path d="M17 16v-9"/>`,
+  learn: `<path d="m22 10-10-5-10 5 10 5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/><path d="M22 10v6"/>`,
+  tip: `<path d="M6.5 9.5h11V18a3 3 0 0 1-3 3h-5a3 3 0 0 1-3-3z"/><circle cx="12" cy="4.2" r="2.2"/><path d="M12 13.5v3"/>`,
   globe: `<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>`,
   home: `<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>`,
+  share: `<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/>`,
+  star: `<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>`,
+  heart: `<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>`,
+  zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
 };
 const ADMIN_RAIL_KEY = "titopay_admin_rail_v1";
 const ADMIN_THEME_KEY = "titopay_admin_theme_v1";
@@ -4336,7 +4361,7 @@ function securityTipRowHtml(tip = {}) {
     <div class="sc-tip-row">
       <input class="sc-tip-title" value="${escapeHtml(tip.title || "")}" maxlength="${SECURITY_CONTENT_LIMITS.tipTitle}" placeholder="Tip title" aria-label="Tip title">
       <select class="sc-tip-icon" aria-label="Tip icon">
-        ${SECURITY_CONTENT_ICONS.map((name) => `<option value="${escapeHtml(name)}"${name === selected ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        ${SECURITY_CONTENT_ICONS.map((name) => `<option value="${escapeHtml(name)}"${name === selected ? " selected" : ""}>${escapeHtml(securityContentIconLabel(name))}</option>`).join("")}
       </select>
       <button class="ghost-btn" type="button" data-sc-remove aria-label="Remove this tip">Remove</button>
       <textarea class="sc-tip-body" rows="2" maxlength="${SECURITY_CONTENT_LIMITS.tipBody}" placeholder="What the customer should do" aria-label="Tip body">${escapeHtml(tip.body || "")}</textarea>
@@ -4395,11 +4420,35 @@ function securityContentPreviewHtml(content) {
     </div>
   `;
 }
+/* "Saved by Thuso on 14 August 2026" beats "saved", and "never edited" is the
+   fact an operator most needs before they start typing. This reads as a
+   sentence, so it spells the date out rather than reusing the console's
+   table format, which is built for scanning a column. */
+function securityContentProvenance(record) {
+  if (!record?.stored) {
+    return "Showing the wording TitoPay ships with. Nobody has edited this yet, so saving here publishes the first version.";
+  }
+  const date = record.updatedAt ? new Date(record.updatedAt) : null;
+  const when = date && !Number.isNaN(date.getTime())
+    ? date.toLocaleString("en-ZA", {
+      timeZone: "Africa/Johannesburg",
+      day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false
+    }).replace(",", " at")
+    : "";
+  const who = record.updatedBy ? ` by ${record.updatedBy}` : "";
+  return when ? `Saved${who} on ${when}.` : `Saved${who}.`;
+}
+/* The stored value is the slug the API accepts; the operator reads a name. */
+function securityContentIconLabel(name) {
+  const words = String(name || "").split("-");
+  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
 async function renderSecurityContent() {
-  /* A failed read must not become a silent overwrite. The page still opens on
-     the built-in copy so it is usable, but it says so, because saving over
-     content the console could not read would replace an admin's real wording
-     with defaults. */
+  /* A failed read must not become a silent overwrite. The page opens on the
+     built-in copy so the operator can see what the screen is, and Save is
+     DISABLED until a real read succeeds: saving content the console could not
+     read would replace an admin's real wording with defaults, and a warning
+     paragraph next to a live Save button is not a guard, it is a suggestion. */
   let loadFailed = false;
   const result = await apiFetch("/admin/security-content").catch(() => {
     loadFailed = true;
@@ -4422,7 +4471,9 @@ async function renderSecurityContent() {
       <section class="panel">
         <h3>Security Content</h3>
         <p>The security warning and safety tips customers read inside the TitoPay app. Clearing a field restores its built-in wording, never a blank. Every change is audited.</p>
-        ${loadFailed ? `<p class="sc-warning" role="alert">The saved content could not be read from the API, so the built-in wording is shown below. Saving now would replace whatever is currently stored. Refresh before you edit.</p>` : ""}
+        ${loadFailed
+          ? `<p class="sc-warning" role="alert">The saved content could not be read from the API, so the built-in wording is shown below and saving is switched off. Publishing from here would replace whatever is really stored. Press Retry load once the API answers.</p>`
+          : `<p class="sc-provenance">${escapeHtml(securityContentProvenance(result))}</p>`}
         <form id="sc-form" class="form-grid">
           <div class="field"><label for="sc-eyebrow">Eyebrow</label><input id="sc-eyebrow" value="${escapeHtml(content.eyebrow)}" maxlength="${limits.eyebrow}" placeholder="${escapeHtml(SECURITY_CONTENT_DEFAULTS.eyebrow)}"></div>
           <div class="field"><label for="sc-title">Title</label><input id="sc-title" value="${escapeHtml(content.title)}" maxlength="${limits.title}" placeholder="${escapeHtml(SECURITY_CONTENT_DEFAULTS.title)}"></div>
@@ -4440,9 +4491,11 @@ async function renderSecurityContent() {
             </div>
           </div>
           <div class="form-actions field-full">
-            <button class="primary-btn" type="submit">Save security content</button>
+            <button class="primary-btn" type="submit"${loadFailed ? " disabled" : ""}>Save security content</button>
             <button class="secondary-btn" type="button" data-sc-add>Add tip</button>
-            <button class="ghost-btn" type="button" data-sc-restore>Restore defaults</button>
+            ${loadFailed
+              ? `<button class="secondary-btn" type="button" data-sc-retry>Retry load</button>`
+              : `<button class="ghost-btn" type="button" data-sc-restore>Restore defaults</button>`}
           </div>
         </form>
       </section>
@@ -4488,6 +4541,10 @@ async function renderSecurityContent() {
       repaintPreview();
       return;
     }
+    if (event.target.closest("[data-sc-retry]")) {
+      renderSecurityContent();
+      return;
+    }
     if (event.target.closest("[data-sc-restore]")) {
       if (!window.confirm("Replace everything on this form with the built-in TitoPay security wording? Nothing is published until you press Save security content.")) return;
       const defaults = normalizeSecurityContent({});
@@ -4508,6 +4565,12 @@ async function renderSecurityContent() {
   });
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    /* The disabled button is the visible half of the guard; this is the half
+       that holds when a form is submitted by pressing Enter in a text field. */
+    if (loadFailed) {
+      showToast("The saved security content could not be read. Press Retry load before saving.");
+      return;
+    }
     const draft = securityContentDraft();
     /* Wholly blank rows are dropped, half-filled ones are refused. A tip with
        a title and no body renders as an empty instruction in the app. */

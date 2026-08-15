@@ -22,16 +22,37 @@ function explicitAdminAuthenticationMode() {
     : "password_email_otp";
 }
 
+// ONE DDL PER PROCESS, NOT ONE PER REQUEST.
+//
+// This ran a CREATE TABLE IF NOT EXISTS ahead of every single read and write of
+// every platform setting. That was invisible while the callers were all admin
+// screens, and stopped being invisible the moment a PUBLIC unauthenticated
+// endpoint started reading a setting: an anonymous request could put a DDL
+// statement on the database, which is a cheap thing to send and a not-cheap
+// thing to serve.
+//
+// The promise is memoised rather than a boolean, so concurrent first callers
+// wait on the same statement instead of racing to issue their own. A failure is
+// not cached: the next caller retries rather than the process deciding forever
+// that the table cannot be made.
+let platformSettingsTableReady = null;
+
 async function ensurePlatformSettingsTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS platform_settings (
-      key TEXT PRIMARY KEY,
-      value JSONB NOT NULL DEFAULT '{}'::JSONB,
-      updated_by UUID REFERENCES admin_users(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  if (!platformSettingsTableReady) {
+    platformSettingsTableReady = pool.query(`
+      CREATE TABLE IF NOT EXISTS platform_settings (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}'::JSONB,
+        updated_by UUID REFERENCES admin_users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch((error) => {
+      platformSettingsTableReady = null;
+      throw error;
+    });
+  }
+  await platformSettingsTableReady;
 }
 
 function policyFromValue(value = {}) {
@@ -115,6 +136,35 @@ async function getPlatformSetting(key, fallback = {}) {
   };
 }
 
+// The same read, plus who last wrote it and whether a row exists at all.
+//
+// getPlatformSetting folds "no row" and "row holding the default" into the same
+// answer, which is right for a caller that only wants the value and wrong for
+// an editing screen: an operator looking at a form cannot tell whether they are
+// about to revise a colleague's wording or write the first version. The join is
+// LEFT so a setting written by a since-deleted admin still reports its date.
+async function getPlatformSettingRecord(key) {
+  await ensurePlatformSettingsTable();
+  const { rows } = await pool.query(
+    `SELECT s.value, s.updated_at, s.updated_by,
+            COALESCE(NULLIF(a.full_name, ''), a.username, a.email) AS updated_by_name
+       FROM platform_settings s
+       LEFT JOIN admin_users a ON a.id = s.updated_by
+      WHERE s.key = $1
+      LIMIT 1`,
+    [key]
+  );
+  const row = rows[0] || null;
+  return {
+    key,
+    exists: Boolean(row),
+    value: row ? row.value : null,
+    updatedAt: row?.updated_at || null,
+    updatedBy: row?.updated_by || null,
+    updatedByName: row?.updated_by_name || null
+  };
+}
+
 async function setPlatformSetting(key, value = {}, updatedBy = null) {
   await ensurePlatformSettingsTable();
   const { rows } = await pool.query(
@@ -134,5 +184,6 @@ module.exports = {
   getAdminAuthenticationPolicy,
   setAdminAuthenticationPolicy,
   getPlatformSetting,
+  getPlatformSettingRecord,
   setPlatformSetting
 };

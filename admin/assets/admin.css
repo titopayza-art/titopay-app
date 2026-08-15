@@ -6017,6 +6017,19 @@ html[data-theme="dark"] .auth-panel-mark {
   line-height: 1.5;
 }
 
+/* Quieter than the warning: this is a fact about the page, not a problem with
+   it. It sits where the warning would sit so the eye finds one line either way. */
+.sc-provenance {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--tp-border-soft);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface-sunken);
+  color: var(--tp-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
 .sc-tips-block {
   grid-column: 1 / -1;
 }

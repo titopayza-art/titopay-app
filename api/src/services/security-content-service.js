@@ -34,7 +34,11 @@
 
 const { AppError } = require("../lib/errors");
 const { boundedText } = require("../lib/validation");
-const { getPlatformSetting, setPlatformSetting } = require("./platform-settings-service");
+const {
+  getPlatformSetting,
+  getPlatformSettingRecord,
+  setPlatformSetting
+} = require("./platform-settings-service");
 
 const SECURITY_CONTENT_KEY = "security_content";
 const MAX_TIPS = 12;
@@ -56,24 +60,36 @@ const SECURITY_CONTENT_DEFAULTS = {
   ]
 };
 
-// Exactly the names the PWA's icon() has a drawing for. An icon name it does
-// not know renders as the generic grid square, which on a security tip reads as
-// a broken app, so anything unrecognised becomes "shield" instead of being
-// rejected. That keeps a typo in the admin console from blocking the save of
-// wording that may be urgent.
+// THE ICONS A SECURITY TIP MAY CARRY. This list and the admin console's picker
+// are the same list, in the same order, and a test pins them together.
+//
+// It started as every name the PWA's icon() can draw, which was eighty-odd, on
+// the reasoning that anything that renders should be allowed. That was wrong in
+// a way that only shows up on the second edit: the console offered sixteen of
+// them, so loading content whose icon came from outside that sixteen and
+// pressing Save quietly rewrote it to "shield". The stored value was legal, the
+// console could not represent it, and the customer lost the glyph.
+//
+// So the set is curated instead of exhaustive: the glyphs that mean something
+// on a security tip (a lock, a scan, a channel a scammer might phone you on),
+// each one drawable by both the app and the console's live preview. Widening it
+// means adding the name here AND its path in the console, together, which is
+// exactly the coupling that was missing.
+//
+// Order is by meaning rather than alphabet, because it is read as a dropdown.
 const SECURITY_TIP_ICONS = new Set([
-  "wallet", "card-add", "upload", "withdraw", "bank-transfer", "send", "download",
-  "chevron-down", "plus", "copy", "qr", "qr-receive", "scan", "sale", "phone",
-  "sim-card", "signal", "voice-bundle", "sms-bundle", "data-bundle", "zap",
-  "electricity", "tag", "voucher", "gift", "bank", "bill", "bill-pay", "calendar",
-  "ticket", "ticketing", "health", "star", "check-circle", "stockvel", "piggy-bank",
-  "community-wallet", "learn", "tip", "tip-card", "heart", "scissors", "split-bill",
-  "plane", "globe", "lock", "user", "merchant-profile", "contacts", "staff-badge",
-  "shield", "home", "grid", "list", "receipt-list", "statement", "invoice", "quote",
-  "document-invoice", "payment-request", "message-check", "chat", "chatbot",
-  "feedback", "bell", "search", "mail", "paperclip", "share", "arrow-left",
-  "arrow-right", "eye", "eye-off", "refresh", "chart", "bank-payout", "refund-card",
-  "bulk-distribution", "store", "maintenance", "menu", "more-horizontal", "x", "ban"
+  // Protection and refusal
+  "shield", "lock", "ban", "eye", "eye-off",
+  // Codes, scanning and confirmation
+  "scan", "qr", "check-circle",
+  // The channels a scammer reaches someone on
+  "bell", "mail", "phone", "chat", "message-check", "contacts",
+  // The account itself
+  "user", "refresh", "search",
+  // Money surfaces
+  "wallet", "bank", "receipt-list", "chart",
+  // Guidance and reassurance
+  "learn", "tip", "globe", "home", "share", "star", "heart", "zap"
 ]);
 
 const FALLBACK_TIP_ICON = "shield";
@@ -147,15 +163,46 @@ async function getSecurityContent({ fallbackOnError = true } = {}) {
   }
 }
 
+// What the console reads. Same wording as the customer gets, plus the two facts
+// an editing screen needs and a rendering screen does not: has anyone ever saved
+// this, and who last did.
+//
+// It does not fall back on error, for the same reason the admin read does not:
+// a form that silently shows the defaults after a failed read is a form whose
+// next Save destroys the real copy.
+async function getSecurityContentRecord() {
+  const record = await getPlatformSettingRecord(SECURITY_CONTENT_KEY);
+  return {
+    content: mergeWithDefaults(record.value),
+    stored: record.exists,
+    updatedAt: record.updatedAt,
+    updatedBy: record.updatedByName || null
+  };
+}
+
 // Writes are strict where reads are forgiving. An admin who pastes copy that is
 // too long is told so and can shorten it, rather than discovering later that a
 // warning was silently cut off mid-sentence. Blanking a field is still allowed
 // and means "put the default back".
 function normalizeForSave(payload) {
   const value = payload && typeof payload === "object" ? payload : {};
+  // boundedText coerces with String(), so an object arriving where a sentence
+  // belongs would be stored as "[object Object]" and become the live security
+  // warning a customer reads. A malformed payload is a bug in the caller, and
+  // saying so beats writing nonsense into the one screen that must be right.
   const text = (field, label) => {
-    const trimmed = boundedText(value[field], label, { min: 0, max: FIELD_LIMITS[field] });
+    const raw = value[field];
+    if (raw !== undefined && raw !== null && typeof raw !== "string") {
+      throw new AppError(400, `${label} must be text`);
+    }
+    const trimmed = boundedText(raw, label, { min: 0, max: FIELD_LIMITS[field] });
     return trimmed || SECURITY_CONTENT_DEFAULTS[field];
+  };
+  const tipText = (raw, label, max) => {
+    if (raw !== undefined && raw !== null && typeof raw !== "string") {
+      throw new AppError(400, `${label} must be text`);
+    }
+    return boundedText(raw, label, { min: 0, max });
   };
 
   let tips = SECURITY_CONTENT_DEFAULTS.tips;
@@ -164,8 +211,8 @@ function normalizeForSave(payload) {
     if (value.tips.length > MAX_TIPS) throw new AppError(400, `Security tips are limited to ${MAX_TIPS}`);
     const normalized = value.tips
       .map((tip, index) => ({
-        title: boundedText(tip?.title, `Security tip ${index + 1} title`, { min: 0, max: FIELD_LIMITS.tipTitle }),
-        body: boundedText(tip?.body, `Security tip ${index + 1} body`, { min: 0, max: FIELD_LIMITS.tipBody }),
+        title: tipText(tip?.title, `Security tip ${index + 1} title`, FIELD_LIMITS.tipTitle),
+        body: tipText(tip?.body, `Security tip ${index + 1} body`, FIELD_LIMITS.tipBody),
         icon: normalizeTipIcon(tip?.icon)
       }))
       // A row with nothing in it is how an admin console deletes a tip, so an
@@ -201,5 +248,13 @@ module.exports = {
   SECURITY_TIP_ICONS,
   MAX_TIPS,
   getSecurityContent,
-  saveSecurityContent
+  getSecurityContentRecord,
+  saveSecurityContent,
+  // Exported so the guarantees can be tested by CALLING them. Asserting the
+  // shape of this file's source proves only that the source still looks the
+  // same; a refactor that keeps the shape and inverts a condition would pass
+  // while every customer read a blank security card.
+  mergeWithDefaults,
+  normalizeForSave,
+  normalizeTipIcon
 };

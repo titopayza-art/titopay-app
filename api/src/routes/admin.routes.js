@@ -47,7 +47,7 @@ const {
 } = require("../services/platform-settings-service");
 const {
   SECURITY_CONTENT_KEY,
-  getSecurityContent,
+  getSecurityContentRecord,
   saveSecurityContent
 } = require("../services/security-content-service");
 const {
@@ -2913,7 +2913,11 @@ router.put("/security/authentication-mode", requireAdminPermission("security"), 
 // saved copy, because the next Save would make that true.
 router.get("/security-content", requireAdminPermission("security"), async (_req, res, next) => {
   try {
-    res.json({ ok: true, content: await getSecurityContent({ fallbackOnError: false }) });
+    // stored/updatedAt/updatedBy travel with the wording so the page can say
+    // whether it is showing someone's saved copy or the wording TitoPay ships
+    // with. Those look identical on screen otherwise.
+    const record = await getSecurityContentRecord();
+    res.json({ ok: true, ...record });
   } catch (error) {
     next(error);
   }
@@ -2927,13 +2931,24 @@ router.put("/security-content", requireAdminPermission("security"), async (req, 
       actorId: req.auth.userId,
       action: "security_content_updated",
       entityType: "platform_settings",
-      entityId: SECURITY_CONTENT_KEY,
+      // entity_id is a UUID column, and a platform setting is keyed by name.
+      // Passing the key here made Postgres reject the insert, so every save
+      // stored the copy and THEN answered 500, leaving an admin looking at an
+      // error beside content that had in fact changed, with nothing in the log.
+      // The key belongs in the metadata, the way the other settings routes do.
+      entityId: null,
       ipAddress: req.auth.ipAddress,
       userAgent: req.auth.userAgent,
       // The copy itself goes in the log, not just the fact that it changed.
       // When a customer reports being told something odd by "the app", the
       // question is what the app said on that day and who wrote it.
-      metadata: { title: content.title, cardHeading: content.cardHeading, cardBody: content.cardBody, tipCount: content.tips.length }
+      metadata: {
+        settingKey: SECURITY_CONTENT_KEY,
+        title: content.title,
+        cardHeading: content.cardHeading,
+        cardBody: content.cardBody,
+        tipCount: content.tips.length
+      }
     });
     res.json({ ok: true, content });
   } catch (error) {

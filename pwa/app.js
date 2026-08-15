@@ -114,6 +114,7 @@ const SESSION_WARNING_MS = 60 * 1000;
 // cannot be reached, if the request is slow, if a field was saved empty, the
 // customer still reads a real warning rather than an empty card. The stored
 // version is an override, never a dependency.
+const SECURITY_CONTENT_CACHE_KEY = "titopay_security_content_v1";
 const SECURITY_CONTENT_DEFAULTS = {
   eyebrow: "Security Tip",
   title: "Stay safe with TitoPay",
@@ -255,9 +256,107 @@ let authRefreshPromise = null;
 // loadSecurityContent() because every top-level declaration in this file has to
 // sit in one of the two order-sensitive blocks.
 let securityContentRequested = false;
+let securityContentSeeded = false;
 let defaultServicesPromise = null;
 let jsQrLoadPromise = null;
 let authKeyboardCleanup = null;
+// The icon registry lives at module scope rather than inside icon(). It was
+// rebuilt on every single call, which is a lot of allocation for a function this
+// app calls on every render, and it could not be consulted from anywhere else.
+// Being able to ask "can this build draw that name?" is what the security tips
+// need below.
+const ICON_ALIASES = {
+  "community-wallet": "stockvel",
+  "piggy-bank": "stockvel"
+};
+const ICON_PATHS = {
+    wallet: `<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a2 2 0 0 1 2 2v10.5a2.5 2.5 0 0 1-2.5 2.5h-12A2.5 2.5 0 0 1 3 17.5z"/><path d="M17 12h4v4h-4a2 2 0 0 1 0-4Z"/><path d="M6 5l9-2v2"/>`,
+    "card-add": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M8 15h5"/><path d="M16 14v4"/><path d="M14 16h4"/>`,
+    upload: `<path d="M12 19V5"/><path d="m6 11 6-6 6 6"/><path d="M5 21h14"/>`,
+    withdraw: `<path d="M12 5v14"/><path d="m18 13-6 6-6-6"/><path d="M5 3h14"/>`,
+    "bank-transfer": `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M7 10v7"/><path d="M12 10v7"/><path d="M17 10v7"/><path d="M4 17h16"/><path d="m8 21 8-8"/><path d="M16 17v-4h-4"/>`,
+    send: `<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>`,
+    download: `<path d="m12 5 0 14"/><path d="m18 13-6 6-6-6"/><path d="M5 21h14"/>`,
+    "chevron-down": `<path d="m6 9 6 6 6-6"/>`,
+    plus: `<path d="M12 5v14"/><path d="M5 12h14"/>`,
+    copy: `<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`,
+    qr: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h2"/><path d="M20 14v2"/><path d="M16 18h4"/><path d="M14 20h2"/>`,
+    "qr-receive": `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M15 16h5"/><path d="m17 14-2 2 2 2"/><path d="M20 20h-6"/>`,
+    scan: `<path d="M4 7V5a1 1 0 0 1 1-1h2"/><path d="M17 4h2a1 1 0 0 1 1 1v2"/><path d="M20 17v2a1 1 0 0 1-1 1h-2"/><path d="M7 20H5a1 1 0 0 1-1-1v-2"/><path d="M7 12h10"/>`,
+    sale: `<rect x="6" y="3" width="12" height="18" rx="3"/><path d="M9 7h6"/><path d="M9 11h6"/><path d="M9 15h2"/><path d="m12 17 2 2 4-5"/>`,
+    phone: `<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>`,
+    "sim-card": `<path d="M8 2h6l4 4v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v5h4"/><path d="M9 14h6"/><path d="M9 18h3"/><path d="M10 10h.01"/><path d="M14 10h.01"/>`,
+    signal: `<path d="M4 18h2"/><path d="M9 18v-4"/><path d="M14 18v-8"/><path d="M19 18V6"/>`,
+    "voice-bundle": `<path d="M7.5 3.5 10 8 8 9.5a10 10 0 0 0 6.5 6.5L16 14l4.5 2.5-1 3a2 2 0 0 1-2.1 1.4C10.6 20 4 13.4 3.1 6.6A2 2 0 0 1 4.5 4.5Z"/><path d="M15.5 4.2a5.5 5.5 0 0 1 4.3 4.3"/>`,
+    "sms-bundle": `<path d="M4 4h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16h-8.5L7 20v-4H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 4Z"/><path d="M7 8.5h10"/><path d="M7 12h6"/>`,
+    "data-bundle": `<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 17h8"/><path d="M8 7h.01"/><path d="M12 7h.01"/><path d="M16 7h.01"/><path d="M8 11h8"/><path d="M8 14h8"/>`,
+    zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
+    electricity: `<path d="M12 2.6a6.4 6.4 0 0 0-3.7 11.6c.5.4.8 1 .8 1.6v.6h5.8v-.6c0-.6.3-1.2.8-1.6A6.4 6.4 0 0 0 12 2.6Z"/><path d="M9.4 19h5.2"/><path d="M10.2 21.6h3.6"/>`,
+    tag: `<path d="M20 13 11 22l-9-9V4h9z"/><path d="M7 7h.01"/>`,
+    voucher: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4z"/><path d="M9 9h.01"/><path d="M9 15h.01"/><path d="M13 9h4"/><path d="M13 15h4"/>`,
+    gift: `<path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7Z"/><path d="M12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7Z"/>`,
+    bank: `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M6 10v8"/><path d="M10 10v8"/><path d="M14 10v8"/><path d="M18 10v8"/><path d="M4 18h16"/><path d="M3 22h18"/>`,
+    bill: `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/>`,
+    "bill-pay": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="m9.3 13.7 1.9 1.9 3.5-3.9"/>`,
+    calendar: `<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18"/><path d="M8 2.5v4"/><path d="M16 2.5v4"/>`,
+    ticket: `<path d="M2 9a3 3 0 0 0 0 6v3a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3a3 3 0 0 0 0-6V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M13 5v14"/>`,
+    ticketing: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M9 9h6"/><path d="M9 13h4"/><path d="M17 8v8"/>`,
+    health: `<rect x="4" y="4" width="16" height="16" rx="4.5"/><path d="M12 8.8v6.4"/><path d="M8.8 12h6.4"/>`,
+    star: `<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>`,
+    "check-circle": `<circle cx="12" cy="12" r="9"/><path d="m8.5 12.4 2.3 2.3 4.9-5.2"/>`,
+    stockvel: `<circle cx="8.5" cy="6.8" r="2.6"/><circle cx="15.5" cy="6.8" r="2.6"/><path d="M4.5 20.5v-.5a5 5 0 0 1 5-5h5a5 5 0 0 1 5 5v.5"/><circle cx="12" cy="17.6" r="1.7"/>`,
+    "piggy-bank": `<path d="M5 12a6 6 0 0 1 6-6h4a5 5 0 0 1 5 5v4a4 4 0 0 1-4 4H8a5 5 0 0 1-5-5v-1a3 3 0 0 1 2-2.8Z"/><path d="M16 6V4a2 2 0 0 0-2 2"/><path d="M7 19v2"/><path d="M17 19v2"/><path d="M19 11h2"/><path d="M9 10h.01"/>`,
+    "community-wallet": `<path d="M4 17a4 4 0 0 1 8 0"/><path d="M12 17a4 4 0 0 1 8 0"/><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M6 21h12a2 2 0 0 0 2-2v-1H4v1a2 2 0 0 0 2 2Z"/><path d="M12 11v5"/>`,
+    learn: `<path d="m22 10-10-5-10 5 10 5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/><path d="M22 10v6"/>`,
+    tip: `<path d="M6.5 9.5h11V18a3 3 0 0 1-3 3h-5a3 3 0 0 1-3-3z"/><circle cx="12" cy="4.2" r="2.2"/><path d="M12 13.5v3"/>`,
+    "tip-card": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h6"/><path d="M7 14h4"/><circle cx="17" cy="12" r="2.5"/><path d="M17 10.7v2.6"/><path d="M15.7 12h2.6"/>`,
+    heart: `<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>`,
+    scissors: `<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9"/><path d="M8.1 8.1 20 20"/>`,
+    "split-bill": `<path d="M4 5h16v14H4z"/><path d="M8 9h8"/><path d="M8 13h4"/><path d="M12 5v14"/><path d="m7 17 2-2 2 2"/><path d="m13 17 2-2 2 2"/>`,
+    plane: `<rect x="4.5" y="7.5" width="15" height="13" rx="3"/><path d="M9 7.5V6a3 3 0 0 1 6 0v1.5"/><path d="M9 7.5v13"/><path d="M15 7.5v13"/>`,
+    globe: `<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>`,
+    lock: `<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>`,
+    user: `<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/>`,
+    "merchant-profile": `<path d="M4 10h16l-1-5H5z"/><path d="M6 10v10h12V10"/><path d="M9 20v-5h6v5"/><path d="M8 14h.01"/><path d="M16 14h.01"/>`,
+    contacts: `<path d="M16 18a4 4 0 0 0-8 0"/><circle cx="12" cy="10" r="3"/><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M7 7h.01"/><path d="M17 7h.01"/>`,
+    "staff-badge": `<rect x="4" y="3" width="16" height="18" rx="3"/><circle cx="12" cy="9" r="3"/><path d="M8 17a4 4 0 0 1 8 0"/><path d="M8 21v-2"/><path d="M16 21v-2"/>`,
+    shield: `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/>`,
+    home: `<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>`,
+    grid: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h6v6h-6z"/>`,
+    list: `<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>`,
+    "receipt-list": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h3"/>`,
+    statement: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9.5 19v-3.5"/><path d="M12 19v-6"/><path d="M14.5 19v-4.5"/>`,
+    invoice: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h6"/><path d="M9 16h4"/><path d="M16 18h2"/><path d="M16 21h2"/>`,
+    quote: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M10 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M14.5 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M9 19h7"/>`,
+    "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7"/><path d="M9 16h7"/><path d="M9 20h2"/><path d="M13 20h3"/>`,
+    "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h5"/><path d="M7 14.5h3"/><path d="M19 12h-5.5"/><path d="m16 9 -2.6 3 2.6 3"/>`,
+    "message-check": `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="m9 12 2 2 4-5"/>`,
+    chat: `<path d="M16 11.5V6.5A2.5 2.5 0 0 0 13.5 4h-8A2.5 2.5 0 0 0 3 6.5v5A2.5 2.5 0 0 0 5.5 14H7v3l3.4-3"/><path d="M10.5 11h8A2.5 2.5 0 0 1 21 13.5v4a2.5 2.5 0 0 1-2.5 2.5H17v2.2L13.6 20h-3.1A2.5 2.5 0 0 1 8 17.5v-4A2.5 2.5 0 0 1 10.5 11Z"/>`,
+    chatbot: `<path d="M3 11.5a9 9 0 0 1 18 0"/><path d="M3 11.5h2.4a1.6 1.6 0 0 1 1.6 1.6v3a1.6 1.6 0 0 1-1.6 1.6h-.8A1.6 1.6 0 0 1 3 16.1z"/><path d="M21 11.5h-2.4a1.6 1.6 0 0 0-1.6 1.6v3a1.6 1.6 0 0 0 1.6 1.6h.8a1.6 1.6 0 0 0 1.6-1.6z"/><path d="M21 16.1v1.9a3.5 3.5 0 0 1-3.5 3.5H13"/>`,
+    feedback: `<path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6A3.5 3.5 0 0 1 16.5 16H11l-5 4v-4.4A3.5 3.5 0 0 1 4 12.5z"/><path d="m9 9 2 2 4-4"/><path d="M9 13h6"/>`,
+    bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>`,
+    search: `<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>`,
+    mail: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>`,
+    paperclip: `<path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 1 1 5.7 5.7l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.5-8.5"/>`,
+    share: `<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/>`,
+    "arrow-left": `<path d="m15 18-6-6 6-6"/><path d="M21 12H9"/>`,
+    // Opens something. The child card used arrow-left, which points back the
+    // way you came - exactly the wrong direction for a row you tap into.
+    "arrow-right": `<path d="m9 18 6-6-6-6"/><path d="M3 12h12"/>`,
+    eye: `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="3"/>`,
+    "eye-off": `<path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.3A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17.5 17.5 0 0 1-3.1 4.1"/><path d="M6.1 6.1A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4.2-.8"/>`,
+    refresh: `<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>`,
+    chart: `<path d="M3 3v18h18"/><path d="M7 16v-5"/><path d="M12 16V8"/><path d="M17 16v-9"/>`,
+    "bank-payout": `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M6 10v8"/><path d="M10 10v8"/><path d="M14 10v8"/><path d="M18 10v8"/><path d="M4 18h16"/><path d="m13 21 4-4 4 4"/>`,
+    "refund-card": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M9 16a4 4 0 1 0 0-8"/><path d="M9 8H6v3"/>`,
+    "bulk-distribution": `<path d="M4 6h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M14 14h6v6h-6z"/><path d="M10 9h4"/><path d="M10 11l4 6"/><path d="M14 7l-4 2"/>`,
+    store: `<path d="M4 10h16l-1-6H5z"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/>`,
+    maintenance: `<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>`,
+    menu: `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
+    "more-horizontal": `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>`,
+    x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
+    ban: `<circle cx="12" cy="12" r="9"/><path d="m5.9 5.9 12.2 12.2"/>`
+};
 const navItems = [
   ["dashboard", "Home", "home"],
   ["services", "Services", "grid"],
@@ -2698,100 +2797,18 @@ function closeModal(options = {}) {
 }
 function icon(name) {
   const common = `width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"`;
-  const aliases = {
-    "community-wallet": "stockvel",
-    "piggy-bank": "stockvel"
-  };
-  const resolvedName = aliases[name] || name;
-  const paths = {
-    wallet: `<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H18a2 2 0 0 1 2 2v10.5a2.5 2.5 0 0 1-2.5 2.5h-12A2.5 2.5 0 0 1 3 17.5z"/><path d="M17 12h4v4h-4a2 2 0 0 1 0-4Z"/><path d="M6 5l9-2v2"/>`,
-    "card-add": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M8 15h5"/><path d="M16 14v4"/><path d="M14 16h4"/>`,
-    upload: `<path d="M12 19V5"/><path d="m6 11 6-6 6 6"/><path d="M5 21h14"/>`,
-    withdraw: `<path d="M12 5v14"/><path d="m18 13-6 6-6-6"/><path d="M5 3h14"/>`,
-    "bank-transfer": `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M7 10v7"/><path d="M12 10v7"/><path d="M17 10v7"/><path d="M4 17h16"/><path d="m8 21 8-8"/><path d="M16 17v-4h-4"/>`,
-    send: `<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>`,
-    download: `<path d="m12 5 0 14"/><path d="m18 13-6 6-6-6"/><path d="M5 21h14"/>`,
-    "chevron-down": `<path d="m6 9 6 6 6-6"/>`,
-    plus: `<path d="M12 5v14"/><path d="M5 12h14"/>`,
-    copy: `<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`,
-    qr: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h2"/><path d="M20 14v2"/><path d="M16 18h4"/><path d="M14 20h2"/>`,
-    "qr-receive": `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M15 16h5"/><path d="m17 14-2 2 2 2"/><path d="M20 20h-6"/>`,
-    scan: `<path d="M4 7V5a1 1 0 0 1 1-1h2"/><path d="M17 4h2a1 1 0 0 1 1 1v2"/><path d="M20 17v2a1 1 0 0 1-1 1h-2"/><path d="M7 20H5a1 1 0 0 1-1-1v-2"/><path d="M7 12h10"/>`,
-    sale: `<rect x="6" y="3" width="12" height="18" rx="3"/><path d="M9 7h6"/><path d="M9 11h6"/><path d="M9 15h2"/><path d="m12 17 2 2 4-5"/>`,
-    phone: `<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>`,
-    "sim-card": `<path d="M8 2h6l4 4v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v5h4"/><path d="M9 14h6"/><path d="M9 18h3"/><path d="M10 10h.01"/><path d="M14 10h.01"/>`,
-    signal: `<path d="M4 18h2"/><path d="M9 18v-4"/><path d="M14 18v-8"/><path d="M19 18V6"/>`,
-    "voice-bundle": `<path d="M7.5 3.5 10 8 8 9.5a10 10 0 0 0 6.5 6.5L16 14l4.5 2.5-1 3a2 2 0 0 1-2.1 1.4C10.6 20 4 13.4 3.1 6.6A2 2 0 0 1 4.5 4.5Z"/><path d="M15.5 4.2a5.5 5.5 0 0 1 4.3 4.3"/>`,
-    "sms-bundle": `<path d="M4 4h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 20 16h-8.5L7 20v-4H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 4Z"/><path d="M7 8.5h10"/><path d="M7 12h6"/>`,
-    "data-bundle": `<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 17h8"/><path d="M8 7h.01"/><path d="M12 7h.01"/><path d="M16 7h.01"/><path d="M8 11h8"/><path d="M8 14h8"/>`,
-    zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
-    electricity: `<path d="M12 2.6a6.4 6.4 0 0 0-3.7 11.6c.5.4.8 1 .8 1.6v.6h5.8v-.6c0-.6.3-1.2.8-1.6A6.4 6.4 0 0 0 12 2.6Z"/><path d="M9.4 19h5.2"/><path d="M10.2 21.6h3.6"/>`,
-    tag: `<path d="M20 13 11 22l-9-9V4h9z"/><path d="M7 7h.01"/>`,
-    voucher: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4z"/><path d="M9 9h.01"/><path d="M9 15h.01"/><path d="M13 9h4"/><path d="M13 15h4"/>`,
-    gift: `<path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7Z"/><path d="M12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7Z"/>`,
-    bank: `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M6 10v8"/><path d="M10 10v8"/><path d="M14 10v8"/><path d="M18 10v8"/><path d="M4 18h16"/><path d="M3 22h18"/>`,
-    bill: `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h4"/>`,
-    "bill-pay": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="m9.3 13.7 1.9 1.9 3.5-3.9"/>`,
-    calendar: `<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18"/><path d="M8 2.5v4"/><path d="M16 2.5v4"/>`,
-    ticket: `<path d="M2 9a3 3 0 0 0 0 6v3a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3a3 3 0 0 0 0-6V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M13 5v14"/>`,
-    ticketing: `<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M9 9h6"/><path d="M9 13h4"/><path d="M17 8v8"/>`,
-    health: `<rect x="4" y="4" width="16" height="16" rx="4.5"/><path d="M12 8.8v6.4"/><path d="M8.8 12h6.4"/>`,
-    star: `<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/>`,
-    "check-circle": `<circle cx="12" cy="12" r="9"/><path d="m8.5 12.4 2.3 2.3 4.9-5.2"/>`,
-    stockvel: `<circle cx="8.5" cy="6.8" r="2.6"/><circle cx="15.5" cy="6.8" r="2.6"/><path d="M4.5 20.5v-.5a5 5 0 0 1 5-5h5a5 5 0 0 1 5 5v.5"/><circle cx="12" cy="17.6" r="1.7"/>`,
-    "piggy-bank": `<path d="M5 12a6 6 0 0 1 6-6h4a5 5 0 0 1 5 5v4a4 4 0 0 1-4 4H8a5 5 0 0 1-5-5v-1a3 3 0 0 1 2-2.8Z"/><path d="M16 6V4a2 2 0 0 0-2 2"/><path d="M7 19v2"/><path d="M17 19v2"/><path d="M19 11h2"/><path d="M9 10h.01"/>`,
-    "community-wallet": `<path d="M4 17a4 4 0 0 1 8 0"/><path d="M12 17a4 4 0 0 1 8 0"/><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M6 21h12a2 2 0 0 0 2-2v-1H4v1a2 2 0 0 0 2 2Z"/><path d="M12 11v5"/>`,
-    learn: `<path d="m22 10-10-5-10 5 10 5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/><path d="M22 10v6"/>`,
-    tip: `<path d="M6.5 9.5h11V18a3 3 0 0 1-3 3h-5a3 3 0 0 1-3-3z"/><circle cx="12" cy="4.2" r="2.2"/><path d="M12 13.5v3"/>`,
-    "tip-card": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h6"/><path d="M7 14h4"/><circle cx="17" cy="12" r="2.5"/><path d="M17 10.7v2.6"/><path d="M15.7 12h2.6"/>`,
-    heart: `<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>`,
-    scissors: `<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9"/><path d="M8.1 8.1 20 20"/>`,
-    "split-bill": `<path d="M4 5h16v14H4z"/><path d="M8 9h8"/><path d="M8 13h4"/><path d="M12 5v14"/><path d="m7 17 2-2 2 2"/><path d="m13 17 2-2 2 2"/>`,
-    plane: `<rect x="4.5" y="7.5" width="15" height="13" rx="3"/><path d="M9 7.5V6a3 3 0 0 1 6 0v1.5"/><path d="M9 7.5v13"/><path d="M15 7.5v13"/>`,
-    globe: `<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>`,
-    lock: `<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>`,
-    user: `<path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/>`,
-    "merchant-profile": `<path d="M4 10h16l-1-5H5z"/><path d="M6 10v10h12V10"/><path d="M9 20v-5h6v5"/><path d="M8 14h.01"/><path d="M16 14h.01"/>`,
-    contacts: `<path d="M16 18a4 4 0 0 0-8 0"/><circle cx="12" cy="10" r="3"/><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M7 7h.01"/><path d="M17 7h.01"/>`,
-    "staff-badge": `<rect x="4" y="3" width="16" height="18" rx="3"/><circle cx="12" cy="9" r="3"/><path d="M8 17a4 4 0 0 1 8 0"/><path d="M8 21v-2"/><path d="M16 21v-2"/>`,
-    shield: `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/>`,
-    home: `<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>`,
-    grid: `<path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/><path d="M14 14h6v6h-6z"/>`,
-    list: `<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>`,
-    "receipt-list": `<path d="M7 3h10a2 2 0 0 1 2 2v16l-3-1.5-2 1.5-2-1.5-2 1.5-2-1.5L5 21V5a2 2 0 0 1 2-2Z"/><path d="M9 8h6"/><path d="M9 12h6"/><path d="M9 16h3"/>`,
-    statement: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9.5 19v-3.5"/><path d="M12 19v-6"/><path d="M14.5 19v-4.5"/>`,
-    invoice: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h6"/><path d="M9 16h4"/><path d="M16 18h2"/><path d="M16 21h2"/>`,
-    quote: `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M10 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M14.5 15.5v-3a1.5 1.5 0 0 1 1.5-1.5"/><path d="M9 19h7"/>`,
-    "document-invoice": `<path d="M6 2h9l5 5v15H6z"/><path d="M15 2v5h5"/><path d="M9 12h7"/><path d="M9 16h7"/><path d="M9 20h2"/><path d="M13 20h3"/>`,
-    "payment-request": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 10h5"/><path d="M7 14.5h3"/><path d="M19 12h-5.5"/><path d="m16 9 -2.6 3 2.6 3"/>`,
-    "message-check": `<path d="M7.2 18.7 4 20l1.1-3.2A7.5 7.5 0 1 1 12 20a8 8 0 0 1-4.8-1.3Z"/><path d="m9 12 2 2 4-5"/>`,
-    chat: `<path d="M16 11.5V6.5A2.5 2.5 0 0 0 13.5 4h-8A2.5 2.5 0 0 0 3 6.5v5A2.5 2.5 0 0 0 5.5 14H7v3l3.4-3"/><path d="M10.5 11h8A2.5 2.5 0 0 1 21 13.5v4a2.5 2.5 0 0 1-2.5 2.5H17v2.2L13.6 20h-3.1A2.5 2.5 0 0 1 8 17.5v-4A2.5 2.5 0 0 1 10.5 11Z"/>`,
-    chatbot: `<path d="M3 11.5a9 9 0 0 1 18 0"/><path d="M3 11.5h2.4a1.6 1.6 0 0 1 1.6 1.6v3a1.6 1.6 0 0 1-1.6 1.6h-.8A1.6 1.6 0 0 1 3 16.1z"/><path d="M21 11.5h-2.4a1.6 1.6 0 0 0-1.6 1.6v3a1.6 1.6 0 0 0 1.6 1.6h.8a1.6 1.6 0 0 0 1.6-1.6z"/><path d="M21 16.1v1.9a3.5 3.5 0 0 1-3.5 3.5H13"/>`,
-    feedback: `<path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6A3.5 3.5 0 0 1 16.5 16H11l-5 4v-4.4A3.5 3.5 0 0 1 4 12.5z"/><path d="m9 9 2 2 4-4"/><path d="M9 13h6"/>`,
-    bell: `<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/><path d="M9.8 18a2.2 2.2 0 0 0 4.4 0"/>`,
-    search: `<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>`,
-    mail: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>`,
-    paperclip: `<path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 1 1 5.7 5.7l-9.3 9.3a2 2 0 0 1-2.8-2.8l8.5-8.5"/>`,
-    share: `<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/>`,
-    "arrow-left": `<path d="m15 18-6-6 6-6"/><path d="M21 12H9"/>`,
-    // Opens something. The child card used arrow-left, which points back the
-    // way you came - exactly the wrong direction for a row you tap into.
-    "arrow-right": `<path d="m9 18 6-6-6-6"/><path d="M3 12h12"/>`,
-    eye: `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="3"/>`,
-    "eye-off": `<path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.3A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17.5 17.5 0 0 1-3.1 4.1"/><path d="M6.1 6.1A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4.2-.8"/>`,
-    refresh: `<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>`,
-    chart: `<path d="M3 3v18h18"/><path d="M7 16v-5"/><path d="M12 16V8"/><path d="M17 16v-9"/>`,
-    "bank-payout": `<path d="m3 10 9-7 9 7"/><path d="M5 10h14"/><path d="M6 10v8"/><path d="M10 10v8"/><path d="M14 10v8"/><path d="M18 10v8"/><path d="M4 18h16"/><path d="m13 21 4-4 4 4"/>`,
-    "refund-card": `<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 9h18"/><path d="M9 16a4 4 0 1 0 0-8"/><path d="M9 8H6v3"/>`,
-    "bulk-distribution": `<path d="M4 6h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M14 14h6v6h-6z"/><path d="M10 9h4"/><path d="M10 11l4 6"/><path d="M14 7l-4 2"/>`,
-    store: `<path d="M4 10h16l-1-6H5z"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/>`,
-    maintenance: `<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>`,
-    menu: `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
-    "more-horizontal": `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>`,
-    x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
-    ban: `<circle cx="12" cy="12" r="9"/><path d="m5.9 5.9 12.2 12.2"/>`
-  };
-  return `<svg ${common}>${paths[resolvedName] || paths.grid}</svg>`;
+  const resolvedName = ICON_ALIASES[name] || name;
+  return `<svg ${common}>${ICON_PATHS[resolvedName] || ICON_PATHS.grid}</svg>`;
+}
+// Defence in depth for the one place icon names are written by a person rather
+// than by this file. The API permits only names this build can draw, so a name
+// that fails here means a garbled response, not a bad edit -- and the generic
+// grid square icon() would otherwise fall back to reads as a broken app when it
+// appears next to a security warning.
+function securityTipIcon(name) {
+  const key = String(name || "").trim();
+  const resolved = ICON_ALIASES[key] || key;
+  return ICON_PATHS[resolved] ? resolved : "shield";
 }
 
 /* ==========================================================================
@@ -5943,6 +5960,18 @@ function readJsonFromSession(key) {
 // field by field to the copy above. Never returns a blank string, so a screen
 // built from this can never be an empty security warning.
 function securityContent() {
+  // The wording this device was last served, read once per session on the first
+  // screen that needs it. Without this the fetch only ever helped the SECOND
+  // security screen of a session, which on screens most people open once is no
+  // help at all: an admin rewrote the warning after a scam campaign and every
+  // customer still read the old one. It overrides the built-in defaults and is
+  // never depended on -- a corrupt or half-written cache degrades field by field
+  // through pick() exactly like a bad server response.
+  if (!securityContentSeeded) {
+    securityContentSeeded = true;
+    const cached = readJson(SECURITY_CONTENT_CACHE_KEY);
+    if (!state.securityContent && cached && typeof cached === "object") state.securityContent = cached;
+  }
   const stored = state.securityContent && typeof state.securityContent === "object" ? state.securityContent : {};
   const pick = (field) => {
     const value = typeof stored[field] === "string" ? stored[field].trim() : "";
@@ -5953,7 +5982,7 @@ function securityContent() {
       .map((tip) => ({
         title: String(tip?.title || "").trim(),
         body: String(tip?.body || "").trim(),
-        icon: String(tip?.icon || "shield").trim() || "shield"
+        icon: securityTipIcon(tip?.icon)
       }))
       .filter((tip) => tip.title && tip.body)
     : [];
@@ -5981,6 +6010,11 @@ function loadSecurityContent() {
     .then((result) => {
       if (result && result.content && typeof result.content === "object") {
         state.securityContent = result.content;
+        try {
+          writeJson(SECURITY_CONTENT_CACHE_KEY, result.content);
+        } catch (error) {
+          // A full or blocked store is not a reason to fail a security screen.
+        }
       }
     })
     .catch(() => {

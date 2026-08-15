@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 25;
+const API_BUILD = 26;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  26: "Saving security content no longer answers 500 after saving it: the audit " +
+      "write put the settings key in a UUID column, so the copy changed while " +
+      "the admin was shown an error and the log recorded nothing. The console " +
+      "and the API now offer the SAME icon list, so re-saving cannot downgrade " +
+      "a stored icon, and the admin read reports whether anything is stored and " +
+      "who wrote it.",
   25: "The customer security copy is admin-editable: the Stay safe with TitoPay " +
       "card, its warning, the acknowledge button and the safety tips now live in " +
       "platform_settings and are edited from the console with a live preview. " +

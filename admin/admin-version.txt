@@ -1,6 +1,25 @@
 TitoPay Admin
-Build: admin-console-v84
+Build: admin-console-v85
 Date: 2026-08-15
+
+v85 - Security Content hardening.
+
+  - Save is now DISABLED when the stored content could not be read. The page
+    already warned that saving would overwrite whatever was really stored, but
+    the button beside the warning still worked, so the guard was a suggestion.
+    A "Retry load" button replaces it, and submitting with the keyboard is
+    refused too.
+  - The icon picker offers exactly the icons the API accepts. It offered 16 of
+    them while the API accepted 84, so opening content whose icon came from
+    outside those 16 and pressing Save quietly rewrote it to "shield". Both
+    sides now carry the same curated list of 29, and the API test suite fails
+    if they drift apart.
+  - The page says whether it is showing saved copy or the wording TitoPay ships
+    with, and when a person last saved it and who. Those looked identical on
+    screen before, so an operator could not tell whether they were revising a
+    colleague's work or writing the first version.
+  - Requires API build 26, which fixes a save that stored the content and then
+    answered 500.
 
 v84 - Security Content becomes editable.
 
