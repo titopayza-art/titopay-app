@@ -6037,19 +6037,37 @@ function securityTipCard(heading = "Stay safe") {
     </article>
   `;
 }
-function showSecurityTipModal() {
-  loadSecurityContent();
+// ONE security screen, and it is the one the console previews.
+//
+// There were two. A short card carrying only the warning opened after every
+// sign-in and every registration, which is very nearly every customer; a longer
+// one carrying the safety tips sat behind a single row in the Security Centre,
+// which is almost nobody. So an admin could write six tips, watch them render in
+// the console's live preview, and have them appear on the screen hardly anyone
+// opens. The preview was promising a screen TitoPay was not serving.
+//
+// They render the same thing now, in the preview's order: the warning card
+// first, then the tips under their own heading, then the acknowledgement. The
+// eyebrow stays a parameter because both eyebrow fields are admin-editable and
+// both still mean something: one heads the screen, the other heads the list.
+function securityScreenMarkup(eyebrow) {
   const content = securityContent();
-  // The dialog is already titled from the same content, so the card inside it
-  // says what to do rather than repeating the title.
-  openModal(`
+  return `
     <div class="modal-head">
-      <div><p class="eyebrow">${esc(content.eyebrow)}</p><h2>${esc(content.title)}</h2></div>
+      <div><p class="eyebrow">${esc(eyebrow)}</p><h2>${esc(content.title)}</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${securityTipCard(content.cardHeading)}
+    <p class="eyebrow security-tips-eyebrow">${esc(content.tipsEyebrow)}</p>
+    <section class="activity-list">
+      ${content.tips.map((tip) => settingsRow(tip.title, tip.body, tip.icon)).join("")}
+    </section>
     <button class="btn primary" type="button" data-close>${esc(content.acknowledgeLabel)}</button>
-  `);
+  `;
+}
+function showSecurityTipModal() {
+  loadSecurityContent();
+  openModal(securityScreenMarkup(securityContent().eyebrow));
 }
 // ---------------------------------------------------------------------------
 // Security Centre and trust surfaces
@@ -6272,20 +6290,11 @@ function openActiveSessionsModal() {
     <button class="btn secondary" type="button" data-action="device-management">${icon("phone")} View device history</button>
   `);
 }
+// The Security Centre's own way in. Same screen, headed by the tips eyebrow
+// rather than the general one, because that row is specifically about the tips.
 function openSecurityTipsModal() {
   loadSecurityContent();
-  const content = securityContent();
-  openModal(`
-    <div class="modal-head">
-      <div><p class="eyebrow">${esc(content.tipsEyebrow)}</p><h2>${esc(content.title)}</h2></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
-    ${securityTipCard(content.cardHeading)}
-    <section class="activity-list">
-      ${content.tips.map((tip) => settingsRow(tip.title, tip.body, tip.icon)).join("")}
-    </section>
-    <button class="btn primary" type="button" data-close>${esc(content.acknowledgeLabel)}</button>
-  `);
+  openModal(securityScreenMarkup(securityContent().tipsEyebrow));
 }
 function openWhyTrustModal() {
   loadSecurityContent();

@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v85";
+  return "admin-console-v86";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -4425,7 +4425,14 @@ function securityContentPreviewHtml(content) {
    sentence, so it spells the date out rather than reusing the console's
    table format, which is built for scanning a column. */
 function securityContentProvenance(record) {
-  if (!record?.stored) {
+  /* "stored" arrived with API build 26. An older API answers without it, and
+     treating a MISSING field as an explicit false would turn this line into the
+     opposite of a safety signal: it would announce "nobody has edited this yet"
+     over a colleague's live wording. Absent means unknown, and unknown says so. */
+  if (!record || !("stored" in record)) {
+    return "This API build does not report when the security wording was last saved. Upload the current api.zip to see who wrote it and when.";
+  }
+  if (!record.stored) {
     return "Showing the wording TitoPay ships with. Nobody has edited this yet, so saving here publishes the first version.";
   }
   const date = record.updatedAt ? new Date(record.updatedAt) : null;
@@ -4542,7 +4549,18 @@ async function renderSecurityContent() {
       return;
     }
     if (event.target.closest("[data-sc-retry]")) {
-      renderSecurityContent();
+      /* A retry against an API that is still down repaints identical markup,
+         which is indistinguishable from a dead button. Say what happened, and
+         say it after the re-render so the message describes the new state. */
+      showToast("Reading the saved security content...");
+      renderSecurityContent()
+        .then(() => {
+          const stillDown = Boolean(document.querySelector(".sc-warning"));
+          showToast(stillDown
+            ? "Still cannot reach the API. Saving stays switched off."
+            : "Saved security content loaded. You can edit and save now.");
+        })
+        .catch(() => showToast("Still cannot reach the API. Saving stays switched off."));
       return;
     }
     if (event.target.closest("[data-sc-restore]")) {

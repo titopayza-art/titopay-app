@@ -1082,6 +1082,13 @@ h3 {
   line-height: 1.5;
 }
 
+/* The heading over the safety tips on the security screen. .eyebrow is built to
+   sit inside a modal head, so on its own in the body it needs the space above
+   that the head would otherwise have given it. */
+.security-tips-eyebrow {
+  margin: 4px 0 10px;
+}
+
 .guide-progress {
   display: flex;
   justify-content: center;

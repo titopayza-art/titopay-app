@@ -286,15 +286,18 @@ test("nothing the app renders can come back blank", () => {
 test("the admin-authored text is escaped at every render site", () => {
   // The whole point of the feature is that this text comes from somewhere else.
   for (const site of [
-    /<p class="eyebrow">\$\{esc\(content\.eyebrow\)\}<\/p>/,
+    // The eyebrow is a parameter because the screen is built once and headed
+    // two ways: "Security Tip" after sign-in, "Security Tips" from the Security
+    // Centre. Both are admin-authored, so the parameter is escaped.
+    /<p class="eyebrow">\$\{esc\(eyebrow\)\}<\/p>/,
     /<h2>\$\{esc\(content\.title\)\}<\/h2>/,
-    // The heading is a parameter on purpose: the landing menu titles this card
-    // "Stay safe" and must keep doing so, while the three security screens pass
-    // the admin-editable cardHeading. Both are escaped.
+    // Same reason for the card heading: the landing menu titles that card
+    // "Stay safe" and must keep doing so, while the security screens pass the
+    // admin-editable cardHeading.
     /<h3>\$\{esc\(heading\)\}<\/h3>/,
     /<p>\$\{esc\(securityContent\(\)\.cardBody\)\}<\/p>/,
     /data-close>\$\{esc\(content\.acknowledgeLabel\)\}<\/button>/,
-    /<p class="eyebrow">\$\{esc\(content\.tipsEyebrow\)\}<\/p>/
+    /<p class="eyebrow security-tips-eyebrow">\$\{esc\(content\.tipsEyebrow\)\}<\/p>/
   ]) {
     assert.match(APP, site, `render site ${site} escapes its value`);
   }
@@ -326,6 +329,31 @@ test("the wording survives closing the app, so the first screen is current", () 
   const body = fn.slice(0, fn.indexOf("\n// Fetched once per session"));
   assert.match(body, /readJson\(SECURITY_CONTENT_CACHE_KEY\)/);
   assert.match(body, /securityContentSeeded = true/, "the cache is read once, not on every render");
+});
+
+test("the screen a customer actually gets is the screen the console previews", () => {
+  // The defect: the short card opened after every sign-in and registration and
+  // carried NO tips, while the full screen sat behind one Security Centre row.
+  // An admin could write six tips, watch them render in the console preview,
+  // and have them shown on a screen almost nobody opens.
+  const fn = APP.slice(APP.indexOf("function securityScreenMarkup(eyebrow)"));
+  const body = fn.slice(0, fn.indexOf("\nfunction showSecurityTipModal"));
+  assert.match(body, /securityTipCard\(content\.cardHeading\)/, "the warning card is on it");
+  assert.match(body, /content\.tips\.map\(\(tip\) => settingsRow\(tip\.title, tip\.body, tip\.icon\)\)/,
+    "and so are the tips");
+  assert.match(body, /esc\(content\.acknowledgeLabel\)/, "and the acknowledgement closes it");
+  // Both entry points render that one screen. If either grows its own markup
+  // again, the console preview stops being the truth.
+  for (const entry of ["function showSecurityTipModal()", "function openSecurityTipsModal()"]) {
+    const at = APP.indexOf(entry);
+    assert.ok(at > -1, `${entry} exists`);
+    const handler = APP.slice(at, APP.indexOf("\n}", at));
+    assert.match(handler, /openModal\(securityScreenMarkup\(/,
+      `${entry} must render the shared screen, not markup of its own`);
+  }
+  // The order matches the preview: warning, then tips heading, then tips.
+  assert.ok(body.indexOf("securityTipCard") < body.indexOf("security-tips-eyebrow"));
+  assert.ok(body.indexOf("security-tips-eyebrow") < body.indexOf("content.tips.map"));
 });
 
 test("the landing menu keeps its own heading", () => {
@@ -406,5 +434,20 @@ test("a console that could not read the stored copy cannot overwrite it", () => 
   assert.match(body, /data-sc-retry/, "there is a way to try the read again");
   // An operator must be able to tell stored copy from the shipped defaults.
   assert.match(body, /securityContentProvenance\(result\)/);
-  assert.match(CONSOLE_JS, /function securityContentProvenance[\s\S]{0,400}Nobody has edited this yet/);
+  const provenance = CONSOLE_JS.slice(
+    CONSOLE_JS.indexOf("function securityContentProvenance(record)"),
+    CONSOLE_JS.indexOf("\n/* The stored value is the slug")
+  );
+  assert.ok(provenance.length > 100, "the provenance helper was found");
+  assert.match(provenance, /Nobody has edited this yet/);
+  // "stored" arrived with API build 26. Reading a MISSING field as an explicit
+  // false would invert the safety signal: the console would announce "nobody has
+  // edited this yet" over a colleague's live wording on an older API. Absent
+  // means unknown, and unknown has to say so.
+  assert.match(provenance, /!\("stored" in record\)/, "a missing field is distinguished from false");
+  assert.ok(provenance.indexOf('"stored" in record') < provenance.indexOf("Nobody has edited this yet"),
+    "the unknown case is decided BEFORE the never-edited case");
+  // Retrying against an API that is still down repaints identical markup, which
+  // is indistinguishable from a dead button unless it says something.
+  assert.match(body, /data-sc-retry[\s\S]{0,600}Still cannot reach the API/);
 });

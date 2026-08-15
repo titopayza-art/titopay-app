@@ -111,6 +111,28 @@ async function seedAdmin(role, label) {
     clerk = await seedAdmin("support_agent", "Support Agent Without Security");
     created.push(owner, clerk);
 
+    // 1b. The read must not 500 when the database cannot answer. A signed-out
+    // person deciding whether to trust TitoPay is exactly who reaches this, and
+    // an error page is a worse answer than slightly stale wording. The table is
+    // taken away underneath the running server to make the failure real rather
+    // than mocked, and put back in the same breath.
+    let tableRenamed = false;
+    try {
+      await pool.query("ALTER TABLE platform_settings RENAME TO platform_settings_harness_tmp");
+      tableRenamed = true;
+      const broken = await fetch(`${base}/v1/security-content`);
+      assert.equal(broken.status, 200, `a database failure answered ${broken.status}, not 200`);
+      const body = await broken.json();
+      assert.equal(body.content.cardBody, SECURITY_CONTENT_DEFAULTS.cardBody,
+        "the shipped warning is served when the database cannot be read");
+      assert.equal(body.content.tips.length, SECURITY_CONTENT_DEFAULTS.tips.length);
+    } finally {
+      if (tableRenamed) {
+        await pool.query("ALTER TABLE platform_settings_harness_tmp RENAME TO platform_settings");
+      }
+    }
+    ok("the public read serves the shipped copy instead of 500ing when the database cannot answer");
+
     // 7a. Nothing stored yet: the console must be told so.
     const emptyRecord = await fetch(`${base}/v1/admin/security-content`, { headers: owner.headers });
     const emptyText = await emptyRecord.text();

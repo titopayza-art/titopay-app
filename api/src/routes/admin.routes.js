@@ -4520,10 +4520,15 @@ router.put("/roles/:role", requireAdminPermission("engineering"), async (req, re
       actorId: req.auth.userId,
       action: "admin_role_permissions_updated",
       entityType: "admin_role",
-      entityId: role,
+      // A role is named, not a UUID, and entity_id is a uuid column. This threw
+      // AFTER the permissions had been saved, so changing a role's access
+      // answered 500 while the change stood and nothing was logged. The role
+      // now travels in the metadata, where it also becomes readable: the log
+      // recorded the new permissions without ever saying whose they were.
+      entityId: null,
       ipAddress: req.auth.ipAddress,
       userAgent: req.auth.userAgent,
-      metadata: { permissions: updated[role] }
+      metadata: { role, permissions: updated[role] }
     });
     res.json({ ok: true, role, permissions: updated[role] });
   } catch (error) {

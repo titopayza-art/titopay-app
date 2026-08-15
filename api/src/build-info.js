@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 26;
+const API_BUILD = 27;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  27: "The same commit-then-500 audit bug fixed for security content in build " +
+      "26 was still live on PUT /admin/roles/:role, which wrote a role name " +
+      "into a UUID column: changing what a role may do saved the change and " +
+      "then reported failure, logging nothing. Fixed at the call site AND in " +
+      "writeAuditLog, so any identifier that is not a UUID now travels in the " +
+      "metadata rather than costing the whole audit record.",
   26: "Saving security content no longer answers 500 after saving it: the audit " +
       "write put the settings key in a UUID column, so the copy changed while " +
       "the admin was shown an error and the log recorded nothing. The console " +

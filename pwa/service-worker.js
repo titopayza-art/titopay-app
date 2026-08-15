@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v402-security-content-hardening";
+const CACHE_NAME = "titopay-pwa-v403-security-screen";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=402",
-  "./app.min.js?v=402",
+  "./styles.min.css?v=403",
+  "./app.min.js?v=403",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

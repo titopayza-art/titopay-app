@@ -6146,11 +6146,17 @@ html[data-theme="dark"] .auth-panel-mark {
   text-transform: uppercase;
 }
 
+/* The customer app draws this card in warning pink, not in the console's blue.
+   The panel above it promises "how the card reads in the TitoPay app", so the
+   colours are taken from the app's own .security-tip-card rather than from the
+   console palette: an operator judging whether a warning reads urgently enough
+   has to be looking at the real thing. These four values are the PWA's, and
+   they are literals for exactly that reason. */
 .sc-tip-card {
   padding: 12px;
-  border: 1px solid var(--tp-blue-line);
+  border: 1px solid rgba(217, 66, 66, 0.12);
   border-radius: 10px;
-  background: var(--tp-blue-soft);
+  background: #fff0f3;
 }
 
 .sc-tip-card h5 {
