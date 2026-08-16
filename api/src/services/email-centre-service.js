@@ -25,7 +25,7 @@ const ALLOWED_VARIABLES = new Set([
   // The receiver's side of a payment: who paid, and what came off in fees.
   // recipientLine (below) already names the person the money went TO, for the
   // payer's own receipt. These name the person it came FROM.
-  "payerLine", "feeLine",
+  "payerLine", "feeLine", "statementNote",
   // HR work communications. An unknown variable renders as an empty string
   // rather than an error, so a template referring to one of these before it was
   // permitted produced silently blank mail — which is why they are declared
@@ -44,7 +44,37 @@ const DEFAULT_TEMPLATES = [
   ["welcome_email", "Welcome Email", "Welcome to {{companyName}}", "<p>Welcome {{firstName}}. Your {{accountType}} TitoPay account is ready.</p><p><a href=\"{{verificationLink}}\" style=\"display:inline-block;padding:12px 20px;background:#168ac2;color:#fff;text-decoration:none;border-radius:6px\">Verify Email</a></p>"],
   ["personal_account_welcome", "Personal Account Welcome", "Welcome to TitoPay", "<p>Hello {{firstName}},</p><p>Welcome to TitoPay.</p><p>Your Personal account has been created successfully.</p><p>You can now access TitoPay to manage your wallet, send and receive money, make QR payments, view your transaction history, and use the available personal payment services.</p><p>For your security, never share your password, verification code, PIN, or account credentials with anyone.</p><p><a href=\"{{appUrl}}\" style=\"display:inline-block;padding:12px 20px;background:#168ac2;color:#fff;text-decoration:none;border-radius:6px\">Open TitoPay</a><br>{{appUrl}}</p><p>Need assistance? Contact us at <a href=\"mailto:{{supportEmail}}\">{{supportEmail}}</a>.</p>"],
   ["business_account_welcome", "Business Account Welcome", "Welcome to TitoPay Business", "<p>Hello {{firstName}},</p><p>Welcome to TitoPay Business.</p><p>Your Business account has been created successfully.</p><p>You can use TitoPay Business to manage your business profile, receive payments, access your QR payment tools, view transactions, manage payouts, and use available merchant services.</p><p>Some business features may remain restricted until the required business verification or approval process has been completed.</p><p>For your security, never share your password, verification code, PIN, or account credentials with anyone.</p><p><a href=\"{{appUrl}}\" style=\"display:inline-block;padding:12px 20px;background:#168ac2;color:#fff;text-decoration:none;border-radius:6px\">Open TitoPay Business</a><br>{{appUrl}}</p><p>Need assistance? Contact us at <a href=\"mailto:{{supportEmail}}\">{{supportEmail}}</a>.</p>"],
-  ["email_statement", "Email Statement", "Your TitoPay statement {{statementReference}}", "<p>Hello {{firstName}},</p><p>Your TitoPay statement for <strong>{{statementPeriod}}</strong> is ready.</p><p><strong>Statement reference:</strong> {{statementReference}}<br><strong>Transactions:</strong> {{transactionCount}}<br><strong>Money in:</strong> {{currency}} {{moneyIn}}<br><strong>Money out:</strong> {{currency}} {{moneyOut}}<br><strong>Net movement:</strong> {{currency}} {{netMovement}}<br><strong>Email statement fee:</strong> {{currency}} {{statementFee}}</p><p style=\"font-family:monospace;white-space:pre-wrap;background:#f2f7fc;padding:16px;border-radius:8px\">{{statementLines}}</p><p>This is a record of TitoPay wallet activity and is not a bank statement. Contact {{supportEmail}} if you need assistance.</p>"],
+  // THE STATEMENT IS THE PDF. THE EMAIL IS THE COVERING NOTE.
+  //
+  // This used to print the whole ledger into the body as a monospace block of
+  // pipe-separated lines. On a phone every line wrapped across three rows, the
+  // columns stopped lining up, and the document somebody had just PAID for was
+  // unusable as a document. The ledger now travels as an attached A4 PDF and
+  // the email says what is in it.
+  //
+  // html_body and text_body are deliberately different here, which is why this
+  // entry carries a fifth element. A mail client showing plain text has no
+  // attachment preview and no table, so the text part keeps the full ledger:
+  // it is the fallback that makes the fee honest if a PDF cannot be built.
+  ["email_statement", "Email Statement", "Your TitoPay statement {{statementReference}}",
+    "<p>Hello {{firstName}},</p>"
+    + "<p>Your TitoPay statement for <strong>{{statementPeriod}}</strong> is attached to this email as a PDF.</p>"
+    + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;margin:22px 0\">"
+    + "<tr><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#5b7799\">Statement reference</td><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#0b1f3f;font-weight:600;text-align:right\">{{statementReference}}</td></tr>"
+    + "<tr><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#5b7799\">Period</td><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#0b1f3f;font-weight:600;text-align:right\">{{statementPeriod}}</td></tr>"
+    + "<tr><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#5b7799\">Wallet movements</td><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#0b1f3f;font-weight:600;text-align:right\">{{transactionCount}}</td></tr>"
+    + "<tr><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#5b7799\">Money in</td><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#0a7d55;font-weight:700;text-align:right\">{{currency}} {{moneyIn}}</td></tr>"
+    + "<tr><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#5b7799\">Money out</td><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#9e2b34;font-weight:700;text-align:right\">{{currency}} {{moneyOut}}</td></tr>"
+    + "<tr><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#5b7799\">Net movement</td><td style=\"padding:9px 0;border-bottom:1px solid #e2ebf5;font-size:14px;color:#0b1f3f;font-weight:700;text-align:right\">{{currency}} {{netMovement}}</td></tr>"
+    + "<tr><td style=\"padding:9px 0;font-size:14px;color:#5b7799\">Statement fee</td><td style=\"padding:9px 0;font-size:14px;color:#0b1f3f;font-weight:600;text-align:right\">{{currency}} {{statementFee}}</td></tr>"
+    + "</table>"
+    + "<p style=\"font-size:14px;color:#22405f\">{{statementNote}}</p>"
+    + "<p style=\"font-size:13px;color:#5b7799\">A record of TitoPay wallet activity. This is not a bank statement. Contact <a href=\"mailto:{{supportEmail}}\">{{supportEmail}}</a> if you need help with it.</p>",
+    "Hello {{firstName}},\n\nYour TitoPay statement for {{statementPeriod}} is attached to this email as a PDF.\n\n"
+    + "Statement reference: {{statementReference}}\nWallet movements: {{transactionCount}}\n"
+    + "Money in: {{currency}} {{moneyIn}}\nMoney out: {{currency}} {{moneyOut}}\nNet movement: {{currency}} {{netMovement}}\n"
+    + "Statement fee: {{currency}} {{statementFee}}\n\n{{statementLines}}\n\n"
+    + "A record of TitoPay wallet activity. This is not a bank statement. Contact {{supportEmail}} if you need help with it."],
   ["verify_email_address", "Verify Email Address", "Verify your TitoPay email address", "<p>Hello {{firstName}}. Confirm that this email address belongs to you.</p><p><a href=\"{{verificationLink}}\" style=\"display:inline-block;padding:12px 20px;background:#168ac2;color:#fff;text-decoration:none;border-radius:6px\">Verify Email Address</a></p>"],
   ["password_reset", "Password Reset", "Reset your TitoPay password", "<p>Use this secure, single-use link to reset your password.</p><p><a href=\"{{resetPasswordLink}}\" style=\"display:inline-block;padding:12px 20px;background:#168ac2;color:#fff;text-decoration:none;border-radius:6px\">Reset Password</a></p>"],
   ["password_changed", "Password Changed", "Your TitoPay password was changed", "Your TitoPay password was changed. Contact {{supportEmail}} if this was not you."],
@@ -221,16 +251,38 @@ function safeContentPreview(job) {
   } catch {return {html:null,text:null};}
 }
 
+// The plain-text half of a template, derived from its html the same way the
+// seeder derives it, so a fixup cannot leave html and text disagreeing.
+function plainTextFrom(html) {
+  return String(html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+}
+
 async function seedDefaultTemplates(db = pool) {
   // Copy fixups for templates already seeded with older wording. Guarded on
   // the old sentence, so an operator's own edits are never overwritten.
+  // EVERY FIXUP IN THIS FUNCTION USED TO WRITE TO A COLUMN THAT DOES NOT EXIST.
+  //
+  // email_templates has html_body and text_body. It has never had a `body`.
+  // Both statements here targeted `body`, so both threw "column does not
+  // exist" straight into a .catch(() => {}) and no copy correction written
+  // this way has ever reached a live database. The wording an operator sees is
+  // still whatever was first seeded.
+  //
+  // They now write the two real columns, and each stays guarded on the exact
+  // old text so an operator's own edit in the Email Centre is never
+  // overwritten. The catch stays as well: a copy fixup must never be able to
+  // stop the API from starting.
   await db.query(
-    `UPDATE email_templates SET body = REPLACE(body,
-       'The code expires shortly. If you did not request this verification, please ignore this email and contact',
-       'This code expires in {{expiryMinutes}} minutes and can only be used once. If you did not request it, ignore this email and contact'),
-       updated_at = NOW()
-     WHERE template_key = 'email_otp' AND body LIKE '%The code expires shortly.%'`
-  ).catch(() => {});
+    `UPDATE email_templates
+        SET html_body = REPLACE(html_body,
+              'The code expires shortly. If you did not request this verification, please ignore this email and contact',
+              'This code expires in {{expiryMinutes}} minutes and can only be used once. If you did not request it, ignore this email and contact'),
+            text_body = REPLACE(text_body,
+              'The code expires shortly. If you did not request this verification, please ignore this email and contact',
+              'This code expires in {{expiryMinutes}} minutes and can only be used once. If you did not request it, ignore this email and contact'),
+            updated_at = NOW()
+      WHERE template_key = 'email_otp' AND html_body LIKE '%The code expires shortly.%'`
+  ).catch((error) => console.error("[email-centre] OTP copy fixup failed", { message: error.message }));
   // The receipt templates were one machine-shaped sentence each. These
   // rewrites are guarded on that exact old sentence, so a template an
   // operator has already edited in the Email Centre is never overwritten.
@@ -253,13 +305,37 @@ async function seedDefaultTemplates(db = pool) {
   ];
   for (const [key, oldBody, newBody] of receiptFixups) {
     await db.query(
-      "UPDATE email_templates SET body = $2, updated_at = NOW() WHERE template_key = $1 AND body = $3",
-      [key, newBody, oldBody]
-    ).catch(() => {});
+      `UPDATE email_templates
+          SET html_body = $2,
+              text_body = $4,
+              updated_at = NOW()
+        WHERE template_key = $1 AND html_body = $3`,
+      [key, newBody, oldBody, plainTextFrom(newBody)]
+    ).catch((error) => console.error("[email-centre] receipt copy fixup failed", { key, message: error.message }));
   }
-  for (const [key, name, subject, body] of DEFAULT_TEMPLATES) {
+
+  // THE STATEMENT EMAIL IS NOW A COVERING NOTE FOR AN ATTACHED PDF.
+  //
+  // It used to print the whole ledger into the body as pipe-separated
+  // monospace lines, which wrapped into an unreadable block on a phone. The
+  // ledger travels as an A4 PDF now. Guarded on the exact old html, so an
+  // operator who has already rewritten this keeps their version.
+  const statementTemplate = DEFAULT_TEMPLATES.find((item) => item[0] === "email_statement");
+  if (statementTemplate) {
+    await db.query(
+      `UPDATE email_templates
+          SET html_body = $1, text_body = $2, updated_at = NOW()
+        WHERE template_key = 'email_statement'
+          AND html_body LIKE '%font-family:monospace%'`,
+      [statementTemplate[3], statementTemplate[4]]
+    ).catch((error) => console.error("[email-centre] statement copy fixup failed", { message: error.message }));
+  }
+  for (const [key, name, subject, body, ownTextBody] of DEFAULT_TEMPLATES) {
     const htmlBody = body;
-    const textBody = body.replace(/<br\s*\/?>/gi,"\n").replace(/<[^>]+>/g,"").replace(/\s+/g," ").trim();
+    // Most templates are one body used both ways, with the text derived by
+    // stripping tags. A template whose html is a real table cannot survive
+    // that, so an entry may carry its own text part as a fifth element.
+    const textBody = ownTextBody || plainTextFrom(body);
     const { rows } = await db.query(
       `INSERT INTO email_templates (template_key,name,subject,html_body,text_body)
        VALUES ($1,$2,$3,$4,$5) ON CONFLICT (template_key) DO NOTHING RETURNING id`,
@@ -400,7 +476,27 @@ async function deleteTemplate(id, actor) {
   await writeAuditLog({actorType:"admin",actorId:actor.userId,action:"email_template_deleted",entityType:"email_template",entityId:template.id,metadata:{templateKey:template.template_key}});
 }
 
-async function queueEmail({ recipient, templateKey, variables = {}, userId = null, idempotencyKey, metadata = {}, db = pool }) {
+// Attachments ride inside the same encrypted content as the body, so the worker
+// needs no schema change and the file is never stored in the clear. Both queue
+// paths sanitise through here, so a rule tightened for one applies to both.
+function sanitizeAttachments(attachments) {
+  return (Array.isArray(attachments) ? attachments : []).slice(0, 3)
+    .filter((item) => item && item.filename && item.contentBase64)
+    .map((item) => ({
+      filename: String(item.filename).replace(/[^\w.-]/g, "_").slice(0, 80),
+      contentBase64: String(item.contentBase64),
+      contentType: String(item.contentType || "application/octet-stream")
+    }));
+}
+
+// A TEMPLATED email can carry a file too.
+//
+// Only queueRawEmail could, so anything needing an attachment had to give up
+// its admin-editable template and go out as raw markup. The Email Statement is
+// exactly that case: a customer pays for a statement, and the statement is the
+// PDF. Every provider below already reads content.attachments, so this is the
+// one line that was missing rather than a new capability.
+async function queueEmail({ recipient, templateKey, variables = {}, userId = null, idempotencyKey, metadata = {}, attachments = [], db = pool }) {
   await ensureEmailSchema(db);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(recipient || ""))) throw new AppError(400, "Recipient email is invalid");
   const template = await getTemplate(templateKey,null,db);
@@ -408,7 +504,11 @@ async function queueEmail({ recipient, templateKey, variables = {}, userId = nul
   const settings = await getSettings({db});
   if (!settings.sending_enabled) return { skipped:true, reason:"sending_disabled" };
   const rendered = renderTemplate(template, variables, settings);
-  const encryptedContent = encrypt(JSON.stringify({ html:rendered.html, text:rendered.text }));
+  const safeAttachments = sanitizeAttachments(attachments);
+  const encryptedContent = encrypt(JSON.stringify({
+    html: rendered.html, text: rendered.text,
+    ...(safeAttachments.length ? { attachments: safeAttachments } : {})
+  }));
   const key = idempotencyKey || crypto.createHash("sha256").update(`${templateKey}:${recipient}:${JSON.stringify(safePayload(variables))}:${Date.now()}`).digest("hex");
   const { rows } = await db.query(
     `INSERT INTO email_queue (recipient,subject,template_key,template_version,variables,encrypted_content,provider,idempotency_key,maximum_attempts,user_id,metadata)
@@ -517,9 +617,7 @@ async function queueRawEmail({recipient,subject,htmlBody,textBody,variables={},u
   const values={companyName:settings.company_name,supportEmail:settings.support_email,supportUrl:settings.support_url,websiteUrl:settings.website_url,appUrl:config.appOrigin,currentYear:new Date().getUTCFullYear(),...variables};
   const renderedSubject=interpolate(String(subject||"").replace(/[\r\n]/g," ").slice(0,300),values);
   const effectiveHtmlBody=String(htmlBody||"").trim()?htmlBody:htmlFromText(textBody);
-  // Attachments ride inside the same encrypted content as the body, so the
-  // worker needs no schema change and the file is never stored in the clear.
-  const safeAttachments=(Array.isArray(attachments)?attachments:[]).slice(0,3).filter((item)=>item&&item.filename&&item.contentBase64).map((item)=>({filename:String(item.filename).replace(/[^\w.-]/g,"_").slice(0,80),contentBase64:String(item.contentBase64),contentType:String(item.contentType||"application/octet-stream")}));
+  const safeAttachments=sanitizeAttachments(attachments);
   const unsubscribeFooter=unsubscribeUrl?`\n\nTo stop receiving marketing emails from TitoPay, unsubscribe here: ${unsubscribeUrl}`:"";
   if(unsubscribeUrl)metadata={...metadata,unsubscribeUrl};
   const content={html:brandedHtml(interpolate(stripDangerousMarkup(effectiveHtmlBody),values,{html:true}),settings,{unsubscribeUrl}),text:`${interpolate(textBody,values)}\n\n${settings.company_name}\n${settings.tagline}\n${settings.support_email}\n${settings.website_url}\nCopyright © ${new Date().getUTCFullYear()} TitoPay. All Rights Reserved.${unsubscribeFooter}`,...(safeAttachments.length?{attachments:safeAttachments}:{})};

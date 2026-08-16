@@ -302,7 +302,27 @@ async function emailWalletStatement(userId, walletId, range = {}, actor = {}) {
     reference=`TP-EST-${Date.now().toString(36).toUpperCase()}-${transactionId.slice(0,8).toUpperCase()}`;
     const names=String(statement.account.full_name||"").trim().split(/\s+/);
     const net=roundMoney(statement.totals.moneyIn-statement.totals.moneyOut);
+    // THE THING THAT WAS PAID FOR TRAVELS AS A DOCUMENT.
+    //
+    // A customer pays a fee for an Email Statement and used to receive the
+    // ledger typed into the body as pipe-separated monospace lines, which wrap
+    // into an unreadable block on a phone. What the fee buys is a statement you
+    // can send to a bank or a landlord, and that has to be a file.
+    //
+    // If rendering fails the email still goes, because the fee has been charged
+    // and a customer who paid must not be left with nothing: the text part of
+    // the message still carries the full ledger, and the note below says
+    // plainly which of the two they are holding.
+    let pdfAttachment=null;
+    try {
+      const {renderStatementPdf}=require("./statement-pdf-service");
+      const pdf=await renderStatementPdf(statement,reference);
+      pdfAttachment={filename:`titopay-statement-${reference}.pdf`,contentBase64:pdf.toString("base64"),contentType:"application/pdf"};
+    } catch(error) {
+      console.error("[statement-pdf-failed]",{reference,userId,message:error.message});
+    }
     queueJob=await queueEmail({
+      attachments:pdfAttachment?[pdfAttachment]:[],
       recipient:destination,
       templateKey:"email_statement",
       userId,
@@ -314,7 +334,10 @@ async function emailWalletStatement(userId, walletId, range = {}, actor = {}) {
         statementPeriod:statement.period,statementReference:reference,transactionCount:statement.totalCount,
         moneyIn:statementMoney(statement.totals.moneyIn),moneyOut:statementMoney(statement.totals.moneyOut),
         netMovement:`${net<0?"-":""}${statementMoney(net)}`,statementLines:renderStatementLines(statement),
-        statementFee:statementMoney(pricing.fee)
+        statementFee:statementMoney(pricing.fee),
+        statementNote:pdfAttachment
+          ?"Your full statement is attached to this email as a PDF you can save, print or forward."
+          :"Your full statement is listed in the plain-text version of this message. If you need it as a PDF, request the statement again or contact Support."
       },
       metadata:{serviceCode:"email_statement",transactionId,statementReference:reference,walletId,from:statement.from,to:statement.to,fee:pricing.fee,destination,sentElsewhere:sendingElsewhere}
     });

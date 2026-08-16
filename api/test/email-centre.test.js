@@ -32,8 +32,11 @@ test("Email Centre seeds every required transactional template", () => {
   // and this suite passed: the fault only surfaced in a live harness, as a
   // thrown "Unsupported template variable" that swallowed the whole email. A
   // guard that covers six templates out of thirty-one is not a guard.
-  for (const [key, , subject, body] of email.DEFAULT_TEMPLATES) {
-    for (const match of `${subject} ${body}`.matchAll(/\{\{\s*(\w+)\s*\}\}/g)) {
+  // The fifth element, where an entry carries its own plain-text body rather
+  // than deriving it, is template source too and goes through the same
+  // interpolate(), so it is checked alongside the html.
+  for (const [key, , subject, body, ownTextBody] of email.DEFAULT_TEMPLATES) {
+    for (const match of `${subject} ${body} ${ownTextBody || ""}`.matchAll(/\{\{\s*(\w+)\s*\}\}/g)) {
       assert.ok(email.ALLOWED_VARIABLES.has(match[1]),
         `${key} uses {{${match[1]}}}, which is not an allowed variable`);
     }

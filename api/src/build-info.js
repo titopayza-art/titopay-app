@@ -19,10 +19,20 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 51;
+const API_BUILD = 52;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  52: "An Email Statement now arrives AS a statement. The fee bought an email "
+      + "whose body held the ledger as pipe-separated monospace lines that "
+      + "wrapped into an unreadable block on a phone, so the document somebody "
+      + "paid for could not be used as one. It is now an attached A4 PDF with "
+      + "the account holder, the FICA-verified identity where there is one, the "
+      + "totals and the ledger as a real table, and the email is a clean "
+      + "summary. Also: every copy fixup in seedDefaultTemplates wrote to an "
+      + "email_templates.body column that has never existed, so each one threw "
+      + "into a silent catch and no copy correction shipped this way has ever "
+      + "reached a live database. They now write html_body and text_body.",
   51: "The person who was PAID is now told. Every receipt TitoPay has ever sent "
       + "went to the payer; the receiver got nothing, so a Payment A4 poster, a "
       + "Tip A4 poster, a till, an event selling tickets and money sent to a "

@@ -1,10 +1,71 @@
-TitoPay deployment build — 2026-08-16 UTC
+TitoPay deployment build — 2026-08-17 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
 PWA bundle: v426 (titopay-pwa-v426-qr-pricing)
-Requires: api.zip build 51
+Requires: api.zip build 52
 Admin console: admin-console-v89
 
-THE PERSON WHO WAS PAID IS NOW TOLD
+AN EMAIL STATEMENT NOW ARRIVES AS A STATEMENT
+
+   A customer pays a fee for an Email Statement. What the fee bought was an
+   email whose body held the whole ledger typed out as monospace lines:
+
+      DATE | TYPE | AMOUNT | BALANCE | REFERENCE
+      2026-08-16 23:23 | CREDIT | +R 97.00 | R 1854.10 | TX-1786922588288-ZPUB66
+
+   On a phone every one of those wrapped across three rows and the columns
+   stopped lining up. The one thing the fee buys is a document you can send to
+   a bank or a landlord, and that could not be used as one.
+
+   IT IS NOW AN ATTACHED A4 PDF.
+
+      the TitoPay wordmark, the statement reference, the period
+      the account holder, their email, the wallet number, the account type
+      the FICA-VERIFIED IDENTITY where the account has an approved review,
+        which is what makes a statement usable at a bank
+      money in, money out, net movement and closing balance
+      the ledger as a real table, credits green and debits red, ruled rows,
+        a running balance, and page furniture that repeats the table head so
+        page two is readable on its own
+
+   Rendered locally with pdfkit, the same way the ticket PDF already is. No
+   fonts fetched, no images fetched, nothing leaves the server to build it.
+
+   AND THE EMAIL IS A COVERING NOTE.
+
+   A clean summary table, then "your full statement is attached as a PDF". The
+   plain-text half of the message still carries the whole ledger, because the
+   fee has already been charged: if a PDF cannot be built for any reason the
+   customer still receives everything they paid for, and the note in the email
+   says which of the two they are holding.
+
+   Templated email could not carry a file at all before this. Only the raw path
+   could, so anything needing an attachment had to give up its admin-editable
+   template. Every provider already read content.attachments, so this was one
+   missing line rather than a new capability.
+
+   A FIXUP MECHANISM THAT HAS NEVER ONCE WORKED.
+
+   seedDefaultTemplates carries copy corrections for templates already seeded
+   with older wording, guarded on the old text so an operator's own edit is
+   never overwritten. Every one of them ran:
+
+      UPDATE email_templates SET body = ...
+
+   email_templates has html_body and text_body. It has never had a `body`. So
+   each statement threw "column does not exist" straight into a .catch(() => {})
+   and NO copy correction shipped this way has ever reached a live database:
+   the OTP wording fix and all three receipt rewrites have been dead since the
+   day they were written. They now write the two real columns, still guarded on
+   the old text, and a failure is logged instead of swallowed silently.
+
+   Proven in verification/statement-pdf-live.js, which runs the real charged
+   path, decrypts what actually went into the send queue, and reads the
+   finished PDF back out of the attachment: the fee, the attachment, a
+   well-formed document, the holder and reference on it, every wallet movement
+   present with the totals, a body with no monospace dump, a text part that
+   still carries the ledger, and the verified identity block. 8 checks.
+
+PREVIOUS BUILD — THE PERSON WHO WAS PAID IS NOW TOLD
 
    Every receipt TitoPay has ever sent went to the person who PAID. Nothing
    was ever sent to the person who was PAID. So a Payment A4 poster on a
