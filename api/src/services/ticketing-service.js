@@ -1117,6 +1117,66 @@ async function createEventDraft(userId, payload, meta = {}) {
   return publicEvent(rows[0], await getTicketTypes(eventId), await getDocuments(eventId));
 }
 
+/* THE POSTER IS THE ONE THING AN ORGANISER MAY CHANGE ON A LIVE EVENT.
+ *
+ * Everything else about an approved event goes through a change request an
+ * admin reviews, and that is right: the date, the venue, the price and the
+ * refund terms are what a buyer decided on. The poster is different. It is the
+ * shop window, it is the thing most often wrong on the day, and an organiser
+ * who cannot fix a crooked or cropped poster on a selling event has a broken
+ * event and no way to help themselves.
+ *
+ * So it replaces immediately, and every replacement is written to the event
+ * audit log with who did it and when. Nothing else on the event is touched:
+ * this reads and writes exactly one column.
+ *
+ * A finished or cancelled event is refused. There is nothing to advertise, and
+ * a poster changing under a closed event only confuses whoever is looking at
+ * the record later.
+ */
+const POSTER_LOCKED_STATUSES = new Set(["cancelled", "completed"]);
+async function replaceEventPoster(userId, eventId, payload = {}, meta = {}) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    "SELECT id, status, event_name, event_banner_url FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1",
+    [eventId, userId]
+  );
+  const existing = rows[0];
+  if (!existing) throw new AppError(404, "Event not found");
+  if (POSTER_LOCKED_STATUSES.has(existing.status)) {
+    throw new AppError(409, existing.status === "cancelled"
+      ? "This event is cancelled, so its poster can no longer be changed."
+      : "This event has finished, so its poster can no longer be changed.");
+  }
+
+  const poster = cleanEventBanner(payload.eventBannerUrl || payload.event_banner_url || payload.poster);
+  if (!poster) {
+    throw new AppError(400, "Choose a poster image to upload. JPG, PNG or WebP.");
+  }
+
+  const { rows: updated } = await pool.query(
+    "UPDATE events SET event_banner_url = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+    [poster, eventId]
+  );
+  await eventAudit({
+    eventId,
+    actorType: "customer",
+    actorId: userId,
+    action: "event_poster_replaced",
+    // The images themselves are far too big for an audit row, so what is kept
+    // is enough to answer "was there one before, and did this actually change
+    // anything" without storing the pictures twice.
+    metadata: {
+      status: existing.status,
+      hadPoster: Boolean(existing.event_banner_url),
+      replacedIdenticalImage: existing.event_banner_url === poster,
+      eventName: existing.event_name || ""
+    },
+    ...meta
+  });
+  return publicEvent(updated[0], await getTicketTypes(eventId), await getDocuments(eventId));
+}
+
 async function updateEventDraft(userId, eventId, payload, meta = {}) {
   await ensureTicketingSchema();
   const { rows: existingRows } = await pool.query("SELECT * FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1", [eventId, userId]);
@@ -4428,6 +4488,7 @@ module.exports = {
   cleanEventBanner,
   createEventDraft,
   updateEventDraft,
+  replaceEventPoster,
   submitEvent,
   listBusinessEvents,
   getBusinessEvent,

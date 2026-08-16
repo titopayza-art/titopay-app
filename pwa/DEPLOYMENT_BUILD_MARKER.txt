@@ -1,8 +1,48 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v415 (titopay-pwa-v415-security-tip-restored)
-Requires: api.zip build 36
+PWA bundle: v416 (titopay-pwa-v416-event-poster)
+Requires: api.zip build 41 for the poster replace control
 Admin console: admin-console-v89
+
+THE EVENT POSTER: RIGHT SHAPE, AND ORGANISERS CAN CHANGE IT
+
+   TWO THINGS, AND THE FIRST WAS A CONTRADICTION IN OUR OWN GUIDANCE.
+
+   1. THE DIMENSIONS WE ASKED FOR WERE THE WRONG ONES.
+
+      The Create Event form asked for portrait 1080 x 1350 (4:5). The event
+      card renders the poster at 16:9 with background-size: cover. So a poster
+      made to our own spec had roughly two thirds of its height cropped away,
+      keeping only a band across the middle. On a text-heavy poster the result
+      was unreadable, with the heading clipped off the top.
+
+      The form now asks for landscape 1920 x 1080 (16:9), which is the shape
+      the card actually draws, and says plainly what happens to a portrait
+      image if one is used anyway. Nothing about the card changed, so every
+      poster already uploaded looks exactly as it does today.
+
+   2. THE ORGANISER CAN REPLACE THE POSTER ON A LIVE EVENT.
+
+      Approved events could not be edited in the app at all, which meant a
+      wrong poster on a selling event could only be fixed by an admin. The
+      poster is now the one exception: Business Ticketing > Events shows the
+      current poster with an Add or Replace poster control, and the change is
+      live at once.
+
+      Everything else on an approved event still goes through the change
+      request an admin reviews. The date, the venue, the price and the refund
+      terms are what a buyer decided on; the poster is the shop window.
+
+      Every replacement is written to that event's audit trail with who did it
+      and when. A cancelled or finished event refuses, with a reason a person
+      can read. Another business cannot touch it.
+
+   Proven in verification/event-poster-replace-live.js against a real approved
+   event selling paid tickets: the ordinary edit path still refuses it, the
+   poster alone changes, the event stays approved with nothing else moved, the
+   audit row is written, an empty upload is refused rather than wiping the
+   poster, and another business is turned away. 8 checks.
+
 
 THE SECURITY TIP SCREEN IS BACK AFTER SIGN-IN
 
@@ -143,9 +183,11 @@ WHAT PROVES IT
 
 UPLOAD NOTES
 
-   Replace the whole app directory as usual. The asset stamp moves to ?v=415
+   Replace the whole app directory as usual. The asset stamp moves to ?v=416
    in index.html and service-worker.js and the cache name becomes
-   titopay-pwa-v415-security-tip-restored, so no customer can be served a cached bundle.
+   titopay-pwa-v416-event-poster, so no customer can be served a cached bundle.
 
-   Requires api.zip build 36 or newer, unchanged by this upload. This is an app-only
-   release: api.zip and admin.zip do not need to be re-uploaded.
+   Requires api.zip build 41, which carries the poster replace endpoint. The
+   corrected poster dimensions in the form need no API change; the Replace
+   poster control reports a clear error on an older API rather than failing
+   silently. admin.zip is unchanged.

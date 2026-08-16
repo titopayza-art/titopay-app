@@ -9,6 +9,7 @@ const {
   getBusinessEligibility,
   createEventDraft,
   updateEventDraft,
+  replaceEventPoster,
   submitEvent,
   listBusinessEvents,
   getBusinessEvent,
@@ -434,6 +435,19 @@ router.put("/business/events/:id", requireAuth, async (req, res, next) => {
   try {
     const eventId = requireUuid(req.params.id, "Event ID");
     res.json({ ok: true, event: await updateEventDraft(req.auth.userId, eventId, req.body, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The poster is the one thing an organiser may change on an event that is
+// already selling. Everything else on an approved event goes through the
+// change-request flow an admin reviews; a poster that is wrong on the day is a
+// broken shop window the organiser must be able to fix themselves. Audited.
+router.put("/business/events/:id/poster", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, event: await replaceEventPoster(req.auth.userId, eventId, req.body, meta(req)) });
   } catch (error) {
     next(error);
   }

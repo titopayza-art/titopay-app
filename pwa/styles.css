@@ -15431,3 +15431,48 @@ img {
     transform: none;
   }
 }
+
+/* Replacing an event poster from the organiser's Events screen.
+   The control is a <label> wrapping a file input, because a file picker cannot
+   be opened from script without a real user gesture on the input itself. The
+   input is taken out of the layout rather than hidden, so it stays reachable
+   by a keyboard and by a screen reader. */
+.event-poster-swap {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin: 10px 0 2px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--soft-blue);
+}
+
+.event-poster-swap .event-poster-thumb {
+  width: 100%;
+  max-width: 260px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  margin-bottom: 0;
+}
+
+.event-poster-swap-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.event-poster-swap-btn input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.event-poster-swap .field-hint {
+  margin: 0;
+}

@@ -1,8 +1,30 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 40   (GET /health reports this — check it after upload)
-PWA bundle: v415 (titopay-pwa-v415-security-tip-restored)
+API build: 41   (GET /health reports this — check it after upload)
+PWA bundle: v416 (titopay-pwa-v416-event-poster)
 Admin console: admin-console-v89
+
+BUILD 41 — AN ORGANISER CAN FIX THE POSTER ON A SELLING EVENT
+
+   NEW: PUT /v1/ticketing/business/events/:id/poster
+
+   Approved events could not be edited in the app at all, so a wrong poster on
+   an event that was already selling could only be fixed by an admin. The
+   poster is now the one exception. Everything else on an approved event still
+   goes through the change request an admin reviews: the date, the venue, the
+   price and the refund terms are what a buyer decided on. The poster is the
+   shop window, it is what is most often wrong on the day, and an organiser who
+   cannot fix it has a broken event and no way to help themselves.
+
+   It reads and writes exactly ONE column. The event keeps its status, its
+   name, its date and its ticket types. Every replacement lands on that event's
+   audit trail with who did it and when. A cancelled or finished event refuses
+   with a reason a person can read, and another business gets a 404.
+
+   Proven in verification/event-poster-replace-live.js against a real approved
+   event selling paid tickets: 8 checks, including that the ordinary edit path
+   STILL refuses an approved event.
+
 
 BUILD 40 — EVENT TICKETS APPEARS FOR BUSINESS ACCOUNTS ON UPLOAD
 

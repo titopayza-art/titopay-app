@@ -4267,6 +4267,8 @@ function onChange(event) {
   if (profilePhotoInput) prepareProfilePhotoCrop(profilePhotoInput);
   const eventPosterInput = event.target.closest("input[data-event-poster-input]");
   if (eventPosterInput) prepareEventPosterPreview(eventPosterInput);
+  const posterReplaceInput = event.target.closest("input[data-event-poster-replace]");
+  if (posterReplaceInput) replaceEventPoster(posterReplaceInput);
   const scanEventPick = event.target.closest("select[data-scan-event]");
   if (scanEventPick) refreshScanAttendance(scanEventPick.value);
   const staffEventPick = event.target.closest("select[data-staff-event-pick]");
@@ -19963,6 +19965,11 @@ function paintScanAttendance(att) {
 // were not told" are different facts to an organiser.
 function ticketingEventRow(event) {
   const canSubmit = ["draft", "additional_information_required", "rejected"].includes(event.status);
+  // The poster is the one thing an organiser may change on an event that is
+  // already selling: it is the shop window, and a wrong one is a broken event
+  // the organiser must be able to fix without waiting for a review. A finished
+  // or cancelled event has nothing left to advertise, so it is left alone.
+  const canReplacePoster = !["cancelled", "completed"].includes(event.status);
   const types = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
   const sold = types.reduce((total, type) => total + (Number(type.quantitySold ?? type.quantity_sold) || 0), 0);
   const capacity = types.reduce((total, type) => total + (Number(type.quantityAvailable ?? type.quantity_available) || 0), 0);
@@ -19996,6 +20003,16 @@ function ticketingEventRow(event) {
       ` : `<p class="ticket-event-note">No ticket types added yet.</p>`}
       ${event.pendingChangeRequest ? `
         <p class="ticket-event-note ticket-change-pending">${icon("refresh")} Change request pending review: <strong>${esc(changeRequestLabel(event.pendingChangeRequest.requestType))}</strong></p>
+      ` : ""}
+      ${canReplacePoster ? `
+        <div class="event-poster-swap">
+          ${event.eventBannerUrl ? `<img class="event-poster-thumb" src="${esc(event.eventBannerUrl)}" alt="${esc(event.eventName || "Event")} poster">` : `<p class="ticket-event-note">No poster yet. The event card shows a placeholder until you add one.</p>`}
+          <label class="btn ghost mini event-poster-swap-btn">
+            ${icon("upload")} ${event.eventBannerUrl ? "Replace poster" : "Add poster"}
+            <input type="file" accept="image/*" data-event-poster-replace="${esc(event.id)}">
+          </label>
+          <small class="field-hint">Landscape 1920 × 1080 (16:9) fills the card exactly. Changes go live at once and are recorded against the event.</small>
+        </div>
       ` : ""}
       <div class="ticket-event-actions">
         ${canSubmit ? `<button class="btn secondary mini" type="button" data-action="ticketing-submit:${esc(event.id)}">Submit for approval</button>` : ""}
@@ -20231,9 +20248,14 @@ async function submitTicketingTagAssign(data) {
   showToast(`Tag ${result.tag?.tagLabel || ""} is active for this attendee.`);
 }
 
-// The event poster is recommended at portrait 1080 x 1350 (4:5), but any image
-// is accepted and simply scaled to fit. Kept well under the 768 KB request
-// limit so it can travel inside the draft-save call as a data URL.
+// The event poster is recommended at landscape 1920 x 1080 (16:9) because that
+// is the aspect the event card draws, and the two used to disagree: the form
+// asked for portrait 1080 x 1350 while .event-poster renders 16:9 with
+// background-size: cover, so a correctly sized poster had roughly two thirds
+// of its height cropped away and text-heavy posters came out unreadable.
+// Any image is still accepted and simply scaled to fit. Kept well under the
+// 768 KB request limit so it can travel inside the draft-save call as a data
+// URL.
 async function resizeEventPoster(file) {
   const maxEdge = 1400;
   const source = await readFileAsDataUrl(file);
@@ -20348,6 +20370,51 @@ async function prepareEventPosterPreview(input) {
     showToast("That image could not be used. Try another.", "error");
   }
 }
+/* Swapping the poster on an event that already exists, including one that is
+   selling. The draft form keeps its poster in state until the draft is saved;
+   this one goes straight to the server, because the event is already there and
+   there is nothing to save it alongside.
+
+   The button reports what is happening. Uploading a poster on a phone takes a
+   moment, and a control that looks untouched while an image is resized and
+   sent is a control people press twice. */
+async function replaceEventPoster(input) {
+  const eventId = input.dataset.eventPosterReplace;
+  const file = input.files && input.files[0];
+  if (!eventId || !file) return;
+  const label = input.closest(".event-poster-swap-btn");
+  const original = label ? label.innerHTML : "";
+  if (!String(file.type || "").startsWith("image/")) {
+    showToast("Choose an image file (JPG, PNG or WebP).", "error");
+    input.value = "";
+    return;
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    showToast("Choose an image under 15MB.", "error");
+    input.value = "";
+    return;
+  }
+  if (label) label.innerHTML = `${icon("refresh")} Uploading...`;
+  input.disabled = true;
+  try {
+    const dataUrl = await resizeEventPoster(file);
+    await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/poster`, {
+      method: "PUT",
+      body: { eventBannerUrl: dataUrl }
+    });
+    showToast("Poster updated. It is live now.");
+    // Re-read from the server rather than patching the row in place, so what
+    // the organiser sees next is what was actually stored. The Events screen
+    // is reopened rather than the whole hub, so they stay where they were.
+    await loadBusinessTicketingData();
+    openTicketingSection("events");
+  } catch (error) {
+    if (label) label.innerHTML = original;
+    input.disabled = false;
+    input.value = "";
+    showToast(error.message || "That poster could not be uploaded. Try another image.", "error");
+  }
+}
 function clearEventPoster() {
   if (state.eventDraftForm) state.eventDraftForm.poster = "";
   const host = document.querySelector("[data-event-poster-preview]");
@@ -20399,7 +20466,7 @@ function openTicketingEventForm() {
       <section class="section-head compact"><h2>Event poster</h2></section>
       <div data-event-poster-preview></div>
       <label>Upload poster<input type="file" accept="image/*" data-event-poster-input></label>
-      <p class="field-hint">Recommended: portrait <strong>1080 × 1350 px</strong> (4:5). JPG, PNG or WebP. Anything you upload is scaled to fit; optional for a draft.</p>
+      <p class="field-hint">Recommended: landscape <strong>1920 × 1080 px</strong> (16:9). That is the shape the event card draws, so a 16:9 poster is shown whole. A portrait poster still works, but the card keeps a band across its middle and crops the rest. JPG, PNG or WebP; optional for a draft.</p>
 
       <section class="section-head compact"><h2>How people join</h2></section>
       <label class="toggle-row">

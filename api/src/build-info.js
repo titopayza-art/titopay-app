@@ -19,10 +19,15 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 40;
+const API_BUILD = 41;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  41: "An organiser can replace the poster on an event that is already selling. "
+      + "Everything else on an approved event still goes through admin review; "
+      + "the poster is the shop window and a wrong one is a broken event the "
+      + "organiser must be able to fix themselves. One column, audited, and "
+      + "refused on a cancelled or finished event.",
   40: "Event Tickets actually appears for business accounts on upload. Build 39 "
       + "corrected the default, but the seed inserts with ON CONFLICT DO NOTHING "
       + "so it never reached a database that already had the row. The correction "
