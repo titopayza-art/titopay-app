@@ -137,12 +137,13 @@ const balanceOf = async (userId) => Number((await pool.query(
     ok("and the review screen is told before they press Confirm");
 
     // An ordinary payment still works, which is the thing all of this must not break.
-    // A QR payment is priced on both sides: the customer pays R1.50 + 1% on
-    // top, the merchant 1.5% out of the credit. The figures are worked out
-    // from the rates rather than typed in, so this reads as the rule and not
-    // as two numbers that happen to be right today.
-    const customerFee = Math.min(round(1.50 + 200 * 0.01), 10);
-    const merchantFee = round(200 * 0.015);
+    // A QR payment is priced on both sides: the customer pays a flat R1.50 on
+    // top, the merchant R1.50 + 1.5% out of the credit. Both come from the live
+    // schedule rather than being typed in, so this reads as the rule and not as
+    // two numbers that happen to be right today.
+    const pricing = require("../api/src/services/pricing-service");
+    const customerFee = round((await pricing.calculateFee("qr_payment", 200)).fee);
+    const merchantFee = round((await pricing.calculateFee("merchant_qr_payment", 200)).fee);
     const ownerBefore = await balanceOf(owner.id);
     const paid = await call("POST", "/v1/qr/pay", payer, { qrId: good.id, amount: 200, idempotencyKey: randomUUID() });
     assert.equal(paid.status, 200, paid.body.error || "");

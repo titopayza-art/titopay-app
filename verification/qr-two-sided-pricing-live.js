@@ -2,8 +2,11 @@
 
 // A QR PAYMENT NOW HAS TWO SIDES, AND BOTH ARE MEASURED HERE.
 //
-//   the customer pays   R1.50 + 1% of the amount, capped at R10, ON TOP
-//   the merchant pays   1.5% of the amount, OUT OF what they are credited
+//   the customer pays   a flat R1.50, ON TOP of the amount
+//   the merchant pays   R1.50 + 1.5% of the amount, OUT OF the credit
+//
+// A person pays the same R1.50 on a R20 coffee as on a R5000 sofa. The
+// percentage sits on the business side, where the sale is being earned.
 //
 // It was a flat R0.50 from the customer and nothing from the merchant. A
 // merchant_qr_payment rule has sat in the pricing schedule since it was
@@ -41,8 +44,8 @@ const payer = { id: randomUUID(), phone: "27110000202", type: "personal" };
 const round = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
 // The schedule, restated independently of the code being tested.
-const expectedCustomerFee = (amount) => Math.min(round(1.50 + amount * 0.01), 10);
-const expectedMerchantFee = (amount) => round(amount * 0.015);
+const expectedCustomerFee = () => 1.50;
+const expectedMerchantFee = (amount) => round(1.50 + amount * 0.015);
 
 async function seed(user, balance) {
   await pool.query(
@@ -67,16 +70,18 @@ const revenueBalance = async () => Number((await pool.query(
     const customerRule = await pricing.calculateFee("qr_payment", 100);
     const merchantRule = await pricing.calculateFee("merchant_qr_payment", 100);
     assert.equal(Number(customerRule.flatFee), 1.50, `customer flat fee is R${customerRule.flatFee}`);
-    assert.equal(Number(customerRule.percentageFee), 1, `customer percentage is ${customerRule.percentageFee}%`);
+    assert.equal(Number(customerRule.percentageFee), 0, `customer percentage is ${customerRule.percentageFee}%`);
+    assert.equal(Number(merchantRule.flatFee), 1.50, `merchant flat fee is R${merchantRule.flatFee}`);
     assert.equal(Number(merchantRule.percentageFee), 1.5, `merchant rate is ${merchantRule.percentageFee}%`);
-    ok("the schedule carries the new rates", "customer R1.50 + 1%, merchant 1.5%");
+    ok("the schedule carries the new rates", "customer a flat R1.50, merchant R1.50 + 1.5%");
 
-    // The cap, checked at the boundary rather than assumed.
-    const capped = await pricing.calculateFee("qr_payment", 5000);
-    assert.equal(round(capped.fee), 10, `a R5000 payment charges the customer R${capped.fee}`);
-    const under = await pricing.calculateFee("qr_payment", 250);
-    assert.equal(round(under.fee), 4, `a R250 payment charges the customer R${under.fee}`);
-    ok("the customer fee is capped at R10", "R250 -> R4.00, R5000 -> R10.00");
+    // The customer's side does not move with the sale. Checked across three
+    // orders of magnitude rather than assumed from the rule alone.
+    for (const amount of [20, 250, 5000, 20000]) {
+      const quoted = await pricing.calculateFee("qr_payment", amount);
+      assert.equal(round(quoted.fee), 1.50, `a R${amount} payment charges the customer R${quoted.fee}`);
+    }
+    ok("the customer pays R1.50 whatever the sale", "R20, R250, R5000 and R20000 all charge R1.50");
 
     await seed(merchant, 0);
     await seed(payer, 60000);
@@ -130,8 +135,8 @@ const revenueBalance = async () => Number((await pool.query(
     assert.equal(status.paid, true);
     assert.equal(round(status.received), actuallyCredited,
       `the slip says R${status.received} received, the wallet moved R${actuallyCredited}`);
-    assert.equal(round(status.merchantFee), 3.75, `the slip reports a merchant fee of R${status.merchantFee}`);
-    assert.equal(round(status.payerFee), 4, `the slip reports a customer fee of R${status.payerFee}`);
+    assert.equal(round(status.merchantFee), expectedMerchantFee(250), `the slip reports a merchant fee of R${status.merchantFee}`);
+    assert.equal(round(status.payerFee), expectedCustomerFee(250), `the slip reports a customer fee of R${status.payerFee}`);
     ok("the till's slip matches the wallet to the cent",
       `received R${round(status.received).toFixed(2)}, merchant fee R${round(status.merchantFee).toFixed(2)}, customer fee R${round(status.payerFee).toFixed(2)}`);
 
@@ -139,7 +144,38 @@ const revenueBalance = async () => Number((await pool.query(
     assert.ok(rows.every((row) => row.credited > 0), "a merchant was credited nothing or less");
     ok("no merchant is ever credited a negative amount");
 
-    console.log(`\n  ${passed}/5 checks passed\n`);
+    // A SALE SMALLER THAN ITS OWN FEE IS REFUSED, NOT SETTLED AT ZERO.
+    //
+    // The merchant's side carries a flat component, so under about R1.52 the
+    // fee reaches the whole sale. Taking the customer's money, crediting the
+    // business nothing and reporting success would be the worst of the three
+    // possible outcomes, so the boundary is checked from both sides of itself.
+    const tiny = await qrService.createQr({ userId: merchant.id, userType: "customer" },
+      { codeType: "dynamic", amount: 1, label: "Too small" });
+    const beforeTiny = { payer: await balanceOf(payer.id), merchant: await balanceOf(merchant.id) };
+    let refusal = null;
+    try {
+      await qrService.payQr({ userId: payer.id, userType: "customer", ipAddress: "127.0.0.1", userAgent: "pricing" },
+        { qrId: tiny.id, idempotencyKey: randomUUID() });
+    } catch (error) { refusal = error; }
+    assert.ok(refusal, "a R1.00 sale was accepted, and the business was credited nothing");
+    assert.equal(refusal.statusCode, 400, "the refusal is a 400, so the customer reads the real reason");
+    assert.match(refusal.message, /too small/i);
+    assert.equal(round(await balanceOf(payer.id)), round(beforeTiny.payer), "the payer was charged on a refused payment");
+    assert.equal(round(await balanceOf(merchant.id)), round(beforeTiny.merchant), "the merchant moved on a refused payment");
+
+    // And just above the boundary it settles normally.
+    const small = await qrService.createQr({ userId: merchant.id, userType: "customer" },
+      { codeType: "dynamic", amount: 2, label: "Small" });
+    const beforeSmall = await balanceOf(merchant.id);
+    await qrService.payQr({ userId: payer.id, userType: "customer", ipAddress: "127.0.0.1", userAgent: "pricing" },
+      { qrId: small.id, idempotencyKey: randomUUID() });
+    const creditedSmall = round((await balanceOf(merchant.id)) - beforeSmall);
+    assert.ok(creditedSmall > 0, `a R2.00 sale credited the merchant R${creditedSmall}`);
+    ok("a sale too small to carry its own fee is refused, and nothing moves",
+      `R1.00 refused, R2.00 settles at R${creditedSmall.toFixed(2)}`);
+
+    console.log(`\n  ${passed}/6 checks passed\n`);
   } catch (error) { console.error("\nFAILED:", error.message); process.exitCode = 1; }
   finally {
     for (const user of [merchant, payer]) {

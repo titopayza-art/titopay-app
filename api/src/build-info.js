@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 49;
+const API_BUILD = 50;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  50: "A person pays a FLAT R1.50 to pay by QR, on any size of sale, with no "
+      + "percentage and nothing to cap. The percentage sits on the business "
+      + "side, which now pays R1.50 + 1.5% of the sale out of what it is "
+      + "credited, uncapped. Build 49 charged the customer R1.50 + 1% capped at "
+      + "R10; that percentage moves to the business. A sale too small to carry "
+      + "its own fee is now refused before anything moves rather than settling "
+      + "with the business credited nothing.",
   49: "QR payments are priced on both sides. The customer pays R1.50 + 1% of "
       + "the sale, capped at R10, on top of the amount; the business pays 1.5% "
       + "of the sale, out of what it is credited. It was a flat R0.50 from the "

@@ -171,8 +171,8 @@ const balanceOf = async (id) => Number((await pool.query(
 
     // 4. A slip, with the right figures on it.
     //
-    // A QR payment is priced on both sides: the customer pays R1.50 + 1% on
-    // top, and the merchant 1.5% out of the credit. This slip is the
+    // A QR payment is priced on both sides: the customer pays a flat R1.50 on
+    // top, and the merchant R1.50 + 1.5% out of the credit. This slip is the
     // MERCHANT'S, so Fees is the merchant's 1.5% and nothing else, and
     // netAmount is what actually reached the wallet. The expected figures come
     // from the live schedule rather than being typed in, so an admin changing
@@ -187,8 +187,16 @@ const balanceOf = async (id) => Number((await pool.query(
       `the slip says the merchant received R${settled.receipt.netAmount} on a R${SALE} sale, expected R${expectedNet}`);
     assert.equal(Number(settled.receipt.fees), expectedFee,
       `the slip says the merchant paid R${settled.receipt.fees}, expected R${expectedFee}`);
-    assert.ok(Number(settled.receipt.payerFee) > Number(settled.receipt.fees),
-      "the slip is carrying the customer's fee as the merchant's");
+    // The two fees are different figures charged to different people, and the
+    // slip has to keep them apart. The customer's is read from the schedule
+    // too, so this catches the slip printing one where the other belongs.
+    const expectedPayerFee = Math.round(
+      (Number((await require("../api/src/services/pricing-service").calculateFee("qr_payment", SALE)).fee)
+        + Number.EPSILON) * 100) / 100;
+    assert.equal(Number(settled.receipt.payerFee), expectedPayerFee,
+      `the slip says the customer paid R${settled.receipt.payerFee}, expected R${expectedPayerFee}`);
+    assert.notEqual(Number(settled.receipt.payerFee), Number(settled.receipt.fees),
+      "the slip is carrying one side's fee as the other's");
     assert.equal(settled.receipt.status, "PAID");
     assert.match(settled.receipt.merchantName, new RegExp(TAG));
     ok("a slip is produced, and its figures are the merchant's",

@@ -192,8 +192,8 @@ const balanceOf = async (userId) => Number((await pool.query(
       assert.equal(paid.ok, true, `${label}: paying the scanned code failed — ${paid.error}`);
       const payerAfter = await balanceOf(payer.id);
       const ownerAfter = await balanceOf(owner.id);
-      // A QR payment is priced on both sides: the payer pays R1.50 + 1% on top,
-      // the owner 1.5% out of the credit. Both figures come from the live
+      // A QR payment is priced on both sides: the payer pays a flat R1.50 on
+      // top, the owner R1.50 + 1.5% out of the credit. Both come from the live
       // schedule so that an admin changing a rate does not read here as a
       // printed poster having stopped working.
       const pricing = require("../api/src/services/pricing-service");

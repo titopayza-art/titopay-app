@@ -11,7 +11,7 @@ const DEFAULT_SERVICES = [
   ["withdraw", "Withdraw", "withdraw", "withdraw", "Withdraw available wallet funds.", "active", true, false, 20, "none"],
   ["send-money", "Send Money", "send", "send-money", "Send money using a username, cellphone number or email address.", "active", true, false, 30, "none"],
   ["receive-money", "Receive Money", "download", "receive-money", "Generate a TitoPay QR to receive money.", "active", true, true, 40, "none"],
-  ["qr-pay", "QR Pay", "qr", "qr-pay", "Scan and pay TitoPay QR codes. A R0.50 QR payment fee applies.", "active", true, true, 50, "none"],
+  ["qr-pay", "QR Pay", "qr", "qr-pay", "Scan and pay TitoPay QR codes. A flat R1.50 QR payment fee applies.", "active", true, true, 50, "none"],
   ["payment-request", "Payment Request", "download", "payment-request", "Request money from a customer, friend or family member.", "active", true, true, 60, "none"],
   ["bill-split", "Bill Split", "scissors", "bill-split", "Split bills and send payment requests to participants.", "active", true, false, 70, "new"],
   ["send-gift", "Send Gift", "gift", "send-gift", "Send money as a thoughtful digital gift.", "active", true, false, 80, "none"],
@@ -108,7 +108,11 @@ async function ensureDefaultServices() {
   const { rows } = await pool.query("SELECT COUNT(*)::INT AS count FROM service_config WHERE service_code = ANY($1)", [serviceCodes]);
   if (rows[0].count >= DEFAULT_SERVICES.length) {
     await pool.query(
-      "UPDATE service_config SET fee = 0.50, description = 'Scan and pay TitoPay QR codes. A R0.50 QR payment fee applies.', updated_at = NOW() WHERE service_code = 'qr-pay' AND COALESCE(fee, 0) < 0.50"
+      // The tile a customer reads before they scan. It said R0.50 and was pushed
+    // back to R0.50 on every start, so the catalogue would have gone on
+    // advertising a price nobody is charged. The guard still only ever raises
+    // it, so an operator who has set a higher figure keeps theirs.
+    "UPDATE service_config SET fee = 1.50, description = 'Scan and pay TitoPay QR codes. A flat R1.50 QR payment fee applies.', updated_at = NOW() WHERE service_code = 'qr-pay' AND COALESCE(fee, 0) < 1.50"
     );
     await applyServiceCopyFixups();
     return;
@@ -131,7 +135,11 @@ async function ensureDefaultServices() {
     values
   );
   await pool.query(
-    "UPDATE service_config SET fee = 0.50, description = 'Scan and pay TitoPay QR codes. A R0.50 QR payment fee applies.', updated_at = NOW() WHERE service_code = 'qr-pay' AND COALESCE(fee, 0) < 0.50"
+    // The tile a customer reads before they scan. It said R0.50 and was pushed
+    // back to R0.50 on every start, so the catalogue would have gone on
+    // advertising a price nobody is charged. The guard still only ever raises
+    // it, so an operator who has set a higher figure keeps theirs.
+    "UPDATE service_config SET fee = 1.50, description = 'Scan and pay TitoPay QR codes. A flat R1.50 QR payment fee applies.', updated_at = NOW() WHERE service_code = 'qr-pay' AND COALESCE(fee, 0) < 1.50"
   );
   await applyServiceCopyFixups();
 }

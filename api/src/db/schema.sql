@@ -484,16 +484,23 @@ SET flat_fee = CASE WHEN fee_type = 'FIXED' THEN fee_value ELSE flat_fee END,
     effective_date = COALESCE(effective_date, CURRENT_DATE)
 WHERE flat_fee = 0 AND percentage_fee = 0;
 
+-- A QR payment costs a person a flat R1.50. This only fills in a rule that has
+-- NO price at all, which is the case a schema repair has to cover: a rule
+-- created at zero would make QR payments free without anybody deciding that.
+-- It used to force R0.50 onto anything cheaper and raise minimum_fee to match,
+-- which meant an operator could set a lower price in the admin console and have
+-- a schema repair quietly put it back. A price an operator has set is theirs.
 UPDATE pricing_rules
 SET fee_type = 'FIXED',
-    fee_value = 0.50,
-    flat_fee = 0.50,
-    minimum_fee = GREATEST(COALESCE(minimum_fee, 0), 0.50),
+    fee_value = 1.50,
+    flat_fee = 1.50,
     enabled = TRUE,
     active = TRUE,
     updated_at = NOW()
 WHERE service_code = 'qr_payment'
-  AND COALESCE(flat_fee, fee_value, 0) < 0.50;
+  AND COALESCE(flat_fee, 0) = 0
+  AND COALESCE(percentage_fee, 0) = 0
+  AND COALESCE(fee_value, 0) = 0;
 
 CREATE TABLE IF NOT EXISTS service_config (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1325,7 +1332,7 @@ INSERT INTO service_config (
   ('cross-border', 'Cross Border', 'globe', 'cross-border', 'Regional remittance and SADC expansion services.', 0, 0, 'disabled', FALSE, FALSE, 250, 'none'),
   ('send-money', 'Send Money', 'send', 'send-money', 'Send money using a username, cellphone number or email address.', 0, 0, 'active', TRUE, FALSE, 25, 'none'),
   ('receive-money', 'Receive Money', 'download', 'receive-money', 'Generate a TitoPay QR to receive money.', 0, 0, 'active', TRUE, TRUE, 26, 'none'),
-  ('qr-pay', 'QR Pay', 'qr', 'qr-pay', 'Scan and pay TitoPay QR codes. A R0.50 QR payment fee applies.', 0.50, 0, 'active', TRUE, TRUE, 27, 'none'),
+  ('qr-pay', 'QR Pay', 'qr', 'qr-pay', 'Scan and pay TitoPay QR codes. A flat R1.50 QR payment fee applies.', 1.50, 0, 'active', TRUE, TRUE, 27, 'none'),
   ('data', 'Data', 'smartphone', 'data', 'Buy mobile data bundles.', 0, 0, 'active', TRUE, TRUE, 75, 'none'),
   ('transactions', 'Transactions', 'list', 'transactions', 'Search, filter and export wallet transactions.', 0, 0, 'active', TRUE, TRUE, 120, 'none'),
   ('profile-security', 'Profile & Security', 'shield', 'profile-security', 'Manage FICA, wallet lock, devices and profile security.', 0, 0, 'active', TRUE, FALSE, 130, 'none'),
@@ -1344,11 +1351,11 @@ INSERT INTO service_config (
 ON CONFLICT (service_code) DO NOTHING;
 
 UPDATE service_config
-SET fee = 0.50,
-    description = 'Scan and pay TitoPay QR codes. A R0.50 QR payment fee applies.',
+SET fee = 1.50,
+    description = 'Scan and pay TitoPay QR codes. A flat R1.50 QR payment fee applies.',
     updated_at = NOW()
 WHERE service_code = 'qr-pay'
-  AND COALESCE(fee, 0) < 0.50;
+  AND COALESCE(fee, 0) < 1.50;
 
 -- Embedded POS / Speedpoint dynamic QR payments. This module is additive and
 -- deliberately reuses the existing merchants, wallets, transactions and

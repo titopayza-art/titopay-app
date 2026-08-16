@@ -17,12 +17,14 @@ const APPROVED_PRICING_SCHEDULE = [
   ["withdraw_money_to_bank", "Withdraw Money to Bank", 7],
   ["cash_withdrawal", "Withdraw Cash", 10],
   ["withdraw_cash", "Withdraw Cash", 10],
-  // THE CUSTOMER SIDE OF A QR PAYMENT: R1.50 + 1%, capped at R10.
-  // flatFee 1.50, minimumFee 0 (the flat fee IS the floor), percentageFee 1,
-  // maximumFee 10. R50 -> R2.00, R250 -> R4.00, R850 and up -> R10.00.
-  ["qr_payment", "QR Pay", 1.50, 0, 1, 10],
-  ["qr_pay", "QR Pay", 1.50, 0, 1, 10],
-  ["customer_qr_payment", "Customer QR Payment", 1.50, 0, 1, 10],
+  // THE CUSTOMER SIDE OF A QR PAYMENT: A FLAT R1.50, WHATEVER THE SALE.
+  // flatFee 1.50, minimumFee 0 (the flat fee IS the floor), percentageFee 0,
+  // maximumFee 0 (nothing to cap when nothing scales). A person paying by QR
+  // pays R1.50 on a R20 coffee and R1.50 on a R5000 sofa. The percentage sits
+  // on the business side, where the sale is being earned from.
+  ["qr_payment", "QR Pay", 1.50, 0, 0, 0],
+  ["qr_pay", "QR Pay", 1.50, 0, 0, 0],
+  ["customer_qr_payment", "Customer QR Payment", 1.50, 0, 0, 0],
   ["payment_request", "Payment Request"],
   ["request_money", "Payment Request"],
   ["bill_split", "Bill Split", 1],
@@ -47,12 +49,13 @@ const APPROVED_PRICING_SCHEDULE = [
   ["business_wallet", "Business Wallet"],
   ["business_registration", "Business Registration"],
   ["receive_payments", "Receive Payments"],
-  // THE BUSINESS SIDE: 1.5% of every successful QR payment, taken out of what
-  // the merchant is credited. It was 1.7% and, more to the point, no code read
-  // it: the merchant was credited in full on every payment TitoPay has ever
-  // settled. It is charged from build 49.
-  ["merchant_qr", "Merchant QR Payments", 0, 0, 1.5],
-  ["merchant_qr_payment", "Merchant QR Payments", 0, 0, 1.5],
+  // THE BUSINESS SIDE: R1.50 + 1.5% of every successful QR payment, taken out
+  // of what the merchant is credited, and uncapped. The business is the side
+  // that carries the percentage, because the business is the side making the
+  // sale. It was 1.7% and, more to the point, no code read it: the merchant
+  // was credited in full on every payment TitoPay has ever settled.
+  ["merchant_qr", "Merchant QR Payments", 1.50, 0, 1.5, 0],
+  ["merchant_qr_payment", "Merchant QR Payments", 1.50, 0, 1.5, 0],
   ["make_a_sale", "Make a Sale", 0, 0, 1.7],
   // "payouts" is the code the business Payouts tile actually submits (see the
   // service catalogue). It was missing from the approved schedule, so a fee
@@ -350,15 +353,26 @@ async function getPricingRule(serviceCode) {
 // never applied again — so an operator who tunes these afterwards keeps their
 // numbers.
 //
-//   customer   R1.50 + 1%, capped at R10   (was a flat R0.50)
-//   merchant   1.5% of the amount          (was 1.7%, and charged to nobody)
+//   customer   a flat R1.50, whatever the sale
+//   merchant   R1.50 + 1.5% of the sale, uncapped
 //
 // The guard on the OLD values means a rate somebody has already changed by hand
-// is left exactly as they set it.
-const QR_PRICING_FIXUP_KEY = "pricing_fixup_qr_two_sided_2026_08";
+// is left exactly as they set it. Each side lists EVERY value TitoPay itself
+// has ever put there — the original flat R0.50 and 1.7%, and the R1.50 + 1%
+// capped at R10 and 1.5% that build 49 carried — so a database sitting on
+// either of them converges, and one an operator has tuned does not.
+const QR_PRICING_FIXUP_KEY = "pricing_fixup_qr_flat_customer_2026_08";
 const QR_PRICING_FIXUP = [
-  { codes: ["qr_payment", "qr_pay", "customer_qr_payment"], flat: 1.50, percentage: 1, minimum: 0, maximum: 10, wasFlat: 0.50 },
-  { codes: ["merchant_qr", "merchant_qr_payment"], flat: 0, percentage: 1.5, minimum: 0, maximum: 0, wasPercentage: 1.7 }
+  {
+    codes: ["qr_payment", "qr_pay", "customer_qr_payment"],
+    flat: 1.50, percentage: 0, minimum: 0, maximum: 0,
+    was: [[0.50, 0], [1.50, 1]]
+  },
+  {
+    codes: ["merchant_qr", "merchant_qr_payment"],
+    flat: 1.50, percentage: 1.5, minimum: 0, maximum: 0,
+    was: [[0, 1.7], [0, 1.5]]
+  }
 ];
 async function applyQrPricingFixupOnce() {
   try {
@@ -367,20 +381,24 @@ async function applyQrPricingFixupOnce() {
     if (applied.rows.length) return;
     let changed = 0;
     for (const entry of QR_PRICING_FIXUP) {
-      const guard = entry.wasFlat === undefined
-        ? "AND ROUND(percentage_fee::NUMERIC, 4) = $7"
-        : "AND ROUND(flat_fee::NUMERIC, 2) = $7";
+      // fee_type and fee_value are derived exactly as syncApprovedPricingSchedule
+      // derives them, so a rule written by this path and a rule written by that
+      // one cannot disagree about the same fee.
       const { rowCount } = await pool.query(
         `UPDATE pricing_rules
             SET fee_type = $2, fee_value = $3, flat_fee = $4, percentage_fee = $5,
-                minimum_fee = $6, maximum_fee = $8, enabled = TRUE, active = TRUE, updated_at = NOW()
-          WHERE service_code = ANY($1::TEXT[]) ${guard}`,
+                minimum_fee = $6, maximum_fee = $7, enabled = TRUE, active = TRUE, updated_at = NOW()
+          WHERE service_code = ANY($1::TEXT[])
+            AND EXISTS (
+              SELECT 1 FROM unnest($8::NUMERIC[], $9::NUMERIC[]) AS was(flat, percentage)
+               WHERE ROUND(flat_fee::NUMERIC, 2) = ROUND(was.flat, 2)
+                 AND ROUND(percentage_fee::NUMERIC, 4) = ROUND(was.percentage, 4)
+            )`,
         [entry.codes,
-          entry.percentage > 0 && entry.flat === 0 ? "PERCENTAGE" : "FIXED",
-          entry.flat > 0 ? entry.flat : entry.percentage,
-          entry.flat, entry.percentage, entry.minimum,
-          entry.wasFlat === undefined ? entry.wasPercentage : entry.wasFlat,
-          entry.maximum]
+          entry.percentage > 0 ? "PERCENTAGE" : entry.flat > 0 ? "FIXED" : "FREE",
+          entry.percentage > 0 ? entry.percentage : entry.flat,
+          entry.flat, entry.percentage, entry.minimum, entry.maximum,
+          entry.was.map((pair) => pair[0]), entry.was.map((pair) => pair[1])]
       );
       changed += rowCount;
     }
@@ -405,8 +423,9 @@ async function calculateFee(serviceCode, amount) {
   if (Number(rule.maximum_fee) > 0) fee = Math.min(fee, Number(rule.maximum_fee));
   // A hardcoded R0.50 floor for qr_payment used to sit here. It was written when
   // the QR fee WAS R0.50 and it silently overrode anything an operator
-  // configured below that. The schedule now carries R1.50 + 1% capped at R10,
-  // and a floor belongs in minimum_fee where an admin can see and change it.
+  // configured below that. The schedule now carries a flat R1.50 on the
+  // customer side, and a floor belongs in minimum_fee where an admin can see
+  // and change it.
   // A fee is never negative. A negative rule reaching here would debit LESS
   // than the amount while the recipient is credited the full amount, and would
   // "credit" the revenue wallet a negative number — which debits it. TitoPay

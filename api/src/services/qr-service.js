@@ -318,15 +318,27 @@ async function payQr(actor, payload) {
   if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "Amount must be greater than zero");
   // TWO SIDES, PRICED SEPARATELY.
   //
-  //   the customer pays   R1.50 + 1%, capped at R10, ON TOP of the amount
-  //   the merchant pays   1.5% of the amount, OUT OF what they are credited
+  //   the customer pays   a flat R1.50, ON TOP of the amount
+  //   the merchant pays   R1.50 + 1.5% of the amount, OUT OF the credit
   //
   // Both come from the pricing schedule, so an operator changes them in the
   // admin console and neither is a number written into this file. The merchant
   // rule has existed since the schedule was written and was read by nothing:
   // every merchant was credited in full on every payment ever settled.
   const merchantPricing = await calculateFee("merchant_qr_payment", amount);
-  const merchantFee = Math.min(roundMoney(merchantPricing.fee), amount);
+  const merchantFee = roundMoney(merchantPricing.fee);
+  // A SALE SMALLER THAN ITS OWN FEE IS REFUSED, NOT SETTLED AT ZERO.
+  //
+  // The merchant's side carries a flat component, so below roughly R1.52 the
+  // fee reaches the whole sale. Clamping it to the amount would have taken the
+  // customer's money, credited the business nothing, and reported success.
+  // Nobody is served by that, so it is refused before anything moves, and the
+  // message says the real reason rather than a generic rejection.
+  if (merchantFee >= amount) {
+    throw new AppError(400,
+      `This amount is too small to pay by QR. The fee on a QR payment would take the whole sale, `
+      + `so nothing has been taken from your wallet. Payments of R${roundMoney(merchantFee + 0.01).toFixed(2)} and up work normally.`);
+  }
   const tx = await createTransaction(actor, {
     serviceCode: "qr_payment",
     amount,
