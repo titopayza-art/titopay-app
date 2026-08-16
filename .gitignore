@@ -23,3 +23,7 @@ tests/artifacts/
 *.key
 *.p12
 *.pfx
+
+# Screenshot output written by the verification harnesses at the repo root.
+pwa-journeys-*.png
+pwa-money-screens.png
