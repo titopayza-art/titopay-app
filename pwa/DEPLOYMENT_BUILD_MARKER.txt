@@ -1,8 +1,31 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v413 (titopay-pwa-v413-native-back)
+PWA bundle: v414 (titopay-pwa-v414-business-identity-note)
 Requires: api.zip build 36
 Admin console: admin-console-v89
+
+ONE LINE ADDED FOR BUSINESS ACCOUNTS
+
+   "Verify your identity" verifies a natural person, so it has no company
+   field. A business owner opening it saw three document choices, none of them
+   a company registration number, and nothing telling them where that number
+   goes. It read as a gap rather than a boundary.
+
+   On a business account the screen now carries one extra sentence: this
+   screen verifies you as a person, and the business and its registration
+   number are verified separately under Business Verification in the profile.
+
+   Nothing else on that screen moved. The identity document list is still
+   South African ID, passport and other approved identity document, and a
+   company registration number is deliberately not among them: it proves a
+   company is on a register and proves nothing about who is holding the phone,
+   so accepting one here would let a business reach a higher monthly limit
+   with no person verified at all. A test fails the build if it is ever added.
+
+   Personal accounts see no change.
+
+
+EVERYTHING BELOW ARRIVED IN v413, AND SHIPS WITH THIS UPLOAD
 
 THE APP BEHAVES LIKE AN APP
 
@@ -90,9 +113,9 @@ WHAT PROVES IT
 
 UPLOAD NOTES
 
-   Replace the whole app directory as usual. The asset stamp moves to ?v=413
+   Replace the whole app directory as usual. The asset stamp moves to ?v=414
    in index.html and service-worker.js and the cache name becomes
-   titopay-pwa-v413-native-back, so no customer can be served a cached bundle.
+   titopay-pwa-v414-business-identity-note, so no customer can be served a cached bundle.
 
    Requires api.zip build 36, unchanged by this upload. This is an app-only
    release: api.zip and admin.zip do not need to be re-uploaded.

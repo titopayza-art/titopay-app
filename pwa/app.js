@@ -1365,7 +1365,8 @@ async function openIdentityVerificationModal() {
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Limits &amp; Verification</p><h2>Verify your identity</h2>
-        <p class="lead">Use your South African ID, your passport, or another approved identity document.</p></div>
+        <p class="lead">Use your South African ID, your passport, or another approved identity document.</p>
+        ${state.accountType === "business" ? `<p class="lead">This screen verifies you as a person, so there is no company field on it. Your business and its registration number are verified separately, under Business Verification in your profile.</p>` : ""}</div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="basic-verify">

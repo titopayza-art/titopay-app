@@ -391,3 +391,27 @@ test("every iOS startup image the page declares is a whole file at the size it c
     assert.equal(cssHeight * Number(ratio), Number(height), `${name}: height does not match its media query`);
   }
 });
+
+test("the identity screen tells a business where its registration number goes", () => {
+  // "Verify your identity" verifies a natural person, so it has no company
+  // field and never will: a registration number proves a company is on a
+  // register and proves nothing about who is holding the phone. A business
+  // owner looking for it was told nothing at all, which reads as a gap rather
+  // than a boundary. The document list is deliberately NOT touched.
+  const screen = source.slice(source.indexOf("async function openIdentityVerificationModal"),
+    source.indexOf('data-form="basic-verify"'));
+  assert.match(screen, /state\.accountType === "business"/,
+    "the note is shown to a business account only");
+  assert.match(screen, /verified separately, under Business Verification/,
+    "and it names the screen that does collect it");
+
+  const form = source.slice(source.indexOf('<select id="bv-doc" name="documentType">'),
+    source.indexOf('<select id="bv-doc" name="documentType">') + 400);
+  assert.match(form, /value="sa_id"/);
+  assert.match(form, /value="passport"/);
+  assert.match(form, /value="other"/);
+  assert.doesNotMatch(form, /registration|company|business/i,
+    "a company registration number is not an identity document and must never "
+    + "appear in this list: it would let a business reach a higher limit with "
+    + "no person verified at all");
+});
