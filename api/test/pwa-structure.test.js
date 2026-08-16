@@ -439,6 +439,28 @@ test("an unregistered business type is never asked for a registration number", (
   }
 });
 
+test("the printed poster names the owner from the same source the payer sees", () => {
+  // A printed A4 poster cannot be corrected once it is on a counter. It used to
+  // print businessProfileName(), which falls through to the owner's personal
+  // full name when the session carries no business name, while the payer's
+  // phone named the merchant. Measured before the fix: the poster said
+  // "Person 121" and the phone said "Corner Cafe", for one account, on the
+  // exact screen that tells people to check one against the other.
+  assert.match(source, /async function posterOwnerName\(/,
+    "the poster must resolve its name from the API, not from the session");
+  const resolver = source.slice(source.indexOf("async function posterOwnerName("),
+    source.indexOf("async function openQrPosterModal"));
+  assert.match(resolver, /\/v1\/qr\/\$\{encodeURIComponent\(id\)\}\/details/,
+    "it must ask the same endpoint the payer's review screen asks");
+  assert.match(resolver, /owner\?\.displayName/, "and print the name that endpoint returns");
+  assert.match(resolver, /catch \(error\)/, "a failed lookup must never block the poster");
+
+  const poster = source.slice(source.indexOf("async function openQrPosterModal"),
+    source.indexOf("async function openQrPosterModal") + 900);
+  assert.match(poster, /const name = await posterOwnerName\(qr\);/,
+    "the poster still names the owner from the session object");
+});
+
 test("a route change is not mistaken for a back gesture", () => {
   // Setting location.hash fires popstate, and several flows do that with a
   // sheet still open: login sets the route to dashboard, closes the auth

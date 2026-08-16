@@ -1,8 +1,58 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v419 (titopay-pwa-v419-qr-owner)
+PWA bundle: v420 (titopay-pwa-v420-qr-poster-owner)
 Requires: api.zip build 43
 Admin console: admin-console-v89
+
+THE PRINTED A4 POSTERS NAMED THE WRONG PERSON
+
+   A Payment A4 poster and a Tip A4 poster are downloaded once and stuck on a
+   counter, where they stay for months. Nothing about a printed sheet can be
+   corrected afterwards, so what is on it has to be right the first time.
+
+   THE POSTER AND THE PAYER'S PHONE DISAGREED ABOUT WHO WAS BEING PAID.
+
+   The poster printed a name resolved from the phone's own session, which falls
+   back to the owner's personal full name when no business name is on it. The
+   payer's review screen names the merchant. So the counter said one thing and
+   the phone about to pay it said another, on the exact screen the app tells
+   people to check one against the other.
+
+   Measured on one account, before the fix:
+
+     the poster printed      "qp0573980 Person 121"
+     the payer's phone said  "qp0573980 Corner Cafe"
+
+   Nobody saw this until now, because until build 43 the payer's phone said
+   "Owner not confirmed" and there was nothing to disagree with.
+
+   The poster now asks the SAME endpoint the payer's review screen asks and
+   prints the answer. They cannot disagree, because there is only one source. A
+   failed lookup falls back to the old local name rather than blocking the
+   poster, so an older API still prints a sheet.
+
+   AND THE PRINTED CODES THEMSELVES WERE PROVEN, NOT ASSUMED.
+
+   verification/qr-poster-scan-live.js does not trust any id the app happens to
+   be holding. It takes the QR IMAGE off the rendered poster, decodes it with
+   jsQR exactly as the in-app scanner does, and drives everything from the
+   string the decoder returns. For BOTH posters:
+
+     the printed QR decodes off the page                        268x268 pixels
+     the scanner classifies it as a payment code and recovers the id
+     the printed "QR ID" footer is the same id the scan produces, so a
+       customer who types it in by hand reaches the same place
+     the owner is traced, and the name MATCHES the name on the poster
+     paying the scanned code settles at payer -R150.50, owner +R150.00
+     an event ticket scanned at a till is still not a payment code
+
+   12 checks. A test also fails the build if the poster ever goes back to
+   naming the owner from the session object.
+
+   PAYMENT INTEGRITY IS UNCHANGED BY ANY OF THIS. Re-run against this bundle:
+   8 QR payment integrity checks, 13 money path checks including "every cent
+   debited is credited somewhere", 23 money screen checks, 697 API tests.
+
 
 THE QR PAYMENT SCREEN, AND ONE FAULT THAT WAS LOSING MONEY
 
@@ -318,7 +368,7 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   696 API tests, 8 QR payment integrity checks, 13 money path checks,
+   697 API tests, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
    9 business registration checks driven in a real browser,
    98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
@@ -328,9 +378,15 @@ WHAT PROVES IT
 
 UPLOAD NOTES
 
-   Replace the whole app directory as usual. The asset stamp moves to ?v=419
+   Replace the whole app directory as usual. The asset stamp moves to ?v=420
    in index.html and service-worker.js and the cache name becomes
-   titopay-pwa-v419-qr-owner, so no customer can be served a cached bundle.
+   titopay-pwa-v420-qr-poster-owner, so no customer can be served a cached
+   bundle.
+
+   api.zip is UNCHANGED from build 43 and does not need uploading again if you
+   already have it. Reprinting the A4 posters is worth doing once this is live,
+   but the codes on the sheets already printed keep working exactly as they are:
+   only the NAME printed beside them was wrong, never the code.
 
    UPLOAD api.zip BUILD 43 WITH IT. Both of the recent changes need it: the QR
    owner card needs the details endpoint, and the company registration option

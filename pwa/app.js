@@ -13103,6 +13103,32 @@ async function ensurePosterQr(kind) {
   if (kind === "payment") state.profileQr = result.qr || state.profileQr;
   return generated;
 }
+// THE NAME ON THE POSTER AND THE NAME ON THE PAYER'S PHONE MUST BE ONE NAME.
+//
+// The poster used to print businessProfileName(), which reads the session's
+// user object and falls through to the owner's personal full name when no
+// business name is on it. The payer's review screen names the merchant. So a
+// counter poster read "Thabo Mokoena" while the phone about to pay it read
+// "Corner Cafe", and the app tells people to check exactly that.
+//
+// Measured before this: poster "Person 121", phone "Corner Cafe", same account.
+//
+// Nobody can fix a printed A4 sheet afterwards, so the poster now asks the SAME
+// endpoint the payer's phone asks and prints the answer. They cannot disagree,
+// because there is only one source. If that call fails, the old local name is
+// still used rather than blocking the poster.
+async function posterOwnerName(qr) {
+  const local = state.accountType === "business" ? businessProfileName() : qrOwnerName();
+  const id = qr && qr.id ? String(qr.id).trim() : "";
+  if (!id) return local;
+  try {
+    const response = await api(`/v1/qr/${encodeURIComponent(id)}/details`);
+    const named = String(response?.qr?.owner?.displayName || "").trim();
+    return named || local;
+  } catch (error) {
+    return local;
+  }
+}
 async function openQrPosterModal(kind = "payment") {
   const config = QR_POSTER_KINDS[kind] || QR_POSTER_KINDS.payment;
   let qr = null;
@@ -13112,7 +13138,7 @@ async function openQrPosterModal(kind = "payment") {
   } catch (error) {
     failure = error.message || "TitoPay could not return a QR code right now.";
   }
-  const name = state.accountType === "business" ? businessProfileName() : qrOwnerName();
+  const name = await posterOwnerName(qr);
   const wallet = primaryWallet();
   const walletId = displayWalletId(wallet || {});
   state.qrPosterContext = qr ? { kind, config, name, qr, walletId: walletId !== "Generating" ? walletId : "" } : null;
