@@ -1,8 +1,42 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
 PWA bundle: v422 (titopay-pwa-v422-qr-price-integrity)
-Requires: api.zip build 45
+Requires: api.zip build 46
 Admin console: admin-console-v89
+
+THE EVENT WEB ADDRESS READS LIKE ONE
+
+   A free name has always been used exactly as it is:
+
+     app.titopay.co.za/events/titopay-launch
+
+   What was ugly was the COLLISION, when a second event wants a name another
+   event already holds. That appended six characters of a sha1 digest:
+
+     app.titopay.co.za/events/titopay-launch-3d4c29
+
+   Nobody can read that, nobody can say it down a phone, and it looks like a
+   fault rather than an address. It is now the obvious thing, the way every
+   publishing tool does it: the next free number.
+
+     titopay-launch
+     titopay-launch-2
+     titopay-launch-3
+
+   A long name is also no longer cut leaving a dangling hyphen. The 70-character
+   limit is applied before the trailing hyphen is stripped, so a name that got
+   cut mid-word used to end up as "the-annual-general-" as a web address.
+
+   NEW ADDRESSES ONLY. Every event already published keeps the exact slug it
+   has, so nothing already shared, printed or posted changes. Measured against
+   the whole events table: 222 existing addresses, none moved.
+
+   Proven in verification/event-slug-live.js: a free name is untouched, a second
+   gets -2 and a third -3, a long name has no dangling hyphen, punctuation,
+   accents and emoji never reach the address, renaming an event to its own name
+   keeps its address, and every existing address is left alone. 7 checks, plus
+   4 pinned in the build.
+
 
 SECURITY: A PAYER COULD SET THEIR OWN PRICE ON A SALE
 
@@ -503,7 +537,7 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   703 API tests, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
+   707 API tests, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
    9 business registration checks driven in a real browser,
    98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
@@ -519,7 +553,7 @@ UPLOAD NOTES
    titopay-pwa-v422-qr-price-integrity, so no customer can be served a cached
    bundle.
 
-   UPLOAD api.zip BUILD 45 FIRST, AND DO NOT DELAY IT. The price fix is
+   UPLOAD api.zip BUILD 46 FIRST, AND DO NOT DELAY IT. The price fix is
    server-side and the app cannot enforce it: until build 45 is live, a payer
    can still settle a R200 sale for R1.
    On build 43 the shared link still works and the preview still shows a title;

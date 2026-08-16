@@ -18,7 +18,10 @@ function slugify(value = "") {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 70) || "event";
+    .slice(0, 70)
+    // The slice happens after the trim, so a long name could be cut mid-word
+    // and leave a dangling hyphen: "the-annual-general-" as a web address.
+    .replace(/-+$/g, "") || "event";
 }
 
 function cleanText(value = "", max = 2000) {
@@ -709,16 +712,46 @@ function cleanEventBanner(value) {
   return "";
 }
 
+// THE SLUG IS THE LINK AN ORGANISER SENDS TO THEIR AUDIENCE.
+//
+// A free name is used as it is, and always has been:
+//
+//   app.titopay.co.za/events/titopay-launch
+//
+// The question is only what happens on a COLLISION, when a second event wants a
+// name some other event already holds. That used to append six characters of a
+// sha1 digest:
+//
+//   app.titopay.co.za/events/titopay-launch-3d4c29
+//
+// which is unreadable, impossible to say out loud, and looks like something has
+// gone wrong. It is now the obvious thing, the way every publishing tool does
+// it: the next free number.
+//
+//   titopay-launch, titopay-launch-2, titopay-launch-3
+//
+// Only NEW slugs are affected. Every event already published keeps the exact
+// slug it has, so no link that has been shared, printed or posted changes.
 async function uniqueSlug(base, eventId = null) {
-  let candidate = slugify(base);
-  const suffix = createHash("sha1").update(`${base}:${Date.now()}:${Math.random()}`).digest("hex").slice(0, 6);
-  let counter = 0;
-  while (true) {
-    const value = counter === 0 ? candidate : `${candidate}-${suffix}${counter > 1 ? `-${counter}` : ""}`;
-    const { rows } = await pool.query("SELECT id FROM events WHERE slug = $1 AND ($2::UUID IS NULL OR id <> $2::UUID) LIMIT 1", [value, eventId]);
-    if (!rows[0]) return value;
-    counter += 1;
+  const candidate = slugify(base);
+  const taken = async (value) => {
+    const { rows } = await pool.query(
+      "SELECT id FROM events WHERE slug = $1 AND ($2::UUID IS NULL OR id <> $2::UUID) LIMIT 1", [value, eventId]);
+    return Boolean(rows[0]);
+  };
+  if (!(await taken(candidate))) return candidate;
+  for (let counter = 2; counter <= 50; counter += 1) {
+    const value = `${candidate}-${counter}`;
+    if (!(await taken(value))) return value;
   }
+  // Fifty events sharing one name is not a naming problem any more. A short
+  // digest ends the loop rather than letting it run without a bound.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const value = `${candidate}-${createHash("sha1")
+      .update(`${base}:${Date.now()}:${Math.random()}:${attempt}`).digest("hex").slice(0, 6)}`;
+    if (!(await taken(value))) return value;
+  }
+  throw new AppError(409, "Could not create a web address for this event. Try a slightly different name.");
 }
 
 /* ---- Ticket phases -------------------------------------------------------

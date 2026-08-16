@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 45;
+const API_BUILD = 46;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  46: "An event's web address reads like one. A free name was always used as it "
+      + "is; a COLLISION used to append six characters of a sha1 digest, so a "
+      + "second event called TitoPay Launch became /events/titopay-launch-3d4c29. "
+      + "It is now the next free number, /events/titopay-launch-2. New addresses "
+      + "only: every event already published keeps the exact slug it has, so no "
+      + "link already shared changes. A long name is also no longer cut leaving a "
+      + "dangling hyphen.",
   45: "SECURITY. The price on a QR code came from the REQUEST BODY, with the "
       + "merchant's own amount only a fallback, so a payer could settle a R200 "
       + "Make a Sale for R1 and the code was then marked paid. The amount is now "
