@@ -93,10 +93,18 @@ test("existing production announcement tables migrate to the four-audience const
 
 test("Admin Database Health quotes its PostgreSQL keyword alias and checks announcement tables", () => {
   const adminRoutes = source("src/routes/admin.routes.js");
-
+  // `exists` is a reserved word, so the alias has to stay quoted.
   assert.match(adminRoutes, /AS "exists"/);
-  assert.match(adminRoutes, /"announcement_campaigns"/);
-  assert.match(adminRoutes, /"announcement_approvals"/);
-  assert.match(adminRoutes, /"announcement_reads"/);
   assert.doesNotMatch(adminRoutes, /AS exists\s+FROM unnest/);
+
+  // The list of tables moved out of the route and into the diagnosis service,
+  // so the console page and `npm run db:diagnose` ask the same question. The
+  // announcement tables must still be in it.
+  // Read as source rather than required, because this file sets no database
+  // environment and the service pulls in the pool.
+  const diagnosis = source("src/services/console-diagnosis-service.js");
+  for (const table of ["announcement_campaigns", "announcement_approvals", "announcement_reads"]) {
+    assert.match(diagnosis, new RegExp(`"${table}"`), `Database Health still checks ${table}`);
+  }
+  assert.match(adminRoutes, /require\("\.\.\/services\/console-diagnosis-service"\)/);
 });

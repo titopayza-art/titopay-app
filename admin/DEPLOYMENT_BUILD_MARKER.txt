@@ -1,56 +1,59 @@
-TitoPay Admin build: admin-console-v88-20260816
+TitoPay Admin build: admin-console-v89-20260816
 
-v88 (this build): the customer's Limits & Verification screen is operated
-from here.
+v89 (this build): when a console page breaks, this console now tells you why.
 
-  THE NUMBERS. The whole limit framework used to be one textarea of raw JSON.
-  It worked, and it was the wrong instrument: changing "Send per payment" for
-  one level meant hand-editing a nested document where a stray comma loses the
-  save and a typed "25,000" silently REMOVED a limit, because a non-numeric
-  value reads as "no limit" downstream. API build 34 refuses that outright;
-  this build means an operator never has to get near it.
+  THE PROBLEM IT SOLVES. The console answers "Unable to complete this admin
+  action" for every server-side failure, on purpose: an operator screen must
+  not print database errors to whoever is looking at it. That is right for the
+  console and useless for the person who has to fix it, and the tool that put
+  the detail back was a script you needed SSH to run. SSH is exactly what you
+  do not have when a page breaks at two in the morning.
 
-  There is now a matrix: the seven limit rows the customer actually reads,
-  down; the three levels, across; each level's name and explanation editable
-  in place. Levels across rather than stacked because a limit is almost never
-  decided on its own — "is R10 000 per payment right for Basic Verified?" is
-  really "is it right next to R2 500 below and no limit above", and a stacked
-  form makes that comparison a scroll.
+  DATABASE HEALTH IS NOW A DIAGNOSIS. It shows the same report that
+  `npm run db:diagnose` prints, from the same service in the API, so the two
+  can never drift apart:
 
-  Leave a box EMPTY for no standing limit; the placeholder says so. A save
-  sends all three levels in full, because the configuration merge resets any
-  rail a save does not mention. A non-numeric amount is refused in the browser
-  before it is sent, naming the box.
+    - which tables each console page needs, and which are missing, with the
+      page named so a missing row says what it will break
+    - the queries the failing panels actually run, with the REAL Postgres
+      error and its code
+    - the save statements behind the buttons that say nothing useful, so
+      "Save Maintenance Mode did nothing" stops being a mystery
+    - the shape of platform_settings on THIS database: its columns and how
+      many foreign keys it has. Five files declare that table and they
+      disagree, and whichever ran first on a given database is the one that
+      exists, forever
+    - which provider supplies which capability, and which are not contracted
 
-  THE WORDING. New section on the same page: the five sentences the customer
-  reads around those numbers, editable and audit-logged. Two of them, the
-  small print and the note for a level with no fixed limit, cannot be emptied;
-  they can be reworded. The API refuses wording that claims a regulator sets
-  or allows an amount, that calls it statutory or required by law, that uses
-  "cash threshold" for a wallet limit, or that offers "unlimited", and it says
-  which sentence and why. "Restore TitoPay's wording" puts all five back.
+  It only reads. The save probes are real writes, because a read that works
+  while a save fails is the whole shape of the problem, but every one runs
+  inside a transaction that is always rolled back. Running it changes nothing.
 
-  Everything the form does not cover — products, risk bands, earned capacity,
-  monitoring, the holding policy — is still editable as JSON, folded away
-  under "Advanced". The level rows are stripped from that save so a stale
-  textarea cannot undo a change made in the matrix above it.
+  IT ALSO STOPPED LYING. Database Health used to check a hardcoded list of
+  fifteen tables, written when the platform was much smaller, against a schema
+  now past a hundred and seventy. It could report everything green while the
+  tables behind a broken page were missing. It now checks the same map the
+  diagnosis uses, so the list grows with the platform.
 
-  Every limit change still requires a stated reason, is audit-logged with the
-  previous and new values side by side, is versioned, and can be restored.
+  THE TOPBAR SAYS WHICH API BUILD YOU ARE TALKING TO. GET /health has reported
+  the build since it was added and nothing ever read it. The chip is quiet when
+  the API is current and red when it is behind what this console needs, with
+  both numbers and what to do about it.
 
-Carried from v87:
-  - A failing panel says what is actually wrong instead of "Requires API
-    build 15", and names `npm run db:diagnose`.
+Carried from v88:
+  - The customer's Limits & Verification screen is operated from Compliance:
+    a matrix of the seven limit rows across the three levels, plus the five
+    sentences the customer reads around them.
 
 Upload notes:
-  - REQUIRES api.zip build 34. On an older API the matrix still renders and
-    saves, but the wording section reports that it could not load, and a typo
-    in an amount would be stored rather than refused.
-  - Asset stamp moves to admin-console-v88 across all 66 HTML files.
-  - No new directories. Two new endpoints, both under /admin/compliance.
+  - REQUIRES api.zip build 35 for the diagnosis. On an older API the page says
+    so and names `npm run db:diagnose` as the fallback, rather than rendering
+    an empty panel.
+  - Asset stamp moves to admin-console-v89 across all 66 HTML files.
+  - One new endpoint: GET /admin/diagnostics/console, super admin only,
+    because the report carries real table names and real database errors.
   - Replace the whole admin directory as usual. Nothing under api/ or the
     website bundle is touched.
 
 If a console page is blank or erroring after upload:
-  1. cd into the API directory (the same place `npm start` runs from)
-  2. npm run db:diagnose
+  Open Database Health. That is now the answer, not the starting point.

@@ -1,10 +1,39 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 34   (GET /health reports this — check it after upload)
+API build: 35   (GET /health reports this — check it after upload)
 PWA bundle: v411 (titopay-pwa-v411-editable-limits)
-Admin console: admin-console-v88
+Admin console: admin-console-v89
 
 WHAT CHANGED
+
+0. THE DIAGNOSIS NO LONGER NEEDS A SHELL.
+
+   NEW: GET /admin/diagnostics/console, super admin only. It returns exactly
+   what `npm run db:diagnose` prints, because both now read the same service
+   (src/services/console-diagnosis-service.js) and cannot drift apart:
+
+     - the tables each console page needs, and which are missing
+     - the queries the failing panels run, with the real Postgres error + code
+     - the save statements behind the buttons that report nothing useful
+     - the columns and foreign key count of platform_settings ON THIS DATABASE
+     - which provider supplies which capability
+
+   READ-ONLY. Every probe is a SELECT. The four save probes issue real writes,
+   because a read that works while a save fails is the whole shape of the
+   problem, but each runs inside a transaction that is ALWAYS rolled back. It
+   creates, alters and deletes nothing and is safe against production at any
+   time. A live harness proves no probe row survives.
+
+   SUPER ADMIN ONLY, deliberately: the report carries real table names and real
+   database errors, and that detail must never reach anyone else.
+
+   GET /admin/module-health stopped checking a hardcoded fifteen-table list
+   against a schema past a hundred and seventy. It now asks the same map, and
+   each table says which console page it stands behind. It also returns the
+   API build, so the console can show what it is talking to.
+
+   The script scripts/diagnose-admin-console.js is now only a printer for the
+   shared service. Same output, same exit codes, no logic of its own.
 
 0. THE LIMITS SCREEN IS NOW OPERATED FROM THE CONSOLE, and one real hole
    closes on the way.

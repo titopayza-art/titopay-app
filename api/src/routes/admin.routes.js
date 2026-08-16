@@ -26,6 +26,7 @@ const { ensureWalletNumbersForAllWallets, listAllWallets } = require("../service
 const { listAllTransactions, revenueSummary } = require("../services/transaction-service");
 const { listMerchants } = require("../services/merchant-service");
 const { listAuditLogs, writeAuditLog } = require("../services/audit-service");
+const { API_BUILD } = require("../build-info");
 const { adminDisableBeneficiary, adminListBeneficiaries } = require("../services/beneficiary-service");
 const { getEmailProviderStatus, sendSmtpTestEmail, deliverSms } = require("../services/notification-service");
 const { queueEmail, queueRawEmail } = require("../services/email-centre-service");
@@ -2147,54 +2148,52 @@ router.get("/chat-monitor/overview", requireSuperAdmin, async (_req, res, next) 
   }
 });
 
+// WHAT THE DATABASE HEALTH PAGE ASKS.
+//
+// This used to test a hardcoded list of fifteen tables, written when the
+// platform was much smaller, against a schema now well past a hundred and
+// fifty. It could report everything green while the tables behind a broken
+// console page were missing — which is exactly how a failing Compliance
+// Dashboard came to be read as a deployment problem.
+//
+// It now asks the same question the diagnosis asks, from the same map, so the
+// two can never disagree.
 router.get("/module-health", requireSuperAdmin, async (_req, res, next) => {
   try {
-    const requiredTables = [
-      "users",
-      "wallets",
-      "merchants",
-      "transactions",
-      "pricing_rules",
-      "chat_threads",
-      "chat_messages",
-      "notifications",
-      "announcement_campaigns",
-      "announcement_approvals",
-      "announcement_reads",
-      "security_logs",
-      "security_events",
-      "duplicate_account_flags",
-      "trusted_devices"
-    ];
+    const { PAGE_TABLES } = require("../services/console-diagnosis-service");
+    const required = [...new Set(Object.values(PAGE_TABLES).flat())].sort();
     const { rows } = await pool.query(
       `SELECT table_name, to_regclass('public.' || table_name) IS NOT NULL AS "exists"
        FROM unnest($1::TEXT[]) AS required(table_name)
        ORDER BY table_name`,
-      [requiredTables]
+      [required]
     );
+    // Which console page each table stands behind, so a missing row says what
+    // it will break rather than only that it is absent.
+    const pagesFor = {};
+    for (const [page, tables] of Object.entries(PAGE_TABLES)) {
+      for (const table of tables) (pagesFor[table] ||= []).push(page);
+    }
     res.json({
       ok: true,
       apiBase: "/v1",
-      modules: {
-        chatMonitor: {
-          route: "/v1/admin/chat-monitor/overview",
-          requiredTables: ["chat_threads", "chat_messages", "notifications", "security_logs", "users"]
-        },
-        pricingEngine: {
-          route: "/v1/pricing",
-          updateRoute: "/v1/pricing/:id",
-          requiredTables: ["pricing_rules"]
-        },
-        globalSearch: {
-          route: "/v1/admin/global-search",
-          requiredTables: ["users", "wallets", "merchants", "transactions", "duplicate_account_flags", "security_events", "trusted_devices"]
-        }
-      },
-      tables: rows
+      build: API_BUILD,
+      tables: rows.map((row) => ({ ...row, pages: pagesFor[row.table_name] || [] }))
     });
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
+});
+
+// THE DIAGNOSIS, REACHABLE WITHOUT A SHELL.
+//
+// Same answer as `npm run db:diagnose`, from the same service, because the one
+// tool that names the real cause should not be the one tool that needs SSH.
+// Super admin only: it returns real table names and real Postgres errors, and
+// that detail must never reach anyone else.
+router.get("/diagnostics/console", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { runConsoleDiagnosis } = require("../services/console-diagnosis-service");
+    res.json({ ok: true, diagnosis: await runConsoleDiagnosis({ actorId: req.auth?.userId || null }) });
+  } catch (error) { next(error); }
 });
 
 router.get("/maintenance", requireSuperAdmin, async (_req, res, next) => {

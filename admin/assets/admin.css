@@ -6350,3 +6350,18 @@ html[data-theme="dark"] .auth-panel-mark {
     min-width: 120px;
   }
 }
+
+/* The API build the console is actually talking to. Quiet when current, and
+   unmissable when it is not: a panel that fails against a stale API is the one
+   case where the operator needs to know before they start debugging. */
+.api-build-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.api-build-badge.api-build-stale {
+  background: var(--tp-danger-soft);
+  border-color: var(--tp-danger-line);
+  color: var(--tp-danger);
+  font-weight: 700;
+}

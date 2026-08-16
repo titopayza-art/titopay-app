@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v88";
+  return "admin-console-v89";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -315,6 +315,13 @@ const SECURITY_CONTENT_ICON_PATHS = {
   heart: `<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/>`,
   zap: `<path d="m13 2-9 13h8l-1 7 9-13h-8z"/>`,
 };
+// Which API build this console needs. Compared, never enforced: an older API
+// still works for everything it supports, and the topbar chip simply says so.
+// Bump it when the console starts depending on something an earlier build does
+// not have. The sections below are order-sensitive, so this lives up here.
+const REQUIRED_API_BUILD = 35;
+let apiBuildSeen = null;
+
 const ADMIN_RAIL_KEY = "titopay_admin_rail_v1";
 const ADMIN_THEME_KEY = "titopay_admin_theme_v1";
 // Applied before first paint so the console never flashes the wrong theme.
@@ -1019,6 +1026,51 @@ function navGroupTitleFor(page) {
   const group = NAV_GROUPS.find((entry) => entry.items.some(([, slug]) => slug === page));
   return group?.title || "Console";
 }
+// WHICH API BUILD IS THIS CONSOLE TALKING TO?
+//
+// GET /health has reported the build number since it was added — that is the
+// entire reason build-info.js exists — and nothing in the console ever read
+// it. So a panel could fail against a nine-build-old API and the operator had
+// no way to see that from the screen in front of them. A console that says
+// "this panel could not load" without saying whether the API behind it is
+// current is asking the operator to guess.
+//
+// Bump REQUIRED_API_BUILD whenever this console starts depending on something
+// a previous API build does not have. It is compared, never enforced: an older
+// API still works for everything it supports, and the chip simply says so.
+
+async function readApiBuild() {
+  try {
+    const response = await fetch(`${ADMIN_API_BASE}/health`, { headers: { accept: "application/json" } });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    const build = Number(payload?.build);
+    return Number.isFinite(build) ? build : null;
+  } catch {
+    return null;
+  }
+}
+
+function apiBuildChipMarkup() {
+  if (apiBuildSeen === null) {
+    return `<span class="env-badge api-build-badge" title="Could not read the API build">API build ?</span>`;
+  }
+  const stale = apiBuildSeen < REQUIRED_API_BUILD;
+  return `<span class="env-badge api-build-badge${stale ? " api-build-stale" : ""}"
+    title="${stale
+    ? `This console expects API build ${REQUIRED_API_BUILD}. The API is on ${apiBuildSeen}, so some panels will not work until api.zip is uploaded.`
+    : `API build ${apiBuildSeen}, which is current for this console.`}">API ${apiBuildSeen}${stale ? ` &lt; ${REQUIRED_API_BUILD}` : ""}</span>`;
+}
+
+// Read once, then repaint every chip on the page. The console renders its
+// topbar on every navigation, so the value is cached rather than refetched.
+async function refreshApiBuildChip() {
+  apiBuildSeen = await readApiBuild();
+  document.querySelectorAll("[data-api-build-slot]").forEach((slot) => {
+    slot.innerHTML = apiBuildChipMarkup();
+  });
+}
+
 function adminEnvironment() {
   const host = location.hostname;
   if (host === "admin.titopay.co.za" || host === "www.admin.titopay.co.za") {
@@ -1205,6 +1257,7 @@ function renderTopbar(page, title) {
       </nav>
       <div class="topbar-meta">
         <span class="env-badge${environment.nonProd ? " env-nonprod" : ""}" title="Environment">${escapeHtml(environment.label)}</span>
+        <span data-api-build-slot>${apiBuildChipMarkup()}</span>
         <span class="topbar-clock" id="admin-clock" title="South African Standard Time"></span>
         <div class="tp-bell-wrap">
           <button class="tp-bell" type="button" data-alert-bell aria-label="Alerts" aria-haspopup="true" aria-expanded="false" aria-controls="alert-panel">
@@ -1497,7 +1550,11 @@ function renderMetrics(metrics) {
     </section>
   `;
 }
-function renderRows(rows, columns, actions = () => "") {
+// Every table in the console carries an Actions column, because almost every
+// table in the console has actions. A read-only report does not, and an empty
+// column that is always empty reads as something missing rather than something
+// absent by design. The default is unchanged, so no existing table moves.
+function renderRows(rows, columns, actions = () => "", { actionsColumn = true } = {}) {
   if (!rows.length) {
     return `<div class="empty"><strong>Nothing to show yet</strong><small>The TitoPay API returned no records for this view. Adjust the filters above, or refresh once the queue has activity.</small></div>`;
   }
@@ -1505,13 +1562,13 @@ function renderRows(rows, columns, actions = () => "") {
     <div class="table-wrap">
       <table>
         <thead>
-          <tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}<th>Actions</th></tr>
+          <tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}${actionsColumn ? "<th>Actions</th>" : ""}</tr>
         </thead>
         <tbody>
           ${rows.map((row) => `
             <tr>
               ${columns.map((column) => `<td>${column.render ? column.render(row) : escapeHtml(row[column.key] ?? "")}</td>`).join("")}
-              <td><div class="action-row">${actions(row)}</div></td>
+              ${actionsColumn ? `<td><div class="action-row">${actions(row)}</div></td>` : ""}
             </tr>
           `).join("")}
         </tbody>
@@ -4929,21 +4986,118 @@ async function renderDevelopmentTools() {
     ], () => ""))}
   `;
 }
+// DATABASE HEALTH, WHICH NOW ACTUALLY DIAGNOSES.
+//
+// This page used to list fifteen table names and whether they existed, against
+// a schema that is now well past a hundred and fifty. It could report
+// everything green while the tables behind a broken console page were missing,
+// and it offered no way to find out what was actually wrong: that answer lived
+// only in a script you needed SSH to run.
+//
+// It now shows the same report that script prints, from the same service, so
+// the two cannot disagree. Every probe is read-only and every save probe runs
+// inside a transaction that is always rolled back.
 async function renderDatabaseHealth() {
-  const health = await apiFetch("/admin/module-health");
+  const [health, diagnostics] = await Promise.all([
+    apiFetch("/admin/module-health"),
+    apiFetch("/admin/diagnostics/console").catch(() => null)
+  ]);
   const tables = health.tables || [];
   PAGE_EXPORTS["database-health"] = tables;
+  const d = diagnostics?.diagnosis || null;
+
+  const olderApi = `<div class="empty"><strong>This API cannot run the diagnosis yet</strong><small>GET /admin/diagnostics/console arrived in API build 35. Upload the current api.zip, or run <code>npm run db:diagnose</code> in the API directory for the same report.</small></div>`;
+
+  const unreachable = d && !d.reachable ? `
+    <section class="table-card">
+      <h3>The API cannot reach the database</h3>
+      <p class="table-card-note">${escapeHtml(d.databaseError?.message || "No detail was returned.")}</p>
+      <p class="table-card-note">${escapeHtml(d.verdict?.guidance || "")}</p>
+    </section>` : "";
+
+  const verdict = d && d.reachable ? `
+    <section class="table-card">
+      <h3>${escapeHtml(d.verdict.headline)}</h3>
+      <p class="table-card-note">${escapeHtml(d.verdict.guidance)}</p>
+    </section>` : "";
+
+  // Pages whose tables are missing, first, because that is what breaks a screen.
+  const pageRows = d?.pages || [];
+  const pagesHtml = pageRows.length ? tableCard("Tables each console page needs", renderRows(
+    [...pageRows].sort((a, b) => b.missing.length - a.missing.length), [
+      { label: "Console page", render: (row) => `<strong>${escapeHtml(row.page)}</strong>` },
+      { label: "Status", render: (row) => row.missing.length
+        ? `<span class="chip red">${row.missing.length} missing</span>`
+        : `<span class="chip green">All present</span>` },
+      { label: "Missing", render: (row) => row.missing.length
+        ? `<code>${escapeHtml(row.missing.join(", "))}</code>`
+        : `<small>${escapeHtml(String(row.required.length))} tables checked</small>` },
+    ], () => "", { actionsColumn: false }), "A page whose tables are all present but which still fails is a different problem; the queries below catch that.") : "";
+
+  const failingProbes = (d?.probes || []).filter((probe) => !probe.ok);
+  const probesHtml = d ? tableCard(
+    failingProbes.length ? `Queries that fail (${failingProbes.length})` : "What the panels actually run",
+    renderRows(failingProbes.length ? failingProbes : (d.probes || []), [
+      { label: "Console page", key: "page" },
+      { label: "What it reads", key: "what" },
+      { label: "Result", render: (row) => row.ok
+        ? `<span class="chip green">ok</span>`
+        : `<span class="chip red">fails</span>` },
+      { label: "Reason", render: (row) => row.ok ? "<small>-</small>"
+        : `<code>${escapeHtml(row.error.message)}</code>${row.error.code ? `<br><small>${escapeHtml(row.error.code)}</small>` : ""}` },
+    ], () => "", { actionsColumn: false }),
+    "These are the same queries the failing panels run. The console hides database errors from operators on purpose; this page is where they are put back.") : "";
+
+  const failingWrites = (d?.writes || []).filter((write) => !write.ok);
+  const writesHtml = d ? tableCard(
+    failingWrites.length ? `Saves that fail (${failingWrites.length})` : "What the save buttons actually run",
+    renderRows(d.writes || [], [
+      { label: "Button", key: "what" },
+      { label: "Result", render: (row) => row.ok
+        ? `<span class="chip green">ok</span>`
+        : `<span class="chip red">fails</span>` },
+      { label: "Reason", render: (row) => row.ok ? "<small>-</small>"
+        : `<code>${escapeHtml(row.error.message)}</code>${row.error.code ? `<br><small>${escapeHtml(row.error.code)}</small>` : ""}` },
+    ], () => "", { actionsColumn: false }),
+    "Reads passing while a save fails is the exact shape of \"Save Maintenance Mode did nothing\". Every one of these runs inside a transaction that is always rolled back, so running this changes nothing.") : "";
+
+  const notes = d?.notes || {};
+  const notesHtml = d ? `
+    <section class="table-card">
+      <h3>Shape of platform_settings on this database</h3>
+      <p class="table-card-note">Five files declare this table and they disagree: three put a foreign key on <code>updated_by</code> and two do not. <code>CREATE TABLE IF NOT EXISTS</code> means whichever ran first on this database is the one that exists, and it changes what a save will accept.</p>
+      <p class="table-card-note">Foreign keys: <strong>${escapeHtml(String(notes.platformSettingsForeignKeys ?? "unknown"))}</strong> &nbsp;·&nbsp; Columns: <code>${escapeHtml((notes.platformSettingsColumns || ["unknown"]).join(", "))}</code> &nbsp;·&nbsp; Migrations applied: <strong>${escapeHtml(String(notes.appliedMigrations ?? "unknown"))}</strong></p>
+    </section>` : "";
+
+  const providersHtml = d?.providers?.length ? tableCard("Which provider supplies which capability", renderRows(d.providers, [
+    { label: "Capability", key: "capability" },
+    { label: "State", render: (row) => row.state === "wired"
+      ? `<span class="chip green">wired</span>`
+      : row.state === "none" ? `<span class="chip">not contracted</span>` : `<span class="chip red">missing adapter</span>` },
+    { label: "Configured", render: (row) => `<code>${escapeHtml(String(row.configured || "-"))}</code>` },
+    { label: "Set by", render: (row) => `<small>${escapeHtml(String(row.variable || "-"))} (${escapeHtml(String(row.source || "-"))})</small>` },
+  ], () => "", { actionsColumn: false }), "\"Not contracted\" means TitoPay has no supplier for that capability; the operations refuse rather than returning a fabricated result. \"Missing adapter\" is a real fault: check the *_PROVIDER value in the API environment.") : "";
+
   document.getElementById("page-content").innerHTML = `
     ${renderMetrics([
-      ["Required Tables", tables.length],
-      ["Present", tables.filter((row) => row.exists).length],
-      ["Missing", tables.filter((row) => !row.exists).length],
-      ["API Route Prefix", health.apiBase || "/v1"],
-    ])}
-    ${tableCard("Database / Health", renderRows(tables, [
-      { label: "Table", key: "table_name" },
-      { label: "Status", render: (row) => `<span class="chip ${row.exists ? "green" : "red"}">${row.exists ? "Present" : "Missing"}</span>` },
-    ], () => ""))}
+    ["API Build", d ? d.apiBuild : (health.build ?? "unknown")],
+    ["Tables In Database", d ? d.tableCount : "unknown"],
+    ["Tables The Console Needs", tables.length],
+    ["Missing", tables.filter((row) => !row.exists).length],
+  ])}
+    ${unreachable}
+    ${verdict}
+    ${d ? "" : olderApi}
+    ${pagesHtml}
+    ${probesHtml}
+    ${writesHtml}
+    ${notesHtml}
+    ${providersHtml}
+    ${tableCard("Every table the console needs", renderRows(tables, [
+    { label: "Table", key: "table_name" },
+    { label: "Status", render: (row) => `<span class="chip ${row.exists ? "green" : "red"}">${row.exists ? "Present" : "Missing"}</span>` },
+    { label: "Needed by", render: (row) => `<small>${escapeHtml((row.pages || []).join(", ") || "-")}</small>` },
+  ], () => "", { actionsColumn: false }), "Checked against the same map the diagnosis uses, so this list grows with the platform instead of going stale.")}
   `;
 }
 function renderPricingEditor(row = {}) {
@@ -8505,5 +8659,8 @@ window.addEventListener("DOMContentLoaded", () => {
     document.body.classList.add("admin-body");
     startTableEnhancement();
     bootPage();
+    // Never blocks the page: the chip fills itself in when /health answers, and
+    // stays a question mark if it does not.
+    refreshApiBuildChip();
   }
 });

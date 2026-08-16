@@ -19,10 +19,20 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 34;
+const API_BUILD = 35;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  35: "The diagnosis stops needing a shell. GET /admin/diagnostics/console " +
+      "returns exactly what `npm run db:diagnose` prints, from one shared " +
+      "service, so the console and the script can never disagree: the tables " +
+      "each page needs, the queries the failing panels actually run with the " +
+      "real Postgres error, the save statements behind the buttons that say " +
+      "nothing useful, the shape of platform_settings on THIS database, and " +
+      "which provider supplies which capability. Read-only; the save probes " +
+      "run inside transactions that are always rolled back. Database Health " +
+      "also stops checking a stale fifteen-table list against a schema past " +
+      "a hundred and fifty, and /health's build number is finally read.",
   34: "Limits & Verification is operated from the console. The numbers were " +
       "already editable; the SENTENCES around them were hard-coded, which is " +
       "the wrong way round, because wording is what a compliance review " +

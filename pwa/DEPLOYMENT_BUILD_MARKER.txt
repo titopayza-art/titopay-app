@@ -1,8 +1,8 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
 PWA bundle: v411 (titopay-pwa-v411-editable-limits)
-Requires: api.zip build 34
-Admin console: admin-console-v88
+Requires: api.zip build 35
+Admin console: admin-console-v89
 
 WHAT CHANGED IN THE APP
 

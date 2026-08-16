@@ -1,5 +1,5 @@
 TitoPay Admin
-Build: admin-console-v88
+Build: admin-console-v89
 Date: 2026-08-16
 
 v87 - A failing panel now says what is actually wrong.
