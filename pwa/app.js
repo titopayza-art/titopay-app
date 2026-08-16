@@ -4271,6 +4271,21 @@ function onInput(event) {
   }
 }
 function onChange(event) {
+  // A QR ID typed or pasted by hand gets the same treatment as a scanned one:
+  // if the code carries a price, the price is filled in and locked.
+  const typedQrId = event.target.closest('form[data-form="qr-pay"] input[name="qrId"]');
+  if (typedQrId) {
+    const value = String(typedQrId.value || "").trim();
+    const output = document.querySelector("#qr-scanner-output");
+    if (value) {
+      describeScannedQr(value).then((seen) => {
+        if (!output || document.querySelector('form[data-form="qr-pay"] input[name="qrId"]') !== typedQrId) return;
+        output.classList.remove("hidden");
+        output.innerHTML = `${icon("shield")}<strong>QR code read</strong><p>${esc(seen.note)}</p>`;
+      });
+    }
+    return;
+  }
   // Identity verification: the document choice decides which fields show.
   // SA ID needs only the number; a passport or other approved document needs
   // its number, issuing country and date of birth.
@@ -13525,7 +13540,12 @@ async function startQrScanner() {
           break;
         }
         input.value = scanned.qrId;
-        output.innerHTML = `${icon("shield")}<strong>QR captured</strong><p>Review the QR ID and amount, then pay.</p>`;
+        output.innerHTML = `${icon("shield")}<strong>QR captured</strong><p>Reading the code…</p>`;
+        // The till already knows the price and the name. Making the payer type
+        // a figure they can see on the screen in front of them is asking them
+        // to copy something the code is carrying.
+        const captured = await describeScannedQr(scanned.qrId);
+        output.innerHTML = `${icon("shield")}<strong>QR captured</strong><p>${esc(captured.note)}</p>`;
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, detector ? 350 : 160));
@@ -13552,6 +13572,46 @@ function ensureJsQrLoaded() {
     });
   }
   return jsQrLoadPromise;
+}
+// A CODE THAT CARRIES A PRICE FILLS THE PRICE IN.
+//
+// A dynamic "Make a Sale" code is minted for one exact amount, and the till is
+// showing that amount to the customer. The payer's screen still asked them to
+// type it, from an empty box, next to a code that already knew the answer. The
+// API refuses any other figure, so typing was the only way to get it wrong.
+//
+// The amount is filled in and locked. An open code, which carries no price, is
+// left exactly as it was: an empty box the payer fills in themselves.
+//
+// The lookup failing is not a failure of the scan. The id is captured either
+// way and the payment still works; the payer simply types the amount as before.
+async function describeScannedQr(qrId) {
+  const form = document.querySelector('form[data-form="qr-pay"]');
+  const amountField = form ? form.querySelector('input[name="amount"]') : null;
+  let details = null;
+  try {
+    const response = await api(`/v1/qr/${encodeURIComponent(String(qrId).trim())}/details`);
+    details = response.qr || null;
+  } catch (error) {
+    details = null;
+  }
+  const fixed = details && Number(details.amount) > 0 ? Number(details.amount) : 0;
+  if (amountField) {
+    if (fixed > 0) {
+      amountField.value = fixed.toFixed(2);
+      amountField.readOnly = true;
+      amountField.setAttribute("aria-readonly", "true");
+    } else {
+      amountField.readOnly = false;
+      amountField.removeAttribute("aria-readonly");
+    }
+  }
+  const owner = details && details.owner ? String(details.owner.displayName || "").trim() : "";
+  if (details && details.isOwnCode) return { details, note: "This is your own QR code. Show it to the person paying you." };
+  if (fixed > 0 && owner) return { details, note: `${money(fixed)} to ${owner}. Check the name, then pay.` };
+  if (fixed > 0) return { details, note: `${money(fixed)}, set by the merchant. Review it, then pay.` };
+  if (owner) return { details, note: `Paying ${owner}. Enter the amount, then pay.` };
+  return { details, note: "Review the QR ID and amount, then pay." };
 }
 async function detectQrWithBarcodeDetector(detector, video) {
   const codes = await detector.detect(video);

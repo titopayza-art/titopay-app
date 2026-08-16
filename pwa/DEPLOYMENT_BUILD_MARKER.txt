@@ -1,8 +1,42 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v422 (titopay-pwa-v422-qr-price-integrity)
+PWA bundle: v423 (titopay-pwa-v423-qr-amount-prefill)
 Requires: api.zip build 47
 Admin console: admin-console-v89
+
+THE PAYER NO LONGER TYPES A PRICE THE TILL IS ALREADY SHOWING THEM
+
+   Make a Sale mints a code for one exact amount, and the till screen shows it:
+   R 300,00, in large type, facing the customer.
+
+   The payer scanned it and got an EMPTY amount box.
+
+   The code carried the price. The API knew the price. The screen in front of
+   them showed the price. The one thing the app did was ask them to copy it in
+   by hand, which is also the only way left to get it wrong, since build 45
+   refuses any figure other than the merchant's.
+
+   Scanning a code that carries a price now fills it in and locks it, and the
+   capture note names who is being paid:
+
+     "R 300.00 to Corner Cafe. Check the name, then pay."
+
+   Typing or pasting a QR ID by hand does the same thing, so the two routes into
+   that screen behave alike.
+
+   AN OPEN CODE IS UNCHANGED. A static till code names no price, so the amount
+   box stays empty and editable and the payer names the amount, exactly as
+   before. The note still tells them who they are paying.
+
+   A failed lookup is not a failed scan: the id is captured either way, the
+   amount box stays editable, and the payment works as it did.
+
+   Proven in verification/qr-scanner-camera-live.js, driven with a real camera
+   feed, now 8 checks: the code is found and its id recovered, the price is
+   filled in and locked, an open code is left empty and editable, a code printed
+   before the payload was trimmed still scans, and a blank camera produces no
+   false read.
+
 
 QR CODES ARE FAR EASIER TO SCAN
 
@@ -581,7 +615,7 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   708 API tests, 6 camera scanner checks, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
+   708 API tests, 8 camera scanner checks, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
    9 business registration checks driven in a real browser,
    98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
@@ -592,9 +626,9 @@ WHAT PROVES IT
 UPLOAD NOTES
 
    Replace the whole app directory as usual, INCLUDING .htaccess, which is
-   where the crawler rule lives. The asset stamp moves to ?v=422 in index.html
+   where the crawler rule lives. The asset stamp moves to ?v=423 in index.html
    and service-worker.js and the cache name becomes
-   titopay-pwa-v422-qr-price-integrity, so no customer can be served a cached
+   titopay-pwa-v423-qr-amount-prefill, so no customer can be served a cached
    bundle.
 
    UPLOAD api.zip BUILD 47 FIRST, AND DO NOT DELAY IT. The price fix is

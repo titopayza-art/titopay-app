@@ -15476,3 +15476,14 @@ img {
 .event-poster-swap .field-hint {
   margin: 0;
 }
+
+/* A price the merchant set is shown, not asked for. The field is filled from
+   the code itself and locked, because the API refuses any other figure: an
+   editable box there would only be a way to get it wrong. */
+.input-affix input[readonly] {
+  color: var(--navy);
+  background: var(--soft);
+  font-weight: 700;
+  cursor: default;
+}
+

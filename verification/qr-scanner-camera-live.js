@@ -18,6 +18,9 @@
 //   5. A frame with no code in it does not produce a false read.
 //   6. A code minted BEFORE the payload was trimmed still scans, because the
 //      id is the only field anything has ever read.
+//   7. A dynamic code fills its own price in, locked, so the payer never types
+//      a figure the till is already showing them.
+//   8. An open code with no price leaves the amount box empty and editable.
 //
 //   POSTGRES_URL=postgres://postgres@127.0.0.1:55432/titopay \
 //     node verification/qr-scanner-camera-live.js
@@ -130,10 +133,15 @@ async function scanWith(videoFile, signIn) {
       const note = document.querySelector("#qr-scanner-output");
       return (input && input.value) || (note && /No QR detected|unavailable|permission|not a TitoPay/i.test(note.textContent));
     }, { timeout: 30000 }).catch(() => {});
-    const seen = await page.evaluate(() => ({
-      value: (document.querySelector('form[data-form="qr-pay"] input[name="qrId"]') || {}).value || "",
-      note: ((document.querySelector("#qr-scanner-output") || {}).textContent || "").trim().slice(0, 120)
-    }));
+    const seen = await page.evaluate(() => {
+      const amount = document.querySelector('form[data-form="qr-pay"] input[name="amount"]');
+      return {
+        value: (document.querySelector('form[data-form="qr-pay"] input[name="qrId"]') || {}).value || "",
+        note: ((document.querySelector("#qr-scanner-output") || {}).textContent || "").trim().slice(0, 140),
+        amount: amount ? amount.value : "(no field)",
+        amountLocked: amount ? amount.readOnly : null
+      };
+    });
     return { ...seen, errors };
   } finally { await browser.close().catch(() => {}); }
 }
@@ -190,13 +198,29 @@ const signInFn = async ({ email, password }) => {
     assert.equal(legacy.value, sale.id, `an already-printed code read as "${legacy.value}"`);
     ok("a code printed before the payload was trimmed still scans", `${legacyPayload.length} chars, still resolves`);
 
+    assert.equal(result.amount, "388.00", `the amount box held "${result.amount}" instead of the merchant's price`);
+    assert.equal(result.amountLocked, true, "the merchant's price must not be editable by the payer");
+    assert.match(result.note, /R\s?388/, `the capture note read: "${result.note}"`);
+    ok("the merchant's price is filled in and locked", `R${result.amount}, "${result.note}"`);
+
+    // An OPEN code names no price, so the payer still names one.
+    const open = await qrService.createQr({ userId: merchant.id, userType: "customer" },
+      { codeType: "static", label: "Till" });
+    const openPayload = JSON.stringify((await pool.query(
+      "SELECT payload FROM qr_codes WHERE id = $1", [open.id])).rows[0].payload);
+    const openScan = await scanWith(writeY4m(path.join(dir, "open.y4m"), openPayload), signInFn);
+    assert.equal(openScan.value, open.id);
+    assert.equal(openScan.amount, "", `an open code prefilled "${openScan.amount}"`);
+    assert.equal(openScan.amountLocked, false, "an open code must leave the amount editable");
+    ok("an open code leaves the amount empty and editable", `"${openScan.note}"`);
+
     const blank = writeY4m(path.join(dir, "blank.y4m"), "");
     const nothing = await scanWith(blank, signInFn);
     assert.equal(nothing.value, "", `a blank camera produced a false read: "${nothing.value}"`);
     assert.match(nothing.note, /No QR detected/i, `a blank camera said: "${nothing.note}"`);
     ok("a camera with no code in front of it does not produce a false read", nothing.note);
 
-    console.log(`\n  ${passed}/6 checks passed\n`);
+    console.log(`\n  ${passed}/8 checks passed\n`);
   } catch (error) { console.error("\nFAILED:", error.message); process.exitCode = 1; }
   finally {
     fs.rmSync(dir, { recursive: true, force: true });
