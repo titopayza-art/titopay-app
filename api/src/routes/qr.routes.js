@@ -1,6 +1,6 @@
 const express = require("express");
 const { requireAuth } = require("../middleware/auth");
-const { createQr, ensureProfileQr, getMerchantQrs, getQrHistory, payQr, shareQr } = require("../services/qr-service");
+const { createQr, ensureProfileQr, getMerchantQrs, getQrDetails, getQrHistory, payQr, shareQr } = require("../services/qr-service");
 const { AppError } = require("../lib/errors");
 
 const router = express.Router();
@@ -84,6 +84,17 @@ router.get("/history", async (req, res, next) => {
   try {
     const history = await getQrHistory(req.auth.userId);
     res.json({ ok: true, history });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Who owns this code, so the payer can read a name before they press Confirm.
+// It moves no money and changes nothing. Two segments, so it cannot swallow the
+// one-segment /profile, /history or /merchant whatever the declaration order.
+router.get("/:id/details", async (req, res, next) => {
+  try {
+    res.json({ ok: true, qr: await getQrDetails(req.auth, req.params.id) });
   } catch (error) {
     next(error);
   }

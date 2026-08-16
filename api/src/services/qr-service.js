@@ -91,22 +91,77 @@ async function getQrHistory(userId) {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-async function payQr(actor, payload) {
-  // A camera scan hands over the QR's full JSON payload; a typed entry hands
-  // over the UUID. Accept both — and refuse a TitoPay EVENT TICKET by name.
-  // Tickets and payment QRs are separate instruments: a ticket must never be
-  // payable, and a payment QR must never admit anyone through a gate. Anything
-  // else that is not a UUID answers a clean 404 instead of a database error.
-  let qrId = String(payload.qrId || "").trim();
+// A camera scan hands over the QR's whole JSON payload; a typed entry hands
+// over the UUID. Both arrive on the same field, so both are unwrapped here
+// rather than twice, differently.
+function readQrId(raw) {
+  let qrId = String(raw || "").trim();
   if (qrId.startsWith("{")) {
     let parsed = null;
     try { parsed = JSON.parse(qrId); } catch { parsed = null; }
+    // Tickets and payment QRs are separate instruments: a ticket must never be
+    // payable, and a payment QR must never admit anyone through a gate.
     if (parsed && parsed.type === "titopay_ticket") {
       throw new AppError(400, "This is a TitoPay event ticket, not a payment QR. Nothing can be paid with it. Present it at the event entrance instead.");
     }
     qrId = parsed && parsed.id ? String(parsed.id).trim() : "";
   }
   if (!UUID_PATTERN.test(qrId)) throw new AppError(404, "QR code not found");
+  return qrId;
+}
+
+// WHO OWNS THIS QR CODE, ANSWERED BEFORE ANY MONEY MOVES.
+//
+// The review screen has always had a card for this, and it has always read
+// "Owner not confirmed", for every code and every customer, because the app
+// called an endpoint that was never built. The Security Tip screen tells people
+// to "read the verified recipient name before you press Confirm" and there was
+// no name to read.
+//
+// What comes back is the least that answers the question: the name a payer can
+// check against the shopfront in front of them, the TitoPay username, and
+// whether it is a business or a person. Never an email address, never a phone
+// number, never a wallet number, never a balance — a payment QR is shown to
+// strangers by design, so anything returned here is effectively public.
+async function getQrDetails(actor, rawQrId) {
+  const qrId = readQrId(rawQrId);
+  const { rows } = await pool.query(
+    `SELECT q.id, q.reference, q.code_type, q.label, q.amount, q.status, q.expires_at,
+            u.id AS owner_id, u.full_name, u.username, u.account_type,
+            m.business_name
+       FROM qr_codes q
+       JOIN users u ON u.id = q.user_id
+       LEFT JOIN merchants m ON m.user_id = q.user_id AND m.status = 'active'
+      WHERE q.id = $1
+      LIMIT 1`,
+    [qrId]
+  );
+  const qr = rows[0];
+  if (!qr) throw new AppError(404, "QR code not found");
+  const isBusiness = String(qr.account_type || "").toLowerCase() === "business";
+  return {
+    id: qr.id,
+    reference: qr.reference,
+    codeType: qr.code_type,
+    label: qr.label || null,
+    amount: qr.amount === null ? null : Number(qr.amount),
+    status: qr.status || "active",
+    expired: Boolean(qr.expires_at && new Date(qr.expires_at).getTime() < Date.now()),
+    isOwnCode: qr.owner_id === actor.userId,
+    owner: {
+      // A registered business trades under its business name; a person is known
+      // by the name on their verified identity.
+      displayName: (isBusiness && qr.business_name) ? qr.business_name : (qr.full_name || ""),
+      username: qr.username || "",
+      accountType: isBusiness ? "business" : "personal"
+    }
+  };
+}
+
+async function payQr(actor, payload) {
+  // Anything that is not a UUID answers a clean 404 rather than a database
+  // error, and an event ticket is refused by name.
+  const qrId = readQrId(payload.qrId);
   const { rows } = await pool.query(
     `SELECT q.*, u.username, m.id AS merchant_row_id
      FROM qr_codes q
@@ -118,6 +173,12 @@ async function payQr(actor, payload) {
   );
   const qr = rows[0];
   if (!qr) throw new AppError(404, "QR code not found");
+  // Paying your own QR moved money in a circle and took the fee for doing it.
+  // Nothing about it is a payment, and a person who scans their own code has
+  // made a mistake that should be named rather than charged for.
+  if (qr.user_id === actor.userId) {
+    throw new AppError(400, "This is your own QR code. Show it to the person paying you instead of scanning it yourself.");
+  }
   if (qr.status && qr.status !== "active") throw new AppError(409, "This QR code is no longer available for payment");
   if (qr.expires_at && new Date(qr.expires_at).getTime() < Date.now()) throw new AppError(410, "This QR code has expired");
   if (qr.code_type === "dynamic") {
@@ -241,6 +302,7 @@ module.exports = {
   persistQr,
   getMerchantQrs,
   getQrHistory,
+  getQrDetails,
   payQr,
   ensureProfileQr,
   shareQr

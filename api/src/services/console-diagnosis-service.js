@@ -89,8 +89,11 @@ const PROBES = [
     "SELECT COUNT(*)::INT FROM kyc_reviews"],
   ["Revenue", "revenue by service",
     "SELECT service_code, SUM(fee_collected)::NUMERIC FROM revenue_ledger GROUP BY service_code"],
+  // Marked: nothing creates this wallet, and without it every fee-bearing
+  // wallet payment fails at Confirm while the fee preview still works.
+  // Provision it with: node scripts/ensure-revenue-wallet.js --create
   ["Revenue", "revenue wallet exists",
-    "SELECT id FROM wallets WHERE kind = 'revenue' AND user_id IS NULL LIMIT 1"],
+    "SELECT id FROM wallets WHERE kind = 'revenue' AND user_id IS NULL LIMIT 1", true],
   ["Settings and Maintenance", "platform settings readable",
     "SELECT key FROM platform_settings LIMIT 1"],
   ["Settings and Maintenance", "the maintenance mode setting",
@@ -183,10 +186,25 @@ async function runConsoleDiagnosis({ actorId = null } = {}) {
     missing: tables.filter((table) => !present.has(table))
   }));
 
+  // A probe passes if its SQL RUNS. For almost all of these that is the right
+  // question, because an empty table is an ordinary state. For a few of them it
+  // is the wrong question entirely: "revenue wallet exists" returned no rows and
+  // reported OK, so the console said the revenue wallet was fine on a database
+  // that had never had one, while every fee-bearing payment failed at Confirm.
+  // Those probes are marked, and for them an empty result IS the fault.
   const probes = [];
-  for (const [page, what, sql] of PROBES) {
+  for (const [page, what, sql, mustReturnRows] of PROBES) {
     try {
-      await pool.query(sql);
+      const { rowCount } = await pool.query(sql);
+      if (mustReturnRows && rowCount === 0) {
+        probes.push({
+          page,
+          what,
+          ok: false,
+          error: { message: "The query ran and found nothing. This row has to exist.", code: "EMPTY_RESULT" }
+        });
+        continue;
+      }
       probes.push({ page, what, ok: true });
     } catch (error) {
       probes.push({ page, what, ok: false, error: errorDetail(error) });

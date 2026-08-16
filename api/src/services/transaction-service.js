@@ -417,6 +417,24 @@ async function createTransaction(actor, payload) {
   // recipient is credited. Without this, a caller could name any wallet as the
   // "recipient" of a purchase from TitoPay.
   const recipientWallet = feeOnly ? null : await resolveRecipientWallet(payload.recipient);
+  // MONEY WITH NOWHERE TO LAND IS NOT A PAYMENT.
+  //
+  // Below, the recipient is credited only `if (recipientWallet)`, and there was
+  // no else. A payment whose recipient could not be resolved therefore debited
+  // the payer in full, collected the fee, credited nobody, held nothing, and
+  // returned status "completed". Measured on a QR whose owner had no wallet
+  // row: R200.50 left the payer, R0.50 reached revenue, and R200.00 existed
+  // nowhere at all.
+  //
+  // Only the wallet-recipient services reach this line — assertLiveTransactionSupported
+  // has already refused everything else with a 503 — so this cannot affect a
+  // service that legitimately pays out to somewhere that is not a TitoPay
+  // wallet. Nothing has moved yet: this throws before BEGIN.
+  if (!feeOnly && !recipientWallet) {
+    throw new AppError(404,
+      "TitoPay could not find the wallet this payment is for, so nothing was taken from your wallet. "
+      + "Check the recipient and try again, or contact Support if it continues.");
+  }
   const revenueWallet = preview.fee > 0 ? await getRevenueWallet() : null;
   const txId = uuidv4();
   const reference = txReference();

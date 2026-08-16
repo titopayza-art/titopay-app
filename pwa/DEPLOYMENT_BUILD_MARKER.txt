@@ -1,8 +1,84 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v418 (titopay-pwa-v418-business-registration)
-Requires: api.zip build 42
+PWA bundle: v419 (titopay-pwa-v419-qr-owner)
+Requires: api.zip build 43
 Admin console: admin-console-v89
+
+THE QR PAYMENT SCREEN, AND ONE FAULT THAT WAS LOSING MONEY
+
+   FOUR THINGS. THE SECOND IS THE SERIOUS ONE.
+
+   1. THE OWNER OF A QR CODE CAN FINALLY BE NAMED.
+
+      The review screen has always had a card for this and it has always read
+      "Owner not confirmed" -- for every code, every customer, every time --
+      because the app called GET /v1/qr/{id}/details and that endpoint was
+      never built. The Security Tip screen tells people to read the verified
+      recipient name before pressing Confirm. There was no name to read.
+
+      The endpoint exists in build 43. The review now shows who owns the code:
+      a registered business under its business name, a person under the name on
+      their verified identity, with the TitoPay username beside it. It returns
+      nothing else. No email address, no phone number, no wallet number, no
+      balance, because a payment QR is shown to strangers by design.
+
+      On an older API the caution card still appears, which remains the honest
+      answer when nothing can be confirmed.
+
+   2. A PAYMENT WITH NOBODY TO CREDIT TOOK THE MONEY ANYWAY.
+
+      The recipient was credited only if their wallet could be resolved, and
+      there was no other branch. A QR code whose owner had no wallet row
+      therefore debited the payer in full, collected the fee, credited nobody,
+      held nothing, and reported the payment as completed.
+
+      Measured before the fix, on a R200 payment: R200.50 left the payer,
+      R0.50 reached the revenue wallet, and R200.00 existed nowhere at all.
+
+      Such a payment is now refused before anything moves, with a sentence that
+      says plainly that nothing was taken. Only the wallet-to-wallet services
+      reach that line, so nothing that legitimately pays out elsewhere is
+      affected, and an ordinary QR payment settles exactly as it always did.
+
+   3. PAYING YOUR OWN QR CODE IS REFUSED.
+
+      It moved money in a circle and charged the fee for doing it. The review
+      screen now says so before Confirm, and the API refuses it after.
+
+   4. "UNABLE TO COMPLETE THE REQUEST" HAD A CAUSE, AND NOW IT NAMES ITSELF.
+
+      Nothing in the codebase creates the TitoPay revenue wallet; it is
+      provisioned once by scripts/ensure-revenue-wallet.js --create. Without it
+      every fee-bearing wallet payment fails at Confirm while the fee preview on
+      the same screen works perfectly, because only the settlement needs it.
+
+      The error it raised was written for an operator, and the API correctly
+      refuses to show an unauthored 5xx to a customer, so what reached the phone
+      was the blanket "Unable to complete the request. Please try again."
+      Nothing named the cause, on the phone or in the admin console.
+
+      Two changes. The customer is now told that nothing was taken from their
+      wallet, that this is a fault on TitoPay's side and not their account, and
+      to contact Support -- without being shown TitoPay's internal wallet
+      architecture. And the admin console's "revenue wallet exists" probe used
+      to pass whenever the query RAN, so it reported OK on a database that had
+      never had one. A probe that must return a row now fails when it does not.
+
+      IF YOUR QR PAYMENTS ARE FAILING, THIS IS THE FIRST THING TO CHECK:
+
+        node scripts/ensure-revenue-wallet.js            reports, changes nothing
+        node scripts/ensure-revenue-wallet.js --create   provisions it
+
+   Proven in verification/qr-payment-integrity-live.js over the real HTTP API:
+   the owner is named and nothing private leaks, a payment with no recipient is
+   refused with the payer's balance identical before and after, a self-payment
+   is refused and costs nothing, an ordinary payment still settles at payer
+   -R200.50 and merchant +R200.00, and a missing revenue wallet produces a
+   sentence a person can act on. 8 checks.
+
+   Also verified unchanged: 13/13 money path checks, including "every cent
+   debited is credited somewhere".
+
 
 A BUSINESS CAN START FROM ITS COMPANY REGISTRATION NUMBER
 
@@ -242,7 +318,8 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   696 API tests, 9 business registration checks driven in a real browser,
+   696 API tests, 8 QR payment integrity checks, 13 money path checks,
+   9 business registration checks driven in a real browser,
    98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
    feel checks and 12 sign-in journey checks driven in a real browser, 7
@@ -251,13 +328,15 @@ WHAT PROVES IT
 
 UPLOAD NOTES
 
-   Replace the whole app directory as usual. The asset stamp moves to ?v=418
+   Replace the whole app directory as usual. The asset stamp moves to ?v=419
    in index.html and service-worker.js and the cache name becomes
-   titopay-pwa-v418-business-registration, so no customer can be served a
-   cached bundle.
+   titopay-pwa-v419-qr-owner, so no customer can be served a cached bundle.
 
-   UPLOAD api.zip BUILD 42 WITH IT. The company registration option needs it:
-   on build 41 the API still refuses to record a business until the owner has
-   verified their own identity, so the fourth option would show a refusal
-   rather than working. The poster changes need no API change at all.
-   admin.zip is unchanged.
+   UPLOAD api.zip BUILD 43 WITH IT. Both of the recent changes need it: the QR
+   owner card needs the details endpoint, and the company registration option
+   needs the relaxed capture rule. On an older API both fail safely rather than
+   badly, showing the caution card and a refusal respectively. The poster
+   changes need no API change at all. admin.zip is unchanged.
+
+   AND RUN scripts/ensure-revenue-wallet.js. If it reports no revenue wallet,
+   that is why QR payments fail at Confirm, and no code change fixes it.

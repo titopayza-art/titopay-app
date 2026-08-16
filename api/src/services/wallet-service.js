@@ -20,13 +20,39 @@ async function getPrimaryWalletForUser(userId) {
   return rows[0];
 }
 
+// NOTHING IN THE CODEBASE CREATES THIS WALLET. It is provisioned once, on
+// purpose, by scripts/ensure-revenue-wallet.js --create, because a wallet that
+// appears in the middle of settling someone's money is not something that
+// should happen quietly.
+//
+// The consequence, until this comment was written, was a puzzle nobody could
+// solve from the phone: every fee-bearing wallet payment failed at Confirm
+// while the fee preview on the same screen worked perfectly, because only this
+// function needs the wallet. The 500 it raised carried a sentence written for
+// an operator, and error-handler.js correctly refuses to show an unauthored
+// 5xx to a customer, so what actually reached the screen was the blanket
+// "Unable to complete the request. Please try again." Nothing named the cause.
+//
+// The sentence for the customer is now authored, and it is honest: their wallet
+// was not touched, this is TitoPay's fault and not theirs, and it will not fix
+// itself by trying again. The operator sentence is unchanged and still goes to
+// the log beside the requestId the response carries.
 async function getRevenueWallet() {
   const { rows } = await pool.query(
     `SELECT *, wallet_number AS wallet_id FROM wallets
      WHERE kind = 'revenue' AND user_id IS NULL
      LIMIT 1`
   );
-  if (!rows[0]) throw new AppError(500, "TitoPay revenue wallet is not configured");
+  if (!rows[0]) {
+    throw new AppError(500, "TitoPay revenue wallet is not configured", {
+      code: "REVENUE_WALLET_MISSING",
+      // No claim is made here that anybody has been told. Saying "our team has
+      // been alerted" when nothing alerts them is the kind of sentence that
+      // costs a customer their afternoon.
+      publicMessage: "TitoPay cannot complete payments at the moment. Nothing was taken from your wallet. "
+        + "This is a fault on our side, not something wrong with your account. Please contact Support."
+    });
+  }
   return rows[0];
 }
 

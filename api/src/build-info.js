@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 42;
+const API_BUILD = 43;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  43: "Four things about a QR payment. GET /v1/qr/:id/details finally exists, so "
+      + "the review screen can name the owner instead of always reading Owner not "
+      + "confirmed. A payment whose recipient wallet cannot be resolved is refused "
+      + "before anything moves, where it used to debit the payer, credit nobody and "
+      + "report completed. Paying your own QR is refused. A missing revenue wallet "
+      + "now says something a customer can act on rather than the blanket 5xx, and "
+      + "the admin console reports it as a fault instead of passing on zero rows.",
   42: "A business can record its company registration number before the owner "
       + "has verified their own identity. CAPTURING the entity is not VERIFYING "
       + "it, and refusing the first until the second was done left a business "

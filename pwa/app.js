@@ -13640,9 +13640,11 @@ async function processQrPayment(data) {
     })
     : { preview: { amount: 0, fee: 0.50, total: 0.50, serviceCode: "qr_payment", serviceName: "QR Payment" } };
   // Ask the API who owns this QR so the payer can check the name before
-  // confirming. The endpoint may ship after this build, so a failure only
-  // means the review shows an explicit "owner not confirmed" caution -- the
-  // payment flow itself is unchanged either way.
+  // confirming. This shipped calling an endpoint that did not exist yet, so the
+  // review card read "Owner not confirmed" for every code and every customer
+  // from the day it was written. The endpoint arrives in API build 43. The
+  // catch stays: on an older API the caution card is still the honest answer,
+  // and the payment flow itself is unchanged either way.
   let qrDetails = null;
   try {
     const details = await api(`/v1/qr/${encodeURIComponent(String(data.qrId).trim())}/details`);
@@ -13662,6 +13664,14 @@ async function processQrPayment(data) {
 function qrOwnerCard(details) {
   const owner = details && (details.owner || details.merchant || null);
   const ownerName = owner && String(owner.displayName || owner.businessName || owner.business_name || owner.fullName || owner.full_name || owner.name || "").trim();
+  // Scanning your own code is a mistake, not a payment, and it is better caught
+  // here than by a refusal after the customer has pressed Confirm.
+  if (details && details.isOwnCode) {
+    return `<section class="qr-owner-card is-unknown" role="status" aria-label="This is your own QR code">
+      <span class="icon-bubble">${icon("qr")}</span>
+      <div><p class="qr-owner-eyebrow">Your own code</p><strong>This QR code is yours</strong><small>Show it to the person paying you rather than scanning it yourself. Paying it would move money in a circle and still cost the fee.</small></div>
+    </section>`;
+  }
   if (ownerName) {
     const isBusiness = String(owner.accountType || owner.account_type || "").toLowerCase() === "business";
     const meta = [
