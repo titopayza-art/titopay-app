@@ -131,6 +131,63 @@ function escapeHtmlAttribute(value = "") {
     .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
+// A description destined for a <meta content="..."> attribute. The old version
+// sliced the raw text at 160 characters, so a real event previewed as
+// "...users can manage their" — cut mid-word — with the description's own line
+// breaks still in it, sitting inside an HTML attribute. This collapses the
+// whitespace first and then cuts at a word boundary, with an ellipsis so the
+// reader can see it is an extract rather than a sentence that stops.
+function metaSummary(text, limit = 160) {
+  const flat = String(text || "").replace(/\s+/g, " ").trim();
+  if (flat.length <= limit) return flat;
+  const cut = flat.slice(0, limit);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > limit * 0.5 ? cut.slice(0, lastSpace) : cut).replace(/[\s,.;:!-]+$/, "")}…`;
+}
+
+// The origin a CRAWLER should use to come back for the poster. Taken from the
+// request that is being answered, because that is by definition the host the
+// crawler could reach; the constant is only a fallback for a call with no Host
+// header at all. No new environment variable to forget to set on deploy.
+function apiPublicOrigin(req) {
+  const host = String(req.get("host") || "").trim();
+  if (!host) return "https://api.titopay.co.za";
+  const protocol = /^(localhost|127\.|\[?::1)/i.test(host) ? "http" : "https";
+  return `${protocol}://${host}`;
+}
+
+// THE POSTER, AS AN IMAGE A CRAWLER CAN ACTUALLY FETCH.
+//
+// Posters are stored as data: URLs, which is right for the app — one row, no
+// object store, no second thing to back up — and useless to WhatsApp, which
+// fetches og:image over HTTP or shows nothing. Every shared event has previewed
+// with no image since the day sharing shipped.
+//
+// So the bytes are served here, decoded from the same column. Read-only, no
+// authentication, approved events only, exactly as the preview page itself is:
+// a poster is public the moment its event is.
+router.get("/public/events/:slug/poster", async (req, res, next) => {
+  try {
+    const event = await getPublicApprovedEvent(req.params.slug);
+    const raw = String(event.eventBannerUrl || "");
+    // Already a real URL: send the crawler straight there rather than proxying
+    // somebody else's bytes through TitoPay.
+    if (/^https?:\/\//i.test(raw)) return res.redirect(302, raw);
+    const match = /^data:(image\/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/i.exec(raw);
+    if (!match) return res.status(404).json({ ok: false, error: "This event has no poster." });
+    const body = Buffer.from(match[2].replace(/\s+/g, ""), "base64");
+    if (!body.length) return res.status(404).json({ ok: false, error: "This event has no poster." });
+    res.set("Content-Type", match[1].toLowerCase());
+    res.set("Content-Length", String(body.length));
+    // A poster changes rarely and a crawler may fetch it many times.
+    res.set("Cache-Control", "public, max-age=3600");
+    res.set("X-Content-Type-Options", "nosniff");
+    return res.send(body);
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/public/events/:slug/preview", async (req, res, next) => {
   try {
     const event = await getPublicApprovedEvent(req.params.slug);
@@ -141,13 +198,18 @@ router.get("/public/events/:slug/preview", async (req, res, next) => {
       ? new Date(event.eventDate).toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
       : "Date to be confirmed";
     const where = [event.venueName, event.city].filter(Boolean).join(", ");
-    const description = [when, where].filter(Boolean).join(" · ")
-      + (event.description ? `. ${String(event.description).slice(0, 160)}` : "");
+    const head = [when, where].filter(Boolean).join(" · ");
+    const description = event.description
+      ? `${head}. ${metaSummary(event.description, 160)}`
+      : head;
     const title = `${event.eventName} | TitoPay Tickets`;
-    // A data: poster cannot be fetched by a crawler, so it is offered only
-    // when it is a real URL. A missing image previews as a link with a title,
-    // which is still far better than a bare URL.
-    const image = /^https?:\/\//i.test(String(event.eventBannerUrl || "")) ? event.eventBannerUrl : "";
+    // Always the poster route, never the stored value: a data: URL cannot be
+    // fetched by a crawler, and the route decodes it into bytes that can.
+    // Offered only when the event actually has a poster, because an og:image
+    // pointing at a 404 previews worse than no og:image at all.
+    const image = event.eventBannerUrl
+      ? `${apiPublicOrigin(req)}/v1/ticketing/public/events/${encodeURIComponent(event.slug)}/poster`
+      : "";
     res.set("Content-Type", "text/html; charset=utf-8");
     res.set("Cache-Control", "public, max-age=300");
     res.send(`<!doctype html>

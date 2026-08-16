@@ -19,10 +19,18 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 43;
+const API_BUILD = 44;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  44: "A shared event link is the real one again. The Share button used to copy "
+      + "the API's own /preview path, so organisers sent their audience a URL that "
+      + "reads like a developer path; crawlers are now redirected to the preview "
+      + "by the app's .htaccess instead, and people get the app. The preview also "
+      + "serves the poster as real image bytes at a new public route, because "
+      + "posters are data: URLs and no crawler could ever fetch one, so every "
+      + "shared event has previewed with no image. The description is cut at a "
+      + "word boundary instead of mid-word, with no raw line breaks.",
   43: "Four things about a QR payment. GET /v1/qr/:id/details finally exists, so "
       + "the review screen can name the owner instead of always reading Owner not "
       + "confirmed. A payment whose recipient wallet cannot be resolved is refused "

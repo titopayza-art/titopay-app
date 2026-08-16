@@ -1,8 +1,73 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v420 (titopay-pwa-v420-qr-poster-owner)
-Requires: api.zip build 43
+PWA bundle: v421 (titopay-pwa-v421-event-share-link)
+Requires: api.zip build 44
 Admin console: admin-console-v89
+
+THE EVENT SHARE LINK IS THE REAL ONE NOW
+
+   Tapping Share on an event put THIS on the clipboard:
+
+     https://api.titopay.co.za/v1/ticketing/public/events/titopay-launch/preview
+
+   It worked, and it landed in the right place. It also meant every organiser
+   was sending their audience a URL that reads like a developer path, on the one
+   screen whose whole job is to make an event look real and worth buying into.
+
+   The reason it existed is genuine. WhatsApp, Facebook, X, Slack and iMessage
+   fetch a URL and read its <meta> tags, and they do NOT run JavaScript. This
+   app renders itself on the phone, so a link straight into it previewed as a
+   bare "TitoPay" with no title, no date and no poster.
+
+   The answer was never to make the human's link ugly. It is to send only the
+   CRAWLERS to the preview:
+
+     a person       gets https://app.titopay.co.za/events/<name>, the app
+     a crawler      is redirected by the app's own .htaccess to the preview,
+                    reads the tags there, and shows a rich card
+
+   The preview page is unchanged and still exists, so every link already shared
+   keeps working exactly as it did.
+
+   THE POSTER NOW APPEARS IN THE PREVIEW. IT NEVER HAS BEFORE.
+
+   Posters are stored as data: URLs, which is right for the app and useless to
+   a crawler: og:image was only ever emitted for an http(s) URL, so it was
+   omitted on every event that has ever existed. Checked against the live
+   TitoPay Launch event: no og:image at all.
+
+   A new public route serves the poster as real image bytes, decoded from the
+   same column. Read-only, no authentication, approved events only, cached for
+   an hour, and it refuses anything that is not an image. An event with no
+   poster offers no og:image rather than one that 404s.
+
+   AND THE DESCRIPTION NO LONGER STOPS MID-WORD.
+
+   It used to slice the raw text at 160 characters, so the live event previewed
+   as "...users can manage their" with the description's own line breaks still
+   in it, inside an HTML attribute. It is now flattened and cut at a word
+   boundary with an ellipsis.
+
+   PROVEN, INCLUDING AGAINST A REAL APACHE.
+
+   verification/event-share-link-live.js: 9 checks over the live API. The app
+   shares the app link, the preview carries the title and points at the app
+   link, og:image points at a fetchable poster, that URL returns real PNG bytes
+   with an image content type, the description has no raw line breaks and no
+   mid-word cut, a promoter's ?ref= survives the hop, an event with no poster
+   offers no og:image, and the Apache rule matches /events/<slug> and nothing
+   else.
+
+   The .htaccess rule was then run through a REAL Apache with this exact file:
+
+     a person on iPhone Safari    /events/<slug>  200   and every other path 200
+     WhatsApp, Facebook, X,
+       Slack, LinkedIn, Telegram  /events/<slug>  302   to the preview
+     a crawler on ANY other path  /, /dashboard, /assets/..., /verify-email/,
+                                  /events, /events/a/b   all 200, untouched
+     ?ref=ABC123                  survives the redirect
+     app.js, styles.css, .md, .ht still 403, for people and crawlers alike
+
 
 THE PRINTED A4 POSTERS NAMED THE WRONG PERSON
 
@@ -368,7 +433,7 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   697 API tests, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
+   698 API tests, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
    9 business registration checks driven in a real browser,
    98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
@@ -378,13 +443,15 @@ WHAT PROVES IT
 
 UPLOAD NOTES
 
-   Replace the whole app directory as usual. The asset stamp moves to ?v=420
-   in index.html and service-worker.js and the cache name becomes
-   titopay-pwa-v420-qr-poster-owner, so no customer can be served a cached
+   Replace the whole app directory as usual, INCLUDING .htaccess, which is
+   where the crawler rule lives. The asset stamp moves to ?v=421 in index.html
+   and service-worker.js and the cache name becomes
+   titopay-pwa-v421-event-share-link, so no customer can be served a cached
    bundle.
 
-   api.zip is UNCHANGED from build 43 and does not need uploading again if you
-   already have it. Reprinting the A4 posters is worth doing once this is live,
+   UPLOAD api.zip BUILD 44 WITH IT, for the poster route the preview points at.
+   On build 43 the shared link still works and the preview still shows a title;
+   it just carries no image, which is exactly where it was before. Reprinting the A4 posters is worth doing once this is live,
    but the codes on the sheets already printed keep working exactly as they are:
    only the NAME printed beside them was wrong, never the code.
 

@@ -56,6 +56,29 @@
   RewriteRule ^(app\.js|styles\.css)$ - [F,L]
   RewriteRule \.md$                   - [F,L]
 
+  # LINK PREVIEWS FOR SHARED EVENTS.
+  #
+  # WhatsApp, Facebook, X, Slack, LinkedIn and iMessage fetch a URL and read its
+  # <meta> tags. They do NOT run JavaScript, and this app renders itself on the
+  # phone, so a shared /events/<slug> link previewed as a bare "TitoPay" with no
+  # title, no date and no poster.
+  #
+  # The old answer was to share an api.titopay.co.za URL instead, which fixed
+  # the preview and gave organisers a link that reads like a developer path to
+  # everyone they send it to. This is the same fix without that cost: the link
+  # people share is the real one, and only the CRAWLERS are sent to the
+  # server-rendered preview, which carries the tags and nothing else.
+  #
+  # A plain 302 by user agent. No mod_proxy, which shared cPanel rarely has.
+  # Every one of these agents follows redirects and reads the tags at the end.
+  #
+  # Two things keep this safe. The pattern matches ONLY /events/<slug>, so no
+  # other path on the site can be affected. And the whole block is bounded by
+  # the user-agent condition, so a person on any browser never touches it: they
+  # fall through to the app shell exactly as before.
+  RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|facebookcatalog|WhatsApp|Twitterbot|Slackbot|LinkedInBot|TelegramBot|Discordbot|SkypeUriPreview|redditbot|Pinterest|vkShare|W3C_Validator|Google-InspectionTool|Applebot|iMessageBot) [NC]
+  RewriteRule ^events/([A-Za-z0-9][A-Za-z0-9._-]{0,199})/?$ https://api.titopay.co.za/v1/ticketing/public/events/$1/preview [L,R=302,QSA]
+
   # SINGLE-PAGE-APP FALLBACK.
   #
   # The app is one index.html with client-side routing, and it already knows how

@@ -170,11 +170,50 @@ test("link previews serve real tags, escaped", () => {
   }
   assert.match(handler, /escapeHtmlAttribute\(event\.eventName\)/,
     "an event name must be escaped before it goes into an attribute");
-  // A data: poster cannot be fetched by a crawler, so it is only offered when
-  // it is a real URL.
-  assert.match(handler, /\^https\?:\\\/\\\//);
-  // And the app shares THAT url, or the preview never renders.
-  assert.match(APP, /\/preview`;/);
+
+  // og:image USED to be offered only for an http(s) poster, which meant never:
+  // every poster is stored as a data: URL, so every shared event previewed with
+  // no image at all. It now points at a route that decodes those bytes.
+  assert.match(handler, /apiPublicOrigin\(req\)[\s\S]*?\/poster`/,
+    "og:image must point at a poster route a crawler can fetch");
+  assert.match(handler, /event\.eventBannerUrl\s*\n?\s*\?/,
+    "an event with no poster must offer no og:image, rather than one that 404s");
+  assert.match(ROUTES, /router\.get\("\/public\/events\/:slug\/poster"/,
+    "the poster route the preview points at must exist");
+
+  // The description goes into an HTML attribute, so it is flattened and cut at
+  // a word boundary. It used to slice raw text at 160 characters, ending
+  // mid-word with the description's own line breaks still in it.
+  assert.match(ROUTES, /function metaSummary\(/);
+  assert.match(handler, /metaSummary\(event\.description, 160\)/);
+
+  // THE SHARED LINK IS THE APP'S OWN, not this preview path. Organisers were
+  // sending their audience an api.titopay.co.za URL that reads like a developer
+  // path. Crawlers reach the preview through the app's .htaccess instead.
+  const share = APP.slice(APP.indexOf("async function shareTicketingEvent"),
+    APP.indexOf("async function openPublicTicketingEvent"));
+  const shareCode = share.split("\n").filter((line) => !line.trim().startsWith("//")).join("\n");
+  assert.match(shareCode, /\$\{origin\}\/events\/\$\{encodeURIComponent\(slug\)\}/,
+    "the app must share the real event link");
+  assert.doesNotMatch(shareCode, /\/preview/,
+    "the app must not hand an organiser an API path to send to their audience");
+});
+
+test("the poster route is public, read-only and refuses anything but an image", () => {
+  const start = ROUTES.indexOf('router.get("/public/events/:slug/poster"');
+  assert.ok(start > -1, "the poster route must exist");
+  const handler = ROUTES.slice(start, ROUTES.indexOf("\n});", start));
+  // Approved events only: getPublicApprovedEvent is the same gate the preview
+  // and the public event page use, so a draft's poster is never reachable.
+  assert.match(handler, /getPublicApprovedEvent\(req\.params\.slug\)/,
+    "a draft or rejected event's poster must not be servable");
+  assert.doesNotMatch(handler, /requireAuth/, "a crawler cannot authenticate");
+  // Only real image types are decoded, and the browser is told not to guess.
+  assert.match(handler, /image\\\/\(\?:png\|jpe\?g\|webp\|gif\)/,
+    "only image content types may be served from a stored data: URL");
+  assert.match(handler, /X-Content-Type-Options.*nosniff/,
+    "a decoded blob must never be sniffed into something executable");
+  assert.match(handler, /404/, "an event with no poster answers 404, not an empty 200");
 });
 
 test("multi-day is a column, not a recurrence engine", () => {

@@ -17647,12 +17647,23 @@ async function shareTicketingEvent(slug) {
   const event = events.find((item) => String(item.slug) === String(slug))
     || (state.publicEvent && String(state.publicEvent.slug) === String(slug) ? state.publicEvent : null)
     || { slug };
-  // The PREVIEW url, not the app one. WhatsApp, Facebook and iMessage read a
-  // page's meta tags and do not run JavaScript, so a link straight into the
-  // app can only ever paste as a bare "TitoPay". This link serves the event's
-  // real title, date and poster to the crawler and then sends a person on to
-  // the app. See the /preview route for why it lives on the API.
-  const url = `${API_BASE}/v1/ticketing/public/events/${encodeURIComponent(slug)}/preview`;
+  // THE REAL EVENT LINK, which is the one an organiser sends to their audience.
+  //
+  // This used to share the API's /preview path, because WhatsApp and Facebook
+  // read a page's meta tags and do not run JavaScript, so a link straight into
+  // the app pasted as a bare "TitoPay". It worked, and it meant every organiser
+  // was sending out
+  //
+  //   https://api.titopay.co.za/v1/ticketing/public/events/<slug>/preview
+  //
+  // which reads like a developer path to everybody who receives it.
+  //
+  // The preview still exists and still carries the tags. What changed is who is
+  // sent to it: the app's .htaccess now 302s CRAWLERS from /events/<slug> to
+  // the preview and leaves people on the app. So the shared link is the honest
+  // one and the preview is still rich.
+  const origin = /^https?:\/\//i.test(location.origin) ? location.origin : "https://app.titopay.co.za";
+  const url = `${origin}/events/${encodeURIComponent(slug)}`;
   const date = event.eventDate ? new Date(event.eventDate) : null;
   const when = date && !Number.isNaN(date.getTime())
     ? date.toLocaleDateString("en-ZA", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
