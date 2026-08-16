@@ -1,8 +1,57 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v417 (titopay-pwa-v417-event-poster)
-Requires: api.zip build 41 for the poster replace control
+PWA bundle: v418 (titopay-pwa-v418-business-registration)
+Requires: api.zip build 42
 Admin console: admin-console-v89
+
+A BUSINESS CAN START FROM ITS COMPANY REGISTRATION NUMBER
+
+   Limits & Verification offered a South African ID, a passport and "other
+   approved identity document". A business owner holding a CIPC certificate and
+   nothing else had no option on that screen at all.
+
+   The screen that DOES take a registration number, Business Verification, then
+   refused to show its form until the owner had already verified themselves with
+   an identity document. So the two screens pointed at each other and the only
+   way out was the ID number, which is exactly what it looked like from inside.
+
+   TWO CHANGES, AND THE SECOND IS THE ONE THAT MATTERS.
+
+   1. A FOURTH OPTION, ON BUSINESS ACCOUNTS ONLY.
+
+      Identity document now reads: South African ID, Passport, Company
+      registration number, Other approved identity document. Choosing the third
+      swaps the lower half of the form to the business name, the type of
+      business and the registration number, and the button becomes Add this
+      business. A personal account still sees three options and never sees a
+      company field.
+
+      A sole proprietor, partnership or informal trader has no registration
+      number and is still never asked for one.
+
+   2. THE BUSINESS CAN BE RECORDED BEFORE THE PERSON IS VERIFIED.
+
+      Capturing an entity is not verifying it. Writing down a name and a
+      registration number proves nothing on its own, so there was nothing to
+      protect by refusing it, and refusing it is what created the loop.
+
+      WHAT DID NOT CHANGE, AND MUST NOT: a company registration number does not
+      verify a person and does not move a limit. It says a company is on a
+      register anybody can search. It says nothing about who is holding the
+      phone. The business is recorded as unverified and stays that way, and it
+      cannot be submitted for verification until a person is verified behind it.
+
+   Proven in verification/business-registration-option.js, driven in a real
+   browser: a business account sees four options and a personal account sees
+   three, the form swaps, the business is written with its registration number,
+   the person is STILL unverified afterwards, the business is unverified, the
+   submit is refused with a reason a person can read, and a sole proprietor is
+   accepted with no number at all. 9 checks.
+
+   A test fails the build if that branch is ever pointed at the personal
+   verification endpoint, or if it ever tells a customer their identity is
+   verified.
+
 
 THE EVENT POSTER: VISIBLE ON THE SHARED LINK, RIGHT SHAPE, AND CHANGEABLE
 
@@ -99,25 +148,17 @@ THE SECURITY TIP SCREEN IS BACK AFTER SIGN-IN
    pass, including closing a sheet, the Pay hub, and a dialog over a sheet.
 
 
-ONE LINE ADDED FOR BUSINESS ACCOUNTS
+THE BUSINESS NOTE THAT v416 ADDED IS NOW THE OPTION ITSELF
 
-   "Verify your identity" verifies a natural person, so it has no company
-   field. A business owner opening it saw three document choices, none of them
-   a company registration number, and nothing telling them where that number
-   goes. It read as a gap rather than a boundary.
+   v416 added one sentence to "Verify your identity" on a business account,
+   telling the owner that their registration number belonged on a different
+   screen. That was honest, and it was not enough: the screen it pointed at
+   would not show its form until the owner had already verified themselves,
+   so the sentence sent people to a door that was locked from the other side.
 
-   On a business account the screen now carries one extra sentence: this
-   screen verifies you as a person, and the business and its registration
-   number are verified separately under Business Verification in the profile.
-
-   Nothing else on that screen moved. The identity document list is still
-   South African ID, passport and other approved identity document, and a
-   company registration number is deliberately not among them: it proves a
-   company is on a register and proves nothing about who is holding the phone,
-   so accepting one here would let a business reach a higher monthly limit
-   with no person verified at all. A test fails the build if it is ever added.
-
-   Personal accounts see no change.
+   The sentence is replaced by the fourth option described at the top of these
+   notes. A business owner can now act on that screen rather than be redirected
+   from it. Personal accounts see no change at all.
 
 
 EVERYTHING BELOW ARRIVED IN v413, AND SHIPS WITH THIS UPLOAD
@@ -201,7 +242,8 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   693 API tests, 98 service-journey checks across both account types with
+   696 API tests, 9 business registration checks driven in a real browser,
+   98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
    feel checks and 12 sign-in journey checks driven in a real browser, 7
    shared-link poster checks, 10 landing swipe checks and 8 modal-route
@@ -209,11 +251,13 @@ WHAT PROVES IT
 
 UPLOAD NOTES
 
-   Replace the whole app directory as usual. The asset stamp moves to ?v=417
+   Replace the whole app directory as usual. The asset stamp moves to ?v=418
    in index.html and service-worker.js and the cache name becomes
-   titopay-pwa-v417-event-poster, so no customer can be served a cached bundle.
+   titopay-pwa-v418-business-registration, so no customer can be served a
+   cached bundle.
 
-   Requires api.zip build 41, which carries the poster replace endpoint. The
-   poster on the shared link and the corrected dimensions in the form need no
-   API change at all; the Replace poster control reports a clear error on an
-   older API rather than failing silently. admin.zip is unchanged.
+   UPLOAD api.zip BUILD 42 WITH IT. The company registration option needs it:
+   on build 41 the API still refuses to record a business until the owner has
+   verified their own identity, so the fourth option would show a refusal
+   rather than working. The poster changes need no API change at all.
+   admin.zip is unchanged.

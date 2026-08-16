@@ -248,13 +248,24 @@ async function loadAuthorisedBusiness(userId, businessId) {
 // business reuses the identity already verified on the account, which is why
 // adding one cannot create a duplicate personal KYC record and cannot trip the
 // duplicate-document refusal.
-async function requireVerifiedPerson(userId) {
+async function loadPerson(userId) {
   const { rows } = await pool.query(
     "SELECT id, full_name, basic_verified_at, kyc_document_type, kyc_issuing_country FROM users WHERE id = $1",
     [userId]
   );
   const person = rows[0];
   if (!person) throw new AppError(404, "Account not found.");
+  return person;
+}
+
+// VERIFYING the entity still needs a verified person, and that has not moved.
+// CAPTURING the entity does not, and used to: a business owner could not so
+// much as type their company registration number until they had verified
+// themselves, which meant the only screen they could reach asked for an ID
+// number and nothing else. Recording a name and a registration number verifies
+// nothing on its own, so there is nothing to protect by refusing it.
+async function requireVerifiedPerson(userId) {
+  const person = await loadPerson(userId);
   if (!person.basic_verified_at) {
     throw new AppError(409,
       "Verify your own identity first. A business is registered by a verified person, and you only ever do that once.");
@@ -263,12 +274,13 @@ async function requireVerifiedPerson(userId) {
 }
 
 // Registering the ENTITY. The authorised person is attached as a relationship,
-// with the role they hold. No personal document is asked for here, because the
-// person has already been verified and asking again would create a second
-// identity for the same human being.
+// with the role they hold. No personal document is asked for here: either the
+// person is already verified, in which case asking again would create a second
+// identity for the same human being, or they are not yet, in which case this
+// row waits as unverified until they are.
 async function createBusinessProfile(auth, payload = {}) {
   await ensureBusinessSchema();
-  const person = await requireVerifiedPerson(auth.userId);
+  const person = await loadPerson(auth.userId);
 
   const type = businessTypeInfo(payload.businessType);
   const businessName = cleanText(payload.businessName, 160);
@@ -433,7 +445,7 @@ async function businessVerificationOverview(auth) {
       // Said plainly so the app never has to imply a second check is coming.
       note: person.basic_verified_at
         ? "Your identity is verified. You do not need to verify it again for any business you add."
-        : "Verify your own identity first. You only ever do that once, whatever the business."
+        : "Add your business and its registration number now if you like. It waits here until you verify your own identity, which you only ever do once, whatever the business."
     },
     businesses: await listMyBusinesses(auth.userId),
     businessTypes: Object.entries(BUSINESS_TYPES).map(([key, info]) => ({

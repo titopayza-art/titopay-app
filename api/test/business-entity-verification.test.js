@@ -198,15 +198,40 @@ test("a business cannot be seen or submitted by someone with no relationship to 
   assert.equal(response.status, 404);
 });
 
-test("a business is registered by a verified person, and the app is told which", async () => {
+test("the business can be captured before the person is verified, and waits", async () => {
+  // CAPTURING is not VERIFYING. Refusing to let an owner so much as type their
+  // company registration number until they had verified themselves left them on
+  // a screen that asked for an ID number and offered nothing else.
   const overview = await (await call("GET", "/v1/business/verification", unverified.token)).json();
   assert.equal(overview.person.identityVerified, false);
-  assert.match(overview.person.note, /only ever do that once/i);
+  assert.match(overview.person.note, /only ever do once/i);
+  assert.match(overview.person.note, /Add your business and its registration number now/i,
+    "the screen has to say the business can be filled in first, or nobody will try");
+
   const response = await addBusiness(unverified.token, {
-    businessName: `${TAG} Too Early`, businessType: "sole_proprietor", role: "owner"
+    businessName: `${TAG} Early Bird`, businessType: "private_company",
+    registrationNumber: "2021/778899/07", role: "owner"
   });
+  assert.equal(response.status, 201, "an unverified person may record their business");
+  const created = (await response.json()).business;
+  assert.equal(created.registrationNumber, "2021/778899/07");
+  assert.equal(created.verificationStatus, "unverified", "and it is recorded as unverified, never as verified");
+});
+
+test("but it cannot be VERIFIED until the person is", async () => {
+  // The whole safety of the change rests here. A registration number is a
+  // public register entry; on its own it identifies nobody.
+  const mine = await (await call("GET", "/v1/business/verification", unverified.token)).json();
+  const business = mine.businesses.find((item) => /Early Bird/.test(item.businessName));
+  assert.ok(business, "the captured business should be listed");
+  const response = await call("POST",
+    `/v1/business/verification/businesses/${business.id}/submit`, unverified.token, {});
   assert.equal(response.status, 409);
   assert.match((await response.json()).error || "", /Verify your own identity first/i);
+
+  const { rows } = await pool.query("SELECT basic_verified_at FROM users WHERE id = $1", [unverified.id]);
+  assert.equal(rows[0].basic_verified_at, null,
+    "recording a company registration number must never verify the person");
 });
 
 test("KYB is its own axis and never quotes a limit as automatic", async () => {

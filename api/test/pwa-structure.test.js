@@ -392,28 +392,51 @@ test("every iOS startup image the page declares is a whole file at the size it c
   }
 });
 
-test("the identity screen tells a business where its registration number goes", () => {
-  // "Verify your identity" verifies a natural person, so it has no company
-  // field and never will: a registration number proves a company is on a
-  // register and proves nothing about who is holding the phone. A business
-  // owner looking for it was told nothing at all, which reads as a gap rather
-  // than a boundary. The document list is deliberately NOT touched.
-  const screen = source.slice(source.indexOf("async function openIdentityVerificationModal"),
-    source.indexOf('data-form="basic-verify"'));
-  assert.match(screen, /state\.accountType === "business"/,
-    "the note is shown to a business account only");
-  assert.match(screen, /verified separately, under Business Verification/,
-    "and it names the screen that does collect it");
+test("a business account sees four options, a personal account sees three", () => {
+  // A business owner with only a company number in front of them was looking at
+  // a form that offered an ID number and nothing else, so the registration
+  // number is now a fourth choice HERE, where they are already standing.
+  const select = source.slice(source.indexOf('<select id="bv-doc" name="documentType">'),
+    source.indexOf('<select id="bv-doc" name="documentType">') + 600);
+  assert.match(select, /value="sa_id"/);
+  assert.match(select, /value="passport"/);
+  assert.match(select, /value="other"/);
+  assert.match(select, /value="company_registration"/, "the fourth option is missing");
+  // It is gated on the account type in the same expression that renders it, so
+  // a personal account cannot be shown a company field.
+  assert.match(select, /state\.accountType === "business" \?[^:]*company_registration/,
+    "the company option must be rendered only for a business account");
+});
 
-  const form = source.slice(source.indexOf('<select id="bv-doc" name="documentType">'),
-    source.indexOf('<select id="bv-doc" name="documentType">') + 400);
-  assert.match(form, /value="sa_id"/);
-  assert.match(form, /value="passport"/);
-  assert.match(form, /value="other"/);
-  assert.doesNotMatch(form, /registration|company|business/i,
-    "a company registration number is not an identity document and must never "
-    + "appear in this list: it would let a business reach a higher limit with "
-    + "no person verified at all");
+test("a company registration number never verifies a person", () => {
+  // THE ONE RULE THIS FEATURE RESTS ON. A registration number says a company is
+  // on a register anyone can search. It says nothing about who is holding the
+  // phone. If this branch were ever pointed at /v1/compliance/basic-verify, a
+  // business would reach a higher limit with no person verified at all.
+  const submit = source.slice(source.indexOf("async function submitBasicVerify"),
+    source.indexOf("async function submitBasicVerify") + 2200);
+  const companyBranch = submit.slice(submit.indexOf('documentType === "company_registration"'),
+    submit.indexOf("let body;"));
+  assert.ok(companyBranch.length > 100, "the company branch is missing from submitBasicVerify");
+  assert.match(companyBranch, /\/v1\/business\/verification\/businesses/,
+    "the company option must post to the business register");
+  assert.doesNotMatch(companyBranch, /basic-verify/,
+    "a company registration number must never be submitted as a personal identity document");
+  assert.doesNotMatch(companyBranch, /identity is verified/i,
+    "and must never tell the customer their identity was verified");
+});
+
+test("an unregistered business type is never asked for a registration number", () => {
+  // A spaza, a hawker or a freelancer has no CIPC number. Requiring one would
+  // shut the very customers this app is for out of their own business.
+  const registered = source.slice(source.indexOf("const REGISTERED_BUSINESS_TYPES"),
+    source.indexOf("const REGISTERED_BUSINESS_TYPES") + 260);
+  for (const key of ["private_company", "public_company", "close_corporation", "non_profit", "cooperative", "trust"]) {
+    assert.match(registered, new RegExp(`"${key}"`), `${key} has a registration number`);
+  }
+  for (const key of ["sole_proprietor", "informal_trader", "partnership"]) {
+    assert.doesNotMatch(registered, new RegExp(`"${key}"`), `${key} has no registration number and must not be required to give one`);
+  }
 });
 
 test("a route change is not mistaken for a back gesture", () => {

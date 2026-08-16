@@ -392,6 +392,9 @@ const routeScrollPositions = new Map();
 // already reserves its height, so the top of the grid is the top of the
 // document.
 let servicesNavPending = false;
+// The business types that HAVE a registration number. A spaza, a hawker or a
+// freelancer does not, and is never asked for one.
+const REGISTERED_BUSINESS_TYPES = new Set(["private_company", "public_company", "close_corporation", "non_profit", "cooperative", "trust"]);
 window.addEventListener("scroll", syncTopbarScrollState, { passive: true });
 // ---------------------------------------------------------------------------
 // The system back gesture belongs to the sheet on top
@@ -1366,7 +1369,7 @@ async function openIdentityVerificationModal() {
     <div class="modal-head">
       <div><p class="eyebrow">Limits &amp; Verification</p><h2>Verify your identity</h2>
         <p class="lead">Use your South African ID, your passport, or another approved identity document.</p>
-        ${state.accountType === "business" ? `<p class="lead">This screen verifies you as a person, so there is no company field on it. Your business and its registration number are verified separately, under Business Verification in your profile.</p>` : ""}</div>
+        ${state.accountType === "business" ? `<p class="lead">On a business account you can also start from the company registration number. That one records the business itself, which is a separate check from the person, and both are shown on this screen once they are done.</p>` : ""}</div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="basic-verify">
@@ -1375,10 +1378,40 @@ async function openIdentityVerificationModal() {
         <select id="bv-doc" name="documentType">
           <option value="sa_id">South African ID</option>
           <option value="passport">Passport</option>
+          ${state.accountType === "business" ? `<option value="company_registration">Company registration number</option>` : ""}
           <option value="other">Other approved identity document</option>
         </select>
-        <small class="field-hint">No South African ID? Verify with your passport or another approved identity document instead.</small>
+        <small class="field-hint">${state.accountType === "business"
+    ? "No South African ID? Use your passport or another approved identity document. Choose company registration number to record the business itself instead."
+    : "No South African ID? Verify with your passport or another approved identity document instead."}</small>
       </div>
+      ${state.accountType === "business" ? `
+      <div class="field" data-doc-field="company" hidden>
+        <label for="bv-biz-name">Registered or trading name</label>
+        <input id="bv-biz-name" name="businessName" maxlength="160" autocomplete="organization" placeholder="The name of the business">
+      </div>
+      <div class="field" data-doc-field="company" hidden>
+        <label for="bv-biz-type">Type of business</label>
+        <select id="bv-biz-type" name="businessType">
+          <option value="private_company">Private company (Pty) Ltd</option>
+          <option value="close_corporation">Close corporation (CC)</option>
+          <option value="public_company">Public company Ltd</option>
+          <option value="non_profit">Non profit organisation</option>
+          <option value="cooperative">Co-operative</option>
+          <option value="trust">Trust</option>
+          <option value="sole_proprietor">Sole proprietor</option>
+          <option value="partnership">Partnership</option>
+          <option value="informal_trader">Informal trader</option>
+          <option value="other">Other</option>
+        </select>
+        <small class="field-hint">A sole proprietor, partnership or informal trader has no registration number, and is never asked for one.</small>
+      </div>
+      <div class="field" data-doc-field="company" hidden>
+        <label for="bv-biz-reg">Company registration number</label>
+        <input id="bv-biz-reg" name="registrationNumber" maxlength="40" autocomplete="off" placeholder="2020/123456/07">
+        <small class="field-hint">The number issued to the BUSINESS, as on the registration certificate. Never a personal identity number.</small>
+      </div>
+      <p class="field-hint" data-doc-field="company" hidden>Recording the business does not verify you as a person. Your own document is still needed before limits move, and you only ever give it once, whatever the business.</p>` : ""}
       <div class="field" data-doc-field="sa_id">
         <label for="bv-id">SA ID number</label>
         <input id="bv-id" name="idNumber" inputmode="numeric" maxlength="13" placeholder="13 digits">
@@ -1398,8 +1431,29 @@ async function openIdentityVerificationModal() {
         <input id="bv-dob" name="dateOfBirth" type="date" autocomplete="bday">
         <small class="field-hint">As it appears on the document.</small>
       </div>
-      <button class="btn primary" type="submit">${icon("shield")} Verify my identity</button>
+      <button class="btn primary" type="submit" data-basic-verify-submit>${icon("shield")} Verify my identity</button>
     </form>`);
+  syncBasicVerifyFields();
+}
+
+// Three shapes on one form now, not two. A company registration number is not
+// an identity document and does not pretend to be: choosing it swaps the whole
+// lower half of the form and says what it will do.
+function syncBasicVerifyFields() {
+  const select = document.querySelector('form[data-form="basic-verify"] select[name="documentType"]');
+  if (!select) return;
+  const form = select.closest("form");
+  const shown = select.value === "company_registration" ? "company"
+    : select.value === "sa_id" ? "sa_id" : "intl";
+  form.querySelectorAll("[data-doc-field]").forEach((field) => {
+    field.hidden = field.dataset.docField !== shown;
+  });
+  const button = form.querySelector("[data-basic-verify-submit]");
+  if (button) {
+    button.innerHTML = shown === "company"
+      ? `${icon("shield")} Add this business`
+      : `${icon("shield")} Verify my identity`;
+  }
 }
 
 async function openLimitsVerificationModal() {
@@ -1502,6 +1556,26 @@ async function openLimitsVerificationModal() {
 }
 async function submitBasicVerify(form, data) {
   const documentType = data.documentType || "sa_id";
+  // A company registration number verifies the BUSINESS, so it goes to the
+  // business register and never to /v1/compliance/basic-verify. Nothing here
+  // sets the person's verified flag: a CIPC number says a company is on a
+  // public register and says nothing at all about who is holding the phone.
+  if (documentType === "company_registration") {
+    const businessName = String(data.businessName || "").trim();
+    const businessType = String(data.businessType || "private_company").trim();
+    const registrationNumber = String(data.registrationNumber || "").trim();
+    if (businessName.length < 2) throw new Error("Enter the name of the business.");
+    if (REGISTERED_BUSINESS_TYPES.has(businessType) && !registrationNumber) {
+      throw new Error("Enter the registration number exactly as it appears on the registration certificate.");
+    }
+    const body = { businessName, businessType, role: "owner" };
+    if (registrationNumber) body.registrationNumber = registrationNumber;
+    await api("/v1/business/verification/businesses", { method: "POST", body });
+    showToast("Business added. Submit it for verification from Business Verification in your profile.");
+    await openBusinessVerificationModal();
+    render();
+    return;
+  }
   let body;
   if (documentType === "sa_id") {
     if (!String(data.idNumber || "").trim()) throw new Error("Enter your SA ID number.");
@@ -1519,14 +1593,18 @@ async function submitBasicVerify(form, data) {
   render();
 }
 
-// BUSINESS VERIFICATION IS A DIFFERENT SCREEN, ON PURPOSE.
+// BUSINESS VERIFICATION IS A DIFFERENT CHECK, ON PURPOSE.
 //
-// Verify your identity is for a HUMAN BEING and asks for a human being's
-// document. It is not touched by any of this, and a company registration
-// number never appears on it, because a company does not have an ID number and
-// a person is not a company.
+// A business account can now START from the company registration number on the
+// Verify your identity screen, because a business owner who has only a company
+// number in front of them should not be staring at a form that offers nothing
+// but an ID number. What that option does is come HERE: it records the entity.
 //
-// This screen has two halves, and keeping them apart is the whole point:
+// It does not verify the person, and it must never be made to. A registration
+// number says a company is on a register anyone can search. It says nothing
+// about who is holding the phone, so on its own it can lift no limit.
+//
+// The two halves stay apart, and keeping them apart is the whole point:
 //
 //   BUSINESS ENTITY    the business's own name, type and registration number,
 //                      where its type has one. A spaza, a hawker or a
@@ -1604,8 +1682,8 @@ async function openBusinessVerificationModal() {
       <h3 class="tier-section-label section-gap">Your businesses</h3>
       ${businesses.map(businessEntityBlock).join("")}` : ""}
 
-    ${person.identityVerified ? `
-      <h3 class="tier-section-label section-gap">${businesses.length ? "Add another business" : "Register your business"}</h3>
+    <h3 class="tier-section-label section-gap">${businesses.length ? "Add another business" : "Register your business"}</h3>
+      ${person.identityVerified ? "" : `<p class="level-note">You can fill this in now. The business waits as unverified until your own identity is verified, and only then can it be submitted.</p>`}
       <form class="form-grid" data-form="business-profile">
         <div class="field">
           <label for="bp-name">Registered or trading name</label>
@@ -1628,10 +1706,12 @@ async function openBusinessVerificationModal() {
           <select id="bp-role" name="role">
             ${roles.map((role) => `<option value="${esc(role.key)}"${role.key === "owner" ? " selected" : ""}>${esc(role.label)}</option>`).join("")}
           </select>
-          <small class="field-hint">Your identity is already verified and is not collected again.</small>
+          <small class="field-hint">${person.identityVerified
+    ? "Your identity is already verified and is not collected again."
+    : "Your own identity is verified once, separately, and is never collected on this form."}</small>
         </div>
         <button class="btn primary" type="submit">${icon("shield")} Add this business</button>
-      </form>` : ""}
+      </form>
 
     <p class="level-fineprint">${esc(overview.limitsNote || "")}</p>
   `);
@@ -4196,11 +4276,7 @@ function onChange(event) {
   // its number, issuing country and date of birth.
   const kycDocType = event.target.closest('form[data-form="basic-verify"] select[name="documentType"]');
   if (kycDocType) {
-    const form = kycDocType.closest("form");
-    const intl = kycDocType.value !== "sa_id";
-    form.querySelectorAll("[data-doc-field]").forEach((field) => {
-      field.hidden = field.dataset.docField === "intl" ? !intl : intl;
-    });
+    syncBasicVerifyFields();
     return;
   }
   const businessTypeSelect = event.target.closest('form[data-form="business-profile"] select[name="businessType"]');

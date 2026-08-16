@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 41;
+const API_BUILD = 42;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  42: "A business can record its company registration number before the owner "
+      + "has verified their own identity. CAPTURING the entity is not VERIFYING "
+      + "it, and refusing the first until the second was done left a business "
+      + "owner on a screen that offered an ID number and nothing else. Nothing "
+      + "about verification moved: a business still cannot be submitted, and no "
+      + "limit still moves, until a person is verified behind it.",
   41: "An organiser can replace the poster on an event that is already selling. "
       + "Everything else on an approved event still goes through admin review; "
       + "the poster is the shop window and a wrong one is a broken event the "
