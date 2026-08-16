@@ -87,6 +87,16 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
 
   try {
     await integrity.ensureIntegritySchema();
+    // ONE SWEEP CHECKS THE 500 MOST RECENTLY ACTIVE WALLETS, which is right in
+    // production and wrong for a harness sharing a database that other
+    // harnesses keep adding wallets to: past roughly five hundred, the wallets
+    // seeded below fall outside the window and a real detection reads as a
+    // failure. Widened for this run and removed in the finally block, so the
+    // harness measures the detector rather than how full the sandbox is.
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, updated_at)
+       VALUES ('money_integrity_config', '{"sweepWalletLimit":5000}'::JSONB, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`);
     const payer = await seedUser("Payer", { balance: 10000 });
     const payee = await seedUser("Payee", { balance: 0 });
 
@@ -245,6 +255,7 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     server.close();
     const ids = users.map((u) => u.id);
     await pool.query("DELETE FROM platform_settings WHERE key = 'compliance_tier_limits'").catch(() => {});
+    await pool.query("DELETE FROM platform_settings WHERE key = 'money_integrity_config'").catch(() => {});
     await pool.query("DELETE FROM money_integrity_alerts WHERE user_id = ANY($1::UUID[]) OR wallet_id IN (SELECT id FROM wallets WHERE user_id = ANY($1::UUID[]))", [ids]).catch(() => {});
     await pool.query("DELETE FROM reconciliation_exceptions WHERE transaction_id IN (SELECT id FROM transactions WHERE user_id = ANY($1::UUID[]))", [ids]).catch(() => {});
     await pool.query("DELETE FROM reconciliation_runs WHERE triggered_by = ANY($1::UUID[]) OR scope = 'provider:harness'", [ids]).catch(() => {});

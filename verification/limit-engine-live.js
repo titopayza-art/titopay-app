@@ -124,7 +124,7 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
 
     // 3. A REFUSAL STATES REMAINING CAPACITY, NEVER A LEGAL THRESHOLD.
     const tooBig = await call(spender.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 90000, recipient: `@${shop.username}`, idempotencyKey: `big-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 12000, recipient: `@${shop.username}`, idempotencyKey: `big-${TAG}` });
     assert.equal(tooBig.status, 403);
     const message = String(tooBig.data.error || "");
     assert.match(message, /most you can send in one payment right now/i);
@@ -132,7 +132,7 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     // the letters f-i-c-a, and a naive test would fail on correct copy.
     assert.doesNotMatch(message, /\bFICA\b|\bSARB\b|statutory|legally required|required by law/i,
       "a refusal never invokes the law");
-    assert.match(message, /R80000\.00|R80 000/, "the refusal quotes what IS possible");
+    assert.match(message, /R10000\.00|R10 000/, "the refusal quotes what IS possible");
     ok("a refusal states the remaining capacity and never claims a legal threshold");
 
     // 4. PRODUCT RULES NARROW ONE RAIL ONLY. A gift is capped tighter than

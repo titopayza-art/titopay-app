@@ -56,38 +56,57 @@ const { writeAuditLog } = require("./audit-service");
 const { verifyIdentity, normalizeVerificationStatus } = require("../providers/kyc-provider");
 
 const DEFAULT_CONFIG = {
-  // null means no standing limit at that tier.
+  // null means no standing limit for that rail at that level.
   //
   // THREE LEVELS, AND ONLY THREE. Enhanced due diligence is NOT a fourth: it
   // is a review that can open on any level, not a rung anyone climbs to.
   //
-  //   Unverified      R25 000 a month
-  //   Basic verified  R200 000 a month
-  //   Fully verified  no standing monthly limit
+  //   Unverified      R25 000 cumulative transaction volume a month
+  //   Basic verified  R200 000 cumulative transaction volume a month
+  //   Fully verified  no fixed monthly product limit
   //
-  // THE LADDER IS A PRODUCT DECISION, NOT A LEGAL ONE, and this ladder is set
-  // ABOVE the assurance the platform currently holds rather than at it. That
-  // is a deliberate business call, taken with the trade-off stated:
+  // THE MONTHLY FIGURE IS A TRANSACTION-VOLUME LIMIT AND NOTHING ELSE.
+  //
+  // This is the distinction that is easiest to lose and most expensive to
+  // lose: monthlySend and monthlyReceive measure VOLUME MOVED over a calendar
+  // month, derived from wallet_ledger. They are not the same thing as, and
+  // are deliberately never set from, the four other rails on this object:
+  //
+  //   singleTransaction  one payment, at the moment it is made
+  //   dailySend          a rolling 24 hour window
+  //   singleWithdrawal / monthlyWithdraw
+  //                      CASH OUT specifically, which is where fraud realises
+  //   maxBalance         stored value HELD in the wallet, a float and
+  //                      safeguarding question, not a volume one
+  //
+  // A wallet that moves R200 000 through it in a month is not a wallet that
+  // may hold R200 000, and a customer who may move that much over thirty days
+  // is not a customer who may move it in one payment. Those four rails keep
+  // their own values, set on their own reasoning, and raising a monthly
+  // volume limit must never drag them up with it.
+  //
+  // THE LADDER IS SET ABOVE THE ASSURANCE THE PLATFORM CURRENTLY HOLDS, which
+  // is a deliberate business decision, taken with the trade-off stated:
   //
   //   Unverified means NOTHING is known about the customer. No document, no
   //   name checked against anything, no screening hit possible on an identity
-  //   that was never given. R25 000 a month through such an account is what
-  //   the platform has chosen to carry, and it is carried by monitoring and
-  //   by the risk engine rather than by identity.
+  //   that was never given.
   //
   //   Basic verified today proves only that someone entered a well-formed
   //   document number no other account is using. There is no Home Affairs
-  //   match, no document image and no liveness check. R200 000 a month rests
-  //   on that, until an identity verification provider is wired in behind the
-  //   KYC capability, at which point the assurance finally matches the number.
+  //   match, no document image and no liveness check. That changes when a
+  //   verification provider is configured behind the KYC capability.
   //
-  // Money sent to an unverified wallet beyond its capacity is still held for
-  // claim rather than refused, so nobody loses a payment to one. Risk is
-  // still applied LAST by the engine, so an elevated or high risk account is
-  // narrowed on every level including the top one. And every number here is
-  // console-editable without a deploy: if the exposure reads differently once
-  // real volume arrives, it is changed in an afternoon, versioned and
-  // reversible.
+  // What carries the difference in the meantime is everything OTHER than the
+  // tier: the per-payment, daily, withdrawal and balance rails below; risk
+  // banding, which the engine applies LAST so it narrows every level
+  // including the top one; transaction monitoring; screening; ongoing due
+  // diligence; and any open compliance review. A level is never on its own a
+  // permission to transact.
+  //
+  // Money sent beyond a recipient's capacity is still held for claim rather
+  // than refused, so nobody loses a payment to a limit. Every number here is
+  // console-editable without a deploy, versioned and reversible.
   //
   // None of these is a statutory FICA or SARB threshold. They are TitoPay
   // operational limits under its RMCP.
@@ -95,45 +114,61 @@ const DEFAULT_CONFIG = {
     0: {
       label: "Unverified",
       description: "Registration only. Verify your identity for higher limits.",
+      // MONTHLY TRANSACTION VOLUME.
       monthlyReceive: 25000,
       monthlySend: 25000,
-      // The internal proportions of this rung are unchanged; only its size
-      // moved. Per payment is half the month, a day is four fifths of it, and
-      // cash out stays the tightest rail, because withdrawal is where fraud
-      // realises and an unverified account is where it is cheapest to attempt.
-      singleTransaction: 12500,
-      dailySend: 20000,
-      singleWithdrawal: 5000,
-      monthlyWithdraw: 15000,
-      // Two months of receiving. A wallet must never be able to hold many
-      // months of what it is allowed to take in, and the card top-up rail is
-      // the only way it could.
-      maxBalance: 50000
+      // THE OTHER RAILS, ON THEIR OWN REASONING. Unchanged by the monthly
+      // figure moving, because nothing about them changed: a payment from an
+      // account whose holder is unknown is exactly as risky as it was.
+      singleTransaction: 2500,
+      dailySend: 4000,
+      singleWithdrawal: 1000,
+      monthlyWithdraw: 3000,
+      // Stored value, not volume. An account nobody has identified has no
+      // business holding a large float, whatever it is allowed to move.
+      maxBalance: 10000
     },
     1: {
       label: "Basic verified",
-      description: "Identity verified. Higher everyday wallet limits.",
+      description: "Identity verified. Higher monthly transaction limits.",
+      // MONTHLY TRANSACTION VOLUME.
       monthlyReceive: 200000,
       monthlySend: 200000,
-      // Per payment stays the deliberate friction: it is the control that
-      // costs honest customers the least and fraud the most, so it remains a
-      // fraction of the month rather than equal to it.
-      singleTransaction: 80000,
-      dailySend: 160000,
-      singleWithdrawal: 80000,
-      monthlyWithdraw: 200000,
-      // Two months of receiving, on the same coherence rule as the rung below.
-      maxBalance: 400000
+      // THE OTHER RAILS, ON THEIR OWN REASONING. Per payment stays the
+      // deliberate friction: it is the control that costs honest customers
+      // the least and fraud the most, and it is the one that does not become
+      // safer because a monthly ceiling rose.
+      singleTransaction: 10000,
+      dailySend: 20000,
+      singleWithdrawal: 10000,
+      // Set on cash-out reasoning, not inherited: this rail happened to equal
+      // the monthly figure under the old ladder, and leaving it there would
+      // have carried that coincidence forward as if it meant something.
+      monthlyWithdraw: 30000,
+      // Stored value, not volume, and deliberately far below the monthly
+      // figure: moving R200 000 through a wallet over a month is a different
+      // proposition from parking it there.
+      maxBalance: 50000
     },
     2: {
       label: "Fully verified",
-      description: "Full FICA verification. No standing wallet limits, with activity subject to ongoing monitoring.",
-      // NO STANDING LIMIT ON ANY RAIL. This is not the same as unlimited, and
-      // the difference matters: risk is applied last, so an account under an
-      // elevated, high risk or EDD banding gains real ceilings here (see
-      // DEFAULT_RISK_BANDS), and monitoring, screening and ongoing due
-      // diligence all keep running. What this level removes is the STANDING
-      // cap, not the supervision.
+      description: "Full FICA verification. No fixed monthly transaction limit, with activity subject to ongoing monitoring.",
+      // NO FIXED MONTHLY PRODUCT LIMIT. That is not a promise of unrestricted
+      // activity and must never be implemented as one. What is removed here
+      // is TitoPay's own standing monthly cap. What still applies, on every
+      // transaction, at this level exactly as at any other:
+      //
+      //   - risk banding, applied LAST by the engine, which gives this level
+      //     real ceilings the moment an account's risk status is raised (see
+      //     DEFAULT_RISK_BANDS in limit-engine.js)
+      //   - transaction monitoring: velocity, structuring and pattern checks
+      //   - sanctions and designation screening
+      //   - enhanced due diligence, which can open on any level
+      //   - ongoing customer due diligence review
+      //   - account status: a restricted or suspended account transacts
+      //     nothing regardless of level
+      //   - product rules, which only ever narrow
+      //   - whatever the payment or payout provider itself will accept
       monthlyReceive: null,
       monthlySend: null,
       singleTransaction: null,

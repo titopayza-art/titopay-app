@@ -86,7 +86,7 @@ test("the flow never brands basic verification as SA-only", () => {
   // The approved wording is "Identity verified", wherever it appears.
   assert.doesNotMatch(COMPLIANCE, /SA ID verified/);
   assert.doesNotMatch(APP, /SA ID verified/);
-  assert.match(COMPLIANCE, /Identity verified\. Higher everyday wallet limits\./);
+  assert.match(COMPLIANCE, /Identity verified\. Higher monthly transaction limits\./);
   // The app offers the document choice and the passport fields.
   assert.match(APP, /South African ID<\/option>/);
   assert.match(APP, /Passport<\/option>/);
@@ -134,7 +134,7 @@ test("the wallet card shows status, not tier arithmetic, with one door", () => {
   const limitCopy = APP.slice(APP.indexOf("function limitRow"), APP.indexOf("async function submitBasicVerify"));
   assert.doesNotMatch(limitCopy.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n"),
     /[Uu]nlimited/, "no wallet limit is ever offered to a customer as unlimited");
-  assert.match(APP, /No standing monthly limit on sending, receiving or your wallet balance\. \$\{supervision\}/,
+  assert.match(APP, /No fixed monthly transaction limit\. \$\{supervision\}/,
     "the one place that says there is no cap says supervision continues in the same breath");
   assert.match(APP, /const supervision = "Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply\."/);
   assert.match(APP, /function openLimitsVerificationModal/);

@@ -1,45 +1,71 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 31   (GET /health reports this — check it after upload)
-PWA bundle: v409 (titopay-pwa-v409-three-levels)
+API build: 32   (GET /health reports this — check it after upload)
+PWA bundle: v410 (titopay-pwa-v410-monthly-volume)
 Admin console: admin-console-v87 (UNCHANGED in this build; no need to re-upload)
 
 WHAT CHANGED
 
-1. LIMITS. THREE LEVELS, and the whole ladder moved up:
+1. LIMITS. THREE LEVELS, and the monthly figure is a TRANSACTION VOLUME
+   limit and nothing else.
 
-       Unverified       R25 000 a month   (was R5 000)
-       Basic verified   R200 000 a month  (was R25 000)
-       Fully verified   no standing limit on any rail
+       Unverified       R25 000 cumulative volume a month   (was R5 000)
+       Basic verified   R200 000 cumulative volume a month  (was R25 000)
+       Fully verified   no fixed monthly transaction limit
 
    Enhanced due diligence is NOT a fourth level and is not described as one:
    it is a review that can open on any level, and the account keeps working
    and keeps its level while it runs.
 
-   The per-payment, per-day, withdrawal and maximum-balance rails on the two
-   limited levels moved with their monthly figure and kept their original
-   proportions, so the ladder stays coherent (a day never allows more than a
-   month, one payment never exceeds a day, cash out is never looser than
-   paying). Basic verified is now R80 000 per payment and R160 000 per day.
+   CORRECTION TO BUILD 31. That build scaled the per-payment, daily,
+   withdrawal and wallet-balance rails alongside the monthly figure, which
+   quietly asserted that a wallet allowed to MOVE R200 000 over a month may
+   also HOLD R200 000, and may move R80 000 of it in a single payment. Those
+   are four different questions with four different risks. All four rails are
+   back on their own values and their own reasoning, unchanged from where
+   they were before build 31 and unaffected by the monthly figure:
+
+                        per payment   per day   cash out (single/month)   max balance
+       Unverified          R2 500     R4 000      R1 000 / R3 000           R10 000
+       Basic verified     R10 000    R20 000     R10 000 / R30 000          R50 000
+       Fully verified        none      none         none / none                none
+
+   (The one exception: basic verified monthly withdrawal is R30 000 rather
+   than the R25 000 it was, because R25 000 was only ever that number by
+   coincidence with the old monthly figure, and carrying a coincidence
+   forward makes it look like a decision.)
+
+   A test now fails the build if any of those four rails is ever set to a
+   published monthly figure, or rises to within half of the month it sits
+   inside.
+
+   TIER 3 IS "NO FIXED MONTHLY LIMIT", NOT "NO CONTROLS". What is removed is
+   TitoPay's own standing monthly cap. What still applies at that level, and
+   is asserted in the test suite rather than only documented: risk banding
+   (the engine applies risk LAST, so a raised risk status gives that level
+   real ceilings on every rail), transaction monitoring, sanctions and
+   designation screening, enhanced due diligence, ongoing customer due
+   diligence, account status, product rules, and whatever the payment or
+   payout provider itself will accept.
 
    READ THIS BEFORE YOU DEPLOY. This ladder is set deliberately ABOVE the
    identity assurance the platform currently holds, and the config file says
    so in full. Unverified means NOTHING is known about the customer, and
-   R25 000 a month now passes through such an account. Basic verified proves
-   only that someone entered a well-formed document number no other account
-   is using: no Home Affairs match, no document image, no liveness check, and
-   R200 000 a month now rests on that. The exposure is carried by monitoring
-   and the risk engine rather than by identity until a verification provider
-   is wired in behind KYC_PROVIDER.
+   R25 000 of monthly volume now passes through such an account. Basic
+   verified proves only that someone entered a well-formed document number no
+   other account is using: no Home Affairs match, no document image, no
+   liveness check, and R200 000 of monthly volume now rests on that. What
+   carries the difference in the meantime is the four rails above plus risk,
+   monitoring and screening, until a verification provider is configured
+   behind KYC_PROVIDER.
 
-   Two knock-on effects to review with compliance, both console-editable and
-   NEITHER changed by me, because inventing risk parameters is not mine to do:
-     - monitoring.velocityAmount24h is R150 000, and basic verified may now
-       send R160 000 in a day. Ordinary permitted behaviour can therefore
-       raise a velocity signal.
-     - edd.singleTransactionReview is R100 000, above the new R80 000
-       per-payment cap, so the value trigger for EDD is now only reachable
-       at fully verified.
+   One knock-on effect to review with compliance, console-editable and NOT
+   changed by me, because setting risk parameters without an approved
+   specification is not mine to do: edd.singleTransactionReview is R100 000,
+   above the R10 000 per-payment cap at basic verified, so the EDD value
+   trigger is only reachable at fully verified. (The velocity concern raised
+   against build 31 no longer applies: basic verified is back to R20 000 a
+   day, well under the R150 000 velocity mark.)
 
    These are TitoPay operational limits under its RMCP, editable in the
    console without a deploy, versioned and reversible. No figure is a

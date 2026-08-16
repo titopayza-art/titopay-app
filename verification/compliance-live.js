@@ -96,18 +96,18 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
 
     // 1. Tier 0 binds on both send checks.
     const bigSingle = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 15000, recipient: `@${friend.username}` });
+      { serviceCode: "wallet_transfer", amount: 3000, recipient: `@${friend.username}` });
     assert.equal(bigSingle.status, 403);
     // The refusal states what IS possible, and never invokes the law.
-    assert.match(String(bigSingle.data.error || ""), /one payment right now is R12500\.00/i);
+    assert.match(String(bigSingle.data.error || ""), /one payment right now is R2500\.00/i);
     const okSend = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 9000, recipient: `@${friend.username}` });
+      { serviceCode: "wallet_transfer", amount: 2000, recipient: `@${friend.username}` });
     assert.ok([200, 201].includes(okSend.status), JSON.stringify(okSend.data));
     const secondSend = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 9000, recipient: `@${friend.username}`, idempotencyKey: `b-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 1800, recipient: `@${friend.username}`, idempotencyKey: `b-${TAG}` });
     assert.ok([200, 201].includes(secondSend.status), JSON.stringify(secondSend.data));
     const overDaily = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 2500, recipient: `@${friend.username}`, idempotencyKey: `c-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 500, recipient: `@${friend.username}`, idempotencyKey: `c-${TAG}` });
     assert.equal(overDaily.status, 403, JSON.stringify(overDaily.data));
     assert.match(String(overDaily.data.error || ""), /today's sending capacity left/i);
     ok("tier 0 binds: the single payment and daily send limits both refuse with the numbers spelled out");
@@ -222,9 +222,9 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
 
     // 9. The withdrawal gate binds per tier.
     const bigWithdrawal = await call(newbie.token, "POST", "/v1/payouts/withdrawals",
-      { amount: 90000, idempotencyKey: `w-${TAG}`, bankAccountNumber: "1234567890", bankCode: "250655", accountHolder: "Newbie Harness" });
+      { amount: 30000, idempotencyKey: `w-${TAG}`, bankAccountNumber: "1234567890", bankCode: "250655", accountHolder: "Newbie Harness" });
     assert.equal(bigWithdrawal.status, 403, JSON.stringify(bigWithdrawal.data));
-    assert.match(String(bigWithdrawal.data.error || ""), /withdraw at once right now is R80000\.00/i);
+    assert.match(String(bigWithdrawal.data.error || ""), /withdraw at once right now is R10000\.00/i);
     ok("withdrawal limits bind by tier before any wallet or provider work");
 
     // 10. The pre-limit nudge is a real notification.

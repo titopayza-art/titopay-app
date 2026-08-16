@@ -1200,17 +1200,20 @@ function remainingTile(label, value, { wide = false } = {}) {
 // hard-coded slots in it. The top level has no standing limit on any rail, so
 // there is no number to print and the old copy would have printed one anyway.
 //
-// "No standing monthly limit" is the honest way to say what the engine does,
-// and it is not the same word as unlimited. Risk is applied LAST, so an
-// account whose risk banding has been raised gains real ceilings even here,
-// and monitoring, screening and ongoing due diligence keep running whatever
-// the level. Saying "unlimited" on a screen would be a promise the engine is
-// deliberately built not to keep. (The internal banding names themselves
-// never appear anywhere in this file, deliberately: a test enforces it.)
+// The top level has NO FIXED MONTHLY LIMIT, which is a precise statement and
+// not the same claim as "unlimited". What is removed is TitoPay's own monthly
+// product cap. Risk is applied LAST by the engine, so an account whose risk
+// banding has been raised gains real ceilings even at that level, and
+// monitoring, screening, ongoing due diligence and account status keep
+// running whatever the level. The sentence therefore always carries what
+// still applies, in the same breath, so it can never be read as a promise
+// that activity can never be reviewed or restricted. (The internal banding
+// names themselves never appear anywhere in this file, deliberately: a test
+// enforces it.)
 function verificationLimitsLine(entry) {
   const supervision = "Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply.";
   if (entry.monthlyReceive === null && entry.monthlySend === null) {
-    return `No standing monthly limit on sending, receiving or your wallet balance. ${supervision}`;
+    return `No fixed monthly transaction limit. ${supervision}`;
   }
   const monthly = [];
   if (entry.monthlyReceive !== null) monthly.push(`receive up to ${money(entry.monthlyReceive)}`);

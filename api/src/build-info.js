@@ -19,10 +19,18 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 31;
+const API_BUILD = 32;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  32: "The monthly figure is a TRANSACTION VOLUME limit and nothing else. " +
+      "Build 31 scaled the per-payment, daily, withdrawal and wallet-balance " +
+      "rails alongside it, which quietly said a wallet that may MOVE R200 000 " +
+      "over a month may also HOLD it, and may move it in one payment. Those " +
+      "four rails are back on their own values and their own reasoning: " +
+      "unverified R25 000 a month, basic verified R200 000 a month, fully " +
+      "verified no fixed monthly limit, with per payment, per day, cash out " +
+      "and stored value set independently of all three.",
   31: "The ladder is three levels and the whole ladder moved: unverified " +
       "R25 000 a month, identity verified R200 000 a month, fully verified " +
       "no standing limit on any rail. Set deliberately ABOVE the identity " +

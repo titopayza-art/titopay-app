@@ -67,6 +67,38 @@ test("limits layer verification, product, earned standing and risk, in that orde
   assert.ok(Number(contained.limits.singleTransaction) > 0, "on every rail, not just the monthly one");
 });
 
+test("a monthly VOLUME limit is never reused as a balance, daily or withdrawal limit", () => {
+  // The distinction that is easiest to lose. monthlySend and monthlyReceive
+  // measure volume moved over a calendar month. maxBalance is stored value.
+  // singleTransaction is one payment. dailySend is a rolling day. The
+  // withdrawal rails are cash out. Setting any of them FROM the monthly
+  // figure is how a platform accidentally lets a wallet hold, or move in one
+  // payment, what it was only ever meant to move over thirty days.
+  const MONTHLY = [25000, 200000];
+  for (const level of ["0", "1"]) {
+    const t = DEFAULT_CONFIG.tiers[level];
+    assert.ok(MONTHLY.includes(t.monthlySend), `tier ${level}: monthly volume is one of the two published figures`);
+    assert.equal(t.monthlySend, t.monthlyReceive, `tier ${level}: one monthly transaction figure, both directions`);
+    for (const key of ["singleTransaction", "dailySend", "singleWithdrawal", "monthlyWithdraw", "maxBalance"]) {
+      assert.ok(!MONTHLY.includes(t[key]),
+        `tier ${level}: ${key} is a different concept and must not carry a monthly transaction figure`);
+      assert.ok(Number(t[key]) < Number(t.monthlySend),
+        `tier ${level}: ${key} is narrower than the month it sits inside`);
+    }
+  }
+  // And a wallet may never HOLD what it is allowed to move in a month: stored
+  // value is a float and safeguarding question, not a volume one.
+  for (const level of ["0", "1"]) {
+    const t = DEFAULT_CONFIG.tiers[level];
+    assert.ok(t.maxBalance <= t.monthlyReceive / 2,
+      `tier ${level}: a wallet is not a place to park a month's throughput`);
+  }
+  // The engine enforces them as different things too: balance headroom is its
+  // own evaluation, and monthly volume comes from the ledger, not the balance.
+  assert.match(ENGINE, /async function evaluateBalanceHeadroom/);
+  assert.match(COMPLIANCE, /FROM wallet_ledger wl[\s\S]{0,140}DATE_TRUNC\('month', NOW\(\)\)/);
+});
+
 test("three levels, and the ladder climbs on every rail", () => {
   // THREE. Enhanced due diligence is a review that can open on any level, not
   // a fourth rung, so a fourth tier must never appear in config.
@@ -88,6 +120,21 @@ test("three levels, and the ladder climbs on every rail", () => {
     assert.ok(Number(basic[key]) > Number(unverified[key]),
       `${key}: verifying must be worth doing`);
   }
+  // "No fixed monthly limit" is never implemented as "no controls". Every one
+  // of these still applies at the top level, and the config says so.
+  const source0 = read("src", "services", "compliance-service.js");
+  for (const control of ["risk banding", "transaction monitoring", "screening",
+    "enhanced due diligence", "ongoing customer due diligence", "account status"]) {
+    assert.ok(source0.toLowerCase().includes(control),
+      `the top level remains subject to ${control}`);
+  }
+  // Proven, not just documented: risk gives the unlimited level real ceilings.
+  const top = engine.buildEffectiveLimits({
+    config: DEFAULT_CONFIG, tier: 2, riskStatus: "high_risk", earned: { applies: false, multiplier: 1 } });
+  for (const key of ["monthlySend", "monthlyReceive", "singleTransaction", "dailySend"]) {
+    assert.ok(Number(top.limits[key]) > 0, `high risk bounds ${key} at the top level`);
+  }
+
   // And no number here may be presented as a statutory threshold.
   const source = read("src", "services", "compliance-service.js");
   assert.doesNotMatch(source, /R?(25|200)[ ,]?000[^\n]{0,60}(statutory|required by law|FICA limit)/i);
@@ -130,9 +177,9 @@ test("the ladder is set above the assurance, and says so out loud", () => {
   // accident. The file has to state the trade-off, so that raising the
   // numbers can never be mistaken for having raised the assurance.
   const source = read("src", "services", "compliance-service.js");
-  assert.match(source, /ABOVE the assurance the platform currently holds/);
-  assert.match(source, /no document image and no liveness check/);
-  assert.match(source, /Unverified means NOTHING is known about the customer/);
+  assert.match(source, /ABOVE the assurance the platform currently holds/i);
+  assert.match(source, /no document image and no liveness check/i);
+  assert.match(source, /Unverified means NOTHING is known about the customer/i);
   // Per payment stays a fraction of the month on both limited rungs: it is
   // the control that costs honest customers the least and fraud the most.
   for (const key of ["0", "1"]) {
@@ -228,7 +275,7 @@ test("the customer can see what they can still do", () => {
   assert.match(APP, /async function openVerificationLevelsModal/);
   // Never unlimited, and never a bare statement that a level has no cap.
   assert.doesNotMatch(APP, /No fixed monthly limits/);
-  assert.match(APP, /No standing monthly limit on sending, receiving or your wallet balance/);
+  assert.match(APP, /No fixed monthly transaction limit/);
   assert.match(APP, /still apply/, "and the supervision that continues is said in the same sentence");
   assert.match(APP, /Not a level you choose/, "enhanced due diligence is a process, not a tier");
   assert.doesNotMatch(APP, /Your FICA limits/);
