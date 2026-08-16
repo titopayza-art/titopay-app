@@ -25,7 +25,7 @@ const API_BUILD = 37;
 const BUILD_NOTES = {
   37: "Schema repair that never rewrites pricing (scripts/repair-schema.js); the "
       + "diagnosis stops counting foreign keys across every schema and stops "
-      + "pointing at db/init.js; /health reports a version that moves.",
+      + "pointing at db/init.js. No response shape changed.",
   36: "App only: the landing screen stops fighting the browser for a gesture " +
       "it was always going to lose. iOS Safari reserves a strip down each side " +
       "for its own back navigation and `touch-action` does not govern it, so a " +
@@ -195,11 +195,16 @@ module.exports = {
   API_BUILD,
   BUILD_NOTES,
   buildInfo() {
-    // appVersion was the string "1.0" and had been since the first deploy: it
-    // never moved, so /health reported the same version for build 15 and build
-    // 36 and answered nothing. Anyone reading it had to know to ignore it.
-    // It now carries the build, which is the number that actually changes, and
-    // is kept as a field because callers may still be reading the name.
-    return { build: API_BUILD, appVersion: `build-${API_BUILD}` };
+    // appVersion is the literal "1.0" and has been since the first deploy, so
+    // it reports the same thing for every build and answers nothing. `build`
+    // is the field that moves and the one to read.
+    //
+    // LEAVE IT ALONE. It was changed to carry the build, and that was a change
+    // to a live response shape made because someone ASKED WHAT THE FIELD MEANT,
+    // which is not a request to change it. Anything outside this repository
+    // may be reading it -- an uptime check, a monitor, a script on the host --
+    // and none of that is visible from here. Changing it needs a decision, not
+    // an inference.
+    return { build: API_BUILD, appVersion: "1.0" };
   }
 };

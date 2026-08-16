@@ -140,14 +140,13 @@ test("the diagnosis counts one table's foreign keys, not every schema's", () => 
   assert.match(query, /ns\.nspname = 'public'/, "and to the one the API actually writes to");
 });
 
-test("the health response reports a version that moves", () => {
-  // appVersion was the literal "1.0" and had been since the first deploy, so
-  // /health answered the same thing for build 15 and build 36. Anyone reading
-  // it had to already know to ignore it.
+test("the health version field is left exactly as it is", () => {
+  // appVersion was changed to carry the build number because the field was
+  // asked about. A question is not a request, and /health is a live response
+  // shape that things outside this repository may read. Restored, and pinned
+  // so it is not "improved" again without someone deciding to.
   const { buildInfo, API_BUILD } = require("../src/build-info");
   const info = buildInfo();
-  assert.equal(info.build, API_BUILD);
-  assert.notEqual(info.appVersion, "1.0");
-  assert.match(String(info.appVersion), new RegExp(String(API_BUILD)),
-    "the version a person reads carries the build a person needs");
+  assert.equal(info.appVersion, "1.0", "the response shape is not ours to change unasked");
+  assert.equal(info.build, API_BUILD, "the build is the field that moves");
 });

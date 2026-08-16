@@ -36,12 +36,11 @@ BUILD 37 — THREE REPAIRS TO THE REPAIR TOOLS THEMSELVES
       database; the number was wrong. Now scoped to public, which is what the
       columns line beside it always did.
 
-   3. /health REPORTED A VERSION THAT NEVER MOVED.
-
-      appVersion was the literal string "1.0" and had been since the first
-      deploy, so build 15 and build 36 answered identically and anyone reading
-      it had to know to ignore it. It now reads `build-37`. The `build` field
-      is unchanged and is still the number to check.
+   NOTHING ELSE CHANGED. /health still answers appVersion "1.0", exactly as
+   build 36 does. That field is a placeholder that has never moved, and it was
+   briefly changed here to carry the build; that was a change to a live
+   response shape made because the field was asked about, which is not a
+   request to change it, and it has been put back.
 
    NO SCHEMA CHANGE, no new environment variable, no dependency change. Upload
    api.zip, restart, done.
