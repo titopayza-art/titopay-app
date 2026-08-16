@@ -149,6 +149,41 @@ async function applyServiceCopyFixups() {
       WHERE service_code = 'business-ticketing-staff'
         AND service_name = 'Ticketing Staff'`
   );
+  await openTicketsToBusinessOnce();
+}
+
+// Event Tickets was seeded business_visible = FALSE, which hid the tile from
+// business accounts even though every step behind it already worked for a
+// business wallet: a business books a stand at an expo, sends staff to a
+// conference, buys a table at a fundraiser. Correcting DEFAULT_SERVICES alone
+// never reaches an installation that already has the row, for the same reason
+// the rename above is pushed out here rather than left in the seed.
+//
+// It runs ONCE, ever, and records that it has. An admin who afterwards decides
+// to hide the tile from businesses keeps that decision: this will not run a
+// second time and quietly turn it back on. That is the difference between
+// correcting a default and overriding a choice.
+//
+// It never throws. This sits on the path of every catalogue read, and a
+// platform_settings hiccup must not take the whole service list down with it.
+const TICKETS_BUSINESS_FIXUP_KEY = "service_fixup_tickets_business_visible";
+async function openTicketsToBusinessOnce() {
+  try {
+    const applied = await pool.query(
+      "SELECT 1 FROM platform_settings WHERE key = $1 LIMIT 1", [TICKETS_BUSINESS_FIXUP_KEY]);
+    if (applied.rows.length) return;
+    const { rowCount } = await pool.query(
+      `UPDATE service_config
+          SET business_visible = TRUE, updated_at = NOW()
+        WHERE service_code = 'tickets' AND business_visible = FALSE`);
+    await pool.query(
+      `INSERT INTO platform_settings (key, value)
+       VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING`,
+      [TICKETS_BUSINESS_FIXUP_KEY, JSON.stringify({ appliedAt: new Date().toISOString(), rowsChanged: rowCount })]);
+    if (rowCount) console.info("[services] Event Tickets is now available to business accounts");
+  } catch (error) {
+    console.error("[services] could not open Event Tickets to business accounts", { message: error.message });
+  }
 }
 
 function servicePayload(payload = {}) {

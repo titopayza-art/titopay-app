@@ -19,10 +19,15 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 39;
+const API_BUILD = 40;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  40: "Event Tickets actually appears for business accounts on upload. Build 39 "
+      + "corrected the default, but the seed inserts with ON CONFLICT DO NOTHING "
+      + "so it never reached a database that already had the row. The correction "
+      + "is now pushed out the same way the service renames are, once, recorded, "
+      + "so an admin who later hides the tile keeps that decision.",
   39: "Event Tickets is offered to business accounts as well as personal ones. "
       + "Buying a ticket was never personal-only: the whole path already worked "
       + "for a business wallet, the tile was simply hidden. Selling tickets is "

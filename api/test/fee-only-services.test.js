@@ -244,3 +244,34 @@ test("a business can reach Event Tickets, and still cannot sell without the orga
     "the app's offline catalogue must agree with the API's default");
   assert.equal(offline.personal_visible, true);
 });
+
+test("the corrected Event Tickets default reaches a database that already has the row", () => {
+  // ensureDefaultServices inserts with ON CONFLICT DO NOTHING, so changing the
+  // flag in DEFAULT_SERVICES alone would never reach an installation that
+  // already has a tickets row. That is why this codebase pushes such
+  // corrections out through applyServiceCopyFixups, and this one goes there
+  // too: uploading the build is enough, with no SQL to run by hand.
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "src", "services", "service-management-service.js"), "utf8");
+  assert.match(source, /await openTicketsToBusinessOnce\(\);/,
+    "the fixup runs from applyServiceCopyFixups");
+
+  const fixup = source.slice(source.indexOf("async function openTicketsToBusinessOnce"),
+    source.indexOf("function servicePayload"));
+  assert.match(fixup, /business_visible = TRUE/);
+  assert.match(fixup, /AND business_visible = FALSE/,
+    "a row that is already visible is left alone");
+
+  // Applied once, ever. An admin who later hides the tile keeps that decision;
+  // correcting a default and overriding a choice are different things.
+  assert.match(fixup, /SELECT 1 FROM platform_settings WHERE key = \$1/,
+    "it checks whether it has run before");
+  assert.match(fixup, /INSERT INTO platform_settings/,
+    "and records that it has");
+
+  // It sits on the path of every catalogue read, so it must never throw.
+  assert.match(fixup, /try \{/);
+  assert.match(fixup, /catch \(error\)/);
+  assert.ok(fixup.indexOf("catch (error)") < fixup.lastIndexOf("}"),
+    "the whole body is guarded, not part of it");
+});

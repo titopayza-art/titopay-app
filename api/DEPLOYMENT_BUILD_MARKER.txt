@@ -1,8 +1,34 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 39   (GET /health reports this — check it after upload)
+API build: 40   (GET /health reports this — check it after upload)
 PWA bundle: v415 (titopay-pwa-v415-security-tip-restored)
 Admin console: admin-console-v89
+
+BUILD 40 — EVENT TICKETS APPEARS FOR BUSINESS ACCOUNTS ON UPLOAD
+
+   NOTHING TO RUN BY HAND. Upload api.zip, restart, and the tile is there.
+
+   Build 39 corrected the shipped default, but that was not enough on its own:
+   ensureDefaultServices inserts with ON CONFLICT DO NOTHING, so a corrected
+   default never reaches a database that already has the row, and every live
+   installation has one. That is why this codebase already pushes such
+   corrections out through applyServiceCopyFixups, which is where the rename of
+   Ticketing Staff to Event Scanners lives. This goes there too.
+
+   It runs on the first catalogue read after the restart, ONCE, and records in
+   platform_settings that it has run. So an admin who afterwards hides Event
+   Tickets from businesses keeps that decision: it will not be turned back on
+   at the next boot. Correcting a default and overriding a choice are different
+   things, and only the first is done here.
+
+   It cannot take the catalogue down. The whole body is wrapped, because it
+   sits on the path of every service list read; a failure logs and moves on.
+
+   Verified against a database put back into exactly the state production is
+   in: before the deploy business_visible was false, after the first catalogue
+   fetch it was true and the marker was set, a second fetch changed nothing,
+   an admin hiding the tile stuck, and a further fetch left it hidden.
+
 
 BUILD 39 — BUSINESSES CAN BUY EVENT TICKETS
 
@@ -22,18 +48,10 @@ BUILD 39 — BUSINESSES CAN BUY EVENT TICKETS
    business only, and the organiser gates (merchant profile, registration
    details, verification) are untouched.
 
-   IMPORTANT, THIS UPLOAD ALONE DOES NOT CHANGE YOUR LIVE APP.
-   ensureDefaultServices inserts with ON CONFLICT DO NOTHING, so this default
-   only reaches a database that has never seen the tickets row. Yours has one,
-   and it says business_visible = false. Set it directly:
-
-     node -e 'const{pool}=require("./src/db/pool");(async()=>{
-       const r=await pool.query("UPDATE service_config SET business_visible = TRUE, updated_at = NOW() WHERE service_code = $1 RETURNING service_code, personal_visible, business_visible",["tickets"]);
-       console.log(r.rows[0] || "no tickets row found");
-       await pool.end();})()'
-
-   Reversing it is the same command with FALSE. It touches one column on one
-   row and nothing else.
+   Build 40 above is what carries this to a database that already has the
+   tickets row, which is every live installation. To turn the tile back OFF
+   afterwards, set business_visible = FALSE on the tickets row and it stays
+   off.
 
 
 BUILD 38 — THE SCHEMA CAN APPLY ON AN OLDER POSTGRESQL AGAIN
