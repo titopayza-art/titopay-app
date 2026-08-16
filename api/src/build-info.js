@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 37;
+const API_BUILD = 38;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  38: "The schema can apply on an older PostgreSQL again. CREATE TRIGGER ... "
+      + "EXECUTE FUNCTION needs PostgreSQL 11, and schema.sql runs as ONE "
+      + "statement, so on an older server that syntax error rolled the whole "
+      + "file back and created nothing. Every table declared after it had been "
+      + "missing in production for months. EXECUTE PROCEDURE is the older "
+      + "spelling, identical for triggers, accepted by every release.",
   37: "Schema repair that never rewrites pricing (scripts/repair-schema.js); the "
       + "diagnosis stops counting foreign keys across every schema and stops "
       + "pointing at db/init.js. No response shape changed.",

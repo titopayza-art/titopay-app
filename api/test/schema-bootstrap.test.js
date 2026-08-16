@@ -150,3 +150,31 @@ test("the health version field is left exactly as it is", () => {
   assert.equal(info.appVersion, "1.0", "the response shape is not ours to change unasked");
   assert.equal(info.build, API_BUILD, "the build is the field that moves");
 });
+
+test("the schema uses trigger syntax every PostgreSQL version accepts", () => {
+  // CREATE TRIGGER ... EXECUTE FUNCTION requires PostgreSQL 11. On anything
+  // older it is a SYNTAX error, and because schema.sql runs as one statement a
+  // syntax error rolls the entire file back: not one table is created.
+  //
+  // That is exactly what happened on a production node. Every table declared
+  // before line 1762 existed and every table declared after it was missing,
+  // for months, because the file had silently stopped applying the day this
+  // syntax was introduced. The failure is invisible until someone runs the
+  // schema by hand, which is the day a table is needed.
+  //
+  // EXECUTE PROCEDURE is the older spelling, is semantically identical for
+  // triggers, and is still accepted by every PostgreSQL release to date. The
+  // schema already carries a gen_random_uuid() shim for old servers, so
+  // supporting them is a deliberate property of this file, not an accident.
+  assert.doesNotMatch(SCHEMA, /EXECUTE FUNCTION/,
+    "EXECUTE FUNCTION needs PostgreSQL 11 and silently voids the whole schema on older servers");
+  assert.match(SCHEMA, /FOR EACH ROW EXECUTE PROCEDURE titopay_record_tx_status\(\)/,
+    "the status-history triggers are still attached");
+  assert.equal((SCHEMA.match(/EXECUTE PROCEDURE titopay_record_tx_status/g) || []).length, 2,
+    "both the insert and the update trigger");
+
+  for (const file of ["email-centre-schema.sql", "hr-schema.sql"]) {
+    const sql = fs.readFileSync(path.join(__dirname, "..", "src", "db", file), "utf8");
+    assert.doesNotMatch(sql, /EXECUTE FUNCTION/, `${file} must not reintroduce it either`);
+  }
+});

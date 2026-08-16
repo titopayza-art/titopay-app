@@ -1759,11 +1759,11 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'titopay_tx_status_insert') THEN
     CREATE TRIGGER titopay_tx_status_insert AFTER INSERT ON transactions
-    FOR EACH ROW EXECUTE FUNCTION titopay_record_tx_status();
+    FOR EACH ROW EXECUTE PROCEDURE titopay_record_tx_status();
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'titopay_tx_status_update') THEN
     CREATE TRIGGER titopay_tx_status_update BEFORE UPDATE OF status ON transactions
-    FOR EACH ROW EXECUTE FUNCTION titopay_record_tx_status();
+    FOR EACH ROW EXECUTE PROCEDURE titopay_record_tx_status();
   END IF;
 END $$;
 

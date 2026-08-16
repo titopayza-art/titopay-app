@@ -1,8 +1,37 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 37   (GET /health reports this — check it after upload)
-PWA bundle: v413 (titopay-pwa-v413-native-back)
+API build: 38   (GET /health reports this — check it after upload)
+PWA bundle: v414 (titopay-pwa-v414-business-identity-note)
 Admin console: admin-console-v89
+
+BUILD 38 — THE SCHEMA CAN APPLY ON AN OLDER POSTGRESQL AGAIN
+
+   This is the one that matters, and it had been broken in production for
+   months without a single symptom until someone ran the schema by hand.
+
+   schema.sql attached two triggers with `FOR EACH ROW EXECUTE FUNCTION`.
+   That spelling requires PostgreSQL 11. On an older server it is a SYNTAX
+   error, and because the file runs as ONE statement a syntax error rolls the
+   entire file back: not one table is created, and the command reports the
+   error and exits.
+
+   The effect was silent and exact. Every table declared BEFORE that line
+   existed on the database. Every table declared AFTER it was missing. On the
+   production node that was compliance_config_versions, regulatory_report_events
+   and reconciliation_exceptions, which is why the Compliance Dashboard could
+   not load and Save Limits failed.
+
+   `EXECUTE PROCEDURE` is the older spelling. It is identical for triggers and
+   is still accepted by every PostgreSQL release to date, so the schema now
+   applies on old and new servers alike. Proven by dropping both triggers and
+   all three tables and re-running the repair: the triggers came back, the
+   tables came back, and the trigger still records an insert, still records a
+   status change, and still refuses to move a transaction out of `reversed`.
+
+   The file already carried a gen_random_uuid() shim for older servers, so
+   supporting them is a deliberate property of this schema. A test now fails
+   the build if EXECUTE FUNCTION reappears in any of the three schema files.
+
 
 BUILD 37 — THREE REPAIRS TO THE REPAIR TOOLS THEMSELVES
 
