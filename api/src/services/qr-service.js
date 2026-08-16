@@ -4,6 +4,7 @@ const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { writeAuditLog } = require("./audit-service");
 const { createTransaction } = require("./transaction-service");
+const { calculateFee, roundMoney } = require("./pricing-service");
 
 async function persistQr({ userId, codeType, amount = null, label = null, metadata = {}, expiresAt = null }) {
   const id = uuidv4();
@@ -228,6 +229,7 @@ async function getQrPaymentStatus(actor, rawQrId) {
   const received = row.net_amount === null || row.net_amount === undefined
     ? Number(row.amount)
     : Number(row.net_amount);
+  const merchantFee = roundMoney(Math.max(0, Number(row.amount) - received));
   return {
     qrId: qr.id,
     paid: true,
@@ -242,6 +244,9 @@ async function getQrPaymentStatus(actor, rawQrId) {
     // merchant was charged it.
     payerFee: Number(row.fee || 0),
     payerTotal: Number(row.total || 0),
+    // What the merchant was charged on this sale, so the slip can show it
+    // rather than leaving a gap between the sale price and the credit.
+    merchantFee,
     payer: {
       displayName: (payerIsBusiness && row.business_name) ? row.business_name : (row.full_name || ""),
       username: row.username || "",
@@ -311,13 +316,31 @@ async function payQr(actor, payload) {
     amount = Number(requested ?? 0);
   }
   if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "Amount must be greater than zero");
+  // TWO SIDES, PRICED SEPARATELY.
+  //
+  //   the customer pays   R1.50 + 1%, capped at R10, ON TOP of the amount
+  //   the merchant pays   1.5% of the amount, OUT OF what they are credited
+  //
+  // Both come from the pricing schedule, so an operator changes them in the
+  // admin console and neither is a number written into this file. The merchant
+  // rule has existed since the schedule was written and was read by nothing:
+  // every merchant was credited in full on every payment ever settled.
+  const merchantPricing = await calculateFee("merchant_qr_payment", amount);
+  const merchantFee = Math.min(roundMoney(merchantPricing.fee), amount);
   const tx = await createTransaction(actor, {
     serviceCode: "qr_payment",
     amount,
     recipient: qr.username,
     idempotencyKey: payload.idempotencyKey,
     merchantReceivesFee: false,
-    metadata: { qrId: qr.id, qrReference: qr.reference, merchantUserId: qr.user_id, qrPaymentFee: 0.50 }
+    recipientFee: merchantFee,
+    metadata: {
+      qrId: qr.id,
+      qrReference: qr.reference,
+      merchantUserId: qr.user_id,
+      merchantFeeServiceCode: "merchant_qr_payment",
+      merchantFeePercentage: Number(merchantPricing.percentageFee || 0)
+    }
   });
   await pool.query(
     "UPDATE transactions SET qr_code_id = $2, merchant_id = $3 WHERE id = $1",

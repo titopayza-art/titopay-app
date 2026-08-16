@@ -1,10 +1,63 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v425 (titopay-pwa-v425-soft-pos)
-Requires: api.zip build 48
+PWA bundle: v426 (titopay-pwa-v426-qr-pricing)
+Requires: api.zip build 49
 Admin console: admin-console-v89
 
-THE MERCHANT POS NOW BEHAVES LIKE A SOFT POS
+A QR PAYMENT NOW HAS TWO SIDES
+
+   Customer:  R1.50 + 1% of the sale, capped at R10, charged ON TOP.
+   Business:  1.5% of the sale, taken OUT OF what is credited.
+
+   What it was: a flat R0.50 from the customer, and nothing at all from the
+   business.
+
+   THE BUSINESS SIDE WAS NEVER CHARGED, BY ANYONE, EVER.
+
+   A merchant_qr_payment rule has sat in the pricing schedule since the day it
+   was written, at 1.7%. No code read it. payQr priced the customer's side and
+   credited the merchant the sale IN FULL, so every business on TitoPay has
+   been settled at 0% on every QR payment the platform has ever processed.
+   That is now a real charge, taken at settlement, on the same payment.
+
+   THE R0.50 FLOOR IN THE CODE IS GONE.
+
+   calculateFee ended with a hardcoded Math.max(fee, 0.50) for qr_payment, on
+   top of whatever the schedule said. An admin could set the QR fee to R0.20
+   in the console, see it saved, and customers would still be charged R0.50. A
+   floor is a schedule field (minimum_fee) and belongs there, not in code.
+   What the console says is now what the customer is charged.
+
+   HOW THE LIVE RULES MOVE.
+
+   applyQrPricingFixupOnce runs on boot, once, guarded on a platform_settings
+   key AND on the old values: a rule an admin has already changed away from
+   R0.50 or 1.7% is left exactly as the admin set it. Nothing is overwritten
+   twice, and the schedule stays the authority afterwards.
+
+   WHAT MOVES, ON A R250 SALE.
+
+      customer debited     R254.00   (R250.00 + R4.00)
+      business credited    R246.25   (R250.00 - R3.75)
+      TitoPay              R  7.75   (R4.00 + R3.75)
+
+   Verified cent by cent at R10, R50, R250, R850 and R5000 by
+   verification/qr-two-sided-pricing-live.js, on real payments through the
+   real service, checking on every one that debited - credited - revenue == 0.
+
+   THE SLIPS NOW SAY WHOSE FEE IS WHOSE.
+
+   The merchant's slip showed "Fees R0.00" and the customer's slip printed the
+   MERCHANT'S net as the customer's own figure, which on a R250 sale told a
+   customer who had just been debited R254.00 that they paid R246.25. The
+   merchant's slip carries the merchant's 1.5% and what reached the wallet;
+   the customer's carries their own fee and Total paid.
+
+   The review screen no longer invents a fee. It printed R0.50 whenever it had
+   no amount to quote on, which was right by accident when the fee was flat
+   and wrong at every amount now. Only the server quotes a fee.
+
+PREVIOUS BUILD — THE MERCHANT POS NOW BEHAVES LIKE A SOFT POS
 
    A till puts a code on screen, the customer pays, and the screen turns over
    with a slip. This one said "Waiting for payment..." until it expired, on

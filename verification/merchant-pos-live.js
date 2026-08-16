@@ -170,18 +170,32 @@ const balanceOf = async (id) => Number((await pool.query(
     ok("the till turns over by itself when the money lands", `status "${settled.status}", nothing clicked`);
 
     // 4. A slip, with the right figures on it.
+    //
+    // A QR payment is priced on both sides: the customer pays R1.50 + 1% on
+    // top, and the merchant 1.5% out of the credit. This slip is the
+    // MERCHANT'S, so Fees is the merchant's 1.5% and nothing else, and
+    // netAmount is what actually reached the wallet. The expected figures come
+    // from the live schedule rather than being typed in, so an admin changing
+    // a rate does not read here as the till having broken.
+    const merchantRate = (await require("../api/src/services/pricing-service")
+      .calculateFee("merchant_qr_payment", SALE)).fee;
+    const expectedFee = Math.round((Number(merchantRate) + Number.EPSILON) * 100) / 100;
+    const expectedNet = Math.round((SALE - expectedFee + Number.EPSILON) * 100) / 100;
     assert.ok(settled.receipt, "no slip was produced");
     assert.equal(Number(settled.receipt.amount), SALE);
-    assert.equal(Number(settled.receipt.netAmount), SALE,
-      `the slip says the merchant received R${settled.receipt.netAmount} on a R${SALE} sale`);
-    assert.equal(Number(settled.receipt.fees), 0, "the QR fee is the customer's, not the merchant's");
+    assert.equal(Number(settled.receipt.netAmount), expectedNet,
+      `the slip says the merchant received R${settled.receipt.netAmount} on a R${SALE} sale, expected R${expectedNet}`);
+    assert.equal(Number(settled.receipt.fees), expectedFee,
+      `the slip says the merchant paid R${settled.receipt.fees}, expected R${expectedFee}`);
+    assert.ok(Number(settled.receipt.payerFee) > Number(settled.receipt.fees),
+      "the slip is carrying the customer's fee as the merchant's");
     assert.equal(settled.receipt.status, "PAID");
     assert.match(settled.receipt.merchantName, new RegExp(TAG));
     ok("a slip is produced, and its figures are the merchant's",
       `received R${Number(settled.receipt.netAmount).toFixed(2)}, merchant fee R${Number(settled.receipt.fees).toFixed(2)}`);
 
     const merchantAfter = await balanceOf(merchant.id);
-    assert.equal(Number((merchantAfter - merchantBefore).toFixed(2)), SALE,
+    assert.equal(Number((merchantAfter - merchantBefore).toFixed(2)), expectedNet,
       "the wallet and the slip disagree about what was received");
     ok("and the wallet agrees with the slip", `+R${(merchantAfter - merchantBefore).toFixed(2)}`);
 

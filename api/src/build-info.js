@@ -19,10 +19,20 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 48;
+const API_BUILD = 49;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  49: "QR payments are priced on both sides. The customer pays R1.50 + 1% of "
+      + "the sale, capped at R10, on top of the amount; the business pays 1.5% "
+      + "of the sale, out of what it is credited. It was a flat R0.50 from the "
+      + "customer and nothing from the business: a merchant_qr_payment rule has "
+      + "sat in the schedule since it was written, at 1.7%, read by no code at "
+      + "all, so every business has been credited in full on every payment "
+      + "TitoPay has settled. The R0.50 floor that code applied on top of the "
+      + "schedule is gone too, so what an admin sets is now what customers are "
+      + "charged. A one-shot fixup moves the live rules and skips any rule an "
+      + "admin has already changed.",
   48: "GET /v1/qr/:id/status, the one question a till needs to ask. Make a Sale "
       + "was hunting the MERCHANT'S transaction list for the payment, and there "
       + "has never been such a row: a payment writes one transactions row owned "

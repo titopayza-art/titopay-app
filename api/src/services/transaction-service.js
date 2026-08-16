@@ -435,7 +435,8 @@ async function createTransaction(actor, payload) {
       "TitoPay could not find the wallet this payment is for, so nothing was taken from your wallet. "
       + "Check the recipient and try again, or contact Support if it continues.");
   }
-  const revenueWallet = preview.fee > 0 ? await getRevenueWallet() : null;
+  const revenueWallet = (preview.fee > 0 || Number(payload.recipientFee || 0) > 0)
+    ? await getRevenueWallet() : null;
   const txId = uuidv4();
   const reference = txReference();
   // preview.amount, not the request body. For every service except the
@@ -444,7 +445,31 @@ async function createTransaction(actor, payload) {
   // service it is what stops the customer being charged twice: the preview
   // says amount 0, fee 2.50, total 2.50, and the debit follows the preview.
   const chargedAmount = roundMoney(preview.amount);
-  const netAmount = roundMoney(payload.merchantReceivesFee ? chargedAmount - preview.fee : chargedAmount);
+  // THE RECIPIENT'S OWN FEE, TAKEN OUT OF WHAT THEY ARE CREDITED.
+  //
+  // A QR payment now has two sides: the customer pays R1.50 + 1% capped at R10
+  // on top of the amount, and the merchant is charged 1.5% of it out of
+  // settlement. Only the payer's side existed here; merchantReceivesFee simply
+  // moved the ONE fee from the payer to the recipient, so a merchant rate could
+  // not be expressed at all. A merchant_qr_payment rule has sat in the schedule
+  // since it was written, read by nothing, and every merchant has been credited
+  // in full on every payment TitoPay has ever settled.
+  //
+  // The double entry still balances exactly, which is the only thing that
+  // matters here:
+  //
+  //   payer debited     amount + payerFee
+  //   recipient credited amount - recipientFee
+  //   revenue credited   payerFee + recipientFee
+  //
+  // Zero for every service that does not pass one, so nothing else moves.
+  const recipientFee = feeOnly ? 0 : Math.max(0, roundMoney(Number(payload.recipientFee || 0)));
+  if (recipientFee > chargedAmount) {
+    throw new AppError(400, "The fee on this payment is larger than the payment itself.");
+  }
+  const netAmount = roundMoney(
+    payload.merchantReceivesFee ? chargedAmount - preview.fee : chargedAmount - recipientFee
+  );
   // Set inside the money transaction when the recipient's credit is held
   // for verification; read after commit to tell them about it.
   let pendingHold = null;
@@ -514,7 +539,7 @@ async function createTransaction(actor, payload) {
         debitTotal,
         reference,
         payload.recipient || null,
-        JSON.stringify({ ...payload.metadata, clientIdempotencyKey: idempotencyKey || payload.metadata?.clientIdempotencyKey || null, netAmount, recipientWalletId: recipientWallet?.id || null, ...(recipientWallet ? { recipientName: recipientWallet.full_name || null, recipientUsername: recipientWallet.username || null, recipientContact: recipientWallet.phone || recipientWallet.email || null } : {}) })
+        JSON.stringify({ ...payload.metadata, clientIdempotencyKey: idempotencyKey || payload.metadata?.clientIdempotencyKey || null, netAmount, payerFee: preview.fee, recipientFee, recipientWalletId: recipientWallet?.id || null, ...(recipientWallet ? { recipientName: recipientWallet.full_name || null, recipientUsername: recipientWallet.username || null, recipientContact: recipientWallet.phone || recipientWallet.email || null } : {}) })
       ]
     );
 
@@ -554,19 +579,27 @@ async function createTransaction(actor, payload) {
       });
     }
     if (revenueWallet) {
+      // Both sides of the fee land here, so the ledger balances against the
+      // payer's debit and the recipient's reduced credit.
+      const collected = roundMoney(preview.fee + recipientFee);
       await applyWalletMovement(client, {
         walletId: revenueWallet.id,
         transactionId: txId,
         entryType: "credit",
-        amount: preview.fee,
+        amount: collected,
         reference,
-        metadata: { serviceCode: normalizedServiceCode, source: "fee" }
+        metadata: {
+          serviceCode: normalizedServiceCode,
+          source: "fee",
+          payerFee: preview.fee,
+          recipientFee
+        }
       });
       await client.query(
         `INSERT INTO revenue_ledger
           (id, transaction_id, service_code, fee_collected, revenue_wallet_id)
          VALUES ($1,$2,$3,$4,$5)`,
-        [uuidv4(), txId, normalizedServiceCode, preview.fee, revenueWallet.id]
+        [uuidv4(), txId, normalizedServiceCode, collected, revenueWallet.id]
       );
     }
     if (recipientWallet?.user_id) {

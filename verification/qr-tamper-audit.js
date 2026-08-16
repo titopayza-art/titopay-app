@@ -71,6 +71,17 @@ const balanceOf = async (id) => Number((await pool.query(
 const scannedPayload = async (qrId) => (await pool.query(
   "SELECT payload FROM qr_codes WHERE id = $1", [qrId])).rows[0].payload;
 
+// A merchant is credited the SALE PRICE LESS THEIR OWN FEE. This audit is about
+// whether the price is the merchant's, so what it has to compare against is
+// what that price settles to, read from the live schedule rather than typed in:
+// a rate change is an admin's decision and must not read as a security finding.
+const round = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+async function creditFor(amount) {
+  const { fee } = await require("../api/src/services/pricing-service")
+    .calculateFee("merchant_qr_payment", amount);
+  return round(amount - Math.min(round(fee), amount));
+}
+
 (async () => {
   let passed = 0; const findings = [];
   const ok = (m, d = "") => { console.log(`  PASS  ${m}${d ? "  — " + d : ""}`); passed++; };
@@ -95,12 +106,14 @@ const scannedPayload = async (qrId) => (await pool.query(
     const before = { merchant: await balanceOf(merchant.id), attacker: await balanceOf(attacker.id) };
     const underpay = await pay(attacker, { qrId: sale.id, amount: 1, idempotencyKey: randomUUID() });
     const after = { merchant: await balanceOf(merchant.id), attacker: await balanceOf(attacker.id) };
+    const expectedCredit = await creditFor(200);
     const credited = Number((after.merchant - before.merchant).toFixed(2));
-    if (underpay.status === 200 && credited < 200) {
+    if (underpay.status === 200 && credited < expectedCredit) {
       fail("a payer can set their own price on a R200 sale",
         `paid ${underpay.status}, merchant credited R${credited.toFixed(2)} against R200.00 asked, and the code is now marked paid`);
-    } else if (underpay.status === 200 && credited === 200) {
-      ok("the amount on a dynamic QR is the merchant's, not the payer's", "an amount of 1 was ignored, R200.00 settled");
+    } else if (underpay.status === 200 && credited === expectedCredit) {
+      ok("the amount on a dynamic QR is the merchant's, not the payer's",
+        `an amount of 1 was ignored, R200.00 settled at R${expectedCredit.toFixed(2)}`);
     } else {
       ok("a payer cannot set their own price on a dynamic QR", `${underpay.status} ${underpay.body.error || ""}`);
     }
@@ -110,10 +123,11 @@ const scannedPayload = async (qrId) => (await pool.query(
     // code, paid properly, has to settle at the merchant's price.
     const honest = await pay(attacker, { qrId: sale.id, amount: 200, idempotencyKey: randomUUID() });
     const settled = Number(((await balanceOf(merchant.id)) - before.merchant).toFixed(2));
-    if (honest.status !== 200 || settled !== 200) {
+    if (honest.status !== 200 || settled !== expectedCredit) {
       fail("the honest payment no longer works", `${honest.status} ${honest.body.error || ""}, merchant +R${settled.toFixed(2)}`);
     } else {
-      ok("and the honest payment still settles at the merchant's price", "merchant +R200.00");
+      ok("and the honest payment still settles at the merchant's price",
+        `R200.00 sale, merchant +R${expectedCredit.toFixed(2)}`);
     }
     // Paying with no amount at all is the same as agreeing to the code's price.
     const replay = await pay(attacker, { qrId: sale.id, idempotencyKey: randomUUID() });

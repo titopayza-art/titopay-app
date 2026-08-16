@@ -150,6 +150,10 @@ async function applyServiceCopyFixups() {
         AND service_name = 'Ticketing Staff'`
   );
   await openTicketsToBusinessOnce();
+  // Priced changes ride the same one-shot mechanism, for the same reason: the
+  // approved schedule only reaches a database through db:init, which also
+  // overwrites every fee an operator has set by hand.
+  await require("./pricing-service").applyQrPricingFixupOnce();
 }
 
 // Event Tickets was seeded business_visible = FALSE, which hid the tile from

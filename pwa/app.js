@@ -10551,7 +10551,11 @@ function receiptRows(receipt) {
     ["Payment Method", receipt.paymentMethod || "QR Payment"],
     ["Amount", money(receipt.amount)],
     ["Fees", money(receipt.fees || 0)],
-    ["Net Amount", money(receipt.netAmount ?? (Number(receipt.amount || 0) - Number(receipt.fees || 0)))],
+    // A payer's slip and a merchant's slip both end in a single figure, but it
+    // is not the same figure: one is what left the wallet, the other is what
+    // arrived in it. The label follows the slip so neither has to be read
+    // backwards.
+    [receipt.netLabel || "Net Amount", money(receipt.netAmount ?? (Number(receipt.amount || 0) - Number(receipt.fees || 0)))],
     ["Payment Status", receipt.status || "PAID"]
   ];
 }
@@ -13767,7 +13771,12 @@ async function processQrPayment(data) {
       method: "POST",
       body: { service: "qr_payment", amount }
     })
-    : { preview: { amount: 0, fee: 0.50, total: 0.50, serviceCode: "qr_payment", serviceName: "QR Payment" } };
+    // No amount yet means an open code the payer still has to price, so there
+    // is no fee to state. This used to fabricate R0.50, which was the whole QR
+    // fee back when it was flat. The fee is R1.50 + 1% now, so a made-up figure
+    // would be wrong at every amount rather than right at one, and the server
+    // is the only thing that should ever quote it.
+    : { preview: { amount: 0, fee: 0, total: 0, serviceCode: "qr_payment", serviceName: "QR Payment" } };
   state.pendingQrPaymentReview = {
     idempotencyKey: createClientTransactionKey("qr-payment"),
     data: Object.assign({}, data),
@@ -13810,6 +13819,7 @@ function openQrPaymentReviewModal(context) {
   const preview = context.preview || {};
   const amountText = Number(preview.amount || 0) > 0 ? money(preview.amount) : "Amount from QR";
   const totalText = Number(preview.total || 0) > 0 ? money(preview.total) : "Confirmed by QR";
+  const feeText = Number(preview.amount || 0) > 0 ? money(Number(preview.fee || 0)) : "Confirmed by QR";
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">QR Payment Review</p><h2>Confirm QR payment</h2><p class="lead">No funds leave your wallet until you press Confirm.</p></div>
@@ -13821,7 +13831,7 @@ function openQrPaymentReviewModal(context) {
       ${settingsRow("QR ID", context.data.qrId, "scan")}
       ${context.qrDetails && context.qrDetails.label ? settingsRow("QR label", context.qrDetails.label, "tag") : ""}
       ${settingsRow("Amount", amountText, "wallet")}
-      ${settingsRow("TitoPay QR fee", money(Number(preview.fee || 0.50)), "shield")}
+      ${settingsRow("TitoPay QR fee", feeText, "shield")}
       ${settingsRow("Total debit", totalText, "withdraw")}
       ${settingsRow("Source wallet", displayWalletId(primaryWallet()) !== "Generating" ? `Wallet ${displayWalletId(primaryWallet())}` : `${state.accountType === "business" ? "Business" : "Personal"} wallet`, "wallet")}
       ${settingsRow("Date and time", formatDate(context.createdAt), "list")}
@@ -13898,7 +13908,18 @@ async function confirmReviewedQrPayment() {
       paymentMethod: "QR Payment",
       amount: paid,
       fees: Number(transaction.fee || transaction.fees || 0),
-      netAmount: Number(transaction.netAmount || transaction.net_amount || transaction.amount || paid || 0),
+      // THE CUSTOMER'S SLIP SHOWS THE CUSTOMER'S SIDE.
+      //
+      // netAmount on the response is the MERCHANT'S net, which is now the sale
+      // less the merchant's 1.5%. Printing it here told the customer they had
+      // paid R246.25 on a R250.00 sale that debited them R254.00. What the
+      // customer needs from their own slip is what left their wallet: the
+      // amount plus their fee, which is exactly what total already is.
+      netLabel: "Total paid",
+      netAmount: Number(
+        transaction.total
+        ?? (paid + Number(transaction.fee || transaction.fees || 0))
+      ),
       status: "PAID",
       receiptUrl: `https://app.titopay.co.za/#receipt-${encodeURIComponent(transaction.id || result.reference || context.data.qrId || Date.now())}`
     });
@@ -14231,6 +14252,7 @@ async function startMerchantSalePaymentPolling() {
             amount: status.amount,
             received: status.received,
             fee: status.payerFee,
+            merchantFee: status.merchantFee,
             customerName: status.payer?.displayName || ""
           });
           // Activity and the wallet card should agree with the slip.
@@ -14293,15 +14315,19 @@ function completeMerchantSale(transaction) {
 }
 function buildMerchantReceipt(sale, transaction = {}) {
   const amount = Number(transaction.amount ?? merchantSaleAmount());
-  // ON A QR PAYMENT THE FEE IS THE CUSTOMER'S. They are debited the amount plus
-  // R0.50 and the merchant is credited the amount IN FULL. The slip subtracted
-  // that fee from the merchant's takings, so a R250.00 sale printed as R249.50
-  // received, which is not what reached the wallet and not what the customer
-  // was charged either. The server now says what was received; the payer's fee
-  // is recorded separately so a slip can show it without implying the merchant
-  // paid it.
+  // A QR PAYMENT HAS TWO FEES AND THEY BELONG TO DIFFERENT PEOPLE.
+  //
+  // The customer is debited the amount plus R1.50 + 1% (capped at R10). The
+  // merchant is credited the amount less 1.5%. This slip is the merchant's, so
+  // Fees is the merchant's 1.5% and nothing else: showing the customer's fee
+  // here would read as money the business paid, which it did not.
+  //
+  // received comes from the server rather than being worked out here, so the
+  // slip cannot drift from the wallet if a rate ever changes. payerFee is kept
+  // alongside it so the customer's side can still be shown where it belongs.
   const received = Number(transaction.received ?? amount);
   const payerFee = Number(transaction.fee || transaction.fees || 0);
+  const merchantFee = Number(transaction.merchantFee ?? Math.max(0, amount - received));
   const paidAt = transaction.created_at || transaction.createdAt || transaction.paidAt || new Date().toISOString();
   return {
     id: `receipt-${transaction.id || sale.qr?.id || Date.now()}`,
@@ -14315,7 +14341,7 @@ function buildMerchantReceipt(sale, transaction = {}) {
     date: new Date(paidAt).toISOString(),
     paymentMethod: "QR Payment",
     amount,
-    fees: 0,
+    fees: merchantFee,
     payerFee,
     netAmount: received,
     status: "PAID",
@@ -14330,6 +14356,10 @@ function renderMerchantSaleSuccess(receipt) {
       <h2>Payment Successful</h2>
       <section class="activity-list">
         ${settingsRow("Amount", money(receipt.amount), "wallet")}
+        ${/* Only shown when the two figures differ, so a business on a zero
+             rate is not made to read an extra line saying nothing. */
+          Number(receipt.fees || 0) > 0 ? settingsRow("TitoPay fee", money(receipt.fees), "shield") : ""}
+        ${Number(receipt.fees || 0) > 0 ? settingsRow("Into your wallet", money(receipt.netAmount), "wallet") : ""}
         ${settingsRow("Merchant", receipt.merchantName, "store")}
         ${settingsRow("Reference", receipt.reference, "list")}
         ${settingsRow("Transaction ID", receipt.transactionId || "Recorded", "shield")}

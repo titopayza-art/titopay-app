@@ -192,9 +192,20 @@ const balanceOf = async (userId) => Number((await pool.query(
       assert.equal(paid.ok, true, `${label}: paying the scanned code failed — ${paid.error}`);
       const payerAfter = await balanceOf(payer.id);
       const ownerAfter = await balanceOf(owner.id);
-      assert.equal(Number((payerBefore - payerAfter).toFixed(2)), 150.5, `${label}: the payer moved the wrong amount`);
-      assert.equal(Number((ownerAfter - ownerBefore).toFixed(2)), 150, `${label}: the owner was credited the wrong amount`);
-      ok(`paying the scanned code settles correctly`, "payer -150.50, owner +150.00");
+      // A QR payment is priced on both sides: the payer pays R1.50 + 1% on top,
+      // the owner 1.5% out of the credit. Both figures come from the live
+      // schedule so that an admin changing a rate does not read here as a
+      // printed poster having stopped working.
+      const pricing = require("../api/src/services/pricing-service");
+      const round = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+      const payerFee = round((await pricing.calculateFee("qr_payment", 150)).fee);
+      const ownerFee = round((await pricing.calculateFee("merchant_qr_payment", 150)).fee);
+      assert.equal(Number((payerBefore - payerAfter).toFixed(2)), round(150 + payerFee),
+        `${label}: the payer moved the wrong amount`);
+      assert.equal(Number((ownerAfter - ownerBefore).toFixed(2)), round(150 - ownerFee),
+        `${label}: the owner was credited the wrong amount`);
+      ok(`paying the scanned code settles correctly`,
+        `payer -R${round(150 + payerFee).toFixed(2)}, owner +R${round(150 - ownerFee).toFixed(2)}`);
     }
 
     // The two instruments must never resolve into one another.

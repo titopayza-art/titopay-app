@@ -17,9 +17,12 @@ const APPROVED_PRICING_SCHEDULE = [
   ["withdraw_money_to_bank", "Withdraw Money to Bank", 7],
   ["cash_withdrawal", "Withdraw Cash", 10],
   ["withdraw_cash", "Withdraw Cash", 10],
-  ["qr_payment", "QR Pay", 0.50, 0.50],
-  ["qr_pay", "QR Pay", 0.50, 0.50],
-  ["customer_qr_payment", "Customer QR Payment", 0.50, 0.50],
+  // THE CUSTOMER SIDE OF A QR PAYMENT: R1.50 + 1%, capped at R10.
+  // flatFee 1.50, minimumFee 0 (the flat fee IS the floor), percentageFee 1,
+  // maximumFee 10. R50 -> R2.00, R250 -> R4.00, R850 and up -> R10.00.
+  ["qr_payment", "QR Pay", 1.50, 0, 1, 10],
+  ["qr_pay", "QR Pay", 1.50, 0, 1, 10],
+  ["customer_qr_payment", "Customer QR Payment", 1.50, 0, 1, 10],
   ["payment_request", "Payment Request"],
   ["request_money", "Payment Request"],
   ["bill_split", "Bill Split", 1],
@@ -44,8 +47,12 @@ const APPROVED_PRICING_SCHEDULE = [
   ["business_wallet", "Business Wallet"],
   ["business_registration", "Business Registration"],
   ["receive_payments", "Receive Payments"],
-  ["merchant_qr", "Merchant QR Payments", 0, 0, 1.7],
-  ["merchant_qr_payment", "Merchant QR Payments", 0, 0, 1.7],
+  // THE BUSINESS SIDE: 1.5% of every successful QR payment, taken out of what
+  // the merchant is credited. It was 1.7% and, more to the point, no code read
+  // it: the merchant was credited in full on every payment TitoPay has ever
+  // settled. It is charged from build 49.
+  ["merchant_qr", "Merchant QR Payments", 0, 0, 1.5],
+  ["merchant_qr_payment", "Merchant QR Payments", 0, 0, 1.5],
   ["make_a_sale", "Make a Sale", 0, 0, 1.7],
   // "payouts" is the code the business Payouts tile actually submits (see the
   // service catalogue). It was missing from the approved schedule, so a fee
@@ -334,6 +341,59 @@ async function getPricingRule(serviceCode) {
   return ensureDefaultPricingRule(normalizedCode);
 }
 
+// THE NEW QR PRICING, PUSHED ONCE TO A DATABASE THAT ALREADY HAS THE OLD ROWS.
+//
+// The schedule above is a DEFAULT: syncApprovedPricingSchedule only runs from
+// db:init, which also overwrites every other fee an operator has set, so it is
+// not a way to ship a price change. This is, and it is the same mechanism the
+// service copy fixups use: applied once, recorded in platform_settings, and
+// never applied again — so an operator who tunes these afterwards keeps their
+// numbers.
+//
+//   customer   R1.50 + 1%, capped at R10   (was a flat R0.50)
+//   merchant   1.5% of the amount          (was 1.7%, and charged to nobody)
+//
+// The guard on the OLD values means a rate somebody has already changed by hand
+// is left exactly as they set it.
+const QR_PRICING_FIXUP_KEY = "pricing_fixup_qr_two_sided_2026_08";
+const QR_PRICING_FIXUP = [
+  { codes: ["qr_payment", "qr_pay", "customer_qr_payment"], flat: 1.50, percentage: 1, minimum: 0, maximum: 10, wasFlat: 0.50 },
+  { codes: ["merchant_qr", "merchant_qr_payment"], flat: 0, percentage: 1.5, minimum: 0, maximum: 0, wasPercentage: 1.7 }
+];
+async function applyQrPricingFixupOnce() {
+  try {
+    await ensurePricingSchema();
+    const applied = await pool.query("SELECT 1 FROM platform_settings WHERE key = $1 LIMIT 1", [QR_PRICING_FIXUP_KEY]);
+    if (applied.rows.length) return;
+    let changed = 0;
+    for (const entry of QR_PRICING_FIXUP) {
+      const guard = entry.wasFlat === undefined
+        ? "AND ROUND(percentage_fee::NUMERIC, 4) = $7"
+        : "AND ROUND(flat_fee::NUMERIC, 2) = $7";
+      const { rowCount } = await pool.query(
+        `UPDATE pricing_rules
+            SET fee_type = $2, fee_value = $3, flat_fee = $4, percentage_fee = $5,
+                minimum_fee = $6, maximum_fee = $8, enabled = TRUE, active = TRUE, updated_at = NOW()
+          WHERE service_code = ANY($1::TEXT[]) ${guard}`,
+        [entry.codes,
+          entry.percentage > 0 && entry.flat === 0 ? "PERCENTAGE" : "FIXED",
+          entry.flat > 0 ? entry.flat : entry.percentage,
+          entry.flat, entry.percentage, entry.minimum,
+          entry.wasFlat === undefined ? entry.wasPercentage : entry.wasFlat,
+          entry.maximum]
+      );
+      changed += rowCount;
+    }
+    await pool.query(
+      "INSERT INTO platform_settings (key, value) VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING",
+      [QR_PRICING_FIXUP_KEY, JSON.stringify({ appliedAt: new Date().toISOString(), rowsChanged: changed })]
+    );
+    if (changed) console.info("[pricing] QR pricing updated", { rowsChanged: changed });
+  } catch (error) {
+    console.error("[pricing] could not apply the QR pricing update", { message: error.message });
+  }
+}
+
 async function calculateFee(serviceCode, amount) {
   const normalizedServiceCode = normalizeServiceCode(serviceCode);
   const rule = await getPricingRule(serviceCode);
@@ -343,7 +403,10 @@ async function calculateFee(serviceCode, amount) {
   if (!fee && rule.fee_type === "PERCENTAGE") fee = baseAmount * (Number(rule.fee_value) / 100);
   if (Number(rule.minimum_fee) > 0) fee = Math.max(fee, Number(rule.minimum_fee));
   if (Number(rule.maximum_fee) > 0) fee = Math.min(fee, Number(rule.maximum_fee));
-  if (normalizedServiceCode === "qr_payment") fee = Math.max(fee, 0.50);
+  // A hardcoded R0.50 floor for qr_payment used to sit here. It was written when
+  // the QR fee WAS R0.50 and it silently overrode anything an operator
+  // configured below that. The schedule now carries R1.50 + 1% capped at R10,
+  // and a floor belongs in minimum_fee where an admin can see and change it.
   // A fee is never negative. A negative rule reaching here would debit LESS
   // than the amount while the recipient is credited the full amount, and would
   // "credit" the revenue wallet a negative number — which debits it. TitoPay
@@ -433,6 +496,7 @@ async function updatePricingRule(id, payload, actor) {
 module.exports = {
   DEFAULT_PRICING_RULES,
   APPROVED_PRICING_SCHEDULE,
+  applyQrPricingFixupOnce,
   roundMoney,
   normalizeServiceCode,
   ensureDefaultPricingRule,

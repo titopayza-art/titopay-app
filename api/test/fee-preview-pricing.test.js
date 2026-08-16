@@ -108,13 +108,39 @@ test("flat and percentage together add, they do not replace each other", async (
   });
 });
 
-test("a QR payment is never cheaper than 50c, whatever the schedule says", async () => {
-  // A hard floor in code rather than in the schedule, so an admin editing the
-  // pricing rule to zero cannot make QR acceptance free by accident.
-  await withRule(rule({ service_code: "qr_payment", fee_type: "FREE" }), async () => {
+test("the QR fee is what the schedule says, and nothing overrides it in code", async () => {
+  // There used to be `if (serviceCode === "qr_payment") fee = Math.max(fee, 0.50)`
+  // here, written when the QR fee WAS a flat 50c. It silently overrode anything
+  // an operator configured below that figure, which is the wrong place for a
+  // floor: a floor belongs in minimum_fee, where an admin can see it and change
+  // it. The schedule now carries R1.50 + 1% capped at R10.
+  await withRule(rule({ service_code: "qr_payment", fee_type: "FREE", flat_fee: 0, percentage_fee: 0 }), async () => {
     const fee = await calculateFee("qr_payment", 100);
-    assert.equal(fee.fee, 0.5);
-    assert.equal(fee.total, 100.5);
+    assert.equal(fee.fee, 0, "a rule set to free must actually be free, not silently 50c");
+  });
+  // And a floor set where it belongs is honoured.
+  await withRule(rule({ service_code: "qr_payment", flat_fee: 0, percentage_fee: 0, minimum_fee: 0.5 }), async () => {
+    const fee = await calculateFee("qr_payment", 100);
+    assert.equal(fee.fee, 0.5, "minimum_fee is the floor an admin can see");
+  });
+});
+
+test("the QR customer fee is R1.50 + 1%, capped at R10", async () => {
+  await withRule(rule({ service_code: "qr_payment", flat_fee: 1.5, percentage_fee: 1, minimum_fee: 0, maximum_fee: 10 }), async () => {
+    for (const [amount, expected] of [[10, 1.6], [50, 2], [250, 4], [850, 10], [5000, 10]]) {
+      const fee = await calculateFee("qr_payment", amount);
+      assert.equal(fee.fee, expected, `R${amount} should charge R${expected}, charged R${fee.fee}`);
+      assert.equal(fee.total, roundMoney(amount + expected), "the total is the amount plus the fee");
+    }
+  });
+});
+
+test("the QR merchant fee is 1.5%, and it is uncapped", async () => {
+  await withRule(rule({ service_code: "merchant_qr_payment", fee_type: "PERCENTAGE", flat_fee: 0, percentage_fee: 1.5, minimum_fee: 0, maximum_fee: 0 }), async () => {
+    for (const [amount, expected] of [[10, 0.15], [250, 3.75], [5000, 75]]) {
+      const fee = await calculateFee("merchant_qr_payment", amount);
+      assert.equal(fee.fee, expected, `R${amount} should charge the merchant R${expected}, charged R${fee.fee}`);
+    }
   });
 });
 
