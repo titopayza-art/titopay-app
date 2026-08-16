@@ -92,3 +92,62 @@ test("the console's failure note no longer names a build number", () => {
   assert.match(code, /This panel could not load/);
   assert.match(code, /diagnose-admin-console/, "it points at the tool that reports the real reason");
 });
+
+test("repairing a schema never rewrites the fees an operator set", () => {
+  // `node src/db/init.js` applies the schema AND calls
+  // syncApprovedPricingSchedule, which writes the shipped schedule over
+  // pricing_rules with ON CONFLICT DO UPDATE and forces enabled = TRUE. That
+  // is correct for a new database and destructive on a live one, and the
+  // diagnosis used to send operators straight at it.
+  const repair = fs.readFileSync(path.join(__dirname, "..", "scripts", "repair-schema.js"), "utf8");
+  // The header explains at length why pricing is NOT synced here, so the scan
+  // has to read the code rather than the reasoning that protects it.
+  const repairCode = repair.split("\n").filter((line) => !line.trim().startsWith("//")).join("\n");
+  assert.doesNotMatch(repairCode, /syncApprovedPricingSchedule|pricing-service/,
+    "the repair must not touch pricing");
+  assert.match(repair, /schema\.sql/);
+  assert.match(repair, /email-centre-schema\.sql/);
+  assert.match(repair, /hr-schema\.sql/);
+  assert.match(repair, /the operator's change is gone/,
+    "the reason this exists separately from init.js is recorded where it will be read");
+
+  const init = fs.readFileSync(path.join(__dirname, "..", "src", "db", "init.js"), "utf8");
+  assert.match(init, /syncApprovedPricingSchedule/,
+    "init.js is still the new-database path, and still seeds pricing");
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+  assert.equal(pkg.scripts["db:repair-schema"], "node scripts/repair-schema.js");
+
+  // The guidance an operator is handed at 2am must name the safe command.
+  const diagnosis = fs.readFileSync(
+    path.join(__dirname, "..", "src", "services", "console-diagnosis-service.js"), "utf8");
+  const guidance = diagnosis.slice(diagnosis.indexOf("guidance: ok"), diagnosis.indexOf("guidance: ok") + 900);
+  assert.match(guidance, /scripts\/repair-schema\.js/);
+  assert.doesNotMatch(guidance.replace(/\/\/[^\n]*/g, ""), /src\/db\/init\.js/,
+    "the guidance must not send a live database at the pricing-rewriting command");
+});
+
+test("the diagnosis counts one table's foreign keys, not every schema's", () => {
+  // pg_class.relname is not schema-qualified. Without the namespace join this
+  // summed every platform_settings in the database: a production node with
+  // archived schemas alongside public reported 35 where the answer was 1, and
+  // a number like that reads as a fault when nothing is wrong.
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "src", "services", "console-diagnosis-service.js"), "utf8");
+  const query = source.slice(source.indexOf("platformSettingsForeignKeys"),
+    source.indexOf("platformSettingsColumns"));
+  assert.match(query, /JOIN pg_namespace/, "the count is scoped to a schema");
+  assert.match(query, /ns\.nspname = 'public'/, "and to the one the API actually writes to");
+});
+
+test("the health response reports a version that moves", () => {
+  // appVersion was the literal "1.0" and had been since the first deploy, so
+  // /health answered the same thing for build 15 and build 36. Anyone reading
+  // it had to already know to ignore it.
+  const { buildInfo, API_BUILD } = require("../src/build-info");
+  const info = buildInfo();
+  assert.equal(info.build, API_BUILD);
+  assert.notEqual(info.appVersion, "1.0");
+  assert.match(String(info.appVersion), new RegExp(String(API_BUILD)),
+    "the version a person reads carries the build a person needs");
+});

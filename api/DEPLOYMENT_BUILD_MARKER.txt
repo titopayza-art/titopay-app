@@ -1,8 +1,51 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 36   (GET /health reports this — check it after upload)
-PWA bundle: v412 (titopay-pwa-v412-edge-gesture)
+API build: 37   (GET /health reports this — check it after upload)
+PWA bundle: v413 (titopay-pwa-v413-native-back)
 Admin console: admin-console-v89
+
+BUILD 37 — THREE REPAIRS TO THE REPAIR TOOLS THEMSELVES
+
+   None of this changes how the platform behaves for a customer. All three are
+   faults in the tooling that an operator reads when something is wrong, and
+   all three were found on a live node.
+
+   1. THE COMMAND THE DIAGNOSIS RECOMMENDED WAS THE WRONG ONE.
+
+      When console pages were missing tables, the diagnosis said to run
+      `node src/db/init.js`. That applies the schema AND writes the shipped
+      pricing schedule over pricing_rules with ON CONFLICT DO UPDATE, forcing
+      enabled = TRUE and active = TRUE on every rule. On a live platform it
+      discards every fee an operator has set in the console. Measured:
+
+        before          airtime  fee 9.99, disabled
+        after init.js   airtime  fee 1.00, enabled     <- operator change gone
+        after repair    airtime  fee 9.99, disabled    <- untouched
+
+      NEW: `npm run db:repair-schema` (scripts/repair-schema.js). It applies
+      the same three schema files and never reads or writes pricing. init.js
+      is unchanged and is still the right command for a NEW database. The
+      diagnosis and the Database Health page now name the repair script.
+
+   2. THE DIAGNOSIS COUNTED FOREIGN KEYS ACROSS EVERY SCHEMA.
+
+      pg_class.relname is not schema-qualified, and the count had no namespace
+      join, so it summed every platform_settings in the database. A production
+      node reported "platform_settings foreign keys: 35" where the real answer
+      for the table the API writes to was 1. Nothing was wrong with the
+      database; the number was wrong. Now scoped to public, which is what the
+      columns line beside it always did.
+
+   3. /health REPORTED A VERSION THAT NEVER MOVED.
+
+      appVersion was the literal string "1.0" and had been since the first
+      deploy, so build 15 and build 36 answered identically and anyone reading
+      it had to know to ignore it. It now reads `build-37`. The `build` field
+      is unchanged and is still the number to check.
+
+   NO SCHEMA CHANGE, no new environment variable, no dependency change. Upload
+   api.zip, restart, done.
+
 
 WHAT CHANGED
 

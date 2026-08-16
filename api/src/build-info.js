@@ -19,10 +19,13 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 36;
+const API_BUILD = 37;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  37: "Schema repair that never rewrites pricing (scripts/repair-schema.js); the "
+      + "diagnosis stops counting foreign keys across every schema and stops "
+      + "pointing at db/init.js; /health reports a version that moves.",
   36: "App only: the landing screen stops fighting the browser for a gesture " +
       "it was always going to lose. iOS Safari reserves a strip down each side " +
       "for its own back navigation and `touch-action` does not govern it, so a " +
@@ -192,6 +195,11 @@ module.exports = {
   API_BUILD,
   BUILD_NOTES,
   buildInfo() {
-    return { build: API_BUILD, appVersion: "1.0" };
+    // appVersion was the string "1.0" and had been since the first deploy: it
+    // never moved, so /health reported the same version for build 15 and build
+    // 36 and answered nothing. Anyone reading it had to know to ignore it.
+    // It now carries the build, which is the number that actually changes, and
+    // is kept as a field because callers may still be reading the name.
+    return { build: API_BUILD, appVersion: `build-${API_BUILD}` };
   }
 };

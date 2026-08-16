@@ -219,10 +219,17 @@ async function runConsoleDiagnosis({ actorId = null } = {}) {
   // it changes what a save will accept. Report which, and which columns the
   // table actually has, because a missing column is the other candidate.
   const notes = {};
+  // pg_class.relname is NOT schema-qualified, so without the namespace join
+  // this counted every platform_settings in the database and reported the sum
+  // as if it were one table's keys. A production database with archived or
+  // restored schemas alongside public read 35 where the real answer was 1, and
+  // a number like that reads as a fault when nothing is wrong. The columns
+  // query below has always filtered to public; this now agrees with it.
   notes.platformSettingsForeignKeys = await pool.query(`
     SELECT COUNT(*)::INT AS n FROM pg_constraint c
      JOIN pg_class t ON t.oid = c.conrelid
-    WHERE t.relname = 'platform_settings' AND c.contype = 'f'`)
+     JOIN pg_namespace ns ON ns.oid = t.relnamespace
+    WHERE ns.nspname = 'public' AND t.relname = 'platform_settings' AND c.contype = 'f'`)
     .then((r) => r.rows[0].n).catch(() => null);
   notes.platformSettingsColumns = await pool.query(`
     SELECT column_name FROM information_schema.columns
@@ -259,7 +266,13 @@ async function runConsoleDiagnosis({ actorId = null } = {}) {
       guidance: ok
         ? "If a page still fails, the cause is not the database. Check the API log for the request, and confirm the signed-in admin holds the permission that page requires."
         : missingByPage.length
-          ? "Create them from the shipped schema with `node src/db/init.js`, which is safe to re-run because every statement is CREATE TABLE IF NOT EXISTS, then apply any pending migration with `node scripts/apply-migrations.js` and run this diagnosis again."
+          // NOT src/db/init.js. That applies the same schema files and then
+          // writes the shipped pricing schedule over pricing_rules, forcing
+          // enabled = TRUE on every one, which discards fees an operator has
+          // set in the console. It is the right command for a new database and
+          // the wrong one here. scripts/repair-schema.js is init.js without
+          // that step.
+          ? "Create them from the shipped schema with `node scripts/repair-schema.js`, which is safe to re-run because every statement is CREATE TABLE IF NOT EXISTS and it never writes pricing, then apply any pending migration with `node scripts/apply-migrations.js` and run this diagnosis again."
           : "This is a column or type difference rather than a missing table. The exact database error is on each failing row; that is the thing to fix."
     }
   };
