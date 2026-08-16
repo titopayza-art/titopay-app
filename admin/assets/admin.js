@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v87";
+  return "admin-console-v88";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -2705,7 +2705,7 @@ async function renderTransactions() {
 // if the API predates it, so the queue keeps working against any build.
 async function renderCompliance() {
   const quiet = (path) => apiFetch(path).catch(() => null);
-  const [result, overview, alerts, recon, cases, limitsConfig, integrityConfig, screening, reports, versions, holds] = await Promise.all([
+  const [result, overview, alerts, recon, cases, limitsConfig, integrityConfig, screening, reports, versions, holds, limitsContent] = await Promise.all([
     apiFetch("/admin/compliance/queue"),
     quiet("/admin/compliance/overview"),
     quiet("/admin/integrity/alerts"),
@@ -2716,7 +2716,8 @@ async function renderCompliance() {
     quiet("/admin/compliance/screening"),
     quiet("/admin/compliance/reports"),
     quiet("/admin/compliance/limits/versions"),
-    quiet("/admin/compliance/pending-credits")
+    quiet("/admin/compliance/pending-credits"),
+    quiet("/admin/compliance/limits-content")
   ]);
   PAGE_EXPORTS.compliance = result.items;
   /* This used to read "Requires API build 15" and tell the operator to deploy
@@ -2763,17 +2764,110 @@ async function renderCompliance() {
       <button data-case-decide="${escapeHtml(row.id)}">Decide</button>
     `) : needsApi;
 
-  // LIMITS & RISK. One document holds the whole framework: the level
-  // ladder, per-product narrowing, risk bands, earned capacity and the
-  // receiving-hold policy. Every save is versioned and reversible.
+  // LIMITS & RISK, AS THE CUSTOMER SEES THEM.
+  //
+  // This was one textarea holding the entire framework as raw JSON. It worked,
+  // and it was the wrong instrument: changing "Send per payment" for one level
+  // meant hand-editing a nested document where a stray comma loses the whole
+  // save and a typed "25,000" silently REMOVED a limit, because a non-numeric
+  // value reads as "no limit" downstream. The API refuses that now; this form
+  // means an operator never has to get near it.
+  //
+  // The eight rows below are, in order, exactly the rows the customer reads on
+  // Limits & Verification, so what is being changed is never in doubt. Leave a
+  // field EMPTY for "no standing limit". The JSON document is still available
+  // underneath for products, risk bands, earned capacity, monitoring and the
+  // holding policy, which have no form of their own.
+  const LIMIT_ROWS = [
+    ["monthlySend", "Send per month"],
+    ["monthlyReceive", "Receive per month"],
+    ["singleTransaction", "Send per payment"],
+    ["dailySend", "Send per day"],
+    ["singleWithdrawal", "Withdraw per payment"],
+    ["monthlyWithdraw", "Withdraw per month"],
+    ["maxBalance", "Maximum wallet balance"]
+  ];
+  const limitCell = (level, key) => {
+    const value = limitsConfig?.config?.tiers?.[level]?.[key];
+    const text = value === null || value === undefined ? "" : String(value);
+    return `<input class="limit-input" type="number" min="0" step="0.01" inputmode="decimal"
+      data-limit-level="${level}" data-limit-key="${escapeHtml(key)}"
+      value="${escapeHtml(text)}" placeholder="No limit" aria-label="${escapeHtml(key)} for level ${level}">`;
+  };
+  const levelHeader = (level) => {
+    const tier = limitsConfig?.config?.tiers?.[level] || {};
+    return `<th><input class="limit-label" type="text" maxlength="40" data-limit-level="${level}" data-limit-key="label"
+      value="${escapeHtml(String(tier.label || ""))}" aria-label="Name of level ${level}"></th>`;
+  };
+  const copy = limitsContent?.content || {};
+  const COPY_FIELDS = [
+    ["lead", "Sentence under the heading", "Attributes the limits to TitoPay rather than to a regulator."],
+    ["disclaimer", "Small print under the limit rows", "Cannot be emptied. It is the sentence that says these are TitoPay's amounts, not the law's."],
+    ["topLevelNote", "Shown against a level with no fixed limit", "Cannot be emptied. It carries the controls that still apply."],
+    ["upgradeHint", "Under the call to action", "For a customer who can still move up a level."],
+    ["atTopHint", "Under the call to action, top level", "For a customer already at the highest level."]
+  ];
   const limitsHtml = limitsConfig ? `
-    <div class="form-grid">
-      <label for="limits-json">Limits, products, risk bands and earned capacity (JSON)</label>
-      <textarea id="limits-json" rows="18" spellcheck="false">${escapeHtml(JSON.stringify(limitsConfig.config, null, 2))}</textarea>
-      <label for="limits-reason">Reason for this change</label>
-      <input id="limits-reason" type="text" maxlength="300" placeholder="Why these values, per the approved RMCP">
-      <div class="action-row"><button data-limits-save>Save limits and risk configuration</button></div>
+    <p class="panel-note">These rows are the rows the customer reads on Limits &amp; Verification, in the same order.
+      Leave a field empty for no standing limit. A change applies to the very next transaction.</p>
+    <div class="table-wrap">
+      <table class="limit-matrix" data-tp-enhanced="1">
+        <thead><tr><th>Limit</th>${["0", "1", "2"].map(levelHeader).join("")}</tr></thead>
+        <tbody>
+          ${LIMIT_ROWS.map(([key, label]) => `
+            <tr>
+              <th scope="row">${escapeHtml(label)}</th>
+              ${["0", "1", "2"].map((level) => `<td>${limitCell(level, key)}</td>`).join("")}
+            </tr>`).join("")}
+          <tr>
+            <th scope="row">What this level means</th>
+            ${["0", "1", "2"].map((level) => `<td><textarea class="limit-description" rows="3" maxlength="240"
+              data-limit-level="${level}" data-limit-key="description"
+              aria-label="Description of level ${level}">${escapeHtml(String(limitsConfig?.config?.tiers?.[level]?.description || ""))}</textarea></td>`).join("")}
+          </tr>
+        </tbody>
+      </table>
     </div>
+    <div class="form-grid">
+      <label for="limits-reason">Reason for this change
+        <input id="limits-reason" type="text" maxlength="300" placeholder="Why these values, per the approved risk and compliance framework">
+      </label>
+      <div class="action-row"><button data-limits-save>Save limits</button></div>
+    </div>
+
+    <h3 class="tier-section-label">What the screen says</h3>
+    <p class="panel-note">The wording around the numbers. ${limitsContent
+    ? (limitsContent.stored
+      ? `Currently showing saved copy${limitsContent.updatedBy ? `, last edited by ${escapeHtml(limitsContent.updatedBy)}` : ""}${limitsContent.updatedAt ? ` on ${escapeHtml(new Date(limitsContent.updatedAt).toLocaleString())}` : ""}.`
+      : "Currently showing the wording TitoPay ships with. Nothing has been edited here yet.")
+    : "This panel could not load, so the wording cannot be edited right now."}</p>
+    ${limitsContent ? `
+      <div class="form-grid">
+        ${COPY_FIELDS.map(([key, label, note]) => `
+          <label for="limits-copy-${key}">${escapeHtml(label)}
+            <textarea id="limits-copy-${key}" data-limits-copy="${key}" rows="3" maxlength="400">${escapeHtml(String(copy[key] || ""))}</textarea>
+            <small class="field-hint">${escapeHtml(note)}</small>
+          </label>`).join("")}
+        <div class="action-row">
+          <button data-limits-copy-save>Save wording</button>
+          <button class="ghost-btn" data-limits-copy-reset>Restore TitoPay's wording</button>
+        </div>
+      </div>` : ""}
+
+    <details class="advanced-json">
+      <summary>Advanced: products, risk bands, earned capacity, monitoring and holding (JSON)</summary>
+      <p class="panel-note">Everything the form above does not cover. The level rows here are ignored on save,
+        because the form owns them.</p>
+      <div class="form-grid">
+        <label for="limits-json">The whole configuration document
+          <textarea id="limits-json" rows="16" spellcheck="false">${escapeHtml(JSON.stringify(limitsConfig.config, null, 2))}</textarea>
+        </label>
+        <label for="limits-json-reason">Reason for this change
+          <input id="limits-json-reason" type="text" maxlength="300" placeholder="Why these values">
+        </label>
+        <div class="action-row"><button data-limits-json-save>Save the advanced configuration</button></div>
+      </div>
+    </details>
     ${versions?.versions?.length ? `
       <h3 class="tier-section-label">Change history</h3>
       ${renderRows(versions.versions, [
@@ -8193,20 +8287,91 @@ document.addEventListener("click", async (event) => {
       showToast(adminErrorMessage(error.message));
     }
   }
+  // Saving the FORM. It sends only the three levels, merged over whatever the
+  // API already holds, so products, risk bands and the rest are untouched by a
+  // limit edit. An empty box means no standing limit and is sent as null, which
+  // is the one thing a raw JSON edit got wrong most often: a blank string would
+  // have read as "no limit" by accident rather than on purpose.
   const limitsSave = event.target.closest("[data-limits-save]");
   if (limitsSave) {
     const reason = document.getElementById("limits-reason")?.value.trim();
     if (!reason) { showToast("State the reason for this limit change."); return; }
-    let config;
-    try { config = JSON.parse(document.getElementById("limits-json").value); }
-    catch (error) { showToast("The limit configuration is not valid JSON."); return; }
-    if (!window.confirm("Apply this limit configuration? It takes effect on the very next transaction.")) return;
+    const tiers = { 0: {}, 1: {}, 2: {} };
+    for (const field of document.querySelectorAll("[data-limit-level][data-limit-key]")) {
+      const level = field.dataset.limitLevel;
+      const key = field.dataset.limitKey;
+      const raw = String(field.value ?? "").trim();
+      if (key === "label" || key === "description") { tiers[level][key] = raw; continue; }
+      if (!raw) { tiers[level][key] = null; continue; }
+      const number = Number(raw);
+      if (!Number.isFinite(number) || number < 0) {
+        showToast(`"${raw}" is not an amount. Enter digits only, or leave the box empty for no limit.`);
+        field.focus();
+        return;
+      }
+      tiers[level][key] = number;
+    }
+    if (!window.confirm("Apply these limits? They take effect on the very next transaction.")) return;
     try {
-      await apiFetch("/admin/compliance/limits", { method: "PUT", body: JSON.stringify({ config, reason }) });
-      showToast("Limit configuration saved and audit-logged");
+      const saved = await apiFetch("/admin/compliance/limits", {
+        method: "PUT", body: JSON.stringify({ config: { tiers }, reason })
+      });
+      const warnings = saved?.warnings || [];
+      showToast(warnings.length
+        ? `Saved and audit-logged. ${warnings.length} thing${warnings.length === 1 ? "" : "s"} to look at: ${warnings[0]}`
+        : "Limits saved and audit-logged");
       await renderCompliance();
     } catch (error) {
       showToast(adminErrorMessage(error.message));
+    }
+  }
+  // Saving the ADVANCED document, for everything the form does not cover.
+  const limitsJsonSave = event.target.closest("[data-limits-json-save]");
+  if (limitsJsonSave) {
+    const reason = document.getElementById("limits-json-reason")?.value.trim();
+    if (!reason) { showToast("State the reason for this change."); return; }
+    let config;
+    try { config = JSON.parse(document.getElementById("limits-json").value); }
+    catch (error) { showToast("That configuration is not valid JSON."); return; }
+    // The form owns the levels. Sending them from here too would let a stale
+    // textarea silently undo a limit change made in the table above it.
+    delete config.tiers;
+    if (!window.confirm("Apply this configuration? It takes effect on the very next transaction.")) return;
+    try {
+      const saved = await apiFetch("/admin/compliance/limits", { method: "PUT", body: JSON.stringify({ config, reason }) });
+      const warnings = saved?.warnings || [];
+      showToast(warnings.length ? `Saved. Note: ${warnings[0]}` : "Configuration saved and audit-logged");
+      await renderCompliance();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  // The wording on the same screen.
+  const limitsCopySave = event.target.closest("[data-limits-copy-save]");
+  if (limitsCopySave) {
+    const content = {};
+    for (const field of document.querySelectorAll("[data-limits-copy]")) {
+      content[field.dataset.limitsCopy] = field.value;
+    }
+    try {
+      await apiFetch("/admin/compliance/limits-content", { method: "PUT", body: JSON.stringify({ content }) });
+      showToast("Wording saved. Customers see it on their next load.");
+      await renderCompliance();
+    } catch (error) {
+      // The API refuses wording that claims a regulator set the amount, and
+      // says which sentence and why. That reason is worth showing in full.
+      showToast(error.message || adminErrorMessage(error.message));
+    }
+  }
+  const limitsCopyReset = event.target.closest("[data-limits-copy-reset]");
+  if (limitsCopyReset) {
+    if (!window.confirm("Put every sentence back to the wording TitoPay ships with?")) return;
+    try {
+      await apiFetch("/admin/compliance/limits-content", { method: "PUT", body: JSON.stringify({ reset: true }) });
+      showToast("Wording restored to TitoPay's own");
+      await renderCompliance();
+    } catch (error) {
+      showToast(error.message || adminErrorMessage(error.message));
     }
   }
   const limitsRestore = event.target.closest("[data-limits-restore]");

@@ -6228,3 +6228,125 @@ html[data-theme="dark"] .auth-panel-mark {
   font-weight: 600;
   text-align: center;
 }
+
+/* ---------------------------------------------------------------------------
+   THE LIMIT MATRIX
+   Editing the customer's Limits & Verification screen.
+
+   It is a matrix rather than three stacked forms for one reason: a limit is
+   almost never decided on its own. "Is R10 000 per payment right for Basic
+   Verified?" is really "is it right NEXT TO R2 500 at the level below and no
+   limit at the level above", and a stacked form makes that comparison a
+   scroll. Levels across, rails down, in the order the customer reads them.
+
+   An empty box means no standing limit, so the placeholder says so rather
+   than leaving an operator to guess whether blank means zero.
+   --------------------------------------------------------------------------- */
+.limit-matrix {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.limit-matrix th[scope="row"] {
+  text-align: left;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--tp-text);
+  /* The rail name stays readable while the levels scroll under it on a narrow
+     screen: without this the row loses its own label first. */
+  position: sticky;
+  left: 0;
+  background: var(--tp-surface);
+  z-index: 1;
+}
+
+.limit-matrix td {
+  vertical-align: top;
+  min-width: 148px;
+}
+
+.limit-input,
+.limit-label,
+.limit-description {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--tp-border);
+  border-radius: 10px;
+  background: var(--tp-surface);
+  color: var(--tp-text);
+  font: inherit;
+}
+
+.limit-input {
+  /* Amounts are compared down a column, so they line up on the digit. */
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.limit-label {
+  font-weight: 600;
+}
+
+.limit-description {
+  resize: vertical;
+  /* Three lines of a level's explanation without a scrollbar: the descriptions
+     run to about two hundred characters and clipping one mid-sentence is how
+     an operator edits wording they cannot fully see. */
+  min-height: 104px;
+  line-height: 1.4;
+}
+
+.limit-input:focus,
+.limit-label:focus,
+.limit-description:focus {
+  outline: none;
+  border-color: var(--tp-blue);
+  box-shadow: var(--tp-focus);
+}
+
+.limit-input::placeholder {
+  color: var(--tp-muted);
+  font-style: italic;
+}
+
+/* Explanatory line above a panel. Quiet, and never the same weight as the
+   thing it explains. */
+.panel-note {
+  margin: 0 0 12px;
+  color: var(--tp-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* The raw document, folded away. It still has to exist, because products,
+   risk bands, earned capacity, monitoring and the holding policy have no form
+   of their own, and it must not be the first thing an operator meets. */
+.advanced-json {
+  margin-top: 20px;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  padding: 12px 16px;
+}
+
+.advanced-json > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--tp-muted);
+}
+
+.advanced-json > summary:focus-visible {
+  outline: 2px solid var(--tp-blue);
+  outline-offset: 2px;
+}
+
+.advanced-json[open] > summary {
+  margin-bottom: 12px;
+  color: var(--tp-text);
+}
+
+@media (max-width: 720px) {
+  .limit-matrix td {
+    min-width: 120px;
+  }
+}

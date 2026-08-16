@@ -331,9 +331,17 @@ test("no amount is presented as a statutory threshold, anywhere a customer can r
       assert.doesNotMatch(source, pattern, `forbidden claim: ${pattern}`);
     }
   }
-  // And the disclaimer says what the amounts actually are.
-  assert.match(COMPLIANCE, /These are TitoPay operational limits based on its risk management and compliance framework\. They are not statutory thresholds\./);
-  // The limits screen attributes the numbers to TitoPay, not to a regulator.
+  // The disclaimer says what the amounts actually are. It lives in the content
+  // service now, because it is admin-editable, and the same scan covers it.
+  const CONTENT = read("src", "services", "limits-content-service.js");
+  for (const pattern of FORBIDDEN) {
+    assert.doesNotMatch(stripComments(CONTENT).replace(/FORBIDDEN_CLAIMS[\s\S]*?\n\];/, ""), pattern,
+      `forbidden claim in the editable copy defaults: ${pattern}`);
+  }
+  assert.match(CONTENT, /These are TitoPay operational limits based on its risk management and compliance framework\. They are not statutory thresholds\./);
+  // The limits screen attributes the numbers to TitoPay, not to a regulator,
+  // and the app still ships the same sentence for when it cannot reach us.
+  assert.match(CONTENT, /Your limits depend on your verification status, risk profile and applicable TitoPay compliance requirements\./);
   assert.match(APP, /Your limits depend on your verification status, risk profile and applicable TitoPay compliance requirements\./);
 });
 

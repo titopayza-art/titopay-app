@@ -1,39 +1,56 @@
-TitoPay Admin build: admin-console-v87-20260816
+TitoPay Admin build: admin-console-v88-20260816
 
-v87 (this build): a failing panel says what is actually wrong.
+v88 (this build): the customer's Limits & Verification screen is operated
+from here.
 
-  - The Compliance Dashboard read "Requires API build 15" whenever one of its
-    panels did not load. It was never a build check. It is the fallback shown
-    for ANY failure of those endpoints, so on a server already running build 25
-    it told the operator to deploy api.zip, which was not the problem. It now
-    says the panel could not load and names the command that reports the real
-    reason.
-  - New: `npm run db:diagnose` in the API directory. It lists the tables each
-    console page needs, says which are missing, and prints the actual database
-    error behind any panel that fails. It only reads, so it is safe to run
-    against production at any time.
+  THE NUMBERS. The whole limit framework used to be one textarea of raw JSON.
+  It worked, and it was the wrong instrument: changing "Send per payment" for
+  one level meant hand-editing a nested document where a stray comma loses the
+  save and a typed "25,000" silently REMOVED a limit, because a non-numeric
+  value reads as "no limit" downstream. API build 34 refuses that outright;
+  this build means an operator never has to get near it.
 
-Carried from v85 and v86 (Security Content):
-  - Save is disabled when the stored content could not be read, with a Retry
-    load button in its place.
-  - The icon picker offers exactly the 29 icons the API accepts, so re-saving
-    can no longer downgrade a stored icon.
-  - The page says whether it is showing saved copy or the wording TitoPay ships
-    with, who last saved it and when. A missing field is reported as unknown
-    rather than as "nobody has edited this yet".
-  - The customer preview draws the warning card in the app's warning pink.
+  There is now a matrix: the seven limit rows the customer actually reads,
+  down; the three levels, across; each level's name and explanation editable
+  in place. Levels across rather than stacked because a limit is almost never
+  decided on its own — "is R10 000 per payment right for Basic Verified?" is
+  really "is it right next to R2 500 below and no limit above", and a stacked
+  form makes that comparison a scroll.
+
+  Leave a box EMPTY for no standing limit; the placeholder says so. A save
+  sends all three levels in full, because the configuration merge resets any
+  rail a save does not mention. A non-numeric amount is refused in the browser
+  before it is sent, naming the box.
+
+  THE WORDING. New section on the same page: the five sentences the customer
+  reads around those numbers, editable and audit-logged. Two of them, the
+  small print and the note for a level with no fixed limit, cannot be emptied;
+  they can be reworded. The API refuses wording that claims a regulator sets
+  or allows an amount, that calls it statutory or required by law, that uses
+  "cash threshold" for a wallet limit, or that offers "unlimited", and it says
+  which sentence and why. "Restore TitoPay's wording" puts all five back.
+
+  Everything the form does not cover — products, risk bands, earned capacity,
+  monitoring, the holding policy — is still editable as JSON, folded away
+  under "Advanced". The level rows are stripped from that save so a stale
+  textarea cannot undo a change made in the matrix above it.
+
+  Every limit change still requires a stated reason, is audit-logged with the
+  previous and new values side by side, is versioned, and can be restored.
+
+Carried from v87:
+  - A failing panel says what is actually wrong instead of "Requires API
+    build 15", and names `npm run db:diagnose`.
 
 Upload notes:
-  - REQUIRES api.zip build 28. Older builds fail two admin saves outright: the
-    security content save and the RBAC role save both stored their change and
-    THEN answered 500, because the audit write put a name into a UUID column.
-  - Asset stamp moves to admin-console-v87 across all 66 HTML files, so
-    operators cannot be served a cached admin.js.
-  - No new directories and no new endpoints.
+  - REQUIRES api.zip build 34. On an older API the matrix still renders and
+    saves, but the wording section reports that it could not load, and a typo
+    in an amount would be stored rather than refused.
+  - Asset stamp moves to admin-console-v88 across all 66 HTML files.
+  - No new directories. Two new endpoints, both under /admin/compliance.
   - Replace the whole admin directory as usual. Nothing under api/ or the
     website bundle is touched.
 
 If a console page is blank or erroring after upload:
   1. cd into the API directory (the same place `npm start` runs from)
   2. npm run db:diagnose
-  It will name the missing tables, or confirm the database is not the cause.

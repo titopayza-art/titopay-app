@@ -3454,7 +3454,41 @@ router.put("/compliance/limits", requireAdminPermission("services"), async (req,
     if (!reason) throw new AppError(400, "State the reason for this limit change. It becomes part of the audit record.");
     const compliance = require("../services/compliance-service");
     const config = await compliance.saveComplianceConfig(req.auth, req.body?.config || req.body || {}, { reason });
-    res.json({ ok: true, config });
+    // Warnings never block a save. They tell the operator what the change they
+    // just made implies, which a form full of numbers cannot show on its own.
+    res.json({ ok: true, config, warnings: config.warnings || [] });
+  } catch (error) { next(error); }
+});
+
+// THE WORDING ON THE SAME SCREEN. The numbers above have been editable since
+// the limit engine shipped; the sentences around them were hard-coded, which
+// is the wrong way round, because a sentence is what a compliance review
+// actually asks to change.
+router.get("/compliance/limits-content", requireAdminPermission("services"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await require("../services/limits-content-service").getLimitsContentRecord()) });
+  } catch (error) { next(error); }
+});
+
+router.put("/compliance/limits-content", requireAdminPermission("services"), async (req, res, next) => {
+  try {
+    const content = require("../services/limits-content-service");
+    const saved = await content.saveLimitsContent(req.auth, req.body?.content || {}, {
+      reset: req.body?.reset === true
+    });
+    await writeAuditLog({
+      actorType: "admin",
+      actorId: req.auth?.userId || null,
+      action: "limits_screen_content_updated",
+      entityType: "platform_settings",
+      // The settings key is not a UUID, so it travels in the metadata; the
+      // audit write rejects a non-UUID entity id and used to lose the record.
+      entityId: null,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent"),
+      metadata: { entityKey: content.LIMITS_CONTENT_KEY, content: saved.content }
+    });
+    res.json({ ok: true, ...saved });
   } catch (error) { next(error); }
 });
 

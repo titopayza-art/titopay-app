@@ -1,10 +1,50 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 33   (GET /health reports this — check it after upload)
-PWA bundle: v410 (UNCHANGED in this build; no need to re-upload app.zip)
-Admin console: admin-console-v87 (UNCHANGED in this build; no need to re-upload)
+API build: 34   (GET /health reports this — check it after upload)
+PWA bundle: v411 (titopay-pwa-v411-editable-limits)
+Admin console: admin-console-v88
 
 WHAT CHANGED
+
+0. THE LIMITS SCREEN IS NOW OPERATED FROM THE CONSOLE, and one real hole
+   closes on the way.
+
+   THE HOLE. platform_settings.compliance_tier_limits had NO validation, and
+   the limit engine reads any non-finite value as "no limit". So a typed
+   "25,000" or a stray letter did not fail: it REMOVED the limit and reported
+   success. That is the worst failure an editing screen can have, because the
+   operator sees a confirmation while the platform quietly opens up. Types and
+   ranges are now refused with a message that names the level and the rail.
+
+   Incoherence between rails is WARNED about, never blocked: narrowing one
+   rail in a hurry is legitimate and the engine already takes the narrowest of
+   everything that applies. The warnings come back on the save response.
+
+   THE WORDING. Five sentences on that screen were hard-coded in the API and
+   the app bundle: the lead, the small print, the note for a level with no
+   fixed limit, and the two call-to-action hints. They now live in
+   platform_settings under limits_screen_content, editable through the console
+   and audit-logged. The shipped defaults are the copy that is live today,
+   word for word, so nothing a customer reads changes until an admin edits it.
+
+   Three guarantees on that copy, all enforced server side:
+     - it never comes back blank; an emptied optional field serves its default
+     - it never fails hard on read; a database problem serves the defaults,
+       and the app carries its own copy so it renders with no network at all
+     - the two caveat sentences cannot be emptied, and no saved sentence may
+       claim a regulator sets or allows an amount, call it statutory or
+       required by law, use "cash threshold" for a wallet limit, or offer
+       "unlimited". The refusal names the sentence and the reason.
+       A denial is not a claim: "they are not statutory thresholds" passes,
+       "this is the statutory threshold" does not.
+
+   NEW ENDPOINTS: GET and PUT /admin/compliance/limits-content, both behind
+   the same "services" permission as the limits themselves.
+
+   NOTE FOR ANY CLIENT OF PUT /admin/compliance/limits: a partial save resets
+   every rail it does not mention to the shipped default. That is how the
+   merge has always worked and it is what makes a version restore clean. The
+   console form sends all three levels in full for exactly this reason.
 
 0. TERMINOLOGY. This build changes what the levels are CALLED and how the
    payload describes them. It changes no limit, no fee and no rule, and the

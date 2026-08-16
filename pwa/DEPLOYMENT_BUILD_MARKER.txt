@@ -1,8 +1,8 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v410 (titopay-pwa-v410-monthly-volume)
-Requires: api.zip build 33
-Admin console: admin-console-v87 (unchanged in this build)
+PWA bundle: v411 (titopay-pwa-v411-editable-limits)
+Requires: api.zip build 34
+Admin console: admin-console-v88
 
 WHAT CHANGED IN THE APP
 
@@ -62,6 +62,14 @@ WHAT CHANGED IN THE APP
    Every one of those strings is served by /v1/compliance/status, so v410
    shows the new names the moment build 33 is live. The app.js in this zip is
    byte-identical to v410 as shipped; only this note changed.
+
+5. THE SCREEN'S WORDING NOW COMES FROM THE API.
+   The lead sentence, the small print, the note for a level with no fixed
+   limit and the two call-to-action hints are served by
+   /v1/compliance/status and edited in the admin console. This bundle ships
+   the same five sentences as its own defaults, so it renders exactly as
+   before with no network, on an older API, or if the settings read fails.
+   Nothing a customer reads changes until an admin edits something.
 
 NOTHING ELSE MOVED
 

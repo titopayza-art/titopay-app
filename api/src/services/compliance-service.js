@@ -358,10 +358,73 @@ async function loadComplianceConfig() {
   return mergeConfig(rows[0]?.value);
 }
 
+// WHAT A SAVE MAY NOT DO.
+//
+// The limit rails were stored with no validation at all, and the engine reads
+// any non-finite value as "no limit". So a typed "25,000" or a stray letter in
+// the console did not fail: it REMOVED the limit and reported success. That is
+// the worst possible failure for an editing screen, because the operator sees
+// a save confirmation and the platform quietly opens up.
+//
+// Types and ranges are therefore refused outright. Coherence between rails is
+// reported as a WARNING rather than refused, because narrowing a single rail
+// is a legitimate thing to do in a hurry and the engine already takes the
+// narrowest of everything that applies. A warning tells the operator what
+// they just did; a refusal would stop them doing something valid.
+const LIMIT_RAILS = ["monthlyReceive", "monthlySend", "singleTransaction", "dailySend",
+  "singleWithdrawal", "monthlyWithdraw", "maxBalance"];
+
+function validateLimitConfig(config) {
+  const errors = [];
+  const warnings = [];
+  for (const level of ["0", "1", "2"]) {
+    const tier = config.tiers?.[level] || {};
+    const name = tier.label || `Level ${level}`;
+    for (const rail of LIMIT_RAILS) {
+      const value = tier[rail];
+      if (value === null || value === undefined) continue;   // no standing limit
+      const number = Number(value);
+      if (typeof value === "string" || !Number.isFinite(number)) {
+        errors.push(`${name}: ${rail} must be a number or empty for no limit. "${value}" would have removed the limit entirely.`);
+        continue;
+      }
+      if (number < 0) errors.push(`${name}: ${rail} cannot be negative.`);
+    }
+    const fixed = (rail) => Number.isFinite(Number(tier[rail])) ? Number(tier[rail]) : null;
+    const pair = (a, b, message) => {
+      const left = fixed(a);
+      const right = fixed(b);
+      if (left !== null && right !== null && left > right) warnings.push(`${name}: ${message}`);
+    };
+    pair("dailySend", "monthlySend", "the daily limit is above the monthly one, so the day can never be reached.");
+    pair("singleTransaction", "dailySend", "one payment may exceed a whole day's allowance.");
+    pair("singleWithdrawal", "singleTransaction", "cash out is looser than paying, which is the wrong way round.");
+    pair("monthlyWithdraw", "monthlySend", "a customer may withdraw more in a month than they may send.");
+    const balance = fixed("maxBalance");
+    const receive = fixed("monthlyReceive");
+    if (balance !== null && receive !== null && balance > receive * 2) {
+      warnings.push(`${name}: the wallet may hold more than two months of what it is allowed to receive.`);
+    }
+  }
+  // The ladder must be worth climbing.
+  for (const rail of LIMIT_RAILS) {
+    const lower = config.tiers?.["0"]?.[rail];
+    const upper = config.tiers?.["1"]?.[rail];
+    if (Number.isFinite(Number(lower)) && Number.isFinite(Number(upper)) && Number(upper) < Number(lower)) {
+      warnings.push(`${rail}: the second level allows less than the first, so verifying costs the customer capability.`);
+    }
+  }
+  return { errors, warnings };
+}
+
 async function saveComplianceConfig(actor, value, { reason = null } = {}) {
   await ensureComplianceSchema();
   const previous = await loadComplianceConfig();
   const merged = mergeConfig(value);
+  const { errors, warnings } = validateLimitConfig(merged);
+  if (errors.length) {
+    throw new AppError(400, `This configuration was not saved, because it would have changed a limit in a way nobody intended:\n${errors.join("\n")}`);
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS platform_settings (
       key TEXT PRIMARY KEY,
@@ -400,9 +463,11 @@ async function saveComplianceConfig(actor, value, { reason = null } = {}) {
     entityId: null,
     // Reason, previous value and new value together: the change is
     // reconstructible without reading any other record.
-    metadata: { reason, previous, config: merged }
+    metadata: { reason, previous, config: merged, warnings }
   });
-  return merged;
+  // Warnings ride back with the saved config so the console can show the
+  // operator what their change implies. They never block the save.
+  return { ...merged, warnings };
 }
 
 async function listComplianceConfigVersions(limit = 50) {
@@ -1067,6 +1132,9 @@ async function complianceStatus(auth) {
   const user = await loadUserComplianceRow(auth.userId);
   if (!user) throw new AppError(404, "Account not found.");
   const config = await loadComplianceConfig();
+  // Never throws and never returns blank: a limits screen without its
+  // disclaimer is worse than one with old wording.
+  const screenCopy = await require("./limits-content-service").getLimitsContent();
   const tier = tierForUserRow(user);
   const usage = await monthUsage(auth.userId);
   const current = shapeTier(config, tier);
@@ -1097,11 +1165,15 @@ async function complianceStatus(auth) {
     // Customer-safe review state only. Internal risk ratings (elevated, high
     // risk) are never shown to the account holder.
     underReview: eddActive,
-    // Says what these amounts ARE, and what they are not. "Not statutory FICA
-    // amounts" was too narrow: they are not statutory thresholds of any kind,
-    // and none of them is a cash-threshold reporting figure, which is a
-    // different regime that does not govern an electronic wallet limit.
-    disclaimer: "These are TitoPay operational limits based on its risk management and compliance framework. They are not statutory thresholds.",
+    // Says what these amounts ARE, and what they are not. Admin-editable
+    // through the console, because the sentence a compliance review is most
+    // likely to want changed should not need a deploy. It can be reworded and
+    // it cannot be emptied or turned into a claim about a regulator; see
+    // limits-content-service.
+    disclaimer: screenCopy.disclaimer,
+    // The rest of the screen's wording, served the same way. The app keeps its
+    // own copy of every one of these, so it still renders with no network.
+    screenCopy,
     verified: tier === 2,
     usage: { ...usage, receivePercent, sendPercent },
     limits: current,
@@ -1119,6 +1191,7 @@ async function complianceStatus(auth) {
 
 module.exports = {
   ACCESS_LEVELS,
+  validateLimitConfig,
   productAccessLevel,
   ensureComplianceSchema,
   assertBalanceHeadroom,

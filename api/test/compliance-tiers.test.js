@@ -137,8 +137,10 @@ test("the wallet card shows status, not tier arithmetic, with one door", () => {
   const limitCopy = APP.slice(APP.indexOf("function limitRow"), APP.indexOf("async function submitBasicVerify"));
   assert.doesNotMatch(limitCopy.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n"),
     /[Uu]nlimited/, "no wallet limit is ever offered to a customer as unlimited");
-  assert.match(APP, /No fixed monthly transaction limit\. \$\{supervision\}/,
-    "the one place that says there is no cap says supervision continues in the same breath");
+  // The sentence is admin-editable now, so what is pinned is the wording the
+  // app SHIPS with: the default it falls back to offline, on an older API, or
+  // when the settings read fails.
+  assert.match(APP, /topLevelNote: "No fixed monthly transaction limit\. Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply\."/);
   assert.match(APP, /const supervision = "Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply\."/);
   assert.match(APP, /function openLimitsVerificationModal/);
   // Inside the door: usage bars, the three levels, EDD explained, and the

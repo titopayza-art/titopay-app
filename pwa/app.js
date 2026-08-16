@@ -66,6 +66,14 @@ const EVENT_TAG_STATES = {
 // The wallet badge mirrors the backend's verification state; these tones
 // only choose the badge colour. Kept in this block because every top-level
 // const sits in an order-sensitive one.
+const LIMITS_COPY_DEFAULTS = {
+  lead: "Your limits depend on your verification status, risk profile and applicable TitoPay compliance requirements.",
+  disclaimer: "These are TitoPay operational limits based on its risk management and compliance framework. They are not statutory thresholds.",
+  topLevelNote: "No fixed monthly transaction limit. Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply.",
+  upgradeHint: "Complete full verification to become eligible for higher limits, subject to TitoPay's risk and compliance requirements.",
+  atTopHint: "You are at TitoPay's highest verification level. Higher capability may still be reviewed against your risk profile and ongoing monitoring."
+};
+
 const VERIFICATION_TONES = {
   fully_verified: "ok",
   basic_verified: "mid",
@@ -1200,6 +1208,21 @@ function remainingTile(label, value, { wide = false } = {}) {
 // hard-coded slots in it. The top level has no standing limit on any rail, so
 // there is no number to print and the old copy would have printed one anyway.
 //
+// THE WORDING ON THIS SCREEN IS ADMIN-EDITABLE, and the app still works when
+// it cannot be reached. Every sentence has a shipped default here, identical
+// to what the API serves, so the screen renders correctly offline, on an older
+// API, or while the settings read is failing. The server's copy wins when it
+// arrives; a blank one never does.
+function limitsCopy(status) {
+  const served = (status || state.compliance || {}).screenCopy || {};
+  const copy = { ...LIMITS_COPY_DEFAULTS };
+  for (const key of Object.keys(LIMITS_COPY_DEFAULTS)) {
+    const text = String(served[key] || "").trim();
+    if (text) copy[key] = text;
+  }
+  return copy;
+}
+
 // The top level has NO FIXED MONTHLY LIMIT, which is a precise statement and
 // not the same claim as "unlimited". What is removed is TitoPay's own monthly
 // product cap. Risk is applied LAST by the engine, so an account whose risk
@@ -1210,10 +1233,11 @@ function remainingTile(label, value, { wide = false } = {}) {
 // that activity can never be reviewed or restricted. (The internal banding
 // names themselves never appear anywhere in this file, deliberately: a test
 // enforces it.)
-function verificationLimitsLine(entry) {
+function verificationLimitsLine(entry, status) {
+  const copy = limitsCopy(status);
   const supervision = "Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply.";
   if (entry.monthlyReceive === null && entry.monthlySend === null) {
-    return `No fixed monthly transaction limit. ${supervision}`;
+    return copy.topLevelNote;
   }
   const monthly = [];
   if (entry.monthlyReceive !== null) monthly.push(`receive up to ${money(entry.monthlyReceive)}`);
@@ -1244,7 +1268,7 @@ function verificationLevelBlock(entry, status) {
       : (kycCountryName(status.document.issuingCountry) ? `, issued in ${kycCountryName(status.document.issuingCountry)}` : "");
     documentLine = `<p class="level-note">Verified with: ${esc(base + country)}.</p>`;
   }
-  const limits = verificationLimitsLine(entry);
+  const limits = verificationLimitsLine(entry, status);
   return `
     <section class="level-block${current ? " level-current" : ""}">
       <div class="level-head"><strong>${esc(entry.label)}</strong>${chip}</div>
@@ -1274,15 +1298,16 @@ async function openVerificationLevelsModal() {
 
 // The one action: whatever raises this customer's limits next.
 function increaseLimitsCta(status) {
+  const copy = limitsCopy(status);
   if (status.tier >= 2) {
-    return `<p class="verify-hint">You are at TitoPay's highest verification level. Higher capability may still be reviewed against your risk profile and ongoing monitoring.</p>`;
+    return `<p class="verify-hint">${esc(copy.atTopHint)}</p>`;
   }
   const label = status.tier === 1 ? "Increase your limits" : "Verify your identity";
   return `
     <button class="btn primary verify-cta" type="button" data-action="${status.tier === 1 ? "fica-verification" : "identity-verification"}">${icon("shield")} ${label}</button>
-    <p class="verify-hint">${status.tier === 1
-      ? "Complete full verification to become eligible for higher limits, subject to TitoPay's risk and compliance requirements."
-      : "Verifying your identity takes a couple of minutes and raises your everyday limits."}</p>`;
+    <p class="verify-hint">${esc(status.tier === 1
+    ? copy.upgradeHint
+    : "Verifying your identity takes a couple of minutes and raises your everyday limits.")}</p>`;
 }
 
 // The identity document form, on its own screen now rather than buried in a
@@ -1370,7 +1395,7 @@ async function openLimitsVerificationModal() {
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Your Wallet</p><h2>Limits &amp; Verification</h2>
-        <p class="lead">Your limits depend on your verification status, risk profile and applicable TitoPay compliance requirements.</p></div>
+        <p class="lead">${esc(limitsCopy(status).lead)}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${heldItems.length ? `

@@ -114,7 +114,7 @@ test("security events feed the central risk engine as signals", () => {
 
 test("limit changes carry reason, previous and new values into the audit", () => {
   assert.match(ADMIN, /State the reason for this limit change/);
-  assert.match(COMPLIANCE, /metadata: \{ reason, previous, config: merged \}/);
+  assert.match(COMPLIANCE, /metadata: \{ reason, previous, config: merged, warnings \}/);
 });
 
 test("the suspended state exists, distinct from restricted", () => {

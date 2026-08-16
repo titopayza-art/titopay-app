@@ -19,10 +19,20 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 33;
+const API_BUILD = 34;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  34: "Limits & Verification is operated from the console. The numbers were " +
+      "already editable; the SENTENCES around them were hard-coded, which is " +
+      "the wrong way round, because wording is what a compliance review " +
+      "actually asks to change. Both now live in platform_settings. And a " +
+      "real hole closes: the limit store had NO validation, and the engine " +
+      "reads a non-finite value as \"no limit\", so a typed \"25,000\" removed a " +
+      "limit and reported success. Types and ranges are refused; incoherence " +
+      "is warned about rather than blocked. Editable wording cannot claim a " +
+      "regulator set the amount, and the two caveat sentences cannot be " +
+      "emptied.",
   33: "Terminology, not arithmetic. The first level is \"Limited Access\" " +
       "rather than \"Unverified\": no approved TitoPay compliance requirement " +
       "says a customer may transact without the due diligence that applies to " +
