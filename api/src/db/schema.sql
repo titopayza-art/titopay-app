@@ -370,7 +370,9 @@ CREATE TABLE IF NOT EXISTS ticket_orders (
   ticket_type_id UUID NOT NULL REFERENCES event_ticket_types(id) ON DELETE RESTRICT,
   buyer_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   merchant_id UUID REFERENCES merchants(id) ON DELETE SET NULL,
-  transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+  -- The foreign key is added at the end of this file, not here: transactions
+  -- is created below, and Postgres has no forward declaration.
+  transaction_id UUID,
   order_reference TEXT NOT NULL UNIQUE,
   quantity INTEGER NOT NULL DEFAULT 1,
   subtotal NUMERIC(18,2) NOT NULL DEFAULT 0,
@@ -423,7 +425,7 @@ CREATE TABLE IF NOT EXISTS ticket_refunds (
   status TEXT NOT NULL DEFAULT 'requested',
   reason TEXT NOT NULL DEFAULT '',
   amount NUMERIC(18,2) NOT NULL DEFAULT 0,
-  transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+  transaction_id UUID,   -- foreign key added at the end of this file
   decision_note TEXT,
   requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   processed_at TIMESTAMPTZ,
@@ -1873,3 +1875,30 @@ CREATE INDEX IF NOT EXISTS compliance_config_versions_key_idx
 INSERT INTO wallets (id, wallet_number, user_id, kind, currency, available_balance)
 SELECT gen_random_uuid(), '9000000001', NULL, 'system', 'ZAR', 0
 WHERE NOT EXISTS (SELECT 1 FROM wallets WHERE wallet_number = '9000000001');
+
+-- ---------------------------------------------------------------------------
+-- Deferred foreign keys.
+--
+-- ticket_orders and ticket_refunds both point at transactions, which this file
+-- creates after them. The whole schema runs as ONE statement, so a forward
+-- reference does not merely fail: it rolls the entire file back and leaves an
+-- empty database behind. That is how rebuilding from scratch stopped working,
+-- which is only discovered on the day it is needed most.
+--
+-- The constraints are the same ones the columns used to declare inline, added
+-- once every table exists. Both are guarded, so re-running this file on a
+-- database that already has them is a no-op.
+-- ---------------------------------------------------------------------------
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ticket_orders_transaction_id_fkey') THEN
+    ALTER TABLE ticket_orders
+      ADD CONSTRAINT ticket_orders_transaction_id_fkey
+      FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ticket_refunds_transaction_id_fkey') THEN
+    ALTER TABLE ticket_refunds
+      ADD CONSTRAINT ticket_refunds_transaction_id_fkey
+      FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE SET NULL;
+  END IF;
+END $$;

@@ -1,6 +1,19 @@
 TitoPay Admin
-Build: admin-console-v86
-Date: 2026-08-15
+Build: admin-console-v87
+Date: 2026-08-16
+
+v87 - A failing panel now says what is actually wrong.
+
+  - The Compliance Dashboard read "Requires API build 15" whenever a panel's
+    endpoint did not answer. It was never a build check: it is the fallback for
+    ANY failure, so on a server already running build 25 it sent the operator
+    off to redeploy the API, which was not the problem. It now says the panel
+    could not load and names the command that reports the real reason.
+  - That command is new: run `npm run db:diagnose` in the API directory. It
+    lists which tables each console page needs, which are missing, and prints
+    the actual database error behind every panel that fails. It only reads, so
+    it is safe against production.
+  - Requires API build 28.
 
 v86 - Security Content: two corrections found by review.
 

@@ -1,44 +1,39 @@
-TitoPay Admin build: admin-console-v86-20260815
+TitoPay Admin build: admin-console-v87-20260816
 
-This build and v85 together harden the Security Content page shipped in v84.
-Nothing else on the console changes.
+v87 (this build): a failing panel says what is actually wrong.
 
-v86 (this build), from review of v85:
-  - The provenance line no longer fails open. It tested a positive flag, so an
-    API that does not send "stored" (anything before build 26) was read as
-    "nobody has edited this yet" and printed over a colleague's live wording,
-    which is the exact mistake the line exists to prevent. A missing field now
-    reports that the API cannot tell us.
-  - Retry load says what happened. Against an API that is still down it
-    repainted byte-identical markup with no message, indistinguishable from a
-    dead button.
-  - The customer preview draws the warning card in the app's warning pink
-    instead of the console's blue. The panel promises "how the card reads in the
-    TitoPay app", so an operator judging whether a warning reads urgently enough
-    has to be looking at the real thing.
+  - The Compliance Dashboard read "Requires API build 15" whenever one of its
+    panels did not load. It was never a build check. It is the fallback shown
+    for ANY failure of those endpoints, so on a server already running build 25
+    it told the operator to deploy api.zip, which was not the problem. It now
+    says the panel could not load and names the command that reports the real
+    reason.
+  - New: `npm run db:diagnose` in the API directory. It lists the tables each
+    console page needs, says which are missing, and prints the actual database
+    error behind any panel that fails. It only reads, so it is safe to run
+    against production at any time.
 
-v85, carried in this build:
-  - Save is DISABLED when the stored content could not be read. v84 showed a
-    warning next to a working Save button, so the guard against overwriting an
-    unread version was advice rather than a rule. A "Retry load" button takes
-    its place, and pressing Enter in a field is refused for the same reason.
-  - The icon picker offers exactly the icons the API accepts. v84 offered 16 of
-    them while the API accepted 84, so opening content whose icon came from
-    outside those 16 and pressing Save quietly rewrote it to "shield". Both
-    sides now carry the same curated list of 29, spelled out for the operator
-    ("Message Check" rather than "message-check"), and the API test suite fails
-    if the two lists drift apart.
-  - The page states whether it is showing saved copy or the wording TitoPay
-    ships with, and when a person last saved it and who.
+Carried from v85 and v86 (Security Content):
+  - Save is disabled when the stored content could not be read, with a Retry
+    load button in its place.
+  - The icon picker offers exactly the 29 icons the API accepts, so re-saving
+    can no longer downgrade a stored icon.
+  - The page says whether it is showing saved copy or the wording TitoPay ships
+    with, who last saved it and when. A missing field is reported as unknown
+    rather than as "nobody has edited this yet".
+  - The customer preview draws the warning card in the app's warning pink.
 
 Upload notes:
-  - REQUIRES api.zip build 27. Two saves in build 25 and earlier stored their
-    change and THEN answered 500, because the audit write put a name into a
-    UUID column: the security content save and the RBAC role save. The console
-    reported an error over changes that had in fact been made.
-  - Asset stamp moves from admin-console-v84 to admin-console-v86 across all
-    66 HTML files, so operators cannot be served a cached admin.js.
-  - No new directories and no new endpoints; /security-content/ already exists
-    from v84.
+  - REQUIRES api.zip build 28. Older builds fail two admin saves outright: the
+    security content save and the RBAC role save both stored their change and
+    THEN answered 500, because the audit write put a name into a UUID column.
+  - Asset stamp moves to admin-console-v87 across all 66 HTML files, so
+    operators cannot be served a cached admin.js.
+  - No new directories and no new endpoints.
   - Replace the whole admin directory as usual. Nothing under api/ or the
     website bundle is touched.
+
+If a console page is blank or erroring after upload:
+  1. cd into the API directory (the same place `npm start` runs from)
+  2. npm run db:diagnose
+  It will name the missing tables, or confirm the database is not the cause.

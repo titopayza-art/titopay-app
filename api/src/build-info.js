@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 27;
+const API_BUILD = 28;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  28: "The schema can rebuild an empty database again: two ticketing tables " +
+      "referenced transactions 200 lines before it was created, and because " +
+      "the file runs as one statement that rolled the WHOLE schema back and " +
+      "left nothing behind. Adds `npm run db:diagnose`, which reports the real " +
+      "reason a console page is failing instead of the sanitised message the " +
+      "operator sees.",
   27: "The same commit-then-500 audit bug fixed for security content in build " +
       "26 was still live on PUT /admin/roles/:role, which wrote a role name " +
       "into a UUID column: changing what a role may do saved the change and " +

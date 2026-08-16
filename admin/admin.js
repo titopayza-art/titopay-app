@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v86";
+  return "admin-console-v87";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -2719,7 +2719,13 @@ async function renderCompliance() {
     quiet("/admin/compliance/pending-credits")
   ]);
   PAGE_EXPORTS.compliance = result.items;
-  const needsApi = `<div class="empty"><strong>Requires API build 15</strong><small>Deploy the current api.zip and this panel comes alive.</small></div>`;
+  /* This used to read "Requires API build 15" and tell the operator to deploy
+     api.zip. It is not a build check: it is what shows when the endpoint did
+     not answer, for ANY reason. On a server already running a later build it
+     sent the operator to redeploy something that was not the problem, which
+     cost a night. It now says what is actually known, and points at the one
+     command that reports the real cause. */
+  const needsApi = `<div class="empty"><strong>This panel could not load</strong><small>The API did not answer for this section. Run <code>node scripts/diagnose-admin-console.js</code> in the API directory to see the reason.</small></div>`;
 
   const overviewHtml = overview ? renderMetrics([
     ["Open integrity alerts", (overview.openIntegrityAlerts || []).reduce((sum, row) => sum + Number(row.count || 0), 0)],
