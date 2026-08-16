@@ -4635,6 +4635,16 @@ async function handleAction(action, actionElement = null) {
   if (String(action || "").startsWith("ticket-email:")) {
     openTicketEmailModal(action.split(":").slice(1).join(":"));
   }
+  if (String(action || "").startsWith("ticket-remove:")) {
+    await setTicketRemoved(action.split(":").slice(1).join(":"), true, actionElement);
+  }
+  if (String(action || "").startsWith("ticket-restore:")) {
+    await setTicketRemoved(action.split(":").slice(1).join(":"), false, actionElement);
+  }
+  if (action === "tickets-toggle-removed") {
+    state.ticketing.showRemovedTickets = !state.ticketing.showRemovedTickets;
+    await refreshMyTickets();
+  }
   if (action === "vendor-tag-charge") {
     openVendorTagChargeModal();
   }
@@ -17574,8 +17584,15 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
   const eventDate = ticket.eventDate || event.eventDate || order.eventDate || "";
   const venue = ticket.venueName || event.venueName || order.venueName || "";
   const city = ticket.city || event.city || "";
+  // A cancelled event is the one thing a ticket must say for itself. Without
+  // it the stub looked exactly like a live ticket and the holder found out at
+  // the gate.
+  const cancelled = Boolean(ticket.eventCancelled) || String(ticket.eventStatus || event.status || "") === "cancelled";
+  const removed = Boolean(ticket.removed);
+  const ticketId = ticket.id || ticket.ticketId || "";
   return `
-    <article class="ticket-stub">
+    <article class="ticket-stub${cancelled ? " is-cancelled" : ""}">
+      ${cancelled ? `<p class="ticket-cancelled-flag">${icon("ban")} Event cancelled by the organiser</p>` : ""}
       <header class="ticket-stub-head">
         <p class="eyebrow">TitoPay Ticket</p>
         <strong>${esc(eventName)}</strong>
@@ -17602,6 +17619,7 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
         ${ticketWalletControl(ticket)}
         ${linkableTicketId(ticket) ? `<button class="btn primary" type="button" data-action="event-tag-link:${esc(linkableTicketId(ticket))}">${icon("scan")} Link wristband</button>` : ""}
         ${order.id || order.orderId ? `<button class="btn ghost" type="button" data-action="request-refund:${esc(order.id || order.orderId)}">${icon("refund-card")} Refund</button>` : ""}
+        ${ticketId ? `<button class="btn ghost ticket-remove-btn" type="button" data-action="ticket-${removed ? "restore" : "remove"}:${esc(ticketId)}">${icon(removed ? "refresh" : "x")} ${removed ? "Put back" : "Remove"}</button>` : ""}
       </div>
       <footer class="ticket-stub-foot">${ticketWristbandNote(ticket)}</footer>
     </article>`;
@@ -17951,6 +17969,32 @@ async function submitTicketClaim(data) {
   if (form) form.reset();
   await refreshMyTickets();
 }
+// Put a ticket away, or bring it back.
+//
+// The server hides it rather than deleting it, so this is safe to offer on a
+// ticket that is still valid: the confirmation says as much, and the list has a
+// toggle that brings removed tickets back into view.
+async function setTicketRemoved(ticketId, removed, button) {
+  if (!ticketId) return;
+  if (removed && !await askToConfirm({
+    title: "Remove this ticket?",
+    body: "It leaves My Tickets but is not deleted. Your ticket, its entry code and any refund you are owed all stay exactly as they are, and Show removed tickets brings it back.",
+    confirmLabel: "Remove"
+  })) return;
+  setButtonBusy(button, true);
+  try {
+    await api(`/v1/ticketing/tickets/${encodeURIComponent(ticketId)}/removed`, {
+      method: "PATCH",
+      body: { removed: Boolean(removed) }
+    });
+    showToast(removed ? "Ticket removed" : "Ticket put back");
+    await refreshMyTickets();
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
 async function refreshMyTickets() {
   const host = document.querySelector("[data-my-ticket-list]");
   if (!host) return;
@@ -17966,7 +18010,7 @@ async function refreshMyTickets() {
     // cashless or the lookup broke. Remember which it was.
     state.ticketing.tagLookupFailed = false;
     const [result, tagResult, linkableResult] = await Promise.all([
-      api("/v1/ticketing/tickets"),
+      api(`/v1/ticketing/tickets${state.ticketing.showRemovedTickets ? "?removed=1" : ""}`),
       api("/v1/ticketing/tags").catch(() => { state.ticketing.tagLookupFailed = true; return { items: [] }; }),
       api("/v1/ticketing/tags/linkable").catch(() => { state.ticketing.tagLookupFailed = true; return { items: [] }; })
     ]);
@@ -18001,9 +18045,13 @@ function renderMyTickets() {
   const tickets = state.ticketing.myTickets || [];
   const tags = eventTagsToShow();
   host.removeAttribute("aria-busy");
-  setMyTicketsLead(tickets.length
-    ? `${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"} ready to show at the entrance.`
-    : "Tickets you buy appear here.");
+  const showingRemoved = Boolean(state.ticketing.showRemovedTickets);
+  const live = tickets.filter((t) => !t.removed);
+  setMyTicketsLead(showingRemoved
+    ? `${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"}, including the ones you removed.`
+    : live.length
+      ? `${live.length} ${live.length === 1 ? "ticket" : "tickets"} ready to show at the entrance.`
+      : "Tickets you buy appear here.");
   if (!tickets.length && !tags.length && !(state.ticketing.linkableTickets || []).length) {
     host.innerHTML = `
       <section class="empty-state compact-state">
@@ -18018,6 +18066,11 @@ function renderMyTickets() {
     return;
   }
   host.innerHTML = `
+    <div class="my-tickets-tools">
+      <button class="btn ghost" type="button" data-action="tickets-toggle-removed">
+        ${icon(showingRemoved ? "eye-off" : "eye")} ${showingRemoved ? "Hide removed tickets" : "Show removed tickets"}
+      </button>
+    </div>
     ${state.ticketing.tagLookupFailed ? `
       <section class="event-tag-card is-link">
         <header class="event-tag-head">

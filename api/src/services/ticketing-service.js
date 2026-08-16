@@ -469,6 +469,19 @@ async function ensureTicketingSchema() {
     ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS coupon_id UUID;
     ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(18,2) NOT NULL DEFAULT 0;
 
+    -- A TICKET A CUSTOMER HAS PUT AWAY, NOT ONE THAT NEVER EXISTED.
+    --
+    -- My Tickets is a wallet, and a wallet nobody can tidy fills with last
+    -- year's stubs until the one ticket needed at a gate is four screens down.
+    -- So a customer can remove a ticket, and removing it hides it: the row
+    -- stays, the money it represents stays auditable, the organiser's counts
+    -- are untouched, and the customer can bring it back.
+    --
+    -- Deleting it outright was the other option and is wrong. A ticket is a
+    -- paid asset and evidence in a refund dispute, and a scanned one is the
+    -- record that somebody came through the gate.
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ;
+
     -- WHO ACTIONED A REFUND.
     --
     -- processed_by points at admin_users, because refunds used to be a TitoPay
@@ -1319,11 +1332,37 @@ async function listPublicApprovedEvents({ search = "", category = "", limit = 60
   };
 }
 
+// A CANCELLED EVENT IS ANSWERED, NOT HIDDEN.
+//
+// This used to match status = 'approved' only, so the moment an event was
+// cancelled its page answered 404 and every link to it died: the share a buyer
+// posted, the link in their confirmation email, the poster QR on a wall. "Event
+// is not available" reads as a broken link, and the people most likely to open
+// it are the ones holding tickets who need to be told it is off.
+//
+// Cancelled events are served with the cancellation stated and selling closed.
+// Everything else that is not approved stays a 404, because a draft or a
+// rejected submission is not something the public was ever shown.
 async function getPublicApprovedEvent(slug) {
   await ensureTicketingSchema();
-  const { rows } = await pool.query("SELECT * FROM events WHERE slug = $1 AND status = 'approved' LIMIT 1", [slugify(slug)]);
+  const { rows } = await pool.query(
+    "SELECT * FROM events WHERE slug = $1 AND status IN ('approved', 'cancelled') LIMIT 1",
+    [slugify(slug)]
+  );
   if (!rows[0]) throw new AppError(404, "Event is not available");
-  return publicEvent(rows[0], await getTicketTypes(rows[0].id), []);
+  const cancelled = rows[0].status === "cancelled";
+  const event = publicEvent(rows[0], await getTicketTypes(rows[0].id), []);
+  // Nothing here needs to close selling: the purchase path matches
+  // e.status = 'approved' of its own accord, so a cancelled event already
+  // cannot be bought from. These two fields exist so the page can SAY so
+  // rather than present a buyable-looking event that refuses at the last step.
+  return {
+    ...event,
+    cancelled,
+    cancelledNotice: cancelled
+      ? "This event has been cancelled by the organiser. Tickets are no longer on sale. If you bought a ticket, open My Tickets in the TitoPay app for the refund position."
+      : ""
+  };
 }
 
 async function listAdminEvents({ status = "", limit = 150 } = {}) {
@@ -2802,13 +2841,41 @@ async function claimTicketByCode(actor, rawCode, meta = {}) {
   return mine.find((item) => item.ticketCode === code) || { ticketCode: code, claimed: true };
 }
 
-async function listMyTickets(userId) {
+// includeRemoved brings back what the customer put away. The list is otherwise
+// only the tickets they still want to see.
+// Put a ticket away, or bring it back.
+//
+// This never deletes. The row, its scan history and its place in the
+// organiser's counts all stay exactly as they were; only whether the customer
+// sees it in My Tickets changes. That is why it is safe to offer on a ticket
+// that is still valid: nothing is lost and the customer can undo it.
+async function setMyTicketRemoved(userId, ticketId, removed) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `UPDATE tickets
+        SET hidden_at = CASE WHEN $3 THEN NOW() ELSE NULL END
+      WHERE id = $1 AND owner_user_id = $2
+      RETURNING id, hidden_at`,
+    [ticketId, userId, Boolean(removed)]
+  );
+  // Scoped to the owner, so a ticket id belonging to someone else is a 404
+  // rather than a 403: it does not confirm the ticket exists.
+  if (!rows[0]) throw new AppError(404, "Ticket not found");
+  return { id: rows[0].id, removed: Boolean(rows[0].hidden_at) };
+}
+
+async function listMyTickets(userId, { includeRemoved = false } = {}) {
   await ensureTicketingSchema();
   const { rows } = await pool.query(
     `SELECT t.*,
             o.order_reference, o.status AS order_status, o.created_at AS order_created_at,
             tt.ticket_name,
             e.event_name, e.slug, e.event_date, e.start_time, e.venue_name, e.city, e.province,
+            -- The event's own state travels with the ticket. Without it a
+            -- cancelled event looked exactly like a live one, so the holder
+            -- kept a ticket that was never going to be scanned and only found
+            -- out at the venue.
+            e.status AS event_status,
             COALESCE(e.cashless_tags_enabled, FALSE) AS cashless_tags_enabled,
             EXISTS (
               SELECT 1 FROM event_tags g
@@ -2819,9 +2886,10 @@ async function listMyTickets(userId) {
        JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
        JOIN events e ON e.id = t.event_id
       WHERE t.owner_user_id = $1
+        AND ($2::BOOLEAN OR t.hidden_at IS NULL)
       ORDER BY t.created_at DESC
       LIMIT 200`,
-    [userId]
+    [userId, includeRemoved]
   );
   // Each ticket carries its scannable QR image (drawn from the payload signed
   // at purchase), so the stub and the PDF show a real entry code. Sequential on
@@ -2837,6 +2905,12 @@ async function listMyTickets(userId) {
     // removed" to anyone who knows it exists.
     cashlessTagsEnabled: Boolean(row.cashless_tags_enabled),
     wristbandLinked: Boolean(row.wristband_linked),
+    // A cancelled or suspended event is the single most important thing a
+    // ticket holder can be told, and it was the one thing this list did not say.
+    eventStatus: row.event_status,
+    eventCancelled: row.event_status === "cancelled",
+    removed: Boolean(row.hidden_at),
+    removedAt: row.hidden_at,
     eventName: row.event_name,
     eventDate: row.event_date,
     venueName: row.venue_name,
@@ -4372,6 +4446,7 @@ module.exports = {
   emailTicketToRecipient,
   listMyTicketOrders,
   listMyTickets,
+  setMyTicketRemoved,
   claimTicketByCode,
   scanTicket,
   // Exported so a door-scanner view can show the running count before the first

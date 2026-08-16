@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 28;
+const API_BUILD = 29;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  29: "A cancelled event is answered instead of hidden: its public page used to " +
+      "404 the moment it was cancelled, killing every share, email link and " +
+      "poster QR pointing at it, and My Tickets never carried the event status " +
+      "so a cancelled ticket looked live. Customers can also remove a ticket " +
+      "from My Tickets, which hides it and never deletes it, so the row, its " +
+      "scan history and the organiser's counts are untouched and it can be " +
+      "brought back.",
   28: "The schema can rebuild an empty database again: two ticketing tables " +
       "referenced transactions 200 lines before it was created, and because " +
       "the file runs as one statement that rolled the WHOLE schema back and " +

@@ -14,8 +14,10 @@
 //
 //     node scripts/diagnose-admin-console.js
 //
-// It only reads. Nothing here creates, alters or deletes anything, so it is
-// safe to run against production at any time.
+// Reads run as themselves. The save probes at the end DO issue writes, because
+// a read that works while a save fails is the whole shape of the problem, but
+// every one of them runs inside a transaction that is always rolled back. It
+// creates, alters and deletes nothing, so it is safe against production.
 
 require("../src/config/env");
 const { pool } = require("../src/db/pool");
@@ -130,6 +132,51 @@ async function tablesPresent() {
       console.log(`           ${bad(error.message)}`);
     }
   }
+
+  // ---- write probes -------------------------------------------------------
+  //
+  // Reads passing while writes fail is the exact shape of "Save Maintenance
+  // Mode did nothing", so the saves are attempted too. Every one runs inside a
+  // transaction that is ALWAYS rolled back, so this still changes nothing.
+  console.log("");
+  console.log("  WHAT THE FAILING SAVE BUTTONS ACTUALLY RUN");
+  console.log("  -----------------------------------------");
+  const anyAdmin = await pool.query("SELECT id FROM admin_users ORDER BY created_at LIMIT 1").catch(() => ({ rows: [] }));
+  const actor = anyAdmin.rows[0]?.id ?? null;
+  const WRITES = [
+    ["Save Maintenance Mode", `INSERT INTO platform_settings (key, value, updated_by, updated_at)
+       VALUES ('__diagnose_probe', '{}'::JSONB, $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`],
+    ["Save Security Content", `INSERT INTO platform_settings (key, value, updated_by, updated_at)
+       VALUES ('__diagnose_probe2', '{"a":1}'::JSONB, $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`],
+    ["Any audited admin action", `INSERT INTO audit_logs (id, actor_type, actor_id, action, entity_type, entity_id, metadata)
+       VALUES (gen_random_uuid(), 'admin', $1, 'diagnose_probe', 'platform_settings', NULL, '{}'::JSONB)`]
+  ];
+  for (const [what, sql] of WRITES) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(sql, [actor]);
+      console.log(`  ${good("ok")}       ${what}`);
+    } catch (error) {
+      failures.push({ page: "save", what, message: error.message });
+      console.log(`  ${bad("FAILS")}    ${what}`);
+      console.log(`           ${bad(error.message)}`);
+    } finally {
+      await client.query("ROLLBACK").catch(() => {});
+      client.release();
+    }
+  }
+
+  // The three copies of this table do not agree: one declares a foreign key on
+  // updated_by and two do not, and whichever ran first on this database is the
+  // one that exists. Report which, because it changes what a save will accept.
+  const fk = await pool.query(`
+    SELECT COUNT(*)::INT AS n FROM pg_constraint c
+     JOIN pg_class t ON t.oid = c.conrelid
+    WHERE t.relname = 'platform_settings' AND c.contype = 'f'`).catch(() => ({ rows: [{ n: -1 }] }));
+  console.log(`  ${paint("36", "note")}     platform_settings foreign keys on this database: ${fk.rows[0].n}`);
 
   // ---- verdict ------------------------------------------------------------
   console.log("");

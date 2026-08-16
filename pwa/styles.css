@@ -15334,3 +15334,44 @@ img {
     gap: 0;
   }
 }
+
+/* A cancelled event, said on the ticket itself.
+
+   The stub is otherwise indistinguishable from a live ticket, which is how a
+   holder ends up at a gate for an event that is not happening. The flag is red
+   rather than grey because this is not a status detail, it is the whole
+   message, and the stub is dimmed so it does not read as a ticket to present. */
+.ticket-cancelled-flag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid rgba(180, 35, 24, 0.28);
+  border-radius: 14px;
+  background: #fdeceb;
+  color: #b42318;
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.ticket-cancelled-flag svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Dimmed, not hidden: the holder still needs the code and the refund button. */
+.ticket-stub.is-cancelled .ticket-stub-body {
+  opacity: 0.55;
+}
+
+.my-tickets-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.my-tickets-tools .btn {
+  min-height: 40px;
+  font-size: 0.85rem;
+}

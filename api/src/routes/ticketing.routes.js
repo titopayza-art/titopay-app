@@ -33,6 +33,7 @@ const {
   listMyEventChangeRequests,
   eventSalesReport,
   listMyTickets,
+  setMyTicketRemoved,
   claimTicketByCode,
   canManageEventTicketing,
   EVENT_CATEGORIES,
@@ -261,7 +262,23 @@ router.post("/orders/:id/refund", requireAuth, async (req, res, next) => {
 // this route did not exist, so that screen has never loaded.
 router.get("/tickets", requireAuth, async (req, res, next) => {
   try {
-    res.json({ ok: true, items: await listMyTickets(req.auth.userId) });
+    // ?removed=1 shows what the customer put away, so removing a ticket is
+    // reversible rather than a one-way door on something they paid for.
+    const includeRemoved = ["1", "true", "yes"].includes(String(req.query.removed || "").toLowerCase());
+    res.json({ ok: true, items: await listMyTickets(req.auth.userId, { includeRemoved }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Remove a ticket from My Tickets, or put it back. This hides it and never
+// deletes it: the ticket, its scan history and the organiser's counts are
+// untouched, which is why it is offered even on a ticket that is still valid.
+router.patch("/tickets/:id/removed", requireAuth, async (req, res, next) => {
+  try {
+    const removed = req.body?.removed;
+    if (typeof removed !== "boolean") throw new AppError(400, "removed must be true or false");
+    res.json({ ok: true, ticket: await setMyTicketRemoved(req.auth.userId, req.params.id, removed) });
   } catch (error) {
     next(error);
   }
