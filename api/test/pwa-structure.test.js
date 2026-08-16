@@ -415,3 +415,21 @@ test("the identity screen tells a business where its registration number goes", 
     + "appear in this list: it would let a business reach a higher limit with "
     + "no person verified at all");
 });
+
+test("a route change is not mistaken for a back gesture", () => {
+  // Setting location.hash fires popstate, and several flows do that with a
+  // sheet still open: login sets the route to dashboard, closes the auth
+  // sheet, then opens the Security Tip screen. Treating that popstate as a
+  // back gesture peeled a layer that was never the target, and because the
+  // peel runs a microtask later it closed the sheet the flow had just opened.
+  // The Security Tip screen stopped appearing after sign-in, silently.
+  // Proven end to end in verification/pwa-sign-in-journey.spec.js.
+  const back = source.slice(source.indexOf("function onHistoryBack"),
+    source.indexOf("function openModal("));
+  assert.match(back, /location\.href !== sheetHistoryHref/,
+    "a popstate that moved the route releases the entry and peels nothing");
+  assert.ok(back.indexOf("location.href !== sheetHistoryHref") < back.indexOf(".tp-dialog-layer"),
+    "and it is checked BEFORE any layer is looked at");
+  assert.match(back, /document\.querySelector\("\.modal-backdrop"\) !== sheet/,
+    "the peel is checked against the sheet that was on screen when the gesture arrived");
+});

@@ -1,8 +1,38 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v414 (titopay-pwa-v414-business-identity-note)
+PWA bundle: v415 (titopay-pwa-v415-security-tip-restored)
 Requires: api.zip build 36
 Admin console: admin-console-v89
+
+THE SECURITY TIP SCREEN IS BACK AFTER SIGN-IN
+
+   THIS IS A FAULT v413 INTRODUCED, AND THIS BUILD FIXES IT.
+
+   The back-gesture work in v413 made every popstate close the top layer. But
+   setting location.hash ALSO fires popstate, and signing in does exactly that
+   with a sheet still open: it sets the route to dashboard, closes the sign-in
+   sheet, then opens the Security Tip screen. The close ran a moment later, by
+   which time the sheet on screen was the Security Tip screen rather than the
+   sign-in sheet the gesture was aimed at, so it closed the wrong one.
+
+   The result was that the Security Tip screen stopped appearing after sign-in
+   in v413 and v414. Nothing errored, nothing was logged, and the screen itself
+   was never broken: it opened and was removed a fraction of a second later.
+
+   A popstate that moved the route is now recognised for what it is and closes
+   nothing, and any close is checked against the exact sheet that was on screen
+   when the gesture arrived.
+
+   NEW: verification/pwa-sign-in-journey.spec.js drives the real journey -- tap
+   Sign in, type, press the button -- and watches for eight seconds. Run against
+   the v414 bundle it fails five checks; against this one it passes twelve. The
+   original testing called showSecurityTipModal() directly, which worked
+   perfectly while the journey was broken, and that is exactly why this was
+   missed.
+
+   Every back-gesture behaviour from v413 still holds: 19 native feel checks
+   pass, including closing a sheet, the Pay hub, and a dialog over a sheet.
+
 
 ONE LINE ADDED FOR BUSINESS ACCOUNTS
 
@@ -113,9 +143,9 @@ WHAT PROVES IT
 
 UPLOAD NOTES
 
-   Replace the whole app directory as usual. The asset stamp moves to ?v=414
+   Replace the whole app directory as usual. The asset stamp moves to ?v=415
    in index.html and service-worker.js and the cache name becomes
-   titopay-pwa-v414-business-identity-note, so no customer can be served a cached bundle.
+   titopay-pwa-v415-security-tip-restored, so no customer can be served a cached bundle.
 
-   Requires api.zip build 36, unchanged by this upload. This is an app-only
+   Requires api.zip build 36 or newer, unchanged by this upload. This is an app-only
    release: api.zip and admin.zip do not need to be re-uploaded.

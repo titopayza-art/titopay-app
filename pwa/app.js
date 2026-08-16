@@ -2956,6 +2956,23 @@ function releaseSheetHistory() {
   }, 0);
 }
 function onHistoryBack(event) {
+  // A popstate that MOVED THE ROUTE is not a gesture aimed at a sheet.
+  //
+  // Setting location.hash fires popstate here, and several flows do exactly
+  // that with a sheet still open: signing in sets the route to dashboard, then
+  // closes the auth sheet, then opens the Security Tip screen. Treating that
+  // popstate as a back gesture peeled a layer that was never the target, and
+  // because the peel ran a microtask later it closed the sheet the flow had
+  // just opened. The Security Tip screen stopped appearing after sign-in.
+  //
+  // The entry a sheet claims always carries the url it was claimed at, so a
+  // url that has moved on says plainly that this popstate belongs to the route
+  // rather than to anything covering it. The entry is released and nothing is
+  // peeled; the sheet that is open claims a fresh one of its own.
+  if (sheetHistoryOwned && location.href !== sheetHistoryHref) {
+    sheetHistoryOwned = false;
+    return;
+  }
   // Top layer first, and one layer at a time. A confirm dialog sits OVER a
   // sheet, and the Pay hub sits over the screen; taking the sheet away while
   // one of those is still on top would leave it floating over nothing.
@@ -2989,8 +3006,16 @@ function onHistoryBack(event) {
     // way a native stack does, rather than dropping the whole pile.
     // handleAction reopens the previous sheet, which claims a fresh entry, so
     // the next Back peels again.
+    //
+    // The peel is checked against the exact element that was on screen when the
+    // gesture arrived. handleAction runs a microtask later, and a flow can
+    // replace the sheet in between; peeling then would close a sheet the
+    // gesture was never aimed at.
     Promise.resolve()
-      .then(() => handleAction("modal-back"))
+      .then(() => {
+        if (document.querySelector(".modal-backdrop") !== sheet) return undefined;
+        return handleAction("modal-back");
+      })
       .catch(() => { closeModal(); })
       .finally(settle);
     return;
