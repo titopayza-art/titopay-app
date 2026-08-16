@@ -200,3 +200,47 @@ test("the customer app sends no amount and no recipient for a PDF", () => {
   assert.match(fn[0], /Idempotency-Key/, "a paid action needs an idempotency key");
   assert.match(fn[0], /idempotencyKey/, "and it must reach the body the server reads");
 });
+
+test("a business can reach Event Tickets, and still cannot sell without the organiser tools", () => {
+  // Buying a ticket is not a personal-only act: a business books a stand, sends
+  // staff to a conference, buys a table at a fundraiser. The tile was hidden
+  // from business accounts while every step behind it already worked, proven
+  // end to end in verification/business-buys-tickets-live.js: a business buys a
+  // paid ticket, the money leaves the BUSINESS wallet, the organiser is
+  // credited and both wallets reconcile.
+  //
+  // ensureDefaultServices inserts with ON CONFLICT DO NOTHING, so this default
+  // only reaches a database that has never seen the row. An environment that
+  // already has it needs the column set directly; no deploy will do it.
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "src", "services", "service-management-service.js"), "utf8");
+  const entry = (code) => {
+    const line = source.split("\n").find((row) => row.trim().startsWith(`["${code}",`));
+    assert.ok(line, `${code} is not in DEFAULT_SERVICES`);
+    // status, personal_visible, business_visible, sort_order, feature_badge
+    const flags = line.match(/"(active|inactive)",\s*(true|false),\s*(true|false)/);
+    assert.ok(flags, `${code} does not carry readable visibility flags`);
+    return { personal: flags[2] === "true", business: flags[3] === "true" };
+  };
+
+  const tickets = entry("tickets");
+  assert.equal(tickets.personal, true, "personal accounts keep Event Tickets");
+  assert.equal(tickets.business, true, "business accounts can buy tickets too");
+
+  // Creating and selling events is a different service and stays business only.
+  const ticketing = entry("ticketing");
+  assert.equal(ticketing.business, true);
+  assert.equal(ticketing.personal, false,
+    "selling tickets is an organiser tool and must not appear for personal accounts");
+
+  // The PWA ships its own offline copy of the catalogue. The two must agree, or
+  // an app with no network shows a different set of tiles than one with.
+  const shipped = JSON.parse(fs.readFileSync(
+    path.join(__dirname, "..", "..", "pwa", "services-default.json"), "utf8"));
+  const rows = Array.isArray(shipped) ? shipped : (shipped.items || shipped.services || []);
+  const offline = rows.find((row) => row.service_code === "tickets");
+  assert.ok(offline, "the PWA fallback catalogue has no tickets entry");
+  assert.equal(offline.business_visible, true,
+    "the app's offline catalogue must agree with the API's default");
+  assert.equal(offline.personal_visible, true);
+});

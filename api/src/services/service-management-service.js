@@ -25,7 +25,13 @@ const DEFAULT_SERVICES = [
   ["transactions", "Transactions", "list", "transactions", "Search, filter and export wallet transactions.", "active", true, true, 160, "none"],
   ["profile-security", "Profile & Security", "shield", "profile-security", "Manage FICA, wallet lock, devices and profile security.", "active", true, false, 170, "none"],
   ["fica", "FICA", "shield", "fica", "Submit and track verification documents.", "active", true, false, 180, "none"],
-  ["tickets", "Tickets", "ticket", "tickets", "Browse approved TitoPay events and buy secure digital tickets.", "active", true, false, 185, "new"],
+  // Buying a ticket is not a personal-only act: a business books a stand at an
+  // expo, sends staff to a conference, buys a table at a fundraiser. The tile
+  // was hidden from business accounts while the whole path behind it already
+  // worked, so this only stopped them reaching a door that was open.
+  // Selling tickets stays separate: that is the "ticketing" service below, and
+  // it remains business only.
+  ["tickets", "Tickets", "ticket", "tickets", "Browse approved TitoPay events and buy secure digital tickets.", "active", true, true, 185, "new"],
   ["statements", "Statements", "list", "statements", "Download PDF statements and CSV exports.", "active", false, true, 190, "none"],
   ["payouts", "Payouts", "withdraw", "payouts", "Request business payouts to bank beneficiaries.", "active", false, true, 200, "none"],
   ["business-profile", "Business Profile", "user", "business-profile", "Manage merchant profile and business wallet settings.", "active", false, true, 210, "none"],

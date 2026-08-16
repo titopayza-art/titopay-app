@@ -1,8 +1,40 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 38   (GET /health reports this — check it after upload)
-PWA bundle: v414 (titopay-pwa-v414-business-identity-note)
+API build: 39   (GET /health reports this — check it after upload)
+PWA bundle: v415 (titopay-pwa-v415-security-tip-restored)
 Admin console: admin-console-v89
+
+BUILD 39 — BUSINESSES CAN BUY EVENT TICKETS
+
+   The Event Tickets tile was shown to personal accounts only. Buying a ticket
+   was never a personal-only act: a business books a stand at an expo, sends
+   staff to a conference, buys a table at a fundraiser. Every step behind the
+   tile already worked for a business; only the tile was hidden.
+
+   Proven before it was changed, in verification/business-buys-tickets-live.js:
+   a business account buys a real paid ticket, the money leaves the BUSINESS
+   wallet (R2000 to R1740, R260 charged), the organiser is credited R220,
+   TitoPay keeps R40, and both wallets still reconcile against their ledgers.
+   The 86-journey walk also now opens Event Tickets on the business account
+   with both wallets byte-for-byte unchanged.
+
+   SELLING tickets is a different service and is UNCHANGED: "Ticketing" stays
+   business only, and the organiser gates (merchant profile, registration
+   details, verification) are untouched.
+
+   IMPORTANT, THIS UPLOAD ALONE DOES NOT CHANGE YOUR LIVE APP.
+   ensureDefaultServices inserts with ON CONFLICT DO NOTHING, so this default
+   only reaches a database that has never seen the tickets row. Yours has one,
+   and it says business_visible = false. Set it directly:
+
+     node -e 'const{pool}=require("./src/db/pool");(async()=>{
+       const r=await pool.query("UPDATE service_config SET business_visible = TRUE, updated_at = NOW() WHERE service_code = $1 RETURNING service_code, personal_visible, business_visible",["tickets"]);
+       console.log(r.rows[0] || "no tickets row found");
+       await pool.end();})()'
+
+   Reversing it is the same command with FALSE. It touches one column on one
+   row and nothing else.
+
 
 BUILD 38 — THE SCHEMA CAN APPLY ON AN OLDER POSTGRESQL AGAIN
 

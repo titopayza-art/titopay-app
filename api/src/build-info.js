@@ -19,10 +19,15 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 38;
+const API_BUILD = 39;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  39: "Event Tickets is offered to business accounts as well as personal ones. "
+      + "Buying a ticket was never personal-only: the whole path already worked "
+      + "for a business wallet, the tile was simply hidden. Selling tickets is "
+      + "unchanged and stays business only. Seeds only a database that has "
+      + "never seen the row; an existing one needs the column set directly.",
   38: "The schema can apply on an older PostgreSQL again. CREATE TRIGGER ... "
       + "EXECUTE FUNCTION needs PostgreSQL 11, and schema.sql runs as ONE "
       + "statement, so on an older server that syntax error rolled the whole "
