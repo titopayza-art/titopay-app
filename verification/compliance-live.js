@@ -6,7 +6,8 @@
  *     monthly send past the limit are both refused with the upgrade path.
  *  2. Basic verification with a valid SA ID upgrades to Tier 1 instantly,
  *     raises limits, and refuses an ID number already used elsewhere.
- *  3. Tier 2 (FICA verified) has no standing limits.
+ *  3. Tier 2 (FICA verified) carries the top monthly ceiling, not an open
+ *     wallet, and a recipient at capacity has money held rather than lost.
  *  4. The limits are CONFIG, not code: changing platform_settings changes
  *     the enforced number immediately.
  *  5. EDD triggers automatically past the configured mark: flag written,
@@ -128,10 +129,15 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     assert.equal(reuse.status, 409, "one ID number, one account");
     ok("a valid SA ID upgrades to tier 1 instantly, raises limits, and cannot be reused");
 
-    // 3. Tier 2 is unlimited by standing limits.
+    // 3. Tier 2 is the TOP of the ladder, and the top is a number. It used to
+    //    carry no standing monthly limit at all, which reads as unlimited on a
+    //    platform that has never underwritten unlimited.
     const status2 = await call(friend.token, "GET", "/v1/compliance/status");
     assert.equal(status2.data.tier, 2);
-    assert.equal(status2.data.limits.monthlySend, null);
+    assert.equal(status2.data.limits.monthlySend, 200000);
+    assert.equal(status2.data.limits.monthlyReceive, 200000);
+    // The rungs still climb: the top allows more than identity verified does.
+    assert.ok(Number(status2.data.limits.monthlySend) > 25000);
     const rich = await seedUser("Rich", { fica: "verified", balance: 0 });
     const bigVerified = await call(friend.token, "POST", "/v1/transactions",
       { serviceCode: "wallet_transfer", amount: 60000, recipient: `@${rich.username}`, idempotencyKey: `e-${TAG}` });
@@ -145,7 +151,7 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     const { rows: heldRows } = await pool.query(
       "SELECT amount FROM pending_credits WHERE recipient_user_id = $1 AND status = 'awaiting_verification'", [newbie.id]);
     assert.ok(heldRows[0], "the payment is held for the recipient rather than refused");
-    ok("tier 2 has no standing limits, and a recipient at capacity has money held for them, not lost");
+    ok("tier 2 carries the R200 000 monthly ceiling, and a recipient at capacity has money held for them, not lost");
 
     // 4. The numbers are config. Change them, and enforcement changes NOW.
     await pool.query(

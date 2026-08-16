@@ -243,15 +243,18 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     assert.equal(capacity.data.basis, undefined, "internal reasoning is never sent to the customer");
     ok("the capacity endpoint tells a customer what they can still do, without exposing the rules");
 
-    // 10. FULLY VERIFIED HAS NO FIXED LIMITS; HIGH RISK GIVES IT REAL ONES.
+    // 10. FULLY VERIFIED IS THE TOP OF THE LADDER, AND THE TOP IS A CEILING.
+    //     Its per-payment rail is still open and reviewed against the account;
+    //     high risk closes even that.
     const whale = await seedUser("Whale", { fica: "verified", balance: 500000 });
     const whaleCapacity = await limits.capacityFor(whale.id);
-    assert.equal(whaleCapacity.limits.monthlySend, null);
+    assert.equal(whaleCapacity.limits.monthlySend, 200000, "the top level carries the top monthly ceiling");
+    assert.equal(whaleCapacity.limits.singleTransaction, null, "per payment stays open at the top level");
     await compliance.setRiskStatus(whale.id, "high_risk", "harness_high_risk");
     const restrained = await limits.capacityFor(whale.id);
-    assert.ok(Number(restrained.limits.singleTransaction) > 0, "high risk gives an unlimited level a boundary");
-    assert.ok(Number(restrained.limits.monthlySend) > 0);
-    ok("fully verified carries no fixed limits, and high risk imposes real ones on it");
+    assert.ok(Number(restrained.limits.singleTransaction) > 0, "high risk gives an open rail a boundary");
+    assert.ok(Number(restrained.limits.monthlySend) < 200000, "and narrows the ceiling it already had");
+    ok("the top level is a ceiling not a blank cheque, and high risk narrows it further");
 
     console.log(`\n${passed}/10 checks passed. Legitimate activity flows; risk and capacity still bind.`);
     process.exit(0);

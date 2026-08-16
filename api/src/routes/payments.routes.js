@@ -10,11 +10,13 @@ const {
   cancelCardTopup,
   refundCardTopup
 } = require("../services/peach-payments-service");
+// The PAYMENT capability. Which provider supplies it is configuration; this
+// route asks for processPayment and never for a named company's checkout.
 const {
-  createTopupCheckout,
-  getTopupStatus,
-  listRecentTopups
-} = require("../services/peach-checkout-service");
+  processPayment,
+  getPaymentStatus,
+  listRecentPayments
+} = require("../providers/payment-provider");
 
 const router = express.Router();
 
@@ -42,7 +44,7 @@ router.post("/qr", async (req, res, next) => {
 router.post("/topup", async (req, res, next) => {
   try {
     assertTransactionsAllowed(req);
-    const result = await createTopupCheckout(req.auth, {
+    const result = await processPayment(req.auth, {
       ...req.body,
       idempotencyKey: req.get("idempotency-key") || req.body?.idempotencyKey
     });
@@ -54,7 +56,7 @@ router.post("/topup", async (req, res, next) => {
 
 router.get("/topup", async (req, res, next) => {
   try {
-    res.json({ ok: true, items: await listRecentTopups(req.auth, req.query.limit) });
+    res.json({ ok: true, items: await listRecentPayments(req.auth, req.query.limit) });
   } catch (error) { next(error); }
 });
 
@@ -62,7 +64,7 @@ router.get("/topup", async (req, res, next) => {
 // always see how a payment they already made resolved.
 router.get("/topup/:reference", async (req, res, next) => {
   try {
-    res.json({ ok: true, ...(await getTopupStatus(req.auth, req.params.reference)) });
+    res.json({ ok: true, ...(await getPaymentStatus(req.auth, req.params.reference)) });
   } catch (error) { next(error); }
 });
 

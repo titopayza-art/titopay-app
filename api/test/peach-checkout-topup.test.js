@@ -168,20 +168,20 @@ test("A stale review screen cannot send a customer to Peach for the wrong total"
   assert.ok(create.indexOf("TOPUP_QUOTE_STALE") < create.indexOf("INSERT INTO transactions"));
 });
 
-test("Withdraw and payout are gated by the Peach payout capability", () => {
+test("Withdraw and payout are gated by the payout capability", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "services", "transaction-service.js"), "utf8");
   // They belong to the payout capability, never to Collection/Checkout.
   for (const code of ["withdraw", "withdraw_money_to_bank", "withdraw_cash", "bank_withdrawal",
     "cash_withdrawal", "payouts", "business_payout", "merchant_payout", "merchant_payouts", "seller_payout"]) {
     assert.ok(
-      new RegExp(`PEACH_PAYOUT_SERVICES = new Set\\(\\[[\\s\\S]{0,600}"${code}"`).test(source),
-      `${code} must be routed to the Peach payout capability`
+      new RegExp(`BANK_PAYOUT_SERVICES = new Set\\(\\[[\\s\\S]{0,600}"${code}"`).test(source),
+      `${code} must be routed to the payout capability`
     );
   }
   // The gate consults the payout capability at the fee preview, so an
   // unconfigured, disabled or unverified payout provider is reported as itself
   // before the customer is shown a fee.
-  assert.match(source, /PEACH_PAYOUT_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,400}payoutAvailability\(\)/);
+  assert.match(source, /BANK_PAYOUT_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,400}payoutAvailability\(\)/);
   assert.match(source, /assertPayoutAvailable/);
 });
 
@@ -196,7 +196,7 @@ test("A withdrawal cannot be created through the wallet-debit endpoint", () => {
   // createTransaction only debits; a withdrawal also has to submit a payout and
   // be reversible, so it is refused here and runs its own lifecycle instead.
   const live = source.slice(source.indexOf("async function assertLiveTransactionSupported"));
-  assert.match(live.slice(0, 1400), /PEACH_PAYOUT_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,240}USE_WITHDRAWAL_FLOW/);
+  assert.match(live.slice(0, 1400), /BANK_PAYOUT_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,240}USE_WITHDRAWAL_FLOW/);
   assert.match(live.slice(0, 1400), /No wallet debit was made/);
   assert.match(live.slice(0, 1400), /\/v1\/payouts\/withdrawals/);
 });

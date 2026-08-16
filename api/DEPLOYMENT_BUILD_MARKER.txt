@@ -1,25 +1,68 @@
-TitoPay deployment build — 2026-08-12 UTC
+TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v315 (titopay-pwa-v315)
-Admin console: admin-console-v76
+API build: 30   (GET /health reports this — check it after upload)
+PWA bundle: v408 (titopay-pwa-v408-business-verification)
+Admin console: admin-console-v87 (UNCHANGED in this build; no need to re-upload)
 
-API changes in this build:
-  - ticketing-service: purchaseTickets loads the platform revenue wallet only
-    when a fee is actually owed (fee > 0 ? load : null), matching every other
-    money path. A free ticket now moves no money and never requires the
-    revenue wallet, so a free purchase can no longer 500 on an environment
-    where the revenue wallet is not provisioned.
-  - ticketing routes: new read-only GET
-    /v1/ticketing/business/events/:id/attendance, gated by the "scan"
-    permission (organiser or assigned scanner), returns { scanned, total }.
+WHAT CHANGED
 
-Migrations to run: none new in this build.
+1. LIMITS. The top verification level had NO standing monthly limit, which
+   reads as unlimited on a platform that has never underwritten unlimited. It
+   now carries R200 000 a month, receive and send. Identity Verified was
+   already R25 000 and is untouched. R5 000 remains what it always was here:
+   the UNVERIFIED rung, not the verified one. No fee, no other limit and no
+   transaction rule changed.
 
-Operational check (important): confirm the single platform revenue wallet
-exists, or PAID ticketing and top-up fees cannot be recorded as revenue:
-  node scripts/ensure-revenue-wallet.js            (report only)
-  node scripts/ensure-revenue-wallet.js --create   (provision if missing)
+   These are TitoPay operational limits under its RMCP, editable in the
+   console without a deploy. Neither figure is a statutory threshold and the
+   app never presents them as one.
 
-Wallet passes (new): Apple Wallet .pkpass signing + Google Wallet save links,
-fully built and configuration-gated — see WALLET_PASSES_SETUP.md. Adds the
-node-forge dependency: run `npm install` once after extracting this api.zip.
+2. PROVIDERS ARE NOW REPLACEABLE. Core asks for a CAPABILITY and never for a
+   company: processPayment(), processPayout(), verifyIdentity(),
+   verifyBusiness(), purchaseAirtime(). Which supplier answers is one server
+   side environment variable per capability:
+
+       PAYMENT_PROVIDER=peach_checkout      (default, unchanged behaviour)
+       PAYOUT_PROVIDER=peach_payouts        (default, unchanged behaviour)
+       KYC_PROVIDER=internal                (default)
+       AML_PROVIDER=internal                (default)
+       VAS_PROVIDER=none                    (default)
+
+   Leave all of them UNSET and the API behaves exactly as build 29 did. The
+   variables exist so a supplier can be changed without a code change.
+
+   The console's routing page no longer names an identity verification vendor
+   as the default. It reads "Not configured", because none is contracted.
+
+3. A BUSINESS IS NO LONGER A PERSON. A business now has its own entity, its
+   own registration number where its type has one, and its own KYB status.
+   One verified person can hold several businesses without re-verifying
+   themselves once, and a sole proprietor or informal trader is never asked
+   for a registration number they do not have.
+
+MIGRATION
+
+   node scripts/apply-migrations.js
+   (or npm run db:apply-migrations, from the API directory)
+
+   New: 20260816_business_entity_verification. It is purely ADDITIVE — three
+   new tables and their indexes. It drops nothing, alters no existing column,
+   rewrites no row, and touches no user, wallet, transaction, merchant or
+   existing business account. The service also creates these tables on first
+   use, so the API works before the migration is applied.
+
+IF A CONSOLE PAGE OR A SAVE FAILS AFTER UPLOAD
+
+   cd into the API directory (the same place `npm start` runs from)
+   npm run db:diagnose
+
+   It now also prints which provider supplies which capability, so
+   "is the KYC provider live?" is one command instead of an investigation.
+
+NOTHING ELSE MOVED
+
+   No fee, no pricing rule, no wallet, no ledger, no authentication path, no
+   permission and no existing endpoint changed. Withdrawals, top-ups, QR
+   payments, ticketing, stokvels, TitoKids, merchant and staff flows all run
+   the same code they ran in build 29 — the payment and payout calls simply
+   arrive through the capability layer instead of by name.

@@ -1,7 +1,9 @@
 const { v4: uuidv4 } = require("uuid");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
-const { payoutAvailability, assertPayoutAvailable } = require("./peach-payout-service");
+// The payout CAPABILITY, not a payout company. Which provider supplies it is
+// configuration; this file must never know or care.
+const { payoutAvailability, assertPayoutAvailable } = require("../providers/payout-provider");
 const { writeAuditLog } = require("./audit-service");
 const { queueEmail } = require("./email-centre-service");
 const { shouldSendCustomerEmail } = require("./customer-notification-preference-service");
@@ -75,9 +77,9 @@ const MULTI_PARTY_SERVICES_PENDING_SETTLEMENT = new Set([
   "stockvel"
 ]);
 
-// Card top-ups are a wallet CREDIT funded by Peach Checkout, not a wallet
-// debit, so they can never run through createTransaction. They have their own
-// lifecycle at /v1/payments/topup.
+// Card top-ups are a wallet CREDIT funded by the PAYMENT capability, not a
+// wallet debit, so they can never run through createTransaction. They have
+// their own lifecycle at /v1/payments/topup.
 const CARD_TOPUP_SERVICES = new Set([
   "wallet_top_up",
   "top_up",
@@ -85,27 +87,29 @@ const CARD_TOPUP_SERVICES = new Set([
   "card_payments"
 ]);
 
-// Withdrawals and payouts are money OUT and belong to the Peach PAYOUT
-// capability, never to Collection/Checkout. They stay unavailable until that
+// Withdrawals and payouts are money OUT and belong to the PAYOUT capability,
+// never to a collection or checkout rail. They stay unavailable until that
 // capability is configured, enabled and its own connection test has succeeded.
+// This file asks the capability and never names the company behind it: which
+// provider supplies payouts is configuration, resolved in src/providers.
 // The service catalogue publishes the code "payouts"; without it here the block
 // only happened via the catch-all, and a fee preview first wrote a zero-fee
 // "payouts" pricing rule to the database.
-// Withdrawal processing was previously held behind PEACH_PAYOUT_PROCESSING_ENABLED
+// Withdrawal processing was previously held behind a processing-enabled flag
 // because a connected payout provider is not the same thing as a withdrawal
 // lifecycle: without the debit + submission + provider-confirmation chain, a
 // Confirm could have debited a wallet with nothing on the other side to move
-// the money. That chain now exists in peach-withdrawal-service, which debits
+// the money. That chain now exists in the withdrawal lifecycle, which debits
 // once inside the same database transaction that records the withdrawal,
-// submits to the Peach Payouts API, and reverses exactly once if Peach reports
-// the payout failed. The flag is therefore gone rather than bypassed — the
-// safety it was standing in for is implemented.
-// Bank payouts only. Peach Payouts pays a bank account by realtime-EFT, so a
-// CASH withdrawal is a different product with a different partner and is not
-// routed here — sending it to the payout flow would tell the customer to use an
+// submits to the payout provider, and reverses exactly once if the provider
+// reports the payout failed. The flag is therefore gone rather than bypassed —
+// the safety it was standing in for is implemented.
+// BANK payouts only. The payout capability pays a bank account, so a CASH
+// withdrawal is a different product with a different partner and is not routed
+// here — sending it to the payout flow would tell the customer to use an
 // endpoint that then refuses them. Cash stays with the unlaunched services
 // below until it has a provider of its own.
-const PEACH_PAYOUT_SERVICES = new Set([
+const BANK_PAYOUT_SERVICES = new Set([
   "withdraw",
   "withdraw_money_to_bank",
   "bank_withdrawal",
@@ -119,8 +123,8 @@ const PEACH_PAYOUT_SERVICES = new Set([
 ]);
 
 const PROVIDER_DEPENDENT_SERVICES = new Set([
-  // Cash out at a till or ATM. Peach Payouts cannot do this — it pays bank
-  // accounts — so it stays unavailable until it has its own provider.
+  // Cash out at a till or ATM. The payout capability cannot do this — it pays
+  // bank accounts — so it stays unavailable until it has its own provider.
   "withdraw_cash",
   "cash_withdrawal",
   "airtime",
@@ -181,10 +185,10 @@ function providerPendingMessage(serviceCode) {
 // Confirm — the previous behaviour previewed cleanly and only failed on Confirm,
 // which reads as a payment glitch rather than an unlaunched service.
 async function assertServiceLaunched(normalizedServiceCode) {
-  // Money out: ask the Peach payout capability directly, so the customer is
-  // told the real reason and a withdrawal can never be attempted through the
-  // Checkout (Collection) endpoint.
-  if (PEACH_PAYOUT_SERVICES.has(normalizedServiceCode)) {
+  // Money out: ask the payout capability directly, so the customer is told the
+  // real reason and a withdrawal can never be attempted through a collection
+  // rail.
+  if (BANK_PAYOUT_SERVICES.has(normalizedServiceCode)) {
     // The provider link, so the customer sees the real reason when the payout
     // capability is unconfigured, disabled or unverified — checked here, at the
     // fee preview, so nobody is walked through a fee to a Confirm that cannot
@@ -194,10 +198,10 @@ async function assertServiceLaunched(normalizedServiceCode) {
   }
   // Card top-ups are deliberately NOT rejected here. The fee preview is a
   // read-only price calculation, and the customer has to be shown the top-up fee
-  // before they are sent to the card page — the amount charged at Peach is
-  // amount + fee. Blocking the preview stopped the top-up before it began. The
-  // wallet-debit path is refused in assertLiveTransactionSupported instead, so
-  // createTransaction still cannot be used to fake a top-up.
+  // before they are sent to the card page — the amount the payment provider
+  // charges is amount + fee. Blocking the preview stopped the top-up before it
+  // began. The wallet-debit path is refused in assertLiveTransactionSupported
+  // instead, so createTransaction still cannot be used to fake a top-up.
   if (REQUEST_ONLY_SERVICES.has(normalizedServiceCode)) {
     throw new AppError(409, "Payment requests create a request only. No wallet debit was made.");
   }
@@ -211,9 +215,9 @@ async function assertServiceLaunched(normalizedServiceCode) {
 
 async function assertLiveTransactionSupported(normalizedServiceCode, payload = {}) {
   await assertServiceLaunched(normalizedServiceCode);
-  // A card top-up is a wallet CREDIT funded by Peach Checkout, so it can never
-  // be created through the wallet-debit endpoint. Only createTransaction reaches
-  // this, which keeps the fee preview above working.
+  // A card top-up is a wallet CREDIT funded by the payment provider, so it can
+  // never be created through the wallet-debit endpoint. Only createTransaction
+  // reaches this, which keeps the fee preview above working.
   if (CARD_TOPUP_SERVICES.has(normalizedServiceCode)) {
     throw new AppError(
       409,
@@ -221,11 +225,11 @@ async function assertLiveTransactionSupported(normalizedServiceCode, payload = {
       { code: "USE_CARD_TOPUP_FLOW", endpoint: "/v1/payments/topup" }
     );
   }
-  // A withdrawal debits the wallet AND submits a payout to Peach, and the two
-  // have to happen in one controlled lifecycle so a failed payout can be
-  // reversed exactly once. createTransaction only does the debit, so it would
-  // take the money with nothing on the other side to move it.
-  if (PEACH_PAYOUT_SERVICES.has(normalizedServiceCode)) {
+  // A withdrawal debits the wallet AND submits a payout to the provider, and
+  // the two have to happen in one controlled lifecycle so a failed payout can
+  // be reversed exactly once. createTransaction only does the debit, so it
+  // would take the money with nothing on the other side to move it.
+  if (BANK_PAYOUT_SERVICES.has(normalizedServiceCode)) {
     throw new AppError(
       409,
       "Withdrawals are completed through the payout flow. No wallet debit was made.",

@@ -1,14 +1,15 @@
 "use strict";
 
-// Withdrawals and business payouts on the Peach Payouts API.
+// Withdrawals and business payouts, on whichever provider supplies the PAYOUT
+// capability. This file names the capability, never the company.
 //
 //   GET    /v1/payouts/banks                 banks TitoPay can pay out to
 //   GET    /v1/payouts/bank-accounts         the customer's saved accounts (masked)
-//   POST   /v1/payouts/bank-accounts         save an account, validated against Peach's rules
+//   POST   /v1/payouts/bank-accounts         save an account, validated before it is stored
 //   DELETE /v1/payouts/bank-accounts/:id     soft delete
 //   POST   /v1/payouts/withdrawals           create a withdrawal (debits, then submits)
 //   GET    /v1/payouts/withdrawals           recent withdrawals
-//   GET    /v1/payouts/withdrawals/:ref      status, re-verified with Peach
+//   GET    /v1/payouts/withdrawals/:ref      status, re-verified with the provider
 //
 // Every route is authenticated and scoped to the calling user. Nothing here
 // accepts bank details on the withdrawal itself — only the id of an account the
@@ -24,11 +25,11 @@ const {
   ACCOUNT_TYPES
 } = require("../services/payout-account-service");
 const {
-  createWithdrawal,
-  getWithdrawalStatus,
-  listRecentWithdrawals
-} = require("../services/peach-withdrawal-service");
-const { payoutAvailability } = require("../services/peach-payout-service");
+  payoutAvailability,
+  processPayout,
+  getPayoutStatus,
+  listRecentPayouts
+} = require("../providers/payout-provider");
 
 const router = express.Router();
 
@@ -76,7 +77,7 @@ router.delete("/bank-accounts/:id", async (req, res, next) => {
 
 router.post("/withdrawals", async (req, res, next) => {
   try {
-    const result = await createWithdrawal(req.auth, {
+    const result = await processPayout(req.auth, {
       ...req.body,
       idempotencyKey: req.get("idempotency-key") || req.body?.idempotencyKey
     });
@@ -88,7 +89,7 @@ router.post("/withdrawals", async (req, res, next) => {
 
 router.get("/withdrawals", async (req, res, next) => {
   try {
-    res.json({ ok: true, items: await listRecentWithdrawals(req.auth, req.query.limit) });
+    res.json({ ok: true, items: await listRecentPayouts(req.auth, req.query.limit) });
   } catch (error) {
     next(error);
   }
@@ -96,7 +97,7 @@ router.get("/withdrawals", async (req, res, next) => {
 
 router.get("/withdrawals/:reference", async (req, res, next) => {
   try {
-    res.json({ ok: true, ...(await getWithdrawalStatus(req.auth, req.params.reference)) });
+    res.json({ ok: true, ...(await getPayoutStatus(req.auth, req.params.reference)) });
   } catch (error) {
     next(error);
   }

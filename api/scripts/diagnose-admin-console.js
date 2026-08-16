@@ -38,7 +38,8 @@ const PAGE_TABLES = {
   "Support Desk": ["support_tickets"],
   "Email Centre": ["email_queue", "email_templates"],
   "Marketing": ["marketing_campaigns"],
-  "HR Portal": ["hr_employees"]
+  "HR Portal": ["hr_employees"],
+  "Business Verification": ["business_profiles", "business_representatives", "business_verifications"]
 };
 
 // Read-only probes that run the same query shape the failing endpoints run.
@@ -177,6 +178,37 @@ async function tablesPresent() {
      JOIN pg_class t ON t.oid = c.conrelid
     WHERE t.relname = 'platform_settings' AND c.contype = 'f'`).catch(() => ({ rows: [{ n: -1 }] }));
   console.log(`  ${paint("36", "note")}     platform_settings foreign keys on this database: ${fk.rows[0].n}`);
+
+  // ---- which company supplies which capability -----------------------------
+  //
+  // "Is the KYC provider live?" used to be unanswerable from outside: the
+  // console showed a vendor name it had never called. Each capability resolves
+  // to exactly one adapter, and this reports which, whether it is wired, and
+  // where the choice came from. No credential and no endpoint is printed.
+  console.log("");
+  console.log("  WHICH PROVIDER SUPPLIES WHICH CAPABILITY");
+  console.log("  ----------------------------------------");
+  try {
+    require("../src/providers/payment-provider");
+    require("../src/providers/payout-provider");
+    require("../src/providers/kyc-provider");
+    require("../src/providers/vas-provider");
+    for (const entry of require("../src/providers").describeProviders()) {
+      // Three states, not two: wired, deliberately not contracted, and
+      // configured to something that does not exist (which is a real fault).
+      const state = entry.configured === "none" ? ["none    ", warn]
+        : entry.registered ? ["wired   ", good]
+          : ["MISSING ", bad];
+      console.log(`  ${state[1](state[0])} ${entry.capability.padEnd(14)}${entry.configured.padEnd(18)}${entry.variable} (${entry.source})`);
+    }
+    console.log("");
+    console.log("  none    TitoPay has no supplier contracted for that capability. The");
+    console.log("          operations refuse; they never return a fabricated result.");
+    console.log("  MISSING the configured provider has no adapter, which IS a fault:");
+    console.log("          check the *_PROVIDER value in the API environment.");
+  } catch (error) {
+    console.log(bad(`  Could not read the provider registry: ${error.message}`));
+  }
 
   // ---- verdict ------------------------------------------------------------
   console.log("");

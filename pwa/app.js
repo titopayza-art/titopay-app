@@ -1193,6 +1193,34 @@ function remainingTile(label, value, { wide = false } = {}) {
     </div>`;
 }
 
+// WHAT ONE LEVEL ALLOWS, SAID WITHOUT PROMISING IT.
+//
+// A level publishes only the ceilings that are actually fixed for it. The
+// top level carries a monthly ceiling but no fixed per-payment or withdrawal
+// number, so the old single sentence would have printed a rand amount for a
+// limit that does not exist. It is built from whatever the API reports
+// instead, and any level whose ceiling is not the whole story says so:
+// reaching a level makes an account ELIGIBLE for that ceiling, and risk
+// banding, transaction monitoring and any open compliance review still
+// narrow it. Nothing here is ever described as automatic or unlimited.
+function verificationLimitsLine(entry) {
+  const eligibility = "Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply.";
+  if (entry.monthlyReceive === null && entry.monthlySend === null) {
+    return "Higher limits may be available after full verification, subject to risk assessment, transaction monitoring and applicable compliance requirements.";
+  }
+  const monthly = [];
+  if (entry.monthlyReceive !== null) monthly.push(`receive up to ${money(entry.monthlyReceive)}`);
+  if (entry.monthlySend !== null) monthly.push(`send up to ${money(entry.monthlySend)}`);
+  let line = monthly.join(" and ");
+  line = line.charAt(0).toUpperCase() + line.slice(1) + " a month";
+  if (entry.singleTransaction !== null) line += `, ${money(entry.singleTransaction)} per payment`;
+  line += ".";
+  // A level that fixes every rail has already said everything. A level that
+  // only fixes the monthly ceiling must not read as a guarantee.
+  if (entry.singleTransaction === null) line += ` ${eligibility}`;
+  return line;
+}
+
 // The verification levels, moved off the main screen into their own view.
 // Informational, calm, and honest that enhanced due diligence is a process
 // that may be triggered, not a tier anyone opts into.
@@ -1209,11 +1237,7 @@ function verificationLevelBlock(entry, status) {
       : (kycCountryName(status.document.issuingCountry) ? `, issued in ${kycCountryName(status.document.issuingCountry)}` : "");
     documentLine = `<p class="level-note">Verified with: ${esc(base + country)}.</p>`;
   }
-  // Never "no fixed limits": higher capability is possible, not promised,
-  // and it is never unlimited.
-  const limits = entry.monthlyReceive === null
-    ? "Higher limits may be available after full verification, subject to risk assessment, transaction monitoring and applicable compliance requirements."
-    : `Receive up to ${money(entry.monthlyReceive)} and send up to ${money(entry.monthlySend)} a month, ${money(entry.singleTransaction)} per payment.`;
+  const limits = verificationLimitsLine(entry);
   return `
     <section class="level-block${current ? " level-current" : ""}">
       <div class="level-head"><strong>${esc(entry.label)}</strong>${chip}</div>
@@ -1412,6 +1436,167 @@ async function submitBasicVerify(form, data) {
   await openLimitsVerificationModal();
   render();
 }
+
+// BUSINESS VERIFICATION IS A DIFFERENT SCREEN, ON PURPOSE.
+//
+// Verify your identity is for a HUMAN BEING and asks for a human being's
+// document. It is not touched by any of this, and a company registration
+// number never appears on it, because a company does not have an ID number and
+// a person is not a company.
+//
+// This screen has two halves, and keeping them apart is the whole point:
+//
+//   BUSINESS ENTITY    the business's own name, type and registration number,
+//                      where its type has one. A spaza, a hawker or a
+//                      freelancer is never asked for a CIPC number.
+//   AUTHORISED PERSON  who you are TO this business. Your identity is read,
+//                      not collected: it was verified once, on your own
+//                      record, and adding a second or third business never
+//                      asks for it again.
+//
+// Which is what makes one person, many businesses ordinary rather than an
+// error message.
+function businessStatusChip(business) {
+  const tone = business.verificationStatus === "verified" ? "ok"
+    : business.verificationStatus === "rejected" ? "warn"
+      : business.verificationStatus === "unverified" ? "warn" : "mid";
+  return `<span class="sv-chip ${tone}">${esc(business.verificationLabel)}</span>`;
+}
+
+function businessEntityBlock(business) {
+  const identifier = business.registrationNumber
+    ? `Registration number ${esc(business.registrationNumber)}`
+    : business.requiresRegistrationNumber
+      ? "Registration number still needed"
+      : "No registration number for this business type";
+  return `
+    <section class="level-block">
+      <div class="level-head"><strong>${esc(business.businessName)}</strong>${businessStatusChip(business)}</div>
+      <p class="level-note">${esc(business.businessTypeLabel)} · ${identifier}</p>
+      <p class="level-note">You are the ${esc(String(business.yourRoleLabel || "representative").toLowerCase())}.</p>
+      ${business.verificationStatus === "unverified" || business.verificationStatus === "rejected"
+    ? `<button class="btn secondary" type="button" data-action="business-verify:${esc(business.id)}">${icon("shield")} Submit for verification</button>`
+    : ""}
+    </section>`;
+}
+
+async function openBusinessVerificationModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Business</p><h2>Business verification</h2><p class="lead">Loading your businesses…</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>`);
+  let overview;
+  try {
+    overview = await api("/v1/business/verification");
+  } catch (error) {
+    showToast(friendlyFormError(error, "business"), "error");
+    return;
+  }
+  state.businessVerification = overview;
+  const person = overview.person || {};
+  const businesses = overview.businesses || [];
+  const types = overview.businessTypes || [];
+  const roles = overview.roles || [];
+  const firstRegisteredType = types.find((type) => type.requiresRegistrationNumber);
+
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Business</p><h2>Business verification</h2>
+        <p class="lead">Verify the business itself. Your own identity is separate, and you only verify it once.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    <section class="panel verify-card" aria-label="Authorised person">
+      <div class="level-head">
+        <strong>Authorised person</strong>
+        <span class="sv-chip ${person.identityVerified ? "ok" : "warn"}">${person.identityVerified ? "✓ Identity verified" : "Not verified yet"}</span>
+      </div>
+      <p class="level-note">${esc(person.name || "You")}</p>
+      <p class="level-note">${esc(person.note || "")}</p>
+      ${person.identityVerified ? "" : `
+        <button class="btn primary" type="button" data-action="identity-verification">${icon("shield")} Verify my identity</button>`}
+    </section>
+
+    ${businesses.length ? `
+      <h3 class="tier-section-label section-gap">Your businesses</h3>
+      ${businesses.map(businessEntityBlock).join("")}` : ""}
+
+    ${person.identityVerified ? `
+      <h3 class="tier-section-label section-gap">${businesses.length ? "Add another business" : "Register your business"}</h3>
+      <form class="form-grid" data-form="business-profile">
+        <div class="field">
+          <label for="bp-name">Registered or trading name</label>
+          <input id="bp-name" name="businessName" maxlength="160" placeholder="The name of the business" required>
+        </div>
+        <div class="field">
+          <label for="bp-type">Type of business</label>
+          <select id="bp-type" name="businessType">
+            ${types.map((type) => `<option value="${esc(type.key)}"${type.key === "sole_proprietor" ? " selected" : ""}>${esc(type.label)}</option>`).join("")}
+          </select>
+          <small class="field-hint">Not registered anywhere? Choose sole proprietor or informal trader. You will not be asked for a registration number.</small>
+        </div>
+        <div class="field" data-business-field="registration" hidden>
+          <label for="bp-reg">Business registration number</label>
+          <input id="bp-reg" name="registrationNumber" maxlength="40" autocomplete="off" placeholder="${esc(firstRegisteredType ? "2020/123456/07" : "As on the registration certificate")}">
+          <small class="field-hint">The number issued to the BUSINESS. Never a personal identity number.</small>
+        </div>
+        <div class="field">
+          <label for="bp-role">Your role at this business</label>
+          <select id="bp-role" name="role">
+            ${roles.map((role) => `<option value="${esc(role.key)}"${role.key === "owner" ? " selected" : ""}>${esc(role.label)}</option>`).join("")}
+          </select>
+          <small class="field-hint">Your identity is already verified and is not collected again.</small>
+        </div>
+        <button class="btn primary" type="submit">${icon("shield")} Add this business</button>
+      </form>` : ""}
+
+    <p class="level-fineprint">${esc(overview.limitsNote || "")}</p>
+  `);
+  syncBusinessRegistrationField();
+}
+
+// The registration number field exists only for types that HAVE one. Hiding it
+// is not cosmetic: showing it to a spaza owner is asking for a document that
+// does not exist.
+function syncBusinessRegistrationField() {
+  const select = document.querySelector('form[data-form="business-profile"] select[name="businessType"]');
+  const field = document.querySelector('form[data-form="business-profile"] [data-business-field="registration"]');
+  if (!select || !field) return;
+  const types = state.businessVerification?.businessTypes || [];
+  const chosen = types.find((type) => type.key === select.value);
+  const needed = Boolean(chosen && chosen.requiresRegistrationNumber);
+  field.hidden = !needed;
+  const input = field.querySelector("input");
+  if (input) input.required = needed;
+}
+
+async function submitBusinessProfile(data) {
+  const body = {
+    businessName: data.businessName,
+    businessType: data.businessType,
+    role: data.role
+  };
+  if (String(data.registrationNumber || "").trim()) body.registrationNumber = data.registrationNumber;
+  await api("/v1/business/verification/businesses", { method: "POST", body });
+  showToast("Business added. Submit it for verification when you are ready.");
+  await openBusinessVerificationModal();
+}
+
+async function submitBusinessForVerification(businessId) {
+  try {
+    const result = await api(`/v1/business/verification/businesses/${encodeURIComponent(businessId)}/submit`, {
+      method: "POST", body: {}
+    });
+    showToast(result.business?.verificationStatus === "verified"
+      ? "This business is verified."
+      : "Submitted. The compliance team reviews business registrations, and you will be told in the app.");
+  } catch (error) {
+    showToast(friendlyFormError(error, "business"), "error");
+  }
+  await openBusinessVerificationModal();
+}
+
 function dashboardView() {
   const wallet = primaryWallet();
   const quickServices = homeQuickServices();
@@ -2914,6 +3099,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "stockvel-join") await submitStockvelJoin(data);
     if (form.dataset.form === "stockvel-create") await submitStockvelCreate(form, data);
     if (form.dataset.form === "basic-verify") await submitBasicVerify(form, data);
+    if (form.dataset.form === "business-profile") await submitBusinessProfile(data);
     if (form.dataset.form === "stockvel-contribute") await submitStockvelContribution(form, data);
     else if (form.dataset.form === "stockvel-add-members") await submitStockvelAddMembers(data);
     else if (form.dataset.form === "stockvel-withdrawal") await submitStockvelWithdrawal(data);
@@ -3806,6 +3992,11 @@ function onChange(event) {
     form.querySelectorAll("[data-doc-field]").forEach((field) => {
       field.hidden = field.dataset.docField === "intl" ? !intl : intl;
     });
+    return;
+  }
+  const businessTypeSelect = event.target.closest('form[data-form="business-profile"] select[name="businessType"]');
+  if (businessTypeSelect) {
+    syncBusinessRegistrationField();
     return;
   }
   const quickServiceToggle = event.target.closest("[data-quick-service-toggle]");
@@ -4746,6 +4937,12 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "identity-verification") {
     await openIdentityVerificationModal();
+  }
+  if (action === "business-verification") {
+    await openBusinessVerificationModal();
+  }
+  if (action.startsWith("business-verify:")) {
+    await submitBusinessForVerification(action.slice("business-verify:".length));
   }
   if (action === "claim-pending-credits") {
     try {
@@ -6612,6 +6809,7 @@ function profileView() {
     <section class="section-head compact"><h2>${isBusiness ? "Grow your business" : "Share & tools"}</h2></section>
     <section class="profile-feature-grid">
       ${profileFeature("Share TitoPay", "Invite friends, family or customers by WhatsApp, SMS or any sharing app.", "share", "share-titopay")}
+      ${isBusiness ? profileFeature("Business Verification", "Verify the business itself, and add the businesses you are authorised on. Your own identity stays verified once.", "shield", "business-verification") : ""}
       ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
       ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
       ${isBusiness && !enterpriseDistributionTileVisible() ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
@@ -24997,7 +25195,8 @@ const MODAL_STACK_ACTIONS = new Set([
   "security-centre", "device-management", "active-sessions", "login-history",
   "biometric-info", "privacy-controls", "security-tips", "report-fraud",
   "why-trust-titopay", "notifications", "payment-requests", "limits-verification",
-  "verification-levels", "identity-verification", "preview-sms-notifications",
+  "verification-levels", "identity-verification", "business-verification",
+  "preview-sms-notifications",
   "preview-email-notifications", "authentication-preference", "change-password",
   "fica-verification", "profile-verification", "saved-beneficiaries",
   "proof-of-account", "app-search", "support",

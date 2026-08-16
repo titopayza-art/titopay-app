@@ -48,6 +48,9 @@ const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { BLOCKED_ACCOUNT_STATUSES } = require("../lib/chat-policy");
 const { writeAuditLog } = require("./audit-service");
+// Identity assurance is asked of a CAPABILITY. Which provider supplies it is
+// configuration in src/providers, and no company name appears in this file.
+const { verifyIdentity, normalizeVerificationStatus } = require("../providers/kyc-provider");
 
 const DEFAULT_CONFIG = {
   // null means no standing limit at that tier.
@@ -104,8 +107,22 @@ const DEFAULT_CONFIG = {
     2: {
       label: "Fully verified",
       description: "Full FICA verification for higher balances, larger payments and withdrawals. Activity stays subject to ongoing monitoring.",
-      monthlyReceive: null,
-      monthlySend: null,
+      // ENHANCED VERIFICATION IS A CEILING, NOT A BLANK CHEQUE. This rung
+      // used to carry no standing monthly limit at all, which read as
+      // "unlimited" on a platform that has never underwritten unlimited.
+      // R200 000 a month is the top of the ladder, and it is a MAXIMUM the
+      // account becomes eligible for, not an amount completing a screen
+      // grants: risk banding, transaction monitoring and any open compliance
+      // review still narrow it, and the engine applies risk last so they
+      // always can.
+      //
+      // It is not a statutory figure. Like every other number here it is a
+      // TitoPay operational limit under the RMCP, editable in the console.
+      monthlyReceive: 200000,
+      monthlySend: 200000,
+      // Per-payment, per-day and withdrawal ceilings stay open at this level
+      // and are reviewed against the account rather than fixed in config.
+      // The monthly ceiling above still binds every one of them.
       singleTransaction: null,
       dailySend: null,
       singleWithdrawal: null,
@@ -786,6 +803,66 @@ async function basicVerify(auth, payload = {}) {
     }).catch(() => {});
     throw new AppError(409, "This identity document is already linked to another TitoPay account. If that is not you, contact support.");
   }
+
+  // THE ASSURANCE STEP. Everything above is TitoPay's own rule: which document
+  // types are accepted, the SA ID checksum, the date of birth, and that no
+  // other account already claims this document. What it cannot answer is
+  // whether the person is who the document says, and that is the question the
+  // KYC CAPABILITY answers.
+  //
+  // It is asked by capability, never by company: `verifyIdentity`, never
+  // `verifyWithSomeVendor`. Today the configured adapter is `internal`, which
+  // reports assurance "structural" and confirms nothing against a register —
+  // which is the honest description of what has always happened here, and why
+  // this level's limits are set where they are. The day a verification
+  // provider is contracted, KYC_PROVIDER selects it and this call is unchanged.
+  //
+  // The document number is passed in memory for the check and is NEVER stored:
+  // only the salted hash below is written, exactly as before.
+  const outcome = await verifyIdentity({
+    userId: auth.userId,
+    documentType,
+    documentNumber: documentType === "sa_id"
+      ? String(payload.idNumber || "").replace(/\s+/g, "")
+      : normalizeDocumentNumber(payload.documentNumber),
+    issuingCountry,
+    nationality,
+    dateOfBirth
+  });
+  const assuranceStatus = normalizeVerificationStatus(outcome && outcome.status);
+
+  // A level is granted on "verified" and on nothing else. Anything else is
+  // recorded against the account and leaves the customer where they were,
+  // because a rung the assurance does not support is a limit TitoPay cannot
+  // price. None of these branches can be reached by the internal adapter; they
+  // exist so that wiring a real provider is a configuration change and not a
+  // rewrite of this function.
+  if (assuranceStatus !== "verified") {
+    await pool.query(
+      `INSERT INTO kyc_verifications (id, user_id, document_type, issuing_country, document_hash, status)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [crypto.randomUUID(), auth.userId, documentType, issuingCountry, hash, assuranceStatus]
+    );
+    await writeAuditLog({
+      actorType: "customer",
+      actorId: auth.userId,
+      action: "basic_verification_not_completed",
+      entityType: "user",
+      entityId: auth.userId,
+      ipAddress: auth.ipAddress,
+      userAgent: auth.userAgent,
+      // The provider's own wording never travels: only the TitoPay status.
+      metadata: { method: documentType, issuingCountry, status: assuranceStatus }
+    });
+    if (assuranceStatus === "pending" || assuranceStatus === "review_required") {
+      // Customer-safe, and it never says who is checking or what was found.
+      return { ...(await complianceStatus(auth)), verificationPending: true };
+    }
+    throw new AppError(422, assuranceStatus === "rejected"
+      ? "We could not verify this document. Check the details against the document and try again, or contact Support."
+      : "Verification could not be completed right now. Please try again in a few minutes.");
+  }
+
   await pool.query(
     `UPDATE users SET id_number_hash = $1,
         kyc_document_type = $3,

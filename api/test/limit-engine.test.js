@@ -58,11 +58,33 @@ test("limits layer verification, product, earned standing and risk, in that orde
   const risky = engine.buildEffectiveLimits({ ...base, riskStatus: "elevated", earned: { applies: true, multiplier: 1.5 } });
   assert.ok(risky.limits.monthlySend < earned.limits.monthlySend);
   assert.ok(risky.limits.singleTransaction < plain.limits.singleTransaction);
-  // A level with no fixed limit still gains one under high risk.
+  // A rail with no fixed limit still gains one under high risk. Tier 2 keeps
+  // an open per-payment rail even though its monthly ceiling is fixed, so it
+  // is the rail, not the level, that proves this.
   const open = engine.buildEffectiveLimits({ ...base, tier: 2 });
-  assert.equal(open.limits.monthlySend, null);
+  assert.equal(open.limits.singleTransaction, null);
   const contained = engine.buildEffectiveLimits({ ...base, tier: 2, riskStatus: "high_risk" });
-  assert.ok(Number(contained.limits.monthlySend) > 0, "high risk bounds an otherwise unlimited level");
+  assert.ok(Number(contained.limits.singleTransaction) > 0, "high risk bounds an otherwise open rail");
+  assert.ok(Number(contained.limits.monthlySend) < Number(open.limits.monthlySend),
+    "high risk narrows a fixed ceiling too");
+});
+
+test("the top level is a ceiling, not a blank cheque", () => {
+  // It carried no standing monthly limit at all, which reads as unlimited on
+  // a platform that has never underwritten unlimited.
+  const tier2 = DEFAULT_CONFIG.tiers["2"];
+  assert.equal(tier2.monthlyReceive, 200000);
+  assert.equal(tier2.monthlySend, 200000);
+  // And the ladder still climbs: every rung allows more than the one below.
+  assert.ok(tier2.monthlyReceive > DEFAULT_CONFIG.tiers["1"].monthlyReceive);
+  assert.ok(DEFAULT_CONFIG.tiers["1"].monthlyReceive > DEFAULT_CONFIG.tiers["0"].monthlyReceive);
+  // R5 000 is the UNVERIFIED rung and nothing else. It must never be the
+  // number an identity-verified wallet lives under.
+  assert.equal(DEFAULT_CONFIG.tiers["0"].monthlyReceive, 5000);
+  assert.equal(DEFAULT_CONFIG.tiers["1"].monthlyReceive, 25000);
+  // Neither number may be presented as a statutory threshold.
+  const source = read("src", "services", "compliance-service.js");
+  assert.doesNotMatch(source, /R?200[ ,]?000[^\n]{0,60}(statutory|required by law|FICA limit)/i);
 });
 
 test("product rules can only narrow, never widen", () => {

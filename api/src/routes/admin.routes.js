@@ -268,6 +268,17 @@ const INTEGRATION_PROVIDERS = {
   }
 };
 
+// WHICH COMPANY SUPPLIES WHICH TITOPAY CAPABILITY. Every row is a TitoPay
+// capability first and a vendor second, and a row with no contracted vendor
+// says NOT_ROUTED rather than naming a candidate.
+//
+// KYC used to default to a named verification vendor. Nothing has ever called
+// it: no contract, no credential, no request. A default is a decision, and
+// that one was never taken, so the row is unrouted until it is. The credential
+// slot for that vendor stays in the integration list, because having somewhere
+// to put keys is not the same as having chosen a supplier.
+const NOT_ROUTED = "none";
+
 const PROVIDER_ROUTING_SERVICES = [
   { key: "airtime", label: "Airtime", defaultProvider: "flash" },
   { key: "data", label: "Data", defaultProvider: "flash" },
@@ -278,7 +289,7 @@ const PROVIDER_ROUTING_SERVICES = [
   { key: "vouchers", label: "Vouchers", defaultProvider: "ott" },
   { key: "card_payments", label: "Card Payments", defaultProvider: "peach_payments" },
   { key: "card_topups", label: "Card Top-ups", defaultProvider: "peach_payments" },
-  { key: "kyc", label: "KYC / FICA", defaultProvider: "docfox" },
+  { key: "kyc", label: "Identity Verification", defaultProvider: NOT_ROUTED },
   { key: "email", label: "Email", defaultProvider: "smtp" },
   { key: "sms", label: "SMS", defaultProvider: "sms" }
 ];
@@ -761,19 +772,25 @@ async function getProviderRouting() {
       ...service,
       provider: Object.prototype.hasOwnProperty.call(mapping, service.key) ? mapping[service.key] : service.defaultProvider
     })),
-    providers: Object.entries(INTEGRATION_PROVIDERS)
-      .filter(([, provider]) => provider.routingEligible !== false)
-      .map(([key, provider]) => ({ key, label: provider.label })),
+    providers: [
+      // A capability may legitimately have no supplier, and an operator has to
+      // be able to say so without picking one at random.
+      { key: NOT_ROUTED, label: "Not configured" },
+      ...Object.entries(INTEGRATION_PROVIDERS)
+        .filter(([, provider]) => provider.routingEligible !== false)
+        .map(([key, provider]) => ({ key, label: provider.label }))
+    ],
     updatedAt: stored.updatedAt || null
   };
 }
 
 async function saveProviderRouting(body = {}, adminId) {
-  const supportedProviders = new Set(
-    Object.entries(INTEGRATION_PROVIDERS)
+  const supportedProviders = new Set([
+    NOT_ROUTED,
+    ...Object.entries(INTEGRATION_PROVIDERS)
       .filter(([, provider]) => provider.routingEligible !== false)
       .map(([key]) => key)
-  );
+  ]);
   const submitted = body.mapping || body;
   const mapping = {};
   for (const service of PROVIDER_ROUTING_SERVICES) {

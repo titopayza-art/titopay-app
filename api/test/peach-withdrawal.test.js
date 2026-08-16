@@ -260,7 +260,7 @@ test("The withdrawal flag is gone because the lifecycle now exists", () => {
   assert.doesNotMatch(gate, /Withdrawals are not open yet/);
   // The safety it stood in for: the wallet-debit endpoint still cannot be used.
   const live = gate.slice(gate.indexOf("async function assertLiveTransactionSupported"));
-  assert.match(live.slice(0, 1200), /PEACH_PAYOUT_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,240}USE_WITHDRAWAL_FLOW/);
+  assert.match(live.slice(0, 1200), /BANK_PAYOUT_SERVICES\.has\(normalizedServiceCode\)[\s\S]{0,240}USE_WITHDRAWAL_FLOW/);
   // The provider link is still checked at the fee preview.
   const launched = gate.slice(gate.indexOf("async function assertServiceLaunched"), gate.indexOf("async function assertLiveTransactionSupported"));
   assert.match(launched, /payoutAvailability\(\)/);

@@ -19,10 +19,18 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 29;
+const API_BUILD = 30;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  30: "Providers become replaceable and a business stops being a person. Core " +
+      "asks for a CAPABILITY (processPayment, processPayout, verifyIdentity) " +
+      "and never for a company; which supplier answers is one environment " +
+      "variable per capability. A business now has its own entity, its own " +
+      "registration number where its type has one, and its own KYB status, so " +
+      "one verified person can hold several businesses without re-verifying " +
+      "themselves once. The top verification level gains a R200 000 monthly " +
+      "ceiling in place of no standing limit at all.",
   29: "A cancelled event is answered instead of hidden: its public page used to " +
       "404 the moment it was cancelled, killing every share, email link and " +
       "poster QR pointing at it, and My Tickets never carried the event status " +
