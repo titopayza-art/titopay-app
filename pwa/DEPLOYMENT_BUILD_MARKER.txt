@@ -1,8 +1,42 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v423 (titopay-pwa-v423-qr-amount-prefill)
+PWA bundle: v424 (titopay-pwa-v424-qr-receipt-fix)
 Requires: api.zip build 47
 Admin console: admin-console-v89
+
+A SUCCESSFUL QR PAYMENT WAS BEING REPORTED AS A FAILURE
+
+   THE PAYMENT WENT THROUGH. THE APP SAID "Can't find variable: data".
+
+   confirmReviewedQrPayment() sends the payment with context.data, correctly.
+   Then, AFTER the money has moved, it built the receipt from a bare `data` —
+   a name declared nowhere in that function. app.js is strict mode, so that is a
+   ReferenceError, and Safari words it exactly as above.
+
+   It had been there for as long as the function had, and could not be seen,
+   because /v1/qr/pay was failing earlier in the function for an unrelated
+   reason (no revenue wallet) and the receipt block was never reached. The first
+   QR payment that actually succeeded hit it immediately.
+
+   A CUSTOMER TOLD A COMPLETED PAYMENT FAILED WILL PAY AGAIN. That is the worst
+   thing this screen can do, so two things changed, not one:
+
+     the five bare `data` reads are context.data, which is what they meant
+     everything after the money moves is wrapped, so no receipt, notification
+       or refresh error can ever again present as a failed payment
+
+   The success message is shown after that guard, so it is shown either way. If
+   the receipt cannot be written the failure goes to the console and the
+   customer is left pointed at Activity, which is the server-side record and the
+   thing that is actually true.
+
+   TWO TESTS, AND BOTH WERE MUTATION-TESTED BY PUTTING THE BUG BACK.
+
+   api/test/pwa-free-variables.test.js fails the build if any function in the
+   bundle reads data.something without a `data` in scope, and separately if the
+   post-payment block is ever unwrapped or the receipt goes back to reading a
+   free name. Restoring one of the five original lines fails both.
+
 
 THE PAYER NO LONGER TYPES A PRICE THE TILL IS ALREADY SHOWING THEM
 
@@ -615,7 +649,7 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   708 API tests, 8 camera scanner checks, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
+   710 API tests, 8 camera scanner checks, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
    9 business registration checks driven in a real browser,
    98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
@@ -626,9 +660,9 @@ WHAT PROVES IT
 UPLOAD NOTES
 
    Replace the whole app directory as usual, INCLUDING .htaccess, which is
-   where the crawler rule lives. The asset stamp moves to ?v=423 in index.html
+   where the crawler rule lives. The asset stamp moves to ?v=424 in index.html
    and service-worker.js and the cache name becomes
-   titopay-pwa-v423-qr-amount-prefill, so no customer can be served a cached
+   titopay-pwa-v424-qr-receipt-fix, so no customer can be served a cached
    bundle.
 
    UPLOAD api.zip BUILD 47 FIRST, AND DO NOT DELAY IT. The price fix is

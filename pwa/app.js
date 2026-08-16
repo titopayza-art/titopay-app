@@ -13845,33 +13845,58 @@ async function confirmReviewedQrPayment() {
     return;
   }
   closeModal();
-  await refreshData();
-  const transaction = result.transaction || result.payment || result;
-  const receipt = saveTitoPayReceipt({
-    id: `receipt-${transaction.id || transaction.transactionId || result.reference || data.qrId || Date.now()}`,
-    accountType: state.accountType,
-    merchantName: transaction.merchantName || transaction.merchant_name || transaction.merchant || "TitoPay Merchant",
-    merchantId: transaction.merchantId || transaction.merchant_id || data.qrId || "",
-    customerName: currentCustomerName(),
-    reference: result.reference || transaction.reference || data.qrId,
-    transactionId: transaction.id || transaction.transactionId || transaction.transaction_id || result.reference || "",
-    date: transaction.createdAt || transaction.created_at || transaction.paidAt || new Date().toISOString(),
-    paymentMethod: "QR Payment",
-    amount: Number(data.amount || transaction.amount || 0),
-    fees: Number(transaction.fee || transaction.fees || 0),
-    netAmount: Number(transaction.netAmount || transaction.net_amount || transaction.amount || data.amount || 0),
-    status: "PAID",
-    receiptUrl: `https://app.titopay.co.za/#receipt-${encodeURIComponent(transaction.id || result.reference || data.qrId || Date.now())}`
-  });
-  addInAppNotification({
-    id: `customer-qr-${receipt.id}`,
-    title: "QR payment successful",
-    body: `${money(receipt.amount)} paid by QR. Receipt ${receipt.reference}.`,
-    category: "receipt",
-    metadata: { receiptId: receipt.id }
-  });
-  showToast(`QR paid. Ref ${result.reference}`);
+  // PAST THIS LINE THE MONEY HAS MOVED.
+  //
+  // Everything below is bookkeeping on the phone: a receipt, a notification, a
+  // refresh. None of it can un-take the payment, so none of it may be allowed
+  // to look like the payment failed.
+  //
+  // It did exactly that. This block read a bare `data`, which is declared
+  // nowhere in this function — the payload above correctly uses context.data —
+  // and app.js is strict mode, so it threw ReferenceError and the app showed
+  // "Can't find variable: data" over a payment that had gone through. It went
+  // unseen for as long as it existed because /v1/qr/pay was failing earlier in
+  // the function for a different reason entirely, so this line was never
+  // reached. The first successful QR payment found it immediately.
+  //
+  // A customer told a completed payment failed will pay again. That is the
+  // worst outcome this screen can produce, so the guard matters as much as the
+  // typo: whatever happens here, the payment is reported as what it was.
   state.pendingQrPaymentReview = null;
+  try {
+    await refreshData();
+    const transaction = result.transaction || result.payment || result;
+    const paid = Number(context.data.amount || transaction.amount || 0);
+    const receipt = saveTitoPayReceipt({
+      id: `receipt-${transaction.id || transaction.transactionId || result.reference || context.data.qrId || Date.now()}`,
+      accountType: state.accountType,
+      merchantName: transaction.merchantName || transaction.merchant_name || transaction.merchant
+        || context.qrDetails?.owner?.displayName || "TitoPay Merchant",
+      merchantId: transaction.merchantId || transaction.merchant_id || context.data.qrId || "",
+      customerName: currentCustomerName(),
+      reference: result.reference || transaction.reference || context.data.qrId,
+      transactionId: transaction.id || transaction.transactionId || transaction.transaction_id || result.reference || "",
+      date: transaction.createdAt || transaction.created_at || transaction.paidAt || new Date().toISOString(),
+      paymentMethod: "QR Payment",
+      amount: paid,
+      fees: Number(transaction.fee || transaction.fees || 0),
+      netAmount: Number(transaction.netAmount || transaction.net_amount || transaction.amount || paid || 0),
+      status: "PAID",
+      receiptUrl: `https://app.titopay.co.za/#receipt-${encodeURIComponent(transaction.id || result.reference || context.data.qrId || Date.now())}`
+    });
+    addInAppNotification({
+      id: `customer-qr-${receipt.id}`,
+      title: "QR payment successful",
+      body: `${money(receipt.amount)} paid by QR. Receipt ${receipt.reference}.`,
+      category: "receipt",
+      metadata: { receiptId: receipt.id }
+    });
+  } catch (error) {
+    // The receipt is a convenience. Activity is the record, and it is server
+    // side, so the customer is pointed at the thing that is actually true.
+    console.error("[qr-pay] the payment succeeded; the receipt did not", error);
+  }
+  showToast(result.reference ? `QR paid. Ref ${result.reference}` : "QR payment complete.");
 }
 function safeQrFilename(value) {
   const name = String(value || "titopay-qr").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
