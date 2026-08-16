@@ -86,7 +86,7 @@ test("the flow never brands basic verification as SA-only", () => {
   // The approved wording is "Identity verified", wherever it appears.
   assert.doesNotMatch(COMPLIANCE, /SA ID verified/);
   assert.doesNotMatch(APP, /SA ID verified/);
-  assert.match(COMPLIANCE, /Identity verified\. Everyday wallet limits\./);
+  assert.match(COMPLIANCE, /Identity verified\. Higher everyday wallet limits\./);
   // The app offers the document choice and the passport fields.
   assert.match(APP, /South African ID<\/option>/);
   assert.match(APP, /Passport<\/option>/);
@@ -126,9 +126,17 @@ test("the wallet card shows status, not tier arithmetic, with one door", () => {
   assert.match(body, /Verify Identity/, "tier 0 shows a call to action, not a shaming label");
   assert.match(body, /Limits &amp; Verification/);
   assert.doesNotMatch(body, /Tier \d/, "no tier numbers on the card");
-  // Fully Verified must never read as unlimited.
-  assert.doesNotMatch(APP, /[Uu]nlimited transactions/);
-  assert.doesNotMatch(APP, /No standing limit/, "limit copy says monitored, not limitless");
+  // Fully Verified must never read as unlimited. The top level genuinely has
+  // no standing cap, so the copy is allowed to SAY that — what it may never do
+  // is say it on its own, without the supervision that still applies.
+  // Scoped to the limit copy: "unlimited email campaigns" and an "Unlimited"
+  // placeholder on a coupon's redemption count are unrelated and legitimate.
+  const limitCopy = APP.slice(APP.indexOf("function limitRow"), APP.indexOf("async function submitBasicVerify"));
+  assert.doesNotMatch(limitCopy.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n"),
+    /[Uu]nlimited/, "no wallet limit is ever offered to a customer as unlimited");
+  assert.match(APP, /No standing monthly limit on sending, receiving or your wallet balance\. \$\{supervision\}/,
+    "the one place that says there is no cap says supervision continues in the same breath");
+  assert.match(APP, /const supervision = "Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply\."/);
   assert.match(APP, /function openLimitsVerificationModal/);
   // Inside the door: usage bars, the three levels, EDD explained, and the
   // instant tier 1 form plus the FICA door.

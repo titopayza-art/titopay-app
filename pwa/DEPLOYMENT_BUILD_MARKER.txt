@@ -1,7 +1,7 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v408 (titopay-pwa-v408-business-verification)
-Requires: api.zip build 30
+PWA bundle: v409 (titopay-pwa-v409-three-levels)
+Requires: api.zip build 31
 Admin console: admin-console-v87 (unchanged in this build)
 
 WHAT CHANGED IN THE APP
@@ -31,11 +31,26 @@ WHAT CHANGED IN THE APP
    behaviour. No company registration number was added to it, and none ever
    will be: it verifies a natural person.
 
-3. THE VERIFICATION LEVELS SCREEN READS THE TOP RUNG HONESTLY.
-   The top level now shows R200 000 a month with the sentence that risk
-   assessment, transaction monitoring and applicable TitoPay compliance
-   requirements still apply. It is a ceiling an account becomes eligible
-   for, never an amount completing a screen grants.
+3. THE VERIFICATION LEVELS SCREEN SHOWS THREE LEVELS AND THE NEW LADDER.
+
+     Unverified       R25 000 a month, R12 500 per payment
+     Basic verified   R200 000 a month, R80 000 per payment
+     Fully verified   "No standing monthly limit on sending, receiving or
+                      your wallet balance. Risk assessment, transaction
+                      monitoring and applicable TitoPay compliance
+                      requirements still apply."
+
+   Every number is read from the API, so nothing is hard-coded in the app
+   and changing a limit in the console changes the screen with no upload.
+
+   The word "unlimited" is deliberately not used for the top level, and a
+   test now fails the build if it ever is. The engine applies risk LAST, so
+   an account whose risk banding has been raised still gains real ceilings
+   at that level. "No standing limit" is what actually happens; "unlimited"
+   would be a promise the platform is built not to keep.
+
+   Enhanced due diligence still appears below the three levels, still
+   described as a review rather than a level anyone climbs to.
 
 NOTHING ELSE MOVED
 

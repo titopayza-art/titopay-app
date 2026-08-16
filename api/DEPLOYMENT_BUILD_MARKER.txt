@@ -1,21 +1,53 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 30   (GET /health reports this — check it after upload)
-PWA bundle: v408 (titopay-pwa-v408-business-verification)
+API build: 31   (GET /health reports this — check it after upload)
+PWA bundle: v409 (titopay-pwa-v409-three-levels)
 Admin console: admin-console-v87 (UNCHANGED in this build; no need to re-upload)
 
 WHAT CHANGED
 
-1. LIMITS. The top verification level had NO standing monthly limit, which
-   reads as unlimited on a platform that has never underwritten unlimited. It
-   now carries R200 000 a month, receive and send. Identity Verified was
-   already R25 000 and is untouched. R5 000 remains what it always was here:
-   the UNVERIFIED rung, not the verified one. No fee, no other limit and no
-   transaction rule changed.
+1. LIMITS. THREE LEVELS, and the whole ladder moved up:
+
+       Unverified       R25 000 a month   (was R5 000)
+       Basic verified   R200 000 a month  (was R25 000)
+       Fully verified   no standing limit on any rail
+
+   Enhanced due diligence is NOT a fourth level and is not described as one:
+   it is a review that can open on any level, and the account keeps working
+   and keeps its level while it runs.
+
+   The per-payment, per-day, withdrawal and maximum-balance rails on the two
+   limited levels moved with their monthly figure and kept their original
+   proportions, so the ladder stays coherent (a day never allows more than a
+   month, one payment never exceeds a day, cash out is never looser than
+   paying). Basic verified is now R80 000 per payment and R160 000 per day.
+
+   READ THIS BEFORE YOU DEPLOY. This ladder is set deliberately ABOVE the
+   identity assurance the platform currently holds, and the config file says
+   so in full. Unverified means NOTHING is known about the customer, and
+   R25 000 a month now passes through such an account. Basic verified proves
+   only that someone entered a well-formed document number no other account
+   is using: no Home Affairs match, no document image, no liveness check, and
+   R200 000 a month now rests on that. The exposure is carried by monitoring
+   and the risk engine rather than by identity until a verification provider
+   is wired in behind KYC_PROVIDER.
+
+   Two knock-on effects to review with compliance, both console-editable and
+   NEITHER changed by me, because inventing risk parameters is not mine to do:
+     - monitoring.velocityAmount24h is R150 000, and basic verified may now
+       send R160 000 in a day. Ordinary permitted behaviour can therefore
+       raise a velocity signal.
+     - edd.singleTransactionReview is R100 000, above the new R80 000
+       per-payment cap, so the value trigger for EDD is now only reachable
+       at fully verified.
 
    These are TitoPay operational limits under its RMCP, editable in the
-   console without a deploy. Neither figure is a statutory threshold and the
-   app never presents them as one.
+   console without a deploy, versioned and reversible. No figure is a
+   statutory threshold and the app never presents any of them as one.
+
+   No fee, no pricing rule and no transaction rule changed. The product caps
+   on the gift rail (R5 000 a gift) and the QR rail (R10 000 a scan) are
+   unchanged, and they still narrow every level.
 
 2. PROVIDERS ARE NOW REPLACEABLE. Core asks for a CAPABILITY and never for a
    company: processPayment(), processPayout(), verifyIdentity(),

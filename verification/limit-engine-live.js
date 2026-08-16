@@ -124,7 +124,7 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
 
     // 3. A REFUSAL STATES REMAINING CAPACITY, NEVER A LEGAL THRESHOLD.
     const tooBig = await call(spender.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 12000, recipient: `@${shop.username}`, idempotencyKey: `big-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 90000, recipient: `@${shop.username}`, idempotencyKey: `big-${TAG}` });
     assert.equal(tooBig.status, 403);
     const message = String(tooBig.data.error || "");
     assert.match(message, /most you can send in one payment right now/i);
@@ -132,7 +132,7 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     // the letters f-i-c-a, and a naive test would fail on correct copy.
     assert.doesNotMatch(message, /\bFICA\b|\bSARB\b|statutory|legally required|required by law/i,
       "a refusal never invokes the law");
-    assert.match(message, /R10000\.00|R10 000/, "the refusal quotes what IS possible");
+    assert.match(message, /R80000\.00|R80 000/, "the refusal quotes what IS possible");
     ok("a refusal states the remaining capacity and never claims a legal threshold");
 
     // 4. PRODUCT RULES NARROW ONE RAIL ONLY. A gift is capped tighter than
@@ -158,10 +158,12 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
 
     // 6. MONEY SENT TO A CAPACITY-LIMITED RECIPIENT IS HELD, NOT LOST.
     const newcomer = await seedUser("Newcomer");
-    await pool.query("UPDATE wallets SET available_balance = 4800 WHERE user_id = $1", [newcomer.id]);
+    // R200 short of the unverified receiving ceiling, so the next payment in
+    // cannot land and has to be held.
+    await pool.query("UPDATE wallets SET available_balance = 24800 WHERE user_id = $1", [newcomer.id]);
     await pool.query(
       `INSERT INTO wallet_ledger (id, wallet_id, transaction_id, entry_type, amount, balance_after, reference, metadata)
-       VALUES ($1,$2,NULL,'credit',4800,4800,$3,'{}'::JSONB)`,
+       VALUES ($1,$2,NULL,'credit',24800,24800,$3,'{}'::JSONB)`,
       [crypto.randomUUID(), newcomer.walletId, `PRIOR-${TAG}`]);
     // Measured as a delta, not an absolute: other harnesses share this
     // database, and the invariant that matters is that a hold moves exactly
@@ -178,7 +180,7 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     assert.equal(Number(holds[0].amount), 400);
     const { rows: [newcomerWallet] } = await pool.query(
       "SELECT available_balance FROM wallets WHERE user_id = $1", [newcomer.id]);
-    assert.equal(Number(newcomerWallet.available_balance), 4800, "held money is never spendable before release");
+    assert.equal(Number(newcomerWallet.available_balance), 24800, "held money is never spendable before release");
     const feed = await call(newcomer.token, "GET", "/v1/chat/notifications");
     assert.ok((feed.data.notifications || []).some((n) => n.notification_type === "pending_credit"),
       "the recipient is told money is waiting");
@@ -203,7 +205,7 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     assert.equal((verify.data.released || []).length, 1, "verifying released the held payment");
     const { rows: [afterRelease] } = await pool.query(
       "SELECT available_balance FROM wallets WHERE user_id = $1", [newcomer.id]);
-    assert.equal(Number(afterRelease.available_balance), 5200, "the held amount landed exactly once");
+    assert.equal(Number(afterRelease.available_balance), 25200, "the held amount landed exactly once");
     const again = await call(newcomer.token, "POST", "/v1/compliance/pending-credits/claim", {});
     assert.equal((again.data.released || []).length, 0, "a second claim releases nothing");
     const { rows: [emptied] } = await pool.query(
@@ -214,10 +216,10 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
 
     // 8. AN UNCLAIMED HOLD RETURNS TO THE SENDER, IN FULL, ONCE.
     const stranger = await seedUser("Stranger");
-    await pool.query("UPDATE wallets SET available_balance = 4900 WHERE user_id = $1", [stranger.id]);
+    await pool.query("UPDATE wallets SET available_balance = 24900 WHERE user_id = $1", [stranger.id]);
     await pool.query(
       `INSERT INTO wallet_ledger (id, wallet_id, transaction_id, entry_type, amount, balance_after, reference, metadata)
-       VALUES ($1,$2,NULL,'credit',4900,4900,$3,'{}'::JSONB)`,
+       VALUES ($1,$2,NULL,'credit',24900,24900,$3,'{}'::JSONB)`,
       [crypto.randomUUID(), stranger.walletId, `PRIOR2-${TAG}`]);
     const { rows: [beforeSend] } = await pool.query(
       "SELECT available_balance FROM wallets WHERE user_id = $1", [spender.id]);
@@ -243,18 +245,18 @@ async function seedUser(name, { fica = "pending", balance = 0, basicVerified = f
     assert.equal(capacity.data.basis, undefined, "internal reasoning is never sent to the customer");
     ok("the capacity endpoint tells a customer what they can still do, without exposing the rules");
 
-    // 10. FULLY VERIFIED IS THE TOP OF THE LADDER, AND THE TOP IS A CEILING.
-    //     Its per-payment rail is still open and reviewed against the account;
-    //     high risk closes even that.
+    // 10. FULLY VERIFIED CARRIES NO STANDING LIMIT, AND THAT IS NOT THE SAME
+    //     AS UNSUPERVISED. Risk is applied last, so an account under a high
+    //     risk banding gains real ceilings on every rail regardless of level.
     const whale = await seedUser("Whale", { fica: "verified", balance: 500000 });
     const whaleCapacity = await limits.capacityFor(whale.id);
-    assert.equal(whaleCapacity.limits.monthlySend, 200000, "the top level carries the top monthly ceiling");
-    assert.equal(whaleCapacity.limits.singleTransaction, null, "per payment stays open at the top level");
+    assert.equal(whaleCapacity.limits.monthlySend, null, "no standing monthly limit at the top level");
+    assert.equal(whaleCapacity.limits.singleTransaction, null, "and none per payment either");
     await compliance.setRiskStatus(whale.id, "high_risk", "harness_high_risk");
     const restrained = await limits.capacityFor(whale.id);
-    assert.ok(Number(restrained.limits.singleTransaction) > 0, "high risk gives an open rail a boundary");
-    assert.ok(Number(restrained.limits.monthlySend) < 200000, "and narrows the ceiling it already had");
-    ok("the top level is a ceiling not a blank cheque, and high risk narrows it further");
+    assert.ok(Number(restrained.limits.singleTransaction) > 0, "high risk gives an unlimited level a boundary");
+    assert.ok(Number(restrained.limits.monthlySend) > 0, "on the monthly rail too");
+    ok("fully verified carries no standing limits, and high risk imposes real ones on it");
 
     console.log(`\n${passed}/10 checks passed. Legitimate activity flows; risk and capacity still bind.`);
     process.exit(0);

@@ -58,33 +58,40 @@ test("limits layer verification, product, earned standing and risk, in that orde
   const risky = engine.buildEffectiveLimits({ ...base, riskStatus: "elevated", earned: { applies: true, multiplier: 1.5 } });
   assert.ok(risky.limits.monthlySend < earned.limits.monthlySend);
   assert.ok(risky.limits.singleTransaction < plain.limits.singleTransaction);
-  // A rail with no fixed limit still gains one under high risk. Tier 2 keeps
-  // an open per-payment rail even though its monthly ceiling is fixed, so it
-  // is the rail, not the level, that proves this.
+  // A level with no standing limit still gains one under high risk.
   const open = engine.buildEffectiveLimits({ ...base, tier: 2 });
+  assert.equal(open.limits.monthlySend, null);
   assert.equal(open.limits.singleTransaction, null);
   const contained = engine.buildEffectiveLimits({ ...base, tier: 2, riskStatus: "high_risk" });
-  assert.ok(Number(contained.limits.singleTransaction) > 0, "high risk bounds an otherwise open rail");
-  assert.ok(Number(contained.limits.monthlySend) < Number(open.limits.monthlySend),
-    "high risk narrows a fixed ceiling too");
+  assert.ok(Number(contained.limits.monthlySend) > 0, "high risk bounds an otherwise unlimited level");
+  assert.ok(Number(contained.limits.singleTransaction) > 0, "on every rail, not just the monthly one");
 });
 
-test("the top level is a ceiling, not a blank cheque", () => {
-  // It carried no standing monthly limit at all, which reads as unlimited on
-  // a platform that has never underwritten unlimited.
-  const tier2 = DEFAULT_CONFIG.tiers["2"];
-  assert.equal(tier2.monthlyReceive, 200000);
-  assert.equal(tier2.monthlySend, 200000);
-  // And the ladder still climbs: every rung allows more than the one below.
-  assert.ok(tier2.monthlyReceive > DEFAULT_CONFIG.tiers["1"].monthlyReceive);
-  assert.ok(DEFAULT_CONFIG.tiers["1"].monthlyReceive > DEFAULT_CONFIG.tiers["0"].monthlyReceive);
-  // R5 000 is the UNVERIFIED rung and nothing else. It must never be the
-  // number an identity-verified wallet lives under.
-  assert.equal(DEFAULT_CONFIG.tiers["0"].monthlyReceive, 5000);
-  assert.equal(DEFAULT_CONFIG.tiers["1"].monthlyReceive, 25000);
-  // Neither number may be presented as a statutory threshold.
+test("three levels, and the ladder climbs on every rail", () => {
+  // THREE. Enhanced due diligence is a review that can open on any level, not
+  // a fourth rung, so a fourth tier must never appear in config.
+  assert.deepEqual(Object.keys(DEFAULT_CONFIG.tiers), ["0", "1", "2"]);
+
+  const [unverified, basic, full] = ["0", "1", "2"].map((k) => DEFAULT_CONFIG.tiers[k]);
+  assert.equal(unverified.monthlyReceive, 25000);
+  assert.equal(unverified.monthlySend, 25000);
+  assert.equal(basic.monthlyReceive, 200000);
+  assert.equal(basic.monthlySend, 200000);
+  // The top level carries NO standing limit on any rail.
+  for (const key of ["monthlyReceive", "monthlySend", "singleTransaction", "dailySend",
+    "singleWithdrawal", "monthlyWithdraw", "maxBalance"]) {
+    assert.equal(full[key], null, `fully verified has no standing ${key}`);
+  }
+  // A rung that allows less than the one below it is a ladder nobody climbs.
+  for (const key of ["monthlyReceive", "monthlySend", "singleTransaction", "dailySend",
+    "singleWithdrawal", "monthlyWithdraw", "maxBalance"]) {
+    assert.ok(Number(basic[key]) > Number(unverified[key]),
+      `${key}: verifying must be worth doing`);
+  }
+  // And no number here may be presented as a statutory threshold.
   const source = read("src", "services", "compliance-service.js");
-  assert.doesNotMatch(source, /R?200[ ,]?000[^\n]{0,60}(statutory|required by law|FICA limit)/i);
+  assert.doesNotMatch(source, /R?(25|200)[ ,]?000[^\n]{0,60}(statutory|required by law|FICA limit)/i);
+  assert.match(source, /None of these is a statutory FICA or SARB threshold/);
 });
 
 test("product rules can only narrow, never widen", () => {
@@ -113,18 +120,26 @@ test("every level's ladder is internally coherent", () => {
   }
 });
 
-test("basic verified still fits an ordinary South African month", () => {
+test("the ladder is set above the assurance, and says so out loud", () => {
   const tier1 = DEFAULT_CONFIG.tiers["1"];
-  // The ladder is set to the assurance TitoPay actually has, but everyday
-  // life must still fit: a salary in, rent out, groceries and gifts.
+  // Everyday life must fit: a salary in, rent out, groceries and gifts.
   assert.ok(tier1.monthlyReceive >= 20000, "a month's income lands without a wall");
   assert.ok(tier1.singleTransaction >= 8000, "rent goes in one payment");
-  // And it is not written for an assurance level that does not exist: until
-  // an identity provider is wired in, this level stays modest.
-  assert.ok(tier1.monthlySend <= 50000,
-    "basic verification proves a well-formed number, and the limits say so");
-  assert.match(read("src", "services", "compliance-service.js"),
-    /THESE NUMBERS MATCH THE ASSURANCE, NOT THE AMBITION/);
+  // These limits are deliberately set ABOVE the identity assurance the
+  // platform currently holds, which is a business decision rather than an
+  // accident. The file has to state the trade-off, so that raising the
+  // numbers can never be mistaken for having raised the assurance.
+  const source = read("src", "services", "compliance-service.js");
+  assert.match(source, /ABOVE the assurance the platform currently holds/);
+  assert.match(source, /no document image and no liveness check/);
+  assert.match(source, /Unverified means NOTHING is known about the customer/);
+  // Per payment stays a fraction of the month on both limited rungs: it is
+  // the control that costs honest customers the least and fraud the most.
+  for (const key of ["0", "1"]) {
+    const tier = DEFAULT_CONFIG.tiers[key];
+    assert.ok(tier.singleTransaction <= tier.monthlySend * 0.6,
+      `tier ${key}: one payment cannot be most of a month`);
+  }
 });
 
 test("refusals quote remaining capacity and never invoke the law", () => {
@@ -211,9 +226,10 @@ test("the customer can see what they can still do", () => {
   assert.match(APP, /verify-cta/);
   assert.match(APP, /data-action="verification-levels"/);
   assert.match(APP, /async function openVerificationLevelsModal/);
-  // Never unlimited, never a promise of a specific higher limit.
+  // Never unlimited, and never a bare statement that a level has no cap.
   assert.doesNotMatch(APP, /No fixed monthly limits/);
-  assert.match(APP, /Higher limits may be available after full verification/);
+  assert.match(APP, /No standing monthly limit on sending, receiving or your wallet balance/);
+  assert.match(APP, /still apply/, "and the supervision that continues is said in the same sentence");
   assert.match(APP, /Not a level you choose/, "enhanced due diligence is a process, not a tier");
   assert.doesNotMatch(APP, /Your FICA limits/);
 });

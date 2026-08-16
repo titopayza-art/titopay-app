@@ -1162,7 +1162,7 @@ function limitRow(label, value) {
   return `
     <div class="limit-row">
       <span>${esc(label)}</span>
-      <strong${known ? "" : ' class="limit-open"'}>${known ? esc(money(value)) : "Reviewed individually"}</strong>
+      <strong${known ? "" : ' class="limit-open"'}>${known ? esc(money(value)) : "No standing limit"}</strong>
     </div>`;
 }
 
@@ -1189,24 +1189,28 @@ function remainingTile(label, value, { wide = false } = {}) {
   return `
     <div class="still-tile${wide ? " still-wide" : ""}">
       <small>${esc(label)}</small>
-      <strong${known ? "" : ' class="limit-open"'}>${known ? esc(money(value)) : "Reviewed individually"}</strong>
+      <strong${known ? "" : ' class="limit-open"'}>${known ? esc(money(value)) : "No standing limit"}</strong>
     </div>`;
 }
 
 // WHAT ONE LEVEL ALLOWS, SAID WITHOUT PROMISING IT.
 //
-// A level publishes only the ceilings that are actually fixed for it. The
-// top level carries a monthly ceiling but no fixed per-payment or withdrawal
-// number, so the old single sentence would have printed a rand amount for a
-// limit that does not exist. It is built from whatever the API reports
-// instead, and any level whose ceiling is not the whole story says so:
-// reaching a level makes an account ELIGIBLE for that ceiling, and risk
-// banding, transaction monitoring and any open compliance review still
-// narrow it. Nothing here is ever described as automatic or unlimited.
+// A level publishes only the ceilings that are actually fixed for it, built
+// from whatever the API reports rather than from a sentence with three
+// hard-coded slots in it. The top level has no standing limit on any rail, so
+// there is no number to print and the old copy would have printed one anyway.
+//
+// "No standing monthly limit" is the honest way to say what the engine does,
+// and it is not the same word as unlimited. Risk is applied LAST, so an
+// account whose risk banding has been raised gains real ceilings even here,
+// and monitoring, screening and ongoing due diligence keep running whatever
+// the level. Saying "unlimited" on a screen would be a promise the engine is
+// deliberately built not to keep. (The internal banding names themselves
+// never appear anywhere in this file, deliberately: a test enforces it.)
 function verificationLimitsLine(entry) {
-  const eligibility = "Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply.";
+  const supervision = "Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply.";
   if (entry.monthlyReceive === null && entry.monthlySend === null) {
-    return "Higher limits may be available after full verification, subject to risk assessment, transaction monitoring and applicable compliance requirements.";
+    return `No standing monthly limit on sending, receiving or your wallet balance. ${supervision}`;
   }
   const monthly = [];
   if (entry.monthlyReceive !== null) monthly.push(`receive up to ${money(entry.monthlyReceive)}`);
@@ -1216,8 +1220,8 @@ function verificationLimitsLine(entry) {
   if (entry.singleTransaction !== null) line += `, ${money(entry.singleTransaction)} per payment`;
   line += ".";
   // A level that fixes every rail has already said everything. A level that
-  // only fixes the monthly ceiling must not read as a guarantee.
-  if (entry.singleTransaction === null) line += ` ${eligibility}`;
+  // leaves a rail open must not read as a guarantee.
+  if (entry.singleTransaction === null) line += ` ${supervision}`;
   return line;
 }
 

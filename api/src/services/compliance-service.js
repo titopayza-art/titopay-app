@@ -1,15 +1,18 @@
 "use strict";
 
-// PROGRESSIVE KYC/FICA: FOUR LEVELS, RISK-BASED, CONFIGURABLE, AUDITABLE.
+// PROGRESSIVE KYC/FICA: THREE LEVELS, RISK-BASED, CONFIGURABLE, AUDITABLE.
 //
-//   Tier 0  Unverified      registration only; tight transaction limits
+//   Tier 0  Unverified      registration only
 //   Tier 1  Basic verified  identity document validated (SA ID, passport or
-//                           another approved identity document); everyday limits
+//                           another approved identity document)
 //   Tier 2  Full FICA/KYC   documentary verification; no standing limits
-//   EDD     Enhanced due diligence, triggered automatically by unusual or
-//           high-value activity; asks for source of funds and, where it
-//           applies, beneficial ownership, and puts the account in front of
-//           the compliance team
+//
+// THREE, and only three. Enhanced due diligence is NOT a fourth level and
+// must never be described as one: it is a REVIEW that opens on any level,
+// triggered automatically by unusual or high-value activity, asking for
+// source of funds and, where it applies, beneficial ownership, and putting
+// the account in front of the compliance team. An account keeps working, and
+// keeps its level, while the review runs.
 //
 // Nothing here is hard-coded policy. The numbers below are DEFAULTS, and the
 // live values come from platform_settings key "compliance_tier_limits",
@@ -55,74 +58,84 @@ const { verifyIdentity, normalizeVerificationStatus } = require("../providers/ky
 const DEFAULT_CONFIG = {
   // null means no standing limit at that tier.
   //
-  // THE LADDER IS A PRODUCT DECISION, NOT A LEGAL ONE. Unverified is
-  // deliberately narrow because nothing is known about the customer, and
-  // money sent to an unverified wallet is held for claim rather than
-  // refused, so nobody loses a payment to it. Basic verified is a genuinely
-  // usable everyday wallet: salary, rent, gifts and shopping fit inside it
-  // without a customer meeting a wall every month. Fully verified carries
-  // no fixed limits, only monitoring.
+  // THREE LEVELS, AND ONLY THREE. Enhanced due diligence is NOT a fourth: it
+  // is a review that can open on any level, not a rung anyone climbs to.
+  //
+  //   Unverified      R25 000 a month
+  //   Basic verified  R200 000 a month
+  //   Fully verified  no standing monthly limit
+  //
+  // THE LADDER IS A PRODUCT DECISION, NOT A LEGAL ONE, and this ladder is set
+  // ABOVE the assurance the platform currently holds rather than at it. That
+  // is a deliberate business call, taken with the trade-off stated:
+  //
+  //   Unverified means NOTHING is known about the customer. No document, no
+  //   name checked against anything, no screening hit possible on an identity
+  //   that was never given. R25 000 a month through such an account is what
+  //   the platform has chosen to carry, and it is carried by monitoring and
+  //   by the risk engine rather than by identity.
+  //
+  //   Basic verified today proves only that someone entered a well-formed
+  //   document number no other account is using. There is no Home Affairs
+  //   match, no document image and no liveness check. R200 000 a month rests
+  //   on that, until an identity verification provider is wired in behind the
+  //   KYC capability, at which point the assurance finally matches the number.
+  //
+  // Money sent to an unverified wallet beyond its capacity is still held for
+  // claim rather than refused, so nobody loses a payment to one. Risk is
+  // still applied LAST by the engine, so an elevated or high risk account is
+  // narrowed on every level including the top one. And every number here is
+  // console-editable without a deploy: if the exposure reads differently once
+  // real volume arrives, it is changed in an afternoon, versioned and
+  // reversible.
+  //
+  // None of these is a statutory FICA or SARB threshold. They are TitoPay
+  // operational limits under its RMCP.
   tiers: {
     0: {
       label: "Unverified",
-      description: "Registration only. Verify your identity to transact freely.",
-      monthlyReceive: 5000,
-      monthlySend: 5000,
-      singleTransaction: 2500,
-      dailySend: 4000,
-      singleWithdrawal: 1000,
-      monthlyWithdraw: 3000,
-      // Coherent with the receive limit: an unverified wallet that can take
-      // in R5000 a month has no business holding five months of it, and the
-      // card top-up rail is the only way it could.
-      maxBalance: 10000
+      description: "Registration only. Verify your identity for higher limits.",
+      monthlyReceive: 25000,
+      monthlySend: 25000,
+      // The internal proportions of this rung are unchanged; only its size
+      // moved. Per payment is half the month, a day is four fifths of it, and
+      // cash out stays the tightest rail, because withdrawal is where fraud
+      // realises and an unverified account is where it is cheapest to attempt.
+      singleTransaction: 12500,
+      dailySend: 20000,
+      singleWithdrawal: 5000,
+      monthlyWithdraw: 15000,
+      // Two months of receiving. A wallet must never be able to hold many
+      // months of what it is allowed to take in, and the card top-up rail is
+      // the only way it could.
+      maxBalance: 50000
     },
     1: {
       label: "Basic verified",
-      description: "Identity verified. Everyday wallet limits.",
-      // THESE NUMBERS MATCH THE ASSURANCE, NOT THE AMBITION. Basic
-      // verification today proves that someone entered a well-formed
-      // document number no other account is using. It does not prove who
-      // they are: there is no Home Affairs match, no document image and no
-      // liveness check. So this level carries what TitoPay can afford to
-      // lose to a single fabricated identity, and everyday life still fits
-      // inside it: a salary in, rent out, groceries, gifts.
-      //
-      // When an identity verification provider is wired in, these are the
-      // numbers to raise, in the console, without a deploy. Until then
-      // raising them would be pricing a risk TitoPay has not measured.
-      monthlyReceive: 25000,
-      monthlySend: 25000,
-      // Per-payment stays the deliberate friction: it is the control that
-      // costs honest customers the least and fraud the most.
-      singleTransaction: 10000,
-      dailySend: 20000,
-      singleWithdrawal: 10000,
-      monthlyWithdraw: 25000,
-      // Two months of receiving, on the same coherence rule as Tier 0: a
-      // wallet should never be able to hold many months of what it is
-      // allowed to take in.
-      maxBalance: 50000
+      description: "Identity verified. Higher everyday wallet limits.",
+      monthlyReceive: 200000,
+      monthlySend: 200000,
+      // Per payment stays the deliberate friction: it is the control that
+      // costs honest customers the least and fraud the most, so it remains a
+      // fraction of the month rather than equal to it.
+      singleTransaction: 80000,
+      dailySend: 160000,
+      singleWithdrawal: 80000,
+      monthlyWithdraw: 200000,
+      // Two months of receiving, on the same coherence rule as the rung below.
+      maxBalance: 400000
     },
     2: {
       label: "Fully verified",
-      description: "Full FICA verification for higher balances, larger payments and withdrawals. Activity stays subject to ongoing monitoring.",
-      // ENHANCED VERIFICATION IS A CEILING, NOT A BLANK CHEQUE. This rung
-      // used to carry no standing monthly limit at all, which read as
-      // "unlimited" on a platform that has never underwritten unlimited.
-      // R200 000 a month is the top of the ladder, and it is a MAXIMUM the
-      // account becomes eligible for, not an amount completing a screen
-      // grants: risk banding, transaction monitoring and any open compliance
-      // review still narrow it, and the engine applies risk last so they
-      // always can.
-      //
-      // It is not a statutory figure. Like every other number here it is a
-      // TitoPay operational limit under the RMCP, editable in the console.
-      monthlyReceive: 200000,
-      monthlySend: 200000,
-      // Per-payment, per-day and withdrawal ceilings stay open at this level
-      // and are reviewed against the account rather than fixed in config.
-      // The monthly ceiling above still binds every one of them.
+      description: "Full FICA verification. No standing wallet limits, with activity subject to ongoing monitoring.",
+      // NO STANDING LIMIT ON ANY RAIL. This is not the same as unlimited, and
+      // the difference matters: risk is applied last, so an account under an
+      // elevated, high risk or EDD banding gains real ceilings here (see
+      // DEFAULT_RISK_BANDS), and monitoring, screening and ongoing due
+      // diligence all keep running. What this level removes is the STANDING
+      // cap, not the supervision.
+      monthlyReceive: null,
+      monthlySend: null,
       singleTransaction: null,
       dailySend: null,
       singleWithdrawal: null,

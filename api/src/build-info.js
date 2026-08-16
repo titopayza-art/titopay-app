@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 30;
+const API_BUILD = 31;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  31: "The ladder is three levels and the whole ladder moved: unverified " +
+      "R25 000 a month, identity verified R200 000 a month, fully verified " +
+      "no standing limit on any rail. Set deliberately ABOVE the identity " +
+      "assurance the platform currently holds, so the trade-off is written " +
+      "into the config rather than discovered later. Risk is still applied " +
+      "last, so an elevated or high risk account is narrowed on every level " +
+      "including the top one.",
   30: "Providers become replaceable and a business stops being a person. Core " +
       "asks for a CAPABILITY (processPayment, processPayout, verifyIdentity) " +
       "and never for a company; which supplier answers is one environment " +

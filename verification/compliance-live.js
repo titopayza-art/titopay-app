@@ -6,8 +6,8 @@
  *     monthly send past the limit are both refused with the upgrade path.
  *  2. Basic verification with a valid SA ID upgrades to Tier 1 instantly,
  *     raises limits, and refuses an ID number already used elsewhere.
- *  3. Tier 2 (FICA verified) carries the top monthly ceiling, not an open
- *     wallet, and a recipient at capacity has money held rather than lost.
+ *  3. Tier 2 (FICA verified) carries no standing limit, and a recipient at
+ *     capacity has money held for them rather than lost.
  *  4. The limits are CONFIG, not code: changing platform_settings changes
  *     the enforced number immediately.
  *  5. EDD triggers automatically past the configured mark: flag written,
@@ -91,23 +91,23 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
   try {
     await pool.query("DELETE FROM platform_settings WHERE key = 'compliance_tier_limits'").catch(() => {});
 
-    const newbie = await seedUser("Newbie", { balance: 20000 });
-    const friend = await seedUser("Friend", { fica: "verified", balance: 300000 });
+    const newbie = await seedUser("Newbie", { balance: 40000 });
+    const friend = await seedUser("Friend", { fica: "verified", balance: 600000 });
 
     // 1. Tier 0 binds on both send checks.
     const bigSingle = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 3000, recipient: `@${friend.username}` });
+      { serviceCode: "wallet_transfer", amount: 15000, recipient: `@${friend.username}` });
     assert.equal(bigSingle.status, 403);
     // The refusal states what IS possible, and never invokes the law.
-    assert.match(String(bigSingle.data.error || ""), /one payment right now is R2500\.00/i);
+    assert.match(String(bigSingle.data.error || ""), /one payment right now is R12500\.00/i);
     const okSend = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 2000, recipient: `@${friend.username}` });
+      { serviceCode: "wallet_transfer", amount: 9000, recipient: `@${friend.username}` });
     assert.ok([200, 201].includes(okSend.status), JSON.stringify(okSend.data));
     const secondSend = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 1800, recipient: `@${friend.username}`, idempotencyKey: `b-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 9000, recipient: `@${friend.username}`, idempotencyKey: `b-${TAG}` });
     assert.ok([200, 201].includes(secondSend.status), JSON.stringify(secondSend.data));
     const overDaily = await call(newbie.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 500, recipient: `@${friend.username}`, idempotencyKey: `c-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 2500, recipient: `@${friend.username}`, idempotencyKey: `c-${TAG}` });
     assert.equal(overDaily.status, 403, JSON.stringify(overDaily.data));
     assert.match(String(overDaily.data.error || ""), /today's sending capacity left/i);
     ok("tier 0 binds: the single payment and daily send limits both refuse with the numbers spelled out");
@@ -129,15 +129,14 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     assert.equal(reuse.status, 409, "one ID number, one account");
     ok("a valid SA ID upgrades to tier 1 instantly, raises limits, and cannot be reused");
 
-    // 3. Tier 2 is the TOP of the ladder, and the top is a number. It used to
-    //    carry no standing monthly limit at all, which reads as unlimited on a
-    //    platform that has never underwritten unlimited.
+    // 3. Tier 2 carries NO standing limit on any rail. That is not the same
+    //    as unsupervised: risk banding, monitoring and screening all keep
+    //    running, and check 9 of limit-engine-live proves risk still bounds it.
     const status2 = await call(friend.token, "GET", "/v1/compliance/status");
     assert.equal(status2.data.tier, 2);
-    assert.equal(status2.data.limits.monthlySend, 200000);
-    assert.equal(status2.data.limits.monthlyReceive, 200000);
-    // The rungs still climb: the top allows more than identity verified does.
-    assert.ok(Number(status2.data.limits.monthlySend) > 25000);
+    assert.equal(status2.data.limits.monthlySend, null);
+    assert.equal(status2.data.limits.monthlyReceive, null);
+    assert.equal(status2.data.limits.maxBalance, null);
     const rich = await seedUser("Rich", { fica: "verified", balance: 0 });
     const bigVerified = await call(friend.token, "POST", "/v1/transactions",
       { serviceCode: "wallet_transfer", amount: 60000, recipient: `@${rich.username}`, idempotencyKey: `e-${TAG}` });
@@ -146,12 +145,12 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
     // the payment is held for the recipient to claim, and the sender is
     // never told another account's numbers or verification state.
     const overReceive = await call(friend.token, "POST", "/v1/transactions",
-      { serviceCode: "wallet_transfer", amount: 120000, recipient: `@${newbie.username}`, idempotencyKey: `e2-${TAG}` });
+      { serviceCode: "wallet_transfer", amount: 220000, recipient: `@${newbie.username}`, idempotencyKey: `e2-${TAG}` });
     assert.ok([200, 201].includes(overReceive.status), JSON.stringify(overReceive.data));
     const { rows: heldRows } = await pool.query(
       "SELECT amount FROM pending_credits WHERE recipient_user_id = $1 AND status = 'awaiting_verification'", [newbie.id]);
     assert.ok(heldRows[0], "the payment is held for the recipient rather than refused");
-    ok("tier 2 carries the R200 000 monthly ceiling, and a recipient at capacity has money held for them, not lost");
+    ok("tier 2 carries no standing limit, and a recipient at capacity has money held for them, not lost");
 
     // 4. The numbers are config. Change them, and enforcement changes NOW.
     await pool.query(
@@ -223,9 +222,9 @@ async function seedUser(name, { fica = "pending", balance = 0 } = {}) {
 
     // 9. The withdrawal gate binds per tier.
     const bigWithdrawal = await call(newbie.token, "POST", "/v1/payouts/withdrawals",
-      { amount: 30000, idempotencyKey: `w-${TAG}`, bankAccountNumber: "1234567890", bankCode: "250655", accountHolder: "Newbie Harness" });
+      { amount: 90000, idempotencyKey: `w-${TAG}`, bankAccountNumber: "1234567890", bankCode: "250655", accountHolder: "Newbie Harness" });
     assert.equal(bigWithdrawal.status, 403, JSON.stringify(bigWithdrawal.data));
-    assert.match(String(bigWithdrawal.data.error || ""), /withdraw at once right now is R10000\.00/i);
+    assert.match(String(bigWithdrawal.data.error || ""), /withdraw at once right now is R80000\.00/i);
     ok("withdrawal limits bind by tier before any wallet or provider work");
 
     // 10. The pre-limit nudge is a real notification.
