@@ -1,10 +1,14 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 35   (GET /health reports this — check it after upload)
-PWA bundle: v411 (titopay-pwa-v411-editable-limits)
+API build: 36   (GET /health reports this — check it after upload)
+PWA bundle: v412 (titopay-pwa-v412-edge-gesture)
 Admin console: admin-console-v89
 
 WHAT CHANGED
+
+   NOTE: build 36 carries NO API change. It moves only so the API and app build
+   numbers stay legible as a pair. Everything below arrived in builds 30 to 35.
+
 
 0. THE DIAGNOSIS NO LONGER NEEDS A SHELL.
 

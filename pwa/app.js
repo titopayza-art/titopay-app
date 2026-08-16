@@ -403,6 +403,9 @@ window.addEventListener("scroll", syncTopbarScrollState, { passive: true });
 
 const LANDING_ACCOUNTS = ["personal", "business"];
 const SWIPE_MIN_DISTANCE = 48;
+// How much of each edge belongs to the browser's own navigation gesture. iOS
+// uses roughly 20px; 28 leaves margin without eating into the usable surface.
+const SWIPE_EDGE_GUTTER = 28;
 // A gesture only counts as a swipe when it is clearly sideways, so a vertical
 // scroll or a tap never switches the account by accident.
 const SWIPE_MAX_VERTICAL_RATIO = 0.6;
@@ -1013,6 +1016,21 @@ function landingSwipeStart(event) {
   if (!surface) return;
   // Horizontal strips and form controls own their own sideways gestures.
   if (event.target.closest("input, textarea, select, .suggestion-row, .learn-categories, .statement-periods")) return;
+  // THE OUTER EDGE BELONGS TO THE BROWSER, AND THE BROWSER WINS.
+  //
+  // iOS Safari reserves a strip down each side of the screen for its own back
+  // and forward navigation. `touch-action` does not govern it — it is a system
+  // gesture, not a scroll — so a swipe that starts there becomes a page
+  // transition whatever this app declares. What used to happen is that BOTH
+  // responded to the one gesture: Safari slid the page across to reveal the
+  // blank document behind it, and this handler stepped Personal to Business
+  // underneath. The result was the app sliding sideways with a pale gap where
+  // the rest of it should be, which reads as the app falling apart.
+  //
+  // So it does not compete. A gesture beginning in that strip is Safari's, and
+  // this handler declines it. Everywhere else on the screen still swipes.
+  const width = window.innerWidth || document.documentElement.clientWidth || 0;
+  if (event.clientX < SWIPE_EDGE_GUTTER || event.clientX > width - SWIPE_EDGE_GUTTER) return;
   landingSwipe = { x: event.clientX, y: event.clientY, done: false };
 }
 function landingSwipeMove(event) {

@@ -1,10 +1,30 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v411 (titopay-pwa-v411-editable-limits)
-Requires: api.zip build 35
+PWA bundle: v412 (titopay-pwa-v412-edge-gesture)
+Requires: api.zip build 36
 Admin console: admin-console-v89
 
 WHAT CHANGED IN THE APP
+
+0. THE LANDING SCREEN STOPS FIGHTING THE BROWSER FOR THE EDGE.
+
+   iOS Safari reserves a strip down each side of the screen for its own back
+   and forward navigation. It is a SYSTEM gesture: `touch-action` does not
+   govern it, and the browser wins whatever the page declares. So a swipe
+   starting in that strip did two things at once — Safari slid the page across
+   to reveal the blank document behind it, and the app stepped Personal to
+   Business underneath. What you saw was the app sliding sideways with a pale
+   gap where the rest of it should have been, which reads as the app coming
+   apart.
+
+   It now declines any swipe that begins within 28px of either edge. That strip
+   belongs to the browser. Everywhere else on the screen still swipes, which is
+   more than four fifths of it, and a ten-check browser harness proves both:
+   the feature still works from the middle, and nothing half-happens at the
+   edge.
+
+   No other screen, colour, size, spacing or behaviour changed.
+
 
 1. BUSINESS VERIFICATION IS ITS OWN SCREEN.
    Profile > Grow your business > Business Verification, on business

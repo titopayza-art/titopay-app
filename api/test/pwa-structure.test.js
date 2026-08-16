@@ -272,3 +272,22 @@ test("the service worker and the page agree on the bundle version", () => {
   assert.ok(pageStyles, "index.html must cache-bust styles.min.css");
   assert.equal(pageStyles, workerStyles, "the service worker must precache the same styles version the page requests");
 });
+
+test("the landing swipe does not compete with the browser's edge gesture", () => {
+  // iOS Safari reserves a strip down each side for its own back and forward
+  // navigation, and `touch-action` does not govern it — it is a system gesture.
+  // A swipe starting there became a page transition AND stepped the account
+  // type, so the app slid sideways with a pale gap where the rest of it should
+  // have been. Behaviour is proven in verification/landing-swipe-edge.spec.js;
+  // this stops the guard being deleted.
+  assert.match(source, /const SWIPE_EDGE_GUTTER = \d+;/);
+  const start = source.slice(source.indexOf("function landingSwipeStart"),
+    source.indexOf("function landingSwipeMove"));
+  assert.match(start, /event\.clientX < SWIPE_EDGE_GUTTER/, "the left strip is declined");
+  assert.match(start, /event\.clientX > width - SWIPE_EDGE_GUTTER/, "and the right strip too");
+  assert.match(start, /THE OUTER EDGE BELONGS TO THE BROWSER/,
+    "and the reason is recorded where the next person will read it");
+  // Declined before any movement is measured, so nothing half-happens.
+  assert.ok(start.indexOf("SWIPE_EDGE_GUTTER") < start.indexOf("landingSwipe = {"),
+    "the guard runs before the gesture is armed");
+});

@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 35;
+const API_BUILD = 36;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  36: "App only: the landing screen stops fighting the browser for a gesture " +
+      "it was always going to lose. iOS Safari reserves a strip down each side " +
+      "for its own back navigation and `touch-action` does not govern it, so a " +
+      "swipe starting there became a page transition AND stepped Personal to " +
+      "Business at the same time — the app sliding sideways with a pale gap " +
+      "where the rest of it should be. It now declines gestures that begin in " +
+      "that strip. No API change; the build moves so the pair stays legible.",
   35: "The diagnosis stops needing a shell. GET /admin/diagnostics/console " +
       "returns exactly what `npm run db:diagnose` prints, from one shared " +
       "service, so the console and the script can never disagree: the tables " +
