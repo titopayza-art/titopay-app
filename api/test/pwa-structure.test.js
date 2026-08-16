@@ -291,3 +291,103 @@ test("the landing swipe does not compete with the browser's edge gesture", () =>
   assert.ok(start.indexOf("SWIPE_EDGE_GUTTER") < start.indexOf("landingSwipe = {"),
     "the guard runs before the gesture is armed");
 });
+
+test("the system back gesture closes the layer on top, not the screen", () => {
+  // On an installed app, Back closes whatever is covering the screen. The
+  // sheets, the Pay hub and the confirm dialog lived outside the history
+  // stack, so Back skipped straight past them: on Android it left the app, and
+  // on iOS the edge swipe took the whole screen away with a sheet still open.
+  // Behaviour is proven in verification/pwa-native-feel.spec.js; this stops
+  // the wiring being removed one call at a time.
+  assert.match(source, /history\.pushState\(\{ tpSheet: 1 \}, ""\)/,
+    "a sheet claims one history entry");
+  assert.match(source, /const OVERLAY_SELECTOR = "\.modal-backdrop, \.pay-hub-backdrop:not\(\[data-closing\]\), \.tp-dialog-layer"/,
+    "and every overlay that covers the screen is counted, not just the sheets");
+  assert.match(source, /window\.addEventListener\("popstate", onHistoryBack\)/);
+
+  // The entry is claimed at the url the sheet opened on, because several flows
+  // close a sheet and then navigate; unwinding into that navigation would undo
+  // it. The comparison is what tells the two cases apart.
+  const release = source.slice(source.indexOf("function releaseSheetHistory"),
+    source.indexOf("function onHistoryBack"));
+  assert.match(release, /location\.href !== sheetHistoryHref/,
+    "a route that moved on is left alone rather than unwound");
+  assert.match(release, /if \(overlayIsOpen\(\)\) return;/,
+    "and an entry is never handed back while something is still open");
+
+  // Top layer first, and one layer at a time.
+  const back = source.slice(source.indexOf("function onHistoryBack"),
+    source.indexOf("function openModal("));
+  assert.ok(back.indexOf(".tp-dialog-layer") < back.indexOf(".pay-hub-backdrop")
+    && back.indexOf(".pay-hub-backdrop") < back.indexOf(".modal-backdrop"),
+    "the dialog is peeled before the hub, and the hub before the sheet");
+  assert.match(back, /handleAction\("modal-back"\)/,
+    "a sheet opened from a sheet returns to the one that opened it");
+  assert.match(back, /if \(overlayIsOpen\(\)\) claimSheetHistory\(\);/,
+    "whatever is still open claims an entry of its own, so the next Back peels again");
+  assert.match(back, /sheetHistorySkips < 4/,
+    "stepping over a stale entry is bounded, so a history stack this code did "
+    + "not create can never loop");
+
+  // Every overlay opens through one of these, and each has to claim.
+  for (const opener of ["function openModal(", "function openPayHub(", "function appDialog("]) {
+    const body = source.slice(source.indexOf(opener), source.indexOf(opener) + 6000);
+    assert.match(body, /claimSheetHistory\(\)/, `${opener.trim()} claims a history entry`);
+  }
+});
+
+test("every control the app renders answers a tap", () => {
+  // -webkit-tap-highlight-color is transparent across the app, so a control
+  // with no :active rule of its own gives no feedback at all when tapped and
+  // the tap reads as a miss. These three were found with no answer by a walk
+  // of the real screens in verification/pwa-native-feel.spec.js.
+  const css = fs.readFileSync(pwaFile("styles.css"), "utf8");
+  const min = fs.readFileSync(pwaFile("styles.min.css"), "utf8");
+  for (const sheet of [css, min]) {
+    assert.match(sheet, /\.segment button:active/);
+    assert.match(sheet, /\.chip:not\(:disabled\):active/);
+    assert.match(sheet, /\.install-float-dismiss:active/);
+  }
+  // The landing segment is the first control a new customer touches, and on a
+  // short screen it was 40px tall. Measured before it was changed: the landing
+  // still fits with no scroll at 44px on 360x640, 375x667, 360x740, 390x664,
+  // 412x732 and 414x736.
+  assert.doesNotMatch(css, /body\.landing-static \.landing-flow \.segment button \{\s*min-height: 40px;/);
+  assert.doesNotMatch(min, /landing-flow \.segment button\{min-height:40px\}/);
+});
+
+test("every iOS startup image the page declares is a whole file at the size it claims", () => {
+  // The one startup image the app shipped was truncated in the writing: the
+  // top 660 rows of 2532 were all that was ever there, and a PNG with no IEND
+  // chunk does not decode. iOS silently fell back to a white rectangle, which
+  // is exactly the flash the tag exists to prevent, and the failure was
+  // invisible from the source. Every declared image is now read from disk.
+  const html = fs.readFileSync(pwaFile("index.html"), "utf8");
+  const declared = Array.from(html.matchAll(
+    /href="\.\/assets\/(splash-(\d+)x(\d+)\.png)[^"]*"[\s\S]{0,240}?-webkit-device-pixel-ratio: (\d)\)/g));
+  assert.ok(declared.length >= 8,
+    `one image covers one phone; every other device flashes (found ${declared.length})`);
+
+  for (const [, name, width, height] of declared) {
+    const bytes = fs.readFileSync(pwaFile(`assets/${name}`));
+    assert.ok(bytes.length > 4096, `${name} is too small to be a real image`);
+    assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", `${name} is not a PNG`);
+    // The last chunk of a complete PNG is IEND. Its absence is precisely how
+    // the shipped file failed.
+    assert.equal(bytes.subarray(bytes.length - 8, bytes.length - 4).toString("ascii"), "IEND",
+      `${name} is truncated: iOS will not decode it and shows a white flash instead`);
+    // IHDR carries the real dimensions, and iOS matches on them exactly.
+    assert.equal(bytes.readUInt32BE(16), Number(width), `${name} is not ${width} pixels wide`);
+    assert.equal(bytes.readUInt32BE(20), Number(height), `${name} is not ${height} pixels tall`);
+  }
+
+  // The device size and the pixel size have to agree, or iOS matches the media
+  // query and then draws the wrong picture.
+  for (const [, name, width, height, ratio] of declared) {
+    const media = html.slice(html.indexOf(name));
+    const cssWidth = Number((media.match(/device-width: (\d+)px/) || [])[1]);
+    const cssHeight = Number((media.match(/device-height: (\d+)px/) || [])[1]);
+    assert.equal(cssWidth * Number(ratio), Number(width), `${name}: width does not match its media query`);
+    assert.equal(cssHeight * Number(ratio), Number(height), `${name}: height does not match its media query`);
+  }
+});

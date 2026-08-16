@@ -7424,8 +7424,12 @@ li {
     padding: 5px;
   }
 
+  /* 44px is the smallest target both platforms ask for, and the segment is the
+     first thing a new customer touches. Measured before it was changed: on
+     360x640, 375x667, 360x740, 390x664, 412x732 and 414x736 the landing still
+     fits with no scroll at 44px, so the four pixels cost nothing there. */
   body.landing-static .landing-flow .segment button {
-    min-height: 40px;
+    min-height: 44px;
   }
 
   body.landing-static .landing-flow h1 {
@@ -15383,4 +15387,47 @@ img {
 .my-tickets-tools .btn {
   min-height: 40px;
   font-size: 0.85rem;
+}
+
+/* PRESSED STATE: EVERY CONTROL ANSWERS A TAP -------------------------------
+
+   -webkit-tap-highlight-color is transparent across the app, which is right --
+   the grey flash iOS paints over a control is the single most website-looking
+   thing a web app does. It also means a control with no :active rule of its
+   own gives NO feedback at all: the tap reads as a miss, and people tap again.
+
+   These are the controls a walk of the app found with no answer of their own.
+   The scale matches the one the tiles and buttons already use, so the app has
+   one press, not several. */
+.segment button:active,
+.chip:not(:disabled):active {
+  transform: scale(0.96);
+}
+
+.install-float-dismiss:active {
+  transform: scale(0.9);
+}
+
+.segment button,
+.chip,
+.install-float-dismiss {
+  transition: transform 140ms var(--ease-premium);
+}
+
+.segment button {
+  transition: color 240ms var(--ease-premium), transform 140ms var(--ease-premium);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment button,
+  .chip,
+  .install-float-dismiss {
+    transition: none;
+  }
+
+  .segment button:active,
+  .chip:not(:disabled):active,
+  .install-float-dismiss:active {
+    transform: none;
+  }
 }

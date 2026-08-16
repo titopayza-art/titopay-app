@@ -394,6 +394,36 @@ const routeScrollPositions = new Map();
 let servicesNavPending = false;
 window.addEventListener("scroll", syncTopbarScrollState, { passive: true });
 // ---------------------------------------------------------------------------
+// The system back gesture belongs to the sheet on top
+//
+// On an installed app, Back closes whatever is covering the screen. This app's
+// sheets lived outside the history stack, so Back skipped straight past them:
+// on Android it left the app, and on iOS the edge swipe took the whole screen
+// away with a sheet still open over the page underneath. That is the loudest
+// difference between an app and a page that has been saved to a home screen.
+//
+// A sheet now claims one history entry at the SAME url, so going back consumes
+// that entry, fires popstate without a hashchange, and the route underneath
+// never moves. Closing a sheet by hand gives the entry back.
+let sheetHistoryOwned = false;
+// The url the entry was claimed at. A flow that closes a sheet and then
+// navigates must not have its navigation undone by the unwind, and comparing
+// the url is how that case is told apart from an ordinary close.
+let sheetHistoryHref = "";
+// Set while a sheet is being closed BY the back gesture, so the close does not
+// try to unwind the entry the browser has already consumed.
+let sheetClosingFromHistory = false;
+// A sheet that navigated rather than closing leaves its entry behind. Those
+// are stepped over so Back never reads as dead, bounded so a history stack
+// this code did not create can never turn into a loop.
+let sheetHistorySkips = 0;
+// Everything that covers the screen and so has to answer the back gesture: the
+// sheets, the Pay hub, and the app's own confirm dialog. The hub fades out
+// over 220ms and is marked while it leaves, because an overlay on its way out
+// must not count as one that is open or the entry it gave back is never
+// released.
+const OVERLAY_SELECTOR = ".modal-backdrop, .pay-hub-backdrop:not([data-closing]), .tp-dialog-layer";
+// ---------------------------------------------------------------------------
 // Landing: swipeable account segment
 //
 // The segment was two buttons that swapped colour. It now carries a thumb that
@@ -433,6 +463,7 @@ window.addEventListener("hashchange", () => {
   if (navigatedToServices && state.route === "services") settleServicesScroll();
   else restoreRouteScroll(state.route);
 });
+window.addEventListener("popstate", onHistoryBack);
 document.addEventListener("submit", onSubmit);
 document.addEventListener("click", onClick);
 document.addEventListener("input", onInput);
@@ -1816,6 +1847,10 @@ function closePayHub() {
   const backdrop = document.querySelector(".pay-hub-backdrop");
   if (!backdrop) return;
   document.removeEventListener("keydown", payHubEscListener);
+  // Marked before the fade so nothing counts it as still open during the
+  // 220ms it takes to leave.
+  backdrop.dataset.closing = "1";
+  releaseSheetHistory();
   backdrop.classList.remove("open");
   const remove = () => backdrop.remove();
   if (prefersReducedMotion()) remove();
@@ -1862,6 +1897,7 @@ function openPayHub() {
   });
   document.body.appendChild(backdrop);
   document.addEventListener("keydown", payHubEscListener);
+  claimSheetHistory();
   const sheet = backdrop.querySelector(".pay-orbit");
   if (prefersReducedMotion()) backdrop.classList.add("open");
   else requestAnimationFrame(() => backdrop.classList.add("open"));
@@ -2814,6 +2850,7 @@ function appDialog(options = {}) {
       settled = true;
       document.removeEventListener("keydown", onKey, true);
       layer.remove();
+      releaseSheetHistory();
       resolve(result);
     };
     const confirm = () => finish(withInput ? String(input ? input.value : "") : true);
@@ -2834,6 +2871,10 @@ function appDialog(options = {}) {
     // Captured, so Escape closes this dialog and not the sheet underneath it.
     document.addEventListener("keydown", onKey, true);
     document.body.appendChild(layer);
+    // No-op when a sheet underneath already owns an entry: the back gesture
+    // cancels this dialog and hands the entry straight back to that sheet.
+    // A dialog raised from a plain screen claims one of its own.
+    claimSheetHistory();
     if (input) {
       input.focus();
       input.select();
@@ -2871,6 +2912,94 @@ function modalSignature(root) {
   const eyebrow = head.querySelector(".eyebrow");
   const heading = head.querySelector("h2");
   return `${(eyebrow && eyebrow.textContent) || ""}|${(heading && heading.textContent) || ""}`.trim();
+}
+// A sheet claims one history entry at the url it opened on. pushState with no
+// url keeps that url, so going back later fires popstate and NOT hashchange:
+// the route underneath is untouched, which is exactly what closing a sheet on
+// a phone does.
+function overlayIsOpen() {
+  return Boolean(document.querySelector(OVERLAY_SELECTOR));
+}
+function claimSheetHistory() {
+  if (sheetHistoryOwned) return;
+  try {
+    sheetHistoryHref = location.href;
+    history.pushState({ tpSheet: 1 }, "");
+    sheetHistoryOwned = true;
+    sheetHistorySkips = 0;
+  } catch (error) {
+    // A browser that will not take the entry keeps the old behaviour rather
+    // than losing the sheet.
+    sheetHistoryOwned = false;
+  }
+}
+// Handing the entry back after a sheet is closed by hand, so the next Back is
+// an ordinary move between screens rather than a press that does nothing.
+//
+// Deferred by one task on purpose. Several flows close their sheet and then
+// set location.hash in the same turn; unwinding synchronously would step back
+// INTO that navigation and undo it. One task later the url has settled and the
+// question "did the route move on?" can be answered truthfully.
+function releaseSheetHistory() {
+  if (!sheetHistoryOwned || sheetClosingFromHistory) return;
+  setTimeout(() => {
+    if (!sheetHistoryOwned) return;
+    // Another overlay took its place; the entry still stands for what is open.
+    if (overlayIsOpen()) return;
+    sheetHistoryOwned = false;
+    // The route moved on, so the entry is no longer the top of the stack and
+    // going back would undo the navigation. It is left behind instead, and
+    // onHistoryBack steps over it when it is reached.
+    if (location.href !== sheetHistoryHref) return;
+    try { history.back(); } catch (error) { /* history is not ours to drive */ }
+  }, 0);
+}
+function onHistoryBack(event) {
+  // Top layer first, and one layer at a time. A confirm dialog sits OVER a
+  // sheet, and the Pay hub sits over the screen; taking the sheet away while
+  // one of those is still on top would leave it floating over nothing.
+  const dialog = document.querySelector(".tp-dialog-layer");
+  const hub = document.querySelector(".pay-hub-backdrop:not([data-closing])");
+  const sheet = document.querySelector(".modal-backdrop");
+  if (dialog || hub || sheet) {
+    sheetHistoryOwned = false;
+    sheetClosingFromHistory = true;
+    // Whatever is STILL open after this layer goes needs an entry of its own,
+    // so the next Back peels the next layer rather than leaving the screen.
+    const settle = () => {
+      sheetClosingFromHistory = false;
+      if (overlayIsOpen()) claimSheetHistory();
+    };
+    if (dialog) {
+      // Cancelled through its own button, so the promise the caller is waiting
+      // on settles exactly as it does when the person taps Cancel.
+      const cancel = dialog.querySelector("[data-dialog-cancel]");
+      if (cancel) cancel.click();
+      else dialog.remove();
+      settle();
+      return;
+    }
+    if (hub) {
+      closePayHub();
+      settle();
+      return;
+    }
+    // A sheet opened from another sheet returns to the one that opened it, the
+    // way a native stack does, rather than dropping the whole pile.
+    // handleAction reopens the previous sheet, which claims a fresh entry, so
+    // the next Back peels again.
+    Promise.resolve()
+      .then(() => handleAction("modal-back"))
+      .catch(() => { closeModal(); })
+      .finally(settle);
+    return;
+  }
+  if (event && event.state && event.state.tpSheet && sheetHistorySkips < 4) {
+    sheetHistorySkips += 1;
+    try { history.back(); } catch (error) { /* nothing further to step over */ }
+    return;
+  }
+  sheetHistorySkips = 0;
 }
 function openModal(html) {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -2930,6 +3059,9 @@ function openModal(html) {
   associateFieldLabels(wrapper);
   paintProgressBars(wrapper);
   document.body.classList.add("modal-open");
+  // Claimed once the sheet is really on screen, so a sheet that failed to
+  // render never leaves an entry behind for Back to fall into.
+  claimSheetHistory();
   enhanceContactPickerControls(wrapper);
 
   const card = wrapper.querySelector(".modal-card");
@@ -3016,6 +3148,7 @@ function closeModal(options = {}) {
   activeVasJourney = null;
   document.body.classList.remove("modal-open");
   unlockPageScroll();
+  releaseSheetHistory();
   const opener = state.modalOpener;
   const openerSelector = state.modalOpenerSelector;
   state.modalOpener = null;

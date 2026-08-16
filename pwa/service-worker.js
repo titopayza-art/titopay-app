@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v412-edge-gesture";
+const CACHE_NAME = "titopay-pwa-v413-native-back";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=412",
-  "./app.min.js?v=412",
+  "./styles.min.css?v=413",
+  "./app.min.js?v=413",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
