@@ -22,6 +22,10 @@ const ALLOWED_VARIABLES = new Set([
   "transactionReference", "verificationLink", "resetPasswordLink", "supportEmail", "supportUrl",
   "companyName", "currentYear", "ticketReference", "kycStatus", "accountType", "otp", "appUrl", "websiteUrl",
   "expiryMinutes", "statementPeriod", "statementReference", "transactionCount", "moneyIn", "moneyOut", "netMovement", "statementLines", "statementFee",
+  // The receiver's side of a payment: who paid, and what came off in fees.
+  // recipientLine (below) already names the person the money went TO, for the
+  // payer's own receipt. These name the person it came FROM.
+  "payerLine", "feeLine",
   // HR work communications. An unknown variable renders as an empty string
   // rather than an error, so a template referring to one of these before it was
   // permitted produced silently blank mail — which is why they are declared
@@ -50,6 +54,15 @@ const DEFAULT_TEMPLATES = [
   ["wallet_top_up_receipt", "Wallet Top-Up Receipt", "TitoPay wallet top-up receipt", "<p>Hi {{fullName}},</p><p>Your wallet has been topped up with {{currency}} {{amount}}. The money is available straight away.</p><p>Reference: {{transactionReference}}</p><p>If you did not make this top-up, contact us at {{supportEmail}} right away.</p>"],
   ["money_transfer_receipt", "Money Transfer Receipt", "TitoPay transfer receipt {{transactionReference}}", "<p>Hi {{fullName}},</p><p>Your transfer of {{currency}} {{amount}} to {{recipientLine}} has been completed and delivered.</p><p>Reference: {{transactionReference}}</p><p>The full record is in your activity in the TitoPay app. If you did not make this transfer, contact us at {{supportEmail}} right away.</p>"],
   ["qr_payment_receipt", "QR Payment Receipt", "TitoPay QR payment receipt", "<p>Hi {{fullName}},</p><p>Your QR payment of {{currency}} {{amount}} went through successfully.</p><p>Reference: {{transactionReference}}</p><p>You can see the full details in your activity in the TitoPay app. If you do not recognise this payment, contact us at {{supportEmail}} right away.</p>"],
+  // THE OTHER HALF OF EVERY PAYMENT. Every receipt above is written to the
+  // person who PAID. Nothing was ever written to the person who was paid, so a
+  // poster on a counter, a till, an event selling tickets and a person being
+  // sent money were all told nothing at all. This is their side of it.
+  //
+  // It states the amount that actually reached the wallet, so it agrees with
+  // the balance rather than with the sticker price: {{amount}} is net of any
+  // fee, and {{feeLine}} says what came off when something did.
+  ["payment_received", "Payment Received", "You received {{currency}} {{amount}} on TitoPay", "<p>Hi {{fullName}},</p><p><strong>{{currency}} {{amount}}</strong> is in your TitoPay wallet.</p><p>{{payerLine}}{{feeLine}}</p><p>Reference: {{transactionReference}}</p><p>You can see it any time in the TitoPay app. If you were not expecting this payment, contact us at {{supportEmail}}.</p>"],
   ["refund_confirmation", "Refund Confirmation", "TitoPay refund confirmation", "Your refund of {{currency}} {{amount}} was processed. Reference: {{transactionReference}}."],
   ["business_account_submitted", "Business Account Submitted", "Business account submitted", "{{businessName}} was submitted for review."],
   ["business_account_approved", "Business Account Approved", "Business account approved", "{{businessName}} has been approved."],

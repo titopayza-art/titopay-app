@@ -14,20 +14,25 @@ const root = path.join(__dirname, "..");
 const { pwaFile } = require("./pwa-path");
 
 test("Email Centre seeds every required transactional template", () => {
-  // 24 customer and transactional templates, plus 6 for HR work communications.
+  // 25 customer and transactional templates, plus 6 for HR work communications.
   // The exact count is the guard: it catches a template being dropped, which a
   // list of required keys alone would not.
-  assert.equal(email.DEFAULT_TEMPLATES.length, 30);
+  assert.equal(email.DEFAULT_TEMPLATES.length, 31);
   const keys = new Set(email.DEFAULT_TEMPLATES.map((item) => item[0]));
   assert.equal(keys.size, email.DEFAULT_TEMPLATES.length, "template keys must be unique");
-  for (const key of ["welcome_email","personal_account_welcome","business_account_welcome","email_statement","verify_email_address","password_reset","password_changed","qr_payment_receipt","kyc_approved","support_ticket_resolved"]) assert.ok(keys.has(key));
+  for (const key of ["welcome_email","personal_account_welcome","business_account_welcome","email_statement","verify_email_address","password_reset","password_changed","qr_payment_receipt","payment_received","kyc_approved","support_ticket_resolved"]) assert.ok(keys.has(key));
   for (const key of ["hr_announcement","hr_leave_decision","hr_claim_decision","hr_request_update","hr_onboarding_task","hr_training_reminder"]) {
     assert.ok(keys.has(key), `HR template ${key} is missing`);
   }
-  // Every variable an HR template refers to has to be permitted, or it renders
-  // as an empty string and the message goes out with a hole in it.
+  // EVERY variable EVERY template refers to has to be permitted, or the message
+  // goes out with a hole in it where the figure should be.
+  //
+  // This used to check the HR templates alone. payment_received was then added
+  // using {{payerLine}} and {{feeLine}}, neither of which was on the allowlist,
+  // and this suite passed: the fault only surfaced in a live harness, as a
+  // thrown "Unsupported template variable" that swallowed the whole email. A
+  // guard that covers six templates out of thirty-one is not a guard.
   for (const [key, , subject, body] of email.DEFAULT_TEMPLATES) {
-    if (!key.startsWith("hr_")) continue;
     for (const match of `${subject} ${body}`.matchAll(/\{\{\s*(\w+)\s*\}\}/g)) {
       assert.ok(email.ALLOWED_VARIABLES.has(match[1]),
         `${key} uses {{${match[1]}}}, which is not an allowed variable`);

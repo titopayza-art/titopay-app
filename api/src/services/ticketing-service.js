@@ -2736,6 +2736,31 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
     ...meta
   });
   deliverTicketOrder(orderId).catch((error) => console.error("[ticket-delivery-failed]", { orderId, message: error.message }));
+  // THE ORGANISER IS BEING PAID, AND WAS NEVER TOLD.
+  //
+  // A ticket sale credits the organiser's business wallet directly through
+  // applyWalletMovement, not through createTransaction, so it never passed the
+  // one place that writes a receipt. Every message this sale produced went to
+  // the BUYER: their tickets, their confirmation, their email. The organiser
+  // watching their event sell had to go and look at a balance.
+  //
+  // businessNet is what actually reached the wallet, after TitoPay's
+  // commission, so the notice agrees with the balance. A free ticket moves no
+  // money and the notifier declines a zero amount on its own.
+  if (locked?.business_user_id && businessNet > 0) {
+    const { rows: buyerRows } = await pool.query("SELECT full_name, username FROM users WHERE id=$1", [actor.userId]).catch(() => ({ rows: [] }));
+    const buyer = buyerRows[0];
+    require("./payment-received-service").notifyPaymentReceived({
+      recipientUserId: locked.business_user_id,
+      amount: businessNet,
+      fee: businessCommission,
+      transactionId: txId,
+      reference: orderReference,
+      serviceCode: "ticket_purchase",
+      payerName: buyer?.full_name || (buyer?.username ? `@${buyer.username}` : ""),
+      detail: [locked.event_name, preview.quantity > 1 ? `${preview.quantity} tickets` : "1 ticket"].filter(Boolean).join(", ")
+    }).catch(() => {});
+  }
   const { rows: orderRows } = await pool.query("SELECT * FROM ticket_orders WHERE id = $1", [orderId]);
   const response = ticketOrderResponse(orderRows[0], ticketRows);
   // The confirmation screen renders these tickets immediately, so each carries

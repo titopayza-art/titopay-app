@@ -14,7 +14,7 @@ router.use((req, _res, next) => req.auth?.userType === "admin" ? next() : next(n
 
 const permission = (name) => requireAdminPermission(email.EMAIL_PERMISSIONS[name]);
 const actor = (req) => ({ userId:req.auth.userId, role:req.auth.role });
-function templateScope(req){const role=String(req.auth.role||"").toLowerCase().replace(/[\s-]+/g,"_");if(role==="customer_support")return ["support_ticket_created","support_ticket_updated","support_ticket_resolved"];if(role==="compliance")return ["business_account_submitted","business_account_approved","business_account_rejected","kyc_submitted","kyc_approved","kyc_rejected"];if(role==="finance")return ["payment_receipt","wallet_top_up_receipt","money_transfer_receipt","qr_payment_receipt","refund_confirmation"];return null;}
+function templateScope(req){const role=String(req.auth.role||"").toLowerCase().replace(/[\s-]+/g,"_");if(role==="customer_support")return ["support_ticket_created","support_ticket_updated","support_ticket_resolved"];if(role==="compliance")return ["business_account_submitted","business_account_approved","business_account_rejected","kyc_submitted","kyc_approved","kyc_rejected"];if(role==="finance")return ["payment_receipt","wallet_top_up_receipt","money_transfer_receipt","qr_payment_receipt","payment_received","refund_confirmation"];return null;}
 
 router.get("/dashboard", permission("VIEW"), async (req,res,next)=>{try{res.json({ok:true,...await email.dashboard(templateScope(req))});}catch(error){next(error);}});
 router.get("/analytics", permission("VIEW"), async (req,res,next)=>{try{res.json({ok:true,...await email.analytics(req.query,templateScope(req))});}catch(error){next(error);}});

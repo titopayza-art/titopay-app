@@ -656,6 +656,35 @@ async function createTransaction(actor, payload) {
   } catch (error) {
     console.error("[transaction] receipt queue failed", { transactionId:txId, message:error.message });
   }
+  // AND THE OTHER HALF: TELL THE PERSON WHO WAS PAID.
+  //
+  // The receipt above goes to actor.userId, the PAYER, and for as long as this
+  // function has existed that was the only message a payment produced. The
+  // receiver was told nothing, on every service that routes through here: QR
+  // payments from a poster or a till, money sent to a username, a paid payment
+  // request, a bill split, a stokvel contribution.
+  //
+  // netAmount is deliberately the figure used, not chargedAmount: it is what
+  // actually reached the wallet once the receiver's own fee came off, so the
+  // notice agrees with the balance the person is about to look at.
+  //
+  // Two cases are skipped because they already have a better notice of their
+  // own, and two notices for one payment is its own kind of broken:
+  //   send_gift    sends the sender's name, occasion and message
+  //   pendingHold  the money has NOT arrived yet; notifyHold says exactly that
+  if (recipientWallet?.user_id && !pendingHold && normalizedServiceCode !== "send_gift") {
+    const { rows: payerRows } = await pool.query("SELECT full_name, username FROM users WHERE id=$1", [actor.userId]).catch(() => ({ rows: [] }));
+    const payer = payerRows[0];
+    await require("./payment-received-service").notifyPaymentReceived({
+      recipientUserId: recipientWallet.user_id,
+      amount: netAmount,
+      fee: recipientFee,
+      transactionId: txId,
+      reference,
+      serviceCode: normalizedServiceCode,
+      payerName: payer?.full_name || (payer?.username ? `@${payer.username}` : "")
+    });
+  }
   // A gift is money WITH a message. The transfer above delivered the money;
   // this delivers the gift: the recipient is told who sent it, for what
   // occasion, and what they wrote - in the app and by email. Without this the

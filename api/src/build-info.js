@@ -19,10 +19,19 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 50;
+const API_BUILD = 51;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  51: "The person who was PAID is now told. Every receipt TitoPay has ever sent "
+      + "went to the payer; the receiver got nothing, so a Payment A4 poster, a "
+      + "Tip A4 poster, a till, an event selling tickets and money sent to a "
+      + "username all landed in silence. One notifier, called from "
+      + "createTransaction and from the ticket sale, writes an in-app notice "
+      + "always and an email when the customer has transaction receipts on. It "
+      + "states the NET that reached the wallet, so it agrees with the balance. "
+      + "In-app and email only, no SMS. A gift keeps its own richer notice and "
+      + "a held credit keeps notifyHold, so nothing is announced twice.",
   50: "A person pays a FLAT R1.50 to pay by QR, on any size of sale, with no "
       + "percentage and nothing to cap. The percentage sits on the business "
       + "side, which now pays R1.50 + 1.5% of the sale out of what it is "

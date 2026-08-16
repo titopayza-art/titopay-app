@@ -1,10 +1,67 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
 PWA bundle: v426 (titopay-pwa-v426-qr-pricing)
-Requires: api.zip build 50
+Requires: api.zip build 51
 Admin console: admin-console-v89
 
-A PERSON PAYS A FLAT R1.50 TO PAY BY QR. THE BUSINESS CARRIES THE PERCENTAGE.
+THE PERSON WHO WAS PAID IS NOW TOLD
+
+   Every receipt TitoPay has ever sent went to the person who PAID. Nothing
+   was ever sent to the person who was PAID. So a Payment A4 poster on a
+   counter, a Tip A4 poster on a table, a till, an event selling tickets and
+   money sent to a username all produced silence on the receiving side.
+
+   The only recipient-side notice in the entire codebase belonged to a gift.
+
+   The "Payment received" line on the merchant POS is written by the till
+   SCREEN in the browser, and only while that screen is open. A poster on a
+   wall with nobody watching a screen produced nothing at all.
+
+   WHAT NOW HAPPENS, ON EVERY PAYMENT.
+
+      in-app   always. It costs nothing and it is where people look.
+      email    when the customer has transaction receipts switched on, which
+               is the same switch that governs the payer's own receipt.
+
+   Not SMS. Transactional comms on TitoPay are in-app and email. The SMS
+   provider exists and is used for one-time passcodes; it is not used here.
+
+   THE FIGURE IS THE ONE THE WALLET MOVED BY.
+
+   The notice states the NET that reached the wallet, after the receiver's own
+   fee, so it agrees with the balance rather than with the sticker price. On a
+   R250 QR sale the business is told "You received R244.75", not R250.00, and
+   the fee is named in the same breath.
+
+   ONE NOTIFIER, CALLED FROM EVERY PATH THAT PAYS SOMEBODY.
+
+   api/src/services/payment-received-service.js is the only place that writes
+   these. createTransaction calls it, which covers QR payments from a poster or
+   a till, money sent to a username, a paid payment request, a bill split and a
+   stokvel contribution. The ticket sale calls it separately, because it credits
+   the organiser through applyWalletMovement and never passed the place where
+   receipts are written. Adding a new way to be paid means adding one call,
+   not remembering to write a notification again.
+
+   NOTHING IS ANNOUNCED TWICE.
+
+   A gift keeps its own richer notice, which carries the sender, the occasion
+   and their message. A held credit keeps notifyHold, which says the money has
+   NOT arrived yet. The email is keyed on the transaction, so a retried
+   delivery cannot double-announce a single payment.
+
+   AND NOTHING HERE CAN EVER FAIL A PAYMENT. The money has already moved by the
+   time any of it runs. Every path is wrapped: a customer who was paid but not
+   told is a bad day, a payment rolled back because an email queue was busy is
+   a disaster.
+
+   Proven in verification/payment-received-notices-live.js, which pays real
+   posters with real money and then asks the database what the receiver was
+   told: both posters, money to a username, a ticket sale reaching its
+   organiser, the net figure matching the wallet to the cent, the email switch
+   honoured, no double notice, and the gift left alone. 8 checks.
+
+PREVIOUS BUILD — A PERSON PAYS A FLAT R1.50 TO PAY BY QR. THE BUSINESS CARRIES THE PERCENTAGE.
 
    Customer:  a flat R1.50, whatever the sale, charged ON TOP.
    Business:  R1.50 + 1.5% of the sale, taken OUT OF what is credited.
