@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 44;
+const API_BUILD = 45;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  45: "SECURITY. The price on a QR code came from the REQUEST BODY, with the "
+      + "merchant's own amount only a fallback, so a payer could settle a R200 "
+      + "Make a Sale for R1 and the code was then marked paid. The amount is now "
+      + "read from TitoPay's row and a disagreement is refused outright. The "
+      + "printed payload also carried the owner's internal account UUID on every "
+      + "poster; nothing read it, and it is gone. Codes already printed are "
+      + "unaffected: only the id has ever been trusted from a scan.",
   44: "A shared event link is the real one again. The Share button used to copy "
       + "the API's own /preview path, so organisers sent their audience a URL that "
       + "reads like a developer path; crawlers are now redirected to the preview "

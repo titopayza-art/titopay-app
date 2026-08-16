@@ -8,9 +8,23 @@ const { createTransaction } = require("./transaction-service");
 async function persistQr({ userId, codeType, amount = null, label = null, metadata = {}, expiresAt = null }) {
   const id = uuidv4();
   const reference = `QR-${Date.now()}`;
+  // WHAT GETS PRINTED ON A WALL.
+  //
+  // This payload is encoded into the image itself, so it ends up on an A4
+  // poster on a counter, on a till screen, and in anybody's camera roll. It
+  // used to carry `userId`, the owner's internal account UUID, which is an
+  // internal identifier sitting in public on every sheet TitoPay has ever
+  // printed. It grants nothing on its own, and it also has no business there.
+  //
+  // Nothing reads it: payQr resolves the owner from the qr_codes row by id, so
+  // a forged userId in a scan has always been ignored (proven in
+  // verification/qr-tamper-audit.js). The scanner classifies a payment code on
+  // `id` plus `codeType`, which are both still here, so every code already
+  // printed keeps scanning exactly as it does today.
+  //
+  // The id is the only field the server trusts, and it is a random v4 UUID.
   const payload = {
     id,
-    userId,
     codeType,
     amount,
     currency: "ZAR",
@@ -188,8 +202,37 @@ async function payQr(actor, payload) {
     );
     if (existing.rows[0]) throw new AppError(409, "This QR code has already been paid");
   }
-  const amount = Number(payload.amount ?? qr.amount ?? 0);
-  if (amount <= 0) throw new AppError(400, "Amount must be greater than zero");
+  // THE PRICE ON A CODE IS THE MERCHANT'S, AND THE PAYER'S PHONE IS THE ONE
+  // PLACE IT MUST NOT BE TAKEN FROM.
+  //
+  // This used to read `payload.amount ?? qr.amount`, so the REQUEST BODY won
+  // and the merchant's own price was only a fallback. Make a Sale mints a
+  // dynamic code for one exact amount and shows "Waiting for payment...". A
+  // payer sending amount: 1 against a R200 sale was paid through: the merchant
+  // was credited R1.00, the code was marked paid, and the till screen turned
+  // over to a completed sale. Measured, in verification/qr-tamper-audit.js.
+  //
+  // A QR is handed to strangers by design, so everything in it is readable and
+  // editable by whoever is paying. Only the id may be trusted from the scan;
+  // the price is re-read from TitoPay's own row.
+  //
+  // An open code (no amount) is unchanged: the payer names the amount, because
+  // on those the merchant never named one.
+  const fixedAmount = qr.amount === null || qr.amount === undefined ? null : Number(qr.amount);
+  const requested = payload.amount === undefined || payload.amount === null ? null : Number(payload.amount);
+  let amount;
+  if (fixedAmount !== null && fixedAmount > 0) {
+    // A disagreement is refused rather than silently corrected: nobody may be
+    // charged an amount they did not see on their own review screen.
+    if (requested !== null && Number.isFinite(requested) && Math.abs(requested - fixedAmount) >= 0.005) {
+      throw new AppError(409,
+        `This QR code is for R${fixedAmount.toFixed(2)}. Scan it again to pay the amount the merchant asked for. Nothing was taken from your wallet.`);
+    }
+    amount = fixedAmount;
+  } else {
+    amount = Number(requested ?? 0);
+  }
+  if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "Amount must be greater than zero");
   const tx = await createTransaction(actor, {
     serviceCode: "qr_payment",
     amount,

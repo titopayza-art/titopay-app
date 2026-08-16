@@ -1,8 +1,78 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v421 (titopay-pwa-v421-event-share-link)
-Requires: api.zip build 44
+PWA bundle: v422 (titopay-pwa-v422-qr-price-integrity)
+Requires: api.zip build 45
 Admin console: admin-console-v89
+
+SECURITY: A PAYER COULD SET THEIR OWN PRICE ON A SALE
+
+   THIS IS THE MOST SERIOUS THING FOUND IN THIS WHOLE RUN OF WORK. IT WAS
+   EXPLOITABLE FROM AN ORDINARY CUSTOMER ACCOUNT, WITH NO SPECIAL ACCESS.
+
+   Make a Sale mints a DYNAMIC QR for one exact amount and shows "Waiting for
+   payment...". The server read the amount like this:
+
+     const amount = Number(payload.amount ?? qr.amount ?? 0);
+
+   payload is the REQUEST BODY. So the payer's phone won, and the merchant's own
+   price was only a fallback for when the payer sent none.
+
+   Measured, on a real R200 sale:
+
+     the payer sent amount: 1
+     the merchant was credited          R1.00
+     the code was marked PAID
+     the till screen turned over to a completed sale
+
+   A QR code is handed to strangers by design. It is on a poster on a wall, on a
+   till screen, in somebody's camera roll. Everything inside it is readable and
+   editable by whoever is paying, and the payer's phone has to be assumed
+   hostile. Only the ID may be trusted from a scan.
+
+   The amount is now read from TitoPay's own row. A payer who sends a different
+   figure is refused outright rather than silently corrected, because nobody may
+   be charged an amount they did not see on their own review screen:
+
+     "This QR code is for R200.00. Scan it again to pay the amount the merchant
+      asked for. Nothing was taken from your wallet."
+
+   An OPEN code, which carries no price, is unchanged: the payer names the
+   amount, because on those the merchant never named one. And the app now shows
+   the merchant's figure on the review screen rather than asking for one, so
+   nobody walks into that refusal.
+
+   ALSO REMOVED: THE ACCOUNT ID PRINTED ON EVERY POSTER.
+
+   The QR payload encoded into the image carried the owner's internal account
+   UUID, so it was sitting in public on every A4 sheet TitoPay has ever printed
+   and in every photograph of one. Nothing read it: the owner has always been
+   resolved from the qr_codes row by id, which is why a forged one has always
+   been ignored. It is gone from newly minted codes.
+
+   EVERY CODE ALREADY PRINTED KEEPS WORKING. The id is the only field the server
+   has ever trusted, and it has not changed.
+
+   THE FULL AUDIT, WHICH IS WHAT FOUND IT.
+
+   verification/qr-tamper-audit.js attacks a payment QR from an ordinary
+   customer account over the real HTTP API. All twelve now hold:
+
+     a payer cannot set their own price on a dynamic QR
+     and the honest payment still settles at the merchant's price
+     a dynamic QR cannot be paid twice
+     a forged userId in the scanned payload changes nothing
+     an expired QR is refused
+     a revoked QR is refused
+     zero, negative, non-numeric and overflow amounts are all refused
+     every QR id is a random v4 UUID, so codes cannot be enumerated
+     an event ticket is refused as a payment instrument
+     malformed, oversized and injection-shaped scans answer a clean refusal
+     the QR owner lookup discloses a name, a username and a type, nothing else
+     the printed QR carries no internal account identifier
+
+   Five of those are also pinned as build tests in
+   api/test/qr-payment-integrity.test.js, so none of them can quietly come undone.
+
 
 THE EVENT SHARE LINK IS THE REAL ONE NOW
 
@@ -433,7 +503,7 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   698 API tests, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
+   703 API tests, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
    9 business registration checks driven in a real browser,
    98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
@@ -444,12 +514,14 @@ WHAT PROVES IT
 UPLOAD NOTES
 
    Replace the whole app directory as usual, INCLUDING .htaccess, which is
-   where the crawler rule lives. The asset stamp moves to ?v=421 in index.html
+   where the crawler rule lives. The asset stamp moves to ?v=422 in index.html
    and service-worker.js and the cache name becomes
-   titopay-pwa-v421-event-share-link, so no customer can be served a cached
+   titopay-pwa-v422-qr-price-integrity, so no customer can be served a cached
    bundle.
 
-   UPLOAD api.zip BUILD 44 WITH IT, for the poster route the preview points at.
+   UPLOAD api.zip BUILD 45 FIRST, AND DO NOT DELAY IT. The price fix is
+   server-side and the app cannot enforce it: until build 45 is live, a payer
+   can still settle a R200 sale for R1.
    On build 43 the shared link still works and the preview still shows a title;
    it just carries no image, which is exactly where it was before. Reprinting the A4 posters is worth doing once this is live,
    but the codes on the sheets already printed keep working exactly as they are:

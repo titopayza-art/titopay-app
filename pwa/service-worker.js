@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v421-event-share-link";
+const CACHE_NAME = "titopay-pwa-v422-qr-price-integrity";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=421",
-  "./app.min.js?v=421",
+  "./styles.min.css?v=422",
+  "./app.min.js?v=422",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

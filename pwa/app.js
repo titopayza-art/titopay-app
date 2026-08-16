@@ -13657,14 +13657,9 @@ async function generateQr(data) {
 async function processQrPayment(data) {
   if (isWalletLocked()) throw new Error("Wallet locked. Unlock your wallet before making QR payments.");
   if (!data.qrId) throw new Error("Enter or scan a valid TitoPay QR code.");
-  const amount = Number(data.amount || 0);
-  if (data.amount && (!Number.isFinite(amount) || amount <= 0)) throw new Error("Enter a valid QR payment amount.");
-  const preview = data.amount
-    ? await api("/v1/transactions/fee-preview", {
-      method: "POST",
-      body: { service: "qr_payment", amount }
-    })
-    : { preview: { amount: 0, fee: 0.50, total: 0.50, serviceCode: "qr_payment", serviceName: "QR Payment" } };
+  if (data.amount && (!Number.isFinite(Number(data.amount)) || Number(data.amount) <= 0)) {
+    throw new Error("Enter a valid QR payment amount.");
+  }
   // Ask the API who owns this QR so the payer can check the name before
   // confirming. This shipped calling an endpoint that did not exist yet, so the
   // review card read "Owner not confirmed" for every code and every customer
@@ -13678,6 +13673,23 @@ async function processQrPayment(data) {
   } catch (error) {
     qrDetails = null;
   }
+  // A CODE THAT CARRIES A PRICE IS PAID AT THAT PRICE.
+  //
+  // Make a Sale mints a code for one exact amount. The API refuses any other
+  // amount against it, so asking the payer for one and then having the server
+  // reject it is a dead end the app can simply not walk into: the review shows
+  // the merchant's figure, which is the one the payer is agreeing to.
+  //
+  // An open code carries no price and is unchanged: the payer names the amount.
+  const fixed = qrDetails && Number(qrDetails.amount) > 0 ? Number(qrDetails.amount) : null;
+  const amount = fixed !== null ? fixed : Number(data.amount || 0);
+  if (fixed !== null) data = Object.assign({}, data, { amount: fixed });
+  const preview = amount > 0
+    ? await api("/v1/transactions/fee-preview", {
+      method: "POST",
+      body: { service: "qr_payment", amount }
+    })
+    : { preview: { amount: 0, fee: 0.50, total: 0.50, serviceCode: "qr_payment", serviceName: "QR Payment" } };
   state.pendingQrPaymentReview = {
     idempotencyKey: createClientTransactionKey("qr-payment"),
     data: Object.assign({}, data),
