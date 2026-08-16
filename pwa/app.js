@@ -17713,6 +17713,7 @@ function publicTicketingEventView(event = {}) {
       <div class="public-event-grid">
       <div class="pe-main">
       <section class="panel">
+        ${event.eventBannerUrl ? `<div class="event-hero" style="background-image:url('${esc(event.eventBannerUrl)}')" role="img" aria-label="${esc(event.eventName || "Event")} poster"></div>` : ""}
         <p class="eyebrow">Approved TitoPay Event</p>
         <h1>${esc(event.eventName || "Event")}</h1>
         <p class="lead">${esc(event.description || "Secure TitoPay event ticketing.")}</p>

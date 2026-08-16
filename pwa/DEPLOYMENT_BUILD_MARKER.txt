@@ -1,12 +1,32 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v416 (titopay-pwa-v416-event-poster)
+PWA bundle: v417 (titopay-pwa-v417-event-poster)
 Requires: api.zip build 41 for the poster replace control
 Admin console: admin-console-v89
 
-THE EVENT POSTER: RIGHT SHAPE, AND ORGANISERS CAN CHANGE IT
+THE EVENT POSTER: VISIBLE ON THE SHARED LINK, RIGHT SHAPE, AND CHANGEABLE
 
-   TWO THINGS, AND THE FIRST WAS A CONTRADICTION IN OUR OWN GUIDANCE.
+   THREE THINGS. THE FIRST IS THE ONE A CUSTOMER SEES FIRST.
+
+   0. THE SHARED EVENT LINK SHOWED NO POSTER AT ALL.
+
+      One event has two screens in the app, and only one of them is reached by
+      tapping a card:
+
+        the in-app sheet, opened from Events, which drew the poster
+        the standalone screen a shared titopay.co.za/events/<name> link opens,
+          which never drew it
+
+      The second one is the screen that matters most, because it is what an
+      organiser sends to their audience and what someone without the app sees.
+      It opened on a heading and a wall of text, with the poster nowhere on it.
+
+      The poster was in the payload the whole time. That screen simply never
+      rendered it. It now shows it at the top, at the same 16:9 the event card
+      uses, so the link and the card agree. An event with no poster is unchanged.
+
+      Nothing else on that screen moved: the tickets, the price, the venue, the
+      organiser links and the buy flow are all exactly where they were.
 
    1. THE DIMENSIONS WE ASKED FOR WERE THE WRONG ONES.
 
@@ -42,6 +62,11 @@ THE EVENT POSTER: RIGHT SHAPE, AND ORGANISERS CAN CHANGE IT
    poster alone changes, the event stays approved with nothing else moved, the
    audit row is written, an empty upload is refused rather than wiping the
    poster, and another business is turned away. 8 checks.
+
+   NEW: verification/event-poster-shared-link.js opens a real shared link in a
+   real browser and measures what is on the page. Run against the v416 bundle it
+   fails on "no poster on the shared-link screen"; against this one it passes 7,
+   including that the browser decoded the image and drew it at 16:9.
 
 
 THE SECURITY TIP SCREEN IS BACK AFTER SIGN-IN
@@ -176,18 +201,19 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   685 API tests, 98 service-journey checks across both account types with
+   693 API tests, 98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
-   feel checks driven in a real browser, 10 landing swipe checks and 8
-   modal-route checks. All green.
+   feel checks and 12 sign-in journey checks driven in a real browser, 7
+   shared-link poster checks, 10 landing swipe checks and 8 modal-route
+   checks. All green.
 
 UPLOAD NOTES
 
-   Replace the whole app directory as usual. The asset stamp moves to ?v=416
+   Replace the whole app directory as usual. The asset stamp moves to ?v=417
    in index.html and service-worker.js and the cache name becomes
-   titopay-pwa-v416-event-poster, so no customer can be served a cached bundle.
+   titopay-pwa-v417-event-poster, so no customer can be served a cached bundle.
 
    Requires api.zip build 41, which carries the poster replace endpoint. The
-   corrected poster dimensions in the form need no API change; the Replace
-   poster control reports a clear error on an older API rather than failing
-   silently. admin.zip is unchanged.
+   poster on the shared link and the corrected dimensions in the form need no
+   API change at all; the Replace poster control reports a clear error on an
+   older API rather than failing silently. admin.zip is unchanged.
