@@ -1,6 +1,6 @@
 const express = require("express");
 const { requireAuth } = require("../middleware/auth");
-const { createQr, ensureProfileQr, getMerchantQrs, getQrDetails, getQrHistory, payQr, shareQr } = require("../services/qr-service");
+const { createQr, ensureProfileQr, getMerchantQrs, getQrDetails, getQrHistory, getQrPaymentStatus, payQr, shareQr } = require("../services/qr-service");
 const { AppError } = require("../lib/errors");
 
 const router = express.Router();
@@ -95,6 +95,16 @@ router.get("/history", async (req, res, next) => {
 router.get("/:id/details", async (req, res, next) => {
   try {
     res.json({ ok: true, qr: await getQrDetails(req.auth, req.params.id) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The till asking "has it been paid yet?". Owner only, read-only, and the one
+// call a soft POS makes on a loop while the code is on screen.
+router.get("/:id/status", async (req, res, next) => {
+  try {
+    res.json({ ok: true, status: await getQrPaymentStatus(req.auth, req.params.id) });
   } catch (error) {
     next(error);
   }

@@ -19,10 +19,18 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 47;
+const API_BUILD = 48;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  48: "GET /v1/qr/:id/status, the one question a till needs to ask. Make a Sale "
+      + "was hunting the MERCHANT'S transaction list for the payment, and there "
+      + "has never been such a row: a payment writes one transactions row owned "
+      + "by the PAYER and the merchant is credited through wallet_ledger, so the "
+      + "till searched for something that could not be there and every completed "
+      + "sale expired on Waiting for payment. Owner-only, read-only, and it also "
+      + "reports what the merchant RECEIVED, which is the full amount: the QR fee "
+      + "is the customer's, and the slip was subtracting it from the takings.",
   47: "QR codes are far easier to scan. The image encoded 219 characters the "
       + "server never reads (the account id, amount, currency, reference, label "
       + "and metadata), giving a 61x61 code; it now encodes the id and code type "

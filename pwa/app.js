@@ -3246,7 +3246,25 @@ function closeModal(options = {}) {
     authKeyboardCleanup();
     authKeyboardCleanup = null;
   }
-  if (state.merchantSale && state.merchantSale.status === "waiting") stopMerchantSaleTimers();
+  // REPLACING A SHEET IS NOT DISMISSING IT.
+  //
+  // openModal() closes whatever is on screen before opening the next thing, and
+  // this treated that as the merchant walking away from a live sale. So the
+  // moment Make a Sale rendered its QR — through openModal, through here — the
+  // sale it had just started was marked "cancelled" and its timers cleared.
+  //
+  // Everything downstream then read as broken and none of it was. The countdown
+  // froze at 05:00 because its tick returns unless the status is "waiting". The
+  // payment poll bailed for the same reason, so a sale that HAD been paid sat on
+  // "Waiting for payment..." until it expired. One line, three symptoms.
+  //
+  // A sale is cancelled when a PERSON dismisses the sheet: the X, the backdrop,
+  // Escape, the back gesture. Every one of those calls closeModal() with no
+  // argument. openModal's internal swap passes preserveStack, which is exactly
+  // the same distinction the back trail above already relies on.
+  if (!options.preserveStack && state.merchantSale && state.merchantSale.status === "waiting") {
+    stopMerchantSaleTimers();
+  }
   const backdrop = document.querySelector(".modal-backdrop");
   if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
   stopTitoPayChatPolling();
@@ -14182,21 +14200,63 @@ function expireMerchantSale() {
     <button class="btn primary" type="button" data-action="merchant-make-sale">${icon("store")} New sale</button>
   `);
 }
-function startMerchantSalePaymentPolling() {
+// THE TILL ASKS THE SERVER ABOUT ITS OWN CODE.
+//
+// This used to call refreshData() and hunt the MERCHANT'S transaction list for
+// a credit of the right amount. There has never been such a row. A payment
+// writes ONE transaction and it belongs to the PAYER; the merchant is credited
+// through wallet_ledger, and listTransactionsForUser filters on t.user_id. So
+// the till was searching for something that could not be there, and every
+// completed sale sat on "Waiting for payment..." until it expired, while the
+// money had already arrived.
+//
+// GET /v1/qr/:id/status answers the question directly, for the owner of the
+// code. It arrives in API build 48; on anything older the old search is still
+// attempted so an un-upgraded server is no worse than it was.
+async function startMerchantSalePaymentPolling() {
   const sale = state.merchantSale;
   if (!sale) return;
+  const qrId = sale.qr?.id || "";
   const poll = async () => {
     if (!state.merchantSale || state.merchantSale.status !== "waiting") return;
     try {
+      if (qrId) {
+        const response = await api(`/v1/qr/${encodeURIComponent(qrId)}/status`);
+        const status = response.status || {};
+        if (status.paid) {
+          completeMerchantSale({
+            id: status.transactionId,
+            reference: status.reference,
+            created_at: status.paidAt,
+            amount: status.amount,
+            received: status.received,
+            fee: status.payerFee,
+            customerName: status.payer?.displayName || ""
+          });
+          // Activity and the wallet card should agree with the slip.
+          refreshData().catch(() => {});
+          return;
+        }
+        return;
+      }
       await refreshData();
       const transaction = findMerchantSaleTransaction(state.merchantSale);
       if (transaction) completeMerchantSale(transaction);
     } catch (error) {
-      // Polling must never interrupt the QR screen; user sees expiry/cancel states.
+      // An older API answers 404 here; fall back to the previous behaviour
+      // rather than leaving the till with no detection at all.
+      try {
+        await refreshData();
+        const transaction = findMerchantSaleTransaction(state.merchantSale);
+        if (transaction) completeMerchantSale(transaction);
+      } catch (ignored) {
+        // Polling must never interrupt the QR screen; the merchant still has
+        // the countdown, Cancel, and the expiry state.
+      }
     }
   };
   poll();
-  sale.pollTimer = setInterval(poll, 2500);
+  sale.pollTimer = setInterval(poll, 2000);
 }
 function findMerchantSaleTransaction(sale) {
   const qr = sale.qr || {};
@@ -14232,8 +14292,16 @@ function completeMerchantSale(transaction) {
   renderMerchantSaleSuccess(sale.receipt);
 }
 function buildMerchantReceipt(sale, transaction = {}) {
-  const amount = merchantSaleAmount();
-  const fee = Number(transaction.fee || transaction.fees || 0);
+  const amount = Number(transaction.amount ?? merchantSaleAmount());
+  // ON A QR PAYMENT THE FEE IS THE CUSTOMER'S. They are debited the amount plus
+  // R0.50 and the merchant is credited the amount IN FULL. The slip subtracted
+  // that fee from the merchant's takings, so a R250.00 sale printed as R249.50
+  // received, which is not what reached the wallet and not what the customer
+  // was charged either. The server now says what was received; the payer's fee
+  // is recorded separately so a slip can show it without implying the merchant
+  // paid it.
+  const received = Number(transaction.received ?? amount);
+  const payerFee = Number(transaction.fee || transaction.fees || 0);
   const paidAt = transaction.created_at || transaction.createdAt || transaction.paidAt || new Date().toISOString();
   return {
     id: `receipt-${transaction.id || sale.qr?.id || Date.now()}`,
@@ -14247,8 +14315,9 @@ function buildMerchantReceipt(sale, transaction = {}) {
     date: new Date(paidAt).toISOString(),
     paymentMethod: "QR Payment",
     amount,
-    fees: fee,
-    netAmount: Math.max(0, amount - fee),
+    fees: 0,
+    payerFee,
+    netAmount: received,
     status: "PAID",
     receiptUrl: `https://app.titopay.co.za/#receipt-${encodeURIComponent(transaction.id || sale.qr?.id || Date.now())}`
   };

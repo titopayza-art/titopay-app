@@ -172,6 +172,84 @@ async function getQrDetails(actor, rawQrId) {
   };
 }
 
+// HAS THIS CODE BEEN PAID? THE ONE QUESTION A TILL NEEDS TO ASK.
+//
+// Make a Sale puts a code on screen and waits. To know when the money lands,
+// the app was searching the MERCHANT'S OWN transaction list for a credit of the
+// right amount. There has never been such a row: a payment writes ONE
+// transaction, owned by the payer, and the merchant is credited through
+// wallet_ledger. listTransactionsForUser filters on t.user_id, so the till was
+// looking for something that could not be there, and every completed sale sat
+// on "Waiting for payment..." until it expired.
+//
+// This answers it directly, for the owner of the code and nobody else.
+//
+// What comes back is what a slip needs and no more. The payer is named, as they
+// would be on any wallet transfer the merchant receives, and nothing else about
+// them is disclosed.
+async function getQrPaymentStatus(actor, rawQrId) {
+  const qrId = readQrId(rawQrId);
+  const { rows } = await pool.query(
+    "SELECT id, user_id, code_type, amount, reference, status, expires_at FROM qr_codes WHERE id = $1 LIMIT 1",
+    [qrId]
+  );
+  const qr = rows[0];
+  // Not the owner is the same answer as not existing: a code id is public, and
+  // whether it has been paid is the merchant's business alone.
+  if (!qr || qr.user_id !== actor.userId) throw new AppError(404, "QR code not found");
+
+  const { rows: paid } = await pool.query(
+    `SELECT t.id, t.amount, t.fee, t.total, t.status, t.reference, t.created_at,
+            (t.metadata->>'netAmount')::NUMERIC AS net_amount,
+            u.full_name, u.username, u.account_type,
+            m.business_name
+       FROM transactions t
+       JOIN users u ON u.id = t.user_id
+       LEFT JOIN merchants m ON m.user_id = t.user_id AND m.status = 'active'
+      WHERE t.qr_code_id = $1 AND t.status = 'completed'
+      ORDER BY t.created_at ASC
+      LIMIT 1`,
+    [qr.id]
+  );
+  const row = paid[0];
+  if (!row) {
+    return {
+      qrId: qr.id,
+      paid: false,
+      codeStatus: qr.status || "active",
+      expired: Boolean(qr.expires_at && new Date(qr.expires_at).getTime() < Date.now())
+    };
+  }
+  const payerIsBusiness = String(row.account_type || "").toLowerCase() === "business";
+  // WHAT THE MERCHANT ACTUALLY RECEIVED. On a QR payment the fee is the
+  // PAYER'S: they are debited amount + fee and the merchant is credited the
+  // amount in full. The slip used to subtract that fee from the merchant's
+  // takings, so a R250.00 sale printed as R249.50 received.
+  const received = row.net_amount === null || row.net_amount === undefined
+    ? Number(row.amount)
+    : Number(row.net_amount);
+  return {
+    qrId: qr.id,
+    paid: true,
+    codeStatus: qr.status || "paid",
+    expired: false,
+    transactionId: row.id,
+    reference: row.reference,
+    paidAt: row.created_at,
+    amount: Number(row.amount),
+    received,
+    // Named separately so a slip can say who paid it, never implying the
+    // merchant was charged it.
+    payerFee: Number(row.fee || 0),
+    payerTotal: Number(row.total || 0),
+    payer: {
+      displayName: (payerIsBusiness && row.business_name) ? row.business_name : (row.full_name || ""),
+      username: row.username || "",
+      accountType: payerIsBusiness ? "business" : "personal"
+    }
+  };
+}
+
 async function payQr(actor, payload) {
   // Anything that is not a UUID answers a clean 404 rather than a database
   // error, and an event ticket is refused by name.
@@ -346,6 +424,7 @@ module.exports = {
   getMerchantQrs,
   getQrHistory,
   getQrDetails,
+  getQrPaymentStatus,
   payQr,
   ensureProfileQr,
   shareQr

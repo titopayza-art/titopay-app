@@ -1,8 +1,62 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v424 (titopay-pwa-v424-qr-receipt-fix)
-Requires: api.zip build 47
+PWA bundle: v425 (titopay-pwa-v425-soft-pos)
+Requires: api.zip build 48
 Admin console: admin-console-v89
+
+THE MERCHANT POS NOW BEHAVES LIKE A SOFT POS
+
+   A till puts a code on screen, the customer pays, and the screen turns over
+   with a slip. This one said "Waiting for payment..." until it expired, on
+   EVERY completed sale, with the money already in the wallet. Three separate
+   faults, stacked.
+
+   1. EVERY SALE WAS CANCELLED THE INSTANT ITS QR APPEARED.
+
+      closeModal() ended a live sale whenever it ran. openModal() calls
+      closeModal() before it opens the next thing — so rendering the QR screen
+      cancelled the sale that had just been started, one line before the timers
+      were set.
+
+      Everything downstream then read as broken and none of it was. The
+      countdown froze at 05:00 because its tick returns unless the status is
+      "waiting". The payment poll bailed for the same reason. One line, three
+      symptoms.
+
+      A sale is cancelled when a PERSON dismisses the sheet: the X, the
+      backdrop, Escape, the back gesture. All of those call closeModal() with no
+      argument. openModal's internal swap already passes preserveStack, which is
+      the same distinction the back trail relies on, so that is what is used.
+
+   2. THE TILL WAS LOOKING FOR THE PAYMENT WHERE IT CANNOT BE.
+
+      It searched the MERCHANT'S OWN transaction list for a credit of the right
+      amount. There has never been such a row. A payment writes ONE transactions
+      row and it belongs to the PAYER; the merchant is credited through
+      wallet_ledger, and listTransactionsForUser filters on t.user_id.
+
+      GET /v1/qr/:id/status (API build 48) answers the question directly, for
+      the owner of the code and nobody else. The till polls it every two
+      seconds while the code is up. Another business asking about that code gets
+      "QR code not found", because whether a code has been paid is the
+      merchant's business alone.
+
+   3. THE SLIP SHORTCHANGED THE MERCHANT BY THE CUSTOMER'S FEE.
+
+      On a QR payment the R0.50 is the PAYER'S: they are debited R250.50 and the
+      merchant is credited R250.00 in full. The slip subtracted that fee from
+      the takings, so a R250.00 sale printed as R249.50 received — a figure
+      neither party ever saw. The server now states what was received, and the
+      payer's fee is carried separately so a slip can show it without implying
+      the merchant paid it.
+
+   Proven in verification/merchant-pos-live.js, which runs a real till against a
+   real customer: ring up R250 on the keypad, generate the code, the countdown
+   TICKS, another business is refused the status, the customer pays from their
+   own account, and the till turns over BY ITSELF with nothing clicked. The slip
+   says received R250.00, merchant fee R0.00, and the wallet agrees: +R250.00.
+   7 checks.
+
 
 A SUCCESSFUL QR PAYMENT WAS BEING REPORTED AS A FAILURE
 
@@ -649,7 +703,7 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   710 API tests, 8 camera scanner checks, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
+   710 API tests, 7 merchant POS checks, 8 camera scanner checks, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
    9 business registration checks driven in a real browser,
    98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
@@ -660,12 +714,12 @@ WHAT PROVES IT
 UPLOAD NOTES
 
    Replace the whole app directory as usual, INCLUDING .htaccess, which is
-   where the crawler rule lives. The asset stamp moves to ?v=424 in index.html
+   where the crawler rule lives. The asset stamp moves to ?v=425 in index.html
    and service-worker.js and the cache name becomes
-   titopay-pwa-v424-qr-receipt-fix, so no customer can be served a cached
+   titopay-pwa-v425-soft-pos, so no customer can be served a cached
    bundle.
 
-   UPLOAD api.zip BUILD 47 FIRST, AND DO NOT DELAY IT. The price fix is
+   UPLOAD api.zip BUILD 48 FIRST, AND DO NOT DELAY IT. The price fix is
    server-side and the app cannot enforce it: until build 45 is live, a payer
    can still settle a R200 sale for R1.
    On build 43 the shared link still works and the preview still shows a title;
