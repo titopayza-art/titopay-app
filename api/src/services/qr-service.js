@@ -8,39 +8,39 @@ const { createTransaction } = require("./transaction-service");
 async function persistQr({ userId, codeType, amount = null, label = null, metadata = {}, expiresAt = null }) {
   const id = uuidv4();
   const reference = `QR-${Date.now()}`;
-  // WHAT GETS PRINTED ON A WALL.
+  // WHAT GETS PRINTED ON A WALL, AND WHY IT IS NOW SHORT.
   //
-  // This payload is encoded into the image itself, so it ends up on an A4
-  // poster on a counter, on a till screen, and in anybody's camera roll. It
-  // used to carry `userId`, the owner's internal account UUID, which is an
-  // internal identifier sitting in public on every sheet TitoPay has ever
-  // printed. It grants nothing on its own, and it also has no business there.
+  // Every character encoded here makes the printed code denser, and a denser
+  // code has smaller modules at the same physical size, which is exactly what a
+  // phone camera struggles with across a counter or off a lit screen.
   //
-  // Nothing reads it: payQr resolves the owner from the qr_codes row by id, so
-  // a forged userId in a scan has always been ignored (proven in
-  // verification/qr-tamper-audit.js). The scanner classifies a payment code on
-  // `id` plus `codeType`, which are both still here, so every code already
-  // printed keeps scanning exactly as it does today.
+  // This carried the id, the owner's account UUID, the amount, the currency,
+  // the reference, the label and a metadata object: 219 characters, a 61x61
+  // code. The server reads NONE of it. payQr resolves the owner, the price, the
+  // status and the expiry from the qr_codes row, keyed on the id alone, which
+  // is why a forged payload has always changed nothing (proven in
+  // verification/qr-tamper-audit.js). All of it was dead weight, shrinking the
+  // modules of every poster TitoPay has ever printed.
   //
-  // The id is the only field the server trusts, and it is a random v4 UUID.
-  const payload = {
-    id,
-    codeType,
-    amount,
-    currency: "ZAR",
-    reference,
-    label,
-    metadata
-  };
-  const imageSvg = await QRCode.toString(JSON.stringify(payload), {
-    type: "svg",
-    margin: 1,
-    color: { dark: "#0057FF", light: "#FFFFFF" }
-  });
-  const imageDataUrl = await QRCode.toDataURL(JSON.stringify(payload), {
-    margin: 1,
-    color: { dark: "#0057FF", light: "#FFFFFF" }
-  });
+  //   was    219 characters   61 x 61 modules
+  //   now     66 characters   37 x 37 modules
+  //
+  // At one printed size that makes each module about 65% wider, which is the
+  // single biggest thing that can be done for scanning reliability.
+  //
+  // codeType stays because the scanner classifies a payment code on id PLUS
+  // codeType, and because a reader can tell a one-off sale from a till code
+  // without a round trip. Everything already printed still carries the long
+  // form and still scans: the id is the only field anything has ever read.
+  const payload = { id, codeType };
+  // THE QUIET ZONE. The QR standard requires four modules of clear border, and
+  // this was set to one. A camera finds a code by locating its three finder
+  // patterns against clear space; starve that space and the lock fails, most
+  // often in exactly the conditions a till is in — a busy counter, a printed
+  // sheet with text near it, a code shown on a screen.
+  const render = { margin: 4, color: { dark: "#0057FF", light: "#FFFFFF" } };
+  const imageSvg = await QRCode.toString(JSON.stringify(payload), { type: "svg", ...render });
+  const imageDataUrl = await QRCode.toDataURL(JSON.stringify(payload), render);
   await pool.query(
     `INSERT INTO qr_codes
       (id, user_id, code_type, label, amount, reference, payload, image_svg, image_data_url, expires_at)

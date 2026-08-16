@@ -54,16 +54,35 @@ test("only the id is trusted from a scan", () => {
   }
 });
 
-test("the printed payload carries no internal account identifier", () => {
-  // This object is encoded into the image, so it ends up on a poster on a wall
-  // and in anybody's camera roll. It used to carry the owner's account UUID.
-  const object = persist.slice(persist.indexOf("const payload = {"), persist.indexOf("};", persist.indexOf("const payload = {")));
-  assert.doesNotMatch(object, /\buserId\b/,
+test("the printed payload is the shortest thing that works", () => {
+  // Every character encoded makes the printed code denser, and a denser code
+  // has smaller modules at the same size, which is what a camera struggles with
+  // across a counter. This carried the id, the owner's account UUID, the
+  // amount, the currency, the reference, the label and a metadata object: 219
+  // characters, a 61x61 code, none of which the server reads.
+  const line = persist.slice(persist.indexOf("const payload = {"),
+    persist.indexOf("\n", persist.indexOf("const payload = {")));
+  assert.doesNotMatch(line, /\buserId\b/,
     "the owner's internal account id must not be printed on every QR poster");
-  // The scanner classifies a payment code on id plus codeType, so both stay.
-  for (const field of ["id", "codeType", "amount", "reference"]) {
-    assert.match(object, new RegExp(`\\b${field}\\b`), `${field} must stay in the payload`);
+  for (const dead of ["amount", "currency", "reference", "label", "metadata"]) {
+    assert.doesNotMatch(line, new RegExp(`\\b${dead}\\b`),
+      `${dead} is re-read from the row and must not be encoded into the image`);
   }
+  // The scanner classifies a payment code on id PLUS codeType, so both stay.
+  assert.match(line, /\bid\b/);
+  assert.match(line, /\bcodeType\b/);
+});
+
+test("the printed code has the quiet zone the standard requires", () => {
+  // A camera finds a code by locating its finder patterns against clear space.
+  // This was margin: 1 against a required 4, which fails most often in exactly
+  // the conditions a till is in.
+  assert.doesNotMatch(persist, /margin:\s*1\b/, "a one-module quiet zone is below the QR standard");
+  assert.match(persist, /margin:\s*4\b/, "the QR standard requires four modules of clear border");
+  // One render config, used for both the SVG and the data URL, so they cannot
+  // drift apart into two differently-scannable codes.
+  assert.equal((persist.match(/margin:/g) || []).length, 1,
+    "the SVG and the data URL must render from one config");
 });
 
 test("a QR that is not payable is refused before any money moves", () => {

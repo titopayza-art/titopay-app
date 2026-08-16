@@ -1,8 +1,52 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
 PWA bundle: v422 (titopay-pwa-v422-qr-price-integrity)
-Requires: api.zip build 46
+Requires: api.zip build 47
 Admin console: admin-console-v89
+
+QR CODES ARE FAR EASIER TO SCAN
+
+   The scanner itself was never broken. It was driven with a REAL camera feed:
+   a video of a live TitoPay payment QR handed to Chromium as its webcam, with
+   the app told nothing. It opened the camera, found the code and recovered the
+   right id, and a blank camera correctly produced no false read.
+
+   What was wrong is the codes themselves, and it is measurable.
+
+   1. THE IMAGE CARRIED 219 CHARACTERS THE SERVER NEVER READS.
+
+      Encoded into every printed code: the id, the owner's account UUID, the
+      amount, the currency, the reference, the label and a metadata object.
+
+      payQr reads NONE of that. The owner, the price, the status and the expiry
+      all come from the qr_codes row, keyed on the id alone, which is why a
+      forged payload has always changed nothing. All of it was dead weight.
+
+        was    219 characters    61 x 61 modules
+        now     66 characters    37 x 37 modules
+
+      At one printed size that makes each module about 65% wider, which is the
+      single biggest thing that can be done for scanning reliability. A phone
+      across a counter, a poster at an angle, a code on a lit screen: all of
+      them get easier.
+
+   2. THE QUIET ZONE WAS ONE MODULE. THE STANDARD REQUIRES FOUR.
+
+      A camera finds a code by locating its three finder patterns against clear
+      space. Starve that space and the lock fails, most often in exactly the
+      conditions a till is in: a busy counter, a printed sheet with text beside
+      it, a code shown on a screen.
+
+   EVERY CODE ALREADY PRINTED STILL SCANS. Proven, not assumed: the harness
+   builds a video of the OLD long-form payload and the scanner still recovers
+   the right id from it. The id is the only field anything has ever read.
+
+   Reprinting the A4 posters is worth doing once this is live, because that is
+   where the bigger modules actually help. Nothing breaks if you do not.
+
+   Proven in verification/qr-scanner-camera-live.js, 6 checks with a real
+   camera feed, and 2 more pinned in the build.
+
 
 THE EVENT WEB ADDRESS READS LIKE ONE
 
@@ -537,7 +581,7 @@ NOTHING ELSE MOVED
 
 WHAT PROVES IT
 
-   707 API tests, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
+   708 API tests, 6 camera scanner checks, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
    9 business registration checks driven in a real browser,
    98 service-journey checks across both account types with
    both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
@@ -553,7 +597,7 @@ UPLOAD NOTES
    titopay-pwa-v422-qr-price-integrity, so no customer can be served a cached
    bundle.
 
-   UPLOAD api.zip BUILD 46 FIRST, AND DO NOT DELAY IT. The price fix is
+   UPLOAD api.zip BUILD 47 FIRST, AND DO NOT DELAY IT. The price fix is
    server-side and the app cannot enforce it: until build 45 is live, a payer
    can still settle a R200 sale for R1.
    On build 43 the shared link still works and the preview still shows a title;

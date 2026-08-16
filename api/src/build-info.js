@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 46;
+const API_BUILD = 47;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  47: "QR codes are far easier to scan. The image encoded 219 characters the "
+      + "server never reads (the account id, amount, currency, reference, label "
+      + "and metadata), giving a 61x61 code; it now encodes the id and code type "
+      + "only, 66 characters, 37x37, so each module is about 65% wider at the "
+      + "same printed size. The quiet zone was also one module against the four "
+      + "the QR standard requires, which is a known cause of failed reads. Codes "
+      + "already printed still scan: the id is the only field anything reads.",
   46: "An event's web address reads like one. A free name was always used as it "
       + "is; a COLLISION used to append six characters of a sha1 digest, so a "
       + "second event called TitoPay Launch became /events/titopay-launch-3d4c29. "
