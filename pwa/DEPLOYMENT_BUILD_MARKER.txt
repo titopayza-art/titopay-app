@@ -1,7 +1,7 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
 PWA bundle: v410 (titopay-pwa-v410-monthly-volume)
-Requires: api.zip build 32
+Requires: api.zip build 33
 Admin console: admin-console-v87 (unchanged in this build)
 
 WHAT CHANGED IN THE APP
@@ -33,9 +33,9 @@ WHAT CHANGED IN THE APP
 
 3. THE VERIFICATION LEVELS SCREEN SHOWS THREE LEVELS AND THE NEW LADDER.
 
-     Unverified       R25 000 a month, R2 500 per payment
-     Basic verified   R200 000 a month, R10 000 per payment
-     Fully verified   "No fixed monthly transaction limit. Risk assessment,
+     Limited Access   R25 000 a month, R2 500 per payment
+     Basic Verified   R200 000 a month, R10 000 per payment
+     Fully Verified   "No fixed monthly transaction limit. Risk assessment,
                       transaction monitoring and applicable TitoPay
                       compliance requirements still apply."
 
@@ -55,6 +55,13 @@ WHAT CHANGED IN THE APP
 
    Enhanced due diligence still appears below the three levels, still
    described as a review rather than a level anyone climbs to.
+
+4. LEVEL NAMES COME FROM THE API, SO THIS BUNDLE ALREADY RENDERS THEM.
+   API build 33 renames the first level from "Unverified" to "Limited
+   Access" and stops the top level describing itself as FICA verification.
+   Every one of those strings is served by /v1/compliance/status, so v410
+   shows the new names the moment build 33 is live. The app.js in this zip is
+   byte-identical to v410 as shipped; only this note changed.
 
 NOTHING ELSE MOVED
 

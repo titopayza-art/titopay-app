@@ -19,10 +19,20 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 32;
+const API_BUILD = 33;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  33: "Terminology, not arithmetic. The first level is \"Limited Access\" " +
+      "rather than \"Unverified\": no approved TitoPay compliance requirement " +
+      "says a customer may transact without the due diligence that applies to " +
+      "them, and a label announcing otherwise reads as a claim that one does. " +
+      "The top level no longer calls itself FICA verification, which is a " +
+      "documentary review and not a generic verification status, and never " +
+      "implies enhanced due diligence was performed. The product ACCESS LEVEL " +
+      "is now its own named concept in the status payload, separate from the " +
+      "compliance axes it is derived from. The disclaimer denies statutory " +
+      "status of any kind rather than only FICA. No limit changed.",
   32: "The monthly figure is a TRANSACTION VOLUME limit and nothing else. " +
       "Build 31 scaled the per-payment, daily, withdrawal and wallet-balance " +
       "rails alongside it, which quietly said a wallet that may MOVE R200 000 " +

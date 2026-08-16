@@ -37,11 +37,14 @@ test("limits come from configuration, never from the enforcement path", () => {
   assert.doesNotMatch(TX, /200000/, "no hard-coded FICA threshold in the transaction rails");
 });
 
-test("the four levels exist and usage is ledger-derived", () => {
+test("the three levels exist and usage is ledger-derived", () => {
   assert.match(COMPLIANCE, /tiers: \{\s*0:/);
-  assert.match(COMPLIANCE, /Unverified/);
-  assert.match(COMPLIANCE, /Basic verified/);
-  assert.match(COMPLIANCE, /Fully verified/);
+  // "Limited Access", not "Unverified": nothing in TitoPay's approved
+  // compliance requirements supports announcing that a customer transacts
+  // without the due diligence that applies to them.
+  assert.match(COMPLIANCE, /label: "Limited Access"/);
+  assert.match(COMPLIANCE, /label: "Basic Verified"/);
+  assert.match(COMPLIANCE, /label: "Fully Verified"/);
   assert.match(COMPLIANCE, /edd_trigger/);
   // Usage comes from wallet_ledger, never a parallel tally.
   assert.match(COMPLIANCE, /FROM wallet_ledger wl[\s\S]{0,120}DATE_TRUNC\('month', NOW\(\)\)/);
@@ -86,7 +89,7 @@ test("the flow never brands basic verification as SA-only", () => {
   // The approved wording is "Identity verified", wherever it appears.
   assert.doesNotMatch(COMPLIANCE, /SA ID verified/);
   assert.doesNotMatch(APP, /SA ID verified/);
-  assert.match(COMPLIANCE, /Identity verified\. Higher monthly transaction limits\./);
+  assert.match(COMPLIANCE, /Identity verification completed\. A higher monthly transaction limit\./);
   // The app offers the document choice and the passport fields.
   assert.match(APP, /South African ID<\/option>/);
   assert.match(APP, /Passport<\/option>/);

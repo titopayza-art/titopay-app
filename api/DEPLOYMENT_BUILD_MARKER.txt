@@ -1,10 +1,50 @@
 TitoPay deployment build — 2026-08-16 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-API build: 32   (GET /health reports this — check it after upload)
-PWA bundle: v410 (titopay-pwa-v410-monthly-volume)
+API build: 33   (GET /health reports this — check it after upload)
+PWA bundle: v410 (UNCHANGED in this build; no need to re-upload app.zip)
 Admin console: admin-console-v87 (UNCHANGED in this build; no need to re-upload)
 
 WHAT CHANGED
+
+0. TERMINOLOGY. This build changes what the levels are CALLED and how the
+   payload describes them. It changes no limit, no fee and no rule, and the
+   customer app does not need re-uploading: every label below is served by
+   the API and rendered by the bundle already deployed.
+
+   The first level is "Limited Access", not "Unverified". Nothing in
+   TitoPay's approved compliance requirements confirms that a customer may
+   transact at that level without whatever customer due diligence applies to
+   them, and a product label announcing "unverified" reads as a claim that
+   one does. "Limited Access" says what the account MAY DO, which is what a
+   product level is for, and makes no statement about compliance either way.
+   (The readiness document records the tier labels as "engineering
+   placeholders, NOT policy", so nothing was overridden here. If compliance
+   later approves "Unverified" in writing, it is a one-line change.)
+
+   The top level no longer describes itself as "Full FICA verification".
+   FICA verification is a documentary review, not a generic technical
+   verification status, and "Fully Verified" is a TitoPay PRODUCT label, not
+   a regulatory classification. It also never implies enhanced due diligence:
+   EDD is a specific process that applies where it applies, on any level, and
+   most customers at the top level have not been through it. A test fails the
+   build if any level's description claims otherwise.
+
+   The disclaimer now denies statutory status of ANY kind rather than only
+   FICA: "These are TitoPay operational limits based on its risk management
+   and compliance framework. They are not statutory thresholds." A test scans
+   the compliance service, the app bundle and the compliance routes for
+   claims like "FICA limit", "SARB threshold", "required by law", "cash
+   threshold" and "approved by the regulator", and fails on any of them.
+   Cash-threshold reporting is a different regime and is never used to
+   describe an electronic wallet limit.
+
+   NEW IN THE STATUS PAYLOAD, additively: `accessLevel`, carrying
+   { key, label, position, of, monthlyTransactionLimit,
+   monthlyTransactionLimitNote }. The product ACCESS LEVEL is now a named
+   concept separate from the compliance axes it is derived from, and the
+   caveat travels with the number so a client that renders only the figure
+   cannot drop it. `tier` and `label` are unchanged, so no existing client
+   changes.
 
 1. LIMITS. THREE LEVELS, and the monthly figure is a TRANSACTION VOLUME
    limit and nothing else.

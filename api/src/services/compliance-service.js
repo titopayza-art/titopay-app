@@ -112,8 +112,16 @@ const DEFAULT_CONFIG = {
   // operational limits under its RMCP.
   tiers: {
     0: {
-      label: "Unverified",
-      description: "Registration only. Verify your identity for higher limits.",
+      // "LIMITED ACCESS", NOT "UNVERIFIED". Nothing in TitoPay's approved
+      // compliance requirements confirms that a customer may transact at this
+      // level without whatever customer due diligence applies to them, and a
+      // product label that announces "unverified" reads as a claim that it
+      // does. This is a PRODUCT ACCESS level: it says what the account may
+      // do. Whether the applicable CDD obligations have been met is a
+      // separate axis, carried on the account's own compliance fields, and
+      // this label makes no statement about it either way.
+      label: "Limited Access",
+      description: "A lower monthly transaction limit while identity verification is outstanding.",
       // MONTHLY TRANSACTION VOLUME.
       monthlyReceive: 25000,
       monthlySend: 25000,
@@ -129,8 +137,8 @@ const DEFAULT_CONFIG = {
       maxBalance: 10000
     },
     1: {
-      label: "Basic verified",
-      description: "Identity verified. Higher monthly transaction limits.",
+      label: "Basic Verified",
+      description: "Identity verification completed. A higher monthly transaction limit.",
       // MONTHLY TRANSACTION VOLUME.
       monthlyReceive: 200000,
       monthlySend: 200000,
@@ -151,8 +159,14 @@ const DEFAULT_CONFIG = {
       maxBalance: 50000
     },
     2: {
-      label: "Fully verified",
-      description: "Full FICA verification. No fixed monthly transaction limit, with activity subject to ongoing monitoring.",
+      // "Fully Verified" is a TitoPay PRODUCT label. It is not a regulatory
+      // classification, it does not assert that every applicable due diligence
+      // obligation has been discharged, and it must never be read as saying
+      // enhanced due diligence was performed: EDD is a specific process that
+      // applies where it applies, on any level, and most customers here have
+      // not been through it.
+      label: "Fully Verified",
+      description: "Identity and documentary due diligence completed. No fixed monthly transaction limit, with activity subject to ongoing monitoring.",
       // NO FIXED MONTHLY PRODUCT LIMIT. That is not a promise of unrestricted
       // activity and must never be implemented as one. What is removed here
       // is TitoPay's own standing monthly cap. What still applies, on every
@@ -940,6 +954,58 @@ async function basicVerify(auth, payload = {}) {
   return complianceStatus(auth);
 }
 
+// THE PRODUCT ACCESS LEVEL IS NOT THE COMPLIANCE STATUS.
+//
+// They move together most of the time, which is exactly why they get fused,
+// and fusing them is how a platform ends up saying "KYC passed, therefore
+// allowed" or "fully verified, therefore unrestricted". Neither is true.
+//
+//   PRODUCT ACCESS LEVEL   what the account may do: which of the three
+//                          levels it sits on, and the monthly transaction
+//                          limit that comes with it. A commercial construct.
+//   COMPLIANCE STATUS      a set of independent axes the platform maintains
+//                          separately and never collapses into one badge:
+//                          identity verification, documentary due diligence,
+//                          screening, risk status, ongoing CDD, EDD where it
+//                          genuinely applies, and account status.
+//
+// The access level is derived FROM the verification level, but it does not
+// grant anything on its own: the limit engine applies product rules, earned
+// standing and then risk, in that order with risk last, so a compliance or
+// risk decision narrows or stops an account at any level including the top.
+// A restricted or suspended account transacts nothing whatever its level.
+//
+// Three levels, and the position is published so nothing has to infer a
+// fourth from a number.
+const ACCESS_LEVELS = {
+  0: { key: "limited_access", position: 1 },
+  1: { key: "basic_verified", position: 2 },
+  2: { key: "fully_verified", position: 3 }
+};
+const ACCESS_LEVEL_COUNT = Object.keys(ACCESS_LEVELS).length;
+
+function productAccessLevel(config, tier) {
+  const level = ACCESS_LEVELS[String(tier)] || ACCESS_LEVELS["0"];
+  const shaped = shapeTier(config, tier);
+  // ONE monthly transaction limit per level. It is a limit on VOLUME MOVED
+  // over the calendar month and is deliberately not the wallet balance cap,
+  // the per-payment cap, the daily cap or either withdrawal cap, all of
+  // which are separate rails with their own values on the same object.
+  const monthly = shaped.monthlySend ?? null;
+  return {
+    key: level.key,
+    label: shaped.label,
+    position: level.position,
+    of: ACCESS_LEVEL_COUNT,
+    monthlyTransactionLimit: monthly,
+    // Said in the payload so no screen has to compose the caveat itself, and
+    // so it cannot be dropped by a client that only renders the number.
+    monthlyTransactionLimitNote: monthly === null
+      ? "No fixed monthly transaction limit. Risk assessment, transaction monitoring and applicable TitoPay compliance requirements still apply."
+      : "A TitoPay operational limit on transaction volume for the calendar month, subject to applicable risk and compliance requirements."
+  };
+}
+
 function shapeTier(config, tier) {
   const t = config.tiers[String(tier)] || {};
   return {
@@ -1016,6 +1082,9 @@ async function complianceStatus(auth) {
   return {
     tier,
     label: current.label,
+    // The product construct, named as one. `tier` and `label` above are kept
+    // exactly as they were so no existing client changes.
+    accessLevel: productAccessLevel(config, tier),
     ficaStatus: String(user.fica_status || "none"),
     eddStatus: String(user.edd_status || "none"),
     eddActive,
@@ -1028,7 +1097,11 @@ async function complianceStatus(auth) {
     // Customer-safe review state only. Internal risk ratings (elevated, high
     // risk) are never shown to the account holder.
     underReview: eddActive,
-    disclaimer: "These are TitoPay operational limits under its Risk Management and Compliance Programme, reviewed by the compliance team. They are not statutory FICA amounts.",
+    // Says what these amounts ARE, and what they are not. "Not statutory FICA
+    // amounts" was too narrow: they are not statutory thresholds of any kind,
+    // and none of them is a cash-threshold reporting figure, which is a
+    // different regime that does not govern an electronic wallet limit.
+    disclaimer: "These are TitoPay operational limits based on its risk management and compliance framework. They are not statutory thresholds.",
     verified: tier === 2,
     usage: { ...usage, receivePercent, sendPercent },
     limits: current,
@@ -1045,6 +1118,8 @@ async function complianceStatus(auth) {
 }
 
 module.exports = {
+  ACCESS_LEVELS,
+  productAccessLevel,
   ensureComplianceSchema,
   assertBalanceHeadroom,
   assertCanWithdraw,

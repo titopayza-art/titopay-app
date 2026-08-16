@@ -299,3 +299,98 @@ test("risk bands, products, earned capacity and holding are all configuration", 
   // The engine reads config on every decision; nothing is captured at boot.
   assert.match(ENGINE, /loadComplianceConfig\(\)/);
 });
+
+test("no amount is presented as a statutory threshold, anywhere a customer can read", () => {
+  // The failure mode this guards against is a sentence, not a bug: telling a
+  // customer that R25 000 is what FICA, SARB, the FSCA or PASA allows. None of
+  // these figures is a statutory threshold, none has been approved by a
+  // regulator, and claiming either would be a compliance problem that no test
+  // of the arithmetic would ever catch.
+  // Comments are stripped first, because the two files carry comments whose
+  // whole purpose is to DENY these claims ("no number here is a statutory
+  // FICA or SARB threshold"), and a scan that cannot tell a denial from a
+  // claim would fail on the very sentence that makes the code correct.
+  const stripComments = (source) => source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n").filter((line) => !line.trim().startsWith("//"))
+    .map((line) => line.replace(/\s\/\/.*$/, "")).join("\n");
+  const CUSTOMER_TEXT = [COMPLIANCE, APP, ROUTES].map(stripComments);
+  const FORBIDDEN = [
+    /FICA (limit|allows|threshold)/i,
+    /SARB (limit|allows|threshold)/i,
+    /FSCA (limit|allows|threshold)/i,
+    /PASA (limit|allows|threshold)/i,
+    /statutory (limit|threshold|amount)s? of R/i,
+    /regulatory (limit|threshold) of R/i,
+    /(required|allowed|permitted) by law/i,
+    /cash threshold/i,
+    /approved by (the )?(regulator|SARB|FSCA|FIC)\b/i
+  ];
+  for (const source of CUSTOMER_TEXT) {
+    for (const pattern of FORBIDDEN) {
+      assert.doesNotMatch(source, pattern, `forbidden claim: ${pattern}`);
+    }
+  }
+  // And the disclaimer says what the amounts actually are.
+  assert.match(COMPLIANCE, /These are TitoPay operational limits based on its risk management and compliance framework\. They are not statutory thresholds\./);
+  // The limits screen attributes the numbers to TitoPay, not to a regulator.
+  assert.match(APP, /Your limits depend on your verification status, risk profile and applicable TitoPay compliance requirements\./);
+});
+
+test("the product access level is a separate concept from compliance status", () => {
+  const { productAccessLevel, ACCESS_LEVELS, DEFAULT_CONFIG: CONFIG } = require("../src/services/compliance-service");
+  // Exactly three, published with their position so nothing has to infer a
+  // fourth from a tier number.
+  assert.deepEqual(Object.keys(ACCESS_LEVELS), ["0", "1", "2"]);
+  const levels = ["0", "1", "2"].map((t) => productAccessLevel(CONFIG, Number(t)));
+  assert.deepEqual(levels.map((l) => l.key), ["limited_access", "basic_verified", "fully_verified"]);
+  assert.deepEqual(levels.map((l) => l.position), [1, 2, 3]);
+  assert.deepEqual(levels.map((l) => l.of), [3, 3, 3]);
+  assert.deepEqual(levels.map((l) => l.label), ["Limited Access", "Basic Verified", "Fully Verified"]);
+
+  // ONE monthly transaction limit per level, and it is the VOLUME rail.
+  assert.deepEqual(levels.map((l) => l.monthlyTransactionLimit), [25000, 200000, null]);
+  for (const level of levels) {
+    const tier = CONFIG.tiers[String(level.position - 1)];
+    for (const other of ["maxBalance", "singleTransaction", "dailySend", "singleWithdrawal", "monthlyWithdraw"]) {
+      if (tier[other] === null) continue;
+      assert.notEqual(level.monthlyTransactionLimit, tier[other],
+        `${level.key}: the monthly transaction limit is not the ${other}`);
+    }
+  }
+  // The top level says what still applies, in the payload, so a client that
+  // renders only the number cannot drop the caveat.
+  assert.match(levels[2].monthlyTransactionLimitNote, /No fixed monthly transaction limit/);
+  assert.match(levels[2].monthlyTransactionLimitNote, /still apply/);
+
+  // An access level never grants anything by itself: risk is applied last and
+  // narrows every level, including the one with no fixed limit.
+  assert.match(ENGINE, /4\. RISK\s+risk is applied LAST and always wins/);
+  const topUnderRisk = engine.buildEffectiveLimits({
+    config: CONFIG, tier: 2, riskStatus: "high_risk", earned: { applies: false, multiplier: 1 } });
+  assert.ok(Number(topUnderRisk.limits.monthlySend) > 0, "a compliance decision binds the top level too");
+});
+
+test("enhanced due diligence is never claimed for a whole level", () => {
+  // EDD is a specific process that applies where it applies, on any level.
+  // Labelling every fully verified customer as having been through it would
+  // be a fabricated compliance status.
+  const tier2 = DEFAULT_CONFIG.tiers["2"];
+  assert.doesNotMatch(String(tier2.description), /enhanced due diligence/i);
+  assert.doesNotMatch(String(tier2.label), /enhanced/i);
+  // The app says the same thing where it explains EDD.
+  assert.match(APP, /Not a level you choose/);
+  // And no level is described as "FICA verification", which is a documentary
+  // review, not a generic technical verification status.
+  for (const level of ["0", "1", "2"]) {
+    assert.doesNotMatch(String(DEFAULT_CONFIG.tiers[level].description), /\bFICA\b/i,
+      `tier ${level} does not use FICA as a verification status`);
+  }
+});
+
+test("the source still states plainly that none of these amounts is statutory", () => {
+  // The scan above deliberately ignores comments, so the denial they carry
+  // needs its own assertion or it could be deleted without anything noticing.
+  assert.match(COMPLIANCE, /None of these is a statutory FICA or SARB threshold/);
+  assert.match(ENGINE, /None of the numbers here are statutory FICA or SARB thresholds/);
+});
