@@ -24411,6 +24411,17 @@ function servicesView() {
 function serviceGroupOf(service) {
   const keys = [service.id, service.action, service.serviceCode, service.service_code]
     .map((value) => String(value || "").trim().toLowerCase());
+  // BOOK IS TWO PRODUCTS WEARING ONE TILE, so it cannot have one home.
+  //
+  // For a business it opens their booking console, and it belongs beside
+  // Invoice and Ticketing under "Run your business". For a customer it opens a
+  // list of places to book, and it belongs beside Event Tickets under "Buy".
+  //
+  // Filed only in the business group, it dragged that heading onto the personal
+  // Services screen - every other member of that group is business-only, so the
+  // section had never rendered for a customer at all, and Book made a personal
+  // wallet announce "Run your business" above a single tile.
+  if (keys.includes("book")) return state.accountType === "business" ? "business" : "buy";
   for (const group of SERVICE_GROUPS) {
     if (group.members && keys.some((key) => key && group.members.includes(key))) return group.key;
   }

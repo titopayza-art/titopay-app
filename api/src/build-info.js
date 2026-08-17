@@ -35,7 +35,7 @@ const BUILD_NOTES = {
       + "there. The .htaccess SPA fallback already served that path; the app "
       + "simply never read it, so the link landed on a sign-in screen. Adds "
       + "cover_image_url and gallery to book_venues. Requires "
-      + "db:apply-migrations and app.zip v439 together.",
+      + "db:apply-migrations and app.zip v440 together.",
   68: "Personal users can find and book a business. Discovery, a venue page, a "
       + "day-and-time picker and a confirmation with a readable reference, all "
       + "in the app. The Book tile appears for a customer ONLY once at least "

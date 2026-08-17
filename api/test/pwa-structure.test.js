@@ -504,3 +504,24 @@ test("Book shows booking times on the same clock the picker offered them on", ()
   assert.match(source, /function bookWhenText\(iso\)[\s\S]{0,400}timeZone: "UTC"/,
     "bookWhenText must read UTC");
 });
+
+// A PERSONAL WALLET DOES NOT SAY "RUN YOUR BUSINESS".
+//
+// Empty groups are dropped from the Services grid, and every member of the
+// business group except Book is business-only - so that heading had never once
+// rendered for a customer. Filing Book there put it on the personal screen as a
+// section of one, announcing "Run your business" to somebody booking a table.
+// Book is two products wearing one tile and needs a home per account type.
+test("the Book tile is filed by who is looking at it", () => {
+  const start = source.indexOf("function serviceGroupOf(service)");
+  assert.ok(start > 0, "serviceGroupOf should exist");
+  const fn = source.slice(start, start + 1400);
+  assert.match(fn, /keys\.includes\("book"\)/,
+    "serviceGroupOf must special-case Book, the way the visibility filter already does");
+  assert.match(fn, /state\.accountType === "business" \? "business" : "buy"/,
+    "a business gets its console under Run your business; a customer gets it under Buy");
+  // And the special case must run BEFORE the generic member lookup, or the
+  // business group would claim Book back for everybody.
+  assert.ok(fn.indexOf('keys.includes("book")') < fn.indexOf("for (const group of SERVICE_GROUPS)"),
+    "the special case must be reached before the generic group scan");
+});
