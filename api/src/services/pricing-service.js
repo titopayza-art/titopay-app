@@ -67,6 +67,15 @@ const APPROVED_PRICING_SCHEDULE = [
   ["merchant_payouts", "Business Payouts", 0, 0, 1.5],
   ["refund_processing", "Refund Processing", 0.50],
   ["business_document_pdf", "Business Document PDF", 2.50],
+  // TitoPay Book: the once-off charge that unlocks booking for a business.
+  //
+  // THE PRICE LIVES HERE, NOT IN BOOK'S CODE. R250 is the launch price and it is
+  // read at the moment of sale with calculateFee, so an operator can change it in
+  // the Pricing Engine and the next business pays the new figure. A constant in
+  // Book would mean the console shows one price and the customer is charged
+  // another. Charged once per business and enforced by a unique index, not by a
+  // check in code.
+  ["book_business_activation", "TitoPay Book Activation", 250],
   ["invoice_pdf", "Invoice PDF", 2.50],
   ["invoice_creation", "Invoice Creation", 2.50],
   ["quote_pdf", "Quote PDF", 2.50],
