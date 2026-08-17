@@ -19,12 +19,23 @@ per integration, choosing which URL and API keys the server talks to:
 | `DOCFOX_MODE` | KYC document verification |
 | `OTT_MODE` | vouchers and value-added services |
 
-All four are **required** and must be exactly `sandbox` or `production`. Until
-build 54 the three integration modes defaulted to `production` when unset, so
-going live could happen by omission: an unset variable, a typo or a stripped
-environment file put the platform live in silence. That default is gone. A
-missing, empty or misspelled value now stops the process with exit code 78
-before it accepts a single request.
+Set all four, on both servers, to exactly `sandbox` or `production`.
+
+**The three integration modes still default to `production` when unset.** That
+fail-open is real and it has not been removed: an unset variable, a typo or a
+stripped environment file still leaves the platform pointed at live providers.
+Going live can still happen by omission. What changed in build 55 is that the
+API now **tells you** rather than letting it pass in silence.
+
+Build 54 tried to make it impossible instead of visible, by refusing to start
+when a variable was missing. Deploying that to a server that did not yet have
+the variables **took the API down**, so it was withdrawn. Build 55 warns on
+every boot, reports itself on `/health`, and serves.
+
+The API refuses to start for one class of problem only: a **contradiction**,
+where something has been declared and something else disagrees with it. Those
+are listed at the end of step 4. None of them can occur until you have
+deliberately set the variables, so configuring can never cause an outage.
 
 No table records which mode created a row. `transactions` and `wallets` have no
 environment column. So flipping the keys changes nothing about existing data:
@@ -109,11 +120,9 @@ This is a setup step, not a repair tool.
 
 ### 4. Point the API at it, and declare the environment
 
-**The API refuses to start unless all four of these are set explicitly.** They
-have no defaults. `PEACH_PAYMENTS_MODE`, `DOCFOX_MODE` and `OTT_MODE` used to
-default to `production` when unset, which meant going live could happen by
-omission; that default is gone and an unset or misspelled value now stops the
-process with exit code 78 before it serves anything.
+Set all four. The API will start without them, but it will warn on every boot
+and report itself as undeclared, and the integration modes will quietly fall
+back to `production`.
 
 Production:
 
@@ -145,6 +154,31 @@ geo-lock OFF by default and widen CORS. Leave `NODE_ENV` alone.
 or the reverse, is refused even if the databases have been renamed or restored
 elsewhere. Nothing is added to any financial table.
 
+#### Check it took
+
+```bash
+curl -s https://api.titopay.co.za/v1/health
+```
+
+`"environment":"production"` and `"environmentWarnings":0` means the deployment
+is fully declared. `"undeclared"`, or a warning count above zero, means
+something is still missing; the startup log names it.
+
+#### The only three things that stop the API
+
+1. A production API opening a database **stamped** as sandbox, or the reverse.
+2. An integration mode in a different environment from `TITOPAY_ENV`.
+3. `NODE_ENV` set to `sandbox` or `production` and contradicting `TITOPAY_ENV`.
+
+Each requires the variables to have been set deliberately, so none can fell a
+server that was working a minute ago. Everything else warns and serves,
+including a missing variable, a typo, a database that cannot be reached at
+boot, and absent Peach credentials.
+
+If the API ever does refuse, it prints what contradicts what and exits 78
+without accepting a connection. Correct the contradiction, or unset
+`TITOPAY_ENV` to start unverified.
+
 ### 5. Swap the live keys
 
 Peach production API key, secret, client id, entity id, merchant id, webhook
@@ -152,7 +186,8 @@ secret. Point the Peach webhook at the production callback URL.
 
 ### 6. Prove it before you tell anyone
 
-- `curl https://api.titopay.co.za/health` and check the build number
+- `curl https://api.titopay.co.za/v1/health` and check the build number, and
+  that it reports `"environment":"production"` with zero warnings
 - Sign in to the admin console with the account you just created
 - Register one real account and top up the smallest amount the provider allows
 - Make one QR payment and check three things: the payer's slip says the amount
