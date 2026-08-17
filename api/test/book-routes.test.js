@@ -225,3 +225,57 @@ test("a bad category is refused with a sentence a person can act on", async () =
   const body = await response.json();
   assert.match(body.error, /kind of business/i);
 });
+
+/* ------------------------------------------------------- the venue photo */
+
+// The console lets a business add a picture of the place. These pin the rule
+// rather than the screen: what is stored is vetted, and what is rejected is
+// rejected silently rather than rendered.
+test("a venue photo round-trips and reaches the public page", async () => {
+  const list = await (await call("GET", "/v1/book/venues", owner.token)).json();
+  const venue = list.venues.find((item) => item.slug.startsWith("kasi-kitchen"));
+  assert.ok(venue, "the published restaurant from the journey above");
+  assert.equal(venue.coverImageUrl, null, "a new page has no photo");
+
+  // A one pixel PNG. Small on purpose: the size limit has its own test below.
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const saved = await call("PATCH", `/v1/book/venues/${venue.id}`, owner.token, { coverImageUrl: png });
+  assert.equal(saved.status, 200, await saved.clone().text());
+  assert.equal((await saved.json()).venue.coverImageUrl, png);
+
+  // And a person with no account sees it, which is the entire point of adding it.
+  const publicPage = await fetch(`${baseUrl}/v1/book/public/venues/${venue.slug}`);
+  assert.equal(publicPage.status, 200);
+  assert.equal((await publicPage.json()).venue.coverImageUrl, png);
+});
+
+test("a photo that is not an image is dropped, not stored", async () => {
+  const list = await (await call("GET", "/v1/book/venues", owner.token)).json();
+  const venue = list.venues.find((item) => item.slug.startsWith("kasi-kitchen"));
+  // A javascript: URL is the case that matters: stored and then rendered into
+  // an <img src>, it is a script the business handed to every visitor.
+  const response = await call("PATCH", `/v1/book/venues/${venue.id}`, owner.token,
+    { coverImageUrl: "javascript:alert(1)" });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).venue.coverImageUrl, null,
+    "refused by dropping it, so nothing unvetted can ever be rendered");
+});
+
+test("a photo over the size limit is refused in words", async () => {
+  const list = await (await call("GET", "/v1/book/venues", owner.token)).json();
+  const venue = list.venues.find((item) => item.slug.startsWith("kasi-kitchen"));
+  const huge = `data:image/jpeg;base64,${"A".repeat(740 * 1024)}`;
+  const response = await call("PATCH", `/v1/book/venues/${venue.id}`, owner.token, { coverImageUrl: huge });
+  assert.equal(response.status, 413);
+  assert.match((await response.json()).error, /too large/i);
+});
+
+test("clearing the photo removes it everywhere", async () => {
+  const list = await (await call("GET", "/v1/book/venues", owner.token)).json();
+  const venue = list.venues.find((item) => item.slug.startsWith("kasi-kitchen"));
+  const cleared = await call("PATCH", `/v1/book/venues/${venue.id}`, owner.token, { coverImageUrl: "" });
+  assert.equal(cleared.status, 200);
+  assert.equal((await cleared.json()).venue.coverImageUrl, null);
+  const publicPage = await (await fetch(`${baseUrl}/v1/book/public/venues/${venue.slug}`)).json();
+  assert.equal(publicPage.venue.coverImageUrl, null);
+});

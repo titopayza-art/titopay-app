@@ -478,3 +478,29 @@ test("a route change is not mistaken for a back gesture", () => {
   assert.match(back, /document\.querySelector\("\.modal-backdrop"\) !== sheet/,
     "the peel is checked against the sheet that was on screen when the gesture arrived");
 });
+
+// BOOK READS EVERY TIME ON ONE CLOCK.
+//
+// The availability engine builds slot instants on a UTC day from opening hours
+// stored as minutes from midnight, and the time picker labels them with
+// getUTCHours. Any Book screen that reads a booking time back with the
+// browser's LOCAL clock therefore contradicts the times the customer was
+// offered - by two hours in South Africa, where every user of this product is.
+// That is not a cosmetic difference: the customer is shown 20:30, told 22:30,
+// and the business's day list says something else again.
+test("Book shows booking times on the same clock the picker offered them on", () => {
+  const start = source.indexOf("BOOK, FOR A CUSTOMER.");
+  assert.ok(start > 0, "the customer half of Book should be findable");
+  const bookSource = source.slice(start);
+
+  // formatDate is the app-wide local-clock formatter. Book uses bookWhenText.
+  const localReads = bookSource.match(/formatDate\((?:made\.)?startsAt\)/g) || [];
+  assert.deepEqual(localReads, [],
+    `a Book screen is formatting a booking time on the local clock: ${localReads.join(", ")}`);
+
+  // And the two helpers that keep it consistent must both read UTC.
+  assert.match(source, /function bookTimeOfDay\(iso\)[\s\S]{0,300}getUTCHours/,
+    "bookTimeOfDay must read UTC");
+  assert.match(source, /function bookWhenText\(iso\)[\s\S]{0,400}timeZone: "UTC"/,
+    "bookWhenText must read UTC");
+});

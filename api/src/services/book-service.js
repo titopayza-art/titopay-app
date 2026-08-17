@@ -22,6 +22,24 @@ const { ensureBookSchema } = require("./book-schema");
 const { assertActivated } = require("./book-activation-service");
 const reference = require("../config/book-reference");
 
+// THE SAME IMAGE RULE TICKETING ALREADY USES, not a second one. A data: URL up
+// to 700KB, or an http(s) URL. Anything else is dropped rather than stored, so
+// a screen can never render something the server did not vet. Kept identical to
+// cleanEventBanner on purpose: two image rules that differ by a character is how
+// one of them ends up wrong.
+function cleanVenueImage(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(raw)) {
+    if (Buffer.byteLength(raw, "utf8") > 700 * 1024) {
+      throw new AppError(413, "That photo is too large. Choose a smaller one.");
+    }
+    return raw;
+  }
+  if (/^https?:\/\//i.test(raw)) return raw.slice(0, 800);
+  return "";
+}
+
 /* ------------------------------------------------------------- the address */
 
 function slugify(value = "") {
@@ -103,6 +121,8 @@ function shapeVenue(row) {
       province: row.province, postalCode: row.postal_code
     },
     contact: { phone: row.contact_phone, email: row.contact_email, website: row.website_url },
+    coverImageUrl: row.cover_image_url || null,
+    gallery: row.gallery || [],
     openingHours: row.opening_hours || [],
     amenities: row.amenities || [],
     showsAvailabilityCount: row.shows_availability_count,
@@ -224,6 +244,14 @@ async function updateVenue(actor, venueId, payload = {}, meta = {}) {
       const text = String(payload[key] == null ? "" : payload[key]).trim().slice(0, max);
       set(column, text || null);
     }
+  }
+  if (payload.coverImageUrl !== undefined) {
+    set("cover_image_url", cleanVenueImage(payload.coverImageUrl) || null);
+  }
+  if (payload.gallery !== undefined) {
+    const cleaned = (Array.isArray(payload.gallery) ? payload.gallery : [])
+      .map(cleanVenueImage).filter(Boolean).slice(0, 6);
+    set("gallery", JSON.stringify(cleaned));
   }
   if (payload.showsAvailabilityCount !== undefined) {
     set("shows_availability_count", Boolean(payload.showsAvailabilityCount));

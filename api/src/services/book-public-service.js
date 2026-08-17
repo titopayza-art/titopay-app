@@ -53,6 +53,8 @@ async function publicVenue(slug) {
       province: venue.province
     },
     contact: { phone: venue.contact_phone, email: venue.contact_email, website: venue.website_url },
+    coverImageUrl: venue.cover_image_url || null,
+    gallery: venue.gallery || [],
     amenities: venue.amenities || [],
     // The venue's own choice about whether an exact count is public. Health
     // categories default this off, because a pollable free-slot number on a
@@ -208,7 +210,7 @@ async function discover({ category = "", city = "", search = "", limit = 40 } = 
   values.push(Math.min(Math.max(Number.parseInt(limit, 10) || 40, 1), 100));
 
   const { rows } = await pool.query(
-    `SELECT v.slug, v.name, v.category, v.tagline, v.city, v.suburb,
+    `SELECT v.slug, v.name, v.category, v.tagline, v.city, v.suburb, v.cover_image_url,
             v.shows_availability_count,
             (SELECT COUNT(*)::int FROM book_services s
               WHERE s.venue_id = v.id AND s.status = 'active') AS service_count,
@@ -229,6 +231,7 @@ async function discover({ category = "", city = "", search = "", limit = 40 } = 
     category: row.category,
     categoryLabel: reference.categoryLabel(row.category),
     tagline: row.tagline,
+    coverImageUrl: row.cover_image_url || null,
     city: row.city,
     suburb: row.suburb,
     serviceCount: row.service_count,

@@ -19,10 +19,23 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 68;
+const API_BUILD = 69;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  69: "The Book business console stops being blank. A business can now add a "
+      + "photo, add what it offers, set its opening hours for the week, edit "
+      + "its details and publish - and it sees today's real bookings with "
+      + "confirm and decline, where the screen previously showed a fixed 'no "
+      + "bookings yet' even when somebody had booked. Publishing is refused "
+      + "until there is something to book and at least one open day, because a "
+      + "live page with neither offers a customer an empty screen. The link the "
+      + "business shares now RESOLVES: /book/<slug> opens the place, its photo, "
+      + "its open times and its list, and a person with no account books it "
+      + "there. The .htaccess SPA fallback already served that path; the app "
+      + "simply never read it, so the link landed on a sign-in screen. Adds "
+      + "cover_image_url and gallery to book_venues. Requires "
+      + "db:apply-migrations and app.zip v439 together.",
   68: "Personal users can find and book a business. Discovery, a venue page, a "
       + "day-and-time picker and a confirmation with a readable reference, all "
       + "in the app. The Book tile appears for a customer ONLY once at least "

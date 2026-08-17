@@ -248,6 +248,7 @@ const state = {
   learn: { search: "", category: "all", open: "" },
   enterpriseDistribution: { eligibility: null, beneficiaries: [], batches: [] },
   publicEvent: null,
+  publicVenue: null,
   installPrompt: null,
   installAvailable: false,
   installed: isPwaInstalled()
@@ -1117,10 +1118,14 @@ async function boot() {
     checkApiHealth(),
     loadServices(defaults),
     loadMaintenanceMode(),
-    loadPublicEventFromPath()
+    loadPublicEventFromPath(),
+    loadPublicVenueFromPath()
   ]).then(() => {
     const maintenanceEnabled = Boolean(state.maintenance?.pwa?.enabled);
     if (state.auth?.accessToken || state.route === "services" || state.publicEvent || maintenanceEnabled) render();
+    // A booking link opens the place it points at, over whatever the shell is.
+    // Deliberately after render(), or the render would wipe the sheet away.
+    if (state.publicVenue && !maintenanceEnabled) renderBookVenuePage();
   });
   if (state.auth && state.auth.accessToken) {
     await Promise.all([loadAccount(), publicDataPromise]);
@@ -3468,6 +3473,9 @@ async function onSubmit(event) {
     if (form.dataset.form === "fica-upload") await submitFica(form);
     if (form.dataset.form === "profile-photo") await submitProfilePhoto(form);
     if (form.dataset.form === "book-venue") { await submitBookVenue(data); return; }
+    if (form.dataset.form === "book-service") { await submitBookService(data); return; }
+    if (form.dataset.form === "book-hours") { await submitBookHours(form); return; }
+    if (form.dataset.form === "book-details") { await submitBookDetails(form, data); return; }
     if (form.dataset.form === "book-confirm") { await submitBookConfirm(data); return; }
     if (form.dataset.form === "profile-details") await submitProfileDetails(data);
     if (form.dataset.form === "pwa-review") await submitPwaReview(data);
@@ -4424,6 +4432,18 @@ function onChange(event) {
   if (eventPosterInput) prepareEventPosterPreview(eventPosterInput);
   const posterReplaceInput = event.target.closest("input[data-event-poster-replace]");
   if (posterReplaceInput) replaceEventPoster(posterReplaceInput);
+  const bookPhotoInput = event.target.closest("input[data-book-photo-input]");
+  if (bookPhotoInput) uploadBookPhoto(bookPhotoInput);
+  // A day that is switched off must read as closed, not as a day with times
+  // somebody forgot to save.
+  const bookDayToggle = event.target.closest("[data-bk-day] [data-bk-open]");
+  if (bookDayToggle) {
+    const row = bookDayToggle.closest("[data-bk-day]");
+    row.classList.toggle("is-off", !bookDayToggle.checked);
+    row.querySelectorAll('input[type="time"]').forEach((input) => {
+      input.disabled = !bookDayToggle.checked;
+    });
+  }
   const scanEventPick = event.target.closest("select[data-scan-event]");
   if (scanEventPick) refreshScanAttendance(scanEventPick.value);
   const staffEventPick = event.target.closest("select[data-staff-event-pick]");
@@ -4808,6 +4828,20 @@ async function handleAction(action, actionElement = null) {
   if (action.startsWith("book-venue-open:")) { await openBookVenue(action.split(":")[1]); return; }
   if (action.startsWith("book-copy-link:")) {
     copyTextValue(`${location.origin}/book/${action.split(":")[1]}`, document.querySelector(".modal"), "Booking link copied.");
+    return;
+  }
+  if (action === "book-photo") { openBookPhoto(); return; }
+  if (action === "book-photo-remove") { await removeBookPhoto(event.target.closest("button")); return; }
+  if (action === "book-services") { openBookServices(); return; }
+  if (action.startsWith("book-service-toggle:")) {
+    await toggleBookService(action.split(":")[1]); return;
+  }
+  if (action === "book-hours") { openBookHours(); return; }
+  if (action === "book-publish") { await setBookVenueStatus("published", event.target.closest("button")); return; }
+  if (action === "book-unpublish") { await setBookVenueStatus("paused", event.target.closest("button")); return; }
+  if (action.startsWith("book-booking:")) {
+    const [, status, bookingId] = action.split(":");
+    await moveBookBooking(bookingId, status, event.target.closest("button"));
     return;
   }
   if (action === "business-sales") {
@@ -27379,11 +27413,75 @@ async function openBookModal() {
     ]);
     store.activation = activation.activation;
     store.venues = venues.venues || [];
+    if (store.venues.length) await loadBookVenueDetail(store.venues[0].id);
     renderBook();
   } catch (error) {
     openInfoModal("Book unavailable",
       error.friendlyMessage || "TitoPay could not open Book right now. Please try again.");
   }
+}
+
+// What the console needs before it can describe itself honestly: what you offer,
+// when you are open, and who is coming today. Read together rather than one
+// screen at a time, because a console that says "Not set" while a request is
+// still in flight is a lie the owner then acts on.
+//
+// Each call falls back to an empty list rather than throwing. A business whose
+// opening hours failed to load must still see its bookings.
+async function loadBookVenueDetail(venueId) {
+  const store = bookState();
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start.getTime() + 86400000);
+  const base = `/v1/book/venues/${encodeURIComponent(venueId)}`;
+  const [services, hours, today] = await Promise.all([
+    api(`${base}/services`).catch(() => ({ services: [] })),
+    api(`${base}/opening-hours`).catch(() => ({ openingHours: [] })),
+    api(`${base}/bookings?from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(end.toISOString())}`)
+      .catch(() => ({ bookings: [] }))
+  ]);
+  store.services = services.services || [];
+  store.openingHours = hours.openingHours || [];
+  store.today = today.bookings || [];
+}
+
+const BOOK_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// Minutes from midnight is how the server stores an opening hour, because it is
+// a wall-clock fact about a place. These two turn it into what an <input
+// type="time"> wants and back again.
+function bookMinutesToClock(minutes) {
+  const total = Math.max(0, Math.min(1440, Number(minutes) || 0));
+  return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+function bookClockToMinutes(value) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(value || "").trim());
+  if (!match) return null;
+  const minutes = Number(match[1]) * 60 + Number(match[2]);
+  return Number.isFinite(minutes) ? minutes : null;
+}
+// READ IN UTC, ON PURPOSE, EVERYWHERE IN BOOK.
+//
+// An opening hour is stored as minutes from midnight because it is a wall-clock
+// fact about a place, and the availability engine turns those minutes into
+// instants on a UTC day. So a venue that opens at 11:00 produces a slot at
+// 11:00Z, and the time picker already labels slots with getUTCHours.
+//
+// Anything in Book that reads a booking time back with the browser's LOCAL
+// clock therefore disagrees with the times the customer was offered - by two
+// hours in South Africa. These two helpers are what keep the confirmation, the
+// business's day list and the picker all saying the same thing.
+function bookTimeOfDay(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`;
+}
+function bookWhenText(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  const day = date.toLocaleDateString("en-ZA",
+    { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  return `${day}, ${bookTimeOfDay(iso)}`;
 }
 
 function renderBook() {
@@ -27499,58 +27597,478 @@ async function submitBookVenue(data) {
 function renderBookHome() {
   const store = bookState();
   const venue = store.venues[0];
+  const link = `${location.origin}/book/${venue.slug}`;
+  const ready = bookSetupState(venue);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">${esc(venue.name)}</p><h2>Today</h2>
-        <p class="lead">${esc(formatDate(new Date().toISOString()).split(",")[0])}</p></div>
+      <div><p class="eyebrow">${esc(venue.name)}</p>
+        <h2>${venue.status === "published" ? "Today" : "Set up your page"}</h2>
+        <p class="lead">${venue.status === "published"
+          ? esc(formatDate(new Date().toISOString()))
+          : "Fill these in and your link goes live."}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
 
-    <section class="integration-note">
-      <p>${icon("store")} <span>${venue.status === "published"
-        ? "Your page is live. Share your link and bookings appear here."
-        : "Your page is a draft. Publish it and your link goes live."}</span></p>
-    </section>
+    ${venue.coverImageUrl ? `<img class="bk-cover" src="${esc(venue.coverImageUrl)}" alt="">` : ""}
 
-    <section class="empty-state">
-      <p><strong>No bookings yet</strong></p>
-      <small>Share your link and bookings will appear here.</small>
-    </section>
+    ${venue.status === "published" ? `
+      <section class="integration-note">
+        <p>${icon("store")} <span>Your page is live. Share your link and bookings appear here.</span></p>
+      </section>` : `
+      <section class="integration-note">
+        <p>${icon("store")} <span>${ready.canPublish
+          ? "You are ready. Publish and your link goes live."
+          : `Add ${esc(ready.missing.join(" and "))} before you publish.`}</span></p>
+      </section>`}
+
+    ${venue.status === "published" ? bookTodayHtml() : ""}
 
     <section class="settings-list">
-      <button class="settings-row-button" type="button" data-action="book-copy-link:${esc(venue.slug)}">
-        <span class="icon-bubble">${icon("share")}</span>
-        <span class="settings-row-body"><strong>Your booking link</strong>
-          <small>${esc(`${location.origin}/book/${venue.slug}`)}</small></span>
-        <span class="settings-row-chevron">${icon("copy")}</span>
+      <button class="settings-row-button" type="button" data-action="book-photo">
+        <span class="icon-bubble">${icon("upload")}</span>
+        <span class="settings-row-body"><strong>Photo</strong>
+          <small>${venue.coverImageUrl ? "Added" : "Not added yet"}</small></span>
+        <span class="settings-row-chevron">${icon("arrow-right")}</span>
+      </button>
+      <button class="settings-row-button" type="button" data-action="book-services">
+        <span class="icon-bubble">${icon("receipt-list")}</span>
+        <span class="settings-row-body"><strong>What you offer</strong>
+          <small>${ready.serviceCount ? `${ready.serviceCount} service${ready.serviceCount === 1 ? "" : "s"}` : "Nothing yet"}</small></span>
+        <span class="settings-row-chevron">${icon("arrow-right")}</span>
+      </button>
+      <button class="settings-row-button" type="button" data-action="book-hours">
+        <span class="icon-bubble">${icon("calendar")}</span>
+        <span class="settings-row-body"><strong>Opening hours</strong>
+          <small>${ready.hourCount ? `${ready.hourCount} day${ready.hourCount === 1 ? "" : "s"} set` : "Not set"}</small></span>
+        <span class="settings-row-chevron">${icon("arrow-right")}</span>
       </button>
       <button class="settings-row-button" type="button" data-action="book-venue-open:${esc(venue.id)}">
         <span class="icon-bubble">${icon("store")}</span>
-        <span class="settings-row-body"><strong>Business details</strong><small>${esc(venue.categoryLabel)}${venue.address && venue.address.city ? ` · ${esc(venue.address.city)}` : ""}</small></span>
+        <span class="settings-row-body"><strong>Business details</strong>
+          <small>${esc(venue.categoryLabel)}${venue.address && venue.address.city ? ` · ${esc(venue.address.city)}` : ""}</small></span>
         <span class="settings-row-chevron">${icon("arrow-right")}</span>
       </button>
+      ${venue.status === "published" ? `
+      <button class="settings-row-button" type="button" data-action="book-copy-link:${esc(venue.slug)}">
+        <span class="icon-bubble">${icon("share")}</span>
+        <span class="settings-row-body"><strong>Your booking link</strong><small>${esc(link)}</small></span>
+        <span class="settings-row-chevron">${icon("copy")}</span>
+      </button>` : ""}
     </section>
+
+    <div class="auth-actions">
+      ${venue.status === "published"
+        ? `<button class="btn secondary" type="button" data-action="book-unpublish">${icon("eye-off")} Take my page offline</button>`
+        : `<button class="btn primary" type="button" data-action="book-publish"${ready.canPublish ? "" : " disabled"}>${icon("check-circle")} Publish my page</button>`}
+    </div>
   `);
+}
+
+// What still has to be true before a page can go live. A published venue with no
+// service or no opening hours offers a customer an empty screen, so publishing
+// is refused until both exist rather than allowed and then apologised for.
+function bookSetupState(venue) {
+  const store = bookState();
+  const serviceCount = (store.services || []).length;
+  const hourCount = new Set((store.openingHours || []).map((rule) => rule.dayOfWeek)).size;
+  const missing = [];
+  if (!serviceCount) missing.push("something to book");
+  if (!hourCount) missing.push("opening hours");
+  return { serviceCount, hourCount, missing, canPublish: missing.length === 0 };
+}
+
+/* ------------------------------------------------------------ today */
+
+const BOOK_BOOKING_TONE = {
+  pending: "is-draft", confirmed: "is-approved", checked_in: "is-approved",
+  completed: "is-approved", cancelled: "is-draft", rejected: "is-draft", no_show: "is-draft"
+};
+const BOOK_BOOKING_LABEL = {
+  pending: "New", confirmed: "Confirmed", checked_in: "Arrived",
+  completed: "Done", cancelled: "Cancelled", rejected: "Declined", no_show: "No show"
+};
+
+// Who is coming today, read from the server rather than assumed. This used to be
+// a fixed "No bookings yet", which stayed on the screen even when somebody had
+// booked.
+function bookTodayHtml() {
+  const store = bookState();
+  const list = (store.today || []).filter((booking) =>
+    !["cancelled", "rejected"].includes(booking.status));
+  if (!list.length) {
+    return `
+      <section class="empty-state">
+        <p><strong>Nothing booked for today</strong></p>
+        <small>Share your link and bookings will appear here.</small>
+      </section>`;
+  }
+  const serviceName = (id) => {
+    const found = (store.services || []).find((service) => service.id === id);
+    return found ? found.name : "Booking";
+  };
+  return `
+    <section class="bk-today">
+      ${list.map((booking) => `
+        <article class="bk-booking">
+          <div class="bk-booking-head">
+            <div class="bk-booking-who">
+              <p><strong>${esc(bookTimeOfDay(booking.startsAt))}</strong> ${esc(booking.customer.name || "Guest")}</p>
+              <small>${esc(serviceName(booking.serviceId))}${booking.partySize > 1 ? ` · ${booking.partySize} people` : ""}</small>
+              <small>${esc(booking.reference)}</small>
+            </div>
+            <span class="ticket-status ${BOOK_BOOKING_TONE[booking.status] || "is-draft"}">${esc(BOOK_BOOKING_LABEL[booking.status] || booking.status)}</span>
+          </div>
+          ${booking.status === "pending" ? `
+            <div class="bk-booking-actions">
+              <button class="btn secondary mini" type="button" data-action="book-booking:confirmed:${esc(booking.id)}">${icon("check-circle")} Confirm</button>
+              <button class="btn ghost mini" type="button" data-action="book-booking:rejected:${esc(booking.id)}">${icon("ban")} Decline</button>
+            </div>` : ""}
+        </article>`).join("")}
+    </section>`;
+}
+
+async function moveBookBooking(bookingId, status, button) {
+  const venue = bookState().venues[0];
+  if (!venue) return;
+  setButtonBusy(button, true);
+  try {
+    await api(`/v1/book/venues/${encodeURIComponent(venue.id)}/bookings/${encodeURIComponent(bookingId)}/status`,
+      { method: "POST", body: { status } });
+    await loadBookVenueDetail(venue.id);
+    showToast(status === "confirmed" ? "Booking confirmed." : "Booking declined.",
+      status === "confirmed" ? "success" : undefined);
+    renderBookHome();
+  } catch (error) {
+    setButtonBusy(button, false);
+    showToast(error.friendlyMessage || "That booking could not be updated.", "error");
+  }
+}
+
+/* ------------------------------------------------------------ the photo */
+
+function openBookPhoto() {
+  const venue = bookState().venues[0];
+  if (!venue) return;
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-open" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">Book</p><h2>Photo</h2>
+        <p class="lead">The picture at the top of your booking page.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${venue.coverImageUrl
+      ? `<img class="bk-cover" src="${esc(venue.coverImageUrl)}" alt="Your booking page photo">`
+      : `<section class="empty-state">
+           <p><strong>No photo yet</strong></p>
+           <small>A picture of the place, the food or the work you do.</small>
+         </section>`}
+    <section class="settings-list">
+      <label class="settings-row-button bk-upload">
+        <span class="icon-bubble">${icon("upload")}</span>
+        <span class="settings-row-body"><strong>${venue.coverImageUrl ? "Replace the photo" : "Add a photo"}</strong>
+          <small>Landscape fills the page best. JPG, PNG or WebP under 15MB.</small></span>
+        <input type="file" accept="image/*" data-book-photo-input>
+      </label>
+    </section>
+    ${venue.coverImageUrl ? `
+      <div class="auth-actions">
+        <button class="btn ghost" type="button" data-action="book-photo-remove">${icon("ban")} Remove the photo</button>
+      </div>` : ""}
+  `);
+}
+
+// Scaled in the browser the same way an event poster is, so what travels to the
+// server is a modest JPEG rather than a 12MB phone photo the request would
+// refuse anyway.
+async function uploadBookPhoto(input) {
+  const venue = bookState().venues[0];
+  const file = input.files && input.files[0];
+  if (!venue || !file) return;
+  if (!String(file.type || "").startsWith("image/")) {
+    input.value = "";
+    showToast("Choose an image file (JPG, PNG or WebP).", "error");
+    return;
+  }
+  if (file.size > 15 * 1024 * 1024) {
+    input.value = "";
+    showToast("Choose an image under 15MB.", "error");
+    return;
+  }
+  input.disabled = true;
+  showToast("Uploading your photo...");
+  try {
+    const dataUrl = await resizeEventPoster(file);
+    const result = await api(`/v1/book/venues/${encodeURIComponent(venue.id)}`,
+      { method: "PATCH", body: { coverImageUrl: dataUrl } });
+    bookState().venues[0] = result.venue;
+    showToast("Photo saved.", "success");
+    openBookPhoto();
+  } catch (error) {
+    input.disabled = false;
+    input.value = "";
+    showToast(error.friendlyMessage || "That photo could not be saved. Try another image.", "error");
+  }
+}
+
+async function removeBookPhoto(button) {
+  const venue = bookState().venues[0];
+  if (!venue) return;
+  setButtonBusy(button, true);
+  try {
+    const result = await api(`/v1/book/venues/${encodeURIComponent(venue.id)}`,
+      { method: "PATCH", body: { coverImageUrl: "" } });
+    bookState().venues[0] = result.venue;
+    showToast("Photo removed.");
+    openBookPhoto();
+  } catch (error) {
+    setButtonBusy(button, false);
+    showToast(error.friendlyMessage || "That photo could not be removed.", "error");
+  }
+}
+
+/* -------------------------------------------------------- what you offer */
+
+function openBookServices() {
+  const store = bookState();
+  const venue = store.venues[0];
+  if (!venue) return;
+  const services = store.services || [];
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-open" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">Book</p><h2>What you offer</h2>
+        <p class="lead">The things a customer picks when they book you.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    ${services.length ? `
+      <section class="settings-list">
+        ${services.map((service) => `
+          <button class="settings-row-button" type="button" data-action="book-service-toggle:${esc(service.id)}">
+            <span class="icon-bubble">${icon("receipt-list")}</span>
+            <span class="settings-row-body"><strong>${esc(service.name)}</strong>
+              <small>${service.price > 0 ? `${esc(money(service.price))} · ` : ""}${service.durationMinutes} minutes${service.capacity > 1 ? ` · up to ${service.capacity} at once` : ""}</small></span>
+            <span class="ticket-status ${service.status === "active" ? "is-approved" : "is-draft"}">${service.status === "active" ? "On" : "Off"}</span>
+          </button>`).join("")}
+      </section>
+      <p class="field-hint">Tap one to turn it on or off. Turning it off hides it from your page without deleting it.</p>
+    ` : `
+      <section class="empty-state">
+        <p><strong>Nothing to book yet</strong></p>
+        <small>Add the first one below. You can add more at any time.</small>
+      </section>`}
+    <form class="form-grid" data-form="book-service">
+      <div class="field"><label for="bk-svc-name">Name</label>
+        <input id="bk-svc-name" name="name" maxlength="120" required placeholder="Table for dinner"></div>
+      <div class="field"><label for="bk-svc-duration">How long it takes</label>
+        <select id="bk-svc-duration" name="durationMinutes">
+          ${[15, 30, 45, 60, 90, 120, 180].map((minutes) =>
+            `<option value="${minutes}"${minutes === 60 ? " selected" : ""}>${minutes >= 60 ? `${minutes / 60} hour${minutes === 60 ? "" : "s"}` : `${minutes} minutes`}</option>`).join("")}
+        </select></div>
+      <div class="field"><label for="bk-svc-price">Price <span class="field-optional">Optional</span></label>
+        <input id="bk-svc-price" name="price" inputmode="decimal" placeholder="0.00">
+        <small class="field-hint">Leave it empty if people pay when they arrive.</small></div>
+      <div class="field"><label for="bk-svc-capacity">How many at the same time</label>
+        <input id="bk-svc-capacity" name="capacity" inputmode="numeric" value="1">
+        <small class="field-hint">One chair or one room is 1. A class of twenty is 20.</small></div>
+      <button class="btn primary" type="submit">${icon("plus")} Add it</button>
+    </form>
+  `);
+}
+
+async function submitBookService(data) {
+  const venue = bookState().venues[0];
+  if (!venue) return;
+  const price = String(data.price || "").trim();
+  const result = await api(`/v1/book/venues/${encodeURIComponent(venue.id)}/services`, {
+    method: "POST",
+    body: {
+      name: data.name,
+      durationMinutes: Number(data.durationMinutes) || 60,
+      price: price ? Number(price) : 0,
+      capacity: Number(data.capacity) || 1
+    }
+  });
+  bookState().services = [...(bookState().services || []), result.service];
+  showToast("Added.", "success");
+  openBookServices();
+}
+
+async function toggleBookService(serviceId) {
+  const store = bookState();
+  const venue = store.venues[0];
+  const service = (store.services || []).find((item) => item.id === serviceId);
+  if (!venue || !service) return;
+  const next = service.status === "active" ? "inactive" : "active";
+  try {
+    const result = await api(
+      `/v1/book/venues/${encodeURIComponent(venue.id)}/services/${encodeURIComponent(serviceId)}`,
+      { method: "PATCH", body: { status: next } });
+    store.services = store.services.map((item) => (item.id === serviceId ? result.service : item));
+    openBookServices();
+  } catch (error) {
+    showToast(error.friendlyMessage || "That could not be changed.", "error");
+  }
+}
+
+/* -------------------------------------------------------- opening hours */
+
+// The whole week on one screen, and the whole week is sent back. A screen that
+// posted only the changed day would leave a removed Sunday behind, which is why
+// the endpoint replaces rather than merges.
+function openBookHours() {
+  const store = bookState();
+  const venue = store.venues[0];
+  if (!venue) return;
+  const byDay = new Map((store.openingHours || []).map((rule) => [rule.dayOfWeek, rule]));
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-open" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">Book</p><h2>Opening hours</h2>
+        <p class="lead">Customers can only book inside these times.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="book-hours">
+      <div class="bk-hours">
+        ${[1, 2, 3, 4, 5, 6, 0].map((day) => {
+          const rule = byDay.get(day);
+          const opens = bookMinutesToClock(rule ? rule.opensMinute : 9 * 60);
+          const closes = bookMinutesToClock(rule ? rule.closesMinute : 17 * 60);
+          return `
+            <div class="bk-day${rule ? "" : " is-off"}" data-bk-day="${day}">
+              <label class="bk-day-name">
+                <input type="checkbox" data-bk-open${rule ? " checked" : ""}>
+                <span>${esc(BOOK_DAYS[day])}</span>
+              </label>
+              <div class="bk-day-times">
+                <label class="visually-hidden" for="bk-open-${day}">${esc(BOOK_DAYS[day])} opens</label>
+                <input id="bk-open-${day}" type="time" data-bk-opens value="${opens}"${rule ? "" : " disabled"}>
+                <span class="bk-day-dash">to</span>
+                <label class="visually-hidden" for="bk-close-${day}">${esc(BOOK_DAYS[day])} closes</label>
+                <input id="bk-close-${day}" type="time" data-bk-closes value="${closes}"${rule ? "" : " disabled"}>
+              </div>
+            </div>`;
+        }).join("")}
+      </div>
+      <button class="btn primary" type="submit">${icon("check-circle")} Save opening hours</button>
+    </form>
+  `);
+}
+
+async function submitBookHours(form) {
+  const venue = bookState().venues[0];
+  if (!venue) return;
+  const openingHours = [];
+  form.querySelectorAll("[data-bk-day]").forEach((row) => {
+    if (!row.querySelector("[data-bk-open]").checked) return;
+    const opens = bookClockToMinutes(row.querySelector("[data-bk-opens]").value);
+    const closes = bookClockToMinutes(row.querySelector("[data-bk-closes]").value);
+    const day = Number(row.dataset.bkDay);
+    if (opens === null || closes === null) {
+      throw new Error(`Fill in both times for ${BOOK_DAYS[day]}, or switch that day off.`);
+    }
+    if (closes <= opens) {
+      throw new Error(`${BOOK_DAYS[day]} closes before it opens. Check those two times.`);
+    }
+    openingHours.push({ dayOfWeek: day, opensMinute: opens, closesMinute: closes });
+  });
+  const result = await api(`/v1/book/venues/${encodeURIComponent(venue.id)}/opening-hours`,
+    { method: "PUT", body: { openingHours } });
+  bookState().openingHours = result.openingHours || [];
+  showToast(openingHours.length ? "Opening hours saved." : "You are shown as closed all week.",
+    openingHours.length ? "success" : undefined);
+  renderBookHome();
+}
+
+/* ------------------------------------------------------------- going live */
+
+async function setBookVenueStatus(status, button) {
+  const store = bookState();
+  const venue = store.venues[0];
+  if (!venue) return;
+  if (status === "published" && !bookSetupState(venue).canPublish) return;
+  setButtonBusy(button, true);
+  try {
+    const result = await api(`/v1/book/venues/${encodeURIComponent(venue.id)}/status`,
+      { method: "POST", body: { status } });
+    store.venues[0] = result.venue;
+    showToast(status === "published" ? "Your page is live." : "Your page is offline.",
+      status === "published" ? "success" : undefined);
+    renderBookHome();
+  } catch (error) {
+    setButtonBusy(button, false);
+    showToast(error.friendlyMessage || "That could not be changed right now.", "error");
+  }
 }
 
 async function openBookVenue(venueId) {
   const result = await api(`/v1/book/venues/${encodeURIComponent(venueId)}`).catch(() => null);
   if (!result) return showToast("That page could not be opened.", "error");
   const venue = result.venue;
+  const store = bookState();
+  store.venues = (store.venues || []).map((item) => (item.id === venue.id ? venue : item));
   openModal(`
     <div class="modal-head modal-head-nested">
       <button class="icon-btn" type="button" data-action="book-open" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
-      <div><p class="eyebrow">Book</p><h2>${esc(venue.name)}</h2>
+      <div><p class="eyebrow">Book</p><h2>Business details</h2>
         <p class="lead">${esc(venue.categoryLabel)}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    <form class="form-grid" data-form="book-details" data-venue-id="${esc(venue.id)}">
+      <div class="field"><label for="bk-d-name">Business name</label>
+        <input id="bk-d-name" name="name" maxlength="120" required value="${esc(venue.name)}"></div>
+      <div class="field"><label for="bk-d-tagline">One line about it <span class="field-optional">Optional</span></label>
+        <input id="bk-d-tagline" name="tagline" maxlength="160" value="${esc(venue.tagline || "")}"></div>
+      <div class="field"><label for="bk-d-description">About this place <span class="field-optional">Optional</span></label>
+        <textarea id="bk-d-description" name="description" maxlength="2000" rows="4">${esc(venue.description || "")}</textarea></div>
+      <div class="field"><label for="bk-d-address">Street address <span class="field-optional">Optional</span></label>
+        <input id="bk-d-address" name="addressLine" maxlength="200" value="${esc(venue.address.line || "")}"></div>
+      <div class="field"><label for="bk-d-suburb">Suburb <span class="field-optional">Optional</span></label>
+        <input id="bk-d-suburb" name="suburb" maxlength="80" value="${esc(venue.address.suburb || "")}"></div>
+      <div class="field"><label for="bk-d-city">City or town <span class="field-optional">Optional</span></label>
+        <input id="bk-d-city" name="city" maxlength="80" value="${esc(venue.address.city || "")}"></div>
+      <div class="field"><label for="bk-d-phone">Phone people can call <span class="field-optional">Optional</span></label>
+        <input id="bk-d-phone" name="contactPhone" type="tel" maxlength="30" value="${esc(venue.contact.phone || "")}"></div>
+      <div class="field"><label for="bk-d-confirm">Bookings are</label>
+        <select id="bk-d-confirm" name="autoConfirm">
+          <option value="true"${venue.autoConfirm ? " selected" : ""}>Confirmed straight away</option>
+          <option value="false"${venue.autoConfirm ? "" : " selected"}>Confirmed by me first</option>
+        </select>
+        <small class="field-hint">Confirmed by you means every booking waits for you to accept it.</small></div>
+      <div class="field"><label for="bk-d-counts">Show how many places are left</label>
+        <select id="bk-d-counts" name="showsAvailabilityCount">
+          <option value="true"${venue.showsAvailabilityCount ? " selected" : ""}>Yes, show the number</option>
+          <option value="false"${venue.showsAvailabilityCount ? "" : " selected"}>No, just show the times</option>
+        </select></div>
+      <button class="btn primary" type="submit">${icon("check-circle")} Save details</button>
+    </form>
     <section class="settings-list">
       ${settingsRow("Web address", `/book/${venue.slug}`, "share")}
-      ${settingsRow("Status", venue.status === "published" ? "Live" : "Draft", "shield")}
-      ${settingsRow("Bookings are", venue.autoConfirm ? "Confirmed automatically" : "Confirmed by you", "check-circle")}
-      ${settingsRow("Availability shown publicly", venue.showsAvailabilityCount ? "Yes, with numbers" : "No, just Accepting bookings", "eye")}
+      ${settingsRow("Status", venue.status === "published" ? "Live" : "Not live yet", "shield")}
     </section>
   `);
+}
+
+async function submitBookDetails(form, data) {
+  const venueId = form.dataset.venueId;
+  if (!venueId) return;
+  const result = await api(`/v1/book/venues/${encodeURIComponent(venueId)}`, {
+    method: "PATCH",
+    body: {
+      name: data.name,
+      tagline: data.tagline,
+      description: data.description,
+      addressLine: data.addressLine,
+      suburb: data.suburb,
+      city: data.city,
+      contactPhone: data.contactPhone,
+      autoConfirm: data.autoConfirm === "true",
+      showsAvailabilityCount: data.showsAvailabilityCount === "true"
+    }
+  });
+  const store = bookState();
+  store.venues = (store.venues || []).map((item) => (item.id === venueId ? result.venue : item));
+  showToast("Saved.", "success");
+  renderBookHome();
 }
 
 /* ==========================================================================
@@ -27581,6 +28099,9 @@ function bookCustomerState() {
 
 async function openBookDiscover() {
   const store = bookCustomerState();
+  // Reached from inside the app, so the venue screen keeps its back button even
+  // if this browser first arrived on a shared link.
+  store.fromLink = false;
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">TitoPay</p><h2>Book</h2>
@@ -27647,11 +28168,39 @@ function renderBookDiscover() {
   `);
 }
 
+/**
+ * A business's booking link, opened by somebody who may have no account.
+ *
+ * The .htaccess SPA fallback already hands /book/<slug> to index.html, the same
+ * way it does /events/<slug>. Without this the app shell loaded and then did
+ * nothing with the path, so the link a business shared on WhatsApp arrived at a
+ * sign-in screen with no mention of the business at all.
+ *
+ * Never throws. A slug that does not resolve leaves the visitor on the ordinary
+ * app, which is the right outcome for a mistyped or unpublished link.
+ */
+async function loadPublicVenueFromPath() {
+  const match = location.pathname.match(/\/book\/([^/?#]+)/);
+  if (!match) return;
+  try {
+    const result = await api(`/v1/book/public/venues/${encodeURIComponent(match[1])}`, { auth: false });
+    if (!result.venue) return;
+    state.publicVenue = result.venue;
+    const store = bookCustomerState();
+    store.venue = result.venue;
+    // The rest of the booking journey is shared with in-app discovery. This
+    // flag is the one difference: there is no Book screen to go back to.
+    store.fromLink = true;
+  } catch (error) {
+    state.publicVenue = null;
+  }
+}
+
 async function openBookVenuePage(slug) {
   const store = bookCustomerState();
   openModal(`
-    <div class="modal-head modal-head-nested">
-      <button class="icon-btn" type="button" data-action="book-discover" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
+    <div class="modal-head${store.fromLink ? "" : " modal-head-nested"}">
+      ${store.fromLink ? "" : `<button class="icon-btn" type="button" data-action="book-discover" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>`}
       <div><p class="eyebrow">Book</p><h2>Loading…</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -27667,15 +28216,27 @@ const minuteText = (minute) =>
   `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 
 function renderBookVenuePage() {
-  const venue = bookCustomerState().venue;
+  const store = bookCustomerState();
+  const venue = store.venue;
   const where = [venue.address.suburb, venue.address.city].filter(Boolean).join(", ");
+  // Arriving on a shared link, this screen IS the entry point, so there is
+  // nothing behind it to go back to and no back button is drawn.
+  const head = store.fromLink
+    ? `<div class="modal-head">
+         <div><p class="eyebrow">${esc(venue.categoryLabel)}</p><h2>${esc(venue.name)}</h2>
+           ${venue.tagline ? `<p class="lead">${esc(venue.tagline)}</p>` : ""}</div>
+         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+       </div>`
+    : `<div class="modal-head modal-head-nested">
+         <button class="icon-btn" type="button" data-action="book-discover" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
+         <div><p class="eyebrow">${esc(venue.categoryLabel)}</p><h2>${esc(venue.name)}</h2>
+           ${venue.tagline ? `<p class="lead">${esc(venue.tagline)}</p>` : ""}</div>
+         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+       </div>`;
   openModal(`
-    <div class="modal-head modal-head-nested">
-      <button class="icon-btn" type="button" data-action="book-discover" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
-      <div><p class="eyebrow">${esc(venue.categoryLabel)}</p><h2>${esc(venue.name)}</h2>
-        ${venue.tagline ? `<p class="lead">${esc(venue.tagline)}</p>` : ""}</div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
+    ${head}
+
+    ${venue.coverImageUrl ? `<img class="bk-cover" src="${esc(venue.coverImageUrl)}" alt="${esc(venue.name)}">` : ""}
 
     ${venue.description ? `<section class="panel"><p>${esc(venue.description)}</p></section>` : ""}
 
@@ -27792,7 +28353,7 @@ function openBookConfirm(startsAt) {
     </div>
     <section class="settings-list">
       ${settingsRow("What", service.name, "calendar")}
-      ${settingsRow("When", `${formatDate(startsAt)}`, "calendar")}
+      ${settingsRow("When", bookWhenText(startsAt), "calendar")}
       ${settingsRow("How long", `${service.durationMinutes} minutes`, "calendar")}
       ${settingsRow("Cost", service.price ? `R${Number(service.price).toFixed(2)}` : "Free", "wallet")}
     </section>
@@ -27852,11 +28413,16 @@ async function submitBookConfirm(data) {
         : "The business will confirm. Keep this reference."}</p>
     </section>
     <section class="settings-list">
-      ${settingsRow("When", formatDate(made.startsAt), "calendar")}
+      ${settingsRow("When", bookWhenText(made.startsAt), "calendar")}
       ${settingsRow("How many", String(made.partySize), "user")}
     </section>
     <div class="auth-actions">
-      <button class="btn secondary" type="button" data-action="book-discover">${icon("arrow-left")} Back to Book</button>
+      ${store.fromLink
+        // Arrived on the business's own link, so "Back to Book" would send a
+        // person with no account into a signed-in screen. Their way back is the
+        // place they were booking.
+        ? `<button class="btn secondary" type="button" data-action="book-venue:${esc(venue.slug)}">${icon("arrow-left")} Back to ${esc(venue.name)}</button>`
+        : `<button class="btn secondary" type="button" data-action="book-discover">${icon("arrow-left")} Back to Book</button>`}
     </div>
   `);
 }

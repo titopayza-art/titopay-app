@@ -243,9 +243,9 @@ END $$;
 // one deployment and not another. This is not hypothetical: it is exactly the
 // bug that shipped in business-verification-service and had to be repaired.
 const LATER_COLUMNS_SQL = `
--- (empty: no Book migration has added a column yet. Add ALTER TABLE ... ADD
---  COLUMN IF NOT EXISTS lines here in the SAME commit as any future migration.)
-SELECT 1;
+-- 20260820_book_venue_images
+ALTER TABLE book_venues ADD COLUMN IF NOT EXISTS cover_image_url TEXT;
+ALTER TABLE book_venues ADD COLUMN IF NOT EXISTS gallery JSONB NOT NULL DEFAULT '[]'::JSONB;
 `;
 
 async function build() {

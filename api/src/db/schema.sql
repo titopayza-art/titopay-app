@@ -2532,3 +2532,10 @@ BEGIN
     RAISE NOTICE 'business_profiles is not present yet; Book''s foreign keys to it will be attached by ensureBookSchema().';
   END IF;
 END $$;
+
+-- Book venue images. Byte for byte identical to
+-- src/db/migrations/20260820_book_venue_images.up.sql.
+ALTER TABLE book_venues
+  ADD COLUMN IF NOT EXISTS cover_image_url TEXT;
+ALTER TABLE book_venues
+  ADD COLUMN IF NOT EXISTS gallery JSONB NOT NULL DEFAULT '[]'::JSONB;
