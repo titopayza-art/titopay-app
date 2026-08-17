@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 65;
+const API_BUILD = 66;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  66: "The booking engine, not yet wired to any route. Services, resources, "
+      + "opening hours, computed availability and concurrency-safe booking exist "
+      + "as services and are covered by 18 tests, but no endpoint calls them, so "
+      + "this build behaves exactly like 65 for every user. Book is still "
+      + "coming_soon: visible with a soon badge, cannot be bought. Deploying is "
+      + "safe and changes nothing anyone can see.",
   65: "No dead ends. Book's tile is coming_soon, so no business can pay R250 for "
       + "a booking page that customers cannot reach yet, and the business screen "
       + "no longer shows a link that resolves to a bare 404. The cause was "
