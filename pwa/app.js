@@ -4667,6 +4667,59 @@ async function handleAction(action, actionElement = null) {
     await shareTicketingEvent(action.slice("event-share:".length));
     return;
   }
+  if (action === "business-profile-hub") { await openBusinessProfileHub(); return; }
+  if (action === "business-profile-industry") { openBusinessIndustryPicker(); return; }
+  if (action === "business-profile-sources") { openBusinessSourcesPicker(); return; }
+  if (String(action || "").startsWith("business-industry-pick:")) {
+    const store = businessProfileState();
+    const key = action.slice("business-industry-pick:".length);
+    // Held as a draft so "Something else" can reveal its text box without
+    // saving a half-answer, and so Back discards rather than commits.
+    store.draft = { ...(store.draft || {}), industry: key };
+    if (key !== "other") store.draft.industryOther = "";
+    else store.draft.industryOther = readPickerFreeText("industry-other") || store.draft.industryOther || "";
+    openBusinessIndustryPicker();
+    return;
+  }
+  if (action === "business-industry-save") {
+    const store = businessProfileState();
+    const draft = store.draft || {};
+    const industry = draft.industry !== undefined ? draft.industry : (store.profile || {}).industry;
+    if (!industry) { showToast("Choose what the business does.", "error"); return; }
+    await saveBusinessCommercialProfile(
+      { industry, industryOther: readPickerFreeText("industry-other") },
+      document.querySelector('[data-action="business-industry-save"]')
+    );
+    return;
+  }
+  if (String(action || "").startsWith("business-source-toggle:")) {
+    const store = businessProfileState();
+    const key = action.slice("business-source-toggle:".length);
+    const profile = store.profile || {};
+    const max = (profile.options && profile.options.maxSourcesOfFunds) || 5;
+    const current = store.draft && store.draft.sourcesOfFunds
+      ? store.draft.sourcesOfFunds.slice()
+      : (profile.sourcesOfFunds || []).slice();
+    const at = current.indexOf(key);
+    if (at >= 0) current.splice(at, 1);
+    else if (current.length >= max) { showToast(`You can pick up to ${max}.`, "error"); return; }
+    else current.push(key);
+    store.draft = { ...(store.draft || {}), sourcesOfFunds: current,
+      sourceOfFundsOther: readPickerFreeText("source-other") || (store.draft || {}).sourceOfFundsOther || "" };
+    openBusinessSourcesPicker();
+    return;
+  }
+  if (action === "business-sources-save") {
+    const store = businessProfileState();
+    const draft = store.draft || {};
+    const sources = draft.sourcesOfFunds || (store.profile || {}).sourcesOfFunds || [];
+    if (!sources.length) { showToast("Choose at least one source of funds.", "error"); return; }
+    await saveBusinessCommercialProfile(
+      { sourcesOfFunds: sources, sourceOfFundsOther: readPickerFreeText("source-other") },
+      document.querySelector('[data-action="business-sources-save"]')
+    );
+    return;
+  }
   if (String(action || "").startsWith("event-copy-link:")) {
     await copyTicketingEventLink(action.slice("event-copy-link:".length));
     return;
@@ -25389,10 +25442,216 @@ function openProfileVerificationModal() {
     </section>
     <section class="auth-actions">
       <button class="btn secondary" type="button" data-action="profile-details">${icon("user")} Update details</button>
+      ${state.accountType === "business"
+        ? `<button class="btn secondary" type="button" data-action="business-profile-hub">${icon("store")} Business details</button>`
+        : ""}
       <button class="btn primary" type="button" data-action="fica-verification">${icon("shield")} FICA verification</button>
     </section>
   `);
 }
+
+/* ==========================================================================
+   BUSINESS DETAILS: what the business does, and where its money comes from.
+
+   THREE SCREENS, AND EVERY ONE OF THEM HAS A BACK ARROW. The hub lists the two
+   answers; tapping either opens a picker; the picker returns to the hub. A
+   single close X on a nested screen throws the person out of the whole flow
+   and loses the step they were half way through, which is the thing this was
+   reported for.
+
+   NOTHING HERE IS VERIFICATION. These are the business describing itself. The
+   copy says so plainly, because a screen that looks like a compliance form
+   makes people answer defensively and the answers stop being worth having.
+   ========================================================================== */
+function businessProfileState() {
+  state.businessProfile = state.businessProfile || { loading: false, profile: null, businessId: null, draft: null };
+  return state.businessProfile;
+}
+// The business this person is acting for. `listMyBusinesses` is what the
+// verification screens already use, so this adds no new idea of ownership.
+async function resolveOwnBusinessId() {
+  const store = businessProfileState();
+  if (store.businessId) return store.businessId;
+  const result = await api("/v1/business/verification").catch(() => null);
+  const first = (result && Array.isArray(result.businesses) ? result.businesses : [])[0];
+  store.businessId = first ? (first.id || first.businessId) : null;
+  return store.businessId;
+}
+async function openBusinessProfileHub() {
+  const store = businessProfileState();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Profile</p><h2>Business details</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list"><article class="activity-item"><div><p>Loading your business details…</p></div></article></section>
+  `);
+  try {
+    const businessId = await resolveOwnBusinessId();
+    if (!businessId) {
+      openInfoModal("No business yet",
+        "Register your business under FICA verification first, then you can tell us what it does.");
+      return;
+    }
+    const result = await api(`/v1/business/verification/businesses/${encodeURIComponent(businessId)}/commercial-profile`);
+    store.profile = result.profile;
+    store.draft = null;
+    renderBusinessProfileHub();
+  } catch (error) {
+    openInfoModal("Business details unavailable",
+      error.friendlyMessage || "TitoPay could not load your business details right now. Please try again.");
+  }
+}
+function renderBusinessProfileHub() {
+  const store = businessProfileState();
+  const profile = store.profile || {};
+  const industryText = profile.industry
+    ? (profile.industry === "other" && profile.industryOther ? profile.industryOther : profile.industryLabel)
+    : "Not set";
+  const sources = profile.sourcesOfFunds || [];
+  const sourcesText = sources.length
+    ? `${sources.length} selected · ${profile.sourcesOfFundsLabels[0]} is primary`
+    : "Not set";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Profile</p><h2>Business details</h2>
+        <p class="lead">${esc(profile.businessName || "Your business")}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="integration-note" aria-label="Why TitoPay asks">
+      <p>${icon("store")} <span>Telling us what your business does helps TitoPay build the right tools for you. These answers are not a verification step and they do not change your FICA status.</span></p>
+    </section>
+    <section class="settings-list">
+      <button class="settings-row-button" type="button" data-action="business-profile-industry">
+        <span class="icon-bubble">${icon("store")}</span>
+        <span class="settings-row-body">
+          <strong>Nature of business</strong>
+          <small>${esc(industryText)}</small>
+        </span>
+        <span class="settings-row-chevron">${icon("arrow-right")}</span>
+      </button>
+      <button class="settings-row-button" type="button" data-action="business-profile-sources">
+        <span class="icon-bubble">${icon("wallet")}</span>
+        <span class="settings-row-body">
+          <strong>Source of funds</strong>
+          <small>${esc(sourcesText)}</small>
+        </span>
+        <span class="settings-row-chevron">${icon("arrow-right")}</span>
+      </button>
+    </section>
+    ${profile.updatedAt ? `<p class="muted business-profile-stamp">Last confirmed ${esc(formatDate(profile.updatedAt))}</p>` : ""}
+  `);
+}
+// THE BACK ARROW LIVES HERE. Every picker below opens with one, and it returns
+// to the hub rather than closing the flow.
+function pickerHead(title, subtitle) {
+  return `
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="business-profile-hub"
+        aria-label="Back to business details" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">Business details</p><h2>${esc(title)}</h2>
+        ${subtitle ? `<p class="lead">${esc(subtitle)}</p>` : ""}</div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>`;
+}
+function openBusinessIndustryPicker() {
+  const store = businessProfileState();
+  const profile = store.profile || {};
+  const options = (profile.options && profile.options.industries) || [];
+  const selected = store.draft && store.draft.industry !== undefined ? store.draft.industry : profile.industry;
+  openModal(`
+    ${pickerHead("Nature of business", "Pick the one that fits best")}
+    <section class="settings-list picker-list">
+      ${options.map((option) => `
+        <button class="picker-option${option.key === selected ? " is-selected" : ""}" type="button"
+          data-action="business-industry-pick:${esc(option.key)}"
+          aria-pressed="${option.key === selected ? "true" : "false"}">
+          <span class="picker-option-body">
+            <strong>${esc(option.label)}</strong>
+            <small>${esc(option.hint)}</small>
+          </span>
+          ${option.key === selected ? `<span class="picker-option-tick">${icon("check-circle")}</span>` : ""}
+        </button>`).join("")}
+    </section>
+    ${selected === "other" ? `
+    <section class="panel">
+      <div class="field"><label for="industry-other">Tell us what the business does</label>
+        <input id="industry-other" name="industryOther" maxlength="120"
+          value="${esc((store.draft && store.draft.industryOther) || profile.industryOther || "")}"
+          placeholder="For example: mobile car detailing"></div>
+    </section>` : ""}
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="business-industry-save">${icon("check-circle")} Save</button>
+      <button class="btn secondary" type="button" data-action="business-profile-hub">${icon("arrow-left")} Back</button>
+    </div>
+  `);
+}
+function openBusinessSourcesPicker() {
+  const store = businessProfileState();
+  const profile = store.profile || {};
+  const options = (profile.options && profile.options.sourcesOfFunds) || [];
+  const max = (profile.options && profile.options.maxSourcesOfFunds) || 5;
+  const chosen = store.draft && store.draft.sourcesOfFunds
+    ? store.draft.sourcesOfFunds
+    : (profile.sourcesOfFunds || []).slice();
+  openModal(`
+    ${pickerHead("Source of funds", `Pick up to ${max}. The first one you choose is your main source.`)}
+    ${chosen.length ? `<section class="integration-note" aria-label="Primary source">
+      <p>${icon("wallet")} <span><strong>Main source:</strong> ${esc((options.find((o) => o.key === chosen[0]) || {}).label || chosen[0])}</span></p>
+    </section>` : ""}
+    <section class="settings-list picker-list">
+      ${options.map((option) => {
+        const index = chosen.indexOf(option.key);
+        const isChosen = index >= 0;
+        return `
+        <button class="picker-option${isChosen ? " is-selected" : ""}" type="button"
+          data-action="business-source-toggle:${esc(option.key)}"
+          aria-pressed="${isChosen ? "true" : "false"}">
+          <span class="picker-option-body">
+            <strong>${esc(option.label)}</strong>
+            <small>${esc(option.hint)}</small>
+          </span>
+          ${isChosen ? `<span class="picker-option-rank">${index === 0 ? "Main" : index + 1}</span>` : ""}
+        </button>`;
+      }).join("")}
+    </section>
+    ${chosen.includes("other") ? `
+    <section class="panel">
+      <div class="field"><label for="source-other">Tell us where the money comes from</label>
+        <input id="source-other" name="sourceOfFundsOther" maxlength="120"
+          value="${esc((store.draft && store.draft.sourceOfFundsOther) || profile.sourceOfFundsOther || "")}"
+          placeholder="For example: royalties from a licence"></div>
+    </section>` : ""}
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="business-sources-save">${icon("check-circle")} Save</button>
+      <button class="btn secondary" type="button" data-action="business-profile-hub">${icon("arrow-left")} Back</button>
+    </div>
+  `);
+}
+// Saving reads the free text out of the DOM before the modal is replaced, or it
+// is lost the moment the hub renders.
+function readPickerFreeText(id) {
+  const input = document.querySelector(`#${id}`);
+  return input ? String(input.value || "").trim() : "";
+}
+async function saveBusinessCommercialProfile(patch, button) {
+  const store = businessProfileState();
+  setButtonBusy(button, true);
+  try {
+    const result = await api(
+      `/v1/business/verification/businesses/${encodeURIComponent(store.businessId)}/commercial-profile`,
+      { method: "PUT", body: patch }
+    );
+    store.profile = result.profile;
+    store.draft = null;
+    renderBusinessProfileHub();
+    showToast("Business details saved.", "success");
+  } catch (error) {
+    setButtonBusy(button, false);
+    showToast(error.friendlyMessage || "Those details could not be saved. Please try again.", "error");
+  }
+}
+
 function openFicaVerificationModal() {
   const user = state.user || {};
   const ficaStatus = ficaDisplayStatus(user.ficaStatus || user.fica_status);

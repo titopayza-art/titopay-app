@@ -19,10 +19,22 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 60;
+const API_BUILD = 61;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  61: "A business can tell TitoPay what it does and where its money comes from. "
+      + "Two self-declared fields on business_profiles, an industry list written "
+      + "for the businesses that actually use TitoPay rather than a corporate "
+      + "onboarding list, and sources of funds ordered so the first one is the "
+      + "primary. NOT VERIFICATION and not behind the Support approval queue "
+      + "that a business NAME change goes through: a name is identity, this is "
+      + "the business describing itself, and an approval queue would add Support "
+      + "load for answers only the business can give. kyb_status is never "
+      + "touched and a test asserts it. The columns are added by the migration "
+      + "AND by ensureBusinessSchema, because that function creates the table "
+      + "on demand for deployments that have not migrated and would otherwise "
+      + "build it without them.",
   60: "New customers are finally ASKED to verify their email. The whole flow "
       + "existed and was deliberately dormant: a note in register() explained "
       + "that the landing page did not exist, so a \"Verify your email\" message "

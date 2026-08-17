@@ -52,6 +52,7 @@
 const crypto = require("crypto");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
+const reference = require("../config/business-profile-reference");
 const { writeAuditLog } = require("./audit-service");
 // Business assurance is asked of the KYC capability, never of a company.
 const { verifyBusiness, normalizeVerificationStatus } = require("../providers/kyc-provider");
@@ -108,6 +109,20 @@ function ensureBusinessSchema() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`);
+    // THE COMMERCIAL PROFILE COLUMNS, added here as well as in the migration.
+    //
+    // This function exists as the safety net for a deployment that has not run
+    // migrations, and it creates business_profiles with CREATE TABLE IF NOT
+    // EXISTS. That means on a fresh database it would build the table from the
+    // definition above, WITHOUT these columns, and every commercial profile
+    // read would then fail on a missing column. Additive and idempotent, so
+    // running it against a migrated database does nothing.
+    await pool.query("ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS industry TEXT");
+    await pool.query("ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS sources_of_funds JSONB NOT NULL DEFAULT '[]'::JSONB");
+    await pool.query("ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS industry_other TEXT");
+    await pool.query("ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS source_of_funds_other TEXT");
+    await pool.query("ALTER TABLE business_profiles ADD COLUMN IF NOT EXISTS commercial_profile_updated_at TIMESTAMPTZ");
+
     // A registration number identifies ONE entity in one country. This is the
     // business's unique key, and a person's identity document is deliberately
     // not part of it.
@@ -457,8 +472,145 @@ async function businessVerificationOverview(auth) {
   };
 }
 
+
+/* ==========================================================================
+   THE COMMERCIAL PROFILE: what the business does, and where its money is from.
+   ========================================================================== */
+
+// SELF-DECLARED, AND DELIBERATELY NOT BEHIND SUPPORT APPROVAL.
+//
+// Changing a business NAME goes through profile_change_requests and a human,
+// because a name is identity and a silent rename is how an account becomes
+// somebody else's. Industry and source of funds are neither: they are the
+// business describing itself, they prove nothing, and putting them in an
+// approval queue would add Support load for answers only the business can give
+// and would leave the data stale because nobody would bother.
+//
+// So they save directly, are audited, and stamp when they were last confirmed.
+// KYB STATUS IS NOT TOUCHED by any of this. A business that fills this in is
+// not more verified than one that has not, and a test asserts it.
+async function getCommercialProfile(userId, businessId) {
+  await ensureBusinessSchema();
+  const business = await loadAuthorisedBusiness(userId, businessId);
+  return shapeCommercialProfile(business);
+}
+
+function shapeCommercialProfile(row = {}) {
+  const stored = Array.isArray(row.sources_of_funds)
+    ? row.sources_of_funds
+    : (() => { try { return JSON.parse(row.sources_of_funds || "[]"); } catch (_e) { return []; } })();
+  const sources = stored.filter((key) => reference.isSourceOfFunds(key));
+  return {
+    businessId: row.id,
+    businessName: row.business_name,
+    industry: reference.isIndustry(row.industry) ? row.industry : null,
+    industryLabel: reference.industryLabel(row.industry),
+    industryOther: row.industry_other || null,
+    // Order is meaning here: the first entry is the primary source.
+    sourcesOfFunds: sources,
+    primarySourceOfFunds: sources[0] || null,
+    sourcesOfFundsLabels: sources.map((key) => reference.sourceOfFundsLabel(key)),
+    sourceOfFundsOther: row.source_of_funds_other || null,
+    updatedAt: row.commercial_profile_updated_at || null,
+    // What the screens render. Sent with the record so the app never carries its
+    // own copy of the list and the two cannot drift apart.
+    options: {
+      industries: reference.INDUSTRIES,
+      sourcesOfFunds: reference.SOURCES_OF_FUNDS,
+      maxSourcesOfFunds: reference.MAX_SOURCES_OF_FUNDS
+    }
+  };
+}
+
+function cleanFreeText(value) {
+  const text = String(value === undefined || value === null ? "" : value).trim();
+  if (!text) return null;
+  return text.slice(0, reference.FREE_TEXT_MAX);
+}
+
+async function updateCommercialProfile(userId, businessId, payload = {}, meta = {}) {
+  await ensureBusinessSchema();
+  const business = await loadAuthorisedBusiness(userId, businessId);
+
+  // INDUSTRY. Optional, but if given it must be one TitoPay actually offers:
+  // an unknown key would be stored and then rendered as nothing at all.
+  let industry = business.industry;
+  let industryOther = business.industry_other;
+  if (payload.industry !== undefined) {
+    const key = String(payload.industry || "").trim();
+    if (key && !reference.isIndustry(key)) throw new AppError(400, "Choose an industry from the list.");
+    industry = key || null;
+    industryOther = key === reference.FREE_TEXT_KEY ? cleanFreeText(payload.industryOther) : null;
+    if (key === reference.FREE_TEXT_KEY && !industryOther) {
+      throw new AppError(400, "Tell us what the business does.");
+    }
+  }
+
+  // SOURCES OF FUNDS. Order is preserved because the first one is the primary,
+  // and duplicates are collapsed rather than refused: picking the same thing
+  // twice is a slip, not an error worth stopping somebody for.
+  let sources = null;
+  let sourceOther = business.source_of_funds_other;
+  if (payload.sourcesOfFunds !== undefined) {
+    const submitted = Array.isArray(payload.sourcesOfFunds) ? payload.sourcesOfFunds : [];
+    const seen = new Set();
+    sources = [];
+    for (const raw of submitted) {
+      const key = String(raw || "").trim();
+      if (!key) continue;
+      if (!reference.isSourceOfFunds(key)) throw new AppError(400, "Choose a source of funds from the list.");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      sources.push(key);
+    }
+    if (sources.length > reference.MAX_SOURCES_OF_FUNDS) {
+      throw new AppError(400, `You can add up to ${reference.MAX_SOURCES_OF_FUNDS} sources of funds.`);
+    }
+    sourceOther = sources.includes(reference.FREE_TEXT_KEY)
+      ? cleanFreeText(payload.sourceOfFundsOther)
+      : null;
+    if (sources.includes(reference.FREE_TEXT_KEY) && !sourceOther) {
+      throw new AppError(400, "Tell us where the money comes from.");
+    }
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE business_profiles
+        SET industry = $2,
+            industry_other = $3,
+            sources_of_funds = COALESCE($4::jsonb, sources_of_funds),
+            source_of_funds_other = $5,
+            commercial_profile_updated_at = NOW(),
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING *`,
+    [businessId, industry, industryOther, sources === null ? null : JSON.stringify(sources), sourceOther]
+  );
+
+  await writeAuditLog({
+    actorType: "customer",
+    actorId: userId,
+    action: "business_commercial_profile_updated",
+    entityType: "business_profile",
+    entityId: businessId,
+    ipAddress: meta.ipAddress,
+    userAgent: meta.userAgent,
+    // The keys, never the free text: a customer's own words about their
+    // business are not something to copy into a second place by default.
+    metadata: {
+      industry: industry || null,
+      sourcesOfFunds: sources === null ? undefined : sources,
+      businessName: business.business_name
+    }
+  }).catch(() => {});
+
+  return shapeCommercialProfile(rows[0]);
+}
+
 module.exports = {
   BUSINESS_TYPES,
+  getCommercialProfile,
+  updateCommercialProfile,
   REPRESENTATIVE_ROLES,
   KYB_STATUSES,
   ensureBusinessSchema,

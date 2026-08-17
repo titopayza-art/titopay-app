@@ -15581,3 +15581,72 @@ button.is-busy.btn-primary::after {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* BUSINESS DETAILS: the hub rows and the two pickers.
+   A nested modal head puts the back arrow first, the title next and the close
+   X last, so the way out of a step and the way out of the flow are visibly
+   different things. */
+.modal-head-nested { display: flex; align-items: flex-start; gap: 10px; }
+.modal-head-nested > div { flex: 1 1 auto; min-width: 0; }
+
+.settings-row-button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid var(--line, #dbe6f5);
+  border-radius: 14px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-row-button + .settings-row-button { margin-top: 8px; }
+.settings-row-button:hover { border-color: var(--accent, #1457ff); }
+.settings-row-button:focus-visible { outline: 3px solid var(--accent, #1457ff); outline-offset: 2px; }
+.settings-row-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.settings-row-body small { color: var(--muted, #5d6d8a); }
+.settings-row-chevron { flex: 0 0 auto; color: var(--muted, #5d6d8a); display: inline-flex; }
+.settings-row-chevron svg { width: 18px; height: 18px; }
+
+.picker-list { display: grid; gap: 8px; }
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line, #dbe6f5);
+  border-radius: 14px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.picker-option:hover { border-color: var(--accent, #1457ff); }
+.picker-option:focus-visible { outline: 3px solid var(--accent, #1457ff); outline-offset: 2px; }
+/* Selection is a border, a tint AND a mark, never colour on its own. */
+.picker-option.is-selected {
+  border-color: var(--accent, #1457ff);
+  background: rgba(20, 87, 255, 0.06);
+}
+.picker-option-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.picker-option-body small { color: var(--muted, #5d6d8a); font-size: 0.82rem; }
+.picker-option-tick { flex: 0 0 auto; color: var(--accent, #1457ff); display: inline-flex; }
+.picker-option-tick svg { width: 20px; height: 20px; }
+/* The order matters on sources of funds, so the rank is shown as a word or a
+   number rather than left for somebody to infer from the list order. */
+.picker-option-rank {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent, #1457ff);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.business-profile-stamp { margin-top: 12px; font-size: 0.82rem; }

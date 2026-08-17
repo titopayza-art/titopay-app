@@ -8,6 +8,10 @@
 //   POST /v1/business/verification/businesses register a business entity
 //   POST /v1/business/verification/businesses/:id/submit
 //                                             submit that entity for KYB
+//   GET  /v1/business/verification/businesses/:id/commercial-profile
+//   PUT  /v1/business/verification/businesses/:id/commercial-profile
+//                                             what the business does and where
+//                                             its money comes from
 //
 // Nothing here accepts an identity document. A person verifies themselves once
 // at /v1/compliance/basic-verify, and every business they are authorised on
@@ -21,7 +25,9 @@ const { requireAuth } = require("../middleware/auth");
 const {
   businessVerificationOverview,
   createBusinessProfile,
-  submitBusinessVerification
+  submitBusinessVerification,
+  getCommercialProfile,
+  updateCommercialProfile
 } = require("../services/business-verification-service");
 
 const router = express.Router();
@@ -65,6 +71,41 @@ router.post("/businesses/:id/submit", async (req, res, next) => {
   try {
     requireCustomer(req);
     res.json({ ok: true, ...(await submitBusinessVerification(actor(req), req.params.id)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// WHAT THE BUSINESS DOES, AND WHERE ITS MONEY COMES FROM.
+//
+// Self-declared, saved directly, and NOT routed through the Support approval
+// queue that a business NAME change goes through. A name is identity; this is
+// the business describing itself, it proves nothing, and an approval queue
+// would add Support load for answers only the business can give.
+//
+// Authorisation is the same as every other route here: the service resolves the
+// business through business_representatives, so a person can only read or
+// change a business they are actually on.
+router.get("/businesses/:id/commercial-profile", async (req, res, next) => {
+  try {
+    requireCustomer(req);
+    const profile = await getCommercialProfile(req.auth.userId, req.params.id);
+    res.json({ ok: true, profile });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/businesses/:id/commercial-profile", async (req, res, next) => {
+  try {
+    requireCustomer(req);
+    const profile = await updateCommercialProfile(
+      req.auth.userId,
+      req.params.id,
+      req.body || {},
+      { ipAddress: req.ip, userAgent: req.get("user-agent") }
+    );
+    res.json({ ok: true, profile });
   } catch (error) {
     next(error);
   }
