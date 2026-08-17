@@ -27,8 +27,50 @@ const { requireAuth } = require("../middleware/auth");
 const { AppError } = require("../lib/errors");
 const activation = require("../services/book-activation-service");
 const book = require("../services/book-service");
+const catalogue = require("../services/book-catalogue-service");
+const bookings = require("../services/book-booking-service");
+const publicBook = require("../services/book-public-service");
+const { publicBookingLimiter } = require("../middleware/rate-limits");
 
 const router = express.Router();
+
+// One wrapper so no handler can forget to pass an error to next().
+const handlePublic = (fn) => async (req, res, next) => {
+  try { await fn(req, res); } catch (error) { next(error); }
+};
+
+/* ======================================================= THE PUBLIC PAGE
+ *
+ * DECLARED BEFORE router.use(requireAuth) ON PURPOSE. A person tapping a
+ * business's link on WhatsApp has no TitoPay account and no token, and
+ * requiring one would throw away most of the reach that link exists to give.
+ * Everything below this block is signed-in only.
+ *
+ * Cached for five minutes and rate limited, because this is the one Book
+ * surface the open internet can reach and it must not become a way to slow the
+ * rest of TitoPay down.
+ */
+router.get("/public/venues/:slug", handlePublic(async (req, res) => {
+  const venue = await publicBook.publicVenue(req.params.slug);
+  res.set("Cache-Control", "public, max-age=300");
+  res.json({ ok: true, venue });
+}));
+
+router.get("/public/venues/:slug/availability", handlePublic(async (req, res) => {
+  const result = await publicBook.publicAvailability(
+    req.params.slug, String(req.query.serviceId || ""), String(req.query.date || ""));
+  // Shorter than the venue itself: a time that was open a minute ago may not be.
+  res.set("Cache-Control", "public, max-age=30");
+  res.json({ ok: true, ...result });
+}));
+
+// The only public WRITE in Book. Behind the same limiter the other public
+// contact endpoints use, because an unauthenticated write is a spam surface.
+router.post("/public/venues/:slug/bookings", publicBookingLimiter, handlePublic(async (req, res) => {
+  const made = await publicBook.publicBooking(req.params.slug, req.body || {},
+    { ipAddress: req.ip, userAgent: req.get("user-agent") });
+  res.status(201).json({ ok: true, booking: made });
+}));
 
 router.use(requireAuth);
 
@@ -106,6 +148,94 @@ router.post("/venues/:id/status", handle(async (req, res) => {
   requireBusiness(req);
   const venue = await book.setVenueStatus(actorOf(req), req.params.id, String(req.body?.status || ""), metaOf(req));
   res.json({ ok: true, venue });
+}));
+
+/* ------------------------------------------------- what a venue offers */
+
+router.get("/venues/:id/services", handle(async (req, res) => {
+  requireBusiness(req);
+  res.json({ ok: true, services: await catalogue.listServices(req.auth.userId, req.params.id) });
+}));
+
+router.post("/venues/:id/services", handle(async (req, res) => {
+  requireBusiness(req);
+  const service = await catalogue.createService(actorOf(req), req.params.id, req.body || {}, metaOf(req));
+  res.status(201).json({ ok: true, service });
+}));
+
+router.patch("/venues/:id/services/:serviceId", handle(async (req, res) => {
+  requireBusiness(req);
+  const service = await catalogue.updateService(
+    actorOf(req), req.params.id, req.params.serviceId, req.body || {}, metaOf(req));
+  res.json({ ok: true, service });
+}));
+
+router.get("/venues/:id/resources", handle(async (req, res) => {
+  requireBusiness(req);
+  res.json({ ok: true, resources: await catalogue.listResources(req.auth.userId, req.params.id) });
+}));
+
+router.post("/venues/:id/resources", handle(async (req, res) => {
+  requireBusiness(req);
+  const resource = await catalogue.createResource(actorOf(req), req.params.id, req.body || {}, metaOf(req));
+  res.status(201).json({ ok: true, resource });
+}));
+
+router.patch("/venues/:id/resources/:resourceId", handle(async (req, res) => {
+  requireBusiness(req);
+  const resource = await catalogue.updateResource(
+    actorOf(req), req.params.id, req.params.resourceId, req.body || {}, metaOf(req));
+  res.json({ ok: true, resource });
+}));
+
+/* --------------------------------------------------------- opening hours */
+
+router.get("/venues/:id/opening-hours", handle(async (req, res) => {
+  requireBusiness(req);
+  res.json({ ok: true, openingHours: await catalogue.listOpeningHours(req.auth.userId, req.params.id) });
+}));
+
+// The whole week at once, deliberately: a screen edits the WEEK, and sending
+// only what changed leaves a removed Sunday behind.
+router.put("/venues/:id/opening-hours", handle(async (req, res) => {
+  requireBusiness(req);
+  const openingHours = await catalogue.setOpeningHours(
+    actorOf(req), req.params.id, req.body?.openingHours || [], metaOf(req));
+  res.json({ ok: true, openingHours });
+}));
+
+/* -------------------------------------------------------------- bookings */
+
+router.get("/venues/:id/bookings", handle(async (req, res) => {
+  requireBusiness(req);
+  await book.canManageVenue(req.auth.userId, req.params.id);
+  const statuses = String(req.query.status || "").split(",").map((s) => s.trim()).filter(Boolean);
+  res.json({ ok: true, bookings: await bookings.listVenueBookings(req.params.id, {
+    from: req.query.from || null, to: req.query.to || null,
+    statuses: statuses.length ? statuses : null
+  })});
+}));
+
+router.post("/venues/:id/bookings/:bookingId/status", handle(async (req, res) => {
+  requireBusiness(req);
+  // Ownership FIRST: without this a business could move a booking belonging to
+  // somebody else's venue simply by knowing its id.
+  await book.canManageVenue(req.auth.userId, req.params.id);
+  const { rows } = await require("../db/pool").pool.query(
+    "SELECT id FROM book_bookings WHERE id = $1 AND venue_id = $2 LIMIT 1",
+    [req.params.bookingId, req.params.id]);
+  if (!rows[0]) throw new AppError(404, "That booking was not found.");
+  const updated = await bookings.setBookingStatus(
+    req.params.bookingId, String(req.body?.status || ""), actorOf(req),
+    { ...metaOf(req), reason: req.body?.reason });
+  res.json({ ok: true, booking: updated });
+}));
+
+/* ------------------------------------------------- a customer's own list */
+
+router.get("/my-bookings", handle(async (req, res) => {
+  requireCustomer(req);
+  res.json({ ok: true, bookings: await bookings.listCustomerBookings(req.auth.userId) });
 }));
 
 module.exports = router;

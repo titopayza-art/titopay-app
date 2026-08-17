@@ -19,10 +19,19 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 66;
+const API_BUILD = 67;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  67: "Book is LIVE and no longer coming_soon, because the link finally resolves. "
+      + "A person with no TitoPay account can open a business's link, see the "
+      + "place and its open times, and book - proven by ten tests that send no "
+      + "Authorization header at all. The public endpoints are declared BEFORE "
+      + "router.use(requireAuth), or a crawler and a customer would both get 401. "
+      + "A booking-appropriate rate limiter was added: the first version reused "
+      + "publicContactLimiter at five per fifteen minutes, which SA mobile "
+      + "carriers would exhaust with strangers on the same NAT. Requires "
+      + "db:apply-migrations and app.zip v436 together.",
   66: "The booking engine, not yet wired to any route. Services, resources, "
       + "opening hours, computed availability and concurrency-safe booking exist "
       + "as services and are covered by 18 tests, but no endpoint calls them, so "

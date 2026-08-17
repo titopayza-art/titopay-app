@@ -27468,8 +27468,9 @@ function renderBookHome() {
     </div>
 
     <section class="integration-note">
-      <p>${icon("store")} <span>Your details are saved. The page customers book on is
-        being built next, and TitoPay will send you the link when it is live.</span></p>
+      <p>${icon("store")} <span>${venue.status === "published"
+        ? "Your page is live. Share your link and bookings appear here."
+        : "Your page is a draft. Publish it and your link goes live."}</span></p>
     </section>
 
     <section class="empty-state">
@@ -27478,9 +27479,12 @@ function renderBookHome() {
     </section>
 
     <section class="settings-list">
-      ${settingsRow("Your booking link",
-        "Not ready to share yet. We will give you the link once your page is live.",
-        "share")}
+      <button class="settings-row-button" type="button" data-action="book-copy-link:${esc(venue.slug)}">
+        <span class="icon-bubble">${icon("share")}</span>
+        <span class="settings-row-body"><strong>Your booking link</strong>
+          <small>${esc(`${location.origin}/book/${venue.slug}`)}</small></span>
+        <span class="settings-row-chevron">${icon("copy")}</span>
+      </button>
       <button class="settings-row-button" type="button" data-action="book-venue-open:${esc(venue.id)}">
         <span class="icon-bubble">${icon("store")}</span>
         <span class="settings-row-body"><strong>Business details</strong><small>${esc(venue.categoryLabel)}${venue.address && venue.address.city ? ` · ${esc(venue.address.city)}` : ""}</small></span>

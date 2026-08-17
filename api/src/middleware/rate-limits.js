@@ -235,6 +235,26 @@ const generalLimiter = rateLimit({
   max: generalLimitMax()
 });
 
+// PUBLIC BOOKINGS ARE NOT A CONTACT FORM, and the difference matters.
+//
+// The first version of Book's public booking endpoint reused
+// publicContactLimiter, which allows FIVE requests per fifteen minutes per
+// client key. That is right for "send this business a message" and wrong for
+// "book a table": South African mobile carriers put thousands of subscribers
+// behind a handful of addresses, so five bookings per fifteen minutes would be
+// consumed by strangers on the same network and real customers would be turned
+// away. A restaurant's own wifi has the same problem.
+//
+// Twenty is chosen because a booking is already a poor spam target: it needs a
+// published venue slug, an active service, a genuinely open slot and a contact
+// detail, and a fake booking consumes a real slot that the business can cancel
+// and see. The global 120-per-minute limiter still applies underneath.
+const publicBookingLimiter = rateLimit({
+  ...commonLimiterOptions,
+  windowMs: SENSITIVE_WINDOW_MS,
+  max: 20
+});
+
 const publicContactLimiter = rateLimit({
   ...commonLimiterOptions,
   windowMs: SENSITIVE_WINDOW_MS,
@@ -248,6 +268,7 @@ module.exports = {
   otpLimiter,
   generalLimiter,
   publicContactLimiter,
+  publicBookingLimiter,
   registrationLimiter: authLimiter,
   passwordResetLimiter: authLimiter,
   pinLimiter: authLimiter,
