@@ -100,3 +100,51 @@ button.is-busy.btn-primary::after {
 @media (prefers-reduced-motion: reduce) {
   button.is-busy::after { animation: none; border-right-color: currentColor; opacity: 0.7; }
 }
+
+/* MONEY ON HOLD, ON THE WALLET CARD.
+   Shown only when there is a reserve, so it never becomes furniture.
+
+   WHITE ON THE CARD, NOT AMBER. The first version used the warning colour, and
+   rendering it showed why that was wrong twice over: amber text on the blue
+   wallet card is about 2:1 contrast, which fails outright, and a coloured alert
+   row on a wallet card reads as a fault when held money is not a fault. It is
+   money in transit. So it borrows the card's own treatment, the same white on
+   translucent white the Wallet ID pill already uses, and carries a clock icon
+   plus the words "on hold" to say what it is. The state is never colour alone. */
+.wallet-held-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin: -4px 0 12px;
+  padding: 9px 13px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 14px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.wallet-held-line:hover { background: rgba(255, 255, 255, 0.2); }
+.wallet-held-line:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+.wallet-held-icon { display: inline-flex; flex: 0 0 auto; }
+.wallet-held-icon svg { width: 15px; height: 15px; }
+.wallet-held-text { flex: 1 1 auto; min-width: 0; }
+.wallet-held-text strong {
+  color: #fff;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.wallet-held-hint {
+  flex: 0 0 auto;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

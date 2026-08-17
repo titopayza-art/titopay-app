@@ -1794,6 +1794,23 @@ function dashboardView() {
             <div class="wallet-balance">${state.loading && !state.wallets.length ? '<span class="skeleton skeleton-balance" aria-hidden="true"></span>' : displayMoney(wallet ? wallet.available_balance : undefined)}</div>
             <button class="balance-toggle" type="button" data-action="toggle-balance" aria-label="${state.balanceHidden ? "Show wallet balance" : "Hide wallet balance"}">${icon(state.balanceHidden ? "eye" : "eye-off")}</button>
           </div>
+          ${(() => {
+            // ONLY WHEN THERE IS SOMETHING HELD. A permanent "R0.00 on hold"
+            // row would be noise on every screen and would train people to
+            // stop reading it, which is the opposite of the point.
+            //
+            // It follows the eye toggle: a customer who has hidden their
+            // balance has hidden this too, because it is the same information.
+            const held = walletHeldBalance();
+            if (held === null) return "";
+            return `
+          <button class="wallet-held-line" type="button" data-route="activity"
+                  aria-label="${state.balanceHidden ? "Money on hold. Show balance to see the amount. Opens Activity." : `${money(held)} on hold. Opens Activity.`}">
+            <span class="wallet-held-icon">${icon("clock")}</span>
+            <span class="wallet-held-text"><strong>${displayMoney(held)}</strong> on hold</span>
+            <span class="wallet-held-hint">See why</span>
+          </button>`;
+          })()}
           <div class="wallet-meta-line">
             <span>Wallet ID</span>
             <strong>${esc(displayWalletId(wallet || {}))}</strong>
@@ -7826,6 +7843,25 @@ function walletAvailableBalance() {
   const raw = wallet ? (wallet.available_balance ?? wallet.availableBalance ?? wallet.balance) : null;
   const value = Number(raw);
   return Number.isFinite(value) ? value : null;
+}
+// MONEY THAT IS YOURS BUT NOT SPENDABLE YET.
+//
+// A withdrawal reserves the amount before the payout provider is called, so the
+// available balance drops the moment it is submitted. Nothing on any screen
+// accounted for the difference: a customer withdrawing R500 watched R500 leave
+// the number at the top of the app with no explanation anywhere, which is the
+// one "where did my money go?" moment left in the product.
+//
+// The reserve has always been in `wallets.reserved_balance` and has always been
+// returned by the wallet endpoint. It was simply never read. This reads it, and
+// like `walletAvailableBalance` above it NEVER GUESSES: an absent or unreadable
+// value returns null and nothing is shown, because inventing a hold would be
+// worse than not mentioning one.
+function walletHeldBalance() {
+  const wallet = primaryWallet();
+  const raw = wallet ? (wallet.reserved_balance ?? wallet.reservedBalance) : null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 function quickAmountLabel(amount) {
   const value = Number(amount) || 0;
