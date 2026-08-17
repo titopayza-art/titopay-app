@@ -30,6 +30,7 @@ const flags = require("../src/config/banking-flags");
 const banking = require("../src/services/banking-service");
 const { registerProvider, CAPABILITIES } = require("../src/providers");
 const { pool } = require("../src/db/pool");
+const approvalFixture = require("./banking-approval-fixture");
 
 const API = path.join(__dirname, "..");
 const CAPABILITY = "CUSTOMER_PAYMENT_INITIATION";
@@ -116,6 +117,7 @@ function runtimeEnv(key, { banking: bankingEnvironment, deployment }) {
     BANKING_INTEGRATION_ENABLED: "true",
     BANKING_PROVIDER: key,
     TITOPAY_ENV: deployment,
+    BANKING_APPROVAL_SIGNING_KEY: approvalFixture.SIGNING_KEY,
     [flags.capabilityFlagName(key, CAPABILITY)]: "true"
   };
   if (bankingEnvironment !== undefined) env.BANKING_ENVIRONMENT = bankingEnvironment;
@@ -123,14 +125,7 @@ function runtimeEnv(key, { banking: bankingEnvironment, deployment }) {
 }
 
 async function approve(provider, environment) {
-  await pool.query(
-    `INSERT INTO banking_capability_approvals
-       (provider, capability, environment, approved, approved_at, approval_reference)
-     VALUES ($1,$2,$3,TRUE,NOW(),'FIXTURE')
-     ON CONFLICT (provider, capability, environment)
-     DO UPDATE SET approved = TRUE, revoked_at = NULL`,
-    [provider, CAPABILITY, environment]
-  );
+  await approvalFixture.grantApproval({ provider, capability: CAPABILITY, environment });
 }
 
 async function clearApprovals(provider) {

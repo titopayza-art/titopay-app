@@ -27,6 +27,9 @@ const states = require("../src/lib/banking-state");
 const flags = require("../src/config/banking-flags");
 const banking = require("../src/services/banking-service");
 const { pool } = require("../src/db/pool");
+// Gate 6 now requires an attributable, signed approval. The shared fixture
+// produces one; a bare row is no longer an approval, deliberately.
+const approvalFixture = require("./banking-approval-fixture");
 
 const API = path.join(__dirname, "..");
 const read = (...parts) => fs.readFileSync(path.join(API, ...parts), "utf8");
@@ -119,20 +122,14 @@ function openEnvironment(overrides = {}) {
     BANKING_PROVIDER: PROVIDER,
     BANKING_ENVIRONMENT: "staging",
     TITOPAY_ENV: "sandbox",
+    BANKING_APPROVAL_SIGNING_KEY: approvalFixture.SIGNING_KEY,
     [flags.capabilityFlagName(PROVIDER, CAPABILITY)]: "true",
     ...overrides
   };
 }
 
 async function approve(provider, capability, environment) {
-  await pool.query(
-    `INSERT INTO banking_capability_approvals
-       (provider, capability, environment, approved, approved_at, approval_reference)
-     VALUES ($1,$2,$3,TRUE,NOW(),'AUDIT-TEST')
-     ON CONFLICT (provider, capability, environment)
-     DO UPDATE SET approved = TRUE, revoked_at = NULL`,
-    [provider, capability, environment]
-  );
+  await approvalFixture.grantApproval({ provider, capability, environment });
 }
 
 async function clearApprovals(provider) {
@@ -202,6 +199,7 @@ function environmentFor(key, overrides = {}) {
     BANKING_PROVIDER: key,
     BANKING_ENVIRONMENT: "staging",
     TITOPAY_ENV: "sandbox",
+    BANKING_APPROVAL_SIGNING_KEY: approvalFixture.SIGNING_KEY,
     [flags.capabilityFlagName(key, CAPABILITY)]: "true",
     ...overrides
   };
@@ -354,7 +352,9 @@ test("GATE 6 (approval): shut alone -> refused", async () => {
     assert.equal(entry.gates.environmentPermits, true, "environment gate open");
     assert.equal(entry.gates.approved, false, "approval gate shut");
     assert.equal(entry.available, false, "the approval alone must refuse");
-    assert.equal(entry.reason, "NOT_APPROVED");
+    // Since build 59 the approval gate says WHY rather than a generic
+    // "not approved": absent, unsigned, unattributed, uncountersigned or revoked.
+    assert.equal(entry.reason, "APPROVAL_MISSING");
   });
 });
 

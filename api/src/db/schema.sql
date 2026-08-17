@@ -2091,3 +2091,38 @@ CREATE INDEX IF NOT EXISTS idx_banking_events_unprocessed
   WHERE status IN ('received','processing','failed');
 CREATE INDEX IF NOT EXISTS idx_banking_events_intent
   ON banking_provider_events (intent_id, received_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Banking approval attribution and tamper evidence.
+--
+-- Kept identical to
+-- src/db/migrations/20260818_banking_approval_attribution.up.sql, which is what
+-- an EXISTING database applies. This copy is what a NEW one gets.
+--
+-- These columns are what stop a database row from being an approval on its own:
+-- attribution, a signature keyed by a secret held in the SERVER environment and
+-- never in this database, and for production a second, different approver. No
+-- secret is stored here; a signature is a digest of the approval's own facts.
+-- ---------------------------------------------------------------------------
+ALTER TABLE banking_capability_approvals
+  ADD COLUMN IF NOT EXISTS approval_signature TEXT;
+ALTER TABLE banking_capability_approvals
+  ADD COLUMN IF NOT EXISTS signature_algorithm TEXT;
+ALTER TABLE banking_capability_approvals
+  ADD COLUMN IF NOT EXISTS countersigned_by UUID REFERENCES admin_users(id) ON DELETE SET NULL;
+ALTER TABLE banking_capability_approvals
+  ADD COLUMN IF NOT EXISTS countersigned_at TIMESTAMPTZ;
+ALTER TABLE banking_capability_approvals
+  ADD COLUMN IF NOT EXISTS countersignature TEXT;
+ALTER TABLE banking_capability_approvals
+  ADD COLUMN IF NOT EXISTS audit_event_id UUID;
+
+ALTER TABLE banking_capability_approvals
+  DROP CONSTRAINT IF EXISTS banking_approvals_two_person;
+ALTER TABLE banking_capability_approvals
+  ADD CONSTRAINT banking_approvals_two_person
+  CHECK (countersigned_by IS NULL OR approved_by IS NULL OR countersigned_by <> approved_by);
+
+CREATE INDEX IF NOT EXISTS idx_banking_approvals_unsigned
+  ON banking_capability_approvals (provider, environment)
+  WHERE approved AND revoked_at IS NULL AND approval_signature IS NULL;

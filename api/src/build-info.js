@@ -19,10 +19,28 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 58;
+const API_BUILD = 59;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  59: "A database row is no longer an approval. Gate 6 asked the database "
+      + "whether a capability was approved and the database answered, so anybody "
+      + "who could write to banking_capability_approvals could approve a bank "
+      + "rail: a psql prompt, a restored backup, a migration run by mistake. The "
+      + "table already had approved_by and approval_reference columns and "
+      + "NOTHING CHECKED THEM, so an approval with both left NULL passed exactly "
+      + "like one a compliance officer had signed. An approval now needs "
+      + "attribution, an external reference that is not a UUID and not the word "
+      + "\"approved\", and an HMAC signature keyed by a secret held in the "
+      + "SERVER environment and never in the database, so full database write "
+      + "access still cannot mint one. Production additionally needs a second, "
+      + "DIFFERENT approver, enforced by the contract and by a CHECK constraint. "
+      + "The remaining boundary is named rather than hidden: one holder of the "
+      + "shared key can produce both signatures, so the two-person rule is "
+      + "enforced in the data and not in the ceremony, and there is a test "
+      + "asserting exactly that. Twenty mutations, twenty caught. No provider "
+      + "added, no capability enabled, no ledger, transaction status, Peach "
+      + "service, payment route, payout route or POS constraint touched.",
   58: "The last architectural weakness closed: a stored configuration must now "
       + "declare which environment it is for. TitoPay resolves credentials "
       + "STORED-CONFIG-FIRST, so a platform_settings row beats the environment "

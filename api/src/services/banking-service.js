@@ -16,8 +16,10 @@
 //                            the deployment's own declared environment
 //   5. configEnvironmentBound the adapter's STORED configuration declares an
 //                            environment, and it equals the running one
-//   6. approved              an approval record names this capability, this
-//                            provider, this environment, and has not been revoked
+//   6. approved              an ATTRIBUTABLE, SIGNED approval record names this
+//                            capability, provider and environment, has not been
+//                            revoked, and for production carries a second,
+//                            different approver's countersignature
 //
 // (The count has been corrected twice, in the same direction both times: gates
 // 1 and 2 were once described as one, and gate 5 was added when the Phase 3.5
@@ -52,6 +54,7 @@ const { AppError } = require("../lib/errors");
 const bankingState = require("../lib/banking-state");
 const flags = require("../config/banking-flags");
 const configContract = require("../config/banking-config-contract");
+const approvalContract = require("../config/banking-approval-contract");
 const bankingProvider = require("../providers/banking-provider");
 const { configuredKey, CAPABILITIES: PROVIDER_CAPABILITIES } = require("../providers");
 
@@ -149,8 +152,8 @@ function environmentDecision(env = process.env) {
 // row restored or copied from the wrong database. Nothing else in the platform
 // can see that, because everything else reads the environment variables, and a
 // stored row beats an environment variable in this codebase.
-function evaluateStoredBinding({ adapterAnswersThisProvider, provider, bankingEnvironment }) {
-  if (!adapterAnswersThisProvider) {
+function evaluateStoredBinding({ adapterRegistered, provider, bankingEnvironment }) {
+  if (!adapterRegistered) {
     return { bound: false, environment: null, reason: "PROVIDER_NOT_REGISTERED", declarations: {} };
   }
 
@@ -237,27 +240,51 @@ function evaluateStoredBinding({ adapterAnswersThisProvider, provider, bankingEn
 // Approvals are read fresh rather than cached. They change rarely, they are
 // read on a path that is already talking to a bank, and a revocation that takes
 // effect on the next call is worth more than the query it costs.
-async function loadApprovals(provider, environment) {
+async function loadApprovals(provider, environment, { env = process.env } = {}) {
   if (!provider || !environment) return new Map();
+  // Every column the contract needs, and nothing else. No secret is stored in
+  // this table, so this SELECT cannot pull one out of it.
   const { rows } = await pool.query(
-    `SELECT capability, approved, approval_reference, approved_at, revoked_at
+    `SELECT provider, capability, environment, approved,
+            approved_by, approval_reference, approved_at,
+            approval_signature, signature_algorithm,
+            countersigned_by, countersigned_at, countersignature,
+            audit_event_id, revoked_at, revoked_by, revocation_reason
        FROM banking_capability_approvals
       WHERE provider = $1 AND environment = $2`,
     [provider, environment]
   ).catch((error) => {
-    // A missing table or an unreachable database must not read as "approved".
-    // It reads as what it is: unknown, and therefore refused.
+    // A missing table, a missing column or an unreachable database must not
+    // read as "approved". It reads as what it is: unknown, and therefore
+    // refused. This is also the path taken on a deployment that has not applied
+    // the attribution migration, which is correct: unverifiable is not approved.
     console.error("[banking] approvals could not be read; treating every capability as unapproved", {
       provider, environment, reason: error?.message || "unknown"
     });
     return { rows: [] };
   });
+
   const map = new Map();
   for (const row of rows) {
+    // THE ROW IS EVIDENCE, NOT THE VERDICT. `verifyApproval` requires
+    // attribution, a signature keyed by a server-side secret that is not in this
+    // database, and for production a second, different approver. A row that
+    // satisfies none of that is recorded here as unapproved, with the reason.
+    const verdict = approvalContract.verifyApproval(row, { env });
+    if (!verdict.approved) {
+      console.warn("[banking] approval present but not valid", {
+        provider, environment, capability: row.capability, reason: verdict.reason
+      });
+    }
     map.set(row.capability, {
-      approved: Boolean(row.approved) && !row.revoked_at,
-      approvalReference: row.approval_reference || null,
-      approvedAt: row.approved_at || null,
+      approved: verdict.approved,
+      reason: verdict.reason,
+      // Attribution only: who, when, and against which external document.
+      // No signature and no key is ever carried out of this function.
+      approvalReference: verdict.attribution?.approvalReference || null,
+      approvedAt: verdict.attribution?.approvedAt || null,
+      approvedBy: verdict.attribution?.approvedBy || null,
+      countersignedBy: verdict.attribution?.countersignedBy || null,
       revokedAt: row.revoked_at || null
     });
   }
@@ -288,9 +315,15 @@ async function getCapabilityReport({ env = process.env } = {}) {
   // environment, which is exactly when a wrong answer would be most misleading.
   const registryKey = registryProviderKey();
   const adapterAnswersThisProvider = registryKey === provider;
+  // Two different absences, and conflating them sent operators to the wrong
+  // place. "The registry resolves a DIFFERENT provider" and "the registry
+  // resolves THIS provider but no adapter is registered under that key" both
+  // mean no adapter answers, and only the second is a missing registration.
+  const adapterRegistered = adapterAnswersThisProvider
+    && bankingProvider.bankingCapabilityConfigured();
 
   let declared = [];
-  if (adapterAnswersThisProvider) {
+  if (adapterRegistered) {
     try {
       declared = bankingProvider.declaredCapabilities() || [];
     } catch (error) {
@@ -311,19 +344,21 @@ async function getCapabilityReport({ env = process.env } = {}) {
   // waved through: the check must not be skippable by omission, which is the
   // whole reason it is a gate and not a convention.
   const storedBinding = evaluateStoredBinding({
-    adapterAnswersThisProvider, provider, bankingEnvironment: environment.banking
+    adapterRegistered, provider, bankingEnvironment: environment.banking
   });
 
-  const approvals = environment.banking ? await loadApprovals(provider, environment.banking) : new Map();
+  const approvals = environment.banking ? await loadApprovals(provider, environment.banking, { env }) : new Map();
 
   const capabilities = flags.ALL_CAPABILITIES.map((capability) => {
     const adapter = declaredByName.get(capability)
       || {
         implemented: false,
         configured: false,
-        reason: adapterAnswersThisProvider ? "NOT_DECLARED" : "PROVIDER_NOT_REGISTERED"
+        reason: adapterRegistered ? "NOT_DECLARED" : "PROVIDER_NOT_REGISTERED"
       };
-    const approval = approvals.get(capability) || { approved: false, approvalReference: null, approvedAt: null, revokedAt: null };
+    const approval = approvals.get(capability)
+      || { approved: false, reason: approvalContract.REASONS.MISSING, approvalReference: null,
+           approvedAt: null, approvedBy: null, countersignedBy: null, revokedAt: null };
 
     const gates = {
       implemented: Boolean(adapter.implemented),
@@ -348,7 +383,10 @@ async function getCapabilityReport({ env = process.env } = {}) {
       else if (!gates.environmentPermits) reason = environment.reason;
       else if (!gates.configEnvironmentBound) reason = storedBinding.reason;
       else if (!gates.flagEnabled) reason = "FLAG_DISABLED";
-      else reason = "NOT_APPROVED";
+      // The approval gate now says WHY: unsigned, unattributed, not
+      // countersigned, revoked, or simply absent. An operator reading
+      // "NOT_APPROVED" learned nothing they could act on.
+      else reason = approval.reason || "NOT_APPROVED";
     }
 
     return {
@@ -357,8 +395,12 @@ async function getCapabilityReport({ env = process.env } = {}) {
       reason,
       gates,
       flagVariable: flags.capabilityFlagName(provider, capability),
+      // Attribution, for the operator and the audit trail. Names and a
+      // reference: no signature, no key, no credential.
       approvalReference: approval.approvalReference,
       approvedAt: approval.approvedAt,
+      approvedBy: approval.approvedBy,
+      countersignedBy: approval.countersignedBy,
       revokedAt: approval.revokedAt
     };
   });
@@ -379,7 +421,7 @@ async function getCapabilityReport({ env = process.env } = {}) {
     // Registered means an adapter answers the capability at all. With
     // BANKING_PROVIDER unset that is the `none` adapter, which refuses
     // everything, and that is a correct and safe state rather than a fault.
-    registered: bankingProvider.bankingCapabilityConfigured(),
+    registered: adapterRegistered,
     capabilities,
     availableCapabilities: capabilities.filter((entry) => entry.available).map((entry) => entry.capability)
   };

@@ -334,6 +334,75 @@ like a second defence that is not there.
 
 ---
 
+## H3. Build 59: what counts as an approval
+
+**The hazard.** Gate 6 asked the database whether a capability was approved, and
+the database answered. The table already carried `approved_by` and
+`approval_reference`, and nothing checked them, so an approval with both left
+NULL passed exactly like one a compliance officer had signed. Anybody who could
+write to the table could approve a bank rail: a psql prompt, a restored backup,
+a SQL injection elsewhere in the platform, a migration run by mistake.
+
+**What an approval now requires**, all of it, or the gate stays shut:
+
+| Requirement | Refusal reason if absent |
+|---|---|
+| A real admin identity in `approved_by` (UUID, foreign key to `admin_users`) | `APPROVAL_HAS_NO_APPROVER` |
+| An external reference: not a UUID, not a placeholder word, 8-200 characters | `APPROVAL_HAS_NO_EXTERNAL_REFERENCE` / `APPROVAL_REFERENCE_MALFORMED` |
+| A timestamp, not in the future (60s clock-skew tolerance) | `APPROVAL_HAS_NO_TIMESTAMP` / `APPROVAL_TIMESTAMP_IN_FUTURE` |
+| An HMAC-SHA256 signature over provider, capability, environment, approver, reference and timestamp | `APPROVAL_UNSIGNED` / `APPROVAL_SIGNATURE_INVALID` |
+| `BANKING_APPROVAL_SIGNING_KEY` present on the server, 32+ characters | `APPROVAL_SIGNING_KEY_ABSENT` |
+| A recognised algorithm (no downgrade to "none") | `APPROVAL_SIGNATURE_ALGORITHM_UNKNOWN` |
+| For production: a second, DIFFERENT approver with their own countersignature | `APPROVAL_NOT_COUNTERSIGNED` / `APPROVAL_COUNTERSIGNED_BY_SAME_PERSON` / `APPROVAL_COUNTERSIGNATURE_INVALID` |
+| Not revoked | `APPROVAL_REVOKED` |
+
+**The signature covers every field**, proved by editing each one after signing
+and asserting the approval becomes invalid. It cannot be lifted from one
+approval onto another, and a countersignature cannot be replayed as the primary
+signature.
+
+**The two-person rule is in the schema as well as the contract**, because a
+rule that lives only in application code is one bad query away from being one
+person: `CHECK (countersigned_by IS NULL OR approved_by IS NULL OR
+countersigned_by <> approved_by)`.
+
+**THE BOUNDARY THAT REMAINS, and it is asserted by a test rather than hidden.**
+Signing is HMAC with a shared server key, not public-key cryptography with
+per-approver keys. One person holding that key can produce both signatures, so
+the two-person rule is enforced in the DATA (two distinct admin identities, two
+distinct valid signatures) and not in the CEREMONY. Closing it properly needs
+per-approver keys or an external signing service, which is a product feature;
+inventing one against an imagined workflow would be worse than naming the gap.
+There is deliberately no route, console page or API that can create an approval.
+
+**Mutation testing, twenty mutations applied one at a time, all twenty caught:**
+
+| Mutation | Caught |
+|---|---|
+| Drop the implemented gate | 2 |
+| Drop the configured gate | 3 |
+| Drop the flag gate | 5 |
+| Drop the runtime environment gate | 3 |
+| Drop the stored-config gate | 12 |
+| Drop the approval gate | 10 |
+| Bypass the approval contract entirely | 3 |
+| Ignore the signature | 6 |
+| Ignore attribution | 3 |
+| Ignore the external reference | 2 |
+| Treat a missing signing key as fine | 3 |
+| Skip the two-person rule | 4 |
+| Allow the same person to countersign | 1 |
+| Ignore revocation | 1 |
+| Infer environment from a URL | 2 |
+| Let ambiguity pick a winner | 2 |
+| Accept a stored-config mismatch | 3 |
+| Environment allow-list falls through | 3 |
+| Unknown provider state becomes SUCCESS | 3 |
+| Treat an unreadable declaration as bound | 2 |
+| *(restored)* | **0** |
+
+---
+
 ## H. Remaining weaknesses and recommendations
 
 1. ~~**The environment gate cannot see stored integration config.**~~ **CLOSED
@@ -349,17 +418,14 @@ like a second defence that is not there.
    scope by instruction, and not replicated by the new tables. **Recommendation:
    a separate migration, separately approved.**
 
-3. **The approval record has no signature.** Anyone with database write access
-   can insert one. It is one gate of SIX and the other five live outside the
-   database, so this is not a single point of failure: database access alone
-   cannot set a server environment variable, make an adapter exist, or make a
-   stored configuration declare the environment that is running. It remains the
-   weakest of the six. Now documented in `banking-service.js` with a five-point
-   architectural TODO: attributable `approved_by`, an `approval_reference`
-   pointing at a document outside the system, tamper evidence, attributable
-   revocation, and a two-person rule for production. **Deliberately not
-   redesigned while no provider exists**, because that would be designing
-   against an imagined workflow.
+3. ~~**The approval record has no signature.**~~ **CLOSED in build 59.** An
+   approval now requires attribution (a real admin identity, a timestamp, and an
+   external reference that is neither a UUID nor a placeholder word), an
+   HMAC-SHA256 signature keyed by `BANKING_APPROVAL_SIGNING_KEY` which lives in
+   the server environment and never in the database, and for production a
+   second, DIFFERENT approver's countersignature, enforced by the contract and
+   by a `CHECK` constraint. Full database write access is no longer sufficient.
+   See section H3.
 
 4. **Nothing consumes the banking layer yet**, by design. The gates are proved
    by tests rather than by traffic. That remains true until Phase 4.

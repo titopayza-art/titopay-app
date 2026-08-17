@@ -581,9 +581,11 @@ test("banking webhook idempotency does not live in platform_settings", async () 
   }
 });
 
-test("an approval row alone does not make a capability available", async () => {
+test("a bare approval row is not an approval, and opens nothing", async () => {
   // The gate that stops a database write, or a compromised console, from
-  // starting a bank rail on its own.
+  // starting a bank rail on its own. Since build 59 an approval must also carry
+  // attribution and a signature keyed by a server-side secret, so the row
+  // inserted here is not even an approval, let alone an activation.
   const provider = "test_bank_approval";
   try {
     await pool.query(
@@ -600,10 +602,11 @@ test("an approval row alone does not make a capability available", async () => {
       }
     });
     const withdrawal = report.capabilities.find((entry) => entry.capability === "WITHDRAWAL");
-    assert.equal(withdrawal.gates.approved, true, "the approval gate is open");
-    assert.equal(withdrawal.gates.flagEnabled, true, "and the flag gate is open");
+    assert.equal(withdrawal.gates.flagEnabled, true, "the flag gate is open");
+    assert.equal(withdrawal.gates.approved, false,
+      "an unsigned, unattributed row must not count as an approval");
     assert.equal(withdrawal.available, false,
-      "but with no adapter implementing it, the capability stays shut");
+      "and with no adapter implementing it either, the capability stays shut");
     // Named a provider the registry has no adapter for. The report says exactly
     // that rather than reporting what some other adapter implements.
     assert.equal(withdrawal.reason, "PROVIDER_NOT_REGISTERED");
