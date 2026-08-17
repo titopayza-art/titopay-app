@@ -3468,6 +3468,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "fica-upload") await submitFica(form);
     if (form.dataset.form === "profile-photo") await submitProfilePhoto(form);
     if (form.dataset.form === "book-venue") { await submitBookVenue(data); return; }
+    if (form.dataset.form === "book-confirm") { await submitBookConfirm(data); return; }
     if (form.dataset.form === "profile-details") await submitProfileDetails(data);
     if (form.dataset.form === "pwa-review") await submitPwaReview(data);
     if (form.dataset.form === "ticketing-event") await submitTicketingEventForm(data, form);
@@ -4788,6 +4789,20 @@ async function handleAction(action, actionElement = null) {
     return;
   }
   if (action === "book-open") { await openBookModal(); return; }
+  if (action === "book-discover") { await openBookDiscover(); return; }
+  if (action.startsWith("book-group:")) {
+    bookCustomerState().category = action.split(":")[1] || "";
+    await openBookDiscover(); return;
+  }
+  if (action.startsWith("book-venue:")) { await openBookVenuePage(action.split(":")[1]); return; }
+  if (action.startsWith("book-service:")) { await openBookTimes(action.split(":")[1]); return; }
+  if (action.startsWith("book-day:")) {
+    const [, serviceId, day] = action.split(":");
+    await openBookTimes(serviceId, day); return;
+  }
+  if (action.startsWith("book-slot:")) {
+    openBookConfirm(action.slice("book-slot:".length)); return;
+  }
   if (action === "book-activate") { await payForBook(event.target.closest("button")); return; }
   if (action === "book-venue-form") { openBookVenueForm(); return; }
   if (action.startsWith("book-venue-open:")) { await openBookVenue(action.split(":")[1]); return; }
@@ -24088,6 +24103,16 @@ function visibleServices() {
     if (action === "enterprise-distribution" || id === "enterprise-distribution") {
       return state.accountType === "business" && Boolean(state.enterpriseDistribution?.eligibility?.eligible);
     }
+    // BOOK, FOR A PERSONAL ACCOUNT, ONLY ONCE THERE IS SOMETHING TO BROWSE.
+    // A business always sees it: it is their console and it works with no other
+    // business on the platform. A customer sees it only when at least one venue
+    // is actually published and bookable, because an empty discovery screen
+    // saying "nothing near you yet" is worse than no tile. It appears by itself
+    // the moment a real business publishes - nothing has to be redeployed.
+    if (action === "book" || id === "book") {
+      if (state.accountType === "business") return service[audienceKey];
+      return Boolean(state.bookDiscovery && state.bookDiscovery.available);
+    }
     if (action === "business-ticketing-staff" || id === "business-ticketing-staff") {
       return service[audienceKey] && eventScannersTileVisible();
     }
@@ -24287,6 +24312,16 @@ function serviceById(id) {
   return undefined;
 }
 function servicesView() {
+  // A customer's Book tile depends on whether any venue is published, which
+  // only the server knows. Fetched once, lazily, and the screen re-renders when
+  // the answer arrives - so the tile appears by itself rather than needing a
+  // redeploy the day a business goes live. A failure means no tile, never a
+  // broken Services screen.
+  if (state.accountType !== "business" && !state.bookDiscovery) {
+    loadBookDiscovery().then((summary) => {
+      if (summary && summary.available && state.route === "services") render();
+    }).catch(() => {});
+  }
   // Pure navigation entries. Each of these routes to a tab that already exists
   // in the bottom navigation, so a tile for them is a duplicate of the nav, not
   // a service. Business Profile was the one still leaking into the grid.
@@ -24425,8 +24460,12 @@ function handleService(id) {
   if (service.type === "businessSales" || service.action === "business-sales") return openBusinessSalesModal();
   if (service.type === "titoKids" || service.action === "tito-kids") return openTitoKidsModal();
   if (service.type === "book" || service.action === "book") {
-    state.currentModalAction = "book-open";
-    return openBookModal();
+    if (state.accountType === "business") {
+      state.currentModalAction = "book-open";
+      return openBookModal();
+    }
+    state.currentModalAction = "book-discover";
+    return openBookDiscover();
   }
   if (service.action === "top-up") return openTopUpModal(service);
   if (service.action === "withdraw") return openWithdrawModal(service);
@@ -27511,5 +27550,313 @@ async function openBookVenue(venueId) {
       ${settingsRow("Bookings are", venue.autoConfirm ? "Confirmed automatically" : "Confirmed by you", "check-circle")}
       ${settingsRow("Availability shown publicly", venue.showsAvailabilityCount ? "Yes, with numbers" : "No, just Accepting bookings", "eye")}
     </section>
+  `);
+}
+
+/* ==========================================================================
+   BOOK, FOR A CUSTOMER.
+
+   The business console lives above. This is the other half: finding a place and
+   booking it. A personal user only ever reaches this once at least one venue is
+   published, so none of these screens has an "unfortunately nothing yet" state
+   to apologise with.
+   ========================================================================== */
+
+// Fetched once per session and cached in state. This is what decides whether
+// the Book tile is shown to a customer at all, so it must be cheap and must
+// never throw: a failure means "no tile", not a broken Services screen.
+async function loadBookDiscovery() {
+  if (state.bookDiscovery) return state.bookDiscovery;
+  const summary = await api("/v1/book/public/discovery-summary").catch(() => null);
+  state.bookDiscovery = summary
+    ? { available: Boolean(summary.available), venues: summary.venues, cities: summary.cities || [] }
+    : { available: false, venues: 0, cities: [] };
+  return state.bookDiscovery;
+}
+
+function bookCustomerState() {
+  state.bookCustomer = state.bookCustomer || { city: "", category: "", venues: null, venue: null, picked: null };
+  return state.bookCustomer;
+}
+
+async function openBookDiscover() {
+  const store = bookCustomerState();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay</p><h2>Book</h2>
+        <p class="lead">Find a restaurant, service or experience.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list"><article class="activity-item"><div><p>Loading…</p></div></article></section>
+  `);
+  const venues = await api(`/v1/book/public/discover${store.category ? `?category=${encodeURIComponent(store.category)}` : ""}`)
+    .catch(() => ({ venues: [] }));
+  store.venues = venues.venues || [];
+  renderBookDiscover();
+}
+
+// The seven groups from the reference config rather than twenty one categories:
+// eight pills wrapped into four ragged lines and "Car wash" broke in half.
+const BOOK_GROUPS = [
+  ["Eat and drink", "store", ["restaurant", "cafe", "bakery"]],
+  ["Beauty", "scissors", ["salon", "barber", "spa", "beauty_studio"]],
+  ["Health", "health", ["doctor", "dentist", "clinic"]],
+  ["Car", "maintenance", ["car_wash", "auto_detailing", "auto_service"]],
+  ["Fitness", "heart", ["gym", "fitness_studio", "personal_training"]],
+  ["Stay", "home", ["hotel", "guesthouse"]],
+  ["Things to do", "star", ["experience", "studio"]]
+];
+
+function renderBookDiscover() {
+  const store = bookCustomerState();
+  const venues = store.venues || [];
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay</p><h2>Book</h2>
+        <p class="lead">Find a restaurant, service or experience.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    <section class="bk-grid" aria-label="Browse">
+      ${BOOK_GROUPS.map(([label, glyph, keys], index) => `
+        <button class="bk-tile${store.category && keys.includes(store.category) ? " is-on" : ""}${index === BOOK_GROUPS.length - 1 ? " bk-tile-wide" : ""}"
+          type="button" data-action="book-group:${esc(keys[0])}">
+          ${icon(glyph)}<span>${esc(label)}</span>
+        </button>`).join("")}
+    </section>
+
+    ${store.category ? `<div class="auth-actions">
+      <button class="btn ghost" type="button" data-action="book-group:">${icon("x")} Clear filter</button>
+    </div>` : ""}
+
+    <section class="section-head"><h3>${store.category ? "Matching" : "Available now"}</h3></section>
+    ${venues.length ? `<section class="activity-list">
+      ${venues.map((venue) => `
+        <button class="activity-item bk-venue" type="button" data-action="book-venue:${esc(venue.slug)}">
+          <span class="icon-bubble">${icon("store")}</span>
+          <div>
+            <p><strong>${esc(venue.name)}</strong></p>
+            <small>${esc([venue.categoryLabel, venue.suburb || venue.city].filter(Boolean).join(" · "))}${
+              venue.fromPrice ? ` · from R${Number(venue.fromPrice).toFixed(2)}` : ""}</small>
+          </div>
+        </button>`).join("")}
+    </section>` : `<section class="empty-state">
+      <p><strong>Nothing here yet</strong></p>
+      <small>${store.category ? "Try another kind of business." : "Check back soon."}</small>
+    </section>`}
+  `);
+}
+
+async function openBookVenuePage(slug) {
+  const store = bookCustomerState();
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-discover" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">Book</p><h2>Loading…</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+  `);
+  const result = await api(`/v1/book/public/venues/${encodeURIComponent(slug)}`).catch(() => null);
+  if (!result) return showToast("That place could not be opened.", "error");
+  store.venue = result.venue;
+  renderBookVenuePage();
+}
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const minuteText = (minute) =>
+  `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+
+function renderBookVenuePage() {
+  const venue = bookCustomerState().venue;
+  const where = [venue.address.suburb, venue.address.city].filter(Boolean).join(", ");
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-discover" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">${esc(venue.categoryLabel)}</p><h2>${esc(venue.name)}</h2>
+        ${venue.tagline ? `<p class="lead">${esc(venue.tagline)}</p>` : ""}</div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    ${venue.description ? `<section class="panel"><p>${esc(venue.description)}</p></section>` : ""}
+
+    <section class="settings-list">
+      ${where ? settingsRow("Where", where, "home") : ""}
+      ${venue.contact.phone ? settingsRow("Phone", venue.contact.phone, "phone") : ""}
+      ${settingsRow("Bookings are", venue.acceptsInstantBooking
+        ? "Confirmed straight away" : "Confirmed by the business", "check-circle")}
+    </section>
+
+    ${venue.openingHours.length ? `
+    <section class="section-head"><h3>Open</h3></section>
+    <section class="panel">
+      ${venue.openingHours.map((rule) => `<p class="muted">${esc(DAY_NAMES[rule.dayOfWeek])}: ${
+        minuteText(rule.opensMinute)} to ${minuteText(rule.closesMinute)}</p>`).join("")}
+    </section>` : ""}
+
+    <section class="section-head"><h3>What you can book</h3></section>
+    <section class="settings-list">
+      ${venue.services.map((service) => `
+        <button class="settings-row-button" type="button" data-action="book-service:${esc(service.id)}">
+          <span class="icon-bubble">${icon("calendar")}</span>
+          <span class="settings-row-body"><strong>${esc(service.name)}</strong>
+            <small>${service.durationMinutes} min${service.price ? ` · R${Number(service.price).toFixed(2)}` : " · Free"}</small></span>
+          <span class="settings-row-chevron">${icon("arrow-right")}</span>
+        </button>`).join("")}
+    </section>
+  `);
+}
+
+// Two dates only: today and the next six days. A month grid is a lot of screen
+// for a decision almost everybody makes inside a week, and the server refuses
+// anything past the venue's own horizon anyway.
+function bookNextDays(count = 7) {
+  return Array.from({ length: count }, (_, i) => {
+    const date = new Date(Date.now() + i * 86400000);
+    const value = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+    return { value, label: i === 0 ? "Today" : i === 1 ? "Tomorrow" : DAY_NAMES[date.getUTCDay()].slice(0, 3) };
+  });
+}
+
+async function openBookTimes(serviceId, dateValue) {
+  const store = bookCustomerState();
+  const venue = store.venue;
+  const service = venue.services.find((s) => s.id === serviceId);
+  if (!service) return showToast("That is no longer offered.", "error");
+  const day = dateValue || bookNextDays()[0].value;
+  // ONE, not two. The first version defaulted to two people and a barber's
+  // "Cut" has capacity one, so the engine correctly refused every booking and
+  // the customer was told the time was unavailable when it was not. A booking
+  // is for one person unless the customer says otherwise.
+  store.picked = { serviceId, date: day, startsAt: null, partySize: (store.picked && store.picked.partySize) || 1 };
+
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-venue:${esc(venue.slug)}" aria-label="Back" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">${esc(venue.name)}</p><h2>${esc(service.name)}</h2>
+        <p class="lead">${service.durationMinutes} min${service.price ? ` · R${Number(service.price).toFixed(2)}` : ""}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <nav class="bk-tabs" aria-label="Day">
+      ${bookNextDays().map((d) => `
+        <button class="bk-tab${d.value === day ? " is-active" : ""}" type="button"
+          data-action="book-day:${esc(serviceId)}:${esc(d.value)}">${esc(d.label)}</button>`).join("")}
+    </nav>
+    <section class="activity-list"><article class="activity-item"><div><p>Checking times…</p></div></article></section>
+  `);
+
+  const result = await api(
+    `/v1/book/public/venues/${encodeURIComponent(venue.slug)}/availability?serviceId=${encodeURIComponent(serviceId)}&date=${encodeURIComponent(day)}`
+  ).catch(() => ({ slots: [] }));
+
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-venue:${esc(venue.slug)}" aria-label="Back" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">${esc(venue.name)}</p><h2>${esc(service.name)}</h2>
+        <p class="lead">${service.durationMinutes} min${service.price ? ` · R${Number(service.price).toFixed(2)}` : ""}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <nav class="bk-tabs" aria-label="Day">
+      ${bookNextDays().map((d) => `
+        <button class="bk-tab${d.value === day ? " is-active" : ""}" type="button"
+          data-action="book-day:${esc(serviceId)}:${esc(d.value)}">${esc(d.label)}</button>`).join("")}
+    </nav>
+    ${(result.slots || []).length ? `
+      <section class="bk-slots" aria-label="Times">
+        ${result.slots.map((slot) => {
+          const t = new Date(slot.startsAt);
+          const label = `${String(t.getUTCHours()).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")}`;
+          return `<button class="bk-slot" type="button" data-action="book-slot:${esc(slot.startsAt)}">${label}</button>`;
+        }).join("")}
+      </section>` : `
+      <section class="empty-state">
+        <p><strong>No times left</strong></p>
+        <small>Try another day.</small>
+      </section>`}
+  `);
+}
+
+function openBookConfirm(startsAt) {
+  const store = bookCustomerState();
+  const venue = store.venue;
+  const service = venue.services.find((s) => s.id === store.picked.serviceId);
+  store.picked.startsAt = startsAt;
+  const when = new Date(startsAt);
+  const user = state.user || {};
+
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-day:${esc(store.picked.serviceId)}:${esc(store.picked.date)}"
+        aria-label="Back to times" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">${esc(venue.name)}</p><h2>Confirm</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="settings-list">
+      ${settingsRow("What", service.name, "calendar")}
+      ${settingsRow("When", `${formatDate(startsAt)}`, "calendar")}
+      ${settingsRow("How long", `${service.durationMinutes} minutes`, "calendar")}
+      ${settingsRow("Cost", service.price ? `R${Number(service.price).toFixed(2)}` : "Free", "wallet")}
+    </section>
+    <form class="form-grid" data-form="book-confirm">
+      ${service.capacity > 1 ? `
+      <div class="field"><label for="bk-people">How many people</label>
+        <input id="bk-people" name="partySize" type="number" min="1" max="${service.capacity}"
+          value="${Math.min(store.picked.partySize, service.capacity)}" required>
+        <small class="field-hint">Up to ${service.capacity}.</small></div>` : `
+      <input type="hidden" name="partySize" value="1">`}
+      <div class="field"><label for="bk-name2">Name</label>
+        <input id="bk-name2" name="customerName" maxlength="80" required
+          value="${esc(user.fullName || user.full_name || "")}"></div>
+      <div class="field"><label for="bk-phone">Cellphone</label>
+        <input id="bk-phone" name="customerPhone" maxlength="30" placeholder="+27…"
+          value="${esc(user.phone || "")}"></div>
+      <div class="field"><label for="bk-email2">Email <span class="field-optional">Optional</span></label>
+        <input id="bk-email2" name="customerEmail" type="email" maxlength="160" value="${esc(user.email || "")}"></div>
+      <div class="field"><label for="bk-notes">Anything they should know <span class="field-optional">Optional</span></label>
+        <input id="bk-notes" name="customerNotes" maxlength="200" placeholder="High chair, wheelchair access…"></div>
+      <button class="btn primary" type="submit">${icon("check-circle")} ${
+        venue.acceptsInstantBooking ? "Book it" : "Send request"}</button>
+    </form>
+    <p class="muted">${venue.acceptsInstantBooking
+      ? "You will get a reference straight away."
+      : "The business confirms this. You will hear back from them."}</p>
+  `);
+}
+
+async function submitBookConfirm(data) {
+  const store = bookCustomerState();
+  const venue = store.venue;
+  const result = await api(
+    `/v1/book/public/venues/${encodeURIComponent(venue.slug)}/bookings`,
+    { method: "POST", body: {
+      serviceId: store.picked.serviceId,
+      startsAt: store.picked.startsAt,
+      partySize: Number(data.partySize) || 1,
+      customerName: data.customerName,
+      customerPhone: data.customerPhone,
+      customerEmail: data.customerEmail,
+      customerNotes: data.customerNotes
+    }}
+  );
+  const made = result.booking;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(venue.name)}</p>
+        <h2>${made.confirmed ? "Booked" : "Request sent"}</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="panel">
+      <p class="eyebrow">Your reference</p>
+      <h3 class="bk-price">${esc(made.reference)}</h3>
+      <p class="muted">${made.confirmed
+        ? "Show this when you arrive."
+        : "The business will confirm. Keep this reference."}</p>
+    </section>
+    <section class="settings-list">
+      ${settingsRow("When", formatDate(made.startsAt), "calendar")}
+      ${settingsRow("How many", String(made.partySize), "user")}
+    </section>
+    <div class="auth-actions">
+      <button class="btn secondary" type="button" data-action="book-discover">${icon("arrow-left")} Back to Book</button>
+    </div>
   `);
 }

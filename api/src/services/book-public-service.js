@@ -69,7 +69,11 @@ async function publicVenue(slug) {
       name: service.name,
       description: service.description,
       price: service.price,
-      durationMinutes: service.durationMinutes
+      durationMinutes: service.durationMinutes,
+      // How many people one booking may cover. A haircut is one; a restaurant
+      // table is several. The booking screen uses this to decide whether asking
+      // "how many people" is a sensible question at all.
+      capacity: service.capacity
     }))
   };
 }
@@ -180,4 +184,87 @@ async function weekOpenCount(venueSlug) {
   return open;
 }
 
-module.exports = { publicVenue, publicAvailability, publicBooking, weekOpenCount };
+/* ------------------------------------------------------------- discovery */
+
+/**
+ * Published venues a customer can browse.
+ *
+ * ONLY PUBLISHED ONES, and only the fields a list row needs. A draft venue is
+ * invisible here for the same reason it 404s on its own page: the business has
+ * not said it is ready.
+ */
+async function discover({ category = "", city = "", search = "", limit = 40 } = {}) {
+  await ensureBookSchema();
+  const values = [];
+  let clause = "v.status = 'published'";
+  if (category) { values.push(category); clause += ` AND v.category = $${values.length}`; }
+  if (city) { values.push(city); clause += ` AND LOWER(v.city) = LOWER($${values.length})`; }
+  if (search) {
+    // Name and tagline only. Searching the description would surface a venue
+    // for a word buried in a paragraph, which reads as a wrong result.
+    values.push(`%${String(search).trim().slice(0, 60)}%`);
+    clause += ` AND (v.name ILIKE $${values.length} OR v.tagline ILIKE $${values.length})`;
+  }
+  values.push(Math.min(Math.max(Number.parseInt(limit, 10) || 40, 1), 100));
+
+  const { rows } = await pool.query(
+    `SELECT v.slug, v.name, v.category, v.tagline, v.city, v.suburb,
+            v.shows_availability_count,
+            (SELECT COUNT(*)::int FROM book_services s
+              WHERE s.venue_id = v.id AND s.status = 'active') AS service_count,
+            (SELECT MIN(s.price) FROM book_services s
+              WHERE s.venue_id = v.id AND s.status = 'active') AS from_price
+       FROM book_venues v
+      WHERE ${clause}
+      ORDER BY v.published_at DESC NULLS LAST
+      LIMIT $${values.length}`,
+    values
+  );
+
+  // A venue with nothing to book is not shown. It would be a dead end: a
+  // customer taps it, finds no services, and leaves.
+  return rows.filter((row) => row.service_count > 0).map((row) => ({
+    slug: row.slug,
+    name: row.name,
+    category: row.category,
+    categoryLabel: reference.categoryLabel(row.category),
+    tagline: row.tagline,
+    city: row.city,
+    suburb: row.suburb,
+    serviceCount: row.service_count,
+    fromPrice: row.from_price === null ? null : Number(row.from_price)
+  }));
+}
+
+/**
+ * Is there anything worth browsing yet?
+ *
+ * This is what decides whether a personal user is shown the Book tile at all.
+ * An empty discovery screen saying "no businesses near you yet" is honest and
+ * poor; no tile is better, and it appears by itself the moment a real business
+ * publishes. One cheap count, cached at the edge.
+ */
+async function discoverySummary() {
+  await ensureBookSchema();
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS venues
+       FROM book_venues v
+      WHERE v.status = 'published'
+        AND EXISTS (SELECT 1 FROM book_services s WHERE s.venue_id = v.id AND s.status = 'active')`
+  );
+  const { rows: cities } = await pool.query(
+    `SELECT DISTINCT v.city FROM book_venues v
+      WHERE v.status = 'published' AND v.city IS NOT NULL AND v.city <> ''
+      ORDER BY v.city LIMIT 50`
+  );
+  return {
+    venues: rows[0].venues,
+    available: rows[0].venues > 0,
+    cities: cities.map((row) => row.city)
+  };
+}
+
+module.exports = {
+  publicVenue, publicAvailability, publicBooking, weekOpenCount,
+  discover, discoverySummary
+};

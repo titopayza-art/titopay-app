@@ -19,10 +19,19 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 67;
+const API_BUILD = 68;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  68: "Personal users can find and book a business. Discovery, a venue page, a "
+      + "day-and-time picker and a confirmation with a readable reference, all "
+      + "in the app. The Book tile appears for a customer ONLY once at least "
+      + "one venue is published and bookable, and then it appears by itself - "
+      + "an empty discovery screen is worse than no tile. Includes a one-shot "
+      + "fixup so installs that already created the book service_config row "
+      + "learn it is for customers too: that table seeds ON CONFLICT DO "
+      + "NOTHING, so an existing row never learns anything from DEFAULT_SERVICES. "
+      + "Requires db:apply-migrations and app.zip v438 together.",
   67: "Book is LIVE and no longer coming_soon, because the link finally resolves. "
       + "A person with no TitoPay account can open a business's link, see the "
       + "place and its open times, and book - proven by ten tests that send no "

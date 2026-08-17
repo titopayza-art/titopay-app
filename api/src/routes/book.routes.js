@@ -72,6 +72,25 @@ router.post("/public/venues/:slug/bookings", publicBookingLimiter, handlePublic(
   res.status(201).json({ ok: true, booking: made });
 }));
 
+router.get("/public/discover", handlePublic(async (req, res) => {
+  const venues = await publicBook.discover({
+    category: String(req.query.category || ""),
+    city: String(req.query.city || ""),
+    search: String(req.query.search || req.query.q || ""),
+    limit: req.query.limit
+  });
+  res.set("Cache-Control", "public, max-age=120");
+  res.json({ ok: true, venues });
+}));
+
+// Whether Book is worth showing a customer at all. Cheap, cached, and the thing
+// that keeps a personal user from meeting an empty screen.
+router.get("/public/discovery-summary", handlePublic(async (_req, res) => {
+  const summary = await publicBook.discoverySummary();
+  res.set("Cache-Control", "public, max-age=300");
+  res.json({ ok: true, ...summary });
+}));
+
 router.use(requireAuth);
 
 // There is no shared requireCustomer middleware in this codebase; every router

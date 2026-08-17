@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v436-book-live";
+const CACHE_NAME = "titopay-pwa-v438-book-customer";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=436",
-  "./app.min.js?v=436",
+  "./styles.min.css?v=438",
+  "./app.min.js?v=438",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

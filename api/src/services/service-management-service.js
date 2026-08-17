@@ -42,7 +42,7 @@ const DEFAULT_SERVICES = [
   // TitoPay Book. Business-only, deliberately: a customer BOOKS through Book,
   // they do not run one, so a personal tile would open a console with nothing in
   // it. Customers reach a venue through discovery and the shared link instead.
-  ["book", "Book", "calendar", "book", "Take bookings for your business: tables, appointments, bays and classes.", "active", false, true, 305, "new"],
+  ["book", "Book", "calendar", "book", "Book a table, an appointment or a service, and take bookings for your own business.", "active", true, true, 305, "new"],
   ["business-ticketing-staff", "Event Scanners", "contacts", "business-ticketing-staff", "The people who scan tickets at your door. Add them, and they scan from their own phone.", "active", false, true, 301, "new"],
   ["shop-marketplace", "Shop Marketplace", "store", "shop-marketplace", "Marketplace services for local brands and digital products.", "disabled", false, false, 310, "none"],
   ["rewards", "Rewards", "sparkles", "rewards", "Personal rewards programme.", "disabled", false, false, 320, "none"],
@@ -162,6 +162,7 @@ async function applyServiceCopyFixups() {
         AND service_name = 'Ticketing Staff'`
   );
   await openTicketsToBusinessOnce();
+  await openBookToCustomersOnce();
   // Priced changes ride the same one-shot mechanism, for the same reason: the
   // approved schedule only reaches a database through db:init, which also
   // overwrites every fee an operator has set by hand.
@@ -199,6 +200,38 @@ async function openTicketsToBusinessOnce() {
     if (rowCount) console.info("[services] Event Tickets is now available to business accounts");
   } catch (error) {
     console.error("[services] could not open Event Tickets to business accounts", { message: error.message });
+  }
+}
+
+// BOOK REACHES CUSTOMERS TOO, and a row that already exists never learns that.
+//
+// service_config seeds with ON CONFLICT DO NOTHING, so the `book` row created by
+// an earlier build carries personal_visible = FALSE forever no matter what
+// DEFAULT_SERVICES says today. Book began as a business-only console; it now
+// also has a customer side, and without this fixup every deployment that
+// installed the earlier build would show it to businesses only.
+//
+// GUARDED AND ONE-SHOT, exactly like the Event Tickets fixup above and for the
+// same reason: if an operator later decides to hide Book from customers, this
+// must not switch it back on. It corrects a default once; it does not override
+// a choice. It never throws, because it sits on the path of every catalogue read.
+const BOOK_PERSONAL_FIXUP_KEY = "service_fixup_book_personal_visible";
+async function openBookToCustomersOnce() {
+  try {
+    const applied = await pool.query(
+      "SELECT 1 FROM platform_settings WHERE key = $1 LIMIT 1", [BOOK_PERSONAL_FIXUP_KEY]);
+    if (applied.rows.length) return;
+    const { rowCount } = await pool.query(
+      `UPDATE service_config
+          SET personal_visible = TRUE, updated_at = NOW()
+        WHERE service_code = 'book' AND personal_visible = FALSE`);
+    await pool.query(
+      `INSERT INTO platform_settings (key, value)
+       VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING`,
+      [BOOK_PERSONAL_FIXUP_KEY, JSON.stringify({ appliedAt: new Date().toISOString(), rowsChanged: rowCount })]);
+    if (rowCount) console.info("[services] Book is now available to personal accounts");
+  } catch (error) {
+    console.error("[services] could not open Book to personal accounts", { message: error.message });
   }
 }
 

@@ -397,11 +397,11 @@
       "service_name": "Book",
       "service_icon": "calendar",
       "action": "book",
-      "description": "Take bookings for your business: tables, appointments, bays and classes.",
+      "description": "Book a table, an appointment or a service, and take bookings for your own business.",
       "fee": 0,
       "commission": 0,
       "status": "active",
-      "personal_visible": false,
+      "personal_visible": true,
       "business_visible": true,
       "sort_order": 305,
       "feature_badge": "new"
