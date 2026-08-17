@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 62;
+const API_BUILD = 63;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  63: "TitoPay Book: the foundation only. Eight new book_* tables, the category "
+      + "vocabulary, and the once-off R250 business activation. NOTHING IS "
+      + "REACHABLE: no router is mounted, so no endpoint changes and no screen "
+      + "changes. Safe to deploy ahead of the feature, and doing so gets the "
+      + "migration applied early. The migration is purely additive and touches "
+      + "no existing table. The only edit to an existing file outside Book is a "
+      + "new entry in the pricing schedule (book_business_activation, R250) so "
+      + "the price is operator-controlled rather than hardcoded. Book owns no "
+      + "balance and no ledger; the activation moves money through "
+      + "applyWalletMovement and records it in transactions, wallet_ledger and "
+      + "revenue_ledger like every other rand.",
   62: "Tests only; no behaviour changes from 61. The commercial profile routes "
       + "had no test above the service layer, so a router that referenced the "
       + "wrong function, read the wrong path parameter or was never mounted "
