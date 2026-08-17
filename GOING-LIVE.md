@@ -12,14 +12,19 @@ Read this once before you start. It takes about twenty minutes.
 There is **no separate sandbox database**. Sandbox is one environment variable
 per integration, choosing which URL and API keys the server talks to:
 
-| Variable | Controls | Default when unset |
-|---|---|---|
-| `PEACH_PAYMENTS_MODE` | card top-ups, withdrawals, payouts | `production` |
-| `DOCFOX_MODE` | KYC document verification | `production` |
-| `OTT_MODE` | vouchers and value-added services | `production` |
+| Variable | Controls |
+|---|---|
+| `TITOPAY_ENV` | which deployment this is |
+| `PEACH_PAYMENTS_MODE` | card top-ups, withdrawals, payouts |
+| `DOCFOX_MODE` | KYC document verification |
+| `OTT_MODE` | vouchers and value-added services |
 
-Note the defaults. **Leaving one unset puts it in production**, so going live
-can happen by omission. Set all three explicitly, in both environments.
+All four are **required** and must be exactly `sandbox` or `production`. Until
+build 54 the three integration modes defaulted to `production` when unset, so
+going live could happen by omission: an unset variable, a typo or a stripped
+environment file put the platform live in silence. That default is gone. A
+missing, empty or misspelled value now stops the process with exit code 78
+before it accepts a single request.
 
 No table records which mode created a row. `transactions` and `wallets` have no
 environment column. So flipping the keys changes nothing about existing data:
@@ -97,25 +102,48 @@ invariant fails.
 Leave `ADMIN_PASSWORD` out to skip the admin step and use `npm run admin:create`
 separately.
 
-Re-running is safe. Customer tables staying empty is the condition it checks,
-so its own output does not trip it.
+Re-running is safe while the database is still unused: the refusal is on
+customer data, and the platform rows are what the script itself creates. Once
+real activity exists it refuses permanently, which is the intended direction.
+This is a setup step, not a repair tool.
 
-### 4. Point the API at it, and set the modes explicitly
+### 4. Point the API at it, and declare the environment
+
+**The API refuses to start unless all four of these are set explicitly.** They
+have no defaults. `PEACH_PAYMENTS_MODE`, `DOCFOX_MODE` and `OTT_MODE` used to
+default to `production` when unset, which meant going live could happen by
+omission; that default is gone and an unset or misspelled value now stops the
+process with exit code 78 before it serves anything.
+
+Production:
 
 ```
-POSTGRES_URL=postgres://user:pass@host:5432/titopay_production
+TITOPAY_ENV=production
 PEACH_PAYMENTS_MODE=production
 DOCFOX_MODE=production
 OTT_MODE=production
+POSTGRES_URL=postgres://user:pass@host:5432/titopay_production
 ```
 
-And on the test server, explicitly:
+Test server:
 
 ```
+TITOPAY_ENV=sandbox
 PEACH_PAYMENTS_MODE=sandbox
 DOCFOX_MODE=sandbox
 OTT_MODE=sandbox
+POSTGRES_URL=postgres://user:pass@host:5432/<your test database>
 ```
+
+`TITOPAY_ENV` is separate from `NODE_ENV` on purpose. `NODE_ENV` keeps its
+ordinary `development`/`production` meaning, because two existing behaviours
+key off it: setting it to `sandbox` would turn the customer registration
+geo-lock OFF by default and widen CORS. Leave `NODE_ENV` alone.
+
+**The database is stamped with its own identity** on first boot, in
+`platform_settings`. After that, a production API opening the sandbox database,
+or the reverse, is refused even if the databases have been renamed or restored
+elsewhere. Nothing is added to any financial table.
 
 ### 5. Swap the live keys
 

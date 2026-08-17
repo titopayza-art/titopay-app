@@ -127,7 +127,14 @@ function resultCodeFrom(payload = {}) {
 }
 
 async function peachRequest(effective, method, path, body, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  const environment = effective.environment === "sandbox" ? "sandbox" : "production";
+  // Anything that was not exactly "sandbox" used to mean production, so an
+  // empty, misspelled or missing environment sent a real customer's card to
+  // the live acquirer. Both values are now stated, and anything else refuses.
+  const declared = String(effective.environment || config.integrations.peachPayments.mode || "").trim().toLowerCase();
+  if (!["sandbox", "production"].includes(declared)) {
+    throw new AppError(400, "Peach Checkout environment must be sandbox or production. Set PEACH_PAYMENTS_MODE.");
+  }
+  const environment = declared;
   const accessToken = await getAccessToken(effective);
   const url = `${checkoutBaseUrl(environment)}${path}`;
   const controller = new AbortController();

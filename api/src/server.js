@@ -2,6 +2,42 @@ const http = require("http");
 const { app } = require("./app");
 const { config } = require("./config/env");
 const { attachChatSocketServer } = require("./realtime/chat-socket");
+const {
+  inspectDeployment, verifyDatabaseIdentity, describeDeployment
+} = require("./config/deployment-safety");
+
+// FAIL CLOSED BEFORE A SINGLE REQUEST IS SERVED.
+//
+// PEACH_PAYMENTS_MODE, DOCFOX_MODE and OTT_MODE each used to read
+// `process.env.X || "production"`. An unset variable, a typo or a stripped
+// environment file therefore put TitoPay in PRODUCTION silently, and nothing
+// anywhere checked that a production API had opened the production database.
+//
+// Both are now stated explicitly and both refuse rather than guess. This runs
+// FIRST, before the cluster forks and before anything listens, so an unsafe
+// deployment never reaches the point of accepting money.
+//
+// It is here rather than in config/env.js on purpose: the test suite and every
+// verification harness import services directly without booting a server, and
+// throwing at require time would break all of them without making one payment
+// safer.
+function refuseToStart(problems) {
+  console.error("");
+  console.error("  TITOPAY REFUSED TO START — UNSAFE DEPLOYMENT CONFIGURATION");
+  console.error("");
+  for (const problem of problems) console.error(`    - ${problem}`);
+  console.error("");
+  console.error("  Every deployment must declare, explicitly:");
+  console.error("    TITOPAY_ENV=production   PEACH_PAYMENTS_MODE=production   DOCFOX_MODE=production   OTT_MODE=production");
+  console.error("    TITOPAY_ENV=sandbox      PEACH_PAYMENTS_MODE=sandbox      DOCFOX_MODE=sandbox      OTT_MODE=sandbox");
+  console.error("");
+  console.error("  Nothing has been served and no connection has been accepted. See GOING-LIVE.md.");
+  console.error("");
+  process.exit(78); // EX_CONFIG
+}
+
+const deployment = inspectDeployment({ env: process.env, config });
+if (!deployment.ok) refuseToStart(deployment.problems);
 
 const server = http.createServer(app);
 
@@ -67,6 +103,22 @@ const chatSocketEnabled = !inClusteredWorker
 
 if (chatSocketEnabled) attachChatSocketServer(server);
 
+// The authoritative environment check: ask the DATABASE what it is, rather
+// than trusting a name. A production database restored under another name is
+// still the production database, and a sandbox API must not open it.
+//
+// A database that has never been stamped is stamped now to match the declared
+// environment, so an existing deployment upgrades without ceremony. After that
+// first stamp a disagreement is fatal, permanently.
+(async () => {
+  const identity = await verifyDatabaseIdentity(require("./db/pool").pool, deployment.environment);
+  if (!identity.ok) refuseToStart(identity.problems);
+
+  console.log("");
+  for (const line of describeDeployment(deployment)) console.log(`  ${line}`);
+  console.log(`  Database identity: ${identity.stamped}${identity.wrote ? " (stamped now)" : ""}`);
+  console.log("");
+
 server.listen(config.apiPort, config.apiHost, () => {
   console.log("TitoPay API service started", {
     role: inClusteredWorker ? `worker ${cluster.worker.id} of ${apiWorkers}` : "single process",
@@ -84,6 +136,11 @@ server.listen(config.apiPort, config.apiHost, () => {
       "and route /v1/chat/socket to it, or live chat will not connect."
     );
   }
+});
+})().catch((error) => {
+  // A failure to VERIFY is a failure to be safe. It never falls through to
+  // listening anyway.
+  refuseToStart([`The deployment safety check could not complete: ${error.message}`]);
 });
 
 function shutdown(signal) {

@@ -30,7 +30,11 @@
 // row. It only creates what an empty database is missing. If it finds customer
 // data it REFUSES TO RUN AT ALL, with no override flag, because a flag that
 // lets you point this at a live database is the exact accident it exists to
-// prevent. Re-running it against its own output is safe and changes nothing.
+// prevent. Re-running it against its own output is safe and changes nothing:
+// the refusal is on CUSTOMER data, and platform rows are what the script
+// itself creates. Once the database has actually been USED, though — a
+// payment, a queued email, a registration — it refuses, permanently. That is
+// the intended direction: this is a setup step, not a repair tool.
 //
 // WHAT IT SETS UP.
 //
@@ -233,6 +237,30 @@ async function main() {
   const { getSuspenseWallet } = require("../src/services/wallet-service");
   const suspense = await getSuspenseWallet();
   console.log(`  wallets    ${pad("suspense", 28)} ${suspense.wallet_number}`);
+
+  // ---- 5b. STAMP THE DATABASE WITH ITS OWN IDENTITY ----------------------
+  //
+  // The API refuses to start when the environment it is told it is in
+  // disagrees with the environment the database says it is. Stamping here
+  // means the new database is known to be production from the moment it
+  // exists, rather than taking whichever identity the first process to boot
+  // happens to declare.
+  //
+  // Additive and idempotent: one platform_settings row, ON CONFLICT DO
+  // NOTHING, so it can never overwrite an existing identity.
+  const { verifyDatabaseIdentity, IDENTITY_KEY } = require("../src/config/deployment-safety");
+  const declaredEnv = String(process.env.TITOPAY_ENV || "").trim();
+  if (declaredEnv) {
+    const identity = await verifyDatabaseIdentity(pool, declaredEnv);
+    if (!identity.ok) {
+      console.error(`\n  ${identity.problems.join("\n  ")}\n`);
+      await pool.end();
+      process.exit(1);
+    }
+    console.log(`  identity   ${pad(IDENTITY_KEY, 28)} ${identity.stamped}${identity.wrote ? " (stamped now)" : " (already set)"}`);
+  } else {
+    console.log(`  identity   ${pad("not stamped", 28)} TITOPAY_ENV is not set; the API will stamp it on first boot`);
+  }
 
   // ---- 6. THE FIRST ADMIN -------------------------------------------------
   //

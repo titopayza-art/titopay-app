@@ -1,10 +1,76 @@
 TitoPay deployment build — 2026-08-17 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
 PWA bundle: v426 (titopay-pwa-v426-qr-pricing)
-Requires: api.zip build 53
+Requires: api.zip build 54
 Admin console: admin-console-v89
 
-GOING LIVE WITHOUT TEST MONEY BECOMING REAL MONEY
+THE API NOW REFUSES TO START ON AN UNSAFE ENVIRONMENT
+
+   PEACH_PAYMENTS_MODE, DOCFOX_MODE and OTT_MODE each read
+
+      process.env.X || "production"
+
+   so an unset variable, a typo, or a stripped environment file put TitoPay in
+   PRODUCTION silently. Going live could happen by omission.
+
+   That default is gone. Those three, plus a new TITOPAY_ENV, must each be
+   exactly "sandbox" or "production". Missing, empty, whitespace, "prod",
+   "PRODUCTION", anything else: the process prints what is wrong and exits 78
+   before it accepts a single request. It never guesses, in either direction.
+
+   THE DATABASE NOW SAYS WHAT IT IS.
+
+   Nothing stopped a production API opening the sandbox database, or a sandbox
+   API opening production. Two checks now do:
+
+      the database NAME, used only ever to REFUSE, never to approve
+      an identity marker the database itself carries, which is authoritative
+
+   The marker is one platform_settings row, written once, ON CONFLICT DO
+   NOTHING. NO FINANCIAL TABLE GAINED A COLUMN. A database that has never been
+   stamped is stamped to match the declared environment on first boot, so an
+   existing deployment upgrades without ceremony; after that a disagreement is
+   fatal, permanently, even if the databases are renamed or restored elsewhere.
+
+   NODE_ENV IS DELIBERATELY NOT OVERLOADED.
+
+   Two behaviours already key off it. Setting NODE_ENV=sandbox would turn the
+   CUSTOMER REGISTRATION GEO-LOCK OFF by default and add 62 localhost origins
+   to CORS, so carrying the deployment identity there would have turned a
+   safety change into a safety regression. TITOPAY_ENV is separate and
+   explicit; NODE_ENV keeps its ordinary meaning. Stating both and having them
+   disagree is itself an error rather than something resolved by guessing.
+
+   THE WEBHOOK WAS AUDITED, AND IT WAS ALREADY RIGHT.
+
+   HMAC-SHA256 with a timing-safe compare, a timestamp window, a webhook-id
+   format check, merchant/entity/amount/currency validation, and idempotency
+   through INSERT ... ON CONFLICT DO NOTHING RETURNING with all processing
+   gated behind it. It was not rewritten. What it lacked was PROOF, so 14 tests
+   now hold it, including that a duplicate delivery is never PROCESSED a second
+   time. Mutation-tested by removing the guard: the test fails with "a wallet
+   would have been credited 2 times".
+
+   /health carries an environment indicator now, purely an identifier, so an
+   operator can tell which deployment answered. Every existing field keeps its
+   name, type and position. No connection string, host, key or secret is
+   exposed anywhere, in the response or in the startup log.
+
+   WHAT WAS NOT TOUCHED.
+
+      no customer data read beyond COUNT(*), deleted or modified
+      no wallet balance, transaction, ledger row or revenue record changed
+      no pricing changed
+      no schema migration, destructive or otherwise
+      no PWA change, no Admin change, no API contract change
+      no authentication change
+
+   Sandbox counts before and after are identical: 2,499 users, 1,961 wallets,
+   2,347 transactions, 4,374 ledger rows, 588 revenue rows.
+
+   781 tests pass. Eleven live harnesses pass.
+
+PREVIOUS BUILD — GOING LIVE WITHOUT TEST MONEY BECOMING REAL MONEY
 
    npm run db:init-production            report only, writes nothing
    npm run db:init-production -- --apply do it

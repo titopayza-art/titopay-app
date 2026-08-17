@@ -20,7 +20,14 @@ function assertEnabled() {
 }
 
 function normalizeEnvironment(value) {
-  const environment = String(value || config.integrations.peachPayments.mode || "production").trim().toLowerCase();
+  // NO FAIL-OPEN DEFAULT. This ended in `|| "production"`, so a Peach call
+  // made with no environment anywhere — unset variable, stripped env file,
+  // stored config without one — went to the LIVE acquirer. An environment
+  // nobody stated is not production; it is a configuration fault.
+  const environment = String(value || config.integrations.peachPayments.mode || "").trim().toLowerCase();
+  if (!environment) {
+    throw new AppError(400, "Peach Payments environment is not configured. Set PEACH_PAYMENTS_MODE to sandbox or production.");
+  }
   if (!["sandbox", "production"].includes(environment)) {
     throw new AppError(400, "Peach Payments environment must be sandbox or production");
   }

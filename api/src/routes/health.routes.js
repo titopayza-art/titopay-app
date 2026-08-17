@@ -80,6 +80,17 @@ async function healthStatus(_req, res, next) {
     res.json({
       status: "ok",
       database: "ok",
+      // WHICH DEPLOYMENT IS THIS? Purely an identifier: "sandbox" or
+      // "production", from TITOPAY_ENV. It answers the one question an
+      // operator cannot otherwise answer from outside, and it is the same
+      // answer the startup log gives.
+      //
+      // Additive only. Every existing field keeps its name, its type and its
+      // position, so anything already reading this response is unaffected.
+      // No connection string, host, database name, key or secret is exposed:
+      // knowing an API is "production" tells an attacker nothing they could
+      // not infer from its hostname.
+      environment: String(process.env.TITOPAY_ENV || "").trim() || "undeclared",
       // Reported so that "is the deployed API current?" is one request rather
       // than an investigation. See src/build-info.js.
       ...buildInfo(),

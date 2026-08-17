@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 53;
+const API_BUILD = 54;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  54: "The API refuses to start on an unsafe environment. PEACH_PAYMENTS_MODE, "
+      + "DOCFOX_MODE and OTT_MODE each read `process.env.X || \"production\"`, so "
+      + "an unset variable, a typo or a stripped env file put TitoPay LIVE in "
+      + "silence. That default is gone: all three, plus a new TITOPAY_ENV, must "
+      + "be exactly sandbox or production or the process exits 78 before "
+      + "serving anything. The database is stamped with its own identity in "
+      + "platform_settings, so a production API opening the sandbox database, "
+      + "or the reverse, is refused even if the databases are renamed. No "
+      + "financial table gained a column and no data was touched. NODE_ENV is "
+      + "deliberately NOT overloaded: setting it to \"sandbox\" would disable "
+      + "the customer registration geo-lock and widen CORS.",
   53: "npm run db:init-production stands up a clean production database. "
       + "Sandbox is not a separate database on TitoPay, it is one env var per "
       + "integration, and no table records which mode created a row, so going "

@@ -103,7 +103,16 @@ const config = {
   integrations: {
     peachPayments: {
       v2Enabled: booleanFromEnv("PEACH_PAYMENTS_V2_ENABLED", false),
-      mode: process.env.PEACH_PAYMENTS_MODE || "production",
+      // NO FAIL-OPEN DEFAULT. This read `|| "production"`, so an unset
+      // variable, a typo or a stripped environment file put TitoPay live
+      // silently. It is now whatever was actually supplied, and
+      // config/deployment-safety.js refuses to start the API unless it is
+      // exactly "sandbox" or "production".
+      //
+      // Left as a plain read rather than a throw so the test suite and the
+      // verification harnesses, which import services without booting a
+      // server, keep working. The gate is at startup, where money is at stake.
+      mode: process.env.PEACH_PAYMENTS_MODE || "",
       baseUrl: process.env.PEACH_PAYMENTS_BASE_URL || "",
       sandboxBaseUrl: process.env.PEACH_PAYMENTS_SANDBOX_BASE_URL || "https://app.sandbox-next.peachpayments.com/api",
       productionBaseUrl: process.env.PEACH_PAYMENTS_PRODUCTION_BASE_URL || "https://app.next.peachpayments.com/api",
@@ -118,7 +127,8 @@ const config = {
       callbackUrl: process.env.PEACH_PAYMENTS_CALLBACK_URL || ""
     },
     docfox: {
-      mode: process.env.DOCFOX_MODE || "production",
+      // No fail-open default. See the note on peachPayments.mode above.
+      mode: process.env.DOCFOX_MODE || "",
       baseUrl: process.env.DOCFOX_BASE_URL || "",
       apiKey: process.env.DOCFOX_API_KEY || "",
       apiSecret: process.env.DOCFOX_API_SECRET || "",
@@ -128,7 +138,8 @@ const config = {
       callbackUrl: process.env.DOCFOX_CALLBACK_URL || ""
     },
     ott: {
-      mode: process.env.OTT_MODE || "production",
+      // No fail-open default. See the note on peachPayments.mode above.
+      mode: process.env.OTT_MODE || "",
       baseUrl: process.env.OTT_BASE_URL || "",
       apiKey: process.env.OTT_API_KEY || "",
       apiSecret: process.env.OTT_API_SECRET || "",
