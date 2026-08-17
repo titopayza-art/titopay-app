@@ -42,7 +42,12 @@ function codeOnly(source) {
 // The companies TitoPay currently integrates with or holds a credential slot
 // for. Matched case-insensitively, on the name only, so "flash" as an English
 // word in a comment is already excluded by codeOnly above.
-const PROVIDER_NAMES = ["peach", "docfox", "flash", "ott"];
+// `absa` joins the list with the banking capability, so that the day an
+// adapter is written the boundary is already being enforced against it. It is
+// currently a bank name in a SUPPORTED_BANKS list and two POS CHECK
+// constraints, none of which is core, and that is the point: it must not
+// spread further.
+const PROVIDER_NAMES = ["peach", "docfox", "flash", "ott", "absa"];
 
 // TitoPay's own business logic. Money rules, limits, verification, and the API
 // surface that is not a provider callback.
@@ -102,6 +107,37 @@ test("core reaches a provider by capability, through the one resolver", () => {
   assert.match(compliance, /await verifyIdentity\(\{/);
   assert.doesNotMatch(codeOnly(compliance), /verifyWith[A-Z]/,
     "an assurance call must never be named after the company that answers it");
+});
+
+test("the banking capability names no bank, and refuses everything", () => {
+  const banking = read("src", "providers", "banking-provider.js");
+  const code = codeOnly(banking).toLowerCase();
+  for (const name of PROVIDER_NAMES) {
+    assert.ok(!code.includes(name), `banking-provider.js must not name ${name}`);
+  }
+  // Every operation refuses, with a state rather than an excuse.
+  for (const operation of [
+    "initiateCustomerPayment", "getPaymentStatus", "handleProviderCallback",
+    "verifyAccount", "getAccountInformation", "getTransactionHistory",
+    "initiatePayout", "initiateWithdrawal", "reconcile"
+  ]) {
+    assert.match(banking, new RegExp(`${operation}: notSupported`),
+      `${operation} must refuse rather than pretend`);
+  }
+  assert.match(banking, /CAPABILITY_NOT_SUPPORTED/);
+  // And the shipped default is an adapter that implements nothing.
+  assert.match(banking, /key: "none"/);
+  assert.match(banking, /isDefault: true/);
+});
+
+test("the banking layer holds no bank name in its configuration or state machine", () => {
+  for (const parts of [["src", "config", "banking-flags.js"], ["src", "lib", "banking-state.js"],
+                       ["src", "services", "banking-service.js"]]) {
+    const code = codeOnly(read(...parts)).toLowerCase();
+    for (const name of PROVIDER_NAMES) {
+      assert.ok(!code.includes(name), `${parts.join("/")} must not name ${name}`);
+    }
+  }
 });
 
 test("an unbought capability refuses, and never fabricates a result", () => {

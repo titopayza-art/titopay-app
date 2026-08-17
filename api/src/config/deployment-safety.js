@@ -166,6 +166,89 @@ function classify(problems) {
   };
 }
 
+// THE BANKING LAYER, CHECKED THE SAME WAY EVERYTHING ELSE IS.
+//
+// Same rule as the rest of this file: a CONTRADICTION refuses, everything else
+// warns, and an untouched deployment says nothing at all. The last part
+// matters more here than anywhere else, because every server running today has
+// none of these variables and none of them needs any.
+//
+// Returns [{ blocking, text }]. Empty when the banking layer is dormant.
+function inspectBanking(env) {
+  const found = [];
+  const enabled = String(env.BANKING_INTEGRATION_ENABLED || "") === "true";
+  const provider = String(env.BANKING_PROVIDER || "").trim();
+  const bankingEnvironment = String(env.BANKING_ENVIRONMENT || "").trim().toLowerCase();
+  const deployment = String(env.TITOPAY_ENV || "").trim().toLowerCase();
+
+  // Nobody has touched it. Say nothing.
+  if (!enabled && !provider && !bankingEnvironment) return found;
+
+  // A CONTRADICTION. Both sides stated, and they disagree about which world
+  // this is. Real money would reach a test bank, or test credentials would
+  // reach a real one. Only reachable once somebody sets these deliberately,
+  // so it can never fell a server that was working a minute ago.
+  if (bankingEnvironment && deployment) {
+    const bankingIsProduction = bankingEnvironment === "production";
+    const deploymentIsProduction = deployment === "production";
+    if (bankingIsProduction !== deploymentIsProduction) {
+      found.push({
+        blocking: true,
+        text: `TITOPAY_ENV is "${deployment}" but BANKING_ENVIRONMENT is "${bankingEnvironment}". `
+          + "A bank rail must run in the same world as the deployment it serves."
+      });
+    }
+  }
+
+  if (bankingEnvironment && !["development", "staging", "production"].includes(bankingEnvironment)) {
+    found.push({
+      blocking: false,
+      text: `BANKING_ENVIRONMENT is "${bankingEnvironment}", which is not development, staging or production. `
+        + "Every banking capability stays closed until it is one of those."
+    });
+  }
+
+  // Half-configured states. All warnings: the effect of each is a rail that
+  // stays shut, which is the safe direction, and refusing to start over a
+  // partly finished configuration would punish somebody mid-setup.
+  if (enabled && (!provider || provider === "none")) {
+    found.push({
+      blocking: false,
+      text: "BANKING_INTEGRATION_ENABLED is true but BANKING_PROVIDER names no adapter, "
+        + "so every banking capability refuses. Set BANKING_PROVIDER or turn the integration off."
+    });
+  }
+  if (provider && provider !== "none" && !enabled) {
+    found.push({
+      blocking: false,
+      text: `BANKING_PROVIDER is "${provider}" but BANKING_INTEGRATION_ENABLED is not "true", `
+        + "so nothing is reachable through it."
+    });
+  }
+  if (enabled && !bankingEnvironment) {
+    found.push({
+      blocking: false,
+      text: "BANKING_INTEGRATION_ENABLED is true but BANKING_ENVIRONMENT is not declared, "
+        + "so every banking capability refuses."
+    });
+  }
+
+  // A capability switched on with the master switch off. It does nothing, and
+  // somebody believing otherwise is worth one line at boot.
+  const orphanFlags = Object.keys(env)
+    .filter((name) => /^BANKING_[A-Z0-9_]+_ENABLED$/.test(name) && name !== "BANKING_INTEGRATION_ENABLED")
+    .filter((name) => String(env[name]) === "true");
+  if (orphanFlags.length && !enabled) {
+    found.push({
+      blocking: false,
+      text: `${orphanFlags.length} banking capability flag(s) are set to true while `
+        + "BANKING_INTEGRATION_ENABLED is not, so none of them has any effect."
+    });
+  }
+
+  return found;
+}
+
 /**
  * Everything that can be decided from configuration alone, with no database.
  *
@@ -241,6 +324,18 @@ function inspectDeployment({ env = process.env, config = null } = {}) {
       // refusing to start over.
       problems.push(message); warn(message);
     }
+  }
+
+  // 5. The banking layer, if anybody has started configuring it.
+  //
+  // SILENT WHEN UNTOUCHED, AND THAT IS DELIBERATE. A server that has never
+  // heard of the banking layer produces no new warning here, so
+  // /health's `environmentWarnings` count does not move for any existing
+  // deployment. Warning every server about a capability it has not asked for
+  // would be noise, and noise is what gets a real warning ignored.
+  for (const message of inspectBanking(env)) {
+    problems.push(message.text);
+    if (message.blocking) block(message.text); else warn(message.text);
   }
 
   const { blocking, warnings } = classify(found);
@@ -348,6 +443,7 @@ module.exports = {
   describeDatabaseTarget,
   databaseNameConflicts,
   checkPeachCredentials,
+  inspectBanking,
   inspectDeployment,
   verifyDatabaseIdentity,
   describeDeployment

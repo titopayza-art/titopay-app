@@ -147,6 +147,7 @@ function providerSummary() {
     require("../providers/payout-provider");
     require("../providers/kyc-provider");
     require("../providers/vas-provider");
+    require("../providers/banking-provider");
     return require("../providers").describeProviders().map((entry) => ({
       ...entry,
       state: entry.configured === "none" ? "none" : entry.registered ? "wired" : "missing"
