@@ -7,10 +7,10 @@
 // to get past it, one control at a time, and asserts that the attempt fails.
 //
 // The central technique is GATE INDEPENDENCE. It is not enough that a fully
-// closed system stays closed; that would pass even if four of the five gates
-// were dead code. So each test opens FOUR gates and shuts exactly ONE, and
-// asserts the capability is still unavailable. Five tests, five single points
-// of failure, none of which is load bearing on its own.
+// closed system stays closed; that would pass even if five of the six gates
+// were dead code. So each test opens FIVE gates and shuts exactly ONE, and
+// asserts the capability is still unavailable. Six tests, six single points of
+// failure, none of which is load bearing on its own.
 
 process.env.NODE_ENV = "test";
 process.env.POSTGRES_URL ||= "postgres://postgres@127.0.0.1:55432/titopay";
@@ -50,21 +50,21 @@ const BANKING_SOURCES = [
 ];
 
 /* ============================================================================
-   1. CAPABILITY GATES — five, each independently sufficient to refuse
+   1. CAPABILITY GATES — six, each independently sufficient to refuse
    ========================================================================== */
 
 // A TEST-ONLY ADAPTER, AND WHY IT HAS TO EXIST.
 //
 // The shipped `none` adapter implements nothing, so `implemented` is false
 // forever, so `available` is false forever. That makes every "shut one gate and
-// check it refuses" test VACUOUS: it would pass with the other four gates
+// check it refuses" test VACUOUS: it would pass with the other five gates
 // deleted, because the answer was already no.
 //
 // Mutation testing caught exactly that. Deleting `gates.flagEnabled` from the
 // availability conjunction broke nothing, because nothing could tell the
 // difference. So the gates are tested against a stub that declares itself fully
 // implemented and configured, which lets the suite prove BOTH directions: all
-// five gates open really does mean available, and shutting any ONE of them
+// six gates open really does mean available, and shutting any ONE of them
 // really does close it.
 //
 // This adapter exists only in this test file. It is never registered by
@@ -74,6 +74,20 @@ const { registerProvider, CAPABILITIES: PROVIDER_CAPABILITIES } = require("../sr
 const PROVIDER = "audit_stub";
 const CAPABILITY = "CUSTOMER_PAYMENT_INITIATION";
 
+// What the stubs' stored configuration declares. Mutable so a test can put the
+// stub in the right world for whatever runtime it is exercising, which keeps
+// gate 5 OPEN while some other gate is the one under test. Gate 5 has its own
+// suite (`banking-config-binding.test.js`) where the declaration is fixed and
+// the mismatches are the point.
+let stubDeclaredEnvironment = "staging";
+function declareStubEnvironment(environment) {
+  stubDeclaredEnvironment = environment;
+}
+
+function stubConfigEnvironment() {
+  return { ok: true, environment: stubDeclaredEnvironment, reason: null, declarations: {} };
+}
+
 registerProvider({
   capability: PROVIDER_CAPABILITIES.BANKING,
   key: PROVIDER,
@@ -81,7 +95,8 @@ registerProvider({
     return flags.ALL_CAPABILITIES.map((capability) => ({
       capability, implemented: true, configured: true, reason: null
     }));
-  }
+  },
+  configEnvironment: stubConfigEnvironment
 });
 
 // The registry resolves the adapter from the REAL process environment, so a
@@ -131,16 +146,16 @@ async function entryFor(env) {
 
 // THE CONTROL. If this does not pass, every refusal test below is vacuous:
 // they would be observing a system that was never capable of saying yes.
-test("CONTROL: all five gates open really does make a capability available", async () => {
+test("CONTROL: all six gates open really does make a capability available", async () => {
   await withStubProvider(async () => {
     try {
       await approve(PROVIDER, CAPABILITY, "staging");
       const { entry } = await entryFor(openEnvironment());
       assert.deepEqual(entry.gates, {
         implemented: true, configured: true, flagEnabled: true,
-        environmentPermits: true, approved: true
+        environmentPermits: true, configEnvironmentBound: true, approved: true
       });
-      assert.equal(entry.available, true, "five open gates must open the capability");
+      assert.equal(entry.available, true, "six open gates must open the capability");
       assert.equal(entry.reason, null);
     } finally {
       await clearApprovals(PROVIDER);
@@ -160,7 +175,10 @@ function registerStub(key, { implemented, configured, reason }) {
       return flags.ALL_CAPABILITIES.map((capability) => ({
         capability, implemented, configured, reason
       }));
-    }
+    },
+    // Bound to the running environment, so gate 5 is open and the gate under
+    // test is the only one shut.
+    configEnvironment: stubConfigEnvironment
   });
 }
 registerStub("audit_stub_unimplemented", { implemented: false, configured: true, reason: "NOT_IMPLEMENTED" });
@@ -284,8 +302,10 @@ test("GATE 4 (environment): shut alone -> refused", async () => {
   await withStubProvider(async () => {
     try {
       await approve(PROVIDER, CAPABILITY, "production");
-      // Production banking on a sandbox deployment. Approved for production, so
-      // the approval gate is genuinely open for the environment being asked about.
+      // Production banking on a sandbox deployment. Approved for production and
+      // the stored configuration declares production too, so gates 5 and 6 are
+      // genuinely open and the runtime pairing is the only thing shut.
+      declareStubEnvironment("production");
       const { entry, report } = await entryFor(
         openEnvironment({ BANKING_ENVIRONMENT: "production", TITOPAY_ENV: "sandbox" })
       );
@@ -295,12 +315,35 @@ test("GATE 4 (environment): shut alone -> refused", async () => {
       assert.equal(entry.available, false, "the environment alone must refuse");
       assert.equal(report.environmentReason, "PRODUCTION_BANKING_ON_NON_PRODUCTION_DEPLOYMENT");
     } finally {
+      declareStubEnvironment("staging");
       await clearApprovals(PROVIDER);
     }
   });
 });
 
-test("GATE 5 (approval): shut alone -> refused", async () => {
+test("GATE 5 (stored config binding): shut alone -> refused", async () => {
+  // The stored configuration is for another world. Every other gate is open.
+  await withStubProvider(async () => {
+    try {
+      await approve(PROVIDER, CAPABILITY, "staging");
+      declareStubEnvironment("development");
+      const { entry } = await entryFor(openEnvironment());
+      assert.equal(entry.gates.implemented, true, "implementation gate open");
+      assert.equal(entry.gates.configured, true, "configuration gate open");
+      assert.equal(entry.gates.flagEnabled, true, "flag gate open");
+      assert.equal(entry.gates.environmentPermits, true, "runtime pairing gate open");
+      assert.equal(entry.gates.approved, true, "approval gate open");
+      assert.equal(entry.gates.configEnvironmentBound, false, "stored config gate shut");
+      assert.equal(entry.available, false, "a config for the wrong world alone must refuse");
+      assert.equal(entry.reason, "STORED_ENVIRONMENT_MISMATCH");
+    } finally {
+      declareStubEnvironment("staging");
+      await clearApprovals(PROVIDER);
+    }
+  });
+});
+
+test("GATE 6 (approval): shut alone -> refused", async () => {
   await withStubProvider(async () => {
     await clearApprovals(PROVIDER);
     const { entry } = await entryFor(openEnvironment());
@@ -315,7 +358,7 @@ test("GATE 5 (approval): shut alone -> refused", async () => {
   });
 });
 
-test("GATE 5e: a revoked approval shuts the gate with everything else open", async () => {
+test("GATE 6e: a revoked approval shuts the gate with everything else open", async () => {
   await withStubProvider(async () => {
     try {
       await approve(PROVIDER, CAPABILITY, "staging");
@@ -332,7 +375,7 @@ test("GATE 5e: a revoked approval shuts the gate with everything else open", asy
   });
 });
 
-test("assertCapability opens only when all five gates are open", async () => {
+test("assertCapability opens only when all six gates are open", async () => {
   await withStubProvider(async () => {
     try {
       await approve(PROVIDER, CAPABILITY, "staging");
@@ -368,7 +411,7 @@ test("assertCapability opens only when all five gates are open", async () => {
   });
 });
 
-test("GATE 5b: an approval for a DIFFERENT environment does not open this one", async () => {
+test("GATE 6b: an approval for a DIFFERENT environment does not open this one", async () => {
   try {
     // Approved for production; asking about staging.
     await approve(PROVIDER, CAPABILITY, "production");
@@ -381,7 +424,7 @@ test("GATE 5b: an approval for a DIFFERENT environment does not open this one", 
   }
 });
 
-test("GATE 5c: an approval for a DIFFERENT capability does not open this one", async () => {
+test("GATE 6c: an approval for a DIFFERENT capability does not open this one", async () => {
   try {
     await approve(PROVIDER, "PAYOUT", "staging");
     const report = await banking.getCapabilityReport({ env: openEnvironment() });
@@ -394,7 +437,7 @@ test("GATE 5c: an approval for a DIFFERENT capability does not open this one", a
   }
 });
 
-test("GATE 5d: an approval for a DIFFERENT provider does not open this one", async () => {
+test("GATE 6d: an approval for a DIFFERENT provider does not open this one", async () => {
   try {
     await approve("some_other_bank", CAPABILITY, "staging");
     const report = await banking.getCapabilityReport({ env: openEnvironment() });
@@ -405,10 +448,11 @@ test("GATE 5d: an approval for a DIFFERENT provider does not open this one", asy
   }
 });
 
-test("the availability expression requires all five gates and nothing less", () => {
+test("the availability expression requires all six gates and nothing less", () => {
   const source = codeOnly(read("src", "services", "banking-service.js"));
   // The exact conjunction, so a gate cannot be quietly dropped from it.
-  for (const gate of ["implemented", "configured", "flagEnabled", "environmentPermits", "approved"]) {
+  for (const gate of ["implemented", "configured", "flagEnabled", "environmentPermits",
+                      "configEnvironmentBound", "approved"]) {
     assert.match(source, new RegExp(`gates\\.${gate}`), `the AND must include ${gate}`);
   }
   // No short circuit that could bypass the conjunction.

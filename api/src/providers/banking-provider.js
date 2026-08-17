@@ -76,6 +76,29 @@ registerProvider({
     }));
   },
 
+  // WHICH ENVIRONMENT THIS ADAPTER'S STORED CONFIGURATION IS FOR.
+  //
+  // Required of every adapter, and the reason is worth stating: TitoPay resolves
+  // credentials STORED-CONFIG-FIRST, so a `platform_settings` row beats the
+  // environment variable. Every other environment check in the platform reads
+  // the variable, so a sandbox configuration restored into a production
+  // database would pass all of them. This is the one check that would not.
+  //
+  // An adapter reads its OWN stored configuration, runs it through
+  // `readDeclaredEnvironment` in the config contract, and returns the RESULT.
+  // Never the configuration itself: no credential crosses this boundary, which
+  // is what keeps this whole directory free of secrets.
+  //
+  // Nothing may be inferred from a URL, a hostname, a key prefix or a provider
+  // name. The contract reads one explicit field and reports "missing" when it
+  // is absent, because a guess that happens to be right still teaches everyone
+  // that guessing works.
+  //
+  // `none` has no stored configuration at all, and says exactly that.
+  configEnvironment() {
+    return { ok: false, environment: null, reason: "NO_PROVIDER_CONFIGURED", declarations: {} };
+  },
+
   initiateCustomerPayment: notSupported,
   getPaymentStatus: notSupported,
   handleProviderCallback: notSupported,
@@ -136,6 +159,11 @@ module.exports = {
   // What the adapter says it implements, for the capability report.
   declaredCapabilities: () =>
     operation(CAPABILITIES.BANKING, "declaredCapabilities")(),
+
+  // Which environment the adapter's stored configuration declares for itself.
+  // A name, never a credential.
+  configEnvironment: () =>
+    operation(CAPABILITIES.BANKING, "configEnvironment")(),
 
   bankingCapabilityConfigured: () => capabilityConfigured(CAPABILITIES.BANKING)
 };

@@ -7,34 +7,38 @@
 // runs, which is a different and stricter one: "is TitoPay willing, configured,
 // permitted AND approved to do it, with this supplier, in this environment?"
 //
-// FIVE GATES. ALL FIVE, EVERY TIME.
+// SIX GATES. ALL SIX, EVERY TIME.
 //
-//   1. implemented        the adapter exports the operation
-//   2. configured         that adapter's own configuration resolves
-//   3. flagEnabled        a server side flag says so (NOT the admin console)
-//   4. environmentPermits the banking environment is declared and paired with
-//                         the deployment's own declared environment
-//   5. approved           an approval record names this capability, this
-//                         provider, this environment, and has not been revoked
+//   1. implemented           the adapter exports the operation
+//   2. configured            that adapter's own configuration resolves
+//   3. flagEnabled           a server side flag says so (NOT the admin console)
+//   4. environmentPermits    the banking environment is declared and paired with
+//                            the deployment's own declared environment
+//   5. configEnvironmentBound the adapter's STORED configuration declares an
+//                            environment, and it equals the running one
+//   6. approved              an approval record names this capability, this
+//                            provider, this environment, and has not been revoked
 //
-// (Gates 1 and 2 were described as one in the first draft of this file, which
-// made the prose say "four" while the code has always required five separate
-// booleans. They are genuinely different failures: code that exists but has no
-// credentials, against credentials that exist for code nobody wrote. Counted
-// separately, and tested separately, so the count in the comment matches the
-// count in the conditional.)
+// (The count has been corrected twice, in the same direction both times: gates
+// 1 and 2 were once described as one, and gate 5 was added when the Phase 3.5
+// audit found that every environment check read the ENVIRONMENT and none could
+// see stored configuration. TitoPay resolves credentials stored-config-first,
+// so a stored row beats the variable, and until gate 5 existed a sandbox
+// configuration sitting in a production database would have passed every check
+// in this file. See `banking-config-contract.js`.)
 //
 // Any one of them false means unavailable. There is no combination that adds up
 // to "probably fine", no override flag, and no ordering in which a missing gate
 // is skipped. Default closed: a server with nothing configured reports every
 // capability unavailable, which is exactly what TitoPay is today.
 //
-// WHY FIVE RATHER THAN ONE. Each gate fails a different way in real life. Code
+// WHY SIX RATHER THAN ONE. Each gate fails a different way in real life. Code
 // can exist for a rail nobody bought. Credentials can be absent for code that
 // is finished. A flag can be set on the wrong deployment. An environment can be
-// mismatched. And an operator can be certain a thing is agreed when the
-// agreement is for something else. Requiring all five means no single mistake,
-// and no single compromised surface, can start money moving through a bank.
+// mismatched. A configuration can be restored from the wrong database. And an
+// operator can be certain a thing is agreed when the agreement is for something
+// else. Requiring all six means no single mistake, and no single compromised
+// surface, can start money moving through a bank.
 //
 // WHAT THIS FILE MAY NOT DO, EVER: credit a wallet, debit a wallet, write to
 // wallet_ledger or revenue_ledger, or decide that a payment succeeded. It
@@ -47,6 +51,7 @@ const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const bankingState = require("../lib/banking-state");
 const flags = require("../config/banking-flags");
+const configContract = require("../config/banking-config-contract");
 const bankingProvider = require("../providers/banking-provider");
 const { configuredKey, CAPABILITIES: PROVIDER_CAPABILITIES } = require("../providers");
 
@@ -128,8 +133,107 @@ function environmentDecision(env = process.env) {
   return { permitted: true, reason: null, banking, deployment };
 }
 
-/* ------------------------------------------------------ gate 5: approval */
+/* --------------------------------------- gate 5: stored config environment */
 
+// Ask the adapter what environment its stored configuration declares, and bind
+// it to the one actually running.
+//
+// FAIL CLOSED IN FOUR DIRECTIONS, all of which are real:
+//   - the adapter does not implement `configEnvironment()`      NOT_DECLARED
+//   - it throws while reading its own configuration             NOT_DECLARED
+//   - its configuration declares nothing, something unknown,
+//     or two things that disagree                               (contract reasons)
+//   - it declares an environment that is not the running one    MISMATCH
+//
+// The last of those is the one this gate was built for: a `platform_settings`
+// row restored or copied from the wrong database. Nothing else in the platform
+// can see that, because everything else reads the environment variables, and a
+// stored row beats an environment variable in this codebase.
+function evaluateStoredBinding({ adapterAnswersThisProvider, provider, bankingEnvironment }) {
+  if (!adapterAnswersThisProvider) {
+    return { bound: false, environment: null, reason: "PROVIDER_NOT_REGISTERED", declarations: {} };
+  }
+
+  // ONE PATH, AND IT IS THE THROWING ONE.
+  //
+  // There was a `typeof bankingProvider.configEnvironment === "function"` guard
+  // here, and it was dead code: the module export always exists, because it is
+  // a wrapper that asks the registry for the operation. An adapter that omits
+  // `configEnvironment` makes the REGISTRY throw, which lands in the catch
+  // below. Mutation testing found the guard by proving that changing it changed
+  // nothing, and dead code around a safety check is worse than no code, because
+  // it reads like a second defence that is not there.
+  //
+  // So: call it, and treat every failure the same way. An adapter that omits
+  // the method, one that throws while reading its own configuration, and one
+  // that returns nonsense are all "has not declared an environment". None of
+  // them is ever "probably fine".
+  let declaration;
+  try {
+    declaration = bankingProvider.configEnvironment();
+  } catch (error) {
+    console.error("[banking] adapter could not declare its stored configuration environment", {
+      provider, reason: error?.message || "unknown"
+    });
+    declaration = null;
+  }
+
+  const normalised = configContract.normaliseAdapterDeclaration(declaration);
+  if (!normalised.ok) {
+    return { bound: false, environment: null, reason: normalised.reason, declarations: normalised.declarations };
+  }
+
+  // The declaration is well formed. Now it has to match.
+  const runtime = String(bankingEnvironment || "").trim().toLowerCase();
+  if (!configContract.VALID_ENVIRONMENTS.includes(runtime)) {
+    return { bound: false, environment: normalised.environment, reason: configContract.REASONS.RUNTIME_UNKNOWN, declarations: normalised.declarations };
+  }
+  if (normalised.environment !== runtime) {
+    console.error("[banking] STORED CONFIGURATION IS FOR THE WRONG ENVIRONMENT", {
+      provider, storedEnvironment: normalised.environment, runningEnvironment: runtime,
+      action: "This configuration was written for a different environment. Do not copy platform_settings between deployments."
+    });
+    return { bound: false, environment: normalised.environment, reason: configContract.REASONS.MISMATCH, declarations: normalised.declarations };
+  }
+  return { bound: true, environment: normalised.environment, reason: null, declarations: normalised.declarations };
+}
+
+/* ------------------------------------------------------ gate 6: approval */
+
+// KNOWN LIMITATION, RECORDED DELIBERATELY: THIS GATE TRUSTS THE DATABASE.
+//
+// An approval is a row. Anyone who can write to `banking_capability_approvals`
+// can create one, and nothing here can tell an approval a compliance officer
+// signed off from an approval somebody inserted with a psql prompt. The row
+// carries `approved_by`, `approved_at`, `approval_reference`, `reason` and the
+// matching revocation columns, so an approval CAN be attributed and audited;
+// what it cannot yet do is PROVE it was not forged, because none of those
+// fields is verified against anything.
+//
+// Why that is acceptable today, and only today: this is one gate of six, and
+// the other five live outside the database. Database write access alone still
+// cannot open a rail, because it cannot set a server environment variable, it
+// cannot make an adapter exist, and it cannot make a stored configuration
+// declare the environment that is running. It is the weakest of the six and it
+// is not a single point of failure.
+//
+// ARCHITECTURAL TODO, before any capability is production-enabled:
+//
+//   1. Attributable approval. `approved_by` must be a real admin identity
+//      captured at the moment of approval, not a column somebody can fill in.
+//   2. `approval_reference` must point at a document that exists outside this
+//      system: a signed agreement, a board minute, a regulator's letter.
+//   3. Tamper evidence. Sign the approval row, or mirror it into the existing
+//      append-only audit log and compare, so an inserted row is detectable.
+//   4. Revocation must be as attributable as approval, using the
+//      `revoked_by` / `revoked_at` / `revocation_reason` columns already there.
+//   5. Two-person rule for production approvals, so no single account can open
+//      a real-money rail.
+//
+// NOT DONE NOW, deliberately: redesigning approval while no provider exists
+// would be designing against an imagined workflow. It is recorded here and in
+// BANKING_SAFETY_AUDIT.md so it is a decision rather than an oversight.
+//
 // Approvals are read fresh rather than cached. They change rarely, they are
 // read on a path that is already talking to a bank, and a revocation that takes
 // effect on the next call is worth more than the query it costs.
@@ -198,6 +302,18 @@ async function getCapabilityReport({ env = process.env } = {}) {
   }
   const declaredByName = new Map(declared.map((entry) => [entry.capability, entry]));
 
+  // GATE 5: the adapter's STORED configuration must declare its own environment
+  // and it must equal the running one.
+  //
+  // The adapter reads its own stored configuration and returns only the
+  // DECISION, never the configuration, so no credential crosses this boundary.
+  // An adapter with no `configEnvironment()` at all is refused rather than
+  // waved through: the check must not be skippable by omission, which is the
+  // whole reason it is a gate and not a convention.
+  const storedBinding = evaluateStoredBinding({
+    adapterAnswersThisProvider, provider, bankingEnvironment: environment.banking
+  });
+
   const approvals = environment.banking ? await loadApprovals(provider, environment.banking) : new Map();
 
   const capabilities = flags.ALL_CAPABILITIES.map((capability) => {
@@ -214,10 +330,11 @@ async function getCapabilityReport({ env = process.env } = {}) {
       configured: Boolean(adapter.configured),
       flagEnabled: flags.capabilityFlagEnabled(provider, capability, env),
       environmentPermits: environment.permitted,
+      configEnvironmentBound: storedBinding.bound,
       approved: Boolean(approval.approved)
     };
     const available = gates.implemented && gates.configured && gates.flagEnabled
-      && gates.environmentPermits && gates.approved;
+      && gates.environmentPermits && gates.configEnvironmentBound && gates.approved;
 
     // The first gate that is shut, in the order an operator would fix them.
     // "NOT_CONFIRMED" is used when nothing has been implemented at all, because
@@ -229,6 +346,7 @@ async function getCapabilityReport({ env = process.env } = {}) {
       else if (!gates.implemented) reason = adapter.reason || "NOT_CONFIRMED";
       else if (!gates.configured) reason = "NOT_CONFIGURED";
       else if (!gates.environmentPermits) reason = environment.reason;
+      else if (!gates.configEnvironmentBound) reason = storedBinding.reason;
       else if (!gates.flagEnabled) reason = "FLAG_DISABLED";
       else reason = "NOT_APPROVED";
     }
@@ -252,6 +370,12 @@ async function getCapabilityReport({ env = process.env } = {}) {
     deploymentEnvironment: environment.deployment,
     environmentPermitted: environment.permitted,
     environmentReason: environment.reason,
+    // What the adapter's stored configuration says about itself. The declared
+    // environment is a name, never a credential, so it is safe to show an
+    // operator, and it is the single most useful line when a rail refuses.
+    storedConfigEnvironment: storedBinding.environment,
+    storedConfigBound: storedBinding.bound,
+    storedConfigReason: storedBinding.reason,
     // Registered means an adapter answers the capability at all. With
     // BANKING_PROVIDER unset that is the `none` adapter, which refuses
     // everything, and that is a correct and safe state rather than a fault.

@@ -13,7 +13,7 @@ substantive findings.
 
 | # | Requirement | Result | Note |
 |---|---|---|---|
-| 1 | Five independently enforced gates | **PASS**, after correction | Code always required five booleans; the prose said "four". Terminology corrected and each gate now proved independently. |
+| 1 | Independently enforced gates | **PASS**, after correction (five at audit time; six from build 58) | Code always required five booleans; the prose said "four". Terminology corrected and each gate now proved independently. |
 | 2 | Financial isolation | **PASS** | Seven structural tests. No write, no import, no primitive, no balance column, no ledger foreign key. |
 | 3 | State machine | **PASS**, after correction | Per-state meanings added; they were undocumented. |
 | 4 | Provider isolation | **PASS**, after correction | One comment used `absa_pay` as an example. Neutralised. |
@@ -142,7 +142,7 @@ trace of a payment. A test asserts it exists.
 ### `banking_capability_approvals`
 
 **Purpose.** The record that a capability has actually been agreed, commercially
-and where relevant by a regulator. Gate 5 reads it. It is the only gate
+and where relevant by a regulator. Gate 6 reads it. It is the only gate
 representing a decision taken outside the codebase.
 
 | | |
@@ -261,16 +261,88 @@ No route, no schema, no migration and no production behaviour changed.
 
 ---
 
+## H2. Build 58: stored environment binding (the sixth gate)
+
+Weakness 1 below is now closed. The change is recorded here because it altered
+the gate count and the availability conjunction.
+
+**The hazard.** TitoPay resolves integration credentials stored-config-first: a
+`platform_settings.integration_*` row beats the environment variable. Every
+environment check written before build 58 reads the VARIABLE. A sandbox
+configuration restored or copied into a production database would therefore have
+passed all of them, used sandbox credentials against real customers, and
+reported nothing wrong, because from their point of view nothing was.
+
+**The gate.** `configEnvironmentBound`. An adapter reads its own stored
+configuration, runs it through `src/config/banking-config-contract.js`, and
+returns the DECISION, never the configuration, so no credential crosses the
+provider boundary. The declared environment must EQUAL the resolved
+`BANKING_ENVIRONMENT`. The runtime pairing against `TITOPAY_ENV` remains a
+separate gate; both must pass.
+
+**Nothing is inferred.** Not from a URL, a hostname, a key format, a credential
+name or a provider name. The contract reads one explicit `environment` field.
+Tests assert that a configuration full of production URLs, `live_` client ids
+and `sk_live_` secrets with no declaration still returns MISSING, and that the
+contract module contains no URL parsing, no hostname inspection and no
+key-prefix matching. A guess that happens to be right would teach everyone that
+guessing works.
+
+**Fail closed in six directions:** missing config, malformed config, missing
+environment, unknown environment, ambiguous environment (a config that declares
+two and disagrees with itself is never resolved in favour of either), and
+mismatch. An adapter that omits `configEnvironment()` entirely, or throws while
+reading its own configuration, is refused too, so the gate cannot be skipped by
+omission.
+
+**The seven required scenarios**, all proved against the real gate with
+test-only fixtures that implement no operation and hold no credential:
+
+| Scenario | Result |
+|---|---|
+| sandbox config + sandbox runtime | permitted |
+| production config + production runtime | permitted |
+| sandbox config + production runtime | **denied** (`STORED_ENVIRONMENT_MISMATCH`) |
+| production config + sandbox runtime | **denied** (`STORED_ENVIRONMENT_MISMATCH`) |
+| missing stored environment | **denied** (`STORED_ENVIRONMENT_MISSING`) |
+| unknown stored environment | **denied** (`STORED_ENVIRONMENT_UNKNOWN`) |
+| unknown runtime environment | **denied** |
+
+**Mutation testing, ten mutations applied one at a time:**
+
+| Mutation | Failures caught |
+|---|---|
+| Drop the implemented gate | 2 |
+| Drop the configured gate | 2 |
+| Drop the flag gate | 4 |
+| Drop the runtime environment gate | 3 |
+| Drop the stored-config gate | 9 |
+| Drop the approval gate | 5 |
+| Treat an unreadable declaration as bound | 2 |
+| Contract infers environment from a URL | 2 |
+| Ambiguity picks a winner | 2 |
+| Binding accepts a mismatch | 1 |
+| *(restored)* | **0** |
+
+One mutation initially survived and was a real finding, though not a hole: a
+`typeof bankingProvider.configEnvironment === "function"` guard was dead code,
+because the module export always exists and an adapter that omits the method
+makes the REGISTRY throw instead. Mutating dead code changes nothing, which is
+how it was found. The guard is gone; every failure now takes the one throwing
+path. Dead code around a safety check is worse than no code, because it reads
+like a second defence that is not there.
+
+---
+
 ## H. Remaining weaknesses and recommendations
 
-1. **The environment gate cannot see stored integration config.** TitoPay
-   resolves credentials stored-config-first: `platform_settings.integration_*`
-   beats the environment variable. A future banking adapter reading stored
-   config could hold sandbox credentials while `BANKING_ENVIRONMENT=production`,
-   and no gate would see it. **Recommendation: when the first adapter is
-   written, stamp the environment into its stored config and refuse on
-   mismatch.** Not fixable now, because there is no adapter and no stored config
-   to check. This is the same hazard `GOING-LIVE.md` already warns about.
+1. ~~**The environment gate cannot see stored integration config.**~~ **CLOSED
+   in build 58.** A sixth gate, `configEnvironmentBound`, now requires a
+   provider's stored configuration to declare its own environment and refuses
+   unless it EQUALS the running one. Nothing is inferred from a URL, hostname,
+   key format, credential name or provider name; missing, unknown, ambiguous,
+   unreadable and undeclared all refuse. See `banking-config-contract.js` and
+   `test/banking-config-binding.test.js`.
 
 2. **`pos_payment_intents.provider` and `pos_terminals.provider` still hard-code
    four bank names in `CHECK` constraints**, including ABSA. Pre-existing, out of
@@ -278,10 +350,16 @@ No route, no schema, no migration and no production behaviour changed.
    a separate migration, separately approved.**
 
 3. **The approval record has no signature.** Anyone with database write access
-   can insert one. It is one gate of five and the other four are outside the
-   database, so this is not a single point of failure, but it is the weakest of
-   the five. **Recommendation: require an `approval_reference` to a document, and
-   review the row in the same change-control process as a credential.**
+   can insert one. It is one gate of SIX and the other five live outside the
+   database, so this is not a single point of failure: database access alone
+   cannot set a server environment variable, make an adapter exist, or make a
+   stored configuration declare the environment that is running. It remains the
+   weakest of the six. Now documented in `banking-service.js` with a five-point
+   architectural TODO: attributable `approved_by`, an `approval_reference`
+   pointing at a document outside the system, tamper evidence, attributable
+   revocation, and a two-person rule for production. **Deliberately not
+   redesigned while no provider exists**, because that would be designing
+   against an imagined workflow.
 
 4. **Nothing consumes the banking layer yet**, by design. The gates are proved
    by tests rather than by traffic. That remains true until Phase 4.

@@ -19,10 +19,28 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 57;
+const API_BUILD = 58;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  58: "The last architectural weakness closed: a stored configuration must now "
+      + "declare which environment it is for. TitoPay resolves credentials "
+      + "STORED-CONFIG-FIRST, so a platform_settings row beats the environment "
+      + "variable, and every environment check written so far reads the "
+      + "VARIABLE. A sandbox configuration restored into a production database "
+      + "would have passed all of them, used sandbox credentials, and reported "
+      + "nothing wrong. A sixth gate now reads the environment a provider's "
+      + "stored config declares for itself and refuses unless it EQUALS the one "
+      + "running. Nothing is inferred: not from a URL, a hostname, a key "
+      + "prefix, a credential name or a provider name, because a guess that "
+      + "happens to be right teaches everyone that guessing works. Missing, "
+      + "unknown, ambiguous, unreadable and undeclared all refuse. Mutation "
+      + "testing also found dead code in the new gate, a typeof guard on a "
+      + "module export that always exists, and it is gone. Ten mutations, ten "
+      + "caught. The approval gate's known limitation, that database write "
+      + "access can create an approval row, is now documented with a five-point "
+      + "TODO rather than left implicit. No provider added, no capability "
+      + "enabled, no route, schema, migration or ledger touched.",
   57: "Safety audit of the banking foundation. Two real findings, both from "
       + "MUTATION TESTING rather than from reading the code. First: the "
       + "environment rule was two statements about which pairs were WRONG, with "
