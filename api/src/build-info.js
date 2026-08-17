@@ -19,10 +19,25 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 56;
+const API_BUILD = 57;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  57: "Safety audit of the banking foundation. Two real findings, both from "
+      + "MUTATION TESTING rather than from reading the code. First: the "
+      + "environment rule was two statements about which pairs were WRONG, with "
+      + "everything unlisted falling through to permitted, which is fail-open in "
+      + "shape even while it was correct in content. It is now an allow list, so "
+      + "a value added later is closed until somebody opens it. Second: the gate "
+      + "tests were partly vacuous. They asserted `unavailable` against an "
+      + "adapter that implements nothing, so `unavailable` was already true and "
+      + "deleting the flag gate from the code broke no test. Three test-only "
+      + "stub adapters now isolate each gate, and a control test proves five "
+      + "open gates really do open a capability, so the refusals mean something. "
+      + "Seven mutations, seven caught. Also: the code has always required FIVE "
+      + "booleans while the comments said four, and the eleven states had no "
+      + "written meanings. Both corrected. No provider added, no capability "
+      + "enabled, no route, schema or migration changed.",
   56: "The banking capability gets a seam, and NOTHING is activated by it. "
       + "src/providers has named `banking` since it was written and deliberately "
       + "left it unregistered; there is now an adapter interface behind it with "

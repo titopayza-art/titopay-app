@@ -65,7 +65,7 @@ registerProvider({
 
   // What this adapter implements, before any question of configuration,
   // approval or flags. Synchronous and database free: it is a statement about
-  // code, which the four gate check in `banking-service` then combines with
+  // code, which the five gate check in `banking-service` then combines with
   // everything else. `none` implements nothing, and says so.
   declaredCapabilities() {
     return ALL_CAPABILITIES.map((capability) => ({

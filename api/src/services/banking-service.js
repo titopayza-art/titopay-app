@@ -7,26 +7,34 @@
 // runs, which is a different and stricter one: "is TitoPay willing, configured,
 // permitted AND approved to do it, with this supplier, in this environment?"
 //
-// FOUR GATES. ALL FOUR, EVERY TIME.
+// FIVE GATES. ALL FIVE, EVERY TIME.
 //
 //   1. implemented        the adapter exports the operation
-//   2. flagEnabled        a server side flag says so (NOT the admin console)
-//   3. environmentPermits the banking environment is declared and agrees with
+//   2. configured         that adapter's own configuration resolves
+//   3. flagEnabled        a server side flag says so (NOT the admin console)
+//   4. environmentPermits the banking environment is declared and paired with
 //                         the deployment's own declared environment
-//   4. approved           an approval record names this capability, this
+//   5. approved           an approval record names this capability, this
 //                         provider, this environment, and has not been revoked
+//
+// (Gates 1 and 2 were described as one in the first draft of this file, which
+// made the prose say "four" while the code has always required five separate
+// booleans. They are genuinely different failures: code that exists but has no
+// credentials, against credentials that exist for code nobody wrote. Counted
+// separately, and tested separately, so the count in the comment matches the
+// count in the conditional.)
 //
 // Any one of them false means unavailable. There is no combination that adds up
 // to "probably fine", no override flag, and no ordering in which a missing gate
 // is skipped. Default closed: a server with nothing configured reports every
 // capability unavailable, which is exactly what TitoPay is today.
 //
-// WHY FOUR RATHER THAN ONE. Each gate fails a different way in real life. Code
-// can exist for a rail nobody bought. A contract can exist for code nobody
-// wrote. Credentials can be present in the wrong environment. And an operator
-// can be certain a thing is agreed when the agreement is for something else.
-// Requiring all four means no single mistake, and no single compromised
-// surface, can start money moving through a bank.
+// WHY FIVE RATHER THAN ONE. Each gate fails a different way in real life. Code
+// can exist for a rail nobody bought. Credentials can be absent for code that
+// is finished. A flag can be set on the wrong deployment. An environment can be
+// mismatched. And an operator can be certain a thing is agreed when the
+// agreement is for something else. Requiring all five means no single mistake,
+// and no single compromised surface, can start money moving through a bank.
 //
 // WHAT THIS FILE MAY NOT DO, EVER: credit a wallet, debit a wallet, write to
 // wallet_ledger or revenue_ledger, or decide that a payment succeeded. It
@@ -61,32 +69,66 @@ function unavailable(details = {}) {
   );
 }
 
-/* ------------------------------------------------------------ gate 3: env */
+/* ------------------------------------------------------------ gate 4: env */
 
 // A banking rail may only run when the banking environment is DECLARED and
-// agrees with the deployment's own declared environment.
+// PAIRED, by this table, with the deployment's own declared environment.
 //
-// `production` banking on a `sandbox` deployment would take real customers to a
-// test bank. `sandbox` banking on a `production` deployment would take test
-// credentials to a real one. Both are refused here rather than discovered
-// later. `staging` and `development` are only ever permitted on a deployment
-// that is not production.
+// AN ALLOW LIST, NOT A LIST OF OBJECTIONS. The first version of this was two
+// rules describing which pairs were WRONG, with everything else falling
+// through to permitted. That is fail-open in shape even when it is correct in
+// content: adding a fourth banking environment later, or a third TITOPAY_ENV,
+// would have been silently permitted against anything the two rules did not
+// happen to mention. Here the pair must appear below or it is refused, so a new
+// value is closed until somebody deliberately opens it.
+//
+// THE TWO VOCABULARIES ARE DIFFERENT, and pretending otherwise would hide the
+// mapping. TITOPAY_ENV has exactly two values, `sandbox` and `production`,
+// because that is what the deployment layer has always used. BANKING_ENVIRONMENT
+// has three, because a bank distinguishes a developer's machine from a shared
+// staging deployment pointed at a bank's sandbox. So `sandbox` admits both of
+// the non-production banking worlds, and `production` admits exactly one thing.
+//
+// What each pair prevents, in plain terms: production banking on a sandbox
+// deployment would take real customers to a test bank; anything less than
+// production banking on a production deployment would take test credentials,
+// or a developer's laptop configuration, to a real one.
+const ENVIRONMENT_PAIRS = Object.freeze({
+  production: Object.freeze(["production"]),
+  sandbox: Object.freeze(["development", "staging"])
+});
+
 function environmentDecision(env = process.env) {
   const banking = flags.bankingEnvironment(env);
   const deployment = String(env.TITOPAY_ENV || "").trim().toLowerCase();
 
-  if (!banking) return { permitted: false, reason: "BANKING_ENVIRONMENT_NOT_DECLARED", banking: null, deployment: deployment || null };
-  if (!deployment) return { permitted: false, reason: "TITOPAY_ENV_NOT_DECLARED", banking, deployment: null };
-  if (banking === "production" && deployment !== "production") {
-    return { permitted: false, reason: "PRODUCTION_BANKING_ON_NON_PRODUCTION_DEPLOYMENT", banking, deployment };
+  if (!banking) {
+    return { permitted: false, reason: "BANKING_ENVIRONMENT_NOT_DECLARED", banking: null, deployment: deployment || null };
   }
-  if (banking !== "production" && deployment === "production") {
-    return { permitted: false, reason: "NON_PRODUCTION_BANKING_ON_PRODUCTION_DEPLOYMENT", banking, deployment };
+  if (!deployment) {
+    return { permitted: false, reason: "TITOPAY_ENV_NOT_DECLARED", banking, deployment: null };
+  }
+
+  const permittedForDeployment = ENVIRONMENT_PAIRS[deployment];
+  // A deployment environment this table has never heard of. Refused rather than
+  // guessed, because the guess would be about where real money goes.
+  if (!permittedForDeployment) {
+    return { permitted: false, reason: "UNKNOWN_DEPLOYMENT_ENVIRONMENT", banking, deployment };
+  }
+  if (!permittedForDeployment.includes(banking)) {
+    return {
+      permitted: false,
+      reason: deployment === "production"
+        ? "NON_PRODUCTION_BANKING_ON_PRODUCTION_DEPLOYMENT"
+        : "PRODUCTION_BANKING_ON_NON_PRODUCTION_DEPLOYMENT",
+      banking,
+      deployment
+    };
   }
   return { permitted: true, reason: null, banking, deployment };
 }
 
-/* ------------------------------------------------------- gate 4: approval */
+/* ------------------------------------------------------ gate 5: approval */
 
 // Approvals are read fresh rather than cached. They change rarely, they are
 // read on a path that is already talking to a bank, and a revocation that takes
@@ -120,7 +162,7 @@ async function loadApprovals(provider, environment) {
 
 /* ------------------------------------------------------- the report itself */
 
-// What every capability's four gates currently say. This is what the admin
+// What every capability's five gates currently say. This is what the admin
 // console shows, what the boot log summarises, and what `assertCapability`
 // consults. It reads no credential and returns none.
 async function getCapabilityReport({ env = process.env } = {}) {

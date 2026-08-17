@@ -22,11 +22,12 @@
 // console can READ this and show an operator what is on; it has no path to
 // change it.
 //
-// A FLAG IS NEVER SUFFICIENT ON ITS OWN. It is one of four gates in
-// `banking-service.js`, and the other three are: the adapter actually
-// implements the operation, its configuration resolves, and an approval record
-// exists naming the capability. A flag says "TitoPay is willing"; it does not
-// say a bank has agreed, a contract exists or a regulator is satisfied.
+// A FLAG IS NEVER SUFFICIENT ON ITS OWN. It is one of five gates in
+// `banking-service.js`, and the other four are: the adapter implements the
+// operation, its configuration resolves, the banking environment is paired with
+// the deployment's own, and an approval record exists naming the capability. A
+// flag says "TitoPay is willing"; it does not say a bank has agreed, a contract
+// exists or a regulator is satisfied.
 //
 // DEFAULT OFF, AND FAIL CLOSED. An unset variable is off. An unreadable value
 // is off. A typo is off. There is no value that means "work it out": the only
@@ -87,9 +88,10 @@ function bankingIntegrationEnabled(env = process.env) {
 // Per provider, per capability: BANKING_<PROVIDER>_<CAPABILITY>_ENABLED.
 //
 // Derived rather than listed, so registering a provider never edits this file
-// and no provider name appears in it. `absa_pay` + WITHDRAWAL becomes
-// BANKING_ABSA_PAY_WITHDRAWAL_ENABLED, which is off until somebody sets it, and
-// which being on still proves nothing about what that bank has agreed to.
+// and no provider name appears in it, not even as an example. A provider key of
+// `example_bank` plus WITHDRAWAL becomes BANKING_EXAMPLE_BANK_WITHDRAWAL_ENABLED,
+// which is off until somebody sets it, and which being on still proves nothing
+// about what that bank has agreed to.
 function capabilityFlagName(providerKey, capability) {
   const provider = String(providerKey || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
   const name = String(capability || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");

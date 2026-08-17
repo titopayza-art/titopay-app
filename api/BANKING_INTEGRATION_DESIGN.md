@@ -245,17 +245,23 @@ controlled refusal. One addition is needed so callers can distinguish "not
 supported" from "temporarily down": a `CAPABILITY_NOT_SUPPORTED` error code on
 the `AppError`, with the customer-facing wording unchanged.
 
-### 3.3 Capability model — four gates, default closed
+### 3.3 Capability model — five gates, default closed
 
 `capabilities()` returns an explicit report. A capability is `enabled: true`
-**only when all four are true**:
+**only when all five are true**:
 
 | Gate | Source | Why |
 |---|---|---|
 | `implemented` | the adapter exports the function | code exists |
 | `configured` | required credentials resolve | it can actually call out |
-| `environmentPermits` | `BANKING_ENVIRONMENT` matches the adapter's mode, and matches `TITOPAY_ENV` | sandbox keys cannot serve production |
-| `approved` | an explicit approval record naming the capability | commercial and regulatory sign-off |
+| `flagEnabled` | a server-read environment flag, never the admin console | TitoPay is willing, and somebody with server access said so |
+| `environmentPermits` | `BANKING_ENVIRONMENT` paired with `TITOPAY_ENV` by an allow-list | sandbox keys cannot serve production |
+| `approved` | an explicit approval record naming provider, capability and environment | commercial and regulatory sign-off |
+
+> Corrected in Phase 3.5. The shipped code always required these five separate
+> booleans; an earlier draft of this table and of the source comments described
+> the first two as one and called it a four-gate system. Each gate is now
+> proved independently, and mutation-tested. See `BANKING_SAFETY_AUDIT.md`.
 
 ```js
 {

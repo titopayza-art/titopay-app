@@ -29,6 +29,40 @@
 // FAILED is a customer charged for nothing; a wrong SUCCESS is money credited
 // that never arrived. IN_DOUBT is the only safe place to not know.
 
+// WHAT EACH STATE MEANS. One sentence each, and the sentence is the contract:
+// an adapter mapping a provider's word onto one of these is asserting the
+// meaning below, not merely picking the closest-looking label.
+//
+//   CREATED           TitoPay has opened the conversation. The transaction
+//                     exists, nothing has been sent to the bank yet, and no
+//                     money has moved anywhere.
+//   CONSENT_PENDING   The bank has been asked for the customer's authority and
+//                     is waiting on the customer. Money has not moved.
+//   AUTHORISED        The customer has given authority. The bank may now be
+//                     instructed. Money still has not moved.
+//   PAYMENT_PENDING   An instruction has been submitted and the bank has not
+//                     yet reported an outcome. MONEY MAY BE IN FLIGHT: this is
+//                     the first state in which a debit may already exist at the
+//                     customer's bank, so it is never treated as "nothing
+//                     happened".
+//   SUCCESS           The bank has confirmed, TO A DIRECT QUERY FROM THIS
+//                     SERVER, that the payment completed. The only state that
+//                     may result in a wallet credit.
+//   FAILED            The bank has confirmed the payment did not complete and
+//                     no money moved. Terminal.
+//   REJECTED          The customer or the bank declined authority. Distinct
+//                     from FAILED because nothing was ever attempted. Terminal.
+//   EXPIRED           A consent or instruction ran out of time before it
+//                     completed. Terminal.
+//   CANCELLED         The customer or TitoPay stopped it deliberately before
+//                     completion. Terminal.
+//   IN_DOUBT          NOBODY KNOWS. The bank did not answer, answered something
+//                     unrecognised, or contradicted itself. Money may or may
+//                     not have moved. Resolvable only by authoritative evidence:
+//                     a direct status query, or an operator with the bank's
+//                     statement. Never resolves on its own, in either direction.
+//   REFUNDED          A settled payment has been returned by a separate money
+//                     movement with its own transaction. Terminal.
 const STATES = {
   CREATED: "CREATED",
   CONSENT_PENDING: "CONSENT_PENDING",
@@ -42,6 +76,22 @@ const STATES = {
   CANCELLED: "CANCELLED",
   REFUNDED: "REFUNDED"
 };
+
+// The meanings above, machine readable, so the documentation cannot silently
+// drift away from the state list. A test asserts every state has one.
+const STATE_MEANINGS = Object.freeze({
+  CREATED: "TitoPay has opened the conversation. Nothing sent to the bank; no money has moved.",
+  CONSENT_PENDING: "The bank is waiting on the customer for authority. No money has moved.",
+  AUTHORISED: "The customer has given authority. The bank may now be instructed. No money has moved.",
+  PAYMENT_PENDING: "An instruction was submitted and no outcome has been reported. Money may be in flight.",
+  SUCCESS: "The bank confirmed completion to a direct query from this server. The only crediting state.",
+  FAILED: "The bank confirmed the payment did not complete and no money moved. Terminal.",
+  REJECTED: "Authority was declined, so nothing was ever attempted. Terminal.",
+  EXPIRED: "A consent or instruction ran out of time before completing. Terminal.",
+  CANCELLED: "Stopped deliberately before completion. Terminal.",
+  IN_DOUBT: "Nobody knows whether money moved. Resolvable only by authoritative evidence.",
+  REFUNDED: "A settled payment was returned by a separate money movement. Terminal."
+});
 
 const ALL_STATES = Object.freeze(Object.values(STATES));
 
@@ -158,6 +208,7 @@ function toCanonicalState(providerState, mapping = {}) {
 
 module.exports = {
   STATES,
+  STATE_MEANINGS,
   ALL_STATES,
   TERMINAL_STATES,
   CREDITING_STATES,
