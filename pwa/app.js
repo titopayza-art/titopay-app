@@ -27460,7 +27460,6 @@ async function submitBookVenue(data) {
 function renderBookHome() {
   const store = bookState();
   const venue = store.venues[0];
-  const link = `${location.origin}/book/${venue.slug}`;
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">${esc(venue.name)}</p><h2>Today</h2>
@@ -27469,8 +27468,8 @@ function renderBookHome() {
     </div>
 
     <section class="integration-note">
-      <p>${icon("store")} <span>Your booking page is ${venue.status === "published"
-        ? "live." : "still a draft, so the link is not public yet."}</span></p>
+      <p>${icon("store")} <span>Your details are saved. The page customers book on is
+        being built next, and TitoPay will send you the link when it is live.</span></p>
     </section>
 
     <section class="empty-state">
@@ -27479,11 +27478,9 @@ function renderBookHome() {
     </section>
 
     <section class="settings-list">
-      <button class="settings-row-button" type="button" data-action="book-copy-link:${esc(venue.slug)}">
-        <span class="icon-bubble">${icon("share")}</span>
-        <span class="settings-row-body"><strong>Your booking link</strong><small>${esc(link)}</small></span>
-        <span class="settings-row-chevron">${icon("copy")}</span>
-      </button>
+      ${settingsRow("Your booking link",
+        "Not ready to share yet. We will give you the link once your page is live.",
+        "share")}
       <button class="settings-row-button" type="button" data-action="book-venue-open:${esc(venue.id)}">
         <span class="icon-bubble">${icon("store")}</span>
         <span class="settings-row-body"><strong>Business details</strong><small>${esc(venue.categoryLabel)}${venue.address && venue.address.city ? ` · ${esc(venue.address.city)}` : ""}</small></span>

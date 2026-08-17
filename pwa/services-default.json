@@ -400,7 +400,7 @@
       "description": "Take bookings for your business: tables, appointments, bays and classes.",
       "fee": 0,
       "commission": 0,
-      "status": "active",
+      "status": "coming_soon",
       "personal_visible": false,
       "business_visible": true,
       "sort_order": 305,

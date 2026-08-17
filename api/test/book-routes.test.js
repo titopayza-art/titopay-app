@@ -171,8 +171,18 @@ test("a business pays, creates a booking page, and gets a shareable link", async
   assert.equal(venue.status, "draft", "a new page is a draft until it is published");
   assert.equal(venue.bookingWord, "Reservation", "a restaurant takes reservations, not appointments");
 
-  // 5. THE LINK. Clean, readable, no random suffix.
-  assert.equal(venue.slug, "kasi-kitchen");
+  // 5. THE LINK. Clean and readable, with NO random hex suffix - the thing that
+  //    was corrected in the event slug generator and must not come back.
+  //
+  //    Asserted by SHAPE rather than by an exact string, deliberately. An exact
+  //    match depends on no other row in the database already holding that slug,
+  //    which made this test fail the moment a demo run left one behind. What
+  //    matters is that the address is derived from the name and readable, not
+  //    that this particular run won the name.
+  assert.match(venue.slug, /^kasi-kitchen(-\d+)?$/,
+    `the slug should be the name, optionally numbered, never a hex digest: ${venue.slug}`);
+  assert.ok(!/-[0-9a-f]{6}$/.test(venue.slug),
+    `a random suffix is unreadable on a poster: ${venue.slug}`);
 
   // 6. It is listed.
   const list = await (await call("GET", "/v1/book/venues", owner.token)).json();

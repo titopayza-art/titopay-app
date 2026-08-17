@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 64;
+const API_BUILD = 65;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  65: "No dead ends. Book's tile is coming_soon, so no business can pay R250 for "
+      + "a booking page that customers cannot reach yet, and the business screen "
+      + "no longer shows a link that resolves to a bare 404. The cause was "
+      + "building in architecture layers rather than along the customer journey: "
+      + "the screen rendered a URL because the venue row had a slug column, not "
+      + "because anything served that address. Everything else is unchanged and "
+      + "the R250 path still works; it is gated, not removed.",
   64: "TitoPay Book is REACHABLE. /v1/book is mounted (above lookupRoutes, which "
       + "puts requireAuth on the bare prefix and turns anything after it into a "
       + "401), the Book tile appears for business accounts under Run your "
