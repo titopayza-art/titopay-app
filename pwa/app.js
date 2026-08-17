@@ -627,12 +627,17 @@ function readFileAsDataUrl(file) {
     reader.readAsDataURL(file);
   });
 }
-async function copyTextValue(value, container) {
+// `successMessage` defaults to the QR wording this helper was written for, so
+// all of its existing callers behave exactly as they did. It exists because the
+// event share used this and then showed its own toast afterwards, so a person
+// sharing an event was told "QR copied." and then something else: two toasts,
+// the first of them about a QR code that was not involved.
+async function copyTextValue(value, container, successMessage = "QR copied.") {
   if (!value) throw new Error("There is no QR link or reference to copy.");
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(value);
-      showToast("QR copied.");
+      showToast(successMessage);
       return true;
     }
   } catch (error) {
@@ -645,7 +650,7 @@ async function copyTextValue(value, container) {
     input.select();
     try {
       if (document.execCommand && document.execCommand("copy")) {
-        showToast("QR copied.");
+        showToast(successMessage);
         return true;
       }
     } catch (error) {
@@ -4660,6 +4665,10 @@ async function handleAction(action, actionElement = null) {
   }
   if (String(action || "").startsWith("event-share:")) {
     await shareTicketingEvent(action.slice("event-share:".length));
+    return;
+  }
+  if (String(action || "").startsWith("event-copy-link:")) {
+    await copyTicketingEventLink(action.slice("event-copy-link:".length));
     return;
   }
   if (action === "event-filter-clear") {
@@ -17868,6 +17877,8 @@ function ticketingPublicEventRow(event = {}) {
           : `<button class="btn secondary event-card-cta" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}">
               ${event.registrationMode ? "Register" : "Get tickets"}
             </button>`}
+        <button class="icon-btn event-share-btn" type="button" data-action="event-copy-link:${esc(event.slug || "")}"
+          aria-label="Copy the link to ${esc(event.eventName || "this event")}" title="Copy link">${icon("copy")}</button>
         <button class="icon-btn event-share-btn" type="button" data-action="event-share:${esc(event.slug || "")}"
           aria-label="Share ${esc(event.eventName || "this event")}" title="Share this event">${icon("share")}</button>
       </div>
@@ -17981,8 +17992,30 @@ async function shareTicketingEvent(slug) {
       if (error && error.name === "AbortError") return;
     }
   }
-  await copyTextValue(`${text}\n${url}`);
-  showToast("Event link copied. Paste it into a message.", "success");
+  // SAY WHICH THING WAS COPIED, ONCE. This used to call copyTextValue (which
+  // toasts "QR copied.") and then toast "Event link copied" on top of it. Two
+  // messages, the first about a QR code, over a copy that was neither.
+  await copyTextValue(`${text}\n${url}`, null, "Event details and link copied. Paste them into a message.");
+}
+// THE BARE LINK, FOR WHEN A MESSAGE IS NOT WHAT YOU WANTED.
+//
+// `shareTicketingEvent` above deliberately builds a full WhatsApp-ready message,
+// because a naked URL pasted into a chat tells the recipient nothing about what
+// they are being invited to. That is right for sharing and wrong for the times
+// somebody wants the address itself: putting it in a poster, an email they are
+// writing, a browser bar, a calendar invite.
+//
+// So both exist, side by side, and each says exactly what it did. The URL is
+// built by the same two lines as the share, so the two can never drift apart.
+async function copyTicketingEventLink(slug) {
+  if (!slug) return;
+  const origin = /^https?:\/\//i.test(location.origin) ? location.origin : "https://app.titopay.co.za";
+  const url = `${origin}/events/${encodeURIComponent(slug)}`;
+  try {
+    await copyTextValue(url, null, "Event link copied.");
+  } catch (error) {
+    showToast("The event link could not be copied. Try the share button instead.", "error");
+  }
 }
 async function openPublicTicketingEvent(slug) {
   if (!slug) return openPersonalTicketsDashboard();
@@ -18003,6 +18036,8 @@ function publicTicketingEventModal(event = {}) {
         <h2>${esc(event.eventName || "Event")}</h2>
         <p class="lead">${esc(event.description || "Secure TitoPay event ticketing.")}</p>
       </div>
+      <button class="icon-btn" type="button" data-action="event-copy-link:${esc(event.slug || "")}"
+        aria-label="Copy the link to this event" title="Copy link">${icon("copy")}</button>
       <button class="icon-btn" type="button" data-action="event-share:${esc(event.slug || "")}"
         aria-label="Share this event" title="Share this event">${icon("share")}</button>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
