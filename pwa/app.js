@@ -578,10 +578,28 @@ async function copyIdentifierValue(button) {
     showToast(`${label} could not be copied.`, "error");
   }
 }
+// A BUSY BUTTON HAS TO LOOK BUSY, NOT BROKEN.
+//
+// This disabled the button and added a class, and the class was styled for
+// exactly one button in the whole stylesheet. Everywhere else — including the
+// Confirm button on a QR payment — the only visible change was the global
+// `button:disabled { opacity: .55 }`, which is the same thing an UNAVAILABLE
+// button looks like. So on a slow network a customer tapped Confirm, the label
+// stayed "Confirm", the button went pale, and nothing else happened.
+//
+// That is the exact moment somebody taps again, and then wonders whether they
+// have paid twice. The payment path is idempotent and would refuse the second
+// attempt, so no money was ever at risk; the doubt was, and doubt is the thing
+// this pass exists to remove.
+//
+// `aria-busy` is set as well, because a customer using a screen reader gets
+// nothing at all from an opacity change.
 function setButtonBusy(button, busy) {
   if (!button) return;
   button.disabled = busy;
   button.classList.toggle("is-busy", busy);
+  if (busy) button.setAttribute("aria-busy", "true");
+  else button.removeAttribute("aria-busy");
 }
 // Applies the values the markup could not carry inline. Called after every
 // Stockvel render; safe to run repeatedly.

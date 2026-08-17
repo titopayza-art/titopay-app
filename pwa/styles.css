@@ -15487,3 +15487,49 @@ img {
   cursor: default;
 }
 
+/* A BUSY BUTTON READS AS WORKING, NOT AS UNAVAILABLE.
+   Only .recipient-verify-btn.is-busy was ever styled, so every other busy
+   button fell back to the global button:disabled opacity, which is what an
+   unavailable button looks like. On a slow network that is the moment a
+   customer taps Confirm a second time. The label is hidden rather than dimmed,
+   because the label is a bare text node in most of these buttons and a spinner
+   drawn on top of readable text looks like a rendering fault, not progress. */
+button.is-busy,
+button.btn.is-busy,
+button.btn.primary.is-busy,
+button.btn.secondary.is-busy {
+  position: relative;
+  opacity: 0.95;
+  cursor: progress;
+  /* Beats .btn.primary's own colour, which is a two-class selector and would
+     otherwise keep the label painted underneath the spinner. */
+  color: transparent;
+}
+button.is-busy > * { visibility: hidden; }
+button.is-busy::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border: 2px solid var(--accent, #1457ff);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: titopay-busy-spin 0.7s linear infinite;
+}
+/* The spinner cannot inherit currentColor, because the label colour is
+   transparent while busy. A filled button needs a white ring; everything else
+   keeps the accent. */
+button.btn.primary.is-busy::after,
+button.is-busy.btn-primary::after {
+  border-color: #ffffff;
+  border-right-color: transparent;
+}
+@keyframes titopay-busy-spin { to { transform: rotate(360deg); } }
+/* Motion is decoration here: the hidden label and the ring still read as busy
+   without it, so a customer who has asked for less movement loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  button.is-busy::after { animation: none; border-right-color: currentColor; opacity: 0.7; }
+}
