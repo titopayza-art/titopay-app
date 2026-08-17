@@ -22,7 +22,7 @@ async function seed(u,bal){u.email=`${TAG}_${u.phone.slice(-3)}@example.invalid`
  try{
   await seed(shop,0); await seed(payer,5000);
   await pool.query(`INSERT INTO merchants (id,user_id,business_name,merchant_id,status,verification_status)
-   VALUES ($1,$2,$3,$4,'active','verified')`,[randomUUID(),shop.id,`${TAG} Corner Cafe`,`M${TAG}`]);
+   VALUES ($1,$2,$3,$4,'active','verified')`,[randomUUID(),shop.id,`${TAG} Corner Cafe`,`TPM-${Date.now()}-${TAG.slice(-4).toUpperCase()}`]);
   browser=await chromium.launch({args:["--no-sandbox"],executablePath:"/opt/pw-browsers/chromium-1194/chrome-linux/chrome"});
   const context=await browser.newContext({viewport:{width:900,height:1200},serviceWorkers:"block"});
   await context.route("https://api.titopay.co.za/**",async(route)=>{const rq=route.request();
@@ -74,8 +74,16 @@ async function seed(u,bal){u.email=`${TAG}_${u.phone.slice(-3)}@example.invalid`
    return [...document.querySelectorAll(".receipt-card dl > div")].map(d=>[d.querySelector("dt").textContent.trim(),d.querySelector("dd").textContent.trim()]);});
   const mmap=new Map(merchant);
   console.log("\n  THE MERCHANT'S SLIP");for(const[k,v]of merchant)console.log(`    ${k.padEnd(18)} ${v}`);
-  assert.ok(mmap.get("Merchant ID"),"the merchant lost their Merchant ID");
-  ok("the merchant's slip keeps its Merchant ID",mmap.get("Merchant ID"));
+  const shownId=mmap.get("Merchant ID");
+  assert.ok(shownId,"the merchant lost their Merchant ID");
+  // IT MUST BE THE TRADING ID, NOT THE ACCOUNT UUID. currentMerchantId() ended
+  // in user.id, and nothing in the session carried a merchant id, so every
+  // merchant receipt printed the owner's internal account UUID on a document
+  // with a Share button. TPM-... is what a merchant quotes to Support.
+  assert.doesNotMatch(shownId,/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    `the merchant's slip shows a raw UUID (${shownId}) instead of their trading id`);
+  assert.match(shownId,/^TPM-/,`the merchant's slip shows "${shownId}", not their TPM- trading id`);
+  ok("the merchant's slip shows their real trading id, not an account UUID",shownId);
   assert.equal(cents(mmap.get("Net Amount")),"47.75",`the merchant's net reads ${mmap.get("Net Amount")}`);
   assert.equal(cents(mmap.get("Fees")),"2.25",`the merchant's fee reads ${mmap.get("Fees")}`);
   ok("and it says Net Amount R47,75 with a fee of R2,25, which is what arrived");

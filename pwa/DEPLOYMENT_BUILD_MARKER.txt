@@ -4,7 +4,51 @@ PWA bundle: v427 (titopay-pwa-v427-receipt-id)
 Requires: api.zip build 55
 Admin console: admin-console-v89
 
-BUILD 55 — URGENT FIX FOR BUILD 54, WHICH COULD REFUSE TO START
+TitoPay deployment build — 2026-08-17 UTC
+Branch: claude/peach-payments-403-fix-6sv7cy
+PWA bundle: v428 (titopay-pwa-v428-merchant-id)
+Requires: api.zip build 55
+Admin console: admin-console-v89
+
+THE MERCHANT'S SLIP SHOWS THEIR TRADING ID, NOT AN ACCOUNT UUID
+
+   currentMerchantId() ended in `user.id`, and nothing in the session ever
+   carried a merchant id, so the last link in that chain was not a theoretical
+   fallback: it was what every merchant receipt actually printed. A live slip
+   read
+
+      Merchant ID   c226fea5-152e-4c53-a91e-7ac3dad14a20
+
+   which is the owner's internal ACCOUNT UUID, on a document that has a Share
+   button on it. The account UUID was stripped off the printed A4 posters in
+   build 45 for exactly this reason; it was still on the receipts.
+
+   GET /v1/merchants/me already existed and already returned the real trading
+   id, TPM-1786309461967-TG61 and the like. It had simply never been called.
+   The app now loads it with the rest of the account and the slip reads
+
+      Merchant ID   TPM-1786929755780-5592
+
+   NO API CHANGE. The endpoint, its response and every other contract are
+   untouched. The call is one more entry in the same Promise.all the app
+   already uses, wrapped in a catch, so a personal account or an account with
+   no merchant row resolves to null and every previous fallback still applies.
+
+   Proven on a real rendered screen by verification/receipt-slips-live.js,
+   which now REFUSES a UUID in that field outright rather than only checking
+   the row is present.
+
+   AND A CORRECTION TO A FIGURE STATED IN CHAT.
+
+   The business fee on a R100 sale was quoted as R1.50, forgetting the 1.5%.
+   It is R1.50 + 1.5% = R3.00, so the business is credited R97.00. The receipt
+   was right and the message was wrong. On a R100 QR payment:
+
+      customer pays      R101.50
+      business receives  R 97.00
+      TitoPay            R  4.50
+
+PREVIOUS BUILD — BUILD 55 — URGENT FIX FOR BUILD 54, WHICH COULD REFUSE TO START
 
    Build 54 treated a variable that had never been set as a reason to stop.
    Deploying it to a server that did not yet have TITOPAY_ENV and the three

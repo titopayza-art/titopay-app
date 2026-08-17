@@ -192,6 +192,10 @@ const APP_ROUTES = ["dashboard", "services", "qr", "activity", "profile"];
 const state = {
   auth: readJson(AUTH_KEY),
   user: null,
+  // The merchant record from GET /v1/merchants/me, for business accounts. Null
+  // on a personal account and on any account with no merchant row, which is
+  // why every reader falls back rather than assuming it is there.
+  merchantRecord: null,
   wallets: [],
   transactions: [],
   beneficiaries: [],
@@ -6975,14 +6979,27 @@ function stepLandingAccount(direction) {
 }
 async function loadAccount() {
   try {
-    const [profile, wallets, transactions, profileQr, securityCentre, enterpriseDistribution, beneficiaries] = await Promise.all([
+    const [profile, wallets, transactions, profileQr, securityCentre, enterpriseDistribution, beneficiaries, merchant] = await Promise.all([
       api("/v1/auth/me"),
       api("/v1/wallets"),
       api("/v1/transactions"),
       api("/v1/qr/profile").catch(() => ({ qr: null })),
       api("/v1/security/centre").catch(() => ({ centre: null })),
       api("/v1/enterprise-distribution/eligibility").catch(() => ({ eligibility: null })),
-      api("/v1/beneficiaries?limit=100").catch(() => ({ items: [] }))
+      api("/v1/beneficiaries?limit=100").catch(() => ({ items: [] })),
+      // THE MERCHANT'S OWN TRADING ID.
+      //
+      // currentMerchantId() ended in `user.id`, and nothing in the session
+      // carried a merchant id, so every merchant receipt printed the owner's
+      // internal ACCOUNT UUID as "Merchant ID" — on a document with a Share
+      // button. The same reason the account UUID was stripped off the printed
+      // posters applies here.
+      //
+      // GET /v1/merchants/me already existed and already returns the real
+      // trading id (TPM-...). It was simply never called. Catching keeps a
+      // personal account, or an account with no merchant row, exactly as it
+      // was: this resolves to null and the old fallbacks still apply.
+      api("/v1/merchants/me").catch(() => ({ merchant: null }))
     ]);
     state.user = hydrateAccountMedia(profile.user || {});
     rememberLocalTitoPayUser(state.user);
@@ -6992,6 +7009,7 @@ async function loadAccount() {
     state.securityCentre = securityCentre.centre || null;
     state.enterpriseDistribution.eligibility = enterpriseDistribution.eligibility || null;
     state.beneficiaries = beneficiaries.items || [];
+    state.merchantRecord = merchant.merchant || null;
     state.accountType = profile.user && (profile.user.accountType || profile.user.account_type) || state.accountType;
     loadInAppNotifications();
     syncTransactionNotifications();
@@ -14044,6 +14062,18 @@ function counterpartyNoun({ plural = false, capitalise = false } = {}) {
   return capitalise ? word.charAt(0).toUpperCase() + word.slice(1) : word;
 }
 function currentMerchantId() {
+  // The merchant's REAL trading id, from GET /v1/merchants/me, which is what a
+  // merchant quotes to Support and reconciles against. Everything after it is
+  // the original chain, kept so an account with no merchant record behaves
+  // exactly as it did.
+  //
+  // The last link used to be reached in practice, not in theory: nothing in
+  // the session carried a merchant id, so every merchant receipt printed
+  // `user.id`, the owner's internal ACCOUNT UUID, on a document with a Share
+  // button on it.
+  const merchant = state.merchantRecord || {};
+  const trading = String(merchant.merchant_id || merchant.merchantId || "").trim();
+  if (trading) return trading;
   const user = state.user || {};
   return user.businessId || user.business_id || user.merchantId || user.merchant_id || user.walletId || user.wallet_id || user.id || "TitoPay Merchant";
 }
