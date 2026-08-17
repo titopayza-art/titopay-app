@@ -39,6 +39,10 @@ const DEFAULT_SERVICES = [
   ["quote", "Quote", "list", "quote", "Create customer quotes. PDF download is R2.50.", "active", false, true, 230, "none"],
   ["proforma-invoice", "Proforma Invoice", "list", "proforma-invoice", "Create proforma invoices. PDF download is R2.50.", "active", false, true, 240, "none"],
   ["ticketing", "Ticketing", "ticket", "ticketing", "Create approved events, manage ticket sales and prepare attendee entry controls.", "active", false, true, 300, "new"],
+  // TitoPay Book. Business-only, deliberately: a customer BOOKS through Book,
+  // they do not run one, so a personal tile would open a console with nothing in
+  // it. Customers reach a venue through discovery and the shared link instead.
+  ["book", "Book", "calendar", "book", "Take bookings for your business: tables, appointments, bays and classes.", "active", false, true, 305, "new"],
   ["business-ticketing-staff", "Event Scanners", "contacts", "business-ticketing-staff", "The people who scan tickets at your door. Add them, and they scan from their own phone.", "active", false, true, 301, "new"],
   ["shop-marketplace", "Shop Marketplace", "store", "shop-marketplace", "Marketplace services for local brands and digital products.", "disabled", false, false, 310, "none"],
   ["rewards", "Rewards", "sparkles", "rewards", "Personal rewards programme.", "disabled", false, false, 320, "none"],

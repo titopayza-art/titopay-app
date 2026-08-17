@@ -34,6 +34,7 @@ const stockvelRoutes = require("./stockvel.routes");
 const titokidsRoutes = require("./titokids.routes");
 const enterpriseDistributionRoutes = require("./enterprise-distribution.routes");
 const posRoutes = require("../pos/routes");
+const bookRoutes = require("./book.routes");
 const emailCentreRoutes = require("./email-centre.routes");
 const emailOtpAdminRoutes = require("./email-otp-admin.routes");
 const { pool } = require("../db/pool");
@@ -149,6 +150,11 @@ function mountVersionedRoutes(prefix) {
   router.use(`${prefix}/tito-kids`, titokidsRoutes);
   router.use(`${prefix}/enterprise-distribution`, enterpriseDistributionRoutes);
   router.use(`${prefix}/pos`, posRoutes);
+  // ABOVE lookupRoutes DELIBERATELY. That router sits on the bare prefix with
+  // requireAuth on it, so anything mounted after it never sees a request and
+  // every unmatched path becomes 401 instead of 404. Book's public venue page
+  // will live in this router later and must be reachable by a crawler.
+  router.use(`${prefix}/book`, bookRoutes);
   router.use(`${prefix}`, lookupRoutes);
 
   router.post(`${prefix}/fee-preview`, requireAuth, async (req, res, next) => {

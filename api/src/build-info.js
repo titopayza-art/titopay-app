@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 63;
+const API_BUILD = 64;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  64: "TitoPay Book is REACHABLE. /v1/book is mounted (above lookupRoutes, which "
+      + "puts requireAuth on the bare prefix and turns anything after it into a "
+      + "401), the Book tile appears for business accounts under Run your "
+      + "business, and a business can pay the once-off R250, create its booking "
+      + "page and get a clean shareable link. Bookings themselves are not built "
+      + "yet: the day view is an empty state, honestly labelled. Requires "
+      + "db:apply-migrations and app.zip v434 together.",
   63: "TitoPay Book: the foundation only. Eight new book_* tables, the category "
       + "vocabulary, and the once-off R250 business activation. NOTHING IS "
       + "REACHABLE: no router is mounted, so no endpoint changes and no screen "

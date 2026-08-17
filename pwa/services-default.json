@@ -393,6 +393,20 @@
       "feature_badge": "new"
     },
     {
+      "service_code": "book",
+      "service_name": "Book",
+      "service_icon": "calendar",
+      "action": "book",
+      "description": "Take bookings for your business: tables, appointments, bays and classes.",
+      "fee": 0,
+      "commission": 0,
+      "status": "active",
+      "personal_visible": false,
+      "business_visible": true,
+      "sort_order": 305,
+      "feature_badge": "new"
+    },
+    {
       "service_code": "business-ticketing-staff",
       "service_name": "Event Scanners",
       "service_icon": "contacts",

@@ -3467,6 +3467,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "authentication-preference-verify") await verifyAuthenticationPreferenceUpdate(data);
     if (form.dataset.form === "fica-upload") await submitFica(form);
     if (form.dataset.form === "profile-photo") await submitProfilePhoto(form);
+    if (form.dataset.form === "book-venue") { await submitBookVenue(data); return; }
     if (form.dataset.form === "profile-details") await submitProfileDetails(data);
     if (form.dataset.form === "pwa-review") await submitPwaReview(data);
     if (form.dataset.form === "ticketing-event") await submitTicketingEventForm(data, form);
@@ -4784,6 +4785,14 @@ async function handleAction(action, actionElement = null) {
     // otherwise the TitoPay home.
     if (window.history.length > 1) window.history.back();
     else window.location.assign("/");
+    return;
+  }
+  if (action === "book-open") { await openBookModal(); return; }
+  if (action === "book-activate") { await payForBook(event.target.closest("button")); return; }
+  if (action === "book-venue-form") { openBookVenueForm(); return; }
+  if (action.startsWith("book-venue-open:")) { await openBookVenue(action.split(":")[1]); return; }
+  if (action.startsWith("book-copy-link:")) {
+    copyTextValue(`${location.origin}/book/${action.split(":")[1]}`, document.querySelector(".modal"), "Booking link copied.");
     return;
   }
   if (action === "business-sales") {
@@ -24415,6 +24424,10 @@ function handleService(id) {
   if (service.type === "enterpriseDistribution" || service.action === "enterprise-distribution") return openEnterpriseDistributionDashboard();
   if (service.type === "businessSales" || service.action === "business-sales") return openBusinessSalesModal();
   if (service.type === "titoKids" || service.action === "tito-kids") return openTitoKidsModal();
+  if (service.type === "book" || service.action === "book") {
+    state.currentModalAction = "book-open";
+    return openBookModal();
+  }
   if (service.action === "top-up") return openTopUpModal(service);
   if (service.action === "withdraw") return openWithdrawModal(service);
   if (["airtime", "airtime-data", "airtime-and-data", "data", "electricity", "voucher"].includes(service.action)) {
@@ -26129,7 +26142,7 @@ const SERVICE_GROUPS = [
   { key: "money", label: "Money in & out", members: ["top-up", "receive-money", "withdraw", "payouts", "tip", "refund"] },
   { key: "buy", label: "Buy", members: ["airtime", "data", "airtime-data", "electricity", "voucher", "pay-bills", "tickets"] },
   { key: "plan", label: "Plan & save", members: ["stockvel", "tito-kids", "learn"] },
-  { key: "business", label: "Run your business", members: ["invoice", "quote", "proforma-invoice", "business-sales", "enterprise-distribution", "ticketing", "business-ticketing-staff"] },
+  { key: "business", label: "Run your business", members: ["invoice", "quote", "proforma-invoice", "business-sales", "enterprise-distribution", "ticketing", "business-ticketing-staff", "book"] },
   { key: "more", label: "More", members: null }
 ];
 // The organiser's social links, shown on the public event page. The server
@@ -27291,3 +27304,211 @@ document.addEventListener("click", (event) => {
   sessionStorage.setItem("titopay_support_conversation_id", String(conversationId));
   openChatbotModal();
 }, true);
+
+/* ==========================================================================
+   TITOPAY BOOK.
+
+   THREE STATES, AND THE SCREEN IS WHICHEVER ONE IS TRUE:
+     not paid  -> what it costs and what it gives you
+     no venue  -> set up the place people book
+     ready     -> today's bookings
+
+   Nothing here invents a component. Everything is .btn / .field / .panel /
+   .activity-list / .settings-list / .empty-state / .modal-head, which is why a
+   Book screen looks like the rest of TitoPay rather than like a bolt-on. The
+   only new selectors are bk-*, a prefix nothing else in the stylesheet uses, so
+   Book's CSS physically cannot restyle an existing screen.
+   ========================================================================== */
+function bookState() {
+  state.book = state.book || { activation: null, venues: null, options: null, venue: null };
+  return state.book;
+}
+
+async function openBookModal() {
+  const store = bookState();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay</p><h2>Book</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list"><article class="activity-item"><div><p>Loading…</p></div></article></section>
+  `);
+  try {
+    const [activation, venues] = await Promise.all([
+      api("/v1/book/activation"),
+      api("/v1/book/venues").catch(() => ({ venues: [] }))
+    ]);
+    store.activation = activation.activation;
+    store.venues = venues.venues || [];
+    renderBook();
+  } catch (error) {
+    openInfoModal("Book unavailable",
+      error.friendlyMessage || "TitoPay could not open Book right now. Please try again.");
+  }
+}
+
+function renderBook() {
+  const store = bookState();
+  if (!store.activation || !store.activation.active) return renderBookOffer();
+  if (!store.venues || !store.venues.length) return renderBookSetup();
+  return renderBookHome();
+}
+
+// WHAT R250 BUYS, said plainly and without a claim that is not true yet.
+function renderBookOffer() {
+  const store = bookState();
+  const price = Number(store.activation && store.activation.amount ? store.activation.amount : 250);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay</p><h2>Book</h2>
+        <p class="lead">Let customers book you, and manage it in one place.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="panel">
+      <p class="eyebrow">Once-off</p>
+      <h3 class="bk-price">R${price.toFixed(2)}</h3>
+      <p class="muted">Paid once from your TitoPay wallet. No monthly subscription.</p>
+    </section>
+    <section class="settings-list">
+      ${[["store", "Your own booking page", "A link you can share on WhatsApp, Instagram or a poster."],
+         ["calendar", "Bookings and a day view", "See today at a glance, confirm or decline requests."],
+         ["grid", "Tables, bays, rooms or staff", "Set what can be booked and how many at once."],
+         ["receipt-list", "What you offer", "Services with a price and how long each one takes."]
+        ].map(([glyph, title, note]) => `
+        <div class="settings-row">
+          <span class="icon-bubble">${icon(glyph)}</span>
+          <span class="settings-row-body"><strong>${esc(title)}</strong><small>${esc(note)}</small></span>
+        </div>`).join("")}
+    </section>
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="book-activate">${icon("check-circle")} Get Book for R${price.toFixed(2)}</button>
+    </div>
+  `);
+}
+
+async function payForBook(button) {
+  setButtonBusy(button, true);
+  try {
+    const result = await api("/v1/book/activation", { method: "POST", body: {} });
+    bookState().activation = result.activation;
+    bookState().venues = [];
+    showToast(result.alreadyActive ? "Book is already active." : "Book is now active.", "success");
+    renderBook();
+  } catch (error) {
+    setButtonBusy(button, false);
+    showToast(error.friendlyMessage || "That payment could not be completed. Please try again.", "error");
+  }
+}
+
+function renderBookSetup() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Book</p><h2>Set up bookings</h2>
+        <p class="lead">Tell us what kind of business this is, and we will make your booking page.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="empty-state">
+      <p><strong>No booking page yet</strong></p>
+      <small>It takes a minute. You can change anything afterwards.</small>
+    </section>
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="book-venue-form">${icon("store")} Create my booking page</button>
+    </div>
+  `);
+}
+
+async function openBookVenueForm() {
+  const store = bookState();
+  if (!store.options) {
+    store.options = await api("/v1/book/options").catch(() => ({ categories: [] }));
+  }
+  const categories = store.options.categories || [];
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-open" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">Book</p><h2>Your booking page</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="book-venue">
+      <div class="field"><label for="bk-name">Business name</label>
+        <input id="bk-name" name="name" maxlength="120" required placeholder="Kasi Kitchen"></div>
+      <div class="field"><label for="bk-category">What kind of business is it</label>
+        <select id="bk-category" name="category" required>
+          <option value="">Choose one</option>
+          ${categories.map((c) => `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join("")}
+        </select>
+        <small class="field-hint">This sets the words on your screens, like table or appointment.</small></div>
+      <div class="field"><label for="bk-city">City or town <span class="field-optional">Optional</span></label>
+        <input id="bk-city" name="city" maxlength="80" placeholder="Johannesburg"></div>
+      <div class="field"><label for="bk-tagline">One line about it <span class="field-optional">Optional</span></label>
+        <input id="bk-tagline" name="tagline" maxlength="160" placeholder="Home cooked meals in Soweto"></div>
+      <button class="btn primary" type="submit">${icon("check-circle")} Create booking page</button>
+    </form>
+  `);
+}
+
+async function submitBookVenue(data) {
+  const result = await api("/v1/book/venues", { method: "POST", body: {
+    name: data.name, category: data.category, city: data.city, tagline: data.tagline
+  }});
+  const store = bookState();
+  store.venues = [result.venue, ...(store.venues || [])];
+  showToast("Your booking page is ready.", "success");
+  renderBook();
+}
+
+function renderBookHome() {
+  const store = bookState();
+  const venue = store.venues[0];
+  const link = `${location.origin}/book/${venue.slug}`;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(venue.name)}</p><h2>Today</h2>
+        <p class="lead">${esc(formatDate(new Date().toISOString()).split(",")[0])}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    <section class="integration-note">
+      <p>${icon("store")} <span>Your booking page is ${venue.status === "published"
+        ? "live." : "still a draft, so the link is not public yet."}</span></p>
+    </section>
+
+    <section class="empty-state">
+      <p><strong>No bookings yet</strong></p>
+      <small>Share your link and bookings will appear here.</small>
+    </section>
+
+    <section class="settings-list">
+      <button class="settings-row-button" type="button" data-action="book-copy-link:${esc(venue.slug)}">
+        <span class="icon-bubble">${icon("share")}</span>
+        <span class="settings-row-body"><strong>Your booking link</strong><small>${esc(link)}</small></span>
+        <span class="settings-row-chevron">${icon("copy")}</span>
+      </button>
+      <button class="settings-row-button" type="button" data-action="book-venue-open:${esc(venue.id)}">
+        <span class="icon-bubble">${icon("store")}</span>
+        <span class="settings-row-body"><strong>Business details</strong><small>${esc(venue.categoryLabel)}${venue.address && venue.address.city ? ` · ${esc(venue.address.city)}` : ""}</small></span>
+        <span class="settings-row-chevron">${icon("arrow-right")}</span>
+      </button>
+    </section>
+  `);
+}
+
+async function openBookVenue(venueId) {
+  const result = await api(`/v1/book/venues/${encodeURIComponent(venueId)}`).catch(() => null);
+  if (!result) return showToast("That page could not be opened.", "error");
+  const venue = result.venue;
+  openModal(`
+    <div class="modal-head modal-head-nested">
+      <button class="icon-btn" type="button" data-action="book-open" aria-label="Back to Book" title="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">Book</p><h2>${esc(venue.name)}</h2>
+        <p class="lead">${esc(venue.categoryLabel)}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="settings-list">
+      ${settingsRow("Web address", `/book/${venue.slug}`, "share")}
+      ${settingsRow("Status", venue.status === "published" ? "Live" : "Draft", "shield")}
+      ${settingsRow("Bookings are", venue.autoConfirm ? "Confirmed automatically" : "Confirmed by you", "check-circle")}
+      ${settingsRow("Availability shown publicly", venue.showsAvailabilityCount ? "Yes, with numbers" : "No, just Accepting bookings", "eye")}
+    </section>
+  `);
+}

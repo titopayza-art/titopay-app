@@ -15650,3 +15650,4 @@ button.is-busy.btn-primary::after {
   letter-spacing: 0.02em;
 }
 .business-profile-stamp { margin-top: 12px; font-size: 0.82rem; }
+.bk-price{font-size:2rem;font-weight:700;color:var(--ink);margin:2px 0 4px}
