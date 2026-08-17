@@ -9,6 +9,7 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "db:init": "node src/db/init.js",
+    "db:init-production": "node scripts/init-production-database.js",
     "db:migrate": "node src/db/init.js",
     "hr:seed": "node scripts/seed-hr.js",
     "pricing:seed": "node scripts/seed-pricing-rules.js",

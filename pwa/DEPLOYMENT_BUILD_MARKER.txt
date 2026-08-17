@@ -1,10 +1,71 @@
 TitoPay deployment build — 2026-08-17 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
 PWA bundle: v426 (titopay-pwa-v426-qr-pricing)
-Requires: api.zip build 52
+Requires: api.zip build 53
 Admin console: admin-console-v89
 
-AN EMAIL STATEMENT NOW ARRIVES AS A STATEMENT
+GOING LIVE WITHOUT TEST MONEY BECOMING REAL MONEY
+
+   npm run db:init-production            report only, writes nothing
+   npm run db:init-production -- --apply do it
+
+   Sandbox on TitoPay is NOT a separate database. It is one environment
+   variable per integration choosing which URL and keys the server talks to,
+   and no table records which mode created a row: transactions and wallets
+   have no environment column. So flipping the keys leaves every test balance
+   exactly where it is.
+
+   That matters because a wallet balance becomes a CLAIM ON REAL MONEY the
+   moment the keys are live. A test account holding R5000 could request a
+   withdrawal and TitoPay would attempt to send R5000 of real money to a real
+   bank account, funded from a float that never received it.
+
+   THE ANSWER IS A CLEAN DATABASE, NOT A CLEANUP.
+
+   This stands up a NEW production database and leaves the existing one as the
+   test environment. Nothing is deleted, so nothing can go wrong irreversibly,
+   and "is it clean?" becomes a row count rather than a hope.
+
+      the schema, from the same files db:init uses
+      the approved pricing schedule
+      the service catalogue and the email templates
+      THE REVENUE WALLET, which nothing else in the codebase creates and whose
+        absence failed every fee-bearing payment in production
+      the suspense wallet
+      one admin account, when ADMIN_PASSWORD is supplied
+      a verification pass that counts what exists and proves the invariants
+
+   IT CANNOT DESTROY ANYTHING.
+
+   No DROP, no DELETE, no TRUNCATE, and no UPDATE to a customer row. If it
+   finds customer data it REFUSES OUTRIGHT, prints what it found and exits
+   non-zero. There is no override flag, because a flag that lets you point it
+   at the live database is the exact accident it exists to prevent. It writes
+   nothing at all without --apply, and re-running it against its own output
+   changes nothing.
+
+   Four tests in the suite assert those properties against the script's own
+   SOURCE, so a DELETE added later by anyone fails the build. Mutation-tested
+   by adding one: it fails, naming the file and the pattern.
+
+   PROVEN, IN THIS ORDER.
+
+      pointed at the sandbox with --apply, it refused and exited 1, listing
+        2,499 users and 4,374 ledger rows, having written nothing
+      pointed at an empty database it set up 93 pricing rules, 31 templates,
+        a revenue wallet opening at R0.00 and one admin
+      re-run against its own output, it changed nothing
+      the sandbox was then re-counted and is byte-for-byte unchanged
+      and a real payment harness run against the BRAND NEW database settled
+        five payments to the cent, so it is functional and not merely populated
+
+   The runbook is GOING-LIVE.md in the repository root: the full sequence, the
+   integration modes (all three default to "production" when unset, so going
+   live can happen by omission), and the reminder that every A4 poster printed
+   during testing must be reprinted, because its QR points at an account that
+   will not exist on the new database.
+
+PREVIOUS BUILD — AN EMAIL STATEMENT NOW ARRIVES AS A STATEMENT
 
    A customer pays a fee for an Email Statement. What the fee bought was an
    email whose body held the whole ledger typed out as monospace lines:

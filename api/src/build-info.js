@@ -19,10 +19,19 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 52;
+const API_BUILD = 53;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  53: "npm run db:init-production stands up a clean production database. "
+      + "Sandbox is not a separate database on TitoPay, it is one env var per "
+      + "integration, and no table records which mode created a row, so going "
+      + "live leaves every test balance in place as a claim on real money. This "
+      + "sets up a NEW database instead: schema, pricing, catalogue, templates, "
+      + "the revenue wallet that nothing else creates, and one admin, then "
+      + "verifies and reports. It holds no DROP, DELETE or TRUNCATE, refuses "
+      + "outright if it finds customer data, has no override flag, and writes "
+      + "nothing without --apply. See GOING-LIVE.md.",
   52: "An Email Statement now arrives AS a statement. The fee bought an email "
       + "whose body held the ledger as pipe-separated monospace lines that "
       + "wrapped into an unreadable block on a phone, so the document somebody "
