@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 61;
+const API_BUILD = 62;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  62: "Tests only; no behaviour changes from 61. The commercial profile routes "
+      + "had no test above the service layer, so a router that referenced the "
+      + "wrong function, read the wrong path parameter or was never mounted "
+      + "would have passed the whole suite and failed as a screen that will not "
+      + "load. test/business-commercial-profile-http.test.js now drives both "
+      + "routes over real HTTP with a real session.",
   61: "A business can tell TitoPay what it does and where its money comes from. "
       + "Two self-declared fields on business_profiles, an industry list written "
       + "for the businesses that actually use TitoPay rather than a corporate "
