@@ -19,10 +19,27 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 59;
+const API_BUILD = 60;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  60: "New customers are finally ASKED to verify their email. The whole flow "
+      + "existed and was deliberately dormant: a note in register() explained "
+      + "that the landing page did not exist, so a \"Verify your email\" message "
+      + "would point every new customer at a 404, and a welcome email with a "
+      + "dead link is worse than no email. That was true when it was written. "
+      + "pwa/verify-email/ has shipped since, so registration now sends the "
+      + "link, non-fatally, exactly like the welcome email beside it. Four "
+      + "things were also wrong or missing: links lived for a DAY rather than "
+      + "thirty minutes; five of the seven audit events had no writer, so a "
+      + "replayed or expired link left no trace; nothing checked that "
+      + "APP_ORIGIN was HTTPS before putting a bearer token in a query string; "
+      + "and the email did not say that TitoPay never asks for a password, PIN "
+      + "or card details, which is the one sentence a phishing lookalike cannot "
+      + "copy safely. VERIFYING AN EMAIL STILL GRANTS NOTHING: not identity, "
+      + "not FICA, not a limit, and a test now fails if anybody wires a "
+      + "financial decision to it. No authentication rule, session rule, "
+      + "payment, wallet, QR or provider behaviour changed.",
   59: "A database row is no longer an approval. Gate 6 asked the database "
       + "whether a capability was approved and the database answered, so anybody "
       + "who could write to banking_capability_approvals could approve a bank "

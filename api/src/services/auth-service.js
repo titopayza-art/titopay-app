@@ -739,12 +739,37 @@ async function register(payload, meta) {
     userAgent: meta.userAgent,
     metadata: { scope: payload.scope || "customer", accountType }
   });
-  // Deliberately NOT sent: the email-verification landing page does not exist
-  // yet, so the "Verify your email" message pointed every new customer at a
-  // 404. A welcome email with a dead link is worse than no email. The token
-  // machinery stays (createVerificationForUser / resendVerification) for the
-  // day the landing page ships; until then registration sends only the
-  // welcome email below, which contains no dead links.
+  // THE VERIFICATION EMAIL, WHICH USED TO BE DELIBERATELY WITHHELD.
+  //
+  // The note that stood here said the landing page did not exist, so a "Verify
+  // your email" message would point every new customer at a 404, and a welcome
+  // email with a dead link is worse than no email. That was true when it was
+  // written. It is no longer: pwa/verify-email/ ships with the app bundle,
+  // reads the token from the query string, calls POST /v1/auth/email/verify and
+  // presents success, expired, already-used and safe-failure states. The
+  // machinery this note preserved is now wired to it.
+  //
+  // NON-FATAL, exactly like the welcome email beside it. A customer whose
+  // account was created must never be told registration failed because an
+  // email could not be queued; they can ask for a new link from the app at any
+  // time, and the failure is recorded for an operator rather than shown to them.
+  //
+  // WHAT THIS DOES NOT DO: it does not gate anything. A verified email is not
+  // identity, not FICA, and not a licence to move money. `email_verified_at` is
+  // read by nothing in the limit engine, the compliance service or any payment
+  // path, and this change does not add such a read.
+  const verificationEmail = await createVerificationForUser(rows[0], {
+    ...meta,
+    verificationReason: "registration"
+  }).catch(async (error) => {
+    console.error("[auth] registration verification email failed", { userId, message:error.message, code:error.details?.code });
+    await safeAuditLog({
+      actorType:userType, actorId:userId, action:"email_verification_send_failed",
+      entityType:"user", entityId:userId, ipAddress:meta.ipAddress, userAgent:meta.userAgent,
+      metadata:{reason:String(error.details?.code||error.message||"Verification queue failed").slice(0,500)}
+    });
+    return null;
+  });
   const welcomeEmail = await queueWelcomeEmail(rows[0], {
     ...meta,
     accountType,
@@ -788,7 +813,11 @@ async function register(payload, meta) {
   return {
     ...sanitizeUser(normalizeCustomer(rows[0])),
     welcomeEmailQueued:Boolean(welcomeEmail&&!welcomeEmail.skipped),
-    welcomeInAppNotificationCreated:Boolean(welcomeNotification)
+    welcomeInAppNotificationCreated:Boolean(welcomeNotification),
+    // Whether a verification email was QUEUED. Never the token, never the link,
+    // and never whether the address was already verified: this is a flag for the
+    // app to decide whether to show "check your email", nothing more.
+    verificationEmailQueued:Boolean(verificationEmail&&verificationEmail.queued)
   };
 }
 

@@ -381,11 +381,19 @@ test("production email-verification links have a working token-safe PWA landing 
   const page=fs.readFileSync(pwaFile("verify-email/index.html"),"utf8");
   const handler=fs.readFileSync(pwaFile("verify-email/verify-email.js"),"utf8");
   assert.match(service,/\/verify-email\?token=/);
-  assert.match(page,/verify-email\.js\?v=227/);
+  assert.match(page,/verify-email\.js\?v=228/);
   assert.match(handler,/\/v1\/auth\/email\/verify/);
   assert.match(handler,/history\.replaceState/);
   assert.match(handler,/JSON\.stringify\(\{ token \}\)/);
   assert.doesNotMatch(page,/404|Not Found/);
+  // The page can now ask for a new link itself. Before this, an expired link
+  // told the customer to go and find the app, which is where a verification
+  // flow quietly stops being completed.
+  assert.match(handler,/\/v1\/auth\/email\/resend-verification/);
+  assert.match(page,/id="resend-form"/);
+  // And it says plainly what TitoPay will never ask for, because a
+  // verification email is exactly the shape a phishing message imitates.
+  assert.match(page,/never ask for your password/i);
 });
 
 test("Email Statement wallet operations are authenticated, priced, atomic and idempotent", () => {

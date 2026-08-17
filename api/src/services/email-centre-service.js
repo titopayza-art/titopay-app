@@ -75,7 +75,7 @@ const DEFAULT_TEMPLATES = [
     + "Money in: {{currency}} {{moneyIn}}\nMoney out: {{currency}} {{moneyOut}}\nNet movement: {{currency}} {{netMovement}}\n"
     + "Statement fee: {{currency}} {{statementFee}}\n\n{{statementLines}}\n\n"
     + "A record of TitoPay wallet activity. This is not a bank statement. Contact {{supportEmail}} if you need help with it."],
-  ["verify_email_address", "Verify Email Address", "Verify your TitoPay email address", "<p>Hello {{firstName}}. Confirm that this email address belongs to you.</p><p><a href=\"{{verificationLink}}\" style=\"display:inline-block;padding:12px 20px;background:#168ac2;color:#fff;text-decoration:none;border-radius:6px\">Verify Email Address</a></p>"],
+  ["verify_email_address", "Verify Email Address", "Verify your TitoPay email address", "<p>Hello {{firstName}}. Confirm that this email address belongs to you.</p><p><a href=\"{{verificationLink}}\" style=\"display:inline-block;padding:12px 20px;background:#168ac2;color:#fff;text-decoration:none;border-radius:6px\">Verify Email Address</a></p><p>This link works once and expires in about 30 minutes. If it has expired, ask for a new one from the app.</p><p><strong>TitoPay will never ask you for your password, your PIN, a one time code or your card or bank details in an email.</strong> If any message claiming to be from TitoPay asks for those, do not reply to it and contact {{supportEmail}}.</p><p>If you did not create a TitoPay account, you can ignore this email and nothing will happen.</p>"],
   ["password_reset", "Password Reset", "Reset your TitoPay password", "<p>Use this secure, single-use link to reset your password.</p><p><a href=\"{{resetPasswordLink}}\" style=\"display:inline-block;padding:12px 20px;background:#168ac2;color:#fff;text-decoration:none;border-radius:6px\">Reset Password</a></p>"],
   ["password_changed", "Password Changed", "Your TitoPay password was changed", "Your TitoPay password was changed. Contact {{supportEmail}} if this was not you."],
   ["login_notification", "Login Notification", "New TitoPay login", "A login to your TitoPay account was recorded."],
@@ -320,6 +320,41 @@ async function seedDefaultTemplates(db = pool) {
   // monospace lines, which wrapped into an unreadable block on a phone. The
   // ledger travels as an A4 PDF now. Guarded on the exact old html, so an
   // operator who has already rewritten this keeps their version.
+  // THE VERIFICATION EMAIL NOW SAYS WHAT TITOPAY WILL NEVER ASK FOR.
+  //
+  // The original was two sentences and a button. A verification email is
+  // exactly the shape a phishing message imitates, so the real one has to say
+  // plainly that TitoPay never asks for a password, a PIN, a one time code or
+  // card details, tell the customer how long the link lasts, and tell somebody
+  // who did not sign up that they can ignore it.
+  //
+  // Guarded on the exact old html, so an operator who has already rewritten
+  // this template in the Email Centre keeps their version.
+  // VERIFICATION LINKS THAT LIVE FOR A DAY BECOME LINKS THAT LIVE FOR THIRTY
+  // MINUTES, ONCE, AND ONLY IF NOBODY HAS CHOSEN OTHERWISE.
+  //
+  // The column default moves for new databases; an existing settings row keeps
+  // whatever it has, which is 1440 on every deployment because nobody has ever
+  // changed it. The guard is the exact old default: a deployment where an
+  // operator has deliberately set any other number is left alone, because
+  // that number is a decision and this is not.
+  await db.query(
+    `UPDATE email_settings SET verification_token_expiry_minutes = 30, updated_at = NOW()
+      WHERE verification_token_expiry_minutes = 1440`
+  ).catch((error) => console.error("[email-centre] verification expiry fixup failed", { message: error.message }));
+
+  const verifyTemplate = DEFAULT_TEMPLATES.find((item) => item[0] === "verify_email_address");
+  if (verifyTemplate) {
+    await db.query(
+      `UPDATE email_templates
+          SET html_body = $1, text_body = $2, updated_at = NOW()
+        WHERE template_key = 'verify_email_address'
+          AND html_body NOT LIKE '%never ask you for your password%'
+          AND html_body LIKE '%Confirm that this email address belongs to you.%'`,
+      [verifyTemplate[3], plainTextFrom(verifyTemplate[3])]
+    ).catch((error) => console.error("[email-centre] verification copy fixup failed", { message: error.message }));
+  }
+
   const statementTemplate = DEFAULT_TEMPLATES.find((item) => item[0] === "email_statement");
   if (statementTemplate) {
     await db.query(
@@ -625,10 +660,71 @@ async function queueRawEmail({recipient,subject,htmlBody,textBody,variables={},u
   return rows[0];
 }
 
+// THE SEVEN EMAIL VERIFICATION AUDIT EVENTS.
+//
+// Two of these names are older than the rest and are kept exactly as they are:
+// `verification_email_queued` and `email_verified` already sit in live audit
+// logs, and renaming them would silently orphan every record written so far.
+// The five that were missing are added in the same snake_case style the audit
+// table has always used, so this is one logging system and not two.
+const VERIFICATION_AUDIT = Object.freeze({
+  REQUESTED: "email_verification_requested",
+  SENT: "verification_email_queued",   // pre-existing name, deliberately kept
+  COMPLETED: "email_verified",         // pre-existing name, deliberately kept
+  EXPIRED: "email_verification_expired",
+  RESENT: "email_verification_resent",
+  REPLAYED: "email_verification_replayed",
+  FAILED: "email_verification_failed"
+});
+
+// A CORRELATION HANDLE THAT IS NOT THE TOKEN.
+//
+// Support needs to be able to tie "the customer says the link failed" to a row
+// in the audit log, and the obvious thing to log is the token, which is exactly
+// the thing that must never be logged: anybody reading the log could then
+// verify the account. The first twelve characters of the SHA-256 HASH identify
+// an attempt without being reversible and without being usable: the endpoint
+// hashes what it is given, so a hash prefix cannot be replayed as a token.
+function tokenFingerprint(hash) {
+  return String(hash || "").slice(0, 12);
+}
+
+// THE VERIFICATION LINK MUST BE HTTPS, AND MUST BE TITOPAY'S OWN DOMAIN.
+//
+// The link carries a bearer secret in a query string. Over plain HTTP that
+// secret is readable by anything between the customer and the server, and a
+// verification token is enough to confirm an address that is not yours.
+//
+// `APP_ORIGIN` is operator-set, so this cannot be assumed. A non-HTTPS origin
+// is refused outright rather than downgraded or silently corrected: sending the
+// email anyway would put the secret on the wire, and quietly rewriting the
+// origin would send customers to a domain nobody configured. `localhost` is
+// allowed over HTTP because a developer machine is not a customer.
+function verificationBaseUrl(configuredOrigin = config.appOrigin) {
+  const origin = String(configuredOrigin || "").trim().replace(/\/+$/, "");
+  let parsed;
+  try { parsed = new URL(origin); }
+  catch (_error) {
+    throw new AppError(500, "Verification email could not be prepared", { code: "APP_ORIGIN_INVALID" });
+  }
+  const isLocal = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !isLocal) {
+    console.error("[email-centre] APP_ORIGIN is not HTTPS; refusing to put a verification token on the wire", {
+      protocol: parsed.protocol, host: parsed.hostname
+    });
+    throw new AppError(500, "Verification email could not be prepared", { code: "APP_ORIGIN_NOT_HTTPS" });
+  }
+  return origin;
+}
+
 async function createVerificationForUser(user, meta = {}) {
   if (!user?.email) return { skipped:true, reason:"no_email" };
   await ensureEmailSchema();
   const settings = await getSettings();
+  // Refuse before a token is minted, not after: a token created for an email
+  // that cannot be sent is a live secret nobody can use and nobody revokes.
+  const baseUrl = verificationBaseUrl();
+  await writeAuditLog({actorType:"customer",actorId:user.id,action:VERIFICATION_AUDIT.REQUESTED,entityType:"user",entityId:user.id,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{reason:meta.verificationReason||"registration"}}).catch(()=>{});
   const token = crypto.randomBytes(32).toString("base64url");
   const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
   const client = await pool.connect();
@@ -640,31 +736,73 @@ async function createVerificationForUser(user, meta = {}) {
     tokenId = rows[0].id;
     await client.query("COMMIT");
   } catch(error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-  const link = `${String(config.appOrigin).replace(/\/$/,"")}/verify-email?token=${encodeURIComponent(token)}`;
+  // The token is the ONLY thing in this URL. No user id, no email, no account
+  // type, nothing that identifies the customer to anybody who sees the link in
+  // a browser history, a proxy log or a forwarded email.
+  const link = `${baseUrl}/verify-email?token=${encodeURIComponent(token)}`;
   const names = String(user.full_name || "").trim().split(/\s+/);
   const variables = { firstName:names[0]||"there",lastName:names.slice(1).join(" "),fullName:user.full_name,email:user.email,accountType:user.account_type,verificationLink:link };
   await queueEmail({recipient:user.email,templateKey:"verify_email_address",variables,userId:user.id,idempotencyKey:`verification:${tokenId}`});
-  await writeAuditLog({actorType:"customer",actorId:user.id,action:"verification_email_queued",entityType:"email_verification",entityId:tokenId,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{}});
+  await writeAuditLog({actorType:"customer",actorId:user.id,action:VERIFICATION_AUDIT.SENT,entityType:"email_verification",entityId:tokenId,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{fingerprint:tokenFingerprint(tokenHash)}});
   return { queued:true };
 }
 
 async function verifyEmailToken(token, meta = {}) {
-  const hash = crypto.createHash("sha256").update(String(token||"")).digest("hex");
+  // INPUT VALIDATION BEFORE ANYTHING ELSE. A token is 32 random bytes in
+  // base64url, so its shape is known exactly. Anything else is refused without
+  // a database round trip, which also means a flood of junk cannot be used to
+  // make the endpoint do work.
+  const supplied = String(token == null ? "" : token).trim();
+  if (!supplied || supplied.length > 200 || !/^[A-Za-z0-9_-]+$/.test(supplied)) {
+    await writeAuditLog({actorType:"unknown",actorId:null,action:VERIFICATION_AUDIT.FAILED,entityType:"email_verification",entityId:null,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{reason:"malformed_token"}}).catch(()=>{});
+    throw new AppError(400,"Verification link is invalid");
+  }
+
+  const hash = crypto.createHash("sha256").update(supplied).digest("hex");
+  const fingerprint = tokenFingerprint(hash);
+
+  // Audit writes for the FAILURE paths happen after the rollback, deliberately.
+  // Writing them inside the transaction would roll them back with everything
+  // else, and a security event that disappears because the thing it describes
+  // failed is the opposite of an audit trail. Only the SUCCESS event belongs
+  // inside, so that it commits with the verification or not at all.
+  let failure = null;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const { rows } = await client.query("SELECT * FROM email_verification_tokens WHERE token_hash=$1 FOR UPDATE", [hash]);
     const record = rows[0];
-    if (!record) throw new AppError(400,"Verification link is invalid");
-    if (record.used_at) throw new AppError(409,"Verification link has already been used");
-    if (record.revoked_at) throw new AppError(400,"Verification link has been replaced");
-    if (new Date(record.expires_at)<=new Date()) throw new AppError(410,"Verification link has expired");
+    if (!record) { failure = { action: VERIFICATION_AUDIT.FAILED, userId: null, reason: "unknown_token" }; throw new AppError(400,"Verification link is invalid"); }
+    // REPLAY. A second use of a consumed token is its own event, because a
+    // customer clicking twice and somebody replaying a token they found look
+    // identical here and only the pattern over time tells them apart.
+    if (record.used_at) { failure = { action: VERIFICATION_AUDIT.REPLAYED, userId: record.user_id, reason: "already_used" }; throw new AppError(409,"Verification link has already been used"); }
+    if (record.revoked_at) { failure = { action: VERIFICATION_AUDIT.FAILED, userId: record.user_id, reason: "revoked_by_newer_request" }; throw new AppError(400,"Verification link has been replaced"); }
+    if (new Date(record.expires_at)<=new Date()) { failure = { action: VERIFICATION_AUDIT.EXPIRED, userId: record.user_id, reason: "expired" }; throw new AppError(410,"Verification link has expired"); }
+
+    // Consume the token and mark the address verified in ONE transaction, so
+    // there is no window in which a token is spent and the account is not
+    // verified, or the reverse.
     await client.query("UPDATE email_verification_tokens SET used_at=NOW() WHERE id=$1",[record.id]);
     const { rows:users } = await client.query("UPDATE users SET email_verified_at=COALESCE(email_verified_at,NOW()),updated_at=NOW() WHERE id=$1 RETURNING id,email,email_verified_at",[record.user_id]);
-    await writeAuditLog({actorType:"customer",actorId:record.user_id,action:"email_verified",entityType:"user",entityId:record.user_id,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{},db:client});
+    await writeAuditLog({actorType:"customer",actorId:record.user_id,action:VERIFICATION_AUDIT.COMPLETED,entityType:"user",entityId:record.user_id,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{fingerprint},db:client});
     await client.query("COMMIT");
     return users[0];
-  } catch(error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+  } catch(error) {
+    await client.query("ROLLBACK").catch(()=>{});
+    if (failure) {
+      await writeAuditLog({
+        actorType: failure.userId ? "customer" : "unknown",
+        actorId: failure.userId,
+        action: failure.action,
+        entityType: "email_verification",
+        entityId: failure.userId,
+        ipAddress: meta.ipAddress, userAgent: meta.userAgent,
+        metadata: { reason: failure.reason, fingerprint }
+      }).catch(()=>{});
+    }
+    throw error;
+  } finally { client.release(); }
 }
 
 async function resendVerification(identifier, meta = {}) {
@@ -674,9 +812,24 @@ async function resendVerification(identifier, meta = {}) {
   const user = rows[0];
   if (!user || user.email_verified_at) return { accepted:true };
   const recent = await pool.query(`SELECT COUNT(*)::int AS count,MAX(requested_at) AS latest FROM email_verification_tokens WHERE user_id=$1 AND requested_at>NOW()-($2||' minutes')::interval`,[user.id,settings.verification_resend_window_minutes]);
-  if (recent.rows[0].latest && Date.now()-new Date(recent.rows[0].latest).getTime()<settings.verification_resend_cooldown_seconds*1000) return {accepted:true};
-  if (recent.rows[0].count>=settings.verification_max_resends) return {accepted:true};
-  await createVerificationForUser(user,meta);
+  // THROTTLED, AND THE ANSWER NEVER CHANGES. Every path out of this function
+  // returns the same `{accepted:true}`, whether the address exists, is already
+  // verified, is inside the cooldown or has exhausted its allowance. A caller
+  // cannot tell any of those apart, which is what stops this endpoint being an
+  // account-existence oracle and stops it being a way to post email at somebody.
+  if (recent.rows[0].latest && Date.now()-new Date(recent.rows[0].latest).getTime()<settings.verification_resend_cooldown_seconds*1000) {
+    await writeAuditLog({actorType:"customer",actorId:user.id,action:VERIFICATION_AUDIT.FAILED,entityType:"user",entityId:user.id,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{reason:"resend_cooldown"}}).catch(()=>{});
+    return {accepted:true};
+  }
+  if (recent.rows[0].count>=settings.verification_max_resends) {
+    await writeAuditLog({actorType:"customer",actorId:user.id,action:VERIFICATION_AUDIT.FAILED,entityType:"user",entityId:user.id,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{reason:"resend_allowance_exhausted"}}).catch(()=>{});
+    return {accepted:true};
+  }
+  // A resend REPLACES every unused token for this user, inside
+  // createVerificationForUser, so the previous link stops working the moment a
+  // new one is issued.
+  await createVerificationForUser(user,{...meta,verificationReason:"resend"});
+  await writeAuditLog({actorType:"customer",actorId:user.id,action:VERIFICATION_AUDIT.RESENT,entityType:"user",entityId:user.id,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{}}).catch(()=>{});
   return {accepted:true};
 }
 
@@ -884,4 +1037,4 @@ async function sweepExpiredOtpEmails(){
     "DELETE FROM otp_codes WHERE expires_at < NOW() - INTERVAL '7 days'");
   return {redacted:rowCount,purged};
 }
-module.exports={EMAIL_PERMISSIONS,ensureMarketingOptOuts,buildUnsubscribeUrl,recordMarketingOptOut,marketingOptOutEmails,sweepExpiredOtpEmails,seedDefaultTemplates,ALLOWED_VARIABLES,DEFAULT_TEMPLATES,ensureEmailSchema,escapeHtml,stripDangerousMarkup,htmlFromText,interpolate,renderTemplate,getSettings,updateSettings,listTemplates,getTemplate,saveTemplate,deleteTemplate,queueEmail,queueWelcomeEmail,welcomeTemplateKeyForAccountType,isWelcomeTemplateKey,queueRawEmail,createVerificationForUser,verifyEmailToken,resendVerification,requestEmailPasswordReset,confirmEmailPasswordReset,listQueue,queueDetail,manageQueue,listLogs,logDetail,dashboard,analytics,claimJobs,processJob,requeueRetryable,providerTest,processWebhook,maskSecrets,safePayload,sanitiseError};
+module.exports={EMAIL_PERMISSIONS,verificationBaseUrl,VERIFICATION_AUDIT,ensureMarketingOptOuts,buildUnsubscribeUrl,recordMarketingOptOut,marketingOptOutEmails,sweepExpiredOtpEmails,seedDefaultTemplates,ALLOWED_VARIABLES,DEFAULT_TEMPLATES,ensureEmailSchema,escapeHtml,stripDangerousMarkup,htmlFromText,interpolate,renderTemplate,getSettings,updateSettings,listTemplates,getTemplate,saveTemplate,deleteTemplate,queueEmail,queueWelcomeEmail,welcomeTemplateKeyForAccountType,isWelcomeTemplateKey,queueRawEmail,createVerificationForUser,verifyEmailToken,resendVerification,requestEmailPasswordReset,confirmEmailPasswordReset,listQueue,queueDetail,manageQueue,listLogs,logDetail,dashboard,analytics,claimJobs,processJob,requeueRetryable,providerTest,processWebhook,maskSecrets,safePayload,sanitiseError};

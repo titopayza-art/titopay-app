@@ -39,7 +39,17 @@ CREATE TABLE IF NOT EXISTS email_settings (
   support_email TEXT NOT NULL DEFAULT 'support@titopay.co.za',
   support_url TEXT NOT NULL DEFAULT 'https://titopay.co.za/support',
   website_url TEXT NOT NULL DEFAULT 'https://titopay.co.za',
-  verification_token_expiry_minutes INTEGER NOT NULL DEFAULT 1440 CHECK (verification_token_expiry_minutes BETWEEN 5 AND 10080),
+  -- THIRTY MINUTES, NOT A DAY.
+  --
+  -- This was 1440, a full day, which is a long time for a link that confirms
+  -- an email address to sit live in an inbox, a browser history or a forwarded
+  -- message. Thirty minutes is short enough to matter and long enough that a
+  -- customer who reads their email within the hour is not inconvenienced; if
+  -- it does expire, the app offers a new one in one tap.
+  --
+  -- Operator-tunable, as it always was. The one-shot correction below moves
+  -- databases still on the untouched 1440 and leaves any other value alone.
+  verification_token_expiry_minutes INTEGER NOT NULL DEFAULT 30 CHECK (verification_token_expiry_minutes BETWEEN 5 AND 10080),
   password_reset_token_expiry_minutes INTEGER NOT NULL DEFAULT 30 CHECK (password_reset_token_expiry_minutes BETWEEN 5 AND 1440),
   verification_resend_cooldown_seconds INTEGER NOT NULL DEFAULT 60 CHECK (verification_resend_cooldown_seconds BETWEEN 15 AND 3600),
   verification_resend_window_minutes INTEGER NOT NULL DEFAULT 60 CHECK (verification_resend_window_minutes BETWEEN 5 AND 1440),

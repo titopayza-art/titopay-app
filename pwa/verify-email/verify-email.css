@@ -20,3 +20,17 @@ p { color: #5d6d8a; font-size: 17px; line-height: 1.55; }
 .status.error { background: #fff0f0; color: #9e2828; }
 a { display: inline-flex; min-height: 52px; align-items: center; justify-content: center; padding: 0 24px; border-radius: 15px; background: #1457ff; color: #fff; font-weight: 800; text-decoration: none; }
 a[hidden] { display: none; }
+
+/* The resend form and the safety line. Same palette and the same shapes as the
+   rest of the card: this is one page, not a page with a widget bolted on. */
+#resend-form { margin: 0 0 20px; text-align: left; }
+#resend-form[hidden] { display: none; }
+#resend-form label { display: block; margin: 0 0 8px; color: #17335f; font-size: 14px; font-weight: 700; }
+#resend-form input { width: 100%; min-height: 52px; padding: 0 16px; border: 1px solid #cddcf2; border-radius: 15px; background: #fff; color: #071b43; font: inherit; font-size: 16px; }
+#resend-form input:focus-visible { outline: 3px solid #1457ff; outline-offset: 2px; border-color: #1457ff; }
+#resend-form button { display: inline-flex; width: 100%; min-height: 52px; margin-top: 12px; align-items: center; justify-content: center; padding: 0 24px; border: 0; border-radius: 15px; background: #1457ff; color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
+#resend-form button:disabled { background: #9db6e8; cursor: default; }
+#resend-form button:focus-visible { outline: 3px solid #071b43; outline-offset: 2px; }
+.resend-note { margin: 12px 0 0; font-size: 15px; }
+.resend-note:empty { display: none; }
+.safety { margin: 22px 0 0; color: #7387a4; font-size: 14px; }

@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v428-merchant-id";
+const CACHE_NAME = "titopay-pwa-v429-email-verification";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=428",
-  "./app.min.js?v=428",
+  "./styles.min.css?v=429",
+  "./app.min.js?v=429",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
@@ -13,8 +13,8 @@ const APP_SHELL = [
   // needed no entry here. It is a file now because the document root sends
   // style-src 'self' and refuses inline blocks. Without this line the page is
   // in the offline shell with no stylesheet to go with it.
-  "./verify-email/verify-email.css?v=227",
-  "./verify-email/verify-email.js?v=227",
+  "./verify-email/verify-email.css?v=228",
+  "./verify-email/verify-email.js?v=228",
   "./assets/titopay-logo.png",
   "./assets/icon-192.png?v=165",
   "./assets/icon-512.png?v=165",
