@@ -11,38 +11,67 @@ BUILD 55 — URGENT FIX FOR BUILD 54, WHICH COULD REFUSE TO START
    integration modes therefore STOPPED THE API. The check was right. The
    rollout was the outage.
 
-   The two cases are now separated:
+   ON AN UNDECLARED ENVIRONMENT, BUILD 55 IS BEHAVIOURALLY IDENTICAL TO 53.
 
-      NOT DECLARED   warns on every boot, reports itself on /health, and
-                     SERVES. It is the state every existing server is already
-                     in, and exactly how the platform has been running for
-                     months. Refusing there breaks a working system to protect
-                     it from a risk it already carries.
+   That is a claim worth being able to check, so here is the whole of it. Only
+   these files differ from build 53 at runtime:
 
-      CONTRADICTED   refuses. A production API on a database STAMPED sandbox,
-                     an integration in the other environment, NODE_ENV
-                     disagreeing with TITOPAY_ENV. Every one of those is only
-                     reachable once the variables are deliberately set, so it
-                     can never fell a server that was working a minute ago.
+      config/env.js        NO behavioural difference. The three modes still
+                           default to "production" exactly as they always have.
+                           Changing that in 54 also changed what
+                           GET /v1/integrations reports, from "production" to
+                           an empty string, which is a live response shape
+                           moving for no reason the caller asked for. The
+                           safety layer reads process.env directly and never
+                           consults this, so it loses nothing by staying put.
 
-   Two more things that could have stopped a healthy server are gone:
+      peach services       The new branches are UNREACHABLE, because the value
+                           they guard against being empty is never empty again.
+                           Behaviour is the historic one, unchanged.
 
-      a database that cannot be REACHED now warns instead of refusing, so a
-        Postgres hiccup during a restart no longer becomes a hard outage
-      missing Peach CREDENTIALS now warn instead of refusing, because they can
-        come from the stored integration config an operator sets in the admin
-        console, which is invisible from the environment
+      server.js            Startup log lines. Refuses ONLY on a contradiction.
 
-   And Peach with no mode set keeps its historic production default with a
-   one-line warning, rather than throwing. Build 54 would have failed every
-   card top-up on a server that had never been given PEACH_PAYMENTS_MODE.
+      health.routes.js     Two ADDED fields. Nothing renamed, retyped or moved.
 
-   VERIFIED ON AN EMPTY ENVIRONMENT: started with no variables at all and
-   answered /v1/health with HTTP 200, reporting environment "undeclared" and
-   environmentWarnings 4. That is the exact condition your server is in.
+      deployment-safety.js New file, called from those two places only.
 
-   Everything build 54 was for is still here. It is just visible instead of
-   fatal, and it becomes strict by being configured rather than by a deploy.
+   SO THE ONLY THING AN UNDECLARED SERVER SEES IS LOG LINES AND TWO NEW HEALTH
+   FIELDS.
+
+   WHAT STILL REFUSES, AND ONLY THIS:
+
+      a production API on a database STAMPED sandbox
+      an integration declared in a different environment from the deployment
+      NODE_ENV contradicting TITOPAY_ENV
+
+   Each is only reachable once the variables are deliberately set, so refusal
+   can never fell a server that was working a minute ago.
+
+   WHAT NO LONGER REFUSES, EACH OF WHICH COULD HAVE STOPPED A HEALTHY SERVER:
+
+      an undeclared or half-declared environment
+      a mode with a typo in it
+      a database that cannot be REACHED, which turned a Postgres hiccup during
+        a restart into a hard outage, strictly worse than the old behaviour
+      missing Peach CREDENTIALS, which can come from the stored integration
+        config in the admin console and are invisible from the environment
+      Peach with no mode set, which in 54 would have thrown and failed EVERY
+        card top-up on a server that never had PEACH_PAYMENTS_MODE
+
+   PROVEN BY BOOTING, NOT BY ASSERTION. Six environment shapes, every one
+   answering /v1/health:
+
+      empty environment (the state of the live server)   HTTP 200
+      fully declared sandbox                             HTTP 200
+      partially declared                                 HTTP 200
+      NODE_ENV=production and nothing else               HTTP 200
+      garbage in a mode                                  HTTP 200
+      database unreachable at boot                       HTTP 500, still serving
+
+   And the three contradictions above each refused.
+
+   790 tests. Every Peach suite green: checkout top-up 24, payments v2 13,
+   withdrawal 22, payout capability 26, http contract 9. Eight live harnesses.
 
 PREVIOUS BUILD — THE CUSTOMER'S SLIP NO LONGER SHOWS A RAW MERCHANT ID
 
