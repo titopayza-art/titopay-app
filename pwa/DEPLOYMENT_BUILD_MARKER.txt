@@ -1,10 +1,56 @@
 TitoPay deployment build — 2026-08-17 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
-PWA bundle: v426 (titopay-pwa-v426-qr-pricing)
+PWA bundle: v427 (titopay-pwa-v427-receipt-id)
 Requires: api.zip build 54
 Admin console: admin-console-v89
 
-THE API NOW REFUSES TO START ON AN UNSAFE ENVIRONMENT
+THE CUSTOMER'S SLIP NO LONGER SHOWS A RAW MERCHANT ID
+
+   Merchant ID is the MERCHANT'S. On their own slip it is the trading id they
+   quote to Support and reconcile against. On the payer's copy the same field
+   falls through to the QR CODE'S id, so a customer who had just paid was
+   handed a bare UUID identifying nothing they could act on:
+
+      Merchant ID   e2186835-f16c-4c8d-83ce-ec242302154f
+
+   The Merchant NAME above it is what actually tells them who they paid, and
+   that stays. The id is gone from the payer's copy and kept on the merchant's.
+
+   Each receipt now records whose copy it is. A receipt saved BEFORE this
+   change carries no role and keeps the row: hiding on unknown would have
+   stripped a real identifier off every merchant slip already on a phone in
+   order to tidy up a customer one.
+
+   Read off a real rendered screen by verification/receipt-slips-live.js,
+   which rings up R50 on a till, pays it from a second account in a second
+   browser page, then opens BOTH receipts and reads the printed rows:
+
+      THE CUSTOMER'S SLIP          THE MERCHANT'S SLIP
+        Merchant Name  Corner Cafe   Merchant Name  Corner Cafe
+        (no Merchant ID)             Merchant ID    <the merchant's>
+        Amount         R 50.00       Amount         R 50.00
+        Fees           R  1.50       Fees           R  2.25
+        Total paid     R 51.50       Net Amount     R 47.75
+
+   Six unit tests hold the same two rules against the SHIPPING source of
+   receiptRows, not a copy of it, and were mutation-tested by putting the row
+   back: the test fails naming what the customer is being shown.
+
+   WHY THE PREVIOUS FIX APPEARED NOT TO WORK.
+
+   v426 corrected the customer's net figure, and a receipt taken afterwards
+   still showed the old one. The bundle was not at fault: app.titopay.co.za was
+   serving v426 with the fix correctly compiled in. The APP ON THE PHONE was
+   still running v425. The service worker calls skipWaiting() and
+   clients.claim(), so the cache updates, but neither replaces JavaScript
+   ALREADY RUNNING in an open page, and an installed PWA that is never fully
+   closed keeps its copy indefinitely.
+
+   FULLY CLOSE THE APP AFTER EVERY DEPLOY, or the fix is on the server and not
+   on the phone. Making the app notice a new bundle and reload itself is a
+   separate change, offered and not yet made.
+
+PREVIOUS BUILD — THE API NOW REFUSES TO START ON AN UNSAFE ENVIRONMENT
 
    PEACH_PAYMENTS_MODE, DOCFOX_MODE and OTT_MODE each read
 

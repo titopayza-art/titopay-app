@@ -10542,7 +10542,18 @@ function receiptRows(receipt) {
   const paidAt = new Date(receipt.date || receipt.createdAt || Date.now());
   return [
     ["Merchant Name", receipt.merchantName],
-    ["Merchant ID", receipt.merchantId],
+    // MERCHANT ID IS THE MERCHANT'S, NOT THE PAYER'S.
+    //
+    // On a merchant's own slip this is currentMerchantId(): their trading id,
+    // the thing they quote to Support and reconcile against. On the payer's
+    // copy the same field falls through to the QR CODE'S id, so a customer was
+    // handed a raw UUID that identifies nothing they could act on and tells
+    // them nothing about who they paid. The name above already does that.
+    //
+    // A receipt with no role recorded keeps the row. Those are the ones saved
+    // before this change, and dropping it would strip a real identifier off
+    // every merchant slip already on a phone to tidy up a customer one.
+    ...(receipt.receiptRole === "payer" ? [] : [["Merchant ID", receipt.merchantId]]),
     ...(receipt.customerName ? [["Customer Name", receipt.customerName]] : []),
     ["Reference", receipt.reference],
     ["Transaction ID", receipt.transactionId || "Recorded"],
@@ -13901,6 +13912,9 @@ async function confirmReviewedQrPayment() {
       merchantName: transaction.merchantName || transaction.merchant_name || transaction.merchant
         || context.qrDetails?.owner?.displayName || "TitoPay Merchant",
       merchantId: transaction.merchantId || transaction.merchant_id || context.data.qrId || "",
+      // Whose slip this is. The payer's copy hides the Merchant ID row, which
+      // on this path is only ever the QR code's id.
+      receiptRole: "payer",
       customerName: currentCustomerName(),
       reference: result.reference || transaction.reference || context.data.qrId,
       transactionId: transaction.id || transaction.transactionId || transaction.transaction_id || result.reference || "",
@@ -14334,6 +14348,8 @@ function buildMerchantReceipt(sale, transaction = {}) {
     accountType: state.accountType,
     merchantName: businessProfileName(),
     merchantId: currentMerchantId(),
+    // The merchant's own trading id, which is theirs to keep and to quote.
+    receiptRole: "merchant",
     customerName: sale.note?.customerName || transaction.customerName || transaction.customer_name || "",
     description: sale.note?.description || "",
     reference: merchantSaleReference(),

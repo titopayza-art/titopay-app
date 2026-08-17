@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v426-qr-pricing";
+const CACHE_NAME = "titopay-pwa-v427-receipt-id";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=426",
-  "./app.min.js?v=426",
+  "./styles.min.css?v=427",
+  "./app.min.js?v=427",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
