@@ -32,10 +32,19 @@ The customer app is served from `app.min.js`, not `app.js`. Both are in the
 archive and both must land. If you extract selectively and take only `app.js`,
 customers get the previous build and nothing appears to have changed.
 
-The bundle in this release is **v306**, and `index.html`, `service-worker.js`
-and the service worker's cache name all agree on that number. That is what makes
-a returning customer pick up the new code instead of the copy their browser
-cached. If you ever hand-edit one of those three, change all three.
+`index.html`, `service-worker.js` and the service worker's cache name all carry
+the same version number, and that agreement is what makes a returning customer
+pick up the new code instead of the copy their browser cached. Read the number
+out of `pwa/index.html` for the release you are shipping rather than trusting a
+number written here, which goes stale on every build. If you ever hand-edit one
+of those three, change all three.
+
+**And close the app afterwards.** Uploading a new bundle updates the service
+worker and its cache, but neither replaces JavaScript ALREADY RUNNING in an open
+page. An installed PWA that is never fully closed keeps executing the copy it
+loaded, indefinitely. This has already cost one round of "the fix is deployed
+and the phone still shows the old behaviour": force-close the app and reopen it
+before deciding a deploy did not work.
 
 ---
 

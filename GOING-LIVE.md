@@ -223,3 +223,32 @@ work on a live database.
 
 **Keep the old database.** It is your test environment. Every change should be
 proven against it before it reaches production.
+
+**NEVER copy `platform_settings` from sandbox into production.** This is the one
+way the sandbox can still reach production after everything else is separated,
+and it is not something the code can prevent.
+
+Your integration credentials do not live only in environment variables. They are
+also stored in the database, in `platform_settings`, under keys an operator sets
+from the admin console:
+
+```
+integration_peach_payments   integration_peach_payouts   integration_docfox
+integration_ott              integration_sms             integration_smtp
+integration_pos_provider     integration_flash
+```
+
+**The stored value wins over the environment variable.** So a production
+database carrying sandbox rows would use sandbox acquirer credentials and
+silently ignore `PEACH_PAYMENTS_MODE=production`, and the startup checks would
+see nothing wrong, because from their point of view nothing is.
+
+The sandbox database currently holds 234 `platform_settings` rows against a
+fresh production database's 4. Most of that bulk is `peach_webhook_*`
+idempotency keys, which are harmless in themselves but make the table look like
+something worth copying to save setup time. It is not.
+
+Configure production's integrations from the admin console, on the production
+console, once. If you ever restore a database backup, check which environment
+it came from before pointing an API at it: the `deployment_environment` row is
+the first thing to read.

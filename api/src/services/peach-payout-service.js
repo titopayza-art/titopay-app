@@ -54,10 +54,34 @@ function trimmed(value) {
   return String(value === undefined || value === null ? "" : value).trim();
 }
 
+// THIS DEFAULTS THE OPPOSITE WAY TO EVERY OTHER INTEGRATION, ON PURPOSE OR BY
+// ACCIDENT, AND NOBODY HAS DECIDED WHICH.
+//
+// Peach Payments, DocFox and OTT all treat an unset environment as PRODUCTION.
+// Payouts treat it as SANDBOX. So on a production server with no payout
+// environment configured, payouts go to Peach's sandbox and no money ever
+// reaches anybody's bank account — quietly, because a sandbox payout succeeds.
+//
+// THE DEFAULT IS DELIBERATELY NOT CHANGED HERE. Either direction moves real
+// money: defaulting to production means an unset variable starts paying people
+// for real, and aligning the others to sandbox would stop live top-ups. The
+// code cannot know which server it is on, so it must not guess, and an
+// operator setting the environment explicitly makes the question moot.
+//
+// What IS new is that the assumption is stated out loud instead of being
+// invisible. Behaviour is unchanged.
+let assumedPayoutEnvironmentWarned = false;
 function normalizeEnvironment(value) {
   const environment = trimmed(value).toLowerCase();
   if (["sandbox", "test", "testing", "staging"].includes(environment)) return "sandbox";
   if (["production", "live", "prod"].includes(environment)) return "production";
+  if (!assumedPayoutEnvironmentWarned) {
+    assumedPayoutEnvironmentWarned = true;
+    console.warn("[peach-payouts] No payout environment is configured. Assuming \"sandbox\", which "
+      + "is this service's historic default and the OPPOSITE of every other integration. "
+      + "On a production server that means payouts never reach a real bank account. "
+      + "Set the payout environment explicitly in Admin, or PEACH_PAYOUTS_MODE.");
+  }
   return "sandbox";
 }
 
