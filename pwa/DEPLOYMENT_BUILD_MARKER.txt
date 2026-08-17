@@ -1,10 +1,50 @@
 TitoPay deployment build — 2026-08-17 UTC
 Branch: claude/peach-payments-403-fix-6sv7cy
 PWA bundle: v427 (titopay-pwa-v427-receipt-id)
-Requires: api.zip build 54
+Requires: api.zip build 55
 Admin console: admin-console-v89
 
-THE CUSTOMER'S SLIP NO LONGER SHOWS A RAW MERCHANT ID
+BUILD 55 — URGENT FIX FOR BUILD 54, WHICH COULD REFUSE TO START
+
+   Build 54 treated a variable that had never been set as a reason to stop.
+   Deploying it to a server that did not yet have TITOPAY_ENV and the three
+   integration modes therefore STOPPED THE API. The check was right. The
+   rollout was the outage.
+
+   The two cases are now separated:
+
+      NOT DECLARED   warns on every boot, reports itself on /health, and
+                     SERVES. It is the state every existing server is already
+                     in, and exactly how the platform has been running for
+                     months. Refusing there breaks a working system to protect
+                     it from a risk it already carries.
+
+      CONTRADICTED   refuses. A production API on a database STAMPED sandbox,
+                     an integration in the other environment, NODE_ENV
+                     disagreeing with TITOPAY_ENV. Every one of those is only
+                     reachable once the variables are deliberately set, so it
+                     can never fell a server that was working a minute ago.
+
+   Two more things that could have stopped a healthy server are gone:
+
+      a database that cannot be REACHED now warns instead of refusing, so a
+        Postgres hiccup during a restart no longer becomes a hard outage
+      missing Peach CREDENTIALS now warn instead of refusing, because they can
+        come from the stored integration config an operator sets in the admin
+        console, which is invisible from the environment
+
+   And Peach with no mode set keeps its historic production default with a
+   one-line warning, rather than throwing. Build 54 would have failed every
+   card top-up on a server that had never been given PEACH_PAYMENTS_MODE.
+
+   VERIFIED ON AN EMPTY ENVIRONMENT: started with no variables at all and
+   answered /v1/health with HTTP 200, reporting environment "undeclared" and
+   environmentWarnings 4. That is the exact condition your server is in.
+
+   Everything build 54 was for is still here. It is just visible instead of
+   fatal, and it becomes strict by being configured rather than by a deploy.
+
+PREVIOUS BUILD — THE CUSTOMER'S SLIP NO LONGER SHOWS A RAW MERCHANT ID
 
    Merchant ID is the MERCHANT'S. On their own slip it is the trading id they
    quote to Support and reconcile against. On the payer's copy the same field

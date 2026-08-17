@@ -19,10 +19,22 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 54;
+const API_BUILD = 55;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  55: "URGENT FIX FOR BUILD 54, WHICH COULD REFUSE TO START. 54 treated a "
+      + "variable that had never been set as a reason to stop, so deploying it "
+      + "to a server that did not yet have TITOPAY_ENV and the three modes took "
+      + "the API down. The check was right; the rollout was the outage. "
+      + "Undeclared now WARNS on every boot, reports itself on /health and "
+      + "SERVES. Only a CONTRADICTION refuses: a production API on a database "
+      + "stamped sandbox, or an integration in the other environment, both of "
+      + "which are only reachable once the variables are deliberately set. A "
+      + "database that cannot be reached warns instead of refusing, and Peach "
+      + "with no mode set keeps its historic production default with a warning "
+      + "rather than failing every top-up. This build starts on an empty "
+      + "environment, exactly as build 53 did.",
   54: "The API refuses to start on an unsafe environment. PEACH_PAYMENTS_MODE, "
       + "DOCFOX_MODE and OTT_MODE each read `process.env.X || \"production\"`, so "
       + "an unset variable, a typo or a stripped env file put TitoPay LIVE in "

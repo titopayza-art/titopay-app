@@ -2,6 +2,7 @@ const express = require("express");
 const { pool } = require("../db/pool");
 const { getPlatformSetting } = require("../services/platform-settings-service");
 const { buildInfo } = require("../build-info");
+const { config } = require("../config/env");
 
 const router = express.Router();
 
@@ -91,6 +92,14 @@ async function healthStatus(_req, res, next) {
       // knowing an API is "production" tells an attacker nothing they could
       // not infer from its hostname.
       environment: String(process.env.TITOPAY_ENV || "").trim() || "undeclared",
+      // How many environment warnings this process started with. A number, not
+      // the warnings themselves: the detail is in the startup log, and this is
+      // enough for "is anything unstated here?" to be one request. Zero means
+      // fully declared.
+      environmentWarnings: (() => {
+        try { return require("../config/deployment-safety").inspectDeployment({ env: process.env, config }).warnings.length; }
+        catch { return null; }
+      })(),
       // Reported so that "is the deployed API current?" is one request rather
       // than an investigation. See src/build-info.js.
       ...buildInfo(),

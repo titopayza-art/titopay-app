@@ -132,20 +132,58 @@ function checkPeachCredentials(peach, mode) {
   return problems;
 }
 
+// WARNINGS AND BLOCKERS ARE NOT THE SAME THING, AND CONFLATING THEM TOOK AN
+// API DOWN.
+//
+// The first version of this refused to start on ANY finding, including a
+// variable that had simply never been set. Deploying it to a server that had
+// not yet been given the variables therefore stopped the API: the gate did
+// exactly what it was asked to do, and the deployment of it was the outage.
+//
+// The two cases are genuinely different:
+//
+//   NOT DECLARED    nobody has said what this deployment is. Bad, and worth
+//                   shouting about on every boot, but it is the state every
+//                   existing server is already in, and it is exactly how the
+//                   platform has been running. Refusing here breaks a working
+//                   system to protect it from a risk it already carries.
+//
+//   CONTRADICTED    somebody HAS said what this is, and something disagrees:
+//                   a production API on a database stamped sandbox, an
+//                   integration in the other environment. This can only arise
+//                   after the variables are deliberately set, so refusing can
+//                   never surprise a server that was working a minute ago, and
+//                   the state it describes is one where real money goes to the
+//                   wrong place.
+//
+// So: undeclared warns, contradicted refuses. A deployment moves from the
+// first to the second by being configured, which is the direction we want,
+// and no configuration step is ever punished with an outage.
+function classify(problems) {
+  return {
+    blocking: problems.filter((problem) => problem.blocking).map((problem) => problem.message),
+    warnings: problems.filter((problem) => !problem.blocking).map((problem) => problem.message)
+  };
+}
+
 /**
  * Everything that can be decided from configuration alone, with no database.
  *
  * @param {object} options
  * @param {object} options.env      an environment object, defaults to process.env
  * @param {object} options.config   the loaded config, for the integration credentials
- * @returns {{ok: boolean, environment: string|null, modes: object, problems: string[], database: object}}
+ * @returns {{ok: boolean, safe: boolean, environment: string|null, modes: object,
+ *            problems: string[], blocking: string[], warnings: string[], database: object}}
  */
 function inspectDeployment({ env = process.env, config = null } = {}) {
+  const found = [];
+  const warn = (message) => found.push({ blocking: false, message });
+  const block = (message) => found.push({ blocking: true, message });
   const problems = [];
 
   // 1. The deployment's own identity.
   const declared = readMode(env, "TITOPAY_ENV");
-  if (!declared.ok) problems.push(declared.reason);
+  if (!declared.ok) { problems.push(declared.reason); warn(declared.reason); }
   const environment = declared.ok ? declared.value : null;
 
   // NODE_ENV is not overloaded, but if somebody has stated an environment
@@ -153,38 +191,66 @@ function inspectDeployment({ env = process.env, config = null } = {}) {
   // exactly the guessing this replaces.
   const nodeEnv = String(env.NODE_ENV || "").trim();
   if (environment && VALID_MODES.includes(nodeEnv) && nodeEnv !== environment) {
-    problems.push(`NODE_ENV is "${nodeEnv}" and TITOPAY_ENV is "${environment}". They must agree, or NODE_ENV must be left to its ordinary "development"/"production" meaning.`);
+    const message = `NODE_ENV is "${nodeEnv}" and TITOPAY_ENV is "${environment}". They must agree, or NODE_ENV must be left to its ordinary "development"/"production" meaning.`;
+    problems.push(message); block(message);
   }
 
   // 2. Every integration mode, explicitly.
   const modes = {};
   for (const name of ["PEACH_PAYMENTS_MODE", "DOCFOX_MODE", "OTT_MODE"]) {
     const mode = readMode(env, name);
-    if (!mode.ok) { problems.push(mode.reason); continue; }
+    if (!mode.ok) { problems.push(mode.reason); warn(mode.reason); continue; }
     modes[name] = mode.value;
     // A production deployment talking to a sandbox provider would take real
     // customers' card details to a test acquirer. A sandbox deployment
     // talking to a production provider would take real money. Both are fatal.
     if (environment && mode.value !== environment) {
-      problems.push(`TITOPAY_ENV is "${environment}" but ${name} is "${mode.value}". Every integration must run in the same environment as the deployment.`);
+      // Both sides were stated and they disagree. Real money would go to the
+      // wrong place, and no working server can arrive here by accident.
+      const message = `TITOPAY_ENV is "${environment}" but ${name} is "${mode.value}". Every integration must run in the same environment as the deployment.`;
+      problems.push(message); block(message);
     }
   }
 
   // 3. The database, by name only. Never the connection string.
   const database = describeDatabaseTarget(env.POSTGRES_URL || env.DATABASE_URL || config?.postgresUrl);
   if (!database.name) {
-    problems.push("The database name could not be read from POSTGRES_URL, so it cannot be checked against TITOPAY_ENV.");
+    const message = "The database name could not be read from POSTGRES_URL, so it cannot be checked against TITOPAY_ENV.";
+    problems.push(message); warn(message);
   } else if (environment) {
     const conflict = databaseNameConflicts(database.name, environment);
-    if (conflict) problems.push(conflict);
+    // A declared environment against a database named for the other one. Only
+    // reachable once TITOPAY_ENV is set, so this cannot fell a running server.
+    if (conflict) { problems.push(conflict); block(conflict); }
   }
 
   // 4. Credentials for the mode actually selected.
   if (config && modes.PEACH_PAYMENTS_MODE) {
-    problems.push(...checkPeachCredentials(config.integrations?.peachPayments, modes.PEACH_PAYMENTS_MODE));
+    for (const message of checkPeachCredentials(config.integrations?.peachPayments, modes.PEACH_PAYMENTS_MODE)) {
+      // WARNING, NOT A BLOCKER, FOR TWO REASONS.
+      //
+      // This only reads the ENVIRONMENT. Peach credentials can also come from
+      // the stored integration config an operator sets in the admin console,
+      // which is resolved per call and is invisible from here, so "missing"
+      // may simply mean "configured somewhere else". Refusing would stop a
+      // perfectly working server.
+      //
+      // And the failure mode if they really are absent is that a top-up
+      // fails, loudly, at the moment it is attempted. That is bad; it is not
+      // money reaching the wrong place, which is the only thing worth
+      // refusing to start over.
+      problems.push(message); warn(message);
+    }
   }
 
-  return { ok: problems.length === 0, environment, modes, problems, database };
+  const { blocking, warnings } = classify(found);
+  return {
+    // `ok` keeps its original meaning: nothing at all is wrong.
+    ok: problems.length === 0,
+    // `safe` is the one startup gates on: nothing CONTRADICTS.
+    safe: blocking.length === 0,
+    environment, modes, problems, blocking, warnings, database
+  };
 }
 
 // The key the database stamps its own identity under. platform_settings is the
@@ -208,7 +274,8 @@ const IDENTITY_KEY = "deployment_environment";
  * @returns {Promise<{ok: boolean, stamped: string|null, wrote: boolean, problems: string[]}>}
  */
 async function verifyDatabaseIdentity(pool, environment, { stampIfMissing = true } = {}) {
-  if (!environment) return { ok: false, stamped: null, wrote: false, problems: ["The environment is not declared, so the database identity cannot be verified."] };
+  // Nothing declared means nothing to contradict. Warn, do not refuse.
+  if (!environment) return { ok: true, unknown: true, stamped: null, wrote: false, problems: [], warnings: ["TITOPAY_ENV is not set, so the database identity was not verified."] };
   try {
     const { rows } = await pool.query(
       "SELECT value FROM platform_settings WHERE key = $1 LIMIT 1", [IDENTITY_KEY]
@@ -217,6 +284,8 @@ async function verifyDatabaseIdentity(pool, environment, { stampIfMissing = true
     const stamped = typeof stored === "string" ? stored : stored?.environment || null;
 
     if (stamped && stamped !== environment) {
+      // The one database finding that stops a process: it has positively
+      // identified itself as the other environment.
       return {
         ok: false, stamped, wrote: false,
         problems: [`This database is stamped as the "${stamped}" database and TITOPAY_ENV is "${environment}". Refusing to start: a ${environment} API must never open the ${stamped} database.`]
@@ -246,10 +315,17 @@ async function verifyDatabaseIdentity(pool, environment, { stampIfMissing = true
     }
     return { ok: true, stamped: settled, wrote: true, problems: [] };
   } catch (error) {
-    // A database that cannot be asked is not a database that can be trusted
-    // with real money, but neither is this the place to decide the schema is
-    // missing. Report it and let the caller fail closed.
-    return { ok: false, stamped: null, wrote: false, problems: [`The database identity could not be read: ${error.message}`] };
+    // A DATABASE THAT CANNOT BE REACHED IS NOT A DATABASE IN THE WRONG
+    // ENVIRONMENT.
+    //
+    // This used to be fatal, which turned a Postgres hiccup during a restart
+    // into a refusal to start at all — strictly worse than the old behaviour,
+    // where the API came up and served 503s until the database returned.
+    // Not knowing is a warning; knowing it is the wrong one is a blocker.
+    return {
+      ok: true, unknown: true, stamped: null, wrote: false, problems: [],
+      warnings: [`The database identity could not be read, so it was not verified: ${error.message}`]
+    };
   }
 }
 

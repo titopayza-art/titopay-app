@@ -33,6 +33,12 @@ const SANDBOX = {
 };
 const withEnv = (base, patch) => safety.inspectDeployment({ env: { ...base, ...patch } });
 
+// `ok` means nothing is wrong at all. `safe` is the one startup gates on, and
+// means nothing CONTRADICTS. The distinction exists because the first version
+// of this refused to start on ANY finding, including a variable that had never
+// been set, and deploying it to a server that did not yet have the variables
+// TOOK THE API DOWN. Undeclared warns and serves; contradicted refuses.
+
 /* ------------------------------------------------- the modes, one at a time */
 
 test("a fully declared production deployment is accepted", () => {
@@ -48,26 +54,33 @@ test("a fully declared sandbox deployment is accepted", () => {
 });
 
 for (const name of ["PEACH_PAYMENTS_MODE", "DOCFOX_MODE", "OTT_MODE", "TITOPAY_ENV"]) {
-  test(`a missing ${name} refuses to start, and does NOT default to production`, () => {
+  test(`a missing ${name} is warned about and does NOT default to production`, () => {
     const env = { ...PRODUCTION };
     delete env[name];
     const result = safety.inspectDeployment({ env });
     assert.equal(result.ok, false, `${name} was allowed to be missing`);
     assert.ok(result.problems.some((problem) => problem.includes(name)),
-      `nothing in the refusal mentions ${name}: ${result.problems.join("; ")}`);
+      `nothing mentions ${name}: ${result.problems.join("; ")}`);
     // The specific regression: silence must never be read as production.
     assert.notEqual(result.modes[name], "production");
+    // AND IT MUST NOT STOP THE API. This is the state every existing server is
+    // already in; refusing here is what caused the outage.
+    assert.equal(result.safe, true, `a missing ${name} would stop the API from starting`);
+    assert.ok(result.warnings.some((warning) => warning.includes(name)),
+      `a missing ${name} is not reported as a warning`);
   });
 
-  test(`an empty ${name} refuses to start`, () => {
+  test(`an empty ${name} is warned about, not silently accepted`, () => {
     const result = withEnv(PRODUCTION, { [name]: "   " });
     assert.equal(result.ok, false, `${name}="   " was accepted`);
+    assert.equal(result.safe, true, `an empty ${name} would stop the API from starting`);
   });
 
   for (const bad of ["prod", "PRODUCTION", "Production ", "live", "sandbox2", "true", "1"]) {
-    test(`${name}="${bad}" refuses to start rather than being interpreted`, () => {
+    test(`${name}="${bad}" is warned about rather than being interpreted`, () => {
       const result = withEnv(PRODUCTION, { [name]: bad });
       assert.equal(result.ok, false, `${name}="${bad}" was accepted`);
+      assert.equal(result.safe, true, `an unreadable ${name} would stop the API from starting`);
     });
   }
 }
@@ -76,16 +89,16 @@ test("an integration in a different environment from the deployment is refused",
   // A production API talking to a sandbox acquirer would take real card
   // details to a test gateway. The reverse would take real money.
   const mixed = withEnv(PRODUCTION, { PEACH_PAYMENTS_MODE: "sandbox" });
-  assert.equal(mixed.ok, false, "production deployment accepted a sandbox acquirer");
-  assert.ok(mixed.problems.some((problem) => /PEACH_PAYMENTS_MODE/.test(problem)));
+  assert.equal(mixed.safe, false, "production deployment accepted a sandbox acquirer");
+  assert.ok(mixed.blocking.some((problem) => /PEACH_PAYMENTS_MODE/.test(problem)));
 
   const other = withEnv(SANDBOX, { OTT_MODE: "production" });
-  assert.equal(other.ok, false, "sandbox deployment accepted a production OTT");
+  assert.equal(other.safe, false, "sandbox deployment accepted a production OTT");
 });
 
 test("NODE_ENV may not contradict TITOPAY_ENV", () => {
   const clash = withEnv(PRODUCTION, { NODE_ENV: "sandbox" });
-  assert.equal(clash.ok, false, "a contradicting NODE_ENV was accepted");
+  assert.equal(clash.safe, false, "a contradicting NODE_ENV was accepted");
   // But its ordinary values are none of this module's business.
   assert.equal(withEnv(PRODUCTION, { NODE_ENV: "production" }).ok, true);
   assert.equal(withEnv(SANDBOX, { NODE_ENV: "development" }).ok, true);
@@ -97,12 +110,12 @@ test("production refuses a sandbox-looking database, and sandbox refuses product
   const productionOnSandboxDb = withEnv(PRODUCTION, {
     POSTGRES_URL: "postgres://user:secret@db.internal:5432/titopay_sandbox"
   });
-  assert.equal(productionOnSandboxDb.ok, false, "a production API opened the sandbox database");
+  assert.equal(productionOnSandboxDb.safe, false, "a production API opened the sandbox database");
 
   const sandboxOnProductionDb = withEnv(SANDBOX, {
     POSTGRES_URL: "postgres://user:secret@db.internal:5432/titopay_production"
   });
-  assert.equal(sandboxOnProductionDb.ok, false, "a sandbox API opened the production database");
+  assert.equal(sandboxOnProductionDb.safe, false, "a sandbox API opened the production database");
 });
 
 test("the matching combinations are accepted", () => {
@@ -117,8 +130,10 @@ test("a database name that says nothing either way is not rejected on the name a
   assert.equal(withEnv(SANDBOX, { POSTGRES_URL: "postgres://u:p@h:5432/titopay" }).ok, true);
 });
 
-test("a database name that cannot be read at all is refused rather than assumed", () => {
-  assert.equal(withEnv(PRODUCTION, { POSTGRES_URL: "" }).ok, false);
+test("a database name that cannot be read is reported but does not stop the API", () => {
+  const result = withEnv(PRODUCTION, { POSTGRES_URL: "" });
+  assert.equal(result.ok, false, "an unreadable database target went unreported");
+  assert.equal(result.safe, true, "an unreadable database name would stop the API from starting");
 });
 
 test("the connection string never reaches a message", () => {
@@ -127,8 +142,8 @@ test("the connection string never reaches a message", () => {
   const leak = withEnv(PRODUCTION, {
     POSTGRES_URL: "postgres://titopay:hunter2SuperSecret@db.internal:5432/titopay_sandbox"
   });
-  assert.equal(leak.ok, false);
-  const printed = [...leak.problems, ...safety.describeDeployment(leak)].join("\n");
+  assert.equal(leak.safe, false);
+  const printed = [...leak.problems, ...leak.blocking, ...leak.warnings, ...safety.describeDeployment(leak)].join("\n");
   assert.doesNotMatch(printed, /hunter2SuperSecret/, "the database password appeared in a startup message");
   assert.doesNotMatch(printed, /postgres:\/\//, "the connection string appeared in a startup message");
 });
@@ -143,13 +158,17 @@ test("the database target is read without exposing the credentials in it", () =>
 
 /* ------------------------------------------------------------- credentials */
 
-test("production mode with no production credentials is refused", () => {
+test("production mode with no production credentials is warned about", () => {
   const result = safety.inspectDeployment({
     env: PRODUCTION,
     config: { integrations: { peachPayments: { v2Enabled: true, apiKey: "", merchantId: "", productionBaseUrl: "https://app.next.peachpayments.com/api" } } }
   });
-  assert.equal(result.ok, false, "production ran with no Peach credentials");
-  assert.ok(result.problems.some((problem) => /PEACH_PAYMENTS/.test(problem)));
+  assert.equal(result.ok, false, "production ran with no Peach credentials and said nothing");
+  assert.ok(result.warnings.some((problem) => /PEACH_PAYMENTS/.test(problem)));
+  // A warning, not a blocker: credentials can also come from the stored
+  // integration config an operator sets in the admin console, which is
+  // invisible here, so refusing would stop a working server.
+  assert.equal(result.safe, true, "missing Peach credentials would stop the API from starting");
 });
 
 test("production credentials present are accepted", () => {
@@ -160,12 +179,12 @@ test("production credentials present are accepted", () => {
   assert.equal(result.ok, true, result.problems.join("; "));
 });
 
-test("production mode pointed at a sandbox host is refused", () => {
+test("production mode pointed at a sandbox host is warned about", () => {
   const result = safety.inspectDeployment({
     env: PRODUCTION,
     config: { integrations: { peachPayments: { v2Enabled: true, apiKey: "k", merchantId: "m", productionBaseUrl: "https://app.sandbox-next.peachpayments.com/api" } } }
   });
-  assert.equal(result.ok, false, "production accepted a sandbox acquirer URL");
+  assert.equal(result.warnings.length > 0, true, "production accepted a sandbox acquirer URL silently");
 });
 
 test("sandbox with no Peach credentials is fine, because the fake provider is used", () => {
@@ -187,4 +206,39 @@ test("the startup description names the modes and the database, and nothing else
   assert.match(printed, /OTT: *production/);
   assert.match(printed, /Database target: *titopay_production/);
   assert.doesNotMatch(printed, /secret|password|apiKey|@db\.internal/i);
+});
+
+/* ------------------------------------------- the outage this must never cause */
+
+test("A COMPLETELY UNDECLARED DEPLOYMENT STARTS. It warns; it does not stop.", () => {
+  // Exactly the state of a server that has not yet been given the variables,
+  // which is every server before this ships. Build 54 refused here and took
+  // production down. Nothing about the platform is less safe than it was the
+  // day before: it is the same behaviour, now said out loud.
+  const result = safety.inspectDeployment({
+    env: { POSTGRES_URL: "postgres://user:secret@db.internal:5432/titopay" }
+  });
+  assert.equal(result.safe, true, "an undeclared deployment would stop the API from starting");
+  assert.equal(result.warnings.length >= 4, true, "an undeclared deployment was not warned about");
+  assert.equal(result.blocking.length, 0);
+});
+
+test("declaring PART of it still starts", () => {
+  // Half-configured is a normal step on the way to configured, and must never
+  // be worse than not starting at all.
+  const result = safety.inspectDeployment({
+    env: { PEACH_PAYMENTS_MODE: "production", POSTGRES_URL: "postgres://u:p@h:5432/titopay" }
+  });
+  assert.equal(result.safe, true, "a partly declared deployment would stop the API from starting");
+});
+
+test("only a contradiction blocks, and every blocker names both sides of it", () => {
+  const blocked = safety.inspectDeployment({
+    env: { ...PRODUCTION, OTT_MODE: "sandbox" }
+  });
+  assert.equal(blocked.safe, false);
+  for (const problem of blocked.blocking) {
+    assert.match(problem, /production/i);
+    assert.match(problem, /sandbox/i);
+  }
 });

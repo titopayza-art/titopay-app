@@ -6,38 +6,65 @@ const {
   inspectDeployment, verifyDatabaseIdentity, describeDeployment
 } = require("./config/deployment-safety");
 
-// FAIL CLOSED BEFORE A SINGLE REQUEST IS SERVED.
+// SAY WHAT THIS DEPLOYMENT IS, LOUDLY, AND STOP ONLY FOR A CONTRADICTION.
 //
 // PEACH_PAYMENTS_MODE, DOCFOX_MODE and OTT_MODE each used to read
 // `process.env.X || "production"`. An unset variable, a typo or a stripped
 // environment file therefore put TitoPay in PRODUCTION silently, and nothing
-// anywhere checked that a production API had opened the production database.
+// checked that a production API had opened the production database.
 //
-// Both are now stated explicitly and both refuse rather than guess. This runs
-// FIRST, before the cluster forks and before anything listens, so an unsafe
-// deployment never reaches the point of accepting money.
+// The first attempt at this refused to start on ANY finding, including a
+// variable that had simply never been set. Deploying it to a server that had
+// not yet been given the variables STOPPED THE API. The check was right and
+// the rollout was the outage.
 //
-// It is here rather than in config/env.js on purpose: the test suite and every
-// verification harness import services directly without booting a server, and
-// throwing at require time would break all of them without making one payment
-// safer.
+// So the two cases are now separated:
+//
+//   NOT DECLARED   warn on every boot, report it on /health, and SERVE. It is
+//                  the state every existing server is already in and exactly
+//                  how the platform has been running; refusing breaks a
+//                  working system to protect it from a risk it already carries.
+//
+//   CONTRADICTED   refuse. A production API on a database stamped sandbox, or
+//                  an integration in the other environment. Only reachable
+//                  once the variables are deliberately set, so it can never
+//                  fell a server that was working a minute ago, and the state
+//                  it describes sends real money to the wrong place.
+//
+// A deployment moves from the first to the second by being configured, which
+// is the direction we want, and configuring is never punished with an outage.
 function refuseToStart(problems) {
   console.error("");
-  console.error("  TITOPAY REFUSED TO START — UNSAFE DEPLOYMENT CONFIGURATION");
+  console.error("  TITOPAY REFUSED TO START — THE ENVIRONMENT CONTRADICTS ITSELF");
   console.error("");
   for (const problem of problems) console.error(`    - ${problem}`);
   console.error("");
-  console.error("  Every deployment must declare, explicitly:");
-  console.error("    TITOPAY_ENV=production   PEACH_PAYMENTS_MODE=production   DOCFOX_MODE=production   OTT_MODE=production");
-  console.error("    TITOPAY_ENV=sandbox      PEACH_PAYMENTS_MODE=sandbox      DOCFOX_MODE=sandbox      OTT_MODE=sandbox");
+  console.error("  This is not a missing setting. Something has been declared and something");
+  console.error("  else disagrees with it, and starting would risk money reaching the wrong");
+  console.error("  place. Correct the contradiction, or unset TITOPAY_ENV to start unverified.");
   console.error("");
   console.error("  Nothing has been served and no connection has been accepted. See GOING-LIVE.md.");
   console.error("");
   process.exit(78); // EX_CONFIG
 }
 
+function warnAboutDeployment(warnings) {
+  if (!warnings.length) return;
+  console.warn("");
+  console.warn("  TITOPAY IS RUNNING WITHOUT A DECLARED ENVIRONMENT");
+  console.warn("");
+  for (const warning of warnings) console.warn(`    ! ${warning}`);
+  console.warn("");
+  console.warn("  The API is serving normally and this changes nothing about how it behaves.");
+  console.warn("  Declare it and this goes quiet:");
+  console.warn("    TITOPAY_ENV=production  PEACH_PAYMENTS_MODE=production  DOCFOX_MODE=production  OTT_MODE=production");
+  console.warn("    TITOPAY_ENV=sandbox     PEACH_PAYMENTS_MODE=sandbox     DOCFOX_MODE=sandbox     OTT_MODE=sandbox");
+  console.warn("");
+}
+
 const deployment = inspectDeployment({ env: process.env, config });
-if (!deployment.ok) refuseToStart(deployment.problems);
+if (!deployment.safe) refuseToStart(deployment.blocking);
+warnAboutDeployment(deployment.warnings);
 
 const server = http.createServer(app);
 
@@ -107,16 +134,19 @@ if (chatSocketEnabled) attachChatSocketServer(server);
 // than trusting a name. A production database restored under another name is
 // still the production database, and a sandbox API must not open it.
 //
-// A database that has never been stamped is stamped now to match the declared
-// environment, so an existing deployment upgrades without ceremony. After that
-// first stamp a disagreement is fatal, permanently.
+// A database that has never been stamped is stamped to match the declared
+// environment, so an existing deployment upgrades without ceremony. A database
+// that cannot be REACHED is a warning, never a refusal: that used to turn a
+// Postgres hiccup during a restart into a refusal to start at all.
 (async () => {
-  const identity = await verifyDatabaseIdentity(require("./db/pool").pool, deployment.environment);
+  const identity = await verifyDatabaseIdentity(require("./db/pool").pool, deployment.environment)
+    .catch((error) => ({ ok: true, unknown: true, stamped: null, wrote: false, warnings: [`The database identity check did not complete: ${error.message}`] }));
   if (!identity.ok) refuseToStart(identity.problems);
+  warnAboutDeployment(identity.warnings || []);
 
   console.log("");
   for (const line of describeDeployment(deployment)) console.log(`  ${line}`);
-  console.log(`  Database identity: ${identity.stamped}${identity.wrote ? " (stamped now)" : ""}`);
+  console.log(`  Database identity: ${identity.stamped || "not verified"}${identity.wrote ? " (stamped now)" : ""}`);
   console.log("");
 
 server.listen(config.apiPort, config.apiHost, () => {
@@ -138,9 +168,13 @@ server.listen(config.apiPort, config.apiHost, () => {
   }
 });
 })().catch((error) => {
-  // A failure to VERIFY is a failure to be safe. It never falls through to
-  // listening anyway.
-  refuseToStart([`The deployment safety check could not complete: ${error.message}`]);
+  // The safety check itself failing must never be the reason customers cannot
+  // pay. It is reported and the API serves, exactly as it did before any of
+  // this existed.
+  console.error("[deployment-safety] the check did not complete; serving anyway", { message: error.message });
+  server.listen(config.apiPort, config.apiHost, () => {
+    console.log("TitoPay API service started (deployment safety check incomplete)", { pid: process.pid });
+  });
 });
 
 function shutdown(signal) {

@@ -19,15 +19,36 @@ function assertEnabled() {
   }
 }
 
+// Said once per process, not once per payment: a line on every top-up is a
+// line nobody reads.
+let assumedEnvironmentWarned = false;
+function warnAssumedEnvironment() {
+  if (assumedEnvironmentWarned) return;
+  assumedEnvironmentWarned = true;
+  console.warn("[peach] PEACH_PAYMENTS_MODE is not set. Assuming \"production\", which is the "
+    + "historic default. Set it explicitly to sandbox or production.");
+}
+
 function normalizeEnvironment(value) {
   // NO FAIL-OPEN DEFAULT. This ended in `|| "production"`, so a Peach call
   // made with no environment anywhere — unset variable, stripped env file,
   // stored config without one — went to the LIVE acquirer. An environment
   // nobody stated is not production; it is a configuration fault.
-  const environment = String(value || config.integrations.peachPayments.mode || "").trim().toLowerCase();
-  if (!environment) {
-    throw new AppError(400, "Peach Payments environment is not configured. Set PEACH_PAYMENTS_MODE to sandbox or production.");
+  const supplied = String(value || config.integrations.peachPayments.mode || "").trim().toLowerCase();
+  if (!supplied) {
+    // NOT CONFIGURED IS NOT THE SAME AS BROKEN.
+    //
+    // This briefly threw, which would have failed every top-up on a server
+    // that had never been given PEACH_PAYMENTS_MODE. That is a bigger fault
+    // than the one it was guarding against. The historic behaviour is kept —
+    // an unstated environment means production, because that is what this has
+    // always done — and it is now SAID OUT LOUD, once per process, so the gap
+    // is visible instead of silent. Declaring the variable removes both the
+    // assumption and the warning.
+    warnAssumedEnvironment();
+    return "production";
   }
+  const environment = supplied;
   if (!["sandbox", "production"].includes(environment)) {
     throw new AppError(400, "Peach Payments environment must be sandbox or production");
   }

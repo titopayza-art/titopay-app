@@ -126,15 +126,28 @@ function resultCodeFrom(payload = {}) {
   return readField(payload, ["result.code", "resultCode", "result_code"]) || readField(payload?.result || {}, ["code"]);
 }
 
+let assumedCheckoutEnvironmentWarned = false;
+function warnAssumedCheckoutEnvironment() {
+  if (assumedCheckoutEnvironmentWarned) return;
+  assumedCheckoutEnvironmentWarned = true;
+  console.warn("[peach-checkout] PEACH_PAYMENTS_MODE is not set. Assuming \"production\", which is "
+    + "the historic default. Set it explicitly to sandbox or production.");
+}
+
 async function peachRequest(effective, method, path, body, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   // Anything that was not exactly "sandbox" used to mean production, so an
   // empty, misspelled or missing environment sent a real customer's card to
   // the live acquirer. Both values are now stated, and anything else refuses.
   const declared = String(effective.environment || config.integrations.peachPayments.mode || "").trim().toLowerCase();
-  if (!["sandbox", "production"].includes(declared)) {
+  // An unstated environment keeps the historic behaviour, production, and says
+  // so once. Throwing here would have failed every card top-up on a server
+  // that had never been given the variable, which is worse than the ambiguity
+  // it was guarding against. A STATED but invalid one is still refused: that
+  // is somebody being imprecise about which environment handles real money.
+  const environment = declared || (warnAssumedCheckoutEnvironment(), "production");
+  if (!["sandbox", "production"].includes(environment)) {
     throw new AppError(400, "Peach Checkout environment must be sandbox or production. Set PEACH_PAYMENTS_MODE.");
   }
-  const environment = declared;
   const accessToken = await getAccessToken(effective);
   const url = `${checkoutBaseUrl(environment)}${path}`;
   const controller = new AbortController();
