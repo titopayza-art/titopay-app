@@ -9737,6 +9737,14 @@ select.is-picker-source {
 }
 
 .sv-tab {
+  /* A FLEX ITEM SHRINKS BELOW ITS TEXT UNLESS TOLD NOT TO.
+     .sv-tabs is a horizontal scroller, but a flex item defaults to
+     flex-shrink: 1, so the six chips compressed to fit the row instead of
+     overflowing it: "Overview" rendered 53px wide against 86px of text and
+     every label was clipped to "Over", "Memb", "Contrib". white-space: nowrap
+     keeps the text on one line, it does not stop the box shrinking. Holding
+     each chip at its content width is what makes overflow-x: auto engage. */
+  flex: 0 0 auto;
   min-height: 44px;
   padding: 0 14px;
   color: var(--muted);

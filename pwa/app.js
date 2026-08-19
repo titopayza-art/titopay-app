@@ -16554,12 +16554,21 @@ function stockvelGroupCard(group) {
       <div class="sv-card-body">
         <strong>${esc(group.name)}</strong>
         ${meta ? `<small>${esc(meta)}</small>` : ""}
-        ${stockvelGoalProgress(group)}
       </div>
       <span class="sv-card-aside">
         ${group.balance != null ? `<span class="sv-card-amount">${esc(money(group.balance))}</span>` : ""}
         ${stockvelStatusChip(group.myStatus)}
       </span>
+      ${/* A DIRECT CHILD, OR THE CARD GRID CANNOT PLACE IT.
+            .sv-card reserves a full-width "goal" row and .sv-goal claims it with
+            grid-area, but the progress block was nested inside .sv-card-body.
+            grid-area only binds to a direct child of the grid that declares the
+            area, so instead of taking the card's own row it created an implicit
+            named area inside .sv-card-body, splitting that body into two
+            columns. The group name was left 117px of a 393px screen and broke
+            mid-word ("Masibamban / e Savings / Club"), while the card's goal row
+            went unused. Placing it here is what the CSS always described. */""}
+      ${stockvelGoalProgress(group)}
     </button>`;
 }
 function stockvelStepIndicator(activeIndex) {
