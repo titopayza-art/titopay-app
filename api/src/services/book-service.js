@@ -36,7 +36,20 @@ function cleanVenueImage(value) {
     }
     return raw;
   }
-  if (/^https?:\/\//i.test(raw)) return raw.slice(0, 800);
+  // AN EXTERNAL URL IS A BEACON ON A PUBLIC PAGE.
+  //
+  // This used to accept any http(s) URL and store it. A venue photo renders on
+  // the public booking page, so a third-party host would receive the IP address
+  // and user agent of every person who opened that page, and the venue owner
+  // (or anyone who took over their account) chose the host. The API's own CSP,
+  // img-src 'self' data:, blocks it from loading today, which means the only
+  // thing it reliably did was leak viewers to whoever owned the link.
+  //
+  // Nothing in the product needs it: the photo control uploads and produces a
+  // data: URL, and no screen submits a link. Dropping it here changes no
+  // existing venue record, because a stored value is only rewritten when a
+  // caller explicitly sends coverImageUrl, which only the uploader and the
+  // remove button do.
   return "";
 }
 
@@ -246,6 +259,9 @@ async function updateVenue(actor, venueId, payload = {}, meta = {}) {
     }
   }
   if (payload.coverImageUrl !== undefined) {
+    // Anything unvetted is dropped rather than refused, which is the contract
+    // this endpoint already had for javascript: URLs and the one its tests
+    // pin. An external link now falls into the same bucket.
     set("cover_image_url", cleanVenueImage(payload.coverImageUrl) || null);
   }
   if (payload.gallery !== undefined) {

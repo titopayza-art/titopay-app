@@ -19,10 +19,29 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 70;
+const API_BUILD = 71;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  71: "SECURITY REMEDIATION FROM THE 19 AUGUST 2026 AUDIT. Identity numbers are "
+      + "now keyed. They were digested with a constant in-source prefix, which "
+      + "is a domain separator and not a pepper, so a dumped users table gave up "
+      + "every customer's ID number: the valid SA ID space is about 1.46 billion "
+      + "numbers and one GPU walks it in under a second. Hashing moved to "
+      + "lib/identity-hash and is HMAC-SHA-256 under IDENTITY_PEPPER, which is "
+      + "REQUIRED IN PRODUCTION - the API refuses to start without it. New "
+      + "additive columns users.id_number_hmac, compliance_screening_list."
+      + "id_number_hmac and kyc_verifications.document_hmac hold it; the legacy "
+      + "digest is still written alongside so that screening entries created "
+      + "before the change keep matching, and screening compares keyed with "
+      + "keyed and legacy with legacy. Set IDENTITY_HASH_LEGACY_DUAL_WRITE=false "
+      + "only after the screening list has been re-ingested. TOP-UPS: creation "
+      + "now refuses any currency but ZAR (an omitted field still means ZAR), "
+      + "and settlement refuses a missing amount instead of treating it as a "
+      + "match and compares the currency it already read; both reuse the "
+      + "existing processing/requiresReview path. JWT: access and refresh "
+      + "secrets must be at least 32 bytes or the API will not start. BOOK: a "
+      + "venue photo may be uploaded but no longer linked to an external host.",
   70: "TWO DEFECTS THAT BROKE CUSTOMER VERIFICATION END TO END. Both were found "
       + "by driving the shipped app against a real database, not by reading. "
       + "FIRST: the FICA submit button never submitted. onSubmit calls "

@@ -78,7 +78,14 @@ test("tier 1 is a validated identity document stored only as a hash", () => {
   assert.match(COMPLIANCE, /function normalizeDocumentNumber/);
   assert.match(COMPLIANCE, /ISO_COUNTRIES/);
   assert.match(COMPLIANCE, /kyc_verifications/, "every verification lands in the history table");
-  assert.match(COMPLIANCE, /createHash\("sha256"\)/);
+  // Identity numbers are hashed through the shared keyed helper now. The
+  // assertion follows the hashing rather than pinning the old inline digest:
+  // an unkeyed sha256 over the identity material reappearing HERE would be
+  // the regression, because that is the reversible form the pepper replaced.
+  assert.match(COMPLIANCE, /identityHashPair\(/,
+    "identity material is hashed through lib/identity-hash");
+  assert.doesNotMatch(COMPLIANCE, /createHash\("sha256"\)[\s\S]{0,40}titopay-/,
+    "the unkeyed digest must never be computed over identity material again");
   assert.doesNotMatch(COMPLIANCE, /INSERT INTO users[\s\S]{0,200}id_number[^_]/,
     "the raw document number must never be stored");
   assert.doesNotMatch(COMPLIANCE, /kyc_document_number/,

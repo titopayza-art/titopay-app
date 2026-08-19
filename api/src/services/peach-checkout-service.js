@@ -25,6 +25,9 @@ const walletService = require("./wallet-service");
 
 const SERVICE_CODE = "wallet_top_up";
 const PROVIDER = "peach_checkout";
+// The wallet's denomination. A top-up may only be created in it, and Peach
+// must report settlement in it, or nothing is credited.
+const WALLET_CURRENCY = "ZAR";
 const DEFAULT_TIMEOUT_MS = 15000;
 const MIN_AMOUNT = Number(process.env.PEACH_TOPUP_MIN_AMOUNT || 5);
 const MAX_AMOUNT = Number(process.env.PEACH_TOPUP_MAX_AMOUNT || 50000);
@@ -257,13 +260,32 @@ function topupResponse(row, extra = {}) {
 /* ------------------------------------------------------------------ create */
 
 async function createTopupCheckout(actor, payload = {}) {
-  const effective = await requireCheckoutConfig();
+  // Request validation before provider work. The currency gate sat after
+  // requireCheckoutConfig, so on any deployment where Checkout is not yet
+  // configured the request failed 503 and the gate was never reached, which
+  // makes it untestable end to end and leaves it resting on ordering nobody
+  // stated. Validating the caller's own input first costs nothing and cannot
+  // change the success path.
   const amount = assertAmount(payload.amount);
+  // TITOPAY WALLETS ARE DENOMINATED IN RAND, SO A TOP-UP IS TOO.
+  //
+  // This accepted any three-letter code from the request body and the wallet was
+  // credited the numeric `amount` regardless. Settlement compared the amount but
+  // never the currency, so 506 of a weaker unit satisfied a 506 expectation and
+  // the customer was credited R506. The only thing preventing that was how the
+  // Peach entity happens to be configured, which is a control outside this
+  // codebase and outside its change management.
+  //
+  // Omitting the field still means ZAR, exactly as before, so no existing caller
+  // changes behaviour.
   const currency = String(payload.currency || "ZAR").trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) throw new AppError(400, "Currency is invalid");
+  if (currency !== WALLET_CURRENCY) throw new AppError(400, "Top-ups are in South African rand");
 
   const idempotencyKey = String(payload.idempotencyKey || payload.metadata?.clientIdempotencyKey || "").trim().slice(0, 120);
   if (!idempotencyKey) throw new AppError(400, "An idempotency key is required");
+
+  const effective = await requireCheckoutConfig();
 
   // The wallet balance cap for the customer's verification tier, checked
   // BEFORE they are sent to the card page: a top up that could not be
@@ -412,21 +434,39 @@ async function settleTopupTransaction(client, transactionId, verified) {
     return { row: rows[0], credited: false, alreadySettled: false };
   }
 
-  // Peach reported success. Confirm the amount and currency still match what
-  // TitoPay created, so a tampered or mismatched notification cannot change
-  // what gets credited. Peach was asked to charge the TOTAL (amount + top-up
-  // fee), so that is what its answer must equal; the wallet is still credited
-  // only `amount`. Rows written before the fee existed carry total = amount, so
-  // this stays correct for them too.
+  // Peach reported success. Confirm the amount AND the currency still match what
+  // TitoPay created. Peach was asked to charge the TOTAL (amount + top-up fee),
+  // so that is what its answer must equal; the wallet is still credited only
+  // `amount`. Rows written before the fee existed carry total = amount.
+  //
+  // A missing amount is not a matching amount: the guard read
+  // `verified.amount !== null && mismatch`, so a response that omitted the field
+  // skipped the check and credited on nothing verified. Currency is compared
+  // here for the first time; it was read and then ignored. Both refusals reuse
+  // the existing review path rather than inventing a state.
   const expectedCharge = Number(row.total ?? row.amount);
-  if (verified.amount !== null && Math.abs(Number(verified.amount) - expectedCharge) > 0.005) {
-    console.error("[peach-checkout] amount mismatch; refusing to credit", {
-      transactionId, expected: expectedCharge, reported: Number(verified.amount)
+  const reportedCurrency = String(verified.currency || "").trim().toUpperCase();
+  const amountBad = verified.amount === null
+    || !Number.isFinite(Number(verified.amount))
+    || Math.abs(Number(verified.amount) - expectedCharge) > 0.005;
+  const currencyBad = Boolean(reportedCurrency) && reportedCurrency !== WALLET_CURRENCY;
+  if (amountBad || currencyBad) {
+    console.error(currencyBad
+      ? "[peach-checkout] currency mismatch; refusing to credit"
+      : "[peach-checkout] amount mismatch; refusing to credit", {
+      transactionId,
+      expected: expectedCharge,
+      reported: verified.amount === null ? null : Number(verified.amount),
+      expectedCurrency: WALLET_CURRENCY,
+      reportedCurrency: reportedCurrency || null
     });
     const { rows } = await client.query(
       `UPDATE transactions SET status='processing', metadata = metadata || $2::jsonb, updated_at=NOW()
         WHERE id=$1 RETURNING *`,
-      [transactionId, JSON.stringify({ providerState: "amount_mismatch", requiresReview: true })]
+      [transactionId, JSON.stringify({
+        providerState: currencyBad ? "currency_mismatch" : "amount_mismatch",
+        requiresReview: true
+      })]
     );
     return { row: rows[0], credited: false, alreadySettled: false };
   }

@@ -51,6 +51,9 @@ const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { BLOCKED_ACCOUNT_STATUSES } = require("../lib/chat-policy");
 const { writeAuditLog } = require("./audit-service");
+const {
+  identityHashPair, saIdMaterial, documentMaterial, legacyDualWriteEnabled
+} = require("../lib/identity-hash");
 // Identity assurance is asked of a CAPABILITY. Which provider supplies it is
 // configuration in src/providers, and no company name appears in this file.
 const { verifyIdentity, normalizeVerificationStatus } = require("../providers/kyc-provider");
@@ -272,6 +275,13 @@ function ensureComplianceSchema() {
   schemaReady ||= (async () => {
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS basic_verified_at TIMESTAMPTZ");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS id_number_hash TEXT");
+    // The keyed identity hash. Additive and nullable: no existing row is
+    // rewritten and a deployment that never applies it keeps working, because
+    // every read below still falls back to the legacy column.
+    await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS id_number_hmac TEXT");
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS users_id_number_hmac_idx ON users (id_number_hmac) WHERE id_number_hmac IS NOT NULL"
+    );
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS edd_status TEXT NOT NULL DEFAULT 'none'");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_status TEXT NOT NULL DEFAULT 'normal'");
     await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS cdd_reviewed_at TIMESTAMPTZ");
@@ -297,6 +307,7 @@ function ensureComplianceSchema() {
     await pool.query(
       "CREATE INDEX IF NOT EXISTS kyc_verifications_user_idx ON kyc_verifications (user_id, created_at DESC)"
     );
+    await pool.query("ALTER TABLE kyc_verifications ADD COLUMN IF NOT EXISTS document_hmac TEXT");
     await pool.query(`
       CREATE TABLE IF NOT EXISTS compliance_screening_list (
         id UUID PRIMARY KEY,
@@ -308,6 +319,11 @@ function ensureComplianceSchema() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    // Entries added from now on carry the keyed hash too. Entries created before
+    // this change hold only the legacy digest and cannot be recomputed, because
+    // the raw number an admin typed was never kept: that is precisely why
+    // screening still compares both forms until the list is re-ingested.
+    await pool.query("ALTER TABLE compliance_screening_list ADD COLUMN IF NOT EXISTS id_number_hmac TEXT");
     await pool.query(`
       CREATE TABLE IF NOT EXISTS compliance_flags (
         id UUID PRIMARY KEY,
@@ -668,13 +684,23 @@ async function screenUser(userId) {
   await ensureComplianceSchema();
   const user = await loadUserComplianceRow(userId);
   if (!user) return { hit: false };
-  const { rows: hashRows } = await pool.query("SELECT id_number_hash FROM users WHERE id = $1", [userId]);
+  const { rows: hashRows } = await pool.query(
+    "SELECT id_number_hash, id_number_hmac FROM users WHERE id = $1", [userId]);
   const { rows: list } = await pool.query(
-    "SELECT id, label, name_pattern, id_number_hash FROM compliance_screening_list WHERE active = TRUE");
+    "SELECT id, label, name_pattern, id_number_hash, id_number_hmac FROM compliance_screening_list WHERE active = TRUE");
   const name = normalizeName(user.full_name);
   for (const entry of list) {
     const nameHit = entry.name_pattern && name && name.includes(normalizeName(entry.name_pattern));
-    const idHit = entry.id_number_hash && hashRows[0]?.id_number_hash === entry.id_number_hash;
+    // Compare keyed with keyed and legacy with legacy, never across the two.
+    // A customer verified before the migration has only the legacy digest and a
+    // customer verified after has both while dual write is on, so either arm can
+    // be the one that matches. Matching across forms is impossible by
+    // construction, which is what keeps this from silently missing a hit.
+    const user = hashRows[0] || {};
+    const idHit = Boolean(
+      (entry.id_number_hmac && user.id_number_hmac && user.id_number_hmac === entry.id_number_hmac)
+      || (entry.id_number_hash && user.id_number_hash && user.id_number_hash === entry.id_number_hash)
+    );
     if (nameHit || idHit) {
       await recordRiskSignal(userId, "sanctions_screening", {
         listEntryId: entry.id, listLabel: entry.label, matchedBy: idHit ? "id_number" : "name"
@@ -894,7 +920,12 @@ async function basicVerify(auth, payload = {}) {
     throw new AppError(400, "Choose the identity document you want to verify with: South African ID, passport, or another approved identity document.");
   }
 
+  // Both forms of the identity hash. `hash` is the keyed one and is what this
+  // account is anchored on from now on; `legacyHash` is the old unkeyed digest,
+  // kept so that a screening entry created before the pepper existed still
+  // matches this customer. See lib/identity-hash.js for why both are needed.
   let hash;
+  let legacyHash;
   let issuingCountry = null;
   let nationality = null;
   let dateOfBirth = null;
@@ -902,9 +933,7 @@ async function basicVerify(auth, payload = {}) {
     const problem = validateSaIdNumber(payload.idNumber);
     if (problem) throw new AppError(400, problem);
     const digits = String(payload.idNumber).replace(/\s+/g, "");
-    // Same salt as always, so existing hashes and screening entries keep
-    // matching.
-    hash = crypto.createHash("sha256").update(`titopay-id:${digits}`).digest("hex");
+    ({ hmac: hash, legacy: legacyHash } = identityHashPair(saIdMaterial(digits)));
     issuingCountry = "ZA";
   } else {
     const number = normalizeDocumentNumber(payload.documentNumber);
@@ -914,12 +943,17 @@ async function basicVerify(auth, payload = {}) {
     dateOfBirth = validDateOfBirth(payload.dateOfBirth);
     if (!dateOfBirth) throw new AppError(400, "Enter your date of birth as on the document.");
     nationality = normalizeCountry(payload.nationality) || issuingCountry;
-    hash = crypto.createHash("sha256").update(`titopay-doc:${documentType}:${issuingCountry}:${number}`).digest("hex");
+    ({ hmac: hash, legacy: legacyHash } = identityHashPair(
+      documentMaterial(documentType, issuingCountry, number)
+    ));
   }
 
+  // Duplicate-identity detection has to see BOTH forms or it regresses the day
+  // this ships: an account verified before the change is anchored on the legacy
+  // digest only, and matching the keyed hash alone would stop recognising it.
   const { rows } = await pool.query(
-    "SELECT id FROM users WHERE id_number_hash = $1 AND id <> $2 LIMIT 1",
-    [hash, auth.userId]
+    "SELECT id FROM users WHERE (id_number_hmac = $1 OR id_number_hash = $3) AND id <> $2 LIMIT 1",
+    [hash, auth.userId, legacyHash]
   );
   if (rows[0]) {
     // Trying to register a document that already anchors another account is
@@ -966,9 +1000,10 @@ async function basicVerify(auth, payload = {}) {
   // rewrite of this function.
   if (assuranceStatus !== "verified") {
     await pool.query(
-      `INSERT INTO kyc_verifications (id, user_id, document_type, issuing_country, document_hash, status)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [crypto.randomUUID(), auth.userId, documentType, issuingCountry, hash, assuranceStatus]
+      `INSERT INTO kyc_verifications (id, user_id, document_type, issuing_country, document_hash, document_hmac, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [crypto.randomUUID(), auth.userId, documentType, issuingCountry,
+       legacyDualWriteEnabled() ? legacyHash : null, hash, assuranceStatus]
     );
     await writeAuditLog({
       actorType: "customer",
@@ -990,20 +1025,28 @@ async function basicVerify(auth, payload = {}) {
       : "Verification could not be completed right now. Please try again in a few minutes.");
   }
 
+  // The keyed hash is what anchors the account. The legacy digest is written
+  // alongside it only while dual write is on, because a screening entry created
+  // before the pepper existed can only be matched in that form. Turning dual
+  // write off is the final step of the migration, after the screening list has
+  // been re-ingested; see lib/identity-hash.js.
   await pool.query(
-    `UPDATE users SET id_number_hash = $1,
+    `UPDATE users SET id_number_hash = $7,
+        id_number_hmac = $1,
         kyc_document_type = $3,
         kyc_issuing_country = $4,
         kyc_nationality = COALESCE($5, kyc_nationality),
         kyc_date_of_birth = COALESCE($6::DATE, kyc_date_of_birth),
         basic_verified_at = COALESCE(basic_verified_at, NOW())
       WHERE id = $2`,
-    [hash, auth.userId, documentType, issuingCountry, nationality, dateOfBirth]
+    [hash, auth.userId, documentType, issuingCountry, nationality, dateOfBirth,
+     legacyDualWriteEnabled() ? legacyHash : null]
   );
   await pool.query(
-    `INSERT INTO kyc_verifications (id, user_id, document_type, issuing_country, document_hash, status)
-     VALUES ($1, $2, $3, $4, $5, 'verified')`,
-    [crypto.randomUUID(), auth.userId, documentType, issuingCountry, hash]
+    `INSERT INTO kyc_verifications (id, user_id, document_type, issuing_country, document_hash, document_hmac, status)
+     VALUES ($1, $2, $3, $4, $5, $6, 'verified')`,
+    [crypto.randomUUID(), auth.userId, documentType, issuingCountry,
+     legacyDualWriteEnabled() ? legacyHash : null, hash]
   );
   await writeAuditLog({
     actorType: "customer",

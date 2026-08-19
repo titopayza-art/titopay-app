@@ -22,6 +22,62 @@ function requiredAny(names) {
   throw new Error(`Missing required environment variable: ${names.join(" or ")}`);
 }
 
+// A SECRET THAT EXISTS IS NOT THE SAME AS A SECRET THAT IS STRONG.
+//
+// requiredAny only checks that a value is non-empty, so JWT_ACCESS_SECRET=secret
+// booted normally and logged nothing unusual. Every access and refresh token in
+// the system is then forgeable by anyone who guesses that string, which is full
+// impersonation of any customer or admin. Pinning HS256 and verifying issuer and
+// audience is undone entirely by a weak key, so the floor belongs at startup
+// where a bad deploy fails loudly instead of silently in production.
+//
+// 32 bytes is the HS256 block size and the usual minimum for HMAC key material.
+function requiredSecret(names, minBytes = 32) {
+  const value = requiredAny(names);
+  if (Buffer.byteLength(value, "utf8") < minBytes) {
+    throw new Error(
+      `${names[0]} must be at least ${minBytes} bytes. ` +
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\""
+    );
+  }
+  return value;
+}
+
+// THE KEY THAT MAKES AN IDENTITY HASH WORTH HASHING.
+//
+// Identity numbers were digested with a constant in-source prefix, which is a
+// domain separator and not a secret, so a dumped users table gave up every
+// customer's ID number: the valid South African ID space is about 1.46 billion
+// numbers and a single GPU walks it in under a second. Keying the digest with a
+// secret held outside the database is what makes a dump useless on its own.
+//
+// Required in production, because running there with anything else is the bug
+// this closes. Outside production it is derived from the access secret so that
+// tests and local work need no new variable; that derivation is deliberately
+// NOT allowed in production, since tying identity hashes to a key that should be
+// rotated would silently break every stored hash the day it is rotated.
+function identityPepperFromEnv(environment) {
+  const raw = String(process.env.IDENTITY_PEPPER || "").trim();
+  if (raw) {
+    if (Buffer.byteLength(raw, "utf8") < 32) {
+      throw new Error("IDENTITY_PEPPER must be at least 32 bytes");
+    }
+    return raw;
+  }
+  if (environment === "production") {
+    throw new Error(
+      "Missing required environment variable: IDENTITY_PEPPER. " +
+      "Identity numbers are keyed with it, so it must be set before the API starts and must never change " +
+      "once customers are verified. Generate one with: " +
+      "node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\""
+    );
+  }
+  return require("crypto")
+    .createHmac("sha256", requiredAny(["JWT_ACCESS_SECRET", "JWT_SECRET"]))
+    .update("titopay-identity-pepper-v1")
+    .digest("hex");
+}
+
 function numberFromEnv(name, fallback) {
   const raw = process.env[name] ?? fallback;
   const value = Number(raw);
@@ -74,8 +130,9 @@ const config = {
   adminOrigin: process.env.ADMIN_ORIGIN || "https://admin.titopay.co.za",
   hrOrigin: process.env.HR_ORIGIN || "https://hr.titopay.co.za",
   postgresUrl: requiredAny(["POSTGRES_URL", "DATABASE_URL"]),
-  accessSecret: requiredAny(["JWT_ACCESS_SECRET", "JWT_SECRET"]),
-  refreshSecret: requiredAny(["JWT_REFRESH_SECRET", "REFRESH_TOKEN_SECRET"]),
+  accessSecret: requiredSecret(["JWT_ACCESS_SECRET", "JWT_SECRET"]),
+  refreshSecret: requiredSecret(["JWT_REFRESH_SECRET", "REFRESH_TOKEN_SECRET"]),
+  identityPepper: identityPepperFromEnv(envName),
   cookieSecret: process.env.COOKIE_SECRET || "",
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL || "15m",
   refreshTokenTtl: process.env.REFRESH_TOKEN_TTL || "7d",

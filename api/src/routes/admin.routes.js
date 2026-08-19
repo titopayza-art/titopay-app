@@ -3609,7 +3609,7 @@ router.get("/compliance/screening", requireAdminPermission("services"), async (r
   try {
     await require("../services/compliance-service").ensureComplianceSchema();
     const { rows } = await pool.query(
-      "SELECT id, label, name_pattern, (id_number_hash IS NOT NULL) AS has_id_hash, active, created_at FROM compliance_screening_list ORDER BY created_at DESC LIMIT 500");
+      "SELECT id, label, name_pattern, (id_number_hash IS NOT NULL OR id_number_hmac IS NOT NULL) AS has_id_hash, active, created_at FROM compliance_screening_list ORDER BY created_at DESC LIMIT 500");
     res.json({ ok: true, entries: rows });
   } catch (error) { next(error); }
 });
@@ -3621,14 +3621,19 @@ router.post("/compliance/screening", requireAdminPermission("services"), async (
     const label = boundedText(req.body?.label, "Label", { min: 2, max: 200 });
     const namePattern = String(req.body?.namePattern || "").trim().slice(0, 200) || null;
     const idNumber = String(req.body?.idNumber || "").replace(/\s+/g, "");
-    const idHash = /^\d{13}$/.test(idNumber)
-      ? crypto.createHash("sha256").update(`titopay-id:${idNumber}`).digest("hex")
-      : null;
-    if (!namePattern && !idHash) throw new AppError(400, "Provide a name pattern or a 13 digit ID number to screen against");
+    // A new entry carries BOTH forms. The keyed hash matches customers verified
+    // from now on; the legacy digest still matches every customer verified
+    // before the pepper existed, and dropping it here would quietly stop
+    // screening that population. Both come from lib/identity-hash so this route
+    // can never drift from the customer-side hashing.
+    const { identityHashPair, saIdMaterial } = require("../lib/identity-hash");
+    const idHashes = /^\d{13}$/.test(idNumber) ? identityHashPair(saIdMaterial(idNumber)) : null;
+    if (!namePattern && !idHashes) throw new AppError(400, "Provide a name pattern or a 13 digit ID number to screen against");
+    const idHash = idHashes ? idHashes.legacy : null;
     const id = crypto.randomUUID();
     await pool.query(
-      "INSERT INTO compliance_screening_list (id, label, name_pattern, id_number_hash, added_by) VALUES ($1,$2,$3,$4,$5)",
-      [id, label, namePattern, idHash, req.auth.userId]);
+      "INSERT INTO compliance_screening_list (id, label, name_pattern, id_number_hash, id_number_hmac, added_by) VALUES ($1,$2,$3,$4,$5,$6)",
+      [id, label, namePattern, idHash, idHashes ? idHashes.hmac : null, req.auth.userId]);
     await writeAuditLog({ actorType: "admin", actorId: req.auth.userId, action: "screening_entry_added",
       entityType: "compliance_screening", entityId: id, metadata: { label, hasName: Boolean(namePattern), hasId: Boolean(idHash) } });
     res.status(201).json({ ok: true, id });

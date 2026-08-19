@@ -152,9 +152,17 @@ test("A card top-up charges the card the total the customer confirmed", () => {
   // The transaction row records amount / fee / total separately.
   assert.match(create, /amount, fee, total, status/);
   // The wallet is still credited only the amount, never the fee.
-  const settle = source.slice(source.indexOf("async function settleTopupTransaction"));
-  assert.match(settle.slice(0, 3000), /amount: Number\(row\.amount\)/);
-  assert.match(settle.slice(0, 3000), /expectedCharge = Number\(row\.total \?\? row\.amount\)/);
+  //
+  // Scoped to the whole of settleTopupTransaction rather than its first 3000
+  // characters. The magic window had 41 characters of headroom left, so the next
+  // edit inside this function was going to fail the assertion whatever it was,
+  // and a fixed offset can also reach into the following function and pass for
+  // the wrong reason. The function boundary is what the test actually means.
+  const settleStart = source.indexOf("async function settleTopupTransaction");
+  const settleEnd = source.indexOf("\nasync function", settleStart + 1);
+  const settle = source.slice(settleStart, settleEnd === -1 ? undefined : settleEnd);
+  assert.match(settle, /amount: Number\(row\.amount\)/);
+  assert.match(settle, /expectedCharge = Number\(row\.total \?\? row\.amount\)/);
 });
 
 test("A stale review screen cannot send a customer to Peach for the wrong total", () => {
