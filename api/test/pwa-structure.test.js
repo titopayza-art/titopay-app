@@ -548,3 +548,37 @@ test("submitFica uses the form data captured before the fields were disabled", (
   assert.match(source, /function setBusy\(form, busy\)[\s\S]{0,220}element\.disabled = busy/,
     "setBusy still disables the fields, so any form-reading handler needs the captured data");
 });
+
+// A TICKET SHOWS THE DOORS TIME, NOT A MIDNIGHT NOBODY ATTENDS.
+//
+// The stub formatted events.event_date - a DATE column with no clock - through
+// formatDate, which carries timeStyle: "short". Every ticket therefore read
+// "12 Dec 2026, 00:00". Worse, `new Date("2026-12-12")` is UTC midnight and
+// Intl then renders it in the reader's zone, so the same ticket said 02:00 in
+// South Africa, and a date on a month boundary could show the previous day.
+//
+// The start time lives beside the date on the event, so the stub reads the day
+// in UTC, the way it was stored, and appends that start time.
+test("a ticket stub shows the event's start time, read as a UTC calendar date", () => {
+  const start = source.indexOf("function ticketWhenText(");
+  assert.ok(start > 0, "ticketWhenText should exist");
+  const fn = source.slice(start, start + 700);
+  assert.match(fn, /timeZone: "UTC"/,
+    "a calendar date must be read in UTC or the day itself can shift for the reader");
+  assert.doesNotMatch(fn, /timeStyle/,
+    "a DATE column has no clock: rendering one invents a midnight");
+  assert.match(fn, /clock \? `\$\{text\}, \$\{clock\}` : text/,
+    "the real start time is appended when the event has one, and omitted when it does not");
+
+  // And the stub must actually use it, with the start time resolved from the
+  // event that travels with the ticket.
+  const stubStart = source.indexOf("function ticketStub(");
+  assert.ok(stubStart > 0, "ticketStub should exist");
+  const stub = source.slice(stubStart, stubStart + 1800);
+  assert.match(stub, /const startTime = ticket\.startTime \|\| ticket\.event\?\.startTime/,
+    "ticketStub must resolve the start time, including from the ticket's own event");
+  assert.match(stub, /ticketWhenText\(eventDate, startTime\)/,
+    "ticketStub must render through ticketWhenText");
+  assert.doesNotMatch(stub, /formatDate\(eventDate\)/,
+    "the old time-bearing formatter must be gone from the stub");
+});

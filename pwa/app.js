@@ -18547,6 +18547,26 @@ async function addTicketToWallet(kind, code, button) {
     setButtonBusy(button, false);
   }
 }
+// AN EVENT DATE IS A CALENDAR DATE, NOT AN INSTANT.
+//
+// The stub ran the date through formatDate, which carries a time style, so a
+// DATE column with no clock printed "12 Dec 2026, 00:00" - a midnight that is
+// not when anything happens. Worse, parsing a bare date yields UTC midnight and
+// then formats it locally, so in South Africa the same ticket read 02:00, and a
+// date near a month end could show the wrong day entirely.
+//
+// The clock a holder actually needs is the event's start time, which travels
+// beside the date. Read the day in UTC, the way it was stored, and append that
+// start time when there is one.
+function ticketWhenText(eventDate, startTime) {
+  if (!eventDate) return "Date to be confirmed";
+  const day = new Date(eventDate);
+  if (Number.isNaN(day.getTime())) return "Date to be confirmed";
+  const text = new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium", timeZone: "UTC" }).format(day);
+  const clock = String(startTime || "").trim();
+  return clock ? `${text}, ${clock}` : text;
+}
+
 function ticketStub(ticket = {}, order = {}, event = {}) {
   rememberRenderedTicket(ticket, order, event);
   const holder = ticket.holderName || ticket.holder_name || order.buyerName || order.buyer_name
@@ -18557,6 +18577,7 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
   const typeName = ticket.ticketTypeName || ticket.ticket_type_name || ticket.typeName || ticket.name || "";
   const eventName = ticket.eventName || event.eventName || order.eventName || "TitoPay event";
   const eventDate = ticket.eventDate || event.eventDate || order.eventDate || "";
+  const startTime = ticket.startTime || ticket.event?.startTime || event.startTime || order.startTime || "";
   const venue = ticket.venueName || event.venueName || order.venueName || "";
   const city = ticket.city || event.city || "";
   // A cancelled event is the one thing a ticket must say for itself. Without
@@ -18571,7 +18592,7 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
       <header class="ticket-stub-head">
         <p class="eyebrow">TitoPay Ticket</p>
         <strong>${esc(eventName)}</strong>
-        <span>${esc(eventDate ? formatDate(eventDate) : "Date to be confirmed")}</span>
+        <span>${esc(ticketWhenText(eventDate, startTime))}</span>
         ${venue ? `<span>${esc([venue, city].filter(Boolean).join(", "))}</span>` : ""}
       </header>
       <div class="ticket-stub-body">

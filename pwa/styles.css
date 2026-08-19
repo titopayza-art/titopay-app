@@ -5767,6 +5767,41 @@ body.landing-static .landing-flow.auth-screen {
   min-width: 0;
 }
 
+/* A MODAL TITLE NEEDS A LINE, NOT A SLIVER.
+ *
+ * A modal opened from another modal has a back arrow injected as the head's
+ * first child. On the event page that is the fourth control in the row, and
+ * with four 48px buttons and four 18px gaps the title column is left about
+ * 120px of a 393px screen: the heading and its lead wrapped into a narrow
+ * ribbon beside an empty half, and because the head is sticky it stayed on
+ * screen for the whole scroll.
+ *
+ * Once the title cannot hold a sensible width it takes its own line instead of
+ * being squeezed. Heads with fewer controls still clear 12rem, so they lay out
+ * exactly as before, and a browser without :has() keeps today's behaviour
+ * because flex-basis alone still shrinks against min-width: 0. */
+@media (max-width: 560px) {
+  .modal-head:has(.modal-back-btn) {
+    flex-wrap: wrap;
+  }
+
+  /* Controls keep one row, back arrow left and the rest right, and the title
+   * drops to a full line under them. Ordering matters: left to itself, wrapping
+   * splits the icons around the title instead of keeping them together. */
+  .modal-head:has(.modal-back-btn) > .icon-btn:not(.modal-back-btn) {
+    order: 2;
+  }
+
+  .modal-head:has(.modal-back-btn) > .modal-back-btn {
+    order: 1;
+  }
+
+  .modal-head:has(.modal-back-btn) > .modal-back-btn + div {
+    order: 3;
+    flex: 1 1 100%;
+  }
+}
+
 /* Gift presentation on the transaction detail (receiver and sender) */
 .gift-receipt-card {
   display: grid;
