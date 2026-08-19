@@ -2826,6 +2826,27 @@ router.post("/compliance/reviews/:id/status", requireAdminPermission("compliance
       [reviewId, status, req.auth.userId]
     );
     if (!rows[0]) return res.status(404).json({ ok: false, error: "Review not found" });
+
+    // THE DECISION HAS TO REACH THE CUSTOMER, NOT JUST THE REVIEW ROW.
+    //
+    // This endpoint used to update kyc_reviews and stop there, while the only
+    // write to users.fica_status anywhere set it to 'submitted'. Nothing ever
+    // set it to 'approved'. approvedFicaDetails() requires BOTH the review and
+    // the user record to say approved, so a compliance officer could approve a
+    // customer and that customer stayed unverified for good: no verified
+    // identity on their statements, and every check gated on
+    // users.fica_status = 'approved' permanently shut.
+    //
+    // Only a FICA review speaks for the account holder's own status, and only
+    // the two terminal decisions move it. Anything else leaves it alone.
+    const decided = { approved: "approved", rejected: "rejected" }[status];
+    if (decided && rows[0].review_type === "FICA" && rows[0].user_id) {
+      await pool.query(
+        "UPDATE users SET fica_status = $2, updated_at = NOW() WHERE id = $1",
+        [rows[0].user_id, decided]
+      );
+    }
+
     await writeAuditLog({
       actorType: req.auth.userType,
       actorId: req.auth.userId,
@@ -2834,7 +2855,7 @@ router.post("/compliance/reviews/:id/status", requireAdminPermission("compliance
       entityId: reviewId,
       ipAddress: req.auth.ipAddress,
       userAgent: req.auth.userAgent,
-      metadata: { status }
+      metadata: { status, reviewType: rows[0].review_type, subjectUserId: rows[0].user_id }
     });
     res.json({ ok: true, item: rows[0] });
   } catch (error) {

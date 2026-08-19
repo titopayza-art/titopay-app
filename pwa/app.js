@@ -3470,7 +3470,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "wallet-unlock") await verifyWalletUnlock(data);
     if (form.dataset.form === "authentication-preference-request") await requestAuthenticationPreferenceUpdate(data);
     if (form.dataset.form === "authentication-preference-verify") await verifyAuthenticationPreferenceUpdate(data);
-    if (form.dataset.form === "fica-upload") await submitFica(form);
+    if (form.dataset.form === "fica-upload") await submitFica(form, formData);
     if (form.dataset.form === "profile-photo") await submitProfilePhoto(form);
     if (form.dataset.form === "book-venue") { await submitBookVenue(data); return; }
     if (form.dataset.form === "book-service") { await submitBookService(data); return; }
@@ -25866,8 +25866,14 @@ function syncFicaNumberField() {
     input.inputMode = isSaId ? "numeric" : "text";
   }
 }
-async function submitFica(form) {
-  const data = new FormData(form);
+// `formData` is captured by onSubmit BEFORE setBusy() runs, and that matters.
+// setBusy disables every control in the form, and the HTML spec omits disabled
+// controls from a FormData built afterwards — so rebuilding it here returned an
+// empty set, this threw "Choose a document to upload." on a form that plainly
+// had one, and no FICA submission ever reached the server. The parameter is
+// optional so a direct caller still works.
+async function submitFica(form, formData) {
+  const data = formData || new FormData(form);
   const file = data.get("document");
   if (!file || !file.name) throw new Error("Choose a document to upload.");
   const isBusiness = state.accountType === "business";

@@ -19,10 +19,28 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 69;
+const API_BUILD = 70;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  70: "TWO DEFECTS THAT BROKE CUSTOMER VERIFICATION END TO END. Both were found "
+      + "by driving the shipped app against a real database, not by reading. "
+      + "FIRST: the FICA submit button never submitted. onSubmit calls "
+      + "setBusy(form, true), which disables every control, and submitFica then "
+      + "rebuilt its FormData from the now-disabled form - the HTML spec omits "
+      + "disabled controls, so every field came back empty and it threw "
+      + "'Choose a document to upload.' on a form that plainly had one. No FICA "
+      + "submission had ever reached the server from that button. It now "
+      + "receives the FormData captured before the fields are disabled. "
+      + "SECOND: approving a review never verified the customer. The compliance "
+      + "decision endpoint updated kyc_reviews and stopped, while the only write "
+      + "to users.fica_status anywhere set it to 'submitted'. Nothing ever set "
+      + "'approved'. approvedFicaDetails() requires BOTH, so an officer could "
+      + "approve a customer and that customer stayed unverified permanently: no "
+      + "verified identity on statements and every check gated on "
+      + "users.fica_status = 'approved' shut for good. A FICA approval or "
+      + "rejection now reaches the customer record in the same request, audit "
+      + "logged with the subject user id. Requires app.zip v441.",
   69: "The Book business console stops being blank. A business can now add a "
       + "photo, add what it offers, set its opening hours for the week, edit "
       + "its details and publish - and it sees today's real bookings with "

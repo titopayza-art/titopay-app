@@ -525,3 +525,26 @@ test("the Book tile is filed by who is looking at it", () => {
   assert.ok(fn.indexOf('keys.includes("book")') < fn.indexOf("for (const group of SERVICE_GROUPS)"),
     "the special case must be reached before the generic group scan");
 });
+
+// THE FICA SUBMIT BUTTON HAS TO ACTUALLY SUBMIT.
+//
+// onSubmit calls setBusy(form, true), which disables every control in the form.
+// The HTML spec omits disabled controls from a FormData built afterwards, so a
+// handler that rebuilds FormData from the form receives an empty set. submitFica
+// did exactly that, threw "Choose a document to upload." on a form that had one,
+// and no FICA submission ever reached the server from that button. It must use
+// the FormData onSubmit captured BEFORE setBusy ran.
+test("submitFica uses the form data captured before the fields were disabled", () => {
+  assert.match(source, /if \(form\.dataset\.form === "fica-upload"\) await submitFica\(form, formData\);/,
+    "the dispatcher must hand submitFica the pre-captured FormData");
+  const start = source.indexOf("async function submitFica(");
+  assert.ok(start > 0, "submitFica should exist");
+  const head = source.slice(start, start + 260);
+  assert.match(head, /async function submitFica\(form, formData\)/,
+    "submitFica must accept the captured FormData");
+  assert.match(head, /const data = formData \|\| new FormData\(form\)/,
+    "submitFica must prefer the captured FormData over rebuilding it");
+  // setBusy still disables everything; that is what makes the above necessary.
+  assert.match(source, /function setBusy\(form, busy\)[\s\S]{0,220}element\.disabled = busy/,
+    "setBusy still disables the fields, so any form-reading handler needs the captured data");
+});
