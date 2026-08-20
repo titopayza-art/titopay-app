@@ -7063,7 +7063,7 @@ function openWhyTrustModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="activity-list">
-      ${settingsRow("Encrypted connection", connectionIsEncrypted() ? "You are connected over encrypted HTTPS right now, and the app talks to TitoPay servers the same way." : "TitoPay is served over encrypted HTTPS connections.", "lock")}
+      ${settingsRow("Secure TLS encryption", connectionIsEncrypted() ? "TitoPay uses HTTPS/TLS encryption to protect data moving between you, TitoPay services and integrated systems — and this session is encrypted right now." : "TitoPay uses HTTPS/TLS encryption to protect data moving between users, TitoPay services and integrated systems.", "lock")}
       ${settingsRow("Secure sign-in", "Your wallet is protected by your PIN or password. Password changes and recovery always require a one-time code sent to your registered cellphone or email.", "shield")}
       ${settingsRow("Codes stay off this device", "Verification codes go to your registered contacts and are never saved on this device.", "eye-off")}
       ${settingsRow("Automatic sign-out", `Inactive sessions sign out after ${sessionTimeoutLabel()} to protect you on shared or lost devices.`, "refresh")}
