@@ -473,6 +473,7 @@ window.addEventListener("hashchange", () => {
 });
 window.addEventListener("popstate", onHistoryBack);
 document.addEventListener("submit", onSubmit);
+document.addEventListener("invalid", onFieldInvalid, true);
 document.addEventListener("click", onClick);
 document.addEventListener("input", onInput);
 document.addEventListener("keydown", handleVasPickerKeydown, true);
@@ -3439,6 +3440,49 @@ function formatDate(value) {
   if (!value) return "Now";
   return new Intl.DateTimeFormat("en-ZA", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
+// Native constraint validation blocks a form's submit before onSubmit ever
+// runs, and on mobile / installed-PWA the browser's own "please fill this in"
+// bubble is frequently invisible — so a single blank required field (most often
+// the Terms checkbox, which sits below the fold on the register form) made the
+// button look completely dead: no request, no message, nothing. Catch the
+// invalid event ourselves and give the user something to act on: scroll the
+// first missing field into view, focus it, and say plainly what is needed.
+function onFieldInvalid(event) {
+  const field = event.target;
+  if (!field || typeof field.closest !== "function" || !field.closest("form[data-form]")) return;
+  // Replace the unreliable native bubble with our own, always-visible feedback.
+  event.preventDefault();
+  if (onFieldInvalid.pending) return; // one message per submit, on the first field
+  onFieldInvalid.pending = field;
+  requestAnimationFrame(() => {
+    const el = onFieldInvalid.pending;
+    onFieldInvalid.pending = null;
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) { try { el.scrollIntoView(); } catch (__) {} }
+    try { el.focus({ preventScroll: true }); } catch (_) { try { el.focus(); } catch (__) {} }
+    showToast(missingFieldMessage(el), "error");
+  });
+}
+function missingFieldMessage(el) {
+  const name = el.name || "";
+  const v = el.validity || {};
+  if (el.type === "checkbox") {
+    if (name === "termsAccepted") return "Please agree to TitoPay's Terms and Conditions to create your wallet.";
+    return "Please tick the box to continue.";
+  }
+  const label = String(el.getAttribute("aria-label") || fieldLabelText(el) || "the highlighted field").trim().replace(/\s+/g, " ");
+  if (v.valueMissing) return `Please fill in ${label}.`;
+  if (v.typeMismatch) return `Please enter a valid ${label}.`;
+  if (v.tooShort) return `${label} is too short — ${el.minLength} characters or more.`;
+  if (v.tooLong) return `${label} is too long.`;
+  if (v.patternMismatch || v.rangeUnderflow || v.rangeOverflow || v.stepMismatch) return `Please check ${label} — that value looks incorrect.`;
+  return `Please check ${label}.`;
+}
+function fieldLabelText(el) {
+  const field = el.closest(".field");
+  const label = field && field.querySelector("label");
+  return label ? label.textContent : "";
+}
 async function onSubmit(event) {
   const form = event.target.closest("form[data-form]");
   if (!form) return;
@@ -5775,7 +5819,7 @@ function registerForm() {
       <div class="field">
         <label>Cellphone</label>
         <div class="input-affix phone-affix" data-prefix="+27">
-          <input name="phone" aria-label="South African cellphone number" inputmode="tel" autocomplete="tel" placeholder="71 234 5678" pattern="^(\\+27|0)?[6-8][0-9\\s-]{8,12}$" required>
+          <input name="phone" aria-label="South African cellphone number" inputmode="tel" autocomplete="tel" placeholder="71 234 5678" pattern="^(\\+27|0)?[6-8][0-9\\s\\-]{8,12}$" required>
         </div>
       </div>
       <div class="field">
