@@ -5758,6 +5758,57 @@ body.landing-static .landing-flow.auth-screen {
   margin-bottom: 16px;
 }
 
+/* The account-created confirmation: no title bar, just a close affordance so
+   the success card is the whole focus. */
+.modal-head-bare {
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.account-created {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  padding: 4px 6px 10px;
+}
+
+.account-created .ac-badge {
+  width: 160px;
+  height: 140px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .account-created .ac-badge {
+    animation: ac-pop 0.5s cubic-bezier(0.2, 0.8, 0.3, 1.2) both;
+  }
+}
+
+@keyframes ac-pop {
+  from { transform: scale(0.82); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.account-created-title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.account-created-text {
+  margin: 0;
+  max-width: 34ch;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.account-created-cta {
+  width: 100%;
+  margin-top: 8px;
+}
+
 .modal-back-btn {
   flex: 0 0 auto;
 }

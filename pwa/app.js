@@ -5908,6 +5908,32 @@ function userLookupTokens(user = {}) {
   }
   return Array.from(new Set(tokens));
 }
+// The dedicated confirmation shown once a wallet is created: a clear success
+// state and a single, obvious way forward (sign in) — instead of a toast that
+// disappears and a tips pop-up over the landing page.
+function accountCreatedScreen(isBusiness) {
+  return `
+    <div class="account-created" role="status" aria-live="polite">
+      <svg class="ac-badge" viewBox="0 0 160 140" width="160" height="140" fill="none" aria-hidden="true">
+        <path d="M46 24c7 3 9 9 7 16" stroke="#4fa3ff" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M114 22c-7 3-9 9-7 16" stroke="#4fa3ff" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="80" cy="66" r="34" fill="#46bd85"/>
+        <path d="M66 66l10 10 20-22" stroke="#ffffff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="33" cy="42" r="4" fill="#7c5cff"/>
+        <circle cx="129" cy="36" r="3.6" fill="#ffb020"/>
+        <circle cx="122" cy="98" r="4" fill="#2fbf71"/>
+        <circle cx="39" cy="98" r="3.6" fill="#ff7a59"/>
+        <circle cx="97" cy="21" r="3" fill="#ffd23f"/>
+        <circle cx="61" cy="106" r="2.6" fill="#7c5cff"/>
+        <rect x="18" y="66" width="11" height="4" rx="2" fill="#4fa3ff" transform="rotate(-22 23 68)"/>
+        <rect x="131" y="60" width="11" height="4" rx="2" fill="#ff5c8a" transform="rotate(28 136 62)"/>
+      </svg>
+      <h2 class="account-created-title">Account created successfully!</h2>
+      <p class="account-created-text">Congratulations! Your ${isBusiness ? "business " : ""}account has been created. Please log in with your credentials to get started.</p>
+      <button class="btn primary account-created-cta" type="button" data-auth-tab="login">Login to get started</button>
+    </div>
+  `;
+}
 async function register(data) {
   if (data.termsAccepted !== "yes") throw new Error("Please accept TitoPay's Terms and Conditions before creating your wallet.");
   delete data.termsAccepted;
@@ -5931,17 +5957,16 @@ async function register(data) {
     fullName: data.fullName || data.name,
     accountType: state.accountType
   });
-  replaceAuthPanel(`
-    ${loginForm()}
-    <div class="auth-modal-links">
-      <button class="btn ghost" data-auth-tab="reset" type="button">Forgot PIN or password?</button>
-      <button class="btn ghost" data-auth-tab="register" type="button">${state.accountType === "business" ? "Create Business Account" : "Create Account"}</button>
+  const created = accountCreatedScreen(state.accountType === "business");
+  openModal(`
+    <div class="modal-head modal-head-bare">
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-  `) || openAuthModal("login");
-  showToast(registration.user?.welcomeEmailQueued
-    ? "Your TitoPay account has been created successfully. Your welcome email is on its way."
-    : "Your TitoPay account has been created successfully. Sign in to continue.");
-  showSecurityTipModal();
+    ${created}
+  `);
+  if (registration.user?.welcomeEmailQueued) {
+    showToast("Your welcome email is on its way.");
+  }
 }
 async function requestReset(data) {
   const profileChange = data.resetContext === "profile" && Boolean(state.auth?.accessToken);
