@@ -19,10 +19,28 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 76;
+const API_BUILD = 77;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  77: "A PARENT MAY HAVE MORE THAN ONE TITOKIDS CHILD. Every child is a kind "
+      + "'system' wallet under the parent, and idx_wallets_user_kind enforced "
+      + "one wallet per user per kind across ALL kinds, so the second child was "
+      + "a duplicate-key 500 every time. The index is rebuilt PARTIAL under a "
+      + "new name (idx_wallets_user_kind_ex_system); uniqueness is unchanged "
+      + "for personal, business and merchant wallets, and the merchant wallet "
+      + "upsert names the predicate so ON CONFLICT still matches. Fixing it "
+      + "exposed two leaks, both closed: the wallet-number backfills (schema "
+      + "DO block and ensureWalletNumbersForAllWallets) numbered child wallets "
+      + "that are unnumbered BY DESIGN, and a numbered child wallet resolved "
+      + "as a transfer recipient - money into a child's pocket around the "
+      + "TitoKids flow, its notifications and its limits. Both backfills now "
+      + "skip user-owned system wallets, recipient resolution refuses kind "
+      + "'system' outright, the migration strips numbers already assigned, and "
+      + "the customer wallet list no longer shows child wallets. Requires "
+      + "db:apply-migrations (20260820_titokids_sibling_wallets); the ensure "
+      + "function self-heals if the migration lags. First-ever TitoKids test "
+      + "file: 14 tests through the real service against the real database.",
   76: "REFINEMENTS FROM THE ADVERSARIAL REVIEW OF BUILD 75, tooling text and "
       + "detection only, no API behaviour change. The preflight's bare-shell "
       + "explanation now triggers only when NO name declared in .env.example is "

@@ -104,6 +104,20 @@ function ensureTitoKidsSchema() {
           status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','achieved','archived')),
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`);
+      // A PARENT MAY HAVE MORE THAN ONE CHILD. Every child is a kind 'system'
+      // wallet under the parent, and the old idx_wallets_user_kind enforced
+      // one per user per kind across ALL kinds, so the second child's wallet
+      // was a duplicate-key 500. The 20260820_titokids_sibling_wallets
+      // migration rebuilds it partial; this is the same statement pair here
+      // because ensure functions are what kept features alive the week the
+      // production database ran three days behind its migrations. Both
+      // statements are idempotent, and the NEW index name is what lets
+      // IF NOT EXISTS converge a database still carrying the old definition.
+      await pool.query("DROP INDEX IF EXISTS idx_wallets_user_kind");
+      await pool.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_wallets_user_kind_ex_system
+         ON wallets (user_id, kind) WHERE kind <> 'system'`
+      );
     })().catch((error) => {
       schemaReady = null;
       throw error;

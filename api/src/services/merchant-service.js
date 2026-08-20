@@ -38,7 +38,7 @@ async function createMerchant(actor, payload) {
   await pool.query(
     `INSERT INTO wallets (id, wallet_number, user_id, kind, currency, available_balance, reserved_balance, status)
      VALUES ($1,$2,$3,'merchant','ZAR',0,0,'active')
-     ON CONFLICT (user_id, kind) DO NOTHING`,
+     ON CONFLICT (user_id, kind) WHERE kind <> 'system' DO NOTHING`,
     [uuidv4(), walletNumber, actor.userId]
   );
   await writeAuditLog({

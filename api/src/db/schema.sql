@@ -133,8 +133,12 @@ DECLARE
 BEGIN
   FOR wallet_record IN
     SELECT id FROM wallets
-    WHERE wallet_number IS NULL
-       OR wallet_number !~ '^[0-9]{1,10}$'
+    WHERE (wallet_number IS NULL
+       OR wallet_number !~ '^[0-9]{1,10}$')
+      -- TitoKids child wallets are user-owned kind 'system' and must stay
+      -- unnumbered: a wallet number makes them resolvable as a transfer
+      -- recipient, and nothing outside TitoKids may reach a child's money.
+      AND NOT (kind = 'system' AND user_id IS NOT NULL)
   LOOP
     LOOP
       candidate := (1000000000 + FLOOR(RANDOM() * 9000000000))::BIGINT::TEXT;
@@ -147,8 +151,20 @@ ALTER TABLE wallets DROP CONSTRAINT IF EXISTS wallets_wallet_number_clean;
 ALTER TABLE wallets ADD CONSTRAINT wallets_wallet_number_clean
   CHECK (wallet_number IS NULL OR wallet_number ~ '^[0-9]{1,10}$');
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wallets_user_kind ON wallets (user_id, kind);
+-- One wallet per user per kind, EXCEPT kind 'system': every TitoKids child is
+-- a system wallet under the parent, so a parent with two children holds two.
+-- The old full index made the second child's wallet a duplicate-key 500.
+-- Rebuilt partial under a NEW name so this line converges databases that
+-- carry the old definition (IF NOT EXISTS on the old name would keep it).
+DROP INDEX IF EXISTS idx_wallets_user_kind;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wallets_user_kind_ex_system
+  ON wallets (user_id, kind) WHERE kind <> 'system';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_wallets_platform_kind ON wallets (kind) WHERE user_id IS NULL;
+-- And child wallets numbered by the loop above before it learned to skip
+-- them go back to unnumbered, which is what keeps them unreachable from
+-- transfers. The platform wallet (user_id IS NULL) keeps its number.
+UPDATE wallets SET wallet_number = NULL, updated_at = NOW()
+ WHERE kind = 'system' AND user_id IS NOT NULL AND wallet_number IS NOT NULL;
 
 -- Saved beneficiaries are convenience relationships only. Payment
 -- authorisation and wallet accounting continue to use the existing engines.

@@ -350,15 +350,22 @@ async function resolveRecipientWallet(recipient) {
   if (!recipient) return null;
   const lookupValues = recipientLookupValues({ recipient }).map((value) => String(value).toLowerCase());
   const phoneLookupValues = recipientPhoneLookupValues({ recipient });
+  // w.kind <> 'system' does two jobs. It keeps a TitoKids child wallet from
+  // ever being a transfer destination, even one that was assigned a wallet
+  // number before the backfills learned to skip them: money reaches a child
+  // through the TitoKids fund flow, with its notifications and limits, or not
+  // at all. And for username/email/phone matches it makes the oldest REAL
+  // wallet win, instead of trusting that a child wallet is never the oldest.
   const { rows } = await pool.query(
     `SELECT w.*, u.username, u.email, u.phone, u.full_name
      FROM users u
      JOIN wallets w ON w.user_id = u.id
-     WHERE LOWER(u.username) = ANY($1::TEXT[])
+     WHERE w.kind <> 'system'
+       AND (LOWER(u.username) = ANY($1::TEXT[])
         OR LOWER(u.email) = ANY($1::TEXT[])
         OR LOWER(u.phone) = ANY($1::TEXT[])
         OR LOWER(COALESCE(w.wallet_number, '')) = ANY($1::TEXT[])
-        OR REGEXP_REPLACE(COALESCE(u.phone, ''), '\\D', '', 'g') = ANY($2::TEXT[])
+        OR REGEXP_REPLACE(COALESCE(u.phone, ''), '\\D', '', 'g') = ANY($2::TEXT[]))
      ORDER BY w.created_at ASC
      LIMIT 1`,
     [lookupValues, phoneLookupValues]

@@ -9,9 +9,13 @@ const { writeAuditLog } = require("./audit-service");
 
 async function getPrimaryWalletForUser(userId) {
   await ensureWalletNumbersForAllWallets(pool);
+  // kind <> 'system': a TitoKids child wallet is custody, not the parent's
+  // primary anything. Ordering already made this true in practice (the
+  // personal or business wallet is always older), but a money path should
+  // not lean on an ordering accident.
   const { rows } = await pool.query(
     `SELECT *, wallet_number AS wallet_id FROM wallets
-     WHERE user_id = $1
+     WHERE user_id = $1 AND kind <> 'system'
      ORDER BY created_at ASC
      LIMIT 1`,
     [userId]
@@ -94,10 +98,13 @@ async function getSuspenseWallet(client = pool) {
 
 async function listWalletsForUser(userId) {
   await ensureWalletNumbersForAllWallets(pool);
+  // kind <> 'system': TitoKids child wallets belong on the TitoKids screens,
+  // which show them per child with names and limits. In this list a parent
+  // with three children would see three unlabeled mystery wallets.
   const { rows } = await pool.query(
     `SELECT id, wallet_number, wallet_number AS wallet_id, kind, currency, available_balance, reserved_balance, status, created_at
      FROM wallets
-     WHERE user_id = $1
+     WHERE user_id = $1 AND kind <> 'system'
      ORDER BY created_at ASC`,
     [userId]
   );

@@ -20,8 +20,13 @@ async function ensureWalletNumbersForAllWallets(queryable) {
   const { rows } = await queryable.query(
     `SELECT id
      FROM wallets
-     WHERE wallet_number IS NULL
-        OR wallet_number !~ '^[0-9]{1,10}$'
+     WHERE (wallet_number IS NULL
+        OR wallet_number !~ '^[0-9]{1,10}$')
+       -- TitoKids child wallets (user-owned, kind 'system') are unnumbered BY
+       -- DESIGN: a wallet number makes a wallet resolvable as a transfer
+       -- recipient, and nothing outside TitoKids may reach a child's money.
+       -- This backfill used to number them, which quietly broke that promise.
+       AND NOT (kind = 'system' AND user_id IS NOT NULL)
      ORDER BY created_at ASC
      LIMIT 1000`
   );
