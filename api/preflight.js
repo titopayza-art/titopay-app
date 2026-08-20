@@ -144,11 +144,12 @@ if (environment !== "production") {
 // credentials for "PLAIN"` while nothing looked wrong. Saying so here, before
 // a rotation, is the whole point of this tool.
 if (present(["EMAIL_ENCRYPTION_KEY"])) {
-  notes.push("EMAIL_ENCRYPTION_KEY set. Stored email credentials survive JWT rotations.");
+  notes.push("EMAIL_ENCRYPTION_KEY set. Stored email and integration credentials survive JWT rotations.");
 } else if (present(["JWT_REFRESH_SECRET", "REFRESH_TOKEN_SECRET"])) {
   fail("EMAIL_ENCRYPTION_KEY is not set, so stored email credentials are encrypted under "
     + "JWT_REFRESH_SECRET. Rotating that secret will silently break every stored email "
-    + "credential (`Missing credentials for \"PLAIN\"` on every send).",
+    + "credential (`Missing credentials for \"PLAIN\"` on every send) and every saved "
+    + "integration secret with it - the admin Integrations store shares the same fallback key.",
     "Pin the key BEFORE any rotation, to the value the credentials are already encrypted under:\n"
     + "      echo \"EMAIL_ENCRYPTION_KEY=$(grep '^JWT_REFRESH_SECRET=' .env | cut -d= -f2-)\" >> .env\n"
     + "      Then restart. Set once, never change.");

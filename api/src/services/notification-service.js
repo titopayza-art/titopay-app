@@ -9,10 +9,29 @@ function platformIntegrationSettingKey(provider) {
   return `integration_${provider}`;
 }
 
+// THE SECOND VAULT THAT THE 20 AUGUST JWT ROTATION BROKE.
+//
+// Integration secrets (the SMTP password saved on the admin Integrations
+// screen, SMS credentials, and the rest of platform_settings) were encrypted
+// under a key derived DIRECTLY from the JWT refresh secret, with no override.
+// Rotating that secret therefore broke this vault too - and fixing
+// EMAIL_ENCRYPTION_KEY alone reopened only the Email Centre's own store,
+// which is why email stayed dead with `Missing credentials for "PLAIN"`
+// after that fix: the real SMTP password lives HERE.
+//
+// The pinned key now governs both vaults. INTEGRATION_ENCRYPTION_KEY wins if
+// somebody wants them separate; EMAIL_ENCRYPTION_KEY - the key operators are
+// told to pin - covers this vault too; the JWT secrets remain only as the
+// legacy fallback for deployments that never pinned anything.
 function integrationEncryptionKey() {
   return crypto
     .createHash("sha256")
-    .update(config.refreshSecret || config.accessSecret)
+    .update(
+      process.env.INTEGRATION_ENCRYPTION_KEY
+      || process.env.EMAIL_ENCRYPTION_KEY
+      || config.refreshSecret
+      || config.accessSecret
+    )
     .digest();
 }
 
@@ -47,7 +66,15 @@ function savedSecretValue(stored, field, fallback = "") {
     if (!text.startsWith("enc:")) return text;
     try {
       return decryptIntegrationSecret(text);
-    } catch (_error) {
+    } catch (error) {
+      // Say so. Swallowing this silently is what turned the 20 August key
+      // mismatch into a bare `Missing credentials for "PLAIN"` three layers
+      // away: the stored password was RIGHT and undecryptable, and nothing
+      // anywhere said which. Never the value, only the fact.
+      console.error("[notification] stored integration secret would not decrypt; falling back", {
+        field, reason: error?.message || "unknown",
+        hint: "the encryption key changed after this secret was saved - see EMAIL_ENCRYPTION_KEY in .env.example"
+      });
       continue;
     }
   }

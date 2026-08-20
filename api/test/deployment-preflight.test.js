@@ -349,6 +349,27 @@ test("the preflight warns that rotating the refresh secret breaks email when the
     "the remedy pins the key to the value credentials are ALREADY encrypted under - zero-risk, nothing re-encrypts");
 });
 
+test("the second vault obeys the same pinned key, and its failures are never silent", () => {
+  // The 20 August incident had a second act: fixing EMAIL_ENCRYPTION_KEY
+  // reopened only the Email Centre's own store, while the SMTP password
+  // actually lives in the admin Integrations store - encrypted under a key
+  // derived DIRECTLY from the refresh secret, with no override, and with
+  // decrypt failures swallowed by a bare catch-continue. Email stayed dead
+  // and nothing said why. Both halves are pinned here.
+  const notify = read("src", "services", "notification-service.js");
+  const fn = notify.slice(notify.indexOf("function integrationEncryptionKey"));
+  const body = fn.slice(0, fn.indexOf("\n}"));
+  assert.match(body, /INTEGRATION_ENCRYPTION_KEY/, "an explicit override wins");
+  assert.match(body, /EMAIL_ENCRYPTION_KEY/,
+    "the key operators are told to pin must govern this vault too");
+  assert.ok(body.indexOf("EMAIL_ENCRYPTION_KEY") < body.indexOf("config.refreshSecret"),
+    "and it must be consulted BEFORE the rotatable JWT fallback, or pinning changes nothing");
+  assert.match(notify, /stored integration secret would not decrypt/,
+    "an undecryptable stored secret must be said out loud, not swallowed into a bare fallback");
+  assert.doesNotMatch(notify, /catch \(_error\) \{\s*continue;/,
+    "the silent catch-continue that hid the real cause may not return");
+});
+
 test("the rotation advice itself now carries the email warning, not 'nothing is lost'", () => {
   assert.doesNotMatch(PREFLIGHT, /Nothing is lost/,
     "that exact phrase was disproven in production; it may not return");

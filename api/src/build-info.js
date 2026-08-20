@@ -19,10 +19,25 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 79;
+const API_BUILD = 80;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  80: "THE SECOND VAULT. Build 79 pinned EMAIL_ENCRYPTION_KEY, and email "
+      + "stayed dead anyway: the SMTP password actually lives in the admin "
+      + "Integrations store (platform_settings), encrypted by "
+      + "notification-service under a key derived DIRECTLY from the JWT "
+      + "refresh secret with no override, and its decrypt failures were "
+      + "swallowed by a bare catch - so the wrong-key mismatch surfaced three "
+      + "layers away as `Missing credentials for \"PLAIN\"` with no clue "
+      + "attached. integrationEncryptionKey now honours "
+      + "INTEGRATION_ENCRYPTION_KEY, then EMAIL_ENCRYPTION_KEY (the key "
+      + "operators are told to pin), before the legacy JWT fallback - so the "
+      + "one pinned key reopens BOTH vaults - and an undecryptable stored "
+      + "secret is logged with the field name and a hint instead of failing "
+      + "silently. Deploying this build on a server whose EMAIL_ENCRYPTION_KEY "
+      + "is already pinned to the pre-rotation value restores email with no "
+      + "other action.",
   79: "THE ROTATION THAT BROKE EMAIL, NAMED BEFORE IT CAN HAPPEN AGAIN. Stored "
       + "email credentials (the SMTP password saved in the Email Centre) are "
       + "encrypted under EMAIL_ENCRYPTION_KEY, falling back to a key derived "
