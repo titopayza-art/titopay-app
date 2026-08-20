@@ -168,10 +168,12 @@ test("valid POS provider deliveries are persisted and duplicates acknowledge saf
   let nonceReserved = false;
   let eventReserved = false;
   const adminManagedSecret = "admin-managed-pos-provider-secret";
-  const integrationKey = crypto
-    .createHash("sha256")
-    .update(process.env.JWT_REFRESH_SECRET)
-    .digest();
+  // Derived through the ONE shared source (lib/integration-secret-key), not a
+  // private copy of the old sha256(refreshSecret) chain - private copies of
+  // this derivation are what broke every stored credential on 20 August, and
+  // this test emulates "a secret saved by the admin under the platform key",
+  // whatever that key is pinned to.
+  const integrationKey = require("../src/lib/integration-secret-key").integrationEncryptionKey();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", integrationKey, iv);
   const encrypted = Buffer.concat([

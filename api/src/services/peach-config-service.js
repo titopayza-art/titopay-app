@@ -31,9 +31,8 @@ const PLAIN_FIELDS = [
 const CACHE_TTL_MS = 15000;
 const caches = new Map();
 
-function integrationEncryptionKey() {
-  return crypto.createHash("sha256").update(config.refreshSecret || config.accessSecret).digest();
-}
+// Key derivation lives in lib/integration-secret-key - ONE copy, pinned,
+// with the 20 August rotation story. Local copies are banned by test.
 
 function decryptSecret(value) {
   const text = String(value || "");

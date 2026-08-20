@@ -215,7 +215,10 @@ function renderTemplate(template, variables, settings) {
 }
 
 function cryptoKey() {
-  return crypto.createHash("sha256").update(process.env.EMAIL_ENCRYPTION_KEY || config.refreshSecret).digest();
+  // One key source for the whole platform (lib/integration-secret-key), with
+  // this store's historical EMAIL-first order preserved exactly, so nothing
+  // already encrypted changes hands.
+  return require("../lib/integration-secret-key").integrationEncryptionKey(process.env.EMAIL_ENCRYPTION_KEY);
 }
 function encrypt(value) {
   const iv = crypto.randomBytes(12);

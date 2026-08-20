@@ -23,17 +23,10 @@ function platformIntegrationSettingKey(provider) {
 // somebody wants them separate; EMAIL_ENCRYPTION_KEY - the key operators are
 // told to pin - covers this vault too; the JWT secrets remain only as the
 // legacy fallback for deployments that never pinned anything.
-function integrationEncryptionKey() {
-  return crypto
-    .createHash("sha256")
-    .update(
-      process.env.INTEGRATION_ENCRYPTION_KEY
-      || process.env.EMAIL_ENCRYPTION_KEY
-      || config.refreshSecret
-      || config.accessSecret
-    )
-    .digest();
-}
+// The chain this file carried in build 80 now lives in
+// lib/integration-secret-key, one copy for every store; the precedence is
+// identical, so nothing already encrypted changes hands.
+const { integrationEncryptionKey } = require("../lib/integration-secret-key");
 
 function decryptIntegrationSecret(value) {
   const text = String(value || "");

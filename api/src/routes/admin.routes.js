@@ -375,12 +375,8 @@ const SECRET_FIELD_NAMES = new Set(["apiKey", "apiSecret", "clientSecret", "pass
 const URL_FIELD_NAMES = new Set(["callbackUrl"]);
 const ENDPOINT_FIELD_NAMES = new Set(["baseUrl"]);
 
-function integrationEncryptionKey() {
-  return crypto
-    .createHash("sha256")
-    .update(config.refreshSecret || config.accessSecret)
-    .digest();
-}
+// Key derivation lives in lib/integration-secret-key - ONE copy, pinned,
+// with the 20 August rotation story. Local copies are banned by test.
 
 function encryptSecret(value) {
   const text = String(value || "").trim();

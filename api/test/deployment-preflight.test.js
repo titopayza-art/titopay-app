@@ -349,21 +349,39 @@ test("the preflight warns that rotating the refresh secret breaks email when the
     "the remedy pins the key to the value credentials are ALREADY encrypted under - zero-risk, nothing re-encrypts");
 });
 
-test("the second vault obeys the same pinned key, and its failures are never silent", () => {
-  // The 20 August incident had a second act: fixing EMAIL_ENCRYPTION_KEY
-  // reopened only the Email Centre's own store, while the SMTP password
-  // actually lives in the admin Integrations store - encrypted under a key
-  // derived DIRECTLY from the refresh secret, with no override, and with
-  // decrypt failures swallowed by a bare catch-continue. Email stayed dead
-  // and nothing said why. Both halves are pinned here.
+test("every stored-secret vault derives its key from ONE pinned source", () => {
+  // The 20 August incident, act three: the derivation sha256(refreshSecret)
+  // was COPY-PASTED into five files - notification, peach-config, POS,
+  // integrations.routes, admin.routes - so fixing one at a time split the
+  // brain between the admin save path and the worker read path. The
+  // derivation now lives in lib/integration-secret-key alone, with the
+  // pinned keys consulted BEFORE the rotatable JWT fallback.
+  const lib = read("src", "lib", "integration-secret-key.js");
+  // Order is asserted inside the CODE chain, not the file: the header comment
+  // narrates the same names in prose order.
+  const chain = lib.slice(lib.indexOf("return process.env.INTEGRATION_ENCRYPTION_KEY"));
+  const order = ["INTEGRATION_ENCRYPTION_KEY", "EMAIL_ENCRYPTION_KEY", "config.refreshSecret", "config.accessSecret"];
+  let last = -1;
+  for (const name of order) {
+    const at = chain.indexOf(name);
+    assert.ok(at > last, `${name} must appear after its predecessor in the fallback chain`);
+    last = at;
+  }
+
+  // The ban: no file may derive an encryption key from a JWT secret on its
+  // own. This grep-shaped assertion is what makes the fix permanent.
+  const { execSync } = require("child_process");
+  const offenders = execSync(
+    "grep -rln 'createHash(\"sha256\").update(config.refreshSecret' src --include=*.js || true",
+    { cwd: API, encoding: "utf8" }).trim();
+  assert.equal(offenders, "", `local key derivations reintroduced in: ${offenders}`);
+  const offenders2 = execSync(
+    "grep -rlnE 'update\\(\\s*config\\.(refreshSecret|accessSecret)\\s*\\|\\|' src --include=*.js || true",
+    { cwd: API, encoding: "utf8" }).trim();
+  assert.equal(offenders2, "", `JWT-fallback key chains outside the lib in: ${offenders2}`);
+
+  // And the silence stays banned: an undecryptable stored secret says so.
   const notify = read("src", "services", "notification-service.js");
-  const fn = notify.slice(notify.indexOf("function integrationEncryptionKey"));
-  const body = fn.slice(0, fn.indexOf("\n}"));
-  assert.match(body, /INTEGRATION_ENCRYPTION_KEY/, "an explicit override wins");
-  assert.match(body, /EMAIL_ENCRYPTION_KEY/,
-    "the key operators are told to pin must govern this vault too");
-  assert.ok(body.indexOf("EMAIL_ENCRYPTION_KEY") < body.indexOf("config.refreshSecret"),
-    "and it must be consulted BEFORE the rotatable JWT fallback, or pinning changes nothing");
   assert.match(notify, /stored integration secret would not decrypt/,
     "an undecryptable stored secret must be said out loud, not swallowed into a bare fallback");
   assert.doesNotMatch(notify, /catch \(_error\) \{\s*continue;/,
@@ -531,6 +549,28 @@ test("apply-migrations with no database URL says so, instead of failing as the O
 });
 
 /* -------------------------------------------------------- it actually ships */
+
+test("the deploy script exists, self-locates via pm2, and cannot corrupt itself mid-run", () => {
+  // 20 August's failures were mostly hands: builds extracted into /root,
+  // scripts run from shells with no configuration, the email worker left on
+  // six-day-old code, health curled into the restart window. One script does
+  // every step in the right place, and these assertions keep its load-bearing
+  // properties: pm2 names the directory (never the current shell), BOTH
+  // processes restart, the wait precedes the proof, and the body is a
+  // function so the zip overwriting this very file mid-run cannot corrupt it.
+  const script = read("scripts", "deploy.sh");
+  assert.match(script, /pm2 jlist/, "the app directory comes from pm2, not from where the operator happens to be");
+  assert.match(script, /pm2 restart titopay-api/, "the API restarts");
+  assert.match(script, /pm2 restart titopay-email-worker/,
+    "the worker restarts too - leaving it stale is how six-day-old code kept running");
+  assert.ok(script.indexOf("db:apply-migrations") < script.indexOf("pm2 restart titopay-api"),
+    "migrations land before the restart");
+  assert.ok(script.indexOf("sleep 6") < script.indexOf("curl -sS"),
+    "the health proof waits out the restart window instead of reading a blip as an outage");
+  assert.match(script, /deploy_main\(\) \{/, "the body is a function, parsed fully before execution");
+  assert.match(script, /deploy_main "\$@"/);
+  assert.match(DEPLOY, /deploy\.sh/, "DEPLOY.md tells the operator the one-command way exists");
+});
 
 test("preflight.js and .env.example are inside the API package", () => {
   assert.ok(fs.existsSync(path.join(API, "preflight.js")),

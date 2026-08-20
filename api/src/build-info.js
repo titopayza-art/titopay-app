@@ -19,10 +19,27 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 80;
+const API_BUILD = 81;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  81: "NEVER AGAIN, MADE STRUCTURAL. The sha256(refreshSecret) key derivation "
+      + "that broke every stored credential on 20 August was COPY-PASTED into "
+      + "five files, and build 80 fixing one of them split the brain: the "
+      + "admin save path encrypted under one key while the worker read path "
+      + "decrypted with another. The derivation now lives in "
+      + "lib/integration-secret-key ALONE - pinned keys before the rotatable "
+      + "JWT fallback - and every site (notification, peach-config, POS, "
+      + "integrations.routes, admin.routes, email-centre) routes through it, "
+      + "with POS keeping its explicit terminal key first and the Email "
+      + "Centre its historical EMAIL-first order, so nothing already "
+      + "encrypted changes hands. A grep-shaped test bans any file from "
+      + "deriving a key from a JWT secret again. Also scripts/deploy.sh: one "
+      + "command that asks pm2 where the app lives, deploys there, migrates, "
+      + "preflights, restarts BOTH processes and prints the health proof - "
+      + "because the day's other failures were builds extracted into /root, "
+      + "a worker left on six-day-old code, and a health check curled into "
+      + "the restart window. DEPLOY.md leads with it.",
   80: "THE SECOND VAULT. Build 79 pinned EMAIL_ENCRYPTION_KEY, and email "
       + "stayed dead anyway: the SMTP password actually lives in the admin "
       + "Integrations store (platform_settings), encrypted by "

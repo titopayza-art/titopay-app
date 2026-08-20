@@ -15,16 +15,18 @@ function safeEqual(left, right) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+// Key derivation lives in lib/integration-secret-key - ONE copy, pinned, with
+// the 20 August rotation story. POS keeps its explicit terminal key first;
+// the shared pinned chain backs it so a JWT rotation cannot break stored
+// terminal data on a deployment that never set POS_TERMINAL_ENCRYPTION_KEY.
+const { integrationEncryptionKey: pinnedKey } = require("../lib/integration-secret-key");
+
 function encryptionKey() {
-  return crypto.createHash("sha256")
-    .update(config.pos.terminalEncryptionKey || config.refreshSecret || config.accessSecret)
-    .digest();
+  return pinnedKey(config.pos.terminalEncryptionKey);
 }
 
 function integrationEncryptionKey() {
-  return crypto.createHash("sha256")
-    .update(config.refreshSecret || config.accessSecret)
-    .digest();
+  return pinnedKey();
 }
 
 function decryptIntegrationSecret(value) {

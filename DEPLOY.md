@@ -75,6 +75,24 @@ cp api/.env ~/api-env-backup-$(date +%F-%H%M)
 ls -la api-backup-*.tar.gz | tail -1
 ```
 
+### The one-command way (recommended)
+
+Upload the release to your home directory as `api.zip`, then:
+
+```bash
+bash <existing app dir>/scripts/deploy.sh
+```
+
+Or, since the running app already has the script from the previous release:
+SSH in anywhere and run `bash $(pm2 jlist | node -e "const l=JSON.parse(require('fs').readFileSync(0,'utf8'));const p=l.find(x=>x.name==='titopay-api');console.log((p.pm2_env.pm_exec_path||'').replace(/\/src\/server\.js$/,''))")/scripts/deploy.sh`.
+
+It asks pm2 where the app actually lives (20 August's failures were mostly
+builds extracted into the wrong directory), deploys there, runs migrations and
+the preflight, restarts BOTH processes including the email worker, waits out
+the restart window, and prints the health line whose build number is the
+proof. Every manual step below is what the script does, kept for
+understanding and for recovery.
+
 ### Upload and extract
 
 Upload `api.zip` through cPanel File Manager into the home directory, then:
