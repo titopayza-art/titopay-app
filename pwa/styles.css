@@ -5207,6 +5207,21 @@ body.landing-static .landing-flow.auth-screen {
   line-height: 1.5;
 }
 
+/* The one case we cannot detect: an in-app Safari view (opened from WhatsApp,
+   Instagram, email) reports itself as Safari but cannot Add to Home Screen.
+   So this note is shown whenever we think we are already in Safari. */
+.install-note {
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--text);
+  background: var(--soft-blue);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--blue);
+  border-radius: 12px;
+  line-height: 1.5;
+  font-size: 0.92rem;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

@@ -6189,6 +6189,9 @@ function openAppleInstallInstructions(environment) {
           <li>Tap <b>Add</b></li>
         </ol>
       </div>
+      ${!needsSafari ? `
+        <p class="install-note">Opened from WhatsApp, Instagram or email? First tap <b>•••</b> or the <b>Share</b> icon and choose <b>Open in Safari</b> — otherwise <b>Add to Home Screen</b> will not appear.</p>
+      ` : ""}
       <p class="install-hint">TitoPay will then appear on your Home Screen and open like an app.</p>
     </section>
   `);
