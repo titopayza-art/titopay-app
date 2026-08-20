@@ -7,7 +7,7 @@ const nodemailer = require("nodemailer");
 const { pool } = require("../db/pool");
 const { config } = require("../config/env");
 const { AppError } = require("../lib/errors");
-const { hashPassword } = require("../lib/passwords");
+const { hashPassword, assertNewCredentialDiffers } = require("../lib/passwords");
 const { writeAuditLog } = require("./audit-service");
 const { getEffectiveEmailProviderConfig } = require("./notification-service");
 
@@ -865,7 +865,11 @@ async function confirmEmailPasswordReset(token,newPassword,meta={}) {
   const client=await pool.connect();let account;
   try{await client.query("BEGIN");const {rows}=await client.query("SELECT * FROM password_reset_tokens WHERE token_hash=$1 FOR UPDATE",[tokenHash]);const record=rows[0];
     if(!record)throw new AppError(400,"Password reset link is invalid");if(record.used_at)throw new AppError(409,"Password reset link has already been used");if(record.revoked_at)throw new AppError(400,"Password reset link has been replaced");if(new Date(record.expires_at)<=new Date())throw new AppError(410,"Password reset link has expired");
-    const table=record.user_type==="admin"?"admin_users":"users";const passwordHash=await hashPassword(newPassword);
+    const table=record.user_type==="admin"?"admin_users":"users";
+    // Reuse is refused BEFORE the token is consumed, so the throw rolls back
+    // and the same link still works with a genuinely new password.
+    await assertNewCredentialDiffers(client,table,record.user_id,newPassword);
+    const passwordHash=await hashPassword(newPassword);
     await client.query("UPDATE password_reset_tokens SET used_at=NOW() WHERE id=$1",[record.id]);
     const {rows:accounts}=await client.query(`UPDATE ${table} SET password_hash=$2,failed_login_attempts=0,locked_until=NULL,last_failed_login_at=NULL,updated_at=NOW() WHERE id=$1 RETURNING *`,[record.user_id,passwordHash]);account={...accounts[0],user_type:record.user_type};
     await client.query("UPDATE sessions SET revoked_at=NOW(),revoked_reason='password_reset' WHERE user_type=$2 AND user_id=$1 AND revoked_at IS NULL",[record.user_id,record.user_type]);

@@ -19,10 +19,23 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 81;
+const API_BUILD = 82;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  82: "A RESET THAT ACCEPTS THE OLD PASSWORD IS THEATRE. Both reset flows "
+      + "(the OTP flow, which also serves the logged-in change, and the email "
+      + "link flow) and therefore the change flow accepted the OLD password or "
+      + "PIN as the new one, so the single thing a reset exists to do - make a "
+      + "leaked credential stop working - silently did not happen. Found by "
+      + "the operator on 20 August 2026. Every credential-setting flow now "
+      + "refuses a new password matching the current one, with the reason in "
+      + "the message, and refuses it BEFORE consuming the OTP or reset link - "
+      + "the same code or link works again with a genuinely new password, and "
+      + "the refusal does not count as a failed attempt. The check runs only "
+      + "AFTER the OTP or token is proven, so the flow cannot be used as a "
+      + "password oracle by anyone who has not already demonstrated control "
+      + "of the account. One copy of the rule, in lib/passwords.",
   81: "NEVER AGAIN, MADE STRUCTURAL. The sha256(refreshSecret) key derivation "
       + "that broke every stored credential on 20 August was COPY-PASTED into "
       + "five files, and build 80 fixing one of them split the brain: the "

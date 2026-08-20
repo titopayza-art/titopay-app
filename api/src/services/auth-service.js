@@ -3,7 +3,7 @@ const { pool } = require("../db/pool");
 const { config } = require("../config/env");
 const { AppError } = require("../lib/errors");
 const { sha256, sixDigitOtp } = require("../lib/crypto");
-const { hashPassword, verifyPassword } = require("../lib/passwords");
+const { hashPassword, verifyPassword, assertNewCredentialDiffers } = require("../lib/passwords");
 const { passwordPolicyProblem } = require("../lib/password-policy");
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require("../lib/jwt");
 const { generateUniqueWalletNumber } = require("../lib/wallet-id");
@@ -1166,8 +1166,13 @@ async function confirmPasswordReset(payload, meta) {
     }
     throw new AppError(isEmailPasswordChange && remainingAttempts === 0 ? 423 : 401, "Invalid OTP", { remainingAttempts });
   }
-  const passwordHash = await hashPassword(newPassword);
   const table = row.user_type === "admin" ? "admin_users" : "users";
+  // The OTP is proven but NOT yet consumed: a refused reuse below costs the
+  // customer nothing - the same code works again with a genuinely new
+  // password. Running this any earlier would let an unauthenticated caller
+  // use the reset flow as a password oracle; after OTP proof it cannot.
+  await assertNewCredentialDiffers(pool, table, row.user_id, newPassword);
+  const passwordHash = await hashPassword(newPassword);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
