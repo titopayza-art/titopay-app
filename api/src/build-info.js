@@ -19,10 +19,23 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 72;
+const API_BUILD = 73;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  73: "A DEPLOY CAN NO LONGER DISCOVER A NEW REQUIRED VARIABLE BY GOING DOWN. "
+      + "Build 71 made IDENTITY_PEPPER required; the new code correctly refused "
+      + "to start without it, and from behind nginx a process that refuses to "
+      + "start is a 502. The guard was right and stays; what was missing was any "
+      + "way to learn the requirement before restarting into it. Three things "
+      + "close that: api/preflight.js reads the server's real configuration and "
+      + "says whether this build will start, reporting every problem at once and "
+      + "never printing a secret's value; api/.env.example declares every "
+      + "variable the API reads and which are required, names only; and DEPLOY.md "
+      + "runs the preflight BEFORE the restart, where a failure costs nothing "
+      + "because the running API is untouched by extracted files. "
+      + "test/deployment-preflight.test.js fails the build if a startup-blocking "
+      + "variable is ever added without being declared and checked.",
   72: "STOKVEL MONEY INTEGRITY. A group's recorded savings and each member's "
       + "own total were summed over the register DISPLAY query, which is capped "
       + "at the 500 most recent rows, so a group that crossed 500 contributions "

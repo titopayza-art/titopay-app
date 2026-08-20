@@ -113,6 +113,43 @@ twice — already-applied migrations are skipped. It never runs a `.down.sql`.
 Expect to see `20260810_hr_claim_employee_link` and
 `20260810_hr_learning_resource_link` in this release.
 
+### Check the release will start, before you restart it
+
+```bash
+cd ~/api && node preflight.js
+```
+
+**This is the step that keeps a bad release from becoming an outage.**
+
+A release can add a newly *required* environment variable. When it does, the new
+code refuses to start without it, which is correct, and from behind nginx a
+process that refuses to start is indistinguishable from a server that is down:
+you get 502. That is exactly what happened on 20 August 2026, when build 71 made
+`IDENTITY_PEPPER` required and nothing on the server said so until the restart.
+
+The preflight reads the configuration this server actually has, loads it the same
+way the API does, and tells you whether the extracted build will start. It reports
+every problem at once rather than dying on the first, names each variable, and
+never prints a secret's value.
+
+Add `--database` to also prove Postgres is reachable and report how many
+migrations are recorded:
+
+```bash
+node preflight.js --database
+```
+
+`Safe to restart.` means go ahead.
+
+**If it fails, DO NOT RESTART.** The API still running is serving from memory and
+is completely unaffected by the files you extracted; it keeps working until it is
+restarted. Fix what the preflight names, run it again, and restart only once it
+passes. Stopping here costs nothing. Restarting into a failed preflight costs an
+outage.
+
+`api/.env.example` lists every variable the API reads, which are required, and
+which have defaults. It holds names only, never values.
+
 ### Restart the API
 
 Which command depends on how Afrihost runs it.
