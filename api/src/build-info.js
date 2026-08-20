@@ -19,10 +19,23 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 74;
+const API_BUILD = 75;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  75: "A BARE SHELL IS NOT THE PROCESS MANAGER. Minutes after build 74 fixed "
+      + "the 502, the preflight run over SSH reported every variable missing on "
+      + "the machine where the API was serving fine, and db:apply-migrations "
+      + "failed with `password authentication failed for user \"root\"`. Both "
+      + "tools were reading a login shell that does not inherit the variables "
+      + "cPanel/pm2/systemd inject into the running process, and neither said "
+      + "so. Now they do: the preflight detects a shell with no TitoPay "
+      + "configuration and no .env and explains where the configuration "
+      + "probably lives, pointing at /v1/health's configWarnings for the "
+      + "running process's real state; apply-migrations refuses up front when "
+      + "no database URL is visible, in those words, instead of letting the "
+      + "Postgres client fall back to the OS username. DEPLOY.md carries the "
+      + "same explanation. No API behaviour changed.",
   74: "A CONFIGURATION PROBLEM CAN NO LONGER BE A 502. src/config/env.js does "
       + "not throw any more, for anything. A missing IDENTITY_PEPPER, a short or "
       + "absent JWT secret, a missing database string, a non-numeric port: each "

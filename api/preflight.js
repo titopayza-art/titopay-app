@@ -45,6 +45,28 @@ require("dotenv").config();
 const environment = process.env.NODE_ENV || "development";
 const GENERATE = 'node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'base64url\'))"';
 
+// A BARE SHELL IS NOT THE PROCESS MANAGER.
+//
+// Seen in production on 20 August 2026, minutes after the 502 was fixed: this
+// preflight, run over SSH, reported every variable missing on the very machine
+// where the API was serving fine. Both were true. On cPanel (Passenger), pm2
+// and systemd setups the running API gets its variables injected by the
+// process manager, and a login shell does not inherit them. So when this shell
+// sees NOTHING — no TitoPay variable and no .env file here — the honest
+// reading is usually "your configuration lives somewhere this shell cannot
+// see", not "your API is unconfigured", and the report below says so instead
+// of letting three ✗ marks read as an emergency.
+const CORE_NAMES = [
+  "POSTGRES_URL", "DATABASE_URL",
+  "JWT_ACCESS_SECRET", "JWT_SECRET",
+  "JWT_REFRESH_SECRET", "REFRESH_TOKEN_SECRET",
+  "IDENTITY_PEPPER"
+];
+const shellSeesNothing =
+  CORE_NAMES.every((name) => !process.env[name])
+  && !fs.existsSync(path.resolve(process.cwd(), ".env"))
+  && !fs.existsSync(path.resolve(process.cwd(), "api", ".env"));
+
 function present(names) {
   for (const name of names) {
     const value = process.env[name];
@@ -142,7 +164,25 @@ if (!problems.length) {
     process.exit(0);
   }
 
-  console.log(`\n${problems.length} configuration problem${problems.length === 1 ? "" : "s"} to fix:\n`);
+  if (shellSeesNothing) {
+    console.log("\nTHIS SHELL SEES NO TITOPAY CONFIGURATION AT ALL — no variable set and no");
+    console.log(".env file in this directory. That usually does NOT mean the API is broken:");
+    console.log("on cPanel (Passenger), pm2 and systemd setups the running API gets its");
+    console.log("variables from the process manager, and an SSH shell does not inherit");
+    console.log("them. The service can be configured correctly while this check, run the");
+    console.log("way you just ran it, sees nothing.");
+    console.log("");
+    console.log("To check the RUNNING API, ask it directly:");
+    console.log("    curl -s https://api.titopay.co.za/v1/health");
+    console.log("Its configWarnings field counts the problems the live process actually");
+    console.log("started with. Zero means its configuration is complete.");
+    console.log("");
+    console.log("To make the scripts in this directory (this preflight, db:apply-migrations)");
+    console.log("see what the API sees, create a .env here with the same values the process");
+    console.log("manager injects. .env.example lists every name.");
+  }
+
+  console.log(`\n${problems.length} configuration problem${problems.length === 1 ? "" : "s"} in this shell's view:\n`);
   for (const { message, remedy } of problems) {
     console.log(`  ✗  ${message}`);
     console.log(`      ${remedy}\n`);

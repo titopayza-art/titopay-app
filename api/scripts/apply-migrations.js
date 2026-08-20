@@ -25,7 +25,34 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-require("../src/config/env");
+const { config } = require("../src/config/env");
+
+// SAY "THERE IS NO DATABASE CONFIGURED" IN THOSE WORDS.
+//
+// Without this check, an empty POSTGRES_URL let the Postgres client fall back
+// to its defaults — localhost, port 5432, the OS username — and the operator
+// read `password authentication failed for user "root"`, which sounds like a
+// wrong password and is really a missing variable. Seen in production on
+// 20 August 2026, minutes after the 502 was fixed.
+//
+// A shell over SSH is not the process manager. On cPanel (Passenger), pm2 and
+// systemd setups the running API gets its variables injected by the manager,
+// and a login shell does not inherit them — so this script can be missing its
+// configuration on the same machine where the API is serving fine.
+if (!config.postgresUrl) {
+  console.error("\n  POSTGRES_URL is not set in this shell, so there is no database to apply");
+  console.error("  migrations to. (Without it the Postgres client falls back to your OS");
+  console.error("  username, which is where a confusing `password authentication failed");
+  console.error("  for user \"root\"` comes from.)");
+  console.error("\n  The running API may be configured correctly even so: on cPanel, pm2 and");
+  console.error("  systemd setups its variables come from the process manager, which this");
+  console.error("  shell does not inherit. Either pass the same value the API uses:");
+  console.error("\n      POSTGRES_URL=\"<connection string>\" npm run db:apply-migrations");
+  console.error("\n  or create a .env in this directory with the same values, so every");
+  console.error("  script here sees what the API sees. .env.example lists every name.\n");
+  process.exit(1);
+}
+
 const { pool } = require("../src/db/pool");
 
 const MIGRATIONS_DIR = path.join(__dirname, "..", "src", "db", "migrations");

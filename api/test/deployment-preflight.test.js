@@ -307,6 +307,83 @@ test("the preflight never prints a secret's value", () => {
     "a deployment log is not a place for key material; report presence and length only");
 });
 
+/* ============================================================================
+   A BARE SHELL IS NOT THE PROCESS MANAGER
+   ==========================================================================*/
+
+// The second act of 20 August: minutes after the 502 was fixed, the preflight
+// run over SSH reported every variable missing on the machine where the API
+// was serving fine, and `npm run db:apply-migrations` failed with `password
+// authentication failed for user "root"`. Both tools were reading a login
+// shell that does not inherit the process manager's environment, and neither
+// said so. These tests hold the explanations that were missing.
+
+const os = require("os");
+
+// A directory guaranteed to hold no .env, so the "shell sees nothing" branch
+// is reachable no matter what the sandbox working copy contains.
+function bareDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "titopay-bare-"));
+}
+
+test("a shell with no configuration at all is told where the configuration probably lives", () => {
+  let output = "";
+  try {
+    output = execFileSync(process.execPath, [path.join(API, "preflight.js")],
+      { cwd: bareDir(), env: { PATH: process.env.PATH }, encoding: "utf8" });
+  } catch (error) {
+    output = `${error.stdout || ""}${error.stderr || ""}`;
+  }
+  assert.match(output, /THIS SHELL SEES NO TITOPAY CONFIGURATION AT ALL/,
+    "three ✗ marks with no explanation read as an outage on a healthy server");
+  assert.match(output, /process manager/, "it must name the real cause: cPanel, pm2 and systemd inject variables a login shell never sees");
+  assert.match(output, /curl -s https:\/\/api\.titopay\.co\.za\/v1\/health/,
+    "and point at the one command that reports the RUNNING process's configuration");
+  assert.match(output, /configWarnings/, "naming the field to read");
+  assert.match(output, /create a \.env here/, "and how to make shell scripts see what the API sees");
+});
+
+test("the bare-shell explanation does not appear when configuration is merely incomplete", () => {
+  let output = "";
+  try {
+    output = execFileSync(process.execPath, [path.join(API, "preflight.js")], {
+      cwd: bareDir(),
+      env: {
+        PATH: process.env.PATH,
+        NODE_ENV: "production",
+        POSTGRES_URL: "postgres://u@127.0.0.1:5432/d",
+        JWT_ACCESS_SECRET: "a-long-enough-access-secret-for-the-floor"
+      },
+      encoding: "utf8"
+    });
+  } catch (error) {
+    output = `${error.stdout || ""}${error.stderr || ""}`;
+  }
+  assert.doesNotMatch(output, /THIS SHELL SEES NO TITOPAY CONFIGURATION/,
+    "a partly configured shell has real problems to fix; do not wave them off as somebody else's environment");
+  assert.match(output, /JWT_REFRESH_SECRET or REFRESH_TOKEN_SECRET is not set/);
+});
+
+test("apply-migrations with no database URL says so, instead of failing as the OS user", () => {
+  let status = 0;
+  let output = "";
+  try {
+    output = execFileSync(process.execPath, [path.join(API, "scripts", "apply-migrations.js")],
+      { cwd: bareDir(), env: { PATH: process.env.PATH }, encoding: "utf8" });
+  } catch (error) {
+    status = error.status;
+    output = `${error.stdout || ""}${error.stderr || ""}`;
+  }
+  assert.equal(status, 1, "no database URL means nothing to migrate; exit non-zero so a deploy script stops");
+  assert.match(output, /POSTGRES_URL is not set in this shell/,
+    "the missing variable must be named in those words");
+  assert.match(output, /password authentication failed/,
+    "and the confusing pg fallback error must be explained before anyone sees it for real");
+  assert.match(output, /process manager/, "with the same shell-versus-service explanation as the preflight");
+  assert.match(output, /POSTGRES_URL="<connection string>" npm run db:apply-migrations/,
+    "and the exact command that works");
+});
+
 /* -------------------------------------------------------- it actually ships */
 
 test("preflight.js and .env.example are inside the API package", () => {

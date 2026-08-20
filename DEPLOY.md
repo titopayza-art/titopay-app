@@ -150,6 +150,29 @@ outage.
 `api/.env.example` lists every variable the API reads, which are required, and
 which have defaults. It holds names only, never values.
 
+### If the preflight reports everything missing on a working server
+
+Read that as "this shell cannot see the configuration", not "the API has none".
+On cPanel (Passenger), pm2 and systemd setups the running API gets its
+variables injected by the process manager, and an SSH shell does not inherit
+them — so the preflight and `db:apply-migrations`, run by hand, can see nothing
+on the very machine where the API is serving fine. (A database URL missing from
+the shell is also where a confusing `password authentication failed for user
+"root"` comes from: the Postgres client falls back to your OS username.)
+
+Two consequences:
+
+- **To check the running API**, ask it, not the shell:
+  `curl -s https://api.titopay.co.za/v1/health` — its `configWarnings` field
+  counts the problems the live process actually started with.
+- **To make shell scripts work**, create `~/api/.env` carrying the same values
+  the process manager injects (`api/.env.example` lists every name), or prefix
+  the one you need: `POSTGRES_URL="<value>" npm run db:apply-migrations`.
+
+Where you add a NEW variable such as `IDENTITY_PEPPER`, add it where the
+running API reads from — the process manager's environment screen — and mirror
+it into `~/api/.env` so the scripts agree with the service.
+
 ### Restart the API
 
 Which command depends on how Afrihost runs it.
