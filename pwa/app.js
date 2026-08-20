@@ -662,11 +662,31 @@ async function copyTextValue(value, container, successMessage = "QR copied.") {
   showToast("Select and copy the QR reference shown on screen.", "error");
   return false;
 }
+// Disabling the control that has focus makes the browser blur it, and inside a
+// scrollable modal it then snaps the card back to the top. On a long form
+// (register) that reads as "I tapped Create and it just jumped to the top and
+// did nothing" — the button looks dead and the error toast is scrolled away.
+// Capture the scroll position before the disable, and once the fields are
+// disabled put any snap straight back inside the scroll handler (which runs
+// before the frame paints, so the modal never visibly jumps) for a brief window.
+function captureModalScroll(form) {
+  const box = form.closest(".modal-card");
+  if (!box) return () => {};
+  const top = box.scrollTop;
+  return () => {
+    const hold = () => { if (box.scrollTop !== top) box.scrollTop = top; };
+    hold();
+    box.addEventListener("scroll", hold);
+    setTimeout(() => box.removeEventListener("scroll", hold), 500);
+  };
+}
 function setBusy(form, busy) {
+  const restoreScroll = captureModalScroll(form);
   form.classList.toggle("is-submitting", busy);
   form.querySelectorAll("button, input, textarea, select").forEach((element) => {
     element.disabled = busy;
   });
+  restoreScroll();
 }
 
 /* ==========================================================================
