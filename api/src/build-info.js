@@ -19,10 +19,18 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 77;
+const API_BUILD = 78;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  78: "DEFENCE IN DEPTH ON CHILD WALLETS, one path deep. Reviewing every "
+      + "place that credits a wallet looked up by number found one more: "
+      + "enterprise distribution's batch release. It is safe today only "
+      + "because child wallets are unnumbered; it now refuses kind 'system' "
+      + "explicitly, in both the batch validation lookup and the release "
+      + "credit query, so a child wallet number behaves exactly like an "
+      + "unknown number - the item fails cleanly and the money releases back "
+      + "to the business wallet. No behaviour change for any real recipient.",
   77: "A PARENT MAY HAVE MORE THAN ONE TITOKIDS CHILD. Every child is a kind "
       + "'system' wallet under the parent, and idx_wallets_user_kind enforced "
       + "one wallet per user per kind across ALL kinds, so the second child was "

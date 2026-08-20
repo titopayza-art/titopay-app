@@ -618,7 +618,11 @@ async function validateRows(rows = [], organisationId) {
   const walletNumbers = normalizedRows.map((row) => row.walletNumber).filter(Boolean);
   const walletSet = new Set();
   if (walletNumbers.length) {
-    const { rows: walletRows } = await pool.query("SELECT wallet_number FROM wallets WHERE wallet_number = ANY($1::TEXT[]) AND status = 'active'", [walletNumbers]);
+    const { rows: walletRows } = await pool.query(
+      // kind <> 'system': a TitoKids child wallet must not validate as a
+      // disbursement recipient, even one carrying a legacy number. Money
+      // reaches a child through the TitoKids flow or not at all.
+      "SELECT wallet_number FROM wallets WHERE wallet_number = ANY($1::TEXT[]) AND status = 'active' AND kind <> 'system'", [walletNumbers]);
     walletRows.forEach((row) => walletSet.add(String(row.wallet_number)));
   }
   return normalizedRows.map((row, index) => {
@@ -929,6 +933,7 @@ async function releaseBatch(batchId, actor, meta = {}) {
          FROM wallets w
          JOIN users u ON u.id = w.user_id
          WHERE w.wallet_number = $1 AND w.status = 'active'
+           AND w.kind <> 'system'
          ORDER BY w.created_at ASC
          LIMIT 1
          FOR UPDATE OF w`,

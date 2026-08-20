@@ -261,6 +261,18 @@ test("the three-copy rule holds: migration, schema.sql and the ensure function a
   assert.match(schema, /AND NOT \(kind = 'system' AND user_id IS NOT NULL\)/);
 });
 
+test("every wallet-number credit path refuses child wallets, not just the main resolver", () => {
+  // Found by reviewing what else credits a wallet looked up by number:
+  // enterprise distribution's batch release. A child wallet number there now
+  // behaves exactly like an unknown number - the item fails cleanly and the
+  // money releases back to the business wallet - instead of landing in a
+  // child's pocket around the TitoKids flow.
+  const dist = read("src", "services", "enterprise-distribution-service.js");
+  const guarded = (dist.match(/AND (?:w\.)?kind <> 'system'/g) || []).length;
+  assert.ok(guarded >= 2,
+    `both the batch validation lookup and the release credit query must carry the filter (found ${guarded})`);
+});
+
 test("the merchant wallet upsert names the partial index's predicate", () => {
   // ON CONFLICT (user_id, kind) matched the OLD full index. Against the
   // partial one it is an error, so merchant creation would break the moment
