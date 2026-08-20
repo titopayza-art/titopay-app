@@ -108,7 +108,12 @@ function checkRequired(names, { minBytes = 0, productionOnly = false, why = "" }
   if (minBytes && bytes < minBytes) {
     fail(`${found.name} is ${bytes} bytes; the minimum is ${minBytes}.`,
       `Replace it in .env with a longer value:\n      ${GENERATE}` +
-      (names[0].startsWith("JWT") ? "\n      Note: changing a JWT secret signs everyone out. Nothing is lost; they sign in again." : ""));
+      (names[0].startsWith("JWT")
+        ? "\n      Note: changing a JWT secret signs everyone out (they sign in again)." +
+          "\n      AND: if EMAIL_ENCRYPTION_KEY is not set, stored email credentials are" +
+          "\n      encrypted under JWT_REFRESH_SECRET - rotating it breaks them. Set" +
+          "\n      EMAIL_ENCRYPTION_KEY to the CURRENT refresh secret value FIRST."
+        : ""));
     return;
   }
   notes.push(`${found.name} set${minBytes ? `, ${bytes} bytes` : ""}.`);
@@ -129,6 +134,24 @@ checkRequired(["IDENTITY_PEPPER"], {
 
 if (environment !== "production") {
   notes.push(`NODE_ENV is "${environment}", not "production". Production-only requirements were not enforced.`);
+}
+
+// THE COUPLING THAT BROKE EMAIL ON 20 AUGUST 2026. Stored email credentials
+// (the SMTP password saved in the admin Email Centre) are encrypted under
+// EMAIL_ENCRYPTION_KEY - or, when it is absent, under a key DERIVED FROM
+// JWT_REFRESH_SECRET. A routine JWT rotation that morning therefore silently
+// broke every stored email credential: every send failed with `Missing
+// credentials for "PLAIN"` while nothing looked wrong. Saying so here, before
+// a rotation, is the whole point of this tool.
+if (present(["EMAIL_ENCRYPTION_KEY"])) {
+  notes.push("EMAIL_ENCRYPTION_KEY set. Stored email credentials survive JWT rotations.");
+} else if (present(["JWT_REFRESH_SECRET", "REFRESH_TOKEN_SECRET"])) {
+  fail("EMAIL_ENCRYPTION_KEY is not set, so stored email credentials are encrypted under "
+    + "JWT_REFRESH_SECRET. Rotating that secret will silently break every stored email "
+    + "credential (`Missing credentials for \"PLAIN\"` on every send).",
+    "Pin the key BEFORE any rotation, to the value the credentials are already encrypted under:\n"
+    + "      echo \"EMAIL_ENCRYPTION_KEY=$(grep '^JWT_REFRESH_SECRET=' .env | cut -d= -f2-)\" >> .env\n"
+    + "      Then restart. Set once, never change.");
 }
 
 // ------------------------------------------------------------ the real loader

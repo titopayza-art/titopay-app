@@ -243,7 +243,8 @@ test("the preflight passes on a configuration that will start", () => {
     POSTGRES_URL: "postgres://user@127.0.0.1:5432/db",
     JWT_ACCESS_SECRET: "a-long-enough-access-secret-for-the-floor",
     JWT_REFRESH_SECRET: "a-long-enough-refresh-secret-for-the-floor",
-    IDENTITY_PEPPER: "a-long-enough-identity-pepper-for-the-floor"
+    IDENTITY_PEPPER: "a-long-enough-identity-pepper-for-the-floor",
+    EMAIL_ENCRYPTION_KEY: "an-email-encryption-key-pinned-once-forever"
   };
   const output = execFileSync(process.execPath, ["preflight.js"], { cwd: API, env, encoding: "utf8" });
   assert.match(output, /Safe to restart/);
@@ -300,11 +301,62 @@ test("the preflight never prints a secret's value", () => {
     POSTGRES_URL: "postgres://user@127.0.0.1:5432/db",
     JWT_ACCESS_SECRET: secret,
     JWT_REFRESH_SECRET: secret,
-    IDENTITY_PEPPER: secret
+    IDENTITY_PEPPER: secret,
+    EMAIL_ENCRYPTION_KEY: secret
   };
   const output = execFileSync(process.execPath, ["preflight.js"], { cwd: API, env, encoding: "utf8" });
   assert.ok(!output.includes(secret),
     "a deployment log is not a place for key material; report presence and length only");
+});
+
+/* ============================================================================
+   THE KEY THAT ROTATING A JWT SECRET SILENTLY DESTROYED
+   ==========================================================================*/
+
+// 20 August 2026, an hour after the 502 was fixed: a routine JWT rotation,
+// advised as "nothing is lost", broke every stored email credential - they
+// are encrypted under a key derived from JWT_REFRESH_SECRET whenever
+// EMAIL_ENCRYPTION_KEY is absent. Every send failed with `Missing credentials
+// for "PLAIN"` and the admin OTP email never arrived, locking the operator
+// out. The preflight must name this coupling BEFORE a rotation, and the
+// remedy must pin the key without changing what anything decrypts to.
+
+test("the preflight warns that rotating the refresh secret breaks email when the key is unset", () => {
+  let status = 0;
+  let output = "";
+  try {
+    output = execFileSync(process.execPath, [path.join(API, "preflight.js")], {
+      cwd: bareDir(),
+      env: {
+        PATH: process.env.PATH,
+        NODE_ENV: "production",
+        POSTGRES_URL: "postgres://user@127.0.0.1:5432/db",
+        JWT_ACCESS_SECRET: "a-long-enough-access-secret-for-the-floor",
+        JWT_REFRESH_SECRET: "a-long-enough-refresh-secret-for-the-floor",
+        IDENTITY_PEPPER: "a-long-enough-identity-pepper-for-the-floor"
+      },
+      encoding: "utf8"
+    });
+  } catch (error) {
+    status = error.status;
+    output = `${error.stdout || ""}${error.stderr || ""}`;
+  }
+  assert.equal(status, 1, "a live landmine is a problem to fix, not a footnote");
+  assert.match(output, /EMAIL_ENCRYPTION_KEY is not set/);
+  assert.match(output, /Rotating that secret will silently break every stored email/);
+  assert.match(output, /Missing credentials for "PLAIN"/, "naming the exact error the operator would otherwise meet cold");
+  assert.match(output, /EMAIL_ENCRYPTION_KEY=\$\(grep '\^JWT_REFRESH_SECRET=' \.env/,
+    "the remedy pins the key to the value credentials are ALREADY encrypted under - zero-risk, nothing re-encrypts");
+});
+
+test("the rotation advice itself now carries the email warning, not 'nothing is lost'", () => {
+  assert.doesNotMatch(PREFLIGHT, /Nothing is lost/,
+    "that exact phrase was disproven in production; it may not return");
+  assert.match(PREFLIGHT, /EMAIL_ENCRYPTION_KEY to the CURRENT refresh secret value FIRST/,
+    "the short-secret remedy must order the steps: pin the key, then rotate");
+  assert.match(EXAMPLE, /^EMAIL_ENCRYPTION_KEY=$/m, "and .env.example declares the key");
+  assert.match(EXAMPLE, /ROTATING THAT SECRET SILENTLY BREAKS EVERY STORED EMAIL/,
+    ".env.example says why in the words of what actually happened");
 });
 
 /* ============================================================================

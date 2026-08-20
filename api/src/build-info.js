@@ -19,10 +19,24 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 78;
+const API_BUILD = 79;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  79: "THE ROTATION THAT BROKE EMAIL, NAMED BEFORE IT CAN HAPPEN AGAIN. Stored "
+      + "email credentials (the SMTP password saved in the Email Centre) are "
+      + "encrypted under EMAIL_ENCRYPTION_KEY, falling back to a key derived "
+      + "from JWT_REFRESH_SECRET when it is absent. On 20 August a routine JWT "
+      + "rotation therefore silently broke every stored email credential: every "
+      + "send failed with `Missing credentials for \"PLAIN\"`, the admin OTP "
+      + "email never arrived, and the operator was locked out of the console. "
+      + "Recovery: set EMAIL_ENCRYPTION_KEY to the OLD refresh secret and "
+      + "everything decrypts again. Prevention, in this build: .env.example "
+      + "declares the key and says exactly what happens without it; the "
+      + "preflight reports the coupling as a problem with the zero-risk pin "
+      + "command as the remedy; and the rotation advice no longer says "
+      + "`nothing is lost`, because that was disproven in production. No "
+      + "runtime behaviour changed.",
   78: "DEFENCE IN DEPTH ON CHILD WALLETS, one path deep. Reviewing every "
       + "place that credits a wallet looked up by number found one more: "
       + "enterprise distribution's batch release. It is safe today only "
