@@ -100,6 +100,16 @@ async function healthStatus(_req, res, next) {
         try { return require("../config/deployment-safety").inspectDeployment({ env: process.env, config }).warnings.length; }
         catch { return null; }
       })(),
+      // Configuration problems this process started with despite starting. A
+      // count, not the warnings themselves, for the same reason as above: the
+      // detail is in the startup log and in `node preflight.js`, and no part of
+      // a public health response should hint at which key is weak. Zero means
+      // the configuration is complete. Non-zero means the API is up and serving
+      // but something needs setting.
+      configWarnings: (() => {
+        try { return require("../config/env").startupWarnings.length; }
+        catch { return null; }
+      })(),
       // Reported so that "is the deployed API current?" is one request rather
       // than an investigation. See src/build-info.js.
       ...buildInfo(),

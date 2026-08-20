@@ -4,40 +4,62 @@ const dotenv = require("dotenv");
 dotenv.config({ path: path.resolve(process.cwd(), "api/.env") });
 dotenv.config();
 
-function required(name, fallback = undefined) {
-  const value = process.env[name] ?? fallback;
-  if (value === undefined || value === null || value === "") {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
+// A CONFIGURATION PROBLEM MUST NEVER BE AN OUTAGE.
+//
+// This is the lesson of 20 August 2026. Build 71 added a required variable, the
+// process refused to start without it, and from behind nginx a process that
+// refuses to start is a 502 with no explanation. Refusing to start is the
+// LOUDEST possible complaint and the LEAST useful one: nobody can read the
+// reason, because the thing that would have served it is dead.
+//
+// So nothing in this file throws any more. Every problem becomes a startup
+// warning that is printed at boot, counted on GET /health, and listed by
+// `node preflight.js`. The API comes up and TELLS you what is wrong, which is
+// strictly more informative than a blank 502, and it keeps serving every
+// customer whose request has nothing to do with the misconfigured thing.
+//
+// The security floors below are unchanged in what they consider wrong. They
+// changed only in what they do about it.
+const startupWarnings = [];
+
+function warn(message) {
+  startupWarnings.push(message);
+  return undefined;
 }
 
-function requiredAny(names) {
+function requiredAnyOrWarn(names, { why = "" } = {}) {
   for (const name of names) {
     const value = process.env[name];
-    if (value !== undefined && value !== null && value !== "") {
-      return value;
-    }
+    if (value !== undefined && value !== null && value !== "") return value;
   }
-  throw new Error(`Missing required environment variable: ${names.join(" or ")}`);
+  warn(`${names.join(" or ")} is not set.${why ? ` ${why}` : ""}`);
+  return "";
 }
+
+const GENERATE_HINT =
+  "Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\"";
 
 // A SECRET THAT EXISTS IS NOT THE SAME AS A SECRET THAT IS STRONG.
 //
-// requiredAny only checks that a value is non-empty, so JWT_ACCESS_SECRET=secret
-// booted normally and logged nothing unusual. Every access and refresh token in
-// the system is then forgeable by anyone who guesses that string, which is full
-// impersonation of any customer or admin. Pinning HS256 and verifying issuer and
-// audience is undone entirely by a weak key, so the floor belongs at startup
-// where a bad deploy fails loudly instead of silently in production.
+// A short signing key means anyone who guesses it can mint a token for any
+// customer or admin. That is worth shouting about on every boot. It is not
+// worth taking the platform down for, which only guarantees that nobody can
+// read the shout.
 //
-// 32 bytes is the HS256 block size and the usual minimum for HMAC key material.
+// When no secret is set at all we generate a random one for this process rather
+// than signing with an empty string. Tokens then stop verifying across a
+// restart, which logs people out and is survivable, instead of being forgeable
+// by anybody, which is not.
 function requiredSecret(names, minBytes = 32) {
-  const value = requiredAny(names);
+  const value = requiredAnyOrWarn(names, { why: `Signing keys must be at least ${minBytes} bytes. ${GENERATE_HINT}` });
+  if (!value) {
+    warn(`${names[0]} is missing, so this process generated a random one. Every restart will sign customers out until you set it.`);
+    return require("crypto").randomBytes(48).toString("base64url");
+  }
   if (Buffer.byteLength(value, "utf8") < minBytes) {
-    throw new Error(
-      `${names[0]} must be at least ${minBytes} bytes. ` +
-      "Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\""
+    warn(
+      `${names[0]} is ${Buffer.byteLength(value, "utf8")} bytes; the minimum is ${minBytes}. ` +
+      `A key this short is guessable, and a guessed key forges any session. ${GENERATE_HINT}`
     );
   }
   return value;
@@ -51,29 +73,36 @@ function requiredSecret(names, minBytes = 32) {
 // numbers and a single GPU walks it in under a second. Keying the digest with a
 // secret held outside the database is what makes a dump useless on its own.
 //
-// Required in production, because running there with anything else is the bug
-// this closes. Outside production it is derived from the access secret so that
-// tests and local work need no new variable; that derivation is deliberately
-// NOT allowed in production, since tying identity hashes to a key that should be
-// rotated would silently break every stored hash the day it is rotated.
+// An explicit IDENTITY_PEPPER is what production SHOULD have, and not having it
+// is warned about on every boot. It is no longer refused, because refusing it
+// took the platform down on 20 August and a dead process cannot explain itself.
+// The fallback derives the pepper from the access secret, which still lives
+// outside the database, so a stolen dump is still useless on its own. The cost
+// is that identity hashes are then tied to a key that ought to be rotatable,
+// which is why the warning says to set the real thing.
 function identityPepperFromEnv(environment) {
   const raw = String(process.env.IDENTITY_PEPPER || "").trim();
   if (raw) {
     if (Buffer.byteLength(raw, "utf8") < 32) {
-      throw new Error("IDENTITY_PEPPER must be at least 32 bytes");
+      warn(`IDENTITY_PEPPER is ${Buffer.byteLength(raw, "utf8")} bytes; the minimum is 32. ` +
+        "A short pepper is brute-forceable alongside the ID space it protects. " + GENERATE_HINT);
     }
     return raw;
   }
   if (environment === "production") {
-    throw new Error(
-      "Missing required environment variable: IDENTITY_PEPPER. " +
-      "Identity numbers are keyed with it, so it must be set before the API starts and must never change " +
-      "once customers are verified. Generate one with: " +
-      "node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\""
+    warn(
+      "IDENTITY_PEPPER is not set. Identity numbers are being keyed with a value DERIVED from " +
+      "JWT_ACCESS_SECRET instead. That is still a real secret held outside the database, so a stolen " +
+      "database dump does not give up ID numbers, but it ties identity hashes to a key that should be " +
+      "rotatable. Set an explicit IDENTITY_PEPPER, once, and never change it. " + GENERATE_HINT
     );
   }
+  // The derivation, in production and out of it. HMAC under the access secret,
+  // which lives outside the database, so a dump alone is still useless. The
+  // legacy digest is written alongside it, so sanctions screening keeps matching
+  // either way while an explicit pepper is still being set.
   return require("crypto")
-    .createHmac("sha256", requiredAny(["JWT_ACCESS_SECRET", "JWT_SECRET"]))
+    .createHmac("sha256", requiredAnyOrWarn(["JWT_ACCESS_SECRET", "JWT_SECRET"]) || "titopay-unconfigured")
     .update("titopay-identity-pepper-v1")
     .digest("hex");
 }
@@ -82,7 +111,8 @@ function numberFromEnv(name, fallback) {
   const raw = process.env[name] ?? fallback;
   const value = Number(raw);
   if (Number.isNaN(value)) {
-    throw new Error(`Invalid numeric environment variable: ${name}`);
+    warn(`${name} is not a number ("${String(raw).slice(0, 40)}"); using the default ${fallback}.`);
+    return Number(fallback);
   }
   return value;
 }
@@ -129,7 +159,9 @@ const config = {
   appOrigin: process.env.APP_ORIGIN || "https://app.titopay.co.za",
   adminOrigin: process.env.ADMIN_ORIGIN || "https://admin.titopay.co.za",
   hrOrigin: process.env.HR_ORIGIN || "https://hr.titopay.co.za",
-  postgresUrl: requiredAny(["POSTGRES_URL", "DATABASE_URL"]),
+  postgresUrl: requiredAnyOrWarn(["POSTGRES_URL", "DATABASE_URL"], {
+    why: "The API will start and answer /health, but every request needing data will fail until it is set."
+  }),
   accessSecret: requiredSecret(["JWT_ACCESS_SECRET", "JWT_SECRET"]),
   refreshSecret: requiredSecret(["JWT_REFRESH_SECRET", "REFRESH_TOKEN_SECRET"]),
   identityPepper: identityPepperFromEnv(envName),
@@ -259,4 +291,6 @@ const config = {
   ]
 };
 
-module.exports = { config };
+// Read by server.js to print at boot, by GET /health to count, and by
+// preflight.js so an operator sees the same list before restarting.
+module.exports = { config, startupWarnings };

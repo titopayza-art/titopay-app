@@ -1,6 +1,6 @@
 const http = require("http");
 const { app } = require("./app");
-const { config } = require("./config/env");
+const { config, startupWarnings } = require("./config/env");
 const { attachChatSocketServer } = require("./realtime/chat-socket");
 const {
   inspectDeployment, verifyDatabaseIdentity, describeDeployment
@@ -60,6 +60,18 @@ function warnAboutDeployment(warnings) {
   console.warn("    TITOPAY_ENV=production  PEACH_PAYMENTS_MODE=production  DOCFOX_MODE=production  OTT_MODE=production");
   console.warn("    TITOPAY_ENV=sandbox     PEACH_PAYMENTS_MODE=sandbox     DOCFOX_MODE=sandbox     OTT_MODE=sandbox");
   console.warn("");
+}
+
+// Configuration problems, printed rather than fatal. src/config/env.js no
+// longer throws for any of them: a process that refuses to start is a 502 with
+// no explanation, which is the least useful way to report a missing variable.
+// The API comes up, says exactly what is wrong, and keeps serving everything
+// that does not depend on the misconfigured thing. `node preflight.js` prints
+// this same list BEFORE a restart, which is where it should be read.
+if (startupWarnings.length) {
+  console.warn(`\n[config] ${startupWarnings.length} configuration warning(s). The API is starting anyway.`);
+  for (const warning of startupWarnings) console.warn(`[config]   - ${warning}`);
+  console.warn("[config] Run `node preflight.js` for the same list with remedies.\n");
 }
 
 const deployment = inspectDeployment({ env: process.env, config });

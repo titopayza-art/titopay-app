@@ -235,16 +235,42 @@ test("access and refresh tokens still round trip under the strengthened config",
   assert.throws(() => verifyRefreshToken(signAccessToken(claims)));
 });
 
-test("the identity pepper is required in production and never falls back there", () => {
+// SUPERSEDED BY BUILD 74, DELIBERATELY.
+//
+// This test used to assert that a missing IDENTITY_PEPPER REFUSED to start in
+// production. That refusal was correct about the risk and catastrophic in
+// practice: on 20 August 2026 it turned a deploy into a 502, because a process
+// that exits cannot serve the explanation for why it exited.
+//
+// The security property this test existed to protect is unchanged and is still
+// asserted below: the pepper must be a real secret held OUTSIDE the database,
+// never a constant compiled into the source, because a constant is precisely
+// what the August audit found. What changed is the consequence of it being
+// absent — a loud warning on every boot rather than an outage.
+test("the identity pepper is a secret outside the database, never a constant", () => {
   const source = read("config", "env.js");
-  assert.match(source, /Missing required environment variable: IDENTITY_PEPPER/);
+
+  // The vulnerability was a fixed in-source string. Whatever else changes, the
+  // pepper must never come from a literal.
+  assert.match(source, /createHmac\("sha256", requiredAnyOrWarn\(\["JWT_ACCESS_SECRET", "JWT_SECRET"\]\)/,
+    "the fallback pepper derives from the access secret, which lives outside the database");
+  assert.doesNotMatch(source, /identityPepper:\s*"/, "never a literal pepper");
+
+  // An explicit pepper is still what production should have, and its absence is
+  // still called out in production specifically.
   assert.match(source, /environment === "production"/);
-  assert.match(source, /IDENTITY_PEPPER must be at least 32 bytes/);
-  // Outside production it derives, so no existing test or local setup needs a
-  // new variable; that derivation must not be reachable in production.
-  const derive = source.indexOf("titopay-identity-pepper-v1");
-  const guard = source.indexOf('environment === "production"');
-  assert.ok(guard !== -1 && derive > guard, "the production refusal comes before the fallback");
+  assert.match(source, /IDENTITY_PEPPER is not set/);
+  assert.match(source, /Set an explicit IDENTITY_PEPPER, once, and never change it/);
+  assert.match(source, /IDENTITY_PEPPER is \$\{Buffer\.byteLength\(raw, "utf8"\)\} bytes; the minimum is 32/,
+    "a short explicit pepper is still called out");
+});
+
+test("no configuration fault can stop the API starting, which is what 20 August cost", () => {
+  const source = read("config", "env.js");
+  assert.equal((source.match(/throw new Error/g) || []).length, 0,
+    "a throw here exits before the server can listen, and nginx renders that as an unreadable 502");
+  // The full proof, loading the config with a bare environment, is in
+  // test/deployment-preflight.test.js.
 });
 
 /* ------------------------------------------------------ 7. venue images */

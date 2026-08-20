@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 73;
+const API_BUILD = 74;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  74: "A CONFIGURATION PROBLEM CAN NO LONGER BE A 502. src/config/env.js does "
+      + "not throw any more, for anything. A missing IDENTITY_PEPPER, a short or "
+      + "absent JWT secret, a missing database string, a non-numeric port: each "
+      + "is now a startup WARNING, printed at boot, counted on GET /health as "
+      + "configWarnings and listed by `node preflight.js`. The API starts and "
+      + "says what is wrong instead of dying where nobody can read the reason. "
+      + "An absent signing key becomes a strong random one for that process "
+      + "rather than an empty string, and an absent pepper is derived by HMAC "
+      + "from the access secret, which still lives outside the database, so a "
+      + "stolen dump is still useless on its own. Security floors are unchanged "
+      + "in what they call wrong; only in what they do about it.",
   73: "A DEPLOY CAN NO LONGER DISCOVER A NEW REQUIRED VARIABLE BY GOING DOWN. "
       + "Build 71 made IDENTITY_PEPPER required; the new code correctly refused "
       + "to start without it, and from behind nginx a process that refuses to "

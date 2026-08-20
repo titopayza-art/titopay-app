@@ -1,21 +1,23 @@
 #!/usr/bin/env node
 "use strict";
 
-// WILL THIS BUILD START, WITH THE CONFIGURATION THIS SERVER ACTUALLY HAS?
+// WHAT IS WRONG WITH THIS SERVER'S CONFIGURATION?
 //
 // Answered BEFORE the restart, while the old process is still serving traffic.
 //
 // On 20 August 2026 the API went to 502 after a deploy. Nothing had crashed:
-// build 71 had added IDENTITY_PEPPER as a required variable, the new code
-// refused to start without it, and refusing to start is indistinguishable from
-// being down when nginx is in front. The guard was right. What was missing was
-// any way to learn that a new variable was needed WITHOUT restarting into it.
+// build 71 had added IDENTITY_PEPPER as a required variable and the new code
+// refused to start without it. Refusing to start is indistinguishable from being
+// down when nginx is in front, so the complaint nobody could read cost a day.
 //
-// So this is the missing step. It loads the real configuration exactly the way
-// src/config/env.js does, reports every problem in one pass rather than dying on
-// the first, and exits non-zero so a deploy script can stop. It reads
-// configuration and connects to nothing unless asked. It never prints a secret's
-// value — only whether it is present and long enough.
+// Since build 74 the API does not refuse to start for ANY configuration problem.
+// It comes up, prints what is wrong, and counts it on GET /health. So this tool
+// is no longer the thing standing between you and an outage; it is the place to
+// read the same list early, with remedies, and fix it properly.
+//
+// It reports every problem in one pass, exits non-zero so a deploy script can
+// stop, connects to nothing unless asked, and never prints a secret's value —
+// only whether it is present and long enough.
 //
 //   node preflight.js              config only, the fast check
 //   node preflight.js --database   also prove the database is reachable
@@ -73,9 +75,10 @@ function checkRequired(names, { minBytes = 0, productionOnly = false, why = "" }
   notes.push(`${found.name} set${minBytes ? `, ${bytes} bytes` : ""}.`);
 }
 
-// The startup-blocking set. Anything src/config/env.js can THROW on belongs
-// here, and api/test/deployment-preflight.test.js fails the build if the two
-// ever drift apart.
+// The configuration that matters. Nothing here is fatal any more, but each one
+// is either a security floor or a feature that will not work. Anything
+// src/config/env.js warns about belongs here too, and
+// api/test/deployment-preflight.test.js fails the build if the two drift apart.
 checkRequired(["POSTGRES_URL", "DATABASE_URL"], { why: "The API cannot reach its database without it." });
 checkRequired(["JWT_ACCESS_SECRET", "JWT_SECRET"], { minBytes: 32 });
 checkRequired(["JWT_REFRESH_SECRET", "REFRESH_TOKEN_SECRET"], { minBytes: 32 });
@@ -96,11 +99,12 @@ if (environment !== "production") {
 // rather than at restart.
 if (!problems.length) {
   try {
-    require("./src/config/env");
-    notes.push("src/config/env.js loaded cleanly.");
+    const { startupWarnings } = require("./src/config/env");
+    for (const warning of startupWarnings || []) fail(warning, "See api/.env.example for what to set.");
+    if (!startupWarnings || !startupWarnings.length) notes.push("src/config/env.js reports no warnings.");
   } catch (error) {
-    fail(`The API's own configuration loader rejected this environment: ${error.message}`,
-      "This is the exact error the API would print instead of starting.");
+    fail(`The API's own configuration loader raised: ${error.message}`,
+      "Nothing in src/config/env.js should throw any more, so this is a bug worth reporting.");
   }
 }
 
@@ -133,18 +137,22 @@ if (!problems.length) {
   for (const note of notes) console.log(`  ok    ${note}`);
 
   if (!problems.length) {
-    console.log(`\nThis build will start with the configuration on this server.`);
+    console.log(`\nConfiguration is complete. This build will start cleanly.`);
     console.log(`Safe to restart.\n`);
     process.exit(0);
   }
 
-  console.log(`\n${problems.length} problem${problems.length === 1 ? "" : "s"} that would stop the API from starting:\n`);
+  console.log(`\n${problems.length} configuration problem${problems.length === 1 ? "" : "s"} to fix:\n`);
   for (const { message, remedy } of problems) {
     console.log(`  ✗  ${message}`);
     console.log(`      ${remedy}\n`);
   }
-  console.log("DO NOT RESTART YET. The API currently running is unaffected by");
-  console.log("the files you just extracted; it keeps serving until it restarts.");
-  console.log("Fix the above, run this again, and restart once it passes.\n");
+  console.log("The API will still START and serve with these problems — since build");
+  console.log("74 no configuration fault is fatal, so you will not get a 502 from this.");
+  console.log("But fix them: each one above is a real weakness or a degraded feature.");
+  console.log("");
+  console.log("DO NOT RESTART YET if you can avoid it. The API currently running is");
+  console.log("unaffected by the files you just extracted; it keeps serving until it");
+  console.log("restarts, so fixing these first costs you nothing.\n");
   process.exit(1);
 })();
