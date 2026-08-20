@@ -108,12 +108,20 @@ class SharedRateLimitStore {
       );
       return { totalHits: Number(rows[0].hits), resetTime: new Date(rows[0].expires_at) };
     } catch (error) {
-      // Deliberately permissive. If PostgreSQL cannot answer this, it cannot
-      // answer the users query either, so the login this is guarding is already
-      // failing — refusing it here would only turn a database blip into a
-      // lockout for everyone. The event is logged so it is never silent.
-      console.error("[rate-limit-store] increment failed; allowing the request", { message: error.message });
-      return { totalHits: 1, resetTime: new Date(Date.now() + this.windowMs) };
+      // NOT fully permissive. The earlier version returned a constant
+      // totalHits:1 here, which is always below every cap, so a counter-write
+      // that failed while the rest of the database still answered (a lock or
+      // statement timeout on rate_limit_counters, pool saturation biting the
+      // write but not the read) silently switched OFF the 5-per-15-min guard on
+      // login, OTP verify, PIN and wallet unlock - unlimited attempts during a
+      // partial hiccup. Flagged in the 20 August 2026 security audit.
+      //
+      // It now degrades to the same in-memory counter used when the table is
+      // absent: per-process rather than shared, so the effective ceiling is
+      // 5 x workers instead of 5, but never unlimited - and never a hard
+      // lockout for everyone either, which failing fully closed would cause.
+      console.error("[rate-limit-store] increment failed; degrading to in-memory counting", { message: error.message });
+      return this.fallbackIncrement(key, 1);
     }
   }
 

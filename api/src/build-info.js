@@ -19,10 +19,29 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 82;
+const API_BUILD = 83;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  83: "SIX-DIMENSION SECURITY AUDIT (auth/session, credential recovery, "
+      + "authorization/IDOR, money movement, injection, rate-limit/crypto). No "
+      + "critical and no exploitable IDOR were found - authorization is "
+      + "uniformly scoped to the authenticated user. Fixed: the email-link "
+      + "password reset skipped the strength policy the OTP door enforces (a "
+      + "business account could set a 4-char password) - now enforced; the "
+      + "password-reset request was an account-existence + internal-UUID oracle "
+      + "- unknown and known identifiers now return an identical shape and the "
+      + "UUID is never returned; event ticket_code was minted with Math.random "
+      + "(state-recoverable, forgeable admission) - now crypto.randomInt; the "
+      + "shared rate-limit store failed OPEN on a counter-write error (unlimited "
+      + "attempts during a partial DB hiccup) - now degrades to in-memory "
+      + "counting; the withdrawal fee was debited from the customer but never "
+      + "credited to revenue - now booked at settlement success, idempotently, "
+      + "so a failed+reversed withdrawal collects nothing; and the refresh path "
+      + "did not enforce the session expires_at - now it does. Lower-severity "
+      + "items (admin-gated SSRF on provider test probes, an authenticated "
+      + "webhook-log spoof, client-supplied fee-bearer flags, refresh-token "
+      + "reuse detection) are documented for follow-up. 8 new tests.",
   82: "A RESET THAT ACCEPTS THE OLD PASSWORD IS THEATRE. Both reset flows "
       + "(the OTP flow, which also serves the logged-in change, and the email "
       + "link flow) and therefore the change flow accepted the OLD password or "

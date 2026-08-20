@@ -1,4 +1,4 @@
-const { randomUUID, createHash } = require("crypto");
+const { randomUUID, createHash, randomInt } = require("crypto");
 const QRCode = require("qrcode");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
@@ -1749,7 +1749,12 @@ async function adminTransitionEvent(eventId, payload, actor, meta = {}) {
 async function uniqueNumericCode(table, column, length = 10) {
   const digits = Math.min(10, Math.max(6, Number(length) || 10));
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    const code = String(Math.floor(Math.random() * (10 ** digits))).padStart(digits, "0");
+    // crypto.randomInt, not Math.random: this mints ticket_code, the value
+    // scanned to admit entry. Math.random is a non-cryptographic PRNG whose
+    // internal state an attacker recovers from a few observed codes, letting
+    // them predict the next tickets and forge admission. Flagged in the
+    // 20 August 2026 security audit. randomInt is a CSPRNG; max 10^10 < 2^48.
+    const code = String(randomInt(10 ** digits)).padStart(digits, "0");
     const { rows } = await pool.query(`SELECT 1 FROM ${table} WHERE ${column} = $1 LIMIT 1`, [code]);
     if (!rows[0]) return code;
   }

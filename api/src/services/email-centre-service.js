@@ -8,6 +8,7 @@ const { pool } = require("../db/pool");
 const { config } = require("../config/env");
 const { AppError } = require("../lib/errors");
 const { hashPassword, assertNewCredentialDiffers } = require("../lib/passwords");
+const { passwordPolicyProblem } = require("../lib/password-policy");
 const { writeAuditLog } = require("./audit-service");
 const { getEffectiveEmailProviderConfig } = require("./notification-service");
 
@@ -866,6 +867,20 @@ async function confirmEmailPasswordReset(token,newPassword,meta={}) {
   try{await client.query("BEGIN");const {rows}=await client.query("SELECT * FROM password_reset_tokens WHERE token_hash=$1 FOR UPDATE",[tokenHash]);const record=rows[0];
     if(!record)throw new AppError(400,"Password reset link is invalid");if(record.used_at)throw new AppError(409,"Password reset link has already been used");if(record.revoked_at)throw new AppError(400,"Password reset link has been replaced");if(new Date(record.expires_at)<=new Date())throw new AppError(410,"Password reset link has expired");
     const table=record.user_type==="admin"?"admin_users":"users";
+    // THE OTHER DOOR MUST ENFORCE THE SAME STRENGTH POLICY.
+    //
+    // The OTP reset (auth-service confirmPasswordReset) runs passwordPolicyProblem
+    // and its own comment warns: "a policy that only guards one of the two doors
+    // guards neither." This email-link door guarded neither - it checked only
+    // length < 4, so a business account (policy: >= 8) could set a 4-char
+    // password and any account could set 1234/0000/password. Found in the
+    // 20 August 2026 security audit. The check runs before the token is
+    // consumed, so a rejected weak password leaves the link usable.
+    const accountType = table === "users"
+      ? (((await client.query("SELECT account_type FROM users WHERE id=$1", [record.user_id])).rows[0]?.account_type) === "business" ? "business" : "personal")
+      : "business";
+    const policyProblem = passwordPolicyProblem(newPassword, { accountType });
+    if (policyProblem) throw new AppError(400, policyProblem);
     // Reuse is refused BEFORE the token is consumed, so the throw rolls back
     // and the same link still works with a genuinely new password.
     await assertNewCredentialDiffers(client,table,record.user_id,newPassword);

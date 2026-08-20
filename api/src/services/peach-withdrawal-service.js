@@ -465,6 +465,56 @@ async function releaseWithdrawalFunds(transactionId, patch = {}, nextStatus = "f
   }
 }
 
+// BOOK THE WITHDRAWAL FEE TO REVENUE - AT SUCCESS, NOT AT SUBMISSION.
+//
+// Submission debits the customer `total` (amount + fee). The `amount` exits to
+// the customer's bank (no internal credit, correct). The `fee` is an INTERNAL
+// movement, customer -> TitoPay revenue, and its credit leg was missing
+// entirely: every other fee-bearing path books revenue (top-up
+// recordTopupFeeRevenue, transfers, bulk distribution) but withdrawal did not,
+// so the fee left the customer's wallet and reached no one - the wallet float
+// shrank by the fee on every withdrawal and platform revenue was under-
+// reported. Flagged in the 20 August 2026 security audit.
+//
+// It is booked HERE, only when the withdrawal actually settles, because a
+// failed withdrawal is reversed and must collect no fee - and the reversal
+// path returns the full `total`, which is only correct while revenue was never
+// credited. The completed-branch TERMINAL guard makes this run exactly once.
+// Idempotent on revenue_ledger, and savepoint-guarded so a revenue hiccup can
+// never undo a settlement that has already happened externally.
+async function recordWithdrawalFeeRevenue(client, row) {
+  const fee = roundMoney(Number(row.fee || 0));
+  if (!(fee > 0)) return false;
+  const already = await client.query("SELECT id FROM revenue_ledger WHERE transaction_id = $1 LIMIT 1", [row.id]);
+  if (already.rows[0]) return false;
+  await client.query("SAVEPOINT withdrawal_fee_revenue");
+  try {
+    const revenueWallet = await walletService.getRevenueWallet();
+    await walletService.applyWalletMovement(client, {
+      walletId: revenueWallet.id,
+      transactionId: row.id,
+      entryType: "credit",
+      amount: fee,
+      reference: row.reference,
+      metadata: { serviceCode: row.service_code, source: "fee", collectedBy: PROVIDER }
+    });
+    await client.query(
+      `INSERT INTO revenue_ledger (id, transaction_id, service_code, fee_collected, revenue_wallet_id)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [uuidv4(), row.id, row.service_code, fee, revenueWallet.id]
+    );
+    await client.query("RELEASE SAVEPOINT withdrawal_fee_revenue");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK TO SAVEPOINT withdrawal_fee_revenue").catch(() => {});
+    await client.query("RELEASE SAVEPOINT withdrawal_fee_revenue").catch(() => {});
+    console.error("[peach-withdrawal] withdrawal fee revenue not recorded; the settlement still stands", {
+      transactionId: row.id, reference: row.reference, reason: error?.message || "unknown"
+    });
+    return false;
+  }
+}
+
 // Apply what Peach reported. Success keeps the debit; failure returns it.
 async function applyPayoutOutcome(transactionId, verified) {
   const nextStatus = transactionStatusForPayout(verified.payoutStatus);
@@ -480,7 +530,10 @@ async function applyPayoutOutcome(transactionId, verified) {
         await client.query("COMMIT");
         return { row, alreadySettled: true };
       }
-      // Nothing moves on success: the debit already happened at submission.
+      // The customer debit already happened at submission; the only internal
+      // movement left on success is the fee -> revenue leg, booked here so a
+      // withdrawal that never settles never collects a fee.
+      await recordWithdrawalFeeRevenue(client, row);
       const { rows } = await client.query(
         `UPDATE transactions SET status='completed', metadata = metadata || $2::jsonb, updated_at=NOW()
           WHERE id=$1 RETURNING *`,

@@ -1088,7 +1088,28 @@ async function requestPasswordReset(payload, meta) {
     throw new AppError(400, "Identifier is required");
   }
   const user = await getUserByIdentifier(payload.identifier, scope);
-  if (!user) return { accepted: true };
+  if (!user) {
+    // A RESET REQUEST MUST NOT REVEAL WHETHER THE ACCOUNT EXISTS.
+    //
+    // The old code returned {accepted:true} for an unknown identifier and, for
+    // a known one, {accountId:<UUID>, userId:<UUID>, challengeId, ...} - so any
+    // unauthenticated caller could confirm an account exists AND harvest its
+    // internal user UUID and a partial phone/email for phishing, throttled only
+    // by the general 120/min limiter (the sensitive limiter keys on the
+    // attacker's own identifier). Flagged in the 20 August 2026 security audit.
+    //
+    // Unknown identifiers now return the SAME shape as a real challenge, with a
+    // synthetic id and a decoy masked destination. No row is created and no OTP
+    // is sent; the synthetic challengeId simply fails at confirm exactly as a
+    // wrong or expired code does. (A residual timing difference remains because
+    // the real path sends an SMS; the response itself no longer distinguishes.)
+    return {
+      challengeId: uuidv4(),
+      otpRequired: true,
+      maskedDestination: scope === "admin" ? "ad***@***" : "07x***xx",
+      remainingAttempts: config.maxOtpAttempts
+    };
+  }
   const channels = scope === "admin" ? ["email"] : ["sms"];
   const challenge = await createOtpChallenge({
     user,
@@ -1100,7 +1121,10 @@ async function requestPasswordReset(payload, meta) {
   await requestEmailPasswordReset(user, meta).catch((error) => {
     console.error("[auth] password reset email queue failed", { userType:user.user_type, userId:user.id, message:error.message });
   });
-  return { accountId: user.id, userId: user.id, ...challenge };
+  // No accountId/userId: the client correlates the reset with challengeId
+  // (returned in ...challenge), so the internal user UUID never reaches an
+  // unauthenticated caller. confirmPasswordReset takes challengeId directly.
+  return { ...challenge };
 }
 
 async function confirmPasswordReset(payload, meta) {
@@ -1328,8 +1352,14 @@ async function refreshTokens(payload, meta) {
      FROM sessions s
      WHERE s.id = $1
        AND s.revoked_at IS NULL
+       AND s.expires_at > NOW()
        AND s.refresh_token_hash = $2
      LIMIT 1`,
+    // expires_at > NOW() added in the 20 August 2026 security audit: the refresh
+    // path checked only revoked_at and the token hash, so a session past its
+    // recorded expiry could still be refreshed indefinitely. The access path
+    // (requireAuth) already enforces expiry and idle timeout; this brings the
+    // refresh path into line so a lapsed session cannot be revived.
     [decoded.sid, sha256(payload.refreshToken)]
   );
   const row = rows[0];
