@@ -19,10 +19,19 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 75;
+const API_BUILD = 76;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  76: "REFINEMENTS FROM THE ADVERSARIAL REVIEW OF BUILD 75, tooling text and "
+      + "detection only, no API behaviour change. The preflight's bare-shell "
+      + "explanation now triggers only when NO name declared in .env.example is "
+      + "set (a shell holding NODE_ENV or the SMTP block is partly configured, "
+      + "not bare), says that /v1/health's configWarnings describes the process "
+      + "still running the OLD build until restart, and that a failed health "
+      + "request is itself the running API reporting a broken configuration. "
+      + "apply-migrations honours libpq's PG* variables instead of refusing "
+      + "them, and its refusal names DATABASE_URL as the equal alternative.",
   75: "A BARE SHELL IS NOT THE PROCESS MANAGER. Minutes after build 74 fixed "
       + "the 502, the preflight run over SSH reported every variable missing on "
       + "the machine where the API was serving fine, and db:apply-migrations "

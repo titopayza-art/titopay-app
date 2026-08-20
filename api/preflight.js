@@ -62,8 +62,25 @@ const CORE_NAMES = [
   "JWT_REFRESH_SECRET", "REFRESH_TOKEN_SECRET",
   "IDENTITY_PEPPER"
 ];
+// "Nothing" is judged against EVERY name the API reads, not just the required
+// core. A shell holding NODE_ENV=production and the SMTP block plainly does see
+// TitoPay configuration, and telling that operator they see "no configuration
+// at all" would be false — their missing core variables are real problems to
+// fix, not somebody else's environment. .env.example is the declaration of all
+// names and ships beside this file; if it is somehow absent, fall back to the
+// core list rather than guessing.
+function knownNames() {
+  try {
+    return fs.readFileSync(path.join(__dirname, ".env.example"), "utf8")
+      .split("\n")
+      .map((line) => (line.match(/^([A-Z][A-Z0-9_]*)=/) || [])[1])
+      .filter(Boolean);
+  } catch {
+    return CORE_NAMES;
+  }
+}
 const shellSeesNothing =
-  CORE_NAMES.every((name) => !process.env[name])
+  knownNames().every((name) => !process.env[name])
   && !fs.existsSync(path.resolve(process.cwd(), ".env"))
   && !fs.existsSync(path.resolve(process.cwd(), "api", ".env"));
 
@@ -174,8 +191,12 @@ if (!problems.length) {
     console.log("");
     console.log("To check the RUNNING API, ask it directly:");
     console.log("    curl -s https://api.titopay.co.za/v1/health");
-    console.log("Its configWarnings field counts the problems the live process actually");
-    console.log("started with. Zero means its configuration is complete.");
+    console.log("Its configWarnings field counts the problems the live process started");
+    console.log("with. Zero means the RUNNING process has a complete configuration —");
+    console.log("the process serving now, which is the OLD build until you restart; a");
+    console.log("variable this new build adds will not show there until it runs. And if");
+    console.log("that request itself fails, the running API is telling you its own");
+    console.log("configuration is genuinely broken, most often the database connection.");
     console.log("");
     console.log("To make the scripts in this directory (this preflight, db:apply-migrations)");
     console.log("see what the API sees, create a .env here with the same values the process");

@@ -39,11 +39,19 @@ const { config } = require("../src/config/env");
 // systemd setups the running API gets its variables injected by the manager,
 // and a login shell does not inherit them — so this script can be missing its
 // configuration on the same machine where the API is serving fine.
-if (!config.postgresUrl) {
-  console.error("\n  POSTGRES_URL is not set in this shell, so there is no database to apply");
-  console.error("  migrations to. (Without it the Postgres client falls back to your OS");
-  console.error("  username, which is where a confusing `password authentication failed");
-  console.error("  for user \"root\"` comes from.)");
+// libpq's own variables are a legitimate way to configure the client, and pg
+// honours them when no connection string is given — a shell set up with
+// PGHOST/PGDATABASE/PGUSER worked before this guard existed and must keep
+// working. The refusal is only for a shell with NEITHER form of configuration,
+// where the client's last resort is localhost as the OS username.
+const hasLibpqConfig = ["PGHOST", "PGDATABASE", "PGUSER", "PGPORT"]
+  .some((name) => process.env[name]);
+
+if (!config.postgresUrl && !hasLibpqConfig) {
+  console.error("\n  POSTGRES_URL is not set in this shell (DATABASE_URL works too), so there");
+  console.error("  is no database to apply migrations to. (Without it the Postgres client");
+  console.error("  falls back to your OS username, which is where a confusing `password");
+  console.error("  authentication failed for user \"root\"` comes from.)");
   console.error("\n  The running API may be configured correctly even so: on cPanel, pm2 and");
   console.error("  systemd setups its variables come from the process manager, which this");
   console.error("  shell does not inherit. Either pass the same value the API uses:");

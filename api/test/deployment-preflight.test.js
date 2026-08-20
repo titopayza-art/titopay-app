@@ -343,6 +343,79 @@ test("a shell with no configuration at all is told where the configuration proba
   assert.match(output, /create a \.env here/, "and how to make shell scripts see what the API sees");
 });
 
+test("a shell holding ANY TitoPay variable is not told it sees nothing at all", () => {
+  // The adversarial review's catch: judging "nothing" against only the seven
+  // core names called a shell holding NODE_ENV=production and the SMTP block
+  // one that "SEES NO TITOPAY CONFIGURATION AT ALL", which is false — that
+  // operator's missing core variables are real problems, not somebody else's
+  // environment. "Nothing" is now judged against every name .env.example
+  // declares.
+  let output = "";
+  try {
+    output = execFileSync(process.execPath, [path.join(API, "preflight.js")], {
+      cwd: bareDir(),
+      env: { PATH: process.env.PATH, SMTP_HOST: "mail.titopay.co.za", EMAIL_PROVIDER: "smtp" },
+      encoding: "utf8"
+    });
+  } catch (error) {
+    output = `${error.stdout || ""}${error.stderr || ""}`;
+  }
+  assert.doesNotMatch(output, /THIS SHELL SEES NO TITOPAY CONFIGURATION/,
+    "SMTP_HOST is TitoPay configuration; this shell is partly configured, not bare");
+  assert.match(output, /POSTGRES_URL or DATABASE_URL is not set/, "and its real problems still print");
+});
+
+test("the health-endpoint pointer says whose configuration it reports, and what a failed request means", () => {
+  // Two more review catches. configWarnings comes from the process that is
+  // STILL RUNNING — the old build until the restart — so a variable the new
+  // build adds cannot show there yet; saying "zero means complete" without
+  // that caveat steers the operator wrong in exactly the build-71 scenario
+  // this tool exists for. And when the running API's database is broken, the
+  // health request itself fails, so the absence of the field is itself the
+  // signal.
+  let output = "";
+  try {
+    output = execFileSync(process.execPath, [path.join(API, "preflight.js")],
+      { cwd: bareDir(), env: { PATH: process.env.PATH }, encoding: "utf8" });
+  } catch (error) {
+    output = `${error.stdout || ""}${error.stderr || ""}`;
+  }
+  assert.match(output, /the OLD build until you restart/);
+  assert.match(output, /if\nthat request itself fails|that request itself fails/,
+    "a failed health request must be explained as the running API's own report");
+});
+
+test("apply-migrations honours libpq's PG* variables instead of refusing them", () => {
+  // A shell configured the libpq way — PGHOST/PGDATABASE/PGUSER, no
+  // POSTGRES_URL — worked before the guard existed, because pg reads those
+  // when no connection string is given. The refusal must not break it.
+  let output = "";
+  try {
+    output = execFileSync(process.execPath, [path.join(API, "scripts", "apply-migrations.js")], {
+      cwd: bareDir(),
+      env: { PATH: process.env.PATH, PGHOST: "127.0.0.1", PGPORT: "55432", PGUSER: "postgres", PGDATABASE: "titopay" },
+      encoding: "utf8",
+      timeout: 60000
+    });
+  } catch (error) {
+    output = `${error.stdout || ""}${error.stderr || ""}`;
+  }
+  assert.doesNotMatch(output, /POSTGRES_URL is not set in this shell/,
+    "PG* variables ARE database configuration; the script must attempt the connection, not refuse");
+});
+
+test("the refusal names DATABASE_URL as the equal alternative it is", () => {
+  let output = "";
+  try {
+    output = execFileSync(process.execPath, [path.join(API, "scripts", "apply-migrations.js")],
+      { cwd: bareDir(), env: { PATH: process.env.PATH }, encoding: "utf8" });
+  } catch (error) {
+    output = `${error.stdout || ""}${error.stderr || ""}`;
+  }
+  assert.match(output, /DATABASE_URL works too/,
+    "env.js accepts either name; naming only one tells a DATABASE_URL user their configuration is wrong");
+});
+
 test("the bare-shell explanation does not appear when configuration is merely incomplete", () => {
   let output = "";
   try {
@@ -377,7 +450,7 @@ test("apply-migrations with no database URL says so, instead of failing as the O
   assert.equal(status, 1, "no database URL means nothing to migrate; exit non-zero so a deploy script stops");
   assert.match(output, /POSTGRES_URL is not set in this shell/,
     "the missing variable must be named in those words");
-  assert.match(output, /password authentication failed/,
+  assert.match(output, /password\s+authentication failed/,
     "and the confusing pg fallback error must be explained before anyone sees it for real");
   assert.match(output, /process manager/, "with the same shell-versus-service explanation as the preflight");
   assert.match(output, /POSTGRES_URL="<connection string>" npm run db:apply-migrations/,
