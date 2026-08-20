@@ -136,9 +136,32 @@ async function contributionRows(groupId) {
   return rows;
 }
 
+// A TOTAL IS COUNTED IN THE DATABASE, NOT IN A PAGE OF ROWS.
+//
+// contributionRows is a DISPLAY query: newest first, capped at 500, which is
+// right for a register a person scrolls. Summing it was not. Past 500
+// contributions the cap silently dropped the OLDEST rows, so a group's recorded
+// savings started going DOWN as it kept saving: 20 members contributing monthly
+// cross 500 records inside 26 months, which is an ordinary stokvel, not an edge
+// case. The same mistake gave each member a shrinking "your contribution".
+//
+// Both totals now come from SUM() over every matching row. The display query is
+// unchanged and still capped, because that part was never the problem.
+async function contributionTotals(groupId, userId = null) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(t.amount), 0) AS contributed,
+            COALESCE(SUM(t.amount) FILTER (WHERE t.user_id = $2::uuid), 0) AS mine
+       FROM transactions t
+      WHERE t.service_code IN ('stockvel', 'stockvel_contribution')
+        AND t.status = 'completed'
+        AND (t.metadata->>'stockvelGroupId') = $1`,
+    [String(groupId), userId]
+  );
+  return { contributed: money(rows[0].contributed), mine: money(rows[0].mine) };
+}
+
 async function groupBalance(groupId) {
-  const contributions = await contributionRows(groupId);
-  const contributed = money(contributions.reduce((sum, row) => sum + Number(row.amount || 0), 0));
+  const { contributed } = await contributionTotals(groupId);
   const { rows } = await pool.query(
     "SELECT COALESCE(SUM(amount), 0) AS approved FROM stockvel_withdrawals WHERE group_id = $1 AND status = 'approved'",
     [groupId]
@@ -264,7 +287,9 @@ async function getGroup(userId, groupId) {
     "SELECT * FROM stockvel_meetings WHERE group_id = $1 ORDER BY opened_at DESC LIMIT 20",
     [groupId]
   );
-  const myContribution = money(contributions.filter((row) => row.user_id === userId).reduce((sum, row) => sum + Number(row.amount || 0), 0));
+  // Counted in the database for the same reason the group total is: filtering
+  // the capped display page would under-report a long-standing member.
+  const { mine: myContribution } = await contributionTotals(groupId, userId);
   return shapeGroup(group, {
     role: member.role,
     can_manage: ["chair", "organiser"].includes(member.role),

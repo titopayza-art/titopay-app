@@ -19,10 +19,20 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 71;
+const API_BUILD = 72;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  72: "STOKVEL MONEY INTEGRITY. A group's recorded savings and each member's "
+      + "own total were summed over the register DISPLAY query, which is capped "
+      + "at the 500 most recent rows, so a group that crossed 500 contributions "
+      + "watched its balance fall. Both totals now come from SUM() in SQL. The "
+      + "audit line written AFTER a transfer commits is no longer allowed to "
+      + "throw: a failure there reported a payment that had already succeeded as "
+      + "failed, and the customer's next move is to pay again. Guessing an "
+      + "invite code now costs: POST /v1/stokvels/join and the invitation accept "
+      + "path share a five-per-fifteen-minutes limiter in their own bucket, so "
+      + "mistyped codes cannot eat a customer's login attempts.",
   71: "SECURITY REMEDIATION FROM THE 19 AUGUST 2026 AUDIT. Identity numbers are "
       + "now keyed. They were digested with a constant in-source prefix, which "
       + "is a domain separator and not a pepper, so a dumped users table gave up "

@@ -5,6 +5,7 @@ const { requireAuth } = require("../middleware/auth");
 const { requireUuid } = require("../lib/validation");
 const { AppError } = require("../lib/errors");
 const svc = require("../services/stockvel-service");
+const { stokvelJoinLimiter } = require("../middleware/rate-limits");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -26,7 +27,7 @@ router.post("/", run(async (req, res) => {
   res.status(201).json({ ok: true, group: await svc.createGroup(req.auth.userId, req.body || {}) });
 }));
 
-router.post("/join", run(async (req, res) => {
+router.post("/join", stokvelJoinLimiter, run(async (req, res) => {
   res.json({ ok: true, group: await svc.joinByCode(req.auth.userId, req.body?.inviteCode || req.body?.code) });
 }));
 
@@ -35,7 +36,7 @@ router.post("/join", run(async (req, res) => {
 router.get("/invitations", run(async (_req, res) => {
   res.json({ ok: true, items: [] });
 }));
-router.post("/invitations/:id/accept", run(async (req, res) => {
+router.post("/invitations/:id/accept", stokvelJoinLimiter, run(async (req, res) => {
   res.json({ ok: true, group: await svc.joinByCode(req.auth.userId, req.params.id) });
 }));
 router.post("/invitations/:id/decline", run(async (_req, res) => {

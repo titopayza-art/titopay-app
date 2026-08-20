@@ -632,6 +632,18 @@ async function createTransaction(actor, payload) {
       holdDays: pendingHold.holdDays
     }).catch(() => {});
   }
+  // NOTHING AFTER COMMIT MAY TELL THE CALLER THE PAYMENT FAILED.
+  //
+  // The money is already gone by this line; the transaction committed above and
+  // cannot be undone by anything here. An unguarded throw therefore reported a
+  // failure for a payment that had SUCCEEDED, and the customer's natural next
+  // move is to try again. I hit exactly this while seeding: 28 contributions
+  // committed, 141 ledger rows written, and every single call raised an error.
+  //
+  // The notifyHold call directly above already gets this right and says so.
+  // The audit write did not. A failure to record the audit line is a logging
+  // problem worth shouting about in the server log; it is not a reason to tell
+  // somebody their money did not move.
   await writeAuditLog({
     actorType: actor.userType,
     actorId: actor.userId,
@@ -641,6 +653,10 @@ async function createTransaction(actor, payload) {
     ipAddress: actor.ipAddress,
     userAgent: actor.userAgent,
     metadata: { serviceCode: normalizedServiceCode, amount: chargedAmount, fee: preview.fee, recipient: payload.recipient || null }
+  }).catch((error) => {
+    console.error("[transaction] audit log not written; the transfer still stands", {
+      transactionId: txId, serviceCode: normalizedServiceCode, reason: error?.message || "unknown"
+    });
   });
   try {
     const { rows: accountRows } = await pool.query("SELECT email,full_name FROM users WHERE id=$1", [actor.userId]);
@@ -1002,6 +1018,8 @@ async function reverseTransaction(id, actor) {
   } finally {
     client.release();
   }
+  // Same rule as the completion path: the reversal has committed, so a failure
+  // to write the audit line must not surface as a failed reversal.
   await writeAuditLog({
     actorType: actor.userType,
     actorId: actor.userId,
@@ -1011,6 +1029,10 @@ async function reverseTransaction(id, actor) {
     ipAddress: actor.ipAddress,
     userAgent: actor.userAgent,
     metadata: { automaticLedgerReversal: true }
+  }).catch((error) => {
+    console.error("[transaction] reversal audit log not written; the reversal still stands", {
+      transactionId: id, reason: error?.message || "unknown"
+    });
   });
   return reversedTransaction;
 }

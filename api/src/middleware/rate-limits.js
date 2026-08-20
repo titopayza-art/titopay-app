@@ -223,6 +223,26 @@ const otpLimiter = rateLimit({
   handler: rateLimitHandler("otp", 15 * 60)
 });
 
+// A STOKVEL INVITE CODE IS A GUESSABLE SECRET, SO GUESSING MUST COST SOMETHING.
+//
+// Codes are SV plus eight digits, which is a 10^8 space, and the join endpoint
+// carried only the general 120-per-minute fairness cap: 172,800 attempts a day
+// from one address. Against a few thousand live groups that lands hits, and a
+// hit is not harmless. Joining is instant with no organiser approval, and the
+// stranger immediately reads the full register: every member's name, what each
+// of them has contributed, and the group chat.
+//
+// Its OWN bucket, not authLimiter's. Sharing that store would let a few mistyped
+// invite codes eat the attempts a person needs to sign in, which turns a privacy
+// control into an account lockout. sensitiveKey includes the authenticated user
+// id, so this counts per person rather than per address and shared carrier NAT
+// cannot make one customer lock out another.
+const stokvelJoinLimiter = rateLimit({
+  ...sensitiveLimiterOptions,
+  store: sharedStore("stokvel-join"),
+  handler: rateLimitHandler("stokvel_join", 15 * 60)
+});
+
 // Deliberately left in process memory. This one is a fairness control rather
 // than a security control — 120 requests a minute is about stopping a runaway
 // client, not about stopping an attacker — and putting a database write in
@@ -266,6 +286,7 @@ const publicContactLimiter = rateLimit({
 module.exports = {
   authLimiter,
   otpLimiter,
+  stokvelJoinLimiter,
   generalLimiter,
   publicContactLimiter,
   publicBookingLimiter,

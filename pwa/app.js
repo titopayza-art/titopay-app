@@ -17745,10 +17745,21 @@ async function submitStockvelContribution(form, data) {
     confirmLabel: "Contribute now"
   });
   if (!confirmed) return;
+  // AN IDEMPOTENCY KEY THAT CHANGES ON RETRY IS NOT AN IDEMPOTENCY KEY.
+  //
+  // This minted a fresh key on every submit, so the one case the key exists for
+  // was the one case it could not cover: a contribution that actually SUCCEEDED
+  // but reported an error, where the member's obvious next move is to tap again
+  // and pay twice. The key is now minted once per attempt and held on the form,
+  // so a retry of the same contribution reuses it and the server recognises the
+  // duplicate. It is cleared on success, so a second, deliberate contribution
+  // still gets its own key and is never mistaken for a repeat.
+  form.dataset.contributionKey ||= createClientTransactionKey("stockvel_contribution");
   const result = await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}/contributions`, {
     method: "POST",
-    body: { amount, cycle: data.reference || "", idempotencyKey: createClientTransactionKey("stockvel_contribution") }
+    body: { amount, cycle: data.reference || "", idempotencyKey: form.dataset.contributionKey }
   });
+  delete form.dataset.contributionKey;
   showToast(`Contribution of ${money(result.amount || amount)} made. Reference ${result.reference}.`);
   refreshData().catch(() => {});
   try { await openStockvelDashboard(groupId); } catch { closeModal(); }
