@@ -45,7 +45,7 @@ const DEFAULT_SERVICES = [
   ["book", "Book", "calendar", "book", "Book a table, an appointment or a service, and take bookings for your own business.", "active", true, true, 305, "new"],
   ["business-ticketing-staff", "Event Scanners", "contacts", "business-ticketing-staff", "The people who scan tickets at your door. Add them, and they scan from their own phone.", "active", false, true, 301, "new"],
   ["shop-marketplace", "Shop Marketplace", "store", "shop-marketplace", "Marketplace services for local brands and digital products.", "disabled", false, false, 310, "none"],
-  ["rewards", "Rewards", "sparkles", "rewards", "Personal rewards programme.", "disabled", false, false, 320, "none"],
+  ["rewards", "Rewards", "sparkles", "rewards", "Offers, promotions and coupon codes published by TitoPay.", "active", true, true, 320, "new"],
   ["business-rewards", "Business Rewards", "sparkles", "business-rewards", "Business rewards programme.", "disabled", false, false, 330, "none"],
   ["virtual-doctor", "Virtual Doctor", "health", "virtual-doctor", "Digital healthcare services.", "disabled", false, false, 340, "none"],
   ["travel", "Travel", "plane", "travel", "Travel booking and payment services.", "disabled", false, false, 350, "none"],
@@ -163,6 +163,7 @@ async function applyServiceCopyFixups() {
   );
   await openTicketsToBusinessOnce();
   await openBookToCustomersOnce();
+  await openRewardsOnce();
   // Priced changes ride the same one-shot mechanism, for the same reason: the
   // approved schedule only reaches a database through db:init, which also
   // overwrites every fee an operator has set by hand.
@@ -232,6 +233,37 @@ async function openBookToCustomersOnce() {
     if (rowCount) console.info("[services] Book is now available to personal accounts");
   } catch (error) {
     console.error("[services] could not open Book to personal accounts", { message: error.message });
+  }
+}
+
+// REWARDS GOES LIVE ONCE. The `rewards` row seeded by earlier builds is
+// disabled and invisible, and ON CONFLICT DO NOTHING means changing the
+// defaults never reaches an installed database. The Rewards screen now exists
+// (admin-published offers behind approval seats), so the tile switches on —
+// once. Guarded and one-shot exactly like the fixups above: if an operator
+// later hides or disables Rewards in the Service Builder, this must not switch
+// it back on. business-rewards stays disabled: business accounts see the same
+// single Rewards tile, not a duplicate.
+const REWARDS_OPEN_FIXUP_KEY = "service_fixup_rewards_open";
+async function openRewardsOnce() {
+  try {
+    const applied = await pool.query(
+      "SELECT 1 FROM platform_settings WHERE key = $1 LIMIT 1", [REWARDS_OPEN_FIXUP_KEY]);
+    if (applied.rows.length) return;
+    const { rowCount } = await pool.query(
+      `UPDATE service_config
+          SET status = 'active', personal_visible = TRUE, business_visible = TRUE,
+              feature_badge = 'new',
+              description = 'Offers, promotions and coupon codes published by TitoPay.',
+              updated_at = NOW()
+        WHERE service_code = 'rewards' AND status = 'disabled'`);
+    await pool.query(
+      `INSERT INTO platform_settings (key, value)
+       VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING`,
+      [REWARDS_OPEN_FIXUP_KEY, JSON.stringify({ appliedAt: new Date().toISOString(), rowsChanged: rowCount })]);
+    if (rowCount) console.info("[services] Rewards is now available to personal and business accounts");
+  } catch (error) {
+    console.error("[services] could not open Rewards", { message: error.message });
   }
 }
 

@@ -1,9 +1,9 @@
-const CACHE_NAME = "titopay-pwa-v458-stokvel-integrity";
+const CACHE_NAME = "titopay-pwa-v459-stokvel-integrity";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.min.css?v=454",
-  "./app.min.js?v=458",
+  "./styles.min.css?v=455",
+  "./app.min.js?v=459",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

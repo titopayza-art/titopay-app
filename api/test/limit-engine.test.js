@@ -96,7 +96,9 @@ test("a monthly VOLUME limit is never reused as a balance, daily or withdrawal l
   // The engine enforces them as different things too: balance headroom is its
   // own evaluation, and monthly volume comes from the ledger, not the balance.
   assert.match(ENGINE, /async function evaluateBalanceHeadroom/);
-  assert.match(COMPLIANCE, /FROM wallet_ledger wl[\s\S]{0,140}DATE_TRUNC\('month', NOW\(\)\)/);
+  // Build 88 anchored the month boundary to South African time: DATE_TRUNC
+  // runs on the SAST clock and the result converts back to a UTC instant.
+  assert.match(COMPLIANCE, /FROM wallet_ledger wl[\s\S]{0,200}DATE_TRUNC\('month', NOW\(\) AT TIME ZONE 'Africa\/Johannesburg'\) AT TIME ZONE 'Africa\/Johannesburg'/);
 });
 
 test("three levels, and the ladder climbs on every rail", () => {

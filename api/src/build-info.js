@@ -19,10 +19,19 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 89;
+const API_BUILD = 90;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  90: "REWARDS. New customer Rewards screen (PWA v459) served by GET "
+      + "/me/rewards: admin-published promotions, discounts, coupon codes, "
+      + "adverts and notices. Marketing drafts a publication in the console "
+      + "(v91); a CEO/COO/Senior Marketing seat approves it live; any "
+      + "marketing admin can withdraw one instantly. Audience targeting "
+      + "(personal/business/both), optional live window, per-user seen "
+      + "tracking feeds the tile's unseen badge, coupon copy counts feed "
+      + "engagement. Nothing here moves money. The dormant 'rewards' service "
+      + "tile switches on via a guarded one-shot fixup.",
   89: "ACCOUNT CLOSURE REQUESTS (Google Play deletion requirement). A customer "
       + "asks to close their profile from the Security Centre (PWA v458); the "
       + "request lands in the Admin Console's Support desk under a new Account "

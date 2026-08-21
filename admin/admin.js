@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v90";
+  return "admin-console-v91";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -171,6 +171,7 @@ const ADMIN_SERVICE_BUILDER_PERMISSIONS = ["service_builder", "services", "platf
 /* Every existing caller passes a message and nothing else, so the tone is
    read from the message itself. A confirmation and a failure no longer look
    identical, and no call site had to change to get it. */
+const REWARD_KIND_LABELS = { promotion: "Promotion", discount: "Discount", coupon: "Coupon", advert: "Advert", notice: "Notice" };
 const TOAST_ERROR_PATTERN = /\b(unable|failed|failure|cannot|can't|could not|error|invalid|expired|denied|rejected|not allowed|unavailable|no longer)\b/i;
 const TOAST_SUCCESS_PATTERN = /\b(saved|updated|created|added|sent|queued|approved|resolved|completed|refreshed|exported|disabled|enabled|assigned|closed|reopened|released|transferred|archived|acknowledged|reversed|verified|rotated|retried|cancelled|signed out|taken over|applied|reloaded)\b/i;
 /* --------------------------------------------------------------------------
@@ -5870,13 +5871,68 @@ function renderPwaReviews(reviews = []) {
     </div>
   `;
 }
+/* Rewards publications: the customer-facing offers feed (PWA Rewards screen).
+   Same governance as announcements - marketing drafts, an approval seat (CEO /
+   COO / Senior Marketing) puts it live - plus an instant withdraw for live
+   publications, because a wrong offer must not wait for a seat. */
+function rewardStatusChip(publication = {}) {
+  const stateLabel = publication.liveState || publication.status || "pending_approval";
+  const text = String(stateLabel).replaceAll("_", " ");
+  if (stateLabel === "live") return `<span class="chip green">live</span>`;
+  if (stateLabel === "scheduled") return `<span class="chip orange">scheduled</span>`;
+  if (stateLabel === "withdrawn" || stateLabel === "rejected") return `<span class="chip red">${escapeHtml(text)}</span>`;
+  return `<span class="chip">${escapeHtml(text)}</span>`;
+}
+function rewardPreviewCardHtml({ kind = "promotion", title = "", body = "", couponCode = "", endsAt = "" } = {}) {
+  const kindLabel = REWARD_KIND_LABELS[kind] || "Offer";
+  const ends = endsAt ? new Date(endsAt) : null;
+  const endsText = ends && !Number.isNaN(ends.getTime()) ? `Ends ${ends.toLocaleDateString("en-ZA", { day: "numeric", month: "short" })}` : "";
+  return `<article class="reward-preview-card">
+    <div class="reward-preview-top">
+      <span class="reward-preview-chip">${escapeHtml(kindLabel)}</span>
+      ${endsText ? `<span class="reward-preview-ends">${escapeHtml(endsText)}</span>` : ""}
+    </div>
+    <strong class="reward-preview-title">${escapeHtml(title || "Offer title")}</strong>
+    <p class="reward-preview-body">${escapeHtml(body || "The offer message customers will read.")}</p>
+    ${couponCode ? `<div class="reward-preview-coupon"><strong class="reward-preview-code">${escapeHtml(String(couponCode).toUpperCase())}</strong><span class="reward-preview-copy">Copy code</span></div>` : ""}
+  </article>`;
+}
+function renderRewardPublications(publications = [], approvalRole = null) {
+  if (!publications.length) return `<p class="table-card-note">No rewards publications yet. Draft one in "Publish to Rewards" above.</p>`;
+  return `<div class="table-wrap"><table><thead><tr>
+      <th>Publication</th><th>Kind</th><th>Audience</th><th>Window</th><th>Status</th><th>Views</th><th>Copies</th><th>Actions</th>
+    </tr></thead><tbody>${publications.map((p) => {
+      const windowText = [p.startsAt ? `from ${new Date(p.startsAt).toLocaleDateString("en-ZA")}` : "", p.endsAt ? `until ${new Date(p.endsAt).toLocaleDateString("en-ZA")}` : ""].filter(Boolean).join(" ") || "always on";
+      const actions = p.status === "pending_approval"
+        ? (approvalRole
+          ? `<button type="button" class="secondary-btn" data-reward-approve="${escapeHtml(p.id)}">Approve as ${escapeHtml(String(approvalRole).toUpperCase())}</button>
+             <button type="button" class="secondary-btn reject-btn" data-reward-reject="${escapeHtml(p.id)}">Reject</button>`
+          : "Awaiting CEO/COO/Senior Marketing")
+        : p.status === "live"
+          ? `<button type="button" class="secondary-btn reject-btn" data-reward-withdraw="${escapeHtml(p.id)}">Withdraw now</button>`
+          : escapeHtml((p.decisionReason ? `${p.status}: ${p.decisionReason}` : (p.decidedBy ? `${p.status} by ${p.decidedBy}` : p.status)).replaceAll("_", " "));
+      return `<tr>
+        <td><strong>${escapeHtml(p.title)}</strong><small>${escapeHtml(String(p.body || "").slice(0, 120))}${String(p.body || "").length > 120 ? "…" : ""}</small>${p.couponCode ? `<small>Code: ${escapeHtml(p.couponCode)}</small>` : ""}</td>
+        <td>${escapeHtml(REWARD_KIND_LABELS[p.kind] || p.kind)}</td>
+        <td>${escapeHtml(p.audience)}</td>
+        <td>${escapeHtml(windowText)}</td>
+        <td>${rewardStatusChip(p)}</td>
+        <td>${escapeHtml(p.viewCount || 0)}</td>
+        <td>${escapeHtml(p.copyCount || 0)}</td>
+        <td>${actions}</td>
+      </tr>`;
+    }).join("")}</tbody></table></div>`;
+}
 async function renderMarketing(me = {}) {
   const content = document.getElementById("page-content");
-  const [smsState, announcementState, reviewState, emailState] = await Promise.all([
+  const [smsState, announcementState, reviewState, emailState, rewardsState] = await Promise.all([
     apiFetch("/admin/marketing/sms-campaigns"),
     apiFetch("/admin/marketing/announcements"),
     apiFetch("/admin/marketing/reviews"),
-    apiFetch("/admin/marketing/email-campaigns")
+    apiFetch("/admin/marketing/email-campaigns"),
+    // Rewards ships in API build 90. Against an older API this degrades to an
+    // empty queue instead of breaking the whole Marketing Centre.
+    apiFetch("/admin/marketing/rewards").catch(() => ({ publications: [], approvalRole: null }))
   ]);
   const rows = smsState.campaigns || [];
   const announcements = announcementState.campaigns || [];
@@ -5889,6 +5945,9 @@ async function renderMarketing(me = {}) {
   PAGE_EXPORTS.marketingAnnouncementApprovalRole = announcementState.approvalRole || null;
   PAGE_EXPORTS.marketingReviews = reviews;
   PAGE_EXPORTS.marketingEmailCampaigns = emailCampaigns;
+  const rewardPublications = rewardsState.publications || [];
+  PAGE_EXPORTS.marketingRewards = rewardPublications;
+  PAGE_EXPORTS.marketingRewardsApprovalRole = rewardsState.approvalRole || null;
   PAGE_EXPORTS.marketingQrAssets = PAGE_EXPORTS.marketingQrAssets || [];
   const canApprove = Boolean(smsState.canApprove || canApproveMarketingSms(me.role));
   const audiences = smsState.audiences || { personal: 0, business: 0, both: 0 };
@@ -5964,14 +6023,42 @@ async function renderMarketing(me = {}) {
     </section>
     <section id="campaign-preview-host"></section>
     <section id="mkt-calendar-host"></section>
+    <section class="panel-grid">
+      <section class="panel">
+        <h3>Publish to Rewards</h3>
+        <p>Adverts, discounts, promotions and coupon codes for the PWA Rewards screen. A publication goes live only after CEO, COO or Senior Marketing approval, and any marketing admin can withdraw a live one instantly.</p>
+        <form id="marketing-rewards-form" class="form-grid">
+          <div class="field"><label>Kind</label><select name="kind" id="reward-kind" required>
+            <option value="promotion">Promotion</option><option value="discount">Discount</option>
+            <option value="coupon">Coupon code</option><option value="advert">Advert</option>
+            <option value="notice">Notice</option></select></div>
+          <div class="field"><label>Audience</label><select name="audience" required>
+            <option value="both">Personal and Business users</option>
+            <option value="personal">Personal users</option>
+            <option value="business">Business users</option></select></div>
+          <div class="field field-full"><label>Title</label><input name="title" maxlength="80" minlength="3" placeholder="What customers see first" required></div>
+          <div class="field field-full"><label>Message</label><textarea name="body" rows="4" maxlength="600" minlength="10" placeholder="Write the offer exactly as customers should read it." required></textarea></div>
+          <div class="field" id="reward-coupon-field"><label>Coupon code</label><input name="couponCode" maxlength="40" placeholder="e.g. SPRING25"><small>Required for the Coupon kind. Customers get a one-tap copy button.</small></div>
+          <div class="field"><label>Starts (optional)</label><input name="startsAt" type="datetime-local"></div>
+          <div class="field"><label>Ends (optional)</label><input name="endsAt" type="datetime-local"><small>The offer disappears from the app by itself when it ends.</small></div>
+          <button class="primary-btn" type="submit">Submit for approval</button>
+        </form>
+      </section>
+      <section class="panel">
+        <h3>Customer Preview</h3>
+        <p>The card exactly as the PWA Rewards screen renders it, updating as you type.</p>
+        <div id="reward-preview-host"></div>
+      </section>
+    </section>
     ${tableCard("PWA Announcement Approval Queue", renderInAppAnnouncements(announcements, announcementState.approvalRole || null), "Announcements are delivered to the TitoPay PWA inbox after approval by either the CEO or COO. No SMS is sent by this workflow.")}
+    ${tableCard("Rewards Publication Queue", renderRewardPublications(rewardPublications, rewardsState.approvalRole || null), "Live publications are on every matching customer's Rewards screen right now. Views count customers who have opened the screen; copies count coupon-code copy taps.")}
     ${tableCard("PWA Reviews - Help us improve", renderPwaReviews(reviews), "Reviews submitted from the TitoPay PWA Profile page. Contact details are only shown where the user gave permission.")}
     ${tableCard("SMS Approval Queue", renderMarketingSmsCampaigns(rows, canApprove), "Marketing and Communications can draft SMS messages. CEO or COO approval sends the message to existing TitoPay phone numbers for the selected audience.")}
     ${tableCard("Email Production Approval Queue", renderMarketingEmailCampaigns(emailCampaigns, Boolean(emailState.canApprove || canApprove)), "Approved productions publish through the Email Centre background queue. Email notification delivery is free; configured OTP and statement prices remain separate pricing services.")}
   `;
   // Registered before the three submit handlers below, so it runs first and can
   // stop them: a template that still says [[DATE]] must not go out to customers.
-  ["marketing-announcement-form", "marketing-sms-form", "marketing-email-form"]
+  ["marketing-announcement-form", "marketing-sms-form", "marketing-email-form", "marketing-rewards-form"]
     .forEach((formId) => guardMarketingPlaceholders(formId));
   const announcementAudience = document.getElementById("announcement-audience");
   const announcementRecipientField = document.getElementById("announcement-recipient-field");
@@ -5983,6 +6070,47 @@ async function renderMarketing(me = {}) {
   };
   announcementAudience?.addEventListener("change", syncAnnouncementRecipient);
   syncAnnouncementRecipient();
+  const rewardsForm = document.getElementById("marketing-rewards-form");
+  const rewardPreviewHost = document.getElementById("reward-preview-host");
+  const syncRewardPreview = () => {
+    if (!rewardsForm || !rewardPreviewHost) return;
+    const data = new FormData(rewardsForm);
+    const kind = String(data.get("kind") || "promotion");
+    const couponInput = document.getElementById("reward-coupon-field")?.querySelector("input");
+    if (couponInput) couponInput.required = kind === "coupon";
+    rewardPreviewHost.innerHTML = rewardPreviewCardHtml({
+      kind,
+      title: String(data.get("title") || ""),
+      body: String(data.get("body") || ""),
+      couponCode: String(data.get("couponCode") || ""),
+      endsAt: String(data.get("endsAt") || "")
+    });
+  };
+  rewardsForm?.addEventListener("input", syncRewardPreview);
+  rewardsForm?.addEventListener("change", syncRewardPreview);
+  syncRewardPreview();
+  rewardsForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      await apiFetch("/admin/marketing/rewards", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: data.get("kind"),
+          audience: data.get("audience"),
+          title: data.get("title"),
+          body: data.get("body"),
+          couponCode: data.get("couponCode"),
+          startsAt: data.get("startsAt") ? new Date(data.get("startsAt")).toISOString() : "",
+          endsAt: data.get("endsAt") ? new Date(data.get("endsAt")).toISOString() : ""
+        })
+      });
+      showToast("Rewards publication submitted for approval");
+      await renderMarketing(PAGE_EXPORTS.currentMe || {});
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  });
   document.getElementById("marketing-announcement-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -7928,6 +8056,57 @@ document.addEventListener("click", async (event) => {
       showToast(adminErrorMessage(error.message));
     } finally {
       announcementApprove.disabled = false;
+    }
+    return;
+  }
+  const rewardApprove = event.target.closest("[data-reward-approve]");
+  if (rewardApprove) {
+    const publicationId = rewardApprove.dataset.rewardApprove;
+    const publication = (PAGE_EXPORTS.marketingRewards || []).find((item) => item.id === publicationId);
+    const approvalRole = PAGE_EXPORTS.marketingRewardsApprovalRole || "executive";
+    if (!window.confirm(`Put "${publication?.title || "this publication"}" live on the Rewards screen for ${publication?.audience || "both"} users, as ${String(approvalRole).toUpperCase()}?`)) return;
+    rewardApprove.disabled = true;
+    try {
+      await apiFetch(`/admin/marketing/rewards/${publicationId}/approve`, { method: "POST", body: JSON.stringify({}) });
+      showToast("Publication is live on the Rewards screen");
+      await renderMarketing(PAGE_EXPORTS.currentMe || {});
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+      rewardApprove.disabled = false;
+    }
+    return;
+  }
+  const rewardReject = event.target.closest("[data-reward-reject]");
+  if (rewardReject) {
+    const publicationId = rewardReject.dataset.rewardReject;
+    const publication = (PAGE_EXPORTS.marketingRewards || []).find((item) => item.id === publicationId);
+    const reason = marketingRejectionReason(publication?.title || "this publication");
+    if (reason === null) return;
+    rewardReject.disabled = true;
+    try {
+      await apiFetch(`/admin/marketing/rewards/${publicationId}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+      showToast("Publication rejected - nothing reached customers");
+      await renderMarketing(PAGE_EXPORTS.currentMe || {});
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+      rewardReject.disabled = false;
+    }
+    return;
+  }
+  const rewardWithdraw = event.target.closest("[data-reward-withdraw]");
+  if (rewardWithdraw) {
+    const publicationId = rewardWithdraw.dataset.rewardWithdraw;
+    const publication = (PAGE_EXPORTS.marketingRewards || []).find((item) => item.id === publicationId);
+    if (!window.confirm(`Withdraw "${publication?.title || "this publication"}" from every customer's Rewards screen immediately?`)) return;
+    const reason = window.prompt("Optional: note why it is being withdrawn (recorded on the queue).") || "";
+    rewardWithdraw.disabled = true;
+    try {
+      await apiFetch(`/admin/marketing/rewards/${publicationId}/withdraw`, { method: "POST", body: JSON.stringify({ reason }) });
+      showToast("Publication withdrawn");
+      await renderMarketing(PAGE_EXPORTS.currentMe || {});
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+      rewardWithdraw.disabled = false;
     }
     return;
   }

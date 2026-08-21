@@ -756,6 +756,40 @@ CREATE INDEX IF NOT EXISTS idx_announcement_approvals_campaign
 CREATE INDEX IF NOT EXISTS idx_announcement_reads_user
   ON announcement_reads (user_id, read_at DESC);
 
+-- Rewards publications: admin-published offers (promotions, discounts,
+-- coupons, adverts, notices) served to the customer Rewards screen once an
+-- approval seat puts them live. Mirrored by ensureRewardsSchema in
+-- rewards-service.js — keep the two in step.
+CREATE TABLE IF NOT EXISTS reward_publications (
+  id UUID PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('promotion', 'discount', 'coupon', 'advert', 'notice')),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  coupon_code TEXT,
+  audience TEXT NOT NULL DEFAULT 'both' CHECK (audience IN ('personal', 'business', 'both')),
+  starts_at TIMESTAMPTZ,
+  ends_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'pending_approval'
+    CHECK (status IN ('pending_approval', 'live', 'rejected', 'withdrawn')),
+  copy_count INTEGER NOT NULL DEFAULT 0,
+  created_by UUID NOT NULL REFERENCES admin_users(id) ON DELETE RESTRICT,
+  decided_by UUID REFERENCES admin_users(id) ON DELETE SET NULL,
+  decided_at TIMESTAMPTZ,
+  decision_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_reward_publications_status
+  ON reward_publications (status, created_at DESC);
+CREATE TABLE IF NOT EXISTS reward_publication_reads (
+  publication_id UUID NOT NULL REFERENCES reward_publications(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (publication_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reward_publication_reads_user
+  ON reward_publication_reads (user_id, seen_at DESC);
+
 CREATE TABLE IF NOT EXISTS trusted_devices (
   id UUID PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -1383,7 +1417,7 @@ INSERT INTO service_config (
   ('invoice', 'Invoice', 'list', 'invoice', 'Create business invoices. PDF download is R2.50.', 0, 0, 'active', FALSE, TRUE, 180, 'none'),
   ('quote', 'Quote', 'list', 'quote', 'Create customer quotes. PDF download is R2.50.', 0, 0, 'active', FALSE, TRUE, 190, 'none'),
   ('proforma-invoice', 'Proforma Invoice', 'list', 'proforma-invoice', 'Create proforma invoices. PDF download is R2.50.', 0, 0, 'active', FALSE, TRUE, 195, 'none'),
-  ('rewards', 'Rewards', 'sparkles', 'rewards', 'Personal rewards programme.', 0, 0, 'disabled', FALSE, FALSE, 260, 'none'),
+  ('rewards', 'Rewards', 'sparkles', 'rewards', 'Offers, promotions and coupon codes published by TitoPay.', 0, 0, 'active', TRUE, TRUE, 260, 'new'),
   ('business-rewards', 'Business Rewards', 'sparkles', 'business-rewards', 'Business rewards programme.', 0, 0, 'disabled', FALSE, FALSE, 270, 'none'),
   ('get-cash', 'Get Cash', 'withdraw', 'get-cash', 'Personal cash-out services.', 0, 0, 'disabled', FALSE, FALSE, 280, 'none'),
   ('cash-back', 'Cash Back', 'refresh', 'cash-back', 'Business cashback services.', 0, 0, 'disabled', FALSE, FALSE, 290, 'none')

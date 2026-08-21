@@ -4193,6 +4193,63 @@ router.post("/marketing/announcements/:id/approve", requireAdminPermission("mark
   }
 });
 
+// REWARDS PUBLICATIONS — the customer-facing offers feed. Same governance as
+// announcements: marketing drafts, an approval seat (CEO / COO / Senior
+// Marketing) puts it live. Withdraw is deliberately looser: any marketing
+// admin can pull a live publication instantly, because a wrong offer on every
+// customer's screen must not wait for a seat to come online.
+const rewardsService = require("../services/rewards-service");
+
+router.get("/marketing/rewards", requireAdminPermission("marketing"), async (_req, res, next) => {
+  try {
+    res.json({
+      ok: true,
+      publications: await rewardsService.listPublicationsForAdmin(),
+      approvalRole: marketingApprovalSeat(_req.auth?.role)
+    });
+  } catch (error) { next(error); }
+});
+
+router.post("/marketing/rewards", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    const publication = await rewardsService.createPublication(req.body || {}, req.auth.userId, {
+      ipAddress: req.ip, userAgent: req.get("user-agent")
+    });
+    res.status(201).json({ ok: true, publication });
+  } catch (error) { next(error); }
+});
+
+router.post("/marketing/rewards/:id/approve", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    const approvalRole = marketingApprovalSeat(req.auth?.role);
+    if (!approvalRole) throw new AppError(403, "Approval requires the CEO, the COO or Senior Marketing");
+    const publicationId = requireUuid(req.params.id, "Publication ID");
+    res.json({ ok: true, publication: await rewardsService.approvePublication(publicationId, req.auth.userId, approvalRole, {
+      ipAddress: req.ip, userAgent: req.get("user-agent")
+    }) });
+  } catch (error) { next(error); }
+});
+
+router.post("/marketing/rewards/:id/reject", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    const approvalRole = marketingApprovalSeat(req.auth?.role);
+    if (!approvalRole) throw new AppError(403, "Rejection requires the CEO, the COO or Senior Marketing");
+    const publicationId = requireUuid(req.params.id, "Publication ID");
+    res.json({ ok: true, publication: await rewardsService.rejectPublication(publicationId, req.auth.userId, req.body?.reason, {
+      ipAddress: req.ip, userAgent: req.get("user-agent")
+    }) });
+  } catch (error) { next(error); }
+});
+
+router.post("/marketing/rewards/:id/withdraw", requireAdminPermission("marketing"), async (req, res, next) => {
+  try {
+    const publicationId = requireUuid(req.params.id, "Publication ID");
+    res.json({ ok: true, publication: await rewardsService.withdrawPublication(publicationId, req.auth.userId, req.body?.reason, {
+      ipAddress: req.ip, userAgent: req.get("user-agent")
+    }) });
+  } catch (error) { next(error); }
+});
+
 router.get("/marketing/reviews", requireAdminPermission("marketing"), async (_req, res, next) => {
   try {
     const reviews = await getPwaCustomerReviews();

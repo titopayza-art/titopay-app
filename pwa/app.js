@@ -7245,7 +7245,7 @@ async function openCloseAccountModal() {
         <label>Why are you leaving? (optional)</label>
         <textarea name="reason" aria-label="Reason for closing the account" rows="3" maxlength="500" placeholder="Anything you want our team to know"></textarea>
       </div>
-      <p class="field-hint">Before closure is approved: withdraw or transfer any money in your wallet. Closing stops sign-in on every device. Records required by law (FICA) are retained.</p>
+      <p class="field-hint">Before closure is approved: withdraw or transfer any money in your wallet. Closing stops sign-in on every device. Records that FICA obliges TitoPay to keep are retained.</p>
       <button class="btn primary" type="submit">${icon("send")} Request account closure</button>
       <button class="btn ghost" type="button" data-close>Keep my account</button>
     </form>
@@ -24423,7 +24423,9 @@ function commercialServiceIcon(item = {}) {
     "business-ticketing-staff": "staff-badge",
     "enterprise-distribution": "bulk-distribution",
     "business-sales": "chart",
-    "tito-kids": "contacts"
+    "tito-kids": "contacts",
+    rewards: "gift",
+    "business-rewards": "gift"
   };
   return byAction[key] || normalizeIconName(item.service_icon || item.serviceIcon || key);
 }
@@ -24440,6 +24442,7 @@ function serviceTypeFromAction(action, status) {
   if (action === "learn") return "learn";
   if (action === "stockvel") return "stockvel";
   if (action === "tip") return "tip";
+  if (action === "rewards" || action === "business-rewards") return "rewards";
   return "transaction";
 }
 function visibleServices() {
@@ -24672,6 +24675,15 @@ function servicesView() {
       if (summary && summary.available && state.route === "services") render();
     }).catch(() => {});
   }
+  // The Rewards tile's "new" badge needs the server's unseen count. Fetched
+  // once, lazily, and only the badge depends on it - a failure means no badge,
+  // never a broken Services screen.
+  if (state.auth?.accessToken && state.rewardsUnseen == null) {
+    state.rewardsUnseen = 0;
+    loadRewardsUnseen().then((count) => {
+      if (count > 0 && state.route === "services") render();
+    }).catch(() => {});
+  }
   // Pure navigation entries. Each of these routes to a tab that already exists
   // in the bottom navigation, so a tile for them is a duplicate of the nav, not
   // a service. Business Profile was the one still leaking into the grid.
@@ -24759,7 +24771,10 @@ function groupedServiceSections(services) {
 function serviceTile(service, clickable = false) {
   if (!service) return "";
   const attrs = clickable ? `data-service="${esc(service.id)}"` : `data-auth-tab="login" aria-label="Sign in to use ${esc(service.label)}"`;
-  const badge = service.status === "coming_soon" ? "soon" : "";
+  const rewardsNew = service.type === "rewards" && Number(state.rewardsUnseen) > 0
+    ? `${state.rewardsUnseen > 9 ? "9+" : state.rewardsUnseen} new`
+    : "";
+  const badge = service.status === "coming_soon" ? "soon" : rewardsNew;
   const label = state.accountType === "business" && service.type === "receive"
     ? "Make a Sale"
     : state.accountType !== "business" && service.type === "qrPay"
@@ -24849,8 +24864,89 @@ function handleService(id) {
   if (service.type === "learn") return openLearnModal();
   if (service.type === "stockvel") return openStockvelModal();
   if (service.type === "tip") return openTipModal();
-  if (service.type === "rewards") return openInfoModal(service.label, service.description || "TitoPay rewards are earned from qualifying app spending and referrals.");
+  if (service.type === "rewards") return openRewardsModal();
   openTransactionModal(service);
+}
+async function loadRewardsUnseen() {
+  try {
+    const result = await api("/v1/auth/me/rewards");
+    state.rewardsUnseen = Number(result.unseenCount) || 0;
+  } catch (error) {
+    state.rewardsUnseen = 0;
+  }
+  return state.rewardsUnseen;
+}
+function rewardEndsCopy(endsAt) {
+  if (!endsAt) return "";
+  const ends = new Date(endsAt);
+  if (Number.isNaN(ends.getTime())) return "";
+  const days = Math.ceil((ends.getTime() - Date.now()) / 86400000);
+  if (days <= 0) return "Ending today";
+  if (days === 1) return "Ends tomorrow";
+  if (days <= 14) return `Ends in ${days} days`;
+  return `Ends ${formatDate(endsAt)}`;
+}
+function rewardCard(item) {
+  const [chipLabel, chipTone] = REWARD_KIND_CHIPS[item.kind] || ["Offer", "is-promo"];
+  const ends = rewardEndsCopy(item.endsAt);
+  return `<article class="reward-card${item.seen ? "" : " is-new"}">
+    <div class="reward-card-top">
+      <span class="reward-chip ${chipTone}">${esc(chipLabel)}</span>
+      ${ends ? `<span class="reward-ends">${esc(ends)}</span>` : ""}
+      ${item.seen ? "" : `<span class="reward-new-dot" role="img" aria-label="New offer"></span>`}
+    </div>
+    <h3 class="reward-title">${esc(item.title)}</h3>
+    <p class="reward-body">${esc(item.body)}</p>
+    ${item.couponCode ? `<div class="reward-coupon">
+      <strong class="reward-code">${esc(item.couponCode)}</strong>
+      <button class="btn ghost mini" type="button" data-copy-value="${esc(item.couponCode)}" data-copy-label="Coupon code" data-reward-copied="${esc(item.id)}">${icon("copy")} Copy code</button>
+    </div>` : ""}
+  </article>`;
+}
+// The Rewards screen. Read-only: everything on it was published by TitoPay's
+// team and signed off by an approval seat, and nothing here can move money.
+// Every failure path renders a friendly state - the screen must never be the
+// reason the app looks broken.
+async function openRewardsModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Rewards</p><h2>Offers &amp; Rewards</h2><p class="lead">Promotions, discounts and coupon codes, published in-app by TitoPay. We never send offers over WhatsApp or ask for your PIN to claim one.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="rewards-list" data-rewards-list>
+      <section class="empty-state compact-state">${icon("refresh")}<strong>Loading offers&hellip;</strong></section>
+    </div>
+  `);
+  let items = null;
+  try {
+    const result = await api("/v1/auth/me/rewards");
+    items = result.items || [];
+  } catch (error) {
+    items = null;
+  }
+  const host = document.querySelector("[data-rewards-list]");
+  if (!host) return;
+  if (items === null) {
+    host.innerHTML = `<section class="empty-state compact-state">${icon("refresh")}<strong>Offers are taking a moment</strong><p>We could not load them right now. Please try again shortly - your money and wallet are unaffected.</p></section>`;
+    return;
+  }
+  if (!items.length) {
+    state.rewardsUnseen = 0;
+    host.innerHTML = `<section class="empty-state compact-state">${icon("gift")}<strong>No offers right now</strong><p>When TitoPay publishes promotions, discounts or coupon codes, they appear here first - watch for the badge on the Rewards tile.</p></section>`;
+    return;
+  }
+  host.innerHTML = items.map(rewardCard).join("");
+  // Copy itself is handled by the global data-copy-value delegate; this only
+  // feeds the marketing dashboard's engagement count, so it never blocks.
+  host.querySelectorAll("[data-reward-copied]").forEach((button) => {
+    button.addEventListener("click", () => {
+      api(`/v1/auth/me/rewards/${button.dataset.rewardCopied}/copied`, { method: "POST", body: {} }).catch(() => {});
+    });
+  });
+  if (items.some((item) => !item.seen)) {
+    api("/v1/auth/me/rewards/seen", { method: "POST", body: {} }).catch(() => {});
+  }
+  state.rewardsUnseen = 0;
 }
 function isDisabledService(service) {
   return String(service.status || "").toLowerCase() === "disabled";
@@ -26563,6 +26659,15 @@ const EVENT_SOCIALS = [
   { key: "youtube", label: "YouTube", placeholder: "youtube.com/@yourevent" },
   { key: "whatsapp", label: "WhatsApp", placeholder: "wa.me/27821234567" }
 ];
+// What each publication kind is called on a card. Server vocabulary; this
+// only names it for the customer.
+const REWARD_KIND_CHIPS = {
+  promotion: ["Promotion", "is-promo"],
+  discount: ["Discount", "is-promo"],
+  coupon: ["Coupon code", "is-coupon"],
+  advert: ["Featured", "is-advert"],
+  notice: ["Notice", "is-notice"]
+};
 // What a buyer is told when a phase is not open. The server decides the state
 // and sends it with every ticket type; this only names it.
 const PHASE_CHIPS = {

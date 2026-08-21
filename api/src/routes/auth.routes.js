@@ -311,6 +311,43 @@ router.delete("/me/closure-request", requireAuth, async (req, res, next) => {
   }
 });
 
+const {
+  listRewardsForCustomer,
+  markRewardsSeen,
+  recordCouponCopy
+} = require("../services/rewards-service");
+const { requireUuid: requireRewardUuid } = require("../lib/validation");
+
+// The Rewards feed: admin-approved publications only. Read-only from this
+// side — a customer can never create, change or redeem anything here, so the
+// worst a bad request can do is see an empty list.
+router.get("/me/rewards", requireAuth, async (req, res, next) => {
+  try {
+    if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");
+    res.json({ ok: true, ...await listRewardsForCustomer(req.auth.userId, req.auth.accountType) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/me/rewards/seen", requireAuth, async (req, res, next) => {
+  try {
+    if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");
+    res.json({ ok: true, ...await markRewardsSeen(req.auth.userId, req.auth.accountType) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/me/rewards/:id/copied", requireAuth, async (req, res, next) => {
+  try {
+    if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");
+    res.json(await recordCouponCopy(requireRewardUuid(req.params.id, "Publication ID")));
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/me/login-mfa", requireAuth, async (req, res, next) => {
   try {
     if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");

@@ -467,14 +467,14 @@
       "service_name": "Rewards",
       "service_icon": "gift",
       "action": "rewards",
-      "description": "Personal rewards programme.",
+      "description": "Offers, promotions and coupon codes published by TitoPay.",
       "fee": 0,
       "commission": 0,
-      "status": "disabled",
-      "personal_visible": false,
-      "business_visible": false,
+      "status": "active",
+      "personal_visible": true,
+      "business_visible": true,
       "sort_order": 320,
-      "feature_badge": "none"
+      "feature_badge": "new"
     },
     {
       "service_code": "business-rewards",

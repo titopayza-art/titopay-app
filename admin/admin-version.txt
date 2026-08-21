@@ -1,6 +1,19 @@
 TitoPay Admin
-Build: admin-console-v90
-Date: 2026-08-16
+Build: admin-console-v91
+Date: 2026-08-21
+
+v91 - Rewards publications.
+
+  - Marketing Centre gains "Publish to Rewards": adverts, discounts,
+    promotions and coupon codes for the PWA's new Rewards screen, with a live
+    customer preview that renders the card exactly as the app will.
+  - Same governance as announcements: a CEO, COO or Senior Marketing seat
+    approves a publication live; any marketing admin can withdraw a live one
+    instantly. Views and coupon-copy counts show real engagement.
+  - Degrades safely against an older API: the queue shows empty instead of
+    breaking the Marketing Centre.
+  - Requires API build 90 (the queue itself); everything else on the page is
+    unchanged.
 
 v87 - A failing panel now says what is actually wrong.
 

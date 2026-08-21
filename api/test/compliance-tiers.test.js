@@ -47,7 +47,9 @@ test("the three levels exist and usage is ledger-derived", () => {
   assert.match(COMPLIANCE, /label: "Fully Verified"/);
   assert.match(COMPLIANCE, /edd_trigger/);
   // Usage comes from wallet_ledger, never a parallel tally.
-  assert.match(COMPLIANCE, /FROM wallet_ledger wl[\s\S]{0,120}DATE_TRUNC\('month', NOW\(\)\)/);
+  // Build 88 anchored the month boundary to South African time: DATE_TRUNC
+  // runs on the SAST clock and the result converts back to a UTC instant.
+  assert.match(COMPLIANCE, /FROM wallet_ledger wl[\s\S]{0,200}DATE_TRUNC\('month', NOW\(\) AT TIME ZONE 'Africa\/Johannesburg'\) AT TIME ZONE 'Africa\/Johannesburg'/);
 });
 
 test("enforcement rides the one transaction rail", () => {
