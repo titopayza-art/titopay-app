@@ -24,7 +24,13 @@ router.post("/fee-preview", async (req, res, next) => {
 router.post("/", async (req, res, next) => {
   try {
     const idempotencyKey = req.headers["idempotency-key"] || req.body.idempotencyKey;
-    res.status(201).json({ ok: true, transaction: await createTransaction(req.auth, { ...req.body, idempotencyKey }) });
+    // Who bears the fee and how much of a payment is diverted to it are
+    // server-authoritative: they are set only by internal callers that invoke
+    // createTransaction directly (e.g. qr-service for a merchant sale). A client
+    // must never influence them, so strip them from the public request body —
+    // otherwise a sender could dodge the send fee or shortchange the recipient.
+    const { merchantReceivesFee, recipientFee, ...body } = req.body || {};
+    res.status(201).json({ ok: true, transaction: await createTransaction(req.auth, { ...body, idempotencyKey }) });
   } catch (error) {
     next(error);
   }

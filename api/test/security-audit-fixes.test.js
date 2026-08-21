@@ -132,3 +132,32 @@ test("the refresh path enforces the session's expires_at", () => {
   assert.match(fn.slice(0, 700), /s\.expires_at > NOW\(\)/,
     "a lapsed session must not be refreshable; the access path already enforces this");
 });
+
+/* ---- Finding: fee bearer / recipient fee were trusted from the client ---- */
+
+test("the public transactions route strips client-supplied fee-bearer and recipient-fee", () => {
+  const src = read("src", "routes", "transaction.routes.js");
+  const handler = src.slice(src.indexOf('router.post("/"'), src.indexOf('router.post("/"') + 1100);
+  // The one untrusted path must remove both server-authoritative fields before
+  // the body reaches createTransaction; the internal callers (qr-service etc.)
+  // pass them directly and are unaffected.
+  assert.match(handler, /const \{ merchantReceivesFee, recipientFee, \.\.\.body \} = req\.body/,
+    "merchantReceivesFee and recipientFee must be destructured out of the request body");
+  assert.match(handler, /createTransaction\(req\.auth, \{ \.\.\.body, idempotencyKey \}\)/,
+    "createTransaction must receive the sanitised body, never the raw one");
+  assert.doesNotMatch(handler, /createTransaction\(req\.auth, \{ \.\.\.req\.body/,
+    "the raw request body must not be forwarded to createTransaction");
+});
+
+/* ---- Finding: admin MFA was off by default ---- */
+
+test("admin OTP is required by default; an explicit opt-out is still honoured", () => {
+  const src = read("src", "config", "env.js");
+  const fn = src.slice(src.indexOf("function adminOtpRequiredFromEnv"), src.indexOf("function listFromEnv"));
+  assert.match(fn, /booleanFromEnv\("ADMIN_OTP_REQUIRED", true\)/,
+    "a defined-but-blank ADMIN_OTP_REQUIRED must default to requiring OTP");
+  assert.match(fn, /booleanFromEnv\("VERIFY_ADMIN_OTP", true\)/,
+    "with no flag set at all, admin OTP must still be required by default");
+  assert.doesNotMatch(fn, /booleanFromEnv\("(ADMIN_OTP_REQUIRED|VERIFY_ADMIN_OTP)", false\)/,
+    "the insecure password-only default must be gone");
+});

@@ -123,10 +123,14 @@ function booleanFromEnv(name, fallback) {
 }
 
 function adminOtpRequiredFromEnv() {
+  // Secure by default: admin sign-in requires email OTP unless an operator
+  // explicitly opts out (ADMIN_OTP_REQUIRED=false) as a documented break-glass.
+  // This only seeds the initial policy / the DB-unavailable fallback; once a
+  // Super Admin saves a choice, the persisted admin_authentication setting wins.
   if (process.env.ADMIN_OTP_REQUIRED !== undefined) {
-    return booleanFromEnv("ADMIN_OTP_REQUIRED", false);
+    return booleanFromEnv("ADMIN_OTP_REQUIRED", true);
   }
-  return booleanFromEnv("VERIFY_ADMIN_OTP", false);
+  return booleanFromEnv("VERIFY_ADMIN_OTP", true);
 }
 
 function listFromEnv(name) {

@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 83;
+const API_BUILD = 84;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  84: "SECURITY ASSESSMENT FIXES. (1) Fee bearer + recipient fee are no longer "
+      + "trusted from the client: POST /v1/transactions strips merchantReceivesFee "
+      + "and recipientFee from the request body, so a sender can neither dodge the "
+      + "send fee nor divert a payment into revenue; the internal callers "
+      + "(qr-service etc.) set them server-side and are unaffected. (2) Admin MFA "
+      + "is now secure by default - admin sign-in requires email OTP unless an "
+      + "operator explicitly sets ADMIN_OTP_REQUIRED=false as documented "
+      + "break-glass; the DB-unavailable fallback now fails closed. Route-layer "
+      + "and config-default only: no boot-time gating, no new required env var, no "
+      + "502 surface. To enforce on an existing deployment, set the admin "
+      + "authentication mode to password_email_otp in the Admin Portal.",
   83: "SIX-DIMENSION SECURITY AUDIT (auth/session, credential recovery, "
       + "authorization/IDOR, money movement, injection, rate-limit/crypto). No "
       + "critical and no exploitable IDOR were found - authorization is "
