@@ -1,6 +1,15 @@
 TitoPay Admin
-Build: admin-console-v94
+Build: admin-console-v95
 Date: 2026-08-21
+
+v95 - Marketing red lines on Rewards publishing.
+
+  - The Publish to Rewards form carries the three marketing red lines
+    (existing features only; no interest/return/free-money language; complete
+    coupon terms) with a required confirmation before submission. Requested
+    by the August 2026 regulatory audit; the approval seats and audit log
+    already existed - this makes the standard visible at the moment it is
+    applied.
 
 v94 - Design-audit fixes across the console.
 

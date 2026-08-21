@@ -6389,3 +6389,6 @@ html[data-theme="dark"] .auth-panel-mark {
    sharing the grid stretched into a giant block. It keeps its width but sits
    at its natural height at the end of the cell. */
 #maintenance-form > .primary-btn { align-self: end; height: auto; }
+.reward-redlines { border: 1px solid var(--tp-border, #dbe3f0); border-radius: 10px; padding: 12px 14px; }
+.reward-redlines ul { margin: 8px 0 10px; padding-left: 18px; }
+.reward-redlines li { margin: 4px 0; }

@@ -7567,7 +7567,7 @@ function profileView() {
       ${isBusiness ? "" : profileFeature("My Workplaces", "Businesses that added you as staff. Take sales for them from your phone.", "staff-badge", "my-workplaces")}
       ${profileFeature("Saved Beneficiaries", isBusiness ? "Manage customers, suppliers, employees and payout recipients." : "Manage favourite and recent payment recipients.", "user", "saved-beneficiaries")}
       ${profileFeature("Profile & Verification", "Update details and manage FICA verification.", "shield", "profile-verification")}
-      ${profileFeature("Proof of Account", "Download an official stamped letter confirming your TitoPay account.", "document-invoice", "proof-of-account")}
+      ${profileFeature("Proof of Account", "Download a letter confirming your TitoPay wallet.", "document-invoice", "proof-of-account")}
       ${profileFeature("Unread Messages", `${unreadNotificationCount()} unread notification${unreadNotificationCount() === 1 ? "" : "s"} · chat, support and account alerts.`, "message-check", "account-activity")}
     </section>
     <section class="section-head compact"><h2>Security</h2></section>
@@ -16763,8 +16763,8 @@ function openStockvelModal() {
     <div class="modal-head">
       <div>
         <p class="eyebrow">Stokvel</p>
-        <h2>Your savings groups</h2>
-        <p class="lead">A transparent digital savings group: agree an amount and a schedule, contribute together, and see exactly who has paid.</p>
+        <h2>Your stokvel groups</h2>
+        <p class="lead">A transparent digital stokvel: agree an amount and a schedule, contribute together, and see exactly who has paid.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -16795,7 +16795,7 @@ function renderStockvelHub(store) {
     return `
       <section class="sv-empty">
         <span class="icon-bubble">${icon("stockvel")}</span>
-        <strong>No savings group yet</strong>
+        <strong>No stokvel group yet</strong>
         <p>Start one with the people you already save with. You agree the amount and the schedule; TitoPay keeps the record of who has contributed.</p>
       </section>`;
   }
@@ -16810,13 +16810,13 @@ function renderStockvelHub(store) {
   if (store.status === "offline") {
     return stockvelUnavailablePanel(
       "Cannot reach TitoPay",
-      "Your savings groups could not be loaded. Check your connection and try again.",
+      "Your stokvel groups could not be loaded. Check your connection and try again.",
       { retry: "hub" }
     );
   }
   return stockvelUnavailablePanel(
-    "Savings groups unavailable",
-    store.error || "TitoPay could not load your savings groups right now.",
+    "Stokvel groups unavailable",
+    store.error || "TitoPay could not load your stokvel groups right now.",
     { retry: "hub" }
   );
 }
@@ -17062,7 +17062,7 @@ function renderStockvelSummary(form) {
 function openStockvelJoinModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Stokvel</p><h2>Join a savings group</h2><p class="lead">Enter the invite code the group organiser shared with you.</p></div>
+      <div><p class="eyebrow">Stokvel</p><h2>Join a stokvel group</h2><p class="lead">Enter the invite code the group organiser shared with you.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="stockvel-join">
@@ -17107,7 +17107,7 @@ function openStockvelDashboard(id) {
         ${stockvelAvatar(summary ? summary.name : "Stokvel", "lg")}
         <div>
           <p class="eyebrow">Stokvel</p>
-          <h2>${esc(summary ? summary.name : "Savings group")}</h2>
+          <h2>${esc(summary ? summary.name : "Stokvel group")}</h2>
           ${summary && summary.description ? `<p class="lead">${esc(summary.description)}</p>` : ""}
         </div>
       </div>
@@ -17146,7 +17146,7 @@ function renderStockvelSection() {
   if (!group) {
     host.innerHTML = stockvelUnavailablePanel(
       store.detailStatus === "offline" ? "Cannot reach TitoPay" : "Group unavailable",
-      store.detailError || "This savings group could not be loaded.",
+      store.detailError || "This stokvel group could not be loaded.",
       { retry: "detail" }
     );
     return;
@@ -17168,7 +17168,7 @@ function stockvelSectionUnavailable(store, what) {
   if (store.detailStatus === "not-provisioned") {
     return stockvelUnavailablePanel(
       `${what} not available yet`,
-      `TitoPay does not publish ${what.toLowerCase()} for a savings group yet. This section fills in automatically once group management is switched on.`
+      `TitoPay does not publish ${what.toLowerCase()} for a stokvel group yet. This section fills in automatically once group management is switched on.`
     );
   }
   if (store.detailStatus === "offline") {
@@ -17461,7 +17461,7 @@ function openStockvelStatementModal(id) {
   ].filter(([, value]) => value);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Stokvel</p><h2>Group statement</h2><p class="lead">A record of this savings group built from what TitoPay holds today.</p></div>
+      <div><p class="eyebrow">Stokvel</p><h2>Group statement</h2><p class="lead">A record of this stokvel group built from what TitoPay holds today.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="receipt-card sv-statement">
@@ -17603,7 +17603,7 @@ function normalizeStockvelInvitation(raw) {
   return {
     id: id || groupName,
     groupId: stockvelText(source, ["stockvelId", "stockvel_id", "groupId", "group_id"]),
-    groupName: groupName || "Savings group",
+    groupName: groupName || "Stokvel group",
     invitedBy: stockvelText(source, ["invitedBy", "invited_by", "inviterName", "inviter_name", "from", "organiser"]),
     contributionAmount: stockvelNumber(source, ["contributionAmount", "contribution_amount", "amount"]),
     cadence: stockvelText(source, ["cadence", "frequency", "contributionFrequency", "contribution_frequency"]),
@@ -17615,7 +17615,7 @@ function renderStockvelInvitations(store) {
   const invitations = store.invitations || [];
   if (!invitations.length) return "";
   return `
-    <section class="sv-invites" aria-label="Invitations to join a savings group">
+    <section class="sv-invites" aria-label="Invitations to join a stokvel group">
       <p class="sv-section-label">${invitations.length === 1 ? "You have an invitation" : `You have ${invitations.length} invitations`}</p>
       ${invitations.map((invite) => `
         <article class="sv-invite">
@@ -17896,7 +17896,7 @@ function openStockvelChatModal(groupId) {
   const group = state.stockvel?.detail?.id === groupId ? state.stockvel.detail : (state.stockvel?.detail || (state.stockvel?.groups || []).find((item) => item.id === groupId));
   const id = groupId || group?.id;
   if (!id) { showToast("Open the group first.", "error"); return; }
-  state.stockvelChat = { groupId: id, groupName: group?.name || "Savings group", canManage: Boolean(group?.canManage), meetings: [] };
+  state.stockvelChat = { groupId: id, groupName: group?.name || "Stokvel group", canManage: Boolean(group?.canManage), meetings: [] };
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">${esc(state.stockvelChat.groupName)}</p><h2>Group chat</h2><p class="lead">Talk as a group. Organisers pin decisions; closing a meeting turns the conversation into minutes for everyone.</p></div>
@@ -26583,6 +26583,7 @@ function proofOfAccountPdf({ now, letterNo, logo = null }) {
 
   line(52, 86, 543, 86);
   text(52, 56, "Smart Payments. Simplified.", 7, "F1", "0.42 0.46 0.55");
+  text(52, 38, "TitoPay is not a bank. This letter confirms a TitoPay wallet, not a bank account.", 6.2, "F1", "0.42 0.46 0.55");
   text(52, 27, `Generated ${generatedAt}. This letter is generated electronically and is valid without signature.`, 6.2, "F1", "0.42 0.46 0.55");
   const pageLabel = "Page 1 of 1";
   text(543 - pageLabel.length * 7 * 0.5, 34, pageLabel, 7, "F1", "0.42 0.46 0.55");
@@ -27243,7 +27244,7 @@ const LEARN_LIBRARY = {
             "Keep savings apart from spending money. Money you can see is money you will use.",
             "Increase the amount when your income increases, before your spending does."
           ],
-          titopay: "A savings group on TitoPay is one way to save a fixed amount on a fixed date, with every contribution visible to the whole group."
+          titopay: "A stokvel group on TitoPay is one way to save a fixed amount on a fixed date, with every contribution visible to the whole group."
         },
         {
           title: "Emergency Funds",
@@ -27391,9 +27392,9 @@ const LEARN_LIBRARY = {
             "Write down what happens when somebody misses a contribution, before anybody misses one.",
             "Every member should be able to see the full contribution record at any time. Secrecy is where groups fail.",
             "Share responsibility. One person holding everything is a risk to them as much as to the group.",
-            "A savings group holds only what its members put in. Any group promising a return on top of contributions is something else, and worth being careful about."
+            "A stokvel holds only what its members put in. Any group promising a return on top of contributions is something else, and worth being careful about."
           ],
-          titopay: "A TitoPay savings group records contributions per member against a shared statement, so every member sees the same record. TitoPay does not add interest or a return."
+          titopay: "A TitoPay stokvel group records contributions per member against a shared statement, so every member sees the same record. TitoPay does not add interest or a return."
         }
       ]
     },

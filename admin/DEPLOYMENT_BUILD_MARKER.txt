@@ -1,4 +1,4 @@
-TitoPay Admin build: admin-console-v94-20260816
+TitoPay Admin build: admin-console-v95-20260816
 
 v89 (this build): when a console page breaks, this console now tells you why.
 
@@ -49,7 +49,7 @@ Upload notes:
   - REQUIRES api.zip build 35 for the diagnosis. On an older API the page says
     so and names `npm run db:diagnose` as the fallback, rather than rendering
     an empty panel.
-  - Asset stamp moves to admin-console-v94 across all 66 HTML files.
+  - Asset stamp moves to admin-console-v95 across all 66 HTML files.
   - One new endpoint: GET /admin/diagnostics/console, super admin only,
     because the report carries real table names and real database errors.
   - Replace the whole admin directory as usual. Nothing under api/ or the

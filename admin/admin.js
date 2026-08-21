@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v94";
+  return "admin-console-v95";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -6090,6 +6090,15 @@ async function renderMarketing(me = {}) {
           <div class="field field-full"><label>Ad image (optional)</label><input type="file" accept="image/*" id="reward-image-input"><small>Shown in the app's ad carousel and on the big Rewards banner. Same size as an event poster - 16:9 looks best; it is resized automatically. <button type="button" class="secondary-btn" id="reward-image-clear" hidden>Remove image</button></small></div>
           <div class="field"><label>Starts (optional)</label><input name="startsAt" type="datetime-local"></div>
           <div class="field"><label>Ends (optional)</label><input name="endsAt" type="datetime-local"><small>The offer disappears from the app by itself when it ends.</small></div>
+          <div class="field field-full reward-redlines">
+            <strong>Marketing red lines - checked on every publication</strong>
+            <ul>
+              <li>It describes only features that exist in the app today.</li>
+              <li>No interest, return, "grow your money" or free-money language - TitoPay is not a bank and offers no credit.</li>
+              <li>Coupon terms are complete and accurate: what it applies to, the window, and any minimum spend.</li>
+            </ul>
+            <label class="toggle-row"><input type="checkbox" name="redlinesConfirmed" required><span>This publication meets all three red lines.</span></label>
+          </div>
           <button class="primary-btn" type="submit">Submit for approval</button>
         </form>
       </section>
