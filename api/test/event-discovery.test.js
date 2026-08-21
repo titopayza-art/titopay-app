@@ -87,7 +87,7 @@ test("organisers pick a category from one shared list", () => {
 });
 
 test("the buyer can search, filter and share", () => {
-  assert.match(APP, /data-ticket-search placeholder="Search events, artists, venues or cities"/);
+  assert.match(APP, /data-ticket-search placeholder="Search events, venues or cities"/);
   assert.match(APP, /data-event-categories/);
   assert.match(APP, /function renderEventCategoryChips/);
   assert.match(APP, /async function shareTicketingEvent/);
