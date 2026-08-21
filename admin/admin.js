@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v89";
+  return "admin-console-v90";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -3407,10 +3407,11 @@ async function renderSupport() {
     }
   }
 
-  const [ticketResult, conversationResult, profileChangeResult] = await Promise.all([
+  const [ticketResult, conversationResult, profileChangeResult, closureResult] = await Promise.all([
     apiFetch("/admin/support/tickets").catch(() => ({ items: [] })),
     apiFetch("/admin/support/conversations").catch(() => ({ items: [] })),
     apiFetch("/admin/profile-change-requests").catch(() => ({ items: [], metrics: {} })),
+    apiFetch("/admin/closure-requests").catch(() => ({ items: [], metrics: {} })),
   ]);
   const tickets = ticketResult.items || [];
   const conversations = conversationResult.items || [];
@@ -3420,6 +3421,8 @@ async function renderSupport() {
   const waiting = Number(counts.waiting ?? conversations.filter((row) => ["ESCALATED", "WAITING_FOR_AGENT"].includes(row.status)).length);
   const activeChats = Number(counts.active ?? conversations.filter((row) => ["AGENT_ACTIVE", "REOPENED"].includes(row.status)).length);
   const profilePending = profileChanges.filter((row) => ["pending", "in_review"].includes(row.status)).length;
+  const closures = closureResult.items || [];
+  const closuresPending = closures.filter((row) => row.status === "pending").length;
 
   PAGE_EXPORTS.supportTicketThreads = Object.fromEntries(tickets.map((row) => [row.id, Array.isArray(row.replies) ? row.replies : []]));
   PAGE_EXPORTS.support = tickets.concat(conversations.map((row) => ({
@@ -3490,6 +3493,22 @@ async function renderSupport() {
       <button data-profile-change-approve="${escapeHtml(row.id)}">Approve</button>
       <button data-profile-change-reject="${escapeHtml(row.id)}">Reject</button>
     ` : ""),
+
+    closures: () => renderRows(closures, [
+      { label: "Customer", render: (row) => `<strong>${escapeHtml(row.user?.fullName || row.user?.username || "-")}</strong><br><small>${escapeHtml(row.user?.phone || row.user?.email || "-")} · ${escapeHtml(row.user?.accountType || "personal")}</small>` },
+      { label: "Reason", render: (row) => `<small>${escapeHtml(String(row.reason || "No reason given").slice(0, 140))}</small>` },
+      { label: "Wallet now", render: (row) => {
+        const available = Number(row.balances?.available || 0);
+        const reserved = Number(row.balances?.reserved || 0);
+        const settled = available === 0 && reserved === 0;
+        return `<strong>R${available.toFixed(2)}</strong>${reserved > 0 ? `<br><small>R${reserved.toFixed(2)} reserved</small>` : ""}<br><small>${settled ? "Settled — ready to close" : "Settle to zero before approving"}</small>`;
+      } },
+      { label: "Requested", render: (row) => `<small>${escapeHtml(row.requestedAt ? new Date(row.requestedAt).toLocaleDateString("en-ZA") : "-")}</small>` },
+      { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "pending")}</span>${row.decisionNote ? `<br><small>${escapeHtml(String(row.decisionNote).slice(0, 80))}</small>` : ""}` },
+    ], (row) => row.status === "pending" ? `
+      <button data-closure-approve="${escapeHtml(row.id)}">Approve closure</button>
+      <button data-closure-decline="${escapeHtml(row.id)}">Decline</button>
+    ` : ""),
   };
 
   page.innerHTML = `
@@ -3498,6 +3517,7 @@ async function renderSupport() {
       ["Active chats", activeChats],
       ["Open tickets", openTickets],
       ["Profile approvals", profilePending],
+      ["Closure requests", closuresPending],
     ])}
     <section class="table-card">
       <nav class="segmented" aria-label="Support queues">
@@ -6967,6 +6987,7 @@ const SUPPORT_TABS = [
   ["conversations", "Live conversations"],
   ["tickets", "Tickets"],
   ["approvals", "Profile approvals"],
+  ["closures", "Account closures"],
 ];
 /* A support transcript is a conversation, not a dataset. Rendering it as a
    table forced an agent to read one message per row across four columns; this
@@ -8353,6 +8374,35 @@ document.addEventListener("click", async (event) => {
         body: JSON.stringify({ notes })
       });
       showToast("Profile update rejected");
+      await renderSupport();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const closureApprove = event.target.closest("[data-closure-approve]");
+  if (closureApprove) {
+    if (!window.confirm("Close this customer's TitoPay account? Sign-in stops immediately and every session is revoked. The wallet must already be settled to zero.")) return;
+    try {
+      await apiFetch(`/admin/closure-requests/${closureApprove.dataset.closureApprove}/approve`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      showToast("Account closed");
+      await renderSupport();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+    }
+  }
+  const closureDecline = event.target.closest("[data-closure-decline]");
+  if (closureDecline) {
+    const note = window.prompt("Short note to the customer explaining why the closure is declined:");
+    if (!note) return;
+    try {
+      await apiFetch(`/admin/closure-requests/${closureDecline.dataset.closureDecline}/decline`, {
+        method: "POST",
+        body: JSON.stringify({ note })
+      });
+      showToast("Closure request declined");
       await renderSupport();
     } catch (error) {
       showToast(adminErrorMessage(error.message));

@@ -1211,6 +1211,28 @@ CREATE TABLE IF NOT EXISTS profile_change_requests (
 CREATE INDEX IF NOT EXISTS idx_profile_change_requests_status ON profile_change_requests (status, due_at ASC);
 CREATE INDEX IF NOT EXISTS idx_profile_change_requests_user ON profile_change_requests (user_id, created_at DESC);
 
+-- A customer's request to close their TitoPay account, reviewed by an admin.
+-- Approval sets users.status = 'closed' and revokes sessions; nothing is
+-- deleted (FICA record retention). Also runtime-ensured by
+-- account-closure-service.js so an un-migrated database self-heals.
+CREATE TABLE IF NOT EXISTS account_closure_requests (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined', 'cancelled')),
+  reason TEXT,
+  balance_snapshot JSONB NOT NULL DEFAULT '{}'::JSONB,
+  decided_by UUID REFERENCES admin_users(id) ON DELETE SET NULL,
+  decided_at TIMESTAMPTZ,
+  decision_note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_closure_requests_status ON account_closure_requests (status, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_account_closure_requests_user ON account_closure_requests (user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_account_closure_requests_one_pending
+  ON account_closure_requests (user_id) WHERE status = 'pending';
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id UUID PRIMARY KEY,
   actor_type TEXT NOT NULL,

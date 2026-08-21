@@ -274,6 +274,43 @@ router.put("/me/notification-preferences", requireAuth, async (req, res, next) =
   }
 });
 
+const {
+  createClosureRequest,
+  getOwnClosureRequest,
+  cancelOwnClosureRequest
+} = require("../services/account-closure-service");
+
+router.get("/me/closure-request", requireAuth, async (req, res, next) => {
+  try {
+    if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");
+    res.json({ ok: true, request: await getOwnClosureRequest(req.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/me/closure-request", requireAuth, otpLimiter, async (req, res, next) => {
+  try {
+    if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");
+    const request = await createClosureRequest(req.auth.userId, req.body || {}, {
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent")
+    });
+    res.status(201).json({ ok: true, request });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/me/closure-request", requireAuth, async (req, res, next) => {
+  try {
+    if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");
+    res.json({ ok: true, request: await cancelOwnClosureRequest(req.auth.userId, { ipAddress: req.ip, userAgent: req.get("user-agent") }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/me/login-mfa", requireAuth, async (req, res, next) => {
   try {
     if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");

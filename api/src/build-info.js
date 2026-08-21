@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 88;
+const API_BUILD = 89;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  89: "ACCOUNT CLOSURE REQUESTS (Google Play deletion requirement). A customer "
+      + "asks to close their profile from the Security Centre (PWA v458); the "
+      + "request lands in the Admin Console's Support desk under a new Account "
+      + "Closures tab (support permission, console v90). Approval is refused "
+      + "while the wallet holds money; once settled it sets users.status = "
+      + "'closed' and revokes every session - sign-in stops immediately, no "
+      + "row is deleted (FICA retention), and an admin can reopen by setting "
+      + "the status back to active. Decline requires a note the customer sees; "
+      + "the customer can cancel while pending. One open request per customer, "
+      + "enforced by a partial unique index. Table account_closure_requests is "
+      + "runtime-ensured AND in schema.sql - no migration needed.",
   88: "BUG AUDIT BATCH A2 - money correctness. Reversing a held payment now "
       + "closes the pending-credit hold inside the same transaction (the expiry "
       + "sweep could previously refund the sender a SECOND time from suspense); "

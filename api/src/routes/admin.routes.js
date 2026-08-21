@@ -2743,6 +2743,57 @@ router.post("/support/conversations/:id/close", requireAdminPermission("support"
   }
 });
 
+const {
+  listClosureRequests,
+  approveClosureRequest,
+  declineClosureRequest
+} = require("../services/account-closure-service");
+
+router.get("/closure-requests", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const items = await listClosureRequests(req.query.status);
+    res.json({
+      ok: true,
+      items,
+      metrics: {
+        total: items.length,
+        pending: items.filter((item) => item.status === "pending").length
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/closure-requests/:id/approve", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const requestId = requireUuid(req.params.id, "Closure request ID");
+    const request = await approveClosureRequest(requestId, req.auth.userId, {
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      note: req.body?.note
+    });
+    res.json({ ok: true, request });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/closure-requests/:id/decline", requireAdminPermission("support"), async (req, res, next) => {
+  try {
+    const requestId = requireUuid(req.params.id, "Closure request ID");
+    const request = await declineClosureRequest(
+      requestId,
+      req.auth.userId,
+      boundedText(req.body?.note || "", "Decline note", { min: 2, max: 500 }),
+      { ipAddress: req.auth.ipAddress, userAgent: req.auth.userAgent }
+    );
+    res.json({ ok: true, request });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/profile-change-requests", requireAdminPermission("support"), async (req, res, next) => {
   try {
     const items = await listProfileChangeRequests(req.query.status);

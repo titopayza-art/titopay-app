@@ -3562,6 +3562,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "authentication-preference-verify") await verifyAuthenticationPreferenceUpdate(data);
     if (form.dataset.form === "fica-upload") await submitFica(form, formData);
     if (form.dataset.form === "profile-photo") await submitProfilePhoto(form, formData);
+    if (form.dataset.form === "closure-request") await submitClosureRequest(data);
     if (form.dataset.form === "book-venue") { await submitBookVenue(data); return; }
     if (form.dataset.form === "book-service") { await submitBookService(data); return; }
     if (form.dataset.form === "book-hours") { await submitBookHours(form); return; }
@@ -5268,6 +5269,12 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "resend-login-otp") {
     await resendLoginOtp(actionElement);
+  }
+  if (action === "close-account") {
+    await openCloseAccountModal();
+  }
+  if (action === "cancel-closure-request") {
+    await cancelClosureRequest();
   }
   if (action === "set-login-mfa") {
     await setLoginMfaChoice(actionElement);
@@ -7055,6 +7062,7 @@ function openSecurityCentreModal() {
     <section class="profile-feature-grid">
       ${securityCentreRow("Login & Security Alerts", "Critical security alerts are always on. Choose extra channels.", "bell", "notifications")}
       ${securityCentreRow("Privacy Controls", "Balance privacy, alert preferences and what TitoPay stores.", "eye-off", "privacy-controls")}
+      ${securityCentreRow("Close TitoPay Account", "Ask our team to close this profile. Reviewed by TitoPay support.", "x", "close-account")}
     </section>
     <section class="section-head compact"><h2>Protect & respond</h2></section>
     <section class="profile-feature-grid">
@@ -7192,6 +7200,70 @@ async function resendLoginOtp(actionElement) {
     if (hidden && result.challengeId) hidden.value = result.challengeId;
     if (result.challengeId) actionElement.dataset.challenge = result.challengeId;
     showToast(result.maskedDestination ? `New code sent to ${result.maskedDestination}.` : "New code sent.");
+  } catch (error) {
+    showToast(friendlyFormError(error), "error");
+  }
+}
+// Ask TitoPay to close this account. Deliberately a REQUEST reviewed by the
+// support team, not a self-service delete: money must be settled first and
+// FICA records are kept as South African law requires.
+async function openCloseAccountModal() {
+  let current = null;
+  try {
+    const result = await api("/v1/auth/me/closure-request");
+    current = result.request || null;
+  } catch (error) {
+    showToast(friendlyFormError(error), "error");
+    return;
+  }
+  const head = `
+    <div class="modal-head">
+      <div><p class="eyebrow">Security &amp; Privacy</p><h2>Close TitoPay Account</h2><p class="lead">Our team reviews every closure. Your money must be withdrawn or transferred first, and legally required records are kept even after closure.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>`;
+  if (current && current.status === "pending") {
+    openModal(`
+      ${head}
+      <section class="activity-list">
+        ${settingsRow("Request received", `Sent ${formatDate(current.requestedAt)}. Our team will be in touch before anything changes.`, "check-circle")}
+      </section>
+      <div class="auth-actions">
+        <button class="btn ghost" type="button" data-action="cancel-closure-request">Keep my account — cancel the request</button>
+        <button class="btn ghost" type="button" data-close>Close</button>
+      </div>
+    `);
+    return;
+  }
+  const declined = current && current.status === "declined"
+    ? `<p class="field-hint">Your previous request was declined${current.decisionNote ? `: "${esc(current.decisionNote)}"` : ""}. You can send a new one below.</p>`
+    : "";
+  openModal(`
+    ${head}
+    ${declined}
+    <form class="form-grid" data-form="closure-request">
+      <div class="field">
+        <label>Why are you leaving? (optional)</label>
+        <textarea name="reason" aria-label="Reason for closing the account" rows="3" maxlength="500" placeholder="Anything you want our team to know"></textarea>
+      </div>
+      <p class="field-hint">Before closure is approved: withdraw or transfer any money in your wallet. Closing stops sign-in on every device. Records required by law (FICA) are retained.</p>
+      <button class="btn primary" type="submit">${icon("send")} Request account closure</button>
+      <button class="btn ghost" type="button" data-close>Keep my account</button>
+    </form>
+  `);
+}
+async function submitClosureRequest(data) {
+  await api("/v1/auth/me/closure-request", {
+    method: "POST",
+    body: { reason: data.reason || "" }
+  });
+  showToast("Closure request sent. Our team will review it and be in touch.");
+  await openCloseAccountModal();
+}
+async function cancelClosureRequest() {
+  try {
+    await api("/v1/auth/me/closure-request", { method: "DELETE" });
+    showToast("Closure request cancelled. Welcome back!");
+    closeModal();
   } catch (error) {
     showToast(friendlyFormError(error), "error");
   }
@@ -26534,7 +26606,7 @@ const MODAL_STACK_ACTIONS = new Set([
   "why-trust-titopay", "notifications", "payment-requests", "limits-verification",
   "verification-levels", "identity-verification", "business-verification",
   "preview-sms-notifications",
-  "preview-email-notifications", "authentication-preference", "login-mfa", "change-password",
+  "preview-email-notifications", "authentication-preference", "login-mfa", "close-account", "change-password",
   "fica-verification", "profile-verification", "saved-beneficiaries",
   "proof-of-account", "app-search", "support",
   "pwa-review", "account-activity", "share-titopay",
