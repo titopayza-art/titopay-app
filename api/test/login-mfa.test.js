@@ -63,6 +63,44 @@ test("enabled: sign-in returns an OTP challenge instead of tokens, and reverts o
   }
 });
 
+test("the generic verify-otp door completes an email login code, and only a login one", async () => {
+  const { verifyOtpLogin } = require("../src/services/auth-service");
+  const { id } = await makeUser({ withEmail: true });
+  const sha256 = (v) => crypto.createHash("sha256").update(String(v)).digest("hex");
+  const code = "734291";
+  const loginCh = crypto.randomUUID();
+  const unlockCh = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO otp_codes (id, user_type, user_id, purpose, code_hash, expires_at, attempts)
+     VALUES ($1,'customer',$3,'email_otp:login',$4, NOW() + INTERVAL '5 minutes', 0),
+            ($2,'customer',$3,'email_otp:wallet_unlock',$4, NOW() + INTERVAL '5 minutes', 0)`,
+    [loginCh, unlockCh, id, sha256(code)]
+  );
+  try {
+    // The phone posts every sign-in code here; an email login challenge must
+    // complete through the bridge and issue a session.
+    const result = await verifyOtpLogin({ challengeId: loginCh, otp: code, scope: "customer" }, meta);
+    assert.ok(result.accessToken, "the emailed login code signs the customer in");
+    // Replay of the used code is refused.
+    await assert.rejects(
+      verifyOtpLogin({ challengeId: loginCh, otp: code, scope: "customer" }, meta),
+      /already been used/i
+    );
+    // A non-login email code must not be redeemable through this door — and
+    // must not be consumed by the attempt.
+    await assert.rejects(
+      verifyOtpLogin({ challengeId: unlockCh, otp: code, scope: "customer" }, meta),
+      /not found/i,
+      "a wallet-unlock email code must never mint a session here"
+    );
+    const { rows } = await pool.query("SELECT used_at FROM otp_codes WHERE id=$1", [unlockCh]);
+    assert.equal(rows[0].used_at, null, "the unlock code survives untouched");
+  } finally {
+    await pool.query("DELETE FROM otp_codes WHERE user_id=$1", [id]);
+    await pool.query("DELETE FROM users WHERE id=$1", [id]);
+  }
+});
+
 test("no lockout: enabling is refused when the account has no email", async () => {
   const { id } = await makeUser({ withEmail: false });
   try {

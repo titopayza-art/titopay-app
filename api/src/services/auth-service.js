@@ -1300,7 +1300,21 @@ async function verifyOtpLogin(payload, meta) {
     [challengeId, LOGIN_OTP_PURPOSES]
   );
   const row = rows[0];
-  if (!row) throw new AppError(404, "OTP challenge not found");
+  if (!row) {
+    // A sign-in code can also be an Email OTP challenge: customer login MFA and
+    // admin sign-in both mint those, stored in this same table under the
+    // 'email_otp:login' purpose and redeemed by the email-OTP door. The app's
+    // generic OTP form posts every sign-in code here, so bridge that one
+    // purpose across — and only that one, so no other email code (wallet
+    // unlock, verification) can be consumed through this unauthenticated
+    // endpoint.
+    const { rows: emailRows } = await pool.query(
+      "SELECT id FROM otp_codes WHERE id = $1 AND purpose = 'email_otp:login' LIMIT 1",
+      [challengeId]
+    );
+    if (emailRows[0]) return verifyEmailOtpLogin({ ...payload, challengeId }, meta);
+    throw new AppError(404, "OTP challenge not found");
+  }
   if (row.used_at) throw new AppError(400, "OTP already used");
   if (new Date(row.expires_at).getTime() < Date.now()) throw new AppError(400, "OTP expired");
   if (Number(row.attempts) >= config.maxOtpAttempts) throw new AppError(429, "OTP attempts exceeded");

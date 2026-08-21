@@ -19,10 +19,18 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 85;
+const API_BUILD = 86;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  86: "LOGIN-CODE VERIFY BRIDGE. Build 85's customer login MFA minted an Email "
+      + "OTP challenge, but the app's OTP form posts every sign-in code to "
+      + "/v1/auth/verify-otp, which only searched the classic login purposes - "
+      + "so the emailed code answered 'OTP challenge not found' and an opted-in "
+      + "customer could not finish signing in. verify-otp now bridges exactly "
+      + "one extra purpose, email_otp:login, through the email-OTP verifier "
+      + "(tokens only for a login event; wallet-unlock and verification codes "
+      + "remain unredeemable here). API-only, no migration, no PWA change.",
   85: "OPT-IN CUSTOMER LOGIN MFA. A customer can switch on an email one-time "
       + "code at sign-in (GET/PUT /v1/auth/me/login-mfa). Off by default, so "
       + "existing sign-in is unchanged; enabling is refused unless the account "
