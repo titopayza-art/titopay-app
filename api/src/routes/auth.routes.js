@@ -13,6 +13,8 @@ const {
   confirmPasswordReset,
   verifyOtpLogin,
   verifyEmailOtpLogin,
+  getLoginMfaStatus,
+  setLoginMfaEnabled,
   refreshTokens,
   logout,
   logoutAll,
@@ -267,6 +269,24 @@ router.put("/me/notification-preferences", requireAuth, async (req, res, next) =
       userAgent: req.get("user-agent")
     });
     res.json({ ok: true, preferences });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/me/login-mfa", requireAuth, async (req, res, next) => {
+  try {
+    if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");
+    res.json({ ok: true, ...await getLoginMfaStatus(req.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/me/login-mfa", requireAuth, async (req, res, next) => {
+  try {
+    if (req.auth.userType !== "customer") throw new AppError(403, "Customer account required");
+    res.json({ ok: true, ...await setLoginMfaEnabled(req.auth.userId, req.body?.enabled) });
   } catch (error) {
     next(error);
   }

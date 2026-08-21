@@ -997,9 +997,15 @@ async function login(payload, meta) {
   const adminAuthenticationRequiresOtp = scope === "admin" &&
     Boolean(adminPolicy?.otpRequired) &&
     !isAdminOtpDisabledByEnvironment();
-  // Customer sign-in is deliberately password/PIN-only. Admin Email OTP is
-  // governed exclusively by the persisted Admin Authentication Mode.
-  if (adminAuthenticationRequiresOtp) {
+  // Admin Email OTP is governed by the persisted Admin Authentication Mode.
+  // Customer sign-in is password/PIN-only UNLESS the customer has opted in to a
+  // login code: off by default, and it can only be active for an account that
+  // has an email to receive the code (enforced when it is switched on), so no
+  // account can lock itself out of sign-in.
+  const customerRequiresLoginOtp = scope === "customer" &&
+    Boolean(user.login_mfa_enabled) &&
+    Boolean(user.email);
+  if (adminAuthenticationRequiresOtp || customerRequiresLoginOtp) {
     const challenge = await createEmailOtpChallenge(user, "login", {
       ...meta,
       deviceName: payload.deviceName || (scope === "admin" ? "Admin Browser" : "Web Browser"),
@@ -1450,6 +1456,45 @@ async function requirePermission(user, permission) {
   }
 }
 
+// Opt-in customer login MFA: a self-service switch. Enabling is refused unless
+// the account has an email to receive the code, so a customer can never lock
+// themselves out. Disabling is always allowed.
+async function getLoginMfaStatus(userId) {
+  const { rows } = await pool.query(
+    "SELECT email, login_mfa_enabled FROM users WHERE id = $1 LIMIT 1",
+    [userId]
+  );
+  const row = rows[0] || {};
+  return {
+    loginMfaEnabled: Boolean(row.login_mfa_enabled),
+    emailAvailable: Boolean(String(row.email || "").trim())
+  };
+}
+
+async function setLoginMfaEnabled(userId, enabled) {
+  const wantOn = Boolean(enabled);
+  const { rows } = await pool.query(
+    "SELECT email FROM users WHERE id = $1 LIMIT 1",
+    [userId]
+  );
+  if (!rows[0]) throw new AppError(404, "Account not found");
+  if (wantOn && !String(rows[0].email || "").trim()) {
+    throw new AppError(400, "Add an email address to your profile before turning on a login code.");
+  }
+  const { rows: updated } = await pool.query(
+    "UPDATE users SET login_mfa_enabled = $2 WHERE id = $1 RETURNING login_mfa_enabled",
+    [userId, wantOn]
+  );
+  await safeAuditLog({
+    actorType: "customer",
+    actorId: userId,
+    action: wantOn ? "login_mfa_enabled" : "login_mfa_disabled",
+    entityType: "user",
+    entityId: userId
+  });
+  return { loginMfaEnabled: Boolean(updated[0].login_mfa_enabled) };
+}
+
 module.exports = {
   ADMIN_ROLE_PERMISSIONS,
   normalizeAdminRole,
@@ -1466,6 +1511,8 @@ module.exports = {
   resendOtpChallenge,
   verifyOtpLogin,
   verifyEmailOtpLogin,
+  getLoginMfaStatus,
+  setLoginMfaEnabled,
   refreshTokens,
   logout,
   logoutAll,

@@ -5237,6 +5237,12 @@ async function handleAction(action, actionElement = null) {
   if (action === "clear-notifications") {
     clearNotifications();
   }
+  if (action === "login-mfa") {
+    await openLoginMfaModal();
+  }
+  if (action === "set-login-mfa") {
+    await setLoginMfaChoice(actionElement);
+  }
   if (action === "enable-browser-notifications") {
     // Explain what alerts are for before the browser's permission prompt, but
     // only while the choice is still open -- once granted or denied, the
@@ -7010,6 +7016,7 @@ function openSecurityCentreModal() {
       ${securityCentreRow("Active Sessions", `Signed in on ${currentDeviceLabel()}.`, "check-circle", "active-sessions")}
       ${securityCentreRow("Login History", "The audit trail of sign-ins and security activity.", "list", "login-history")}
       ${securityCentreRow("Authentication Method", `${authenticationMethodLabel(currentAuthenticationMethod())} · change with verification.`, "shield", "authentication-preference")}
+      ${securityCentreRow("Login Code (2-step sign-in)", "Add an emailed one-time code to every sign-in.", "lock", "login-mfa")}
       ${securityCentreRow("Change PIN / Password", "Verified with a free SMS or Email OTP.", "lock", "change-password")}
     </section>
     <section class="section-head compact"><h2>Alerts & privacy</h2></section>
@@ -7100,6 +7107,53 @@ function openSecurityTipsModal() {
   loadSecurityContent();
   openModal(securityScreenMarkup(securityContent().tipsEyebrow));
   markSecurityScrollState();
+}
+async function openLoginMfaModal() {
+  let status;
+  try {
+    status = await api("/v1/auth/me/login-mfa");
+  } catch (error) {
+    showToast(friendlyFormError(error), "error");
+    return;
+  }
+  const on = Boolean(status.loginMfaEnabled);
+  const canEnable = Boolean(status.emailAvailable);
+  const stateLine = on
+    ? "On — each sign-in asks for a one-time code emailed to you."
+    : "Off — you sign in with your PIN or password only.";
+  const emailNote = (!on && !canEnable)
+    ? `<p class="field-hint">Add an email address to your profile first — the code is sent by email.</p>`
+    : "";
+  const button = (!on && !canEnable)
+    ? ""
+    : `<button class="btn ${on ? "ghost" : "primary"}" type="button" data-action="set-login-mfa" data-enabled="${on ? "false" : "true"}">${icon("lock")} ${on ? "Turn off login code" : "Turn on login code"}</button>`;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Security &amp; Privacy</p><h2>Login code</h2><p class="lead">A one-time code emailed to you at every sign-in, on top of your PIN or password.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list">
+      ${settingsRow("Two-step sign-in", stateLine, "lock")}
+    </section>
+    ${emailNote}
+    <div class="auth-actions">
+      ${button}
+      <button class="btn ghost" type="button" data-close>Close</button>
+    </div>
+  `);
+}
+async function setLoginMfaChoice(actionElement) {
+  if (!actionElement) return;
+  const enabled = actionElement.dataset.enabled === "true";
+  try {
+    const result = await api("/v1/auth/me/login-mfa", { method: "PUT", body: { enabled } });
+    showToast(result.loginMfaEnabled
+      ? "Login code turned on. You'll enter an emailed code next time you sign in."
+      : "Login code turned off.");
+    await openLoginMfaModal();
+  } catch (error) {
+    showToast(friendlyFormError(error), "error");
+  }
 }
 function openWhyTrustModal() {
   loadSecurityContent();
@@ -26423,7 +26477,7 @@ const MODAL_STACK_ACTIONS = new Set([
   "why-trust-titopay", "notifications", "payment-requests", "limits-verification",
   "verification-levels", "identity-verification", "business-verification",
   "preview-sms-notifications",
-  "preview-email-notifications", "authentication-preference", "change-password",
+  "preview-email-notifications", "authentication-preference", "login-mfa", "change-password",
   "fica-verification", "profile-verification", "saved-beneficiaries",
   "proof-of-account", "app-search", "support",
   "pwa-review", "account-activity", "share-titopay",

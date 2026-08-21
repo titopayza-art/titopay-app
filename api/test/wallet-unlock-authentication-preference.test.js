@@ -56,12 +56,18 @@ test("wallet unlock auto-selects the saved preference and preserves legacy chann
   assert.match(service, /action: "wallet_unlocked"/);
 });
 
-test("customer sign-in OTP is disabled while Admin OTP follows only the saved Admin mode", () => {
+test("customer sign-in OTP is opt-in and off by default; Admin OTP follows only the saved Admin mode", () => {
   const auth = read("src/services/auth-service.js");
-  assert.match(auth, /if \(adminAuthenticationRequiresOtp\) \{/);
-  assert.doesNotMatch(auth, /adminAuthenticationRequiresOtp \|\| await shouldRequireLoginOtp/);
-  assert.match(auth, /Customer sign-in is deliberately password\/PIN-only/);
+  // Admin OTP is still governed solely by the persisted admin mode.
+  assert.match(auth, /adminAuthenticationRequiresOtp = scope === "admin" &&\s*Boolean\(adminPolicy\?\.otpRequired\)/);
+  // Customer login OTP now exists, but is gated on the per-user opt-in flag AND
+  // an email to receive the code — so it is off for every account by default.
+  assert.match(auth, /customerRequiresLoginOtp = scope === "customer" &&\s*Boolean\(user\.login_mfa_enabled\) &&\s*Boolean\(user\.email\)/);
+  assert.match(auth, /if \(adminAuthenticationRequiresOtp \|\| customerRequiresLoginOtp\) \{/);
   assert.match(auth, /createEmailOtpChallenge\(user, "login"/);
+  // The switch defaults to off at the database level, so no existing account is
+  // affected until it opts in.
+  assert.match(read("src/db/migrations/20260821_login_mfa.up.sql"), /login_mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE/i);
 });
 
 test("wallet-unlock Email OTP is enabled once without overriding later Admin choices", () => {
@@ -73,13 +79,15 @@ test("wallet-unlock Email OTP is enabled once without overriding later Admin cho
   assert.match(schema, /wallet_unlock_email_otp_initialized = FALSE/);
 });
 
-test("Email OTP can verify authentication-method changes without enabling customer login OTP", () => {
+test("Email OTP can verify authentication-method changes; customer login OTP is a separate opt-in", () => {
   const schema = read("src/db/email-centre-schema.sql");
   const auth = read("src/services/auth-service.js");
   assert.match(schema, /authentication_preference_email_otp_initialized BOOLEAN NOT NULL DEFAULT FALSE/);
   assert.match(schema, /'\{optional_mfa\}', 'true'::JSONB/);
   assert.match(schema, /authentication_preference_email_otp_initialized = FALSE/);
-  assert.match(auth, /if \(adminAuthenticationRequiresOtp\) \{/);
+  // The login-OTP gate is a distinct, per-user opt-in — the authentication-
+  // method change flow does not turn it on.
+  assert.match(auth, /customerRequiresLoginOtp = scope === "customer" &&\s*Boolean\(user\.login_mfa_enabled\)/);
   assert.doesNotMatch(auth, /adminAuthenticationRequiresOtp \|\| await shouldRequireLoginOtp/);
 });
 

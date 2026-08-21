@@ -19,10 +19,18 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 84;
+const API_BUILD = 85;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  85: "OPT-IN CUSTOMER LOGIN MFA. A customer can switch on an email one-time "
+      + "code at sign-in (GET/PUT /v1/auth/me/login-mfa). Off by default, so "
+      + "existing sign-in is unchanged; enabling is refused unless the account "
+      + "has an email to receive the code, so no one can lock themselves out. "
+      + "Reuses the existing email-OTP sign-in path (same one admin uses); the "
+      + "PWA already handles the otp_required response. Migration "
+      + "20260821_login_mfa adds users.login_mfa_enabled (metadata-only, "
+      + "idempotent). Additive and default-off: no change to any current login.",
   84: "SECURITY ASSESSMENT FIXES. (1) Fee bearer + recipient fee are no longer "
       + "trusted from the client: POST /v1/transactions strips merchantReceivesFee "
       + "and recipientFee from the request body, so a sender can neither dodge the "
