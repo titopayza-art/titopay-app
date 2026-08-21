@@ -744,7 +744,32 @@ function safeCssIdentifier(value) {
 }
 function isoDate(date) {
   const value = date instanceof Date ? date : new Date(date);
-  return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+  if (Number.isNaN(value.getTime())) return "";
+  // LOCAL calendar date, not UTC. toISOString() shifted every South African
+  // date back a day (SAST is UTC+2, so local midnight is 22:00 UTC the day
+  // before): "Today" sales reports showed yesterday, "Last month" statements
+  // dropped the 31st, invoice terms landed a day short. Every caller means
+  // the date the customer sees on their own clock.
+  const y = value.getFullYear();
+  const m = String(value.getMonth() + 1).padStart(2, "0");
+  const d = String(value.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+// Parse a customer-typed money amount. South African keyboards put a COMMA on
+// the decimal key, so "1,50" must read as one rand fifty — not R150 (the old
+// comma-stripping parsers) and not NaN (bare Number()), which blocked payment
+// outright. A trailing comma with 1-2 digits is the decimal separator; any
+// other comma (and any dot before a decimal comma) is a thousands separator.
+function parseAmount(value) {
+  let text = String(value ?? "").replace(/[^\d.,-]/g, "");
+  if (!text) return NaN;
+  if (/,\d{1,2}$/.test(text)) {
+    text = text.replace(/\./g, "").replace(/,(?=\d{1,2}$)/, ".").replace(/,/g, "");
+  } else {
+    text = text.replace(/,/g, "");
+  }
+  const amount = Number(text);
+  return Number.isFinite(amount) ? amount : NaN;
 }
 function addDays(date, days) {
   const value = new Date(date);
@@ -2457,7 +2482,7 @@ async function answerPaymentRequest(requestId, kind) {
   await openPaymentRequestsModal();
 }
 async function submitPaymentRequestForm(form, data) {
-  const amount = Number(String(data.amount || "").replace(/[^\d.]/g, ""));
+  const amount = parseAmount(data.amount || "");
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount.");
   const recipient = normalizeRecipientInput(data.recipient, data.recipientMethod || "auto");
   const result = await api("/v1/payments/requests", {
@@ -2488,14 +2513,14 @@ async function submitPaymentRequestForm(form, data) {
   showToast("Request sent.");
 }
 async function submitBillSplitForm(form, data) {
-  const total = Number(String(data.amount || "").replace(/[^\d.]/g, ""));
+  const total = parseAmount(data.amount || "");
   if (!Number.isFinite(total) || total <= 0) throw new Error("Enter the total bill.");
   const method = data.splitMethod || BILL_SPLIT_EQUAL;
   const equal = method === BILL_SPLIT_EQUAL;
   const rows = [...form.querySelectorAll("[data-split-participant]")]
     .map((row) => ({
       identifier: String(row.querySelector("[data-split-person]")?.value || "").trim(),
-      manual: Number(String(row.querySelector("[data-split-manual]")?.value || "").replace(/[^\d.]/g, ""))
+      manual: parseAmount(row.querySelector("[data-split-manual]")?.value)
     }))
     .filter((row) => row.identifier);
   if (!rows.length) throw new Error("Add at least one participant.");
@@ -3450,9 +3475,10 @@ function otpForm(challenge) {
       <input type="hidden" name="accountId" value="${esc(challenge.accountId || challenge.userId || "")}">
       <div class="field">
         <label>OTP code</label>
-        <input name="otp" aria-label="OTP code" inputmode="numeric" maxlength="6" required>
+        <input name="otp" aria-label="OTP code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" pattern="[0-9]{6,8}" required>
       </div>
       <button class="btn primary" type="submit">${icon("shield")} Verify OTP</button>
+      <button class="btn ghost" type="button" data-action="resend-login-otp" data-challenge="${esc(challenge.challengeId)}">Resend code</button>
     </form>
   `;
 }
@@ -3535,7 +3561,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "authentication-preference-request") await requestAuthenticationPreferenceUpdate(data);
     if (form.dataset.form === "authentication-preference-verify") await verifyAuthenticationPreferenceUpdate(data);
     if (form.dataset.form === "fica-upload") await submitFica(form, formData);
-    if (form.dataset.form === "profile-photo") await submitProfilePhoto(form);
+    if (form.dataset.form === "profile-photo") await submitProfilePhoto(form, formData);
     if (form.dataset.form === "book-venue") { await submitBookVenue(data); return; }
     if (form.dataset.form === "book-service") { await submitBookService(data); return; }
     if (form.dataset.form === "book-hours") { await submitBookHours(form); return; }
@@ -5240,6 +5266,9 @@ async function handleAction(action, actionElement = null) {
   if (action === "login-mfa") {
     await openLoginMfaModal();
   }
+  if (action === "resend-login-otp") {
+    await resendLoginOtp(actionElement);
+  }
   if (action === "set-login-mfa") {
     await setLoginMfaChoice(actionElement);
   }
@@ -6010,13 +6039,16 @@ async function requestReset(data) {
 }
 async function confirmReset(data) {
   const saved = readJsonFromSession(SESSION_KEY);
-  if (!saved || (!saved.accountId && !saved.userId)) throw new Error("Reset challenge not found. Request a new OTP.");
+  // The reset response deliberately carries no account id any more (that leak
+  // was closed server-side); the challengeId alone identifies the reset, and
+  // the server derives the account from the proven challenge. Requiring an
+  // accountId here is what silently broke every SMS-OTP reset.
+  if (!saved || !saved.challengeId) throw new Error("Reset challenge not found. Request a new OTP.");
   if ((data.newPassword || "") !== (data.confirmNewPassword || "")) throw new Error("PINs or passwords must match before resetting your TitoPay access.");
   await api("/v1/auth/password-reset/confirm", {
     method: "POST",
     auth: false,
     body: {
-      accountId: saved.accountId || saved.userId,
       challengeId: saved.challengeId,
       otp: data.otp,
       newPassword: data.newPassword,
@@ -7142,6 +7174,28 @@ async function openLoginMfaModal() {
     </div>
   `);
 }
+// Resend the sign-in code. The server revokes the old challenge and mints a
+// NEW one, so the form's hidden challengeId (and this button) must be updated
+// to the fresh id — verifying against the old one would always fail.
+async function resendLoginOtp(actionElement) {
+  if (!actionElement) return;
+  const challengeId = actionElement.dataset.challenge || "";
+  if (!challengeId) { showToast("Request a new code by signing in again.", "error"); return; }
+  try {
+    const result = await api("/v1/auth/email-otp/resend", {
+      method: "POST",
+      auth: false,
+      body: { challengeId, deviceName: navigator.userAgent.slice(0, 80) }
+    });
+    const form = actionElement.closest('form[data-form="otp"]');
+    const hidden = form && form.querySelector('[name="challengeId"]');
+    if (hidden && result.challengeId) hidden.value = result.challengeId;
+    if (result.challengeId) actionElement.dataset.challenge = result.challengeId;
+    showToast(result.maskedDestination ? `New code sent to ${result.maskedDestination}.` : "New code sent.");
+  } catch (error) {
+    showToast(friendlyFormError(error), "error");
+  }
+}
 async function setLoginMfaChoice(actionElement) {
   if (!actionElement) return;
   const enabled = actionElement.dataset.enabled === "true";
@@ -7670,8 +7724,11 @@ function openAccountActivityModal() {
     </section>
   `);
 }
-async function submitProfilePhoto(form) {
-  const data = new FormData(form);
+async function submitProfilePhoto(form, formData) {
+  // Use the FormData the dispatcher captured BEFORE setBusy disabled the
+  // fields — rebuilding it here reads a disabled form and always finds no
+  // file (the same bug submitFica fixed; this was its unfixed twin).
+  const data = formData || new FormData(form);
   const file = data.get("profilePhoto");
   const croppedDataUrl = getCroppedProfilePhotoDataUrl();
   if (croppedDataUrl) {
@@ -8159,7 +8216,7 @@ function applyQuickAmount(button) {
 }
 async function processTransaction(data) {
   if (isWalletLocked()) throw new Error("Wallet locked. Unlock your wallet before making outgoing transactions.");
-  const amount = Number(data.amount);
+  const amount = parseAmount(data.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount.");
   const serviceCode = String(data.serviceCode || "");
   const groupRecipientService = serviceCode === "bill_split" || serviceCode === "stockvel";
@@ -10428,8 +10485,8 @@ function readDocumentItems() {
   const rows = [...document.querySelectorAll("[data-doc-item]")];
   return rows.map((row) => {
     const description = String(row.querySelector("[data-doc-desc]")?.value || "").trim();
-    const quantity = Math.max(Number(String(row.querySelector("[data-doc-qty]")?.value || "").replace(/[^\d.]/g, "")) || 0, 0);
-    const unit = Math.max(Number(String(row.querySelector("[data-doc-unit]")?.value || "").replace(/[^\d.]/g, "")) || 0, 0);
+    const quantity = Math.max(parseAmount(row.querySelector("[data-doc-qty]")?.value) || 0, 0);
+    const unit = Math.max(parseAmount(row.querySelector("[data-doc-unit]")?.value) || 0, 0);
     return { row, description, quantity, unit, total: quantity * unit };
   });
 }
@@ -13107,7 +13164,7 @@ function syncBillSplit() {
   const rows = [...form.querySelectorAll("[data-split-participant]")];
   const people = rows.map((row) => ({ row, value: String(row.querySelector("[data-split-person]")?.value || "").trim() }));
   const named = people.filter((person) => person.value);
-  const total = Math.max(Number(String(form.querySelector('[name="amount"]')?.value || "").replace(/[^\d.]/g, "")) || 0, 0);
+  const total = Math.max(parseAmount(form.querySelector('[name="amount"]')?.value) || 0, 0);
   const method = form.querySelector('[name="splitMethod"]')?.value || BILL_SPLIT_EQUAL;
   const equal = method === BILL_SPLIT_EQUAL;
 
@@ -13123,7 +13180,7 @@ function syncBillSplit() {
     if (manualWrap) manualWrap.classList.toggle("hidden", equal);
     if (cell) cell.classList.toggle("hidden", !equal);
     if (!equal) {
-      const value = Number(String(person.row.querySelector("[data-split-manual]")?.value || "").replace(/[^\d.]/g, ""));
+      const value = parseAmount(person.row.querySelector("[data-split-manual]")?.value);
       if (person.value) {
         if (Number.isFinite(value) && value > 0) manualSum = Math.round((manualSum + value) * 100) / 100;
         else manualMissing += 1;
@@ -14059,7 +14116,7 @@ async function generateQr(data) {
   const body = {
     label: data.label || "TitoPay payment",
     codeType: data.amount ? "dynamic" : "static",
-    amount: data.amount ? Number(data.amount) : null
+    amount: data.amount ? parseAmount(data.amount) : null
   };
   const result = await api(data.amount ? "/v1/qr/generate-dynamic" : "/v1/qr/generate-static", {
     method: "POST",
@@ -14088,7 +14145,7 @@ async function generateQr(data) {
 async function processQrPayment(data) {
   if (isWalletLocked()) throw new Error("Wallet locked. Unlock your wallet before making QR payments.");
   if (!data.qrId) throw new Error("Enter or scan a valid TitoPay QR code.");
-  if (data.amount && (!Number.isFinite(Number(data.amount)) || Number(data.amount) <= 0)) {
+  if (data.amount && (!Number.isFinite(parseAmount(data.amount)) || parseAmount(data.amount) <= 0)) {
     throw new Error("Enter a valid QR payment amount.");
   }
   // Ask the API who owns this QR so the payer can check the name before
@@ -15362,7 +15419,7 @@ async function submitStaffSale(data) {
     .filter(([, quantity]) => Number(quantity) > 0)
     .map(([productId, quantity]) => ({ productId, quantity: Number(quantity) }));
   const body = items.length ? { items } : { amount: data.amount };
-  if (!items.length && !(Number(data.amount) > 0)) throw new Error("Tap products or enter the sale amount.");
+  if (!items.length && !(parseAmount(data.amount) > 0)) throw new Error("Tap products or enter the sale amount.");
   let result;
   try {
     result = await api(`/v1/staff-workspace/workplaces/${encodeURIComponent(sale.businessUserId)}/sale`, { method: "POST", body });
@@ -17618,7 +17675,7 @@ function openStockvelWithdrawalRequestModal(id) {
 }
 async function submitStockvelWithdrawal(data) {
   const groupId = String(data.stockvelId || "");
-  const amount = Number(data.amount);
+  const amount = parseAmount(data.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount.");
   const reason = String(data.reason || "").trim();
   if (!reason) throw new Error("Tell the group what the withdrawal is for.");
@@ -17880,7 +17937,7 @@ async function submitStockvelCreate(form, data) {
 // A contribution is a confirmed money action: the member sees the amount,
 // the fee and the treasurer holding the money before anything moves.
 async function submitStockvelContribution(form, data) {
-  const amount = Number(String(data.amount || "").replace(/[^\d.]/g, ""));
+  const amount = parseAmount(data.amount || "");
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid contribution amount.");
   const groupId = data.stockvelGroupId;
   const preview = await api(`${STOCKVEL_PATH}/${encodeURIComponent(groupId)}/contributions/preview?amount=${encodeURIComponent(amount)}`);
@@ -19586,7 +19643,7 @@ async function startVendorTagScan() {
 }
 async function submitVendorTagCharge(data, form) {
   const s = state.vendorTagCharge || (state.vendorTagCharge = {});
-  const amount = Number(data.amount);
+  const amount = parseAmount(data.amount);
   const token = String(data.token || s.token || "").trim();
   if (!Number.isFinite(amount) || amount <= 0) { showToast("Enter an amount greater than R0.", "error"); return; }
   if (!token) { showToast("Tap or paste the patron's wristband first.", "error"); return; }

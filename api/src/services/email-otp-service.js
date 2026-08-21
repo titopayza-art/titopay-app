@@ -85,7 +85,16 @@ async function createChallenge(user,event,meta={},options={}) {
     await client.query("COMMIT");
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
   const names=String(user.full_name||"").trim().split(/\s+/);
-  await queueEmail({recipient:user.email,templateKey:"email_otp",userId:userType==="customer"?user.id:null,variables:{firstName:names[0]||"there",fullName:user.full_name,email:user.email,otp:code,expiryMinutes:String(settings.email_otp_expiry_minutes)},idempotencyKey:`email-otp:${challengeId}`,metadata:{otpChallengeId:challengeId,purpose,...(options.metadata||{})}});
+  const queueJob=await queueEmail({recipient:user.email,templateKey:"email_otp",userId:userType==="customer"?user.id:null,variables:{firstName:names[0]||"there",fullName:user.full_name,email:user.email,otp:code,expiryMinutes:String(settings.email_otp_expiry_minutes)},idempotencyKey:`email-otp:${challengeId}`,metadata:{otpChallengeId:challengeId,purpose,...(options.metadata||{})}});
+  // The transactional variant refuses a challenge whose email never queued; the
+  // pooled path silently swallowed the same condition, so a user was told
+  // "code sent to xx***@..." while sending was paused or the template disabled
+  // — an undiagnosable five-minute lockout. Same rule here: no email, no
+  // challenge. The just-created row is revoked so nothing dangles.
+  if(!queueJob||queueJob.skipped){
+    await pool.query("UPDATE otp_codes SET revoked_at=NOW(),expires_at=NOW() WHERE id=$1 AND used_at IS NULL",[challengeId]).catch(()=>{});
+    throw new AppError(409,"Verification emails are paused right now. Please try again shortly or contact support.");
+  }
   await writeAuditLog({actorType:userType,actorId:user.id,action:"email_otp_sent",entityType:"otp_challenge",entityId:challengeId,ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{purpose}}).catch((error)=>console.error("[email-otp] sent audit failed",{challengeId,message:error.message}));
   return {challengeId,otpRequired:true,authenticationMode:"email_otp",purpose,expiresInSeconds:settings.email_otp_expiry_minutes*60,resendCooldownSeconds:settings.email_otp_resend_cooldown_seconds,remainingAttempts:settings.email_otp_maximum_attempts,maskedDestination:maskEmail(user.email)};
 }

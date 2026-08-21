@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS users (
   authentication_method_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_successful_authentication_at TIMESTAMPTZ,
   last_failed_authentication_at TIMESTAMPTZ,
+  login_mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   profile_photo_url TEXT,
   business_logo_url TEXT,
   failed_login_attempts INTEGER NOT NULL DEFAULT 0,

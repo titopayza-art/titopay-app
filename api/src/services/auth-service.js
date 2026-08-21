@@ -143,6 +143,7 @@ async function ensureAuthRuntimeSchema() {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS authentication_method_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_successful_authentication_at TIMESTAMPTZ");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_failed_authentication_at TIMESTAMPTZ");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS login_mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE");
   await pool.query("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0");
   await pool.query("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ");
   await pool.query("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ");
@@ -1006,11 +1007,16 @@ async function login(payload, meta) {
     Boolean(user.login_mfa_enabled) &&
     Boolean(user.email);
   if (adminAuthenticationRequiresOtp || customerRequiresLoginOtp) {
+    // force: the per-user opt-in / admin authentication mode IS the
+    // authorization for a sign-in code. Without it, unticking the global
+    // "Enable Email OTP" switch would 409 every MFA customer and every
+    // OTP-mode admin out of sign-in entirely — including the admins who
+    // could turn the switch back on.
     const challenge = await createEmailOtpChallenge(user, "login", {
       ...meta,
       deviceName: payload.deviceName || (scope === "admin" ? "Admin Browser" : "Web Browser"),
       location: payload.location || null
-    });
+    }, { force: true });
     return { auth_mode:"EMAIL_OTP", otp_required:true, ...challenge };
   }
   if (scope === "admin") {
@@ -1335,6 +1341,9 @@ async function verifyOtpLogin(payload, meta) {
   await pool.query("UPDATE otp_codes SET used_at = NOW() WHERE id = $1", [challengeId]);
   const user = await getAccountById(row.user_type, row.user_id);
   if (!user) throw new AppError(404, "Account not found");
+  // Same rule as the email-OTP door: an account suspended between the
+  // challenge and the code must not be issued a session.
+  assertActive(user);
   await safeAuditLog({
     actorType: user.user_type,
     actorId: user.id,

@@ -19,10 +19,28 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 86;
+const API_BUILD = 87;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  87: "BUG AUDIT BATCH A1 - the lockout/critical set from the 21 Aug six-"
+      + "dimension correctness sweep. API: users.login_mfa_enabled added to "
+      + "schema.sql and the runtime self-heal (fresh installs no longer 500 on "
+      + "the Login Code endpoints); sign-in email-OTP challenges force past the "
+      + "global Enable Email OTP switch (unticking it can no longer lock every "
+      + "MFA customer and OTP-mode admin out); a sign-in code whose email never "
+      + "queued now fails loudly and revokes the challenge instead of claiming "
+      + "'code sent'; verify-otp re-checks account status before issuing a "
+      + "session; npm run db:migrate now actually runs migrations (it aliased "
+      + "schema init, which could also clobber operator pricing). Ships with "
+      + "PWA v457: SMS-OTP password reset fixed (the app demanded an accountId "
+      + "the hardened reset response deliberately no longer returns - every "
+      + "reset failed with a valid code in hand); sign-in OTP input accepts "
+      + "6-8 digits + resend button; parseAmount reads SA decimal commas "
+      + "('1,50' is R1.50, never R150 or NaN); isoDate returns the local "
+      + "calendar date (Today reports, statement periods and invoice terms "
+      + "were a day off); profile photo submit uses the pre-capture FormData. "
+      + "No migration.",
   86: "LOGIN-CODE VERIFY BRIDGE. Build 85's customer login MFA minted an Email "
       + "OTP challenge, but the app's OTP form posts every sign-in code to "
       + "/v1/auth/verify-otp, which only searched the classic login purposes - "
