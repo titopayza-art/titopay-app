@@ -1231,7 +1231,10 @@ function dashboardGreeting(now = new Date()) {
   const language = GREETING_LANGUAGES[((dayNumber % GREETING_LANGUAGES.length) + GREETING_LANGUAGES.length) % GREETING_LANGUAGES.length];
   const phrase = language.hello;
   const user = state.user || {};
-  const name = String(user.fullName || user.full_name || user.username || "").trim().split(/\s+/)[0] || "";
+  const fullName = String(user.fullName || user.full_name || user.username || "").trim();
+  // A person is greeted by first name; a business by its full trading name -
+  // "Lumela, Corner" read like a half-loaded screen.
+  const name = state.accountType === "business" ? fullName : (fullName.split(/\s+/)[0] || "");
   return { phrase, name, language: language.name };
 }
 function dashboardGreetingLine() {
@@ -2315,7 +2318,7 @@ function openPaymentRequestModal(service) {
     <form class="form-grid stable-service-form" data-form="payment-request">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       ${recipientMethodField("auto")}
-      <div class="field"><label>Recipient</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
+      <div class="field"><label>Recipient</label><input name="recipient" placeholder="@username, cellphone or email" required></div>
       ${contactSuggestions()}
       <div class="field"><label>Amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
       <div class="field"><label>Description</label><textarea name="description" maxlength="240" placeholder="What is the request for?"></textarea></div>
@@ -2565,7 +2568,7 @@ function openRefundModal(service) {
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
       <input type="hidden" name="integrationFlow" value="merchant_refund">
       ${recipientMethodField("auto")}
-      <div class="field"><label>Customer</label><input name="recipient" placeholder="@username, +27 cellphone or email" required></div>
+      <div class="field"><label>Customer</label><input name="recipient" placeholder="@username, cellphone or email" required></div>
       ${contactSuggestions()}
       <div class="field"><label>Original transaction reference</label><input name="originalReference" placeholder="TP-REF or receipt number" required></div>
       <div class="field">
@@ -2899,7 +2902,7 @@ function openPwaReviewModal() {
         <textarea name="message" minlength="8" maxlength="1200" required placeholder="Write your feedback here"></textarea>
       </div>
       <label class="switch-row">
-        <span><strong>Allow TitoPay to contact me about this feedback</strong><small>Your contact details are only shown to authorised Admin and Marketing users if enabled.</small></span>
+        <span><strong>Allow TitoPay to contact me about this feedback</strong><small>Your contact details are only shared with TitoPay's team, and only if you allow it here.</small></span>
         <input type="checkbox" name="contactPermission" value="true">
       </label>
       <button class="btn primary" type="submit">${icon("send")} Send feedback</button>
@@ -5791,7 +5794,7 @@ function loginForm() {
     <form class="form-grid" data-form="login">
       <div class="field">
         <label>Email, username or cellphone</label>
-        <input name="identifier" aria-label="Email, username or cellphone" autocomplete="username" placeholder="@username, +27 71 234 5678 or name@email.co.za" required>
+        <input name="identifier" aria-label="Email, username or cellphone" autocomplete="username" placeholder="@username, cellphone or email" required>
         <small class="field-hint">Use your TitoPay @username, South African +27 cellphone number, or email address.</small>
       </div>
       <div class="field">
@@ -7296,7 +7299,7 @@ function openWhyTrustModal() {
       ${settingsRow("Codes stay off this device", "Verification codes go to your registered contacts and are never saved on this device.", "eye-off")}
       ${settingsRow("Automatic sign-out", `Inactive sessions sign out after ${sessionTimeoutLabel()} to protect you on shared or lost devices.`, "refresh")}
       ${settingsRow("Device recognition", "Sign-ins are linked to device sessions you can review any time in the Security Centre.", "phone")}
-      ${settingsRow("Identity verification", "Every TitoPay profile carries FICA identity verification with a clear status: Not Started, Pending Review, Approved or Rejected.", "check-circle")}
+      ${settingsRow("Identity verification", "Every TitoPay profile carries FICA identity verification, and its review status is always visible to you in the app.", "check-circle")}
       ${settingsRow("Payments you can check first", "Every payment shows the verified recipient and the exact fees before you confirm, and confirmations are protected against duplicate taps.", "receipt-list")}
       ${settingsRow("Wallet lock", "Stops anything leaving your wallet instantly while payments to you still arrive. Unlock with an OTP when you are ready.", "lock")}
       ${settingsRow("Account recovery", "Recover access with a one-time code to your registered cellphone or email. Critical security emails are always on.", "mail")}
@@ -9006,7 +9009,7 @@ async function openWithdrawModal(service) {
           <p class="field-hint">Withdrawals only go to a bank account saved on your own profile.</p>
         ` : `
           <label>Pay out to</label>
-          <p class="field-hint">You have no saved bank account yet. Add the account below and it will be used for this withdrawal.</p>
+          <p class="field-hint">No saved bank account yet. Add the account below and it will be used for this withdrawal.</p>
         `}
       </div>
       <div class="field" data-bank-account-new>
@@ -10209,7 +10212,7 @@ function openSendMoneyModal(service = coreWalletAction("send"), selected = null)
       : `
       <div class="money-field">
         <label for="send-recipient">Recipient</label>
-        <input id="send-recipient" name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" required>
+        <input id="send-recipient" name="recipient" autocomplete="off" placeholder="@username, cellphone or email" required>
       </div>
       ${recipientMethodField("auto")}
       <input class="money-inline-input" name="reference" placeholder="Add a reference (optional)" autocomplete="off" aria-label="Reference">`,
@@ -10325,7 +10328,7 @@ async function openSavedBeneficiariesModal({ refresh = false } = {}) {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${beneficiarySummaryStrip()}
-    <div class="field"><label for="beneficiary-search">Search beneficiaries</label><input id="beneficiary-search" type="search" data-beneficiary-search value="${esc(state.beneficiarySearch)}" placeholder="Name, nickname, username or wallet"></div>
+    <div class="field"><label for="beneficiary-search">Search beneficiaries</label><input id="beneficiary-search" type="search" data-beneficiary-search value="${esc(state.beneficiarySearch)}" placeholder="Name, nickname or username"></div>
     <div data-beneficiary-list>${beneficiaryManagementList()}</div>
     <button class="btn primary" type="button" data-action="beneficiary-add">${icon("plus")} Add beneficiary</button>
   `);
@@ -13220,7 +13223,7 @@ function billSplitParticipantRow(index = 0) {
     <div class="split-participant" data-split-participant>
       <div class="field">
         <label class="visually-hidden" for="${id}">Participant ${index + 1}</label>
-        <input id="${id}" data-split-person type="text" autocomplete="off" placeholder="@username, +27 cellphone or email">
+        <input id="${id}" data-split-person type="text" autocomplete="off" placeholder="@username, cellphone or email">
       </div>
       <p class="split-share" data-split-share aria-live="off">${esc(money(0))}</p>
       <div class="field split-manual-field hidden" data-split-manual-wrap>
@@ -13406,7 +13409,7 @@ function openSendGiftModal(service) {
       ${recipientMethodField("auto")}
       <div class="field">
         <label for="gift-recipient">Who is it for?</label>
-        <input id="gift-recipient" name="recipient" autocomplete="off" placeholder="@username, +27 cellphone or email" required>
+        <input id="gift-recipient" name="recipient" autocomplete="off" placeholder="@username, cellphone or email" required>
       </div>
       ${contactSuggestions()}
       <button class="btn ghost gift-scan" type="button" data-action="start-qr-scan">${icon("scan")} Scan their TitoPay QR</button>
@@ -15047,7 +15050,7 @@ function renderSalesLedgerView(result) {
 function renderSalesReportView(summary) {
   const { from, to } = salesSelectedRange();
   const changeChip = summary.changePercent === null || summary.changePercent === undefined
-    ? `<span class="chip">First period with data</span>`
+    ? `<span class="chip">No previous period to compare</span>`
     : `<span class="chip" style="${summary.changePercent >= 0 ? "background:#e7f6ec;color:#0b7a3b" : "background:#fdeaea;color:#b3261e"}">${summary.changePercent >= 0 ? "▲" : "▼"} ${Math.abs(summary.changePercent).toFixed(1)}% vs previous period</span>`;
   const perChannel = Object.entries(summary.perChannel || {}).sort((a, b) => b[1].total - a[1].total);
   const channelMax = Math.max(1, ...perChannel.map(([, value]) => value.total));
@@ -16791,7 +16794,7 @@ function renderStockvelHub(store) {
   if (store.status === "empty") {
     return `
       <section class="sv-empty">
-        ${stockvelAvatar("Stokvel", "lg")}
+        <span class="icon-bubble">${icon("stockvel")}</span>
         <strong>No savings group yet</strong>
         <p>Start one with the people you already save with. You agree the amount and the schedule; TitoPay keeps the record of who has contributed.</p>
       </section>`;
@@ -18113,7 +18116,7 @@ async function openPersonalTicketsDashboard() {
       <label class="visually-hidden" for="ticket-search">Search events</label>
       <span class="event-search-icon" aria-hidden="true">${icon("search")}</span>
       <input id="ticket-search" class="event-search-input" type="search" autocomplete="off" enterkeyhint="search"
-        data-ticket-search placeholder="Search events, artists, venues or cities">
+        data-ticket-search placeholder="Search events, venues or cities">
       <button class="event-search-clear" type="button" data-ticket-search-clear aria-label="Clear search" hidden>${icon("x")}</button>
     </div>
     <div class="event-chip-row" data-event-categories></div>
@@ -22477,7 +22480,7 @@ function openTitoPayChatModal() {
     </div>
     <section class="titopay-chat-shell">
       <form class="form-grid titopay-chat-lookup" data-form="titopay-chat-lookup">
-        <div class="field"><label>Find TitoPay user</label><input id="titopay-chat-lookup-identifier" name="identifier" placeholder="@username, +27 cellphone or email" autocomplete="off" required><div class="recipient-detect-hint" data-recipient-detect-for="titopay-chat-lookup-identifier" aria-live="polite">Auto-detect accepts a TitoPay username, South African +27 cellphone number or email address.</div></div>
+        <div class="field"><label>Find TitoPay user</label><input id="titopay-chat-lookup-identifier" name="identifier" placeholder="@username, cellphone or email" autocomplete="off" required><div class="recipient-detect-hint" data-recipient-detect-for="titopay-chat-lookup-identifier" aria-live="polite">Auto-detect accepts a TitoPay username, South African +27 cellphone number or email address.</div></div>
         <div class="field"><label>Method</label><select name="lookupMethod"><option value="auto">Auto-detect</option><option value="username">Username</option><option value="phone">Cellphone</option><option value="email">Email</option></select></div>
         <button class="btn primary" type="submit">${icon("search")} Start chat</button>
       </form>
@@ -26246,7 +26249,7 @@ function openFicaVerificationModal() {
   const isBusiness = state.accountType === "business";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">FICA Verification</p><h2>Verify your TitoPay profile</h2><p class="lead">Submit your identity and address documents once. TitoPay will track the review as Not Started, Pending Review, Approved or Rejected.</p></div>
+      <div><p class="eyebrow">FICA Verification</p><h2>Verify your TitoPay profile</h2><p class="lead">Submit your identity and address documents once. You can follow the review status right here until it is approved.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="activity-list compact-list">
@@ -26259,7 +26262,7 @@ function openFicaVerificationModal() {
       </select></div>
       <div class="field"><label data-fica-number-label>ID number</label>
         <input name="idNumber" inputmode="numeric" autocomplete="off" maxlength="20" required placeholder="13-digit South African ID number" data-fica-number>
-        <small class="field-hint">Typed here so the reviewer verifies your documents against it. No squinting at photos.</small></div>
+        <small class="field-hint">Typed here so our reviewer can check it against your documents exactly as you wrote it.</small></div>
       ${isBusiness ? `
       <div class="field"><label>Company registration number</label>
         <input name="companyRegistrationNumber" autocomplete="off" maxlength="30" required placeholder="e.g. 2020/123456/07">
@@ -27044,7 +27047,7 @@ const VAS_JOURNEYS = {
     providerLabel: "Biller",
     productLabel: "Bill product",
     recipientLabel: "Account or customer number",
-    recipientPlaceholder: "Smartcard, municipal account or bill reference",
+    recipientPlaceholder: "Smartcard or bill reference",
     recipientInputMode: "text",
     fallbackProviders: ["DStv", "Municipal bill", "Water", "Rates", "Utilities", "School fees", "Insurance", "Other biller"],
     openValue: true,

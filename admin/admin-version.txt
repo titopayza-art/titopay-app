@@ -1,6 +1,20 @@
 TitoPay Admin
-Build: admin-console-v93
+Build: admin-console-v94
 Date: 2026-08-21
+
+v94 - Design-audit fixes across the console.
+
+  - Beneficiaries search no longer renders "[object Object]" when opened
+    programmatically.
+  - The SMS analytics charts stop claiming "No email activity"; the shared
+    chart empty-state is neutral and the email pages name email explicitly.
+  - Internal spec references (requirements-file names and ticket codes)
+    removed from user-visible page copy.
+  - Compliance queue "Declared Details" renders one declared fact per line
+    instead of running the ID number, address and file names together.
+  - Ticketing: all currency through the shared ZAR formatter, and the 30-day
+    trend strip draws again - its bars used inline styles that the console
+    CSP silently stripped, so the strip rendered invisible.
 
 v93 - Rewards card design refinement.
 

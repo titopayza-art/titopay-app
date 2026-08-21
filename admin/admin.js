@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v93";
+  return "admin-console-v94";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -2595,7 +2595,7 @@ async function renderWallets(me = {}) {
   `;
 }
 async function renderBeneficiaries(search = "") {
-  const query = String(search || "").trim();
+  const query = typeof search === "string" ? search.trim() : "";
   const result = await apiFetch(`/admin/beneficiaries${query ? `?search=${encodeURIComponent(query)}` : ""}`);
   const items = result.items || [];
   PAGE_EXPORTS.beneficiaries = items;
@@ -3034,12 +3034,13 @@ function renderComplianceQueueCard(result) {
         const detailMeta = parsed?.metadata || {};
         if (!parsed) return `<small>${escapeHtml(String(row.notes || "-").slice(0, 120))}</small>`;
         const parts = [];
-        if (detailMeta.identityKind) parts.push(`<strong>${escapeHtml(detailMeta.identityKind)}</strong>${detailMeta.idNumber ? `: ${escapeHtml(detailMeta.idNumber)}` : ""}`);
-        if (detailMeta.companyRegistrationNumber) parts.push(`Company reg: <strong>${escapeHtml(detailMeta.companyRegistrationNumber)}</strong>`);
+        if (detailMeta.identityKind) parts.push(`<strong>${escapeHtml(detailMeta.identityKind)}</strong> ${detailMeta.idNumber ? escapeHtml(detailMeta.idNumber) : ""}`);
+        if (detailMeta.companyRegistrationNumber) parts.push(`Company reg <strong>${escapeHtml(detailMeta.companyRegistrationNumber)}</strong>`);
         if (detailMeta.address) parts.push(`Address: ${escapeHtml(String(detailMeta.address).slice(0, 90))}`);
         const files = [detailMeta.identityDocument?.name, detailMeta.proofOfAddress?.name, detailMeta.companyRegistration?.name].filter(Boolean);
         if (files.length) parts.push(`Files: ${escapeHtml(files.join(", ").slice(0, 90))}`);
-        return parts.length ? `<small>${parts.join("<br>")}</small>` : `<small>${escapeHtml(parsed.documentType || "-")}</small>`;
+        // One declared fact per line: block-level smalls, no <br> soup.
+        return parts.length ? parts.map((part) => `<small class="fica-detail-line">${part}</small>`).join("") : `<small>${escapeHtml(parsed.documentType || "-")}</small>`;
       } },
     ], (row) => `
       <button data-review-status="approved" data-review-id="${row.id}">Approve</button>
@@ -3639,7 +3640,7 @@ function supportQuickReplyBody() {
         <button class="ghost-btn" type="button" data-sqr-restore>Restore defaults</button>
         <button class="ghost-btn" type="button" data-sqr-cancel>Cancel</button>
       </div>
-      <p class="sqr-note">Use [Agent Name] where the agent's first name should appear. Edits are stored in this browser until the API carries the shared quick-replies endpoints - see ADMIN-API-REQUIREMENTS.md.</p>
+      <p class="sqr-note">Use [Agent Name] where the agent's first name should appear. Edits are stored in this browser for now; team-shared quick replies arrive with a later API update.</p>
     `;
   }
   const groups = [...new Set(replies.map((reply) => reply.group))];
@@ -5267,12 +5268,12 @@ function renderEventTagPanel(eventId, tags, analytics, vendors) {
         ["Lost or Blocked", analytics.tagsLostOrBlocked || 0],
         ["Replaced", analytics.tagsReplaced || 0],
         ["Tap Payments", analytics.payments || 0],
-        ["Tap Sales", `R${Number(analytics.totalSales || 0).toFixed(2)}`],
+        ["Tap Sales", money(analytics.totalSales || 0)],
       ])}
       ${tableCard("Sales by vendor", renderRows(analytics.salesByVendor || [], [
         { label: "Vendor", render: (row) => escapeHtml(row.vendor || "-") },
         { label: "Payments", render: (row) => String(row.payments || 0) },
-        { label: "Total", render: (row) => `R${Number(row.total || 0).toFixed(2)}` },
+        { label: "Total", render: (row) => money(row.total || 0) },
       ]), "Taken from the transactions ledger, not from a separate tally.")}
       ${tableCard("Authorised vendors", renderRows(vendors, [
         { label: "Vendor", render: (row) => escapeHtml(row.businessName || "-") },
@@ -5330,11 +5331,14 @@ async function renderTicketing() {
   const totals = analytics?.totals || {};
   const trend = analytics?.trend || [];
   const maxTrendGross = Math.max(1, ...trend.map((item) => Number(item.gross || 0)));
+  // Bar heights go through data attributes + applyChartBarWidths: the console
+  // CSP (style-src 'self') strips inline style attributes, which left this
+  // strip rendering as invisible bars.
   const trendStrip = trend.length ? `
-    <div style="display:flex;align-items:flex-end;gap:2px;height:46px;margin:6px 0 2px">
-      ${trend.map((item) => `<span title="${escapeHtml(item.day)}: ${item.orders} orders, R${Number(item.gross).toFixed(2)}" style="flex:1;min-width:3px;background:#2f5cff;border-radius:2px 2px 0 0;height:${Math.max(6, Math.round((Number(item.gross) / maxTrendGross) * 46))}px"></span>`).join("")}
+    <div class="tkt-trend">
+      ${trend.map((item) => `<span class="tkt-trend-bar" title="${escapeHtml(item.day)}: ${item.orders} orders, ${money(item.gross || 0)}" data-bar-height="${Math.max(6, Math.round((Number(item.gross) / maxTrendGross) * 46))}"></span>`).join("")}
     </div>
-    <small>Paid ticket orders per day, last 30 days. Tallest day: R${maxTrendGross.toFixed(2)}.</small>` : "<small>No paid ticket orders in the last 30 days.</small>";
+    <small>Paid ticket orders per day, last 30 days. Tallest day: ${money(maxTrendGross)}.</small>` : "<small>No paid ticket orders in the last 30 days.</small>";
   const advertCell = (row) => {
     if (!row.publicUrl) return "<small>No public link yet</small>";
     const copy = `${escapeHtml(row.name)} — get your tickets on TitoPay: ${row.publicUrl}`;
@@ -5346,10 +5350,10 @@ async function renderTicketing() {
   };
   const analyticsCard = analytics ? `
     ${tableCard("Ticket Sales & Marketing", `
-      <div style="padding:4px 2px 10px">${trendStrip}</div>
+      <div class="tkt-trend-host">${trendStrip}</div>
       ${renderRows(analytics.events || [], [
         { label: "Event", render: (row) => `<strong>${escapeHtml(row.name || "-")}</strong><br><small>${escapeHtml(row.organiserName || "-")} · ${escapeHtml(String(row.eventDate || "-").slice(0, 10))} · ${escapeHtml(row.city || row.venueName || "-")}</small>` },
-        { label: "Sales", render: (row) => `<strong>R${Number(row.gross || 0).toFixed(2)}</strong><br><small>${row.orders} orders · ${row.ticketsSold} tickets · net R${Number(row.businessNet || 0).toFixed(2)} to organiser</small>` },
+        { label: "Sales", render: (row) => `<strong>${money(row.gross || 0)}</strong><br><small>${row.orders} orders · ${row.ticketsSold} tickets · net ${money(row.businessNet || 0)} to organiser</small>` },
         { label: "Door", render: (row) => `${row.scanned} scanned<br><small>of ${row.ticketsSold} sold</small>` },
         { label: "Status", render: (row) => `<span class="chip ${row.status === "approved" ? "green" : row.status === "cancelled" || row.status === "suspended" ? "red" : "blue"}">${escapeHtml(String(row.status || "-").replaceAll("_", " "))}</span>` },
       ], advertCell)}
@@ -6334,11 +6338,11 @@ function emailStatusChip(status) {
   const tone = ["delivered", "sent", "enabled"].includes(value) ? "green" : ["failed", "dead_lettered", "cancelled", "disabled"].includes(value) ? "red" : "blue";
   return `<span class="chip ${tone}">${escapeHtml(value.replaceAll("_", " "))}</span>`;
 }
-function emailChart(title, rows, labelKey, valueKey) {
+function emailChart(title, rows, labelKey, valueKey, emptyText = "No activity in this period.") {
   const maximum = Math.max(1, ...rows.map((row) => Number(row[valueKey] || 0)));
   return `<section class="table-card"><h3>${escapeHtml(title)}</h3><div class="email-chart">${rows.length ? rows.map((row) => `
-    <div class="email-chart-row"><span>${escapeHtml(row[labelKey] || "-")}</span><div><i data-chart-width="${Math.max(2, Math.round(Number(row[valueKey] || 0) / maximum * 100))}"></i></div><strong>${escapeHtml(row[valueKey] || 0)}</strong></div>
-  `).join("") : '<div class="empty">No email activity in this period.</div>'}</div></section>`;
+    <div class="email-chart-row"><span>${escapeHtml(String(row[labelKey] || "-").slice(0, 24))}</span><div><i data-chart-width="${Math.max(2, Math.round(Number(row[valueKey] || 0) / maximum * 100))}"></i></div><strong>${escapeHtml(row[valueKey] || 0)}</strong></div>
+  `).join("") : `<div class="empty">${escapeHtml(emptyText)}</div>`}</div></section>`;
 }
 /* Bar widths are applied through the CSSOM after render because the console's
    CSP (style-src 'self') forbids inline style attributes. */
@@ -6347,10 +6351,14 @@ function applyChartBarWidths() {
     const width = Math.min(100, Math.max(0, Number(bar.dataset.chartWidth) || 0));
     bar.style.width = `${width}%`;
   });
+  document.querySelectorAll("[data-bar-height]").forEach((bar) => {
+    const height = Math.min(60, Math.max(0, Number(bar.dataset.barHeight) || 0));
+    bar.style.height = `${height}px`;
+  });
 }
 function emailAnalyticsChart(title, rows) {
   const chartRows=(rows||[]).map((row)=>({label:String(row.period||"").slice(0,10),value:Number(row.sent||0)}));
-  return emailChart(title,chartRows,"label","value");
+  return emailChart(title,chartRows,"label","value","No email activity in this period.");
 }
 async function renderEmailAnalytics() {
   const result=await apiFetch("/admin/email/analytics?days=30");
@@ -6448,7 +6456,7 @@ async function renderSmsAnalytics() {
       ["Campaigns sent", sentCampaigns],
       ["Awaiting approval", pending],
     ])}
-    <p class="table-card-note analytics-note">Derived from SMS campaign records: sent and failed are the API's own per-campaign delivery counters, and every broadcast goes through CEO/COO approval before sending. Per-message delivery receipts, daily/weekly/monthly series and transactional SMS (OTP) reporting arrive with the dedicated SMS analytics endpoint - specified as A-P1-6 in ADMIN-API-REQUIREMENTS.md - and this page upgrades to it automatically.</p>
+    <p class="table-card-note analytics-note">Derived from SMS campaign records: sent and failed are the API's own per-campaign delivery counters, and every broadcast goes through CEO/COO approval before sending. Per-message delivery receipts, daily/weekly/monthly series and transactional SMS (OTP) reporting arrive with the dedicated SMS analytics endpoint - and this page picks them up automatically the day the delivery-receipt feed goes live.</p>
     <div class="email-chart-grid">
       ${emailChart("SMS sent per day (by campaign date)", dailyRows, "day", "sent")}
       ${emailChart("Sent versus failed", [{ outcome: "sent", count: sent }, { outcome: "failed", count: failed }].filter((row) => row.count > 0), "outcome", "count")}
