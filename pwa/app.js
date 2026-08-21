@@ -24939,19 +24939,19 @@ function rewardEndsCopy(endsAt) {
   return `Ends ${formatDate(endsAt)}`;
 }
 function rewardCard(item) {
-  const [chipLabel, chipTone] = REWARD_KIND_CHIPS[item.kind] || ["Offer", "is-promo"];
+  const [kindLabel] = REWARD_KIND_CHIPS[item.kind] || ["Offer"];
   const ends = rewardEndsCopy(item.endsAt);
-  return `<article class="reward-card${item.seen ? "" : " is-new"}" data-reward-card="${esc(item.id)}">
-    <div class="reward-card-top">
-      <span class="reward-chip ${chipTone}">${esc(chipLabel)}</span>
-      ${ends ? `<span class="reward-ends">${esc(ends)}</span>` : ""}
-      ${item.seen ? "" : `<span class="reward-new-dot" role="img" aria-label="New offer"></span>`}
+  return `<article class="reward-card" data-reward-card="${esc(item.id)}">
+    <div class="reward-meta">
+      <span class="reward-kind">${esc(kindLabel)}</span>
+      ${item.seen ? "" : `<span class="reward-new">New</span>`}
+      ${ends ? `<span class="reward-validity">${esc(ends)}</span>` : ""}
     </div>
     <h3 class="reward-title">${esc(item.title)}</h3>
     <p class="reward-body">${esc(item.body)}</p>
     ${item.couponCode ? `<div class="reward-coupon">
-      <strong class="reward-code">${esc(item.couponCode)}</strong>
-      <button class="btn ghost mini" type="button" data-copy-value="${esc(item.couponCode)}" data-copy-label="Coupon code" data-reward-copied="${esc(item.id)}">${icon("copy")} Copy code</button>
+      <span class="reward-code-group"><span class="reward-code-label">Code</span><strong class="reward-code">${esc(item.couponCode)}</strong></span>
+      <button class="btn ghost mini" type="button" data-copy-value="${esc(item.couponCode)}" data-copy-label="Coupon code" data-reward-copied="${esc(item.id)}">${icon("copy")} Copy</button>
     </div>` : ""}
   </article>`;
 }
@@ -26741,11 +26741,11 @@ const EVENT_SOCIALS = [
 // What each publication kind is called on a card. Server vocabulary; this
 // only names it for the customer.
 const REWARD_KIND_CHIPS = {
-  promotion: ["Promotion", "is-promo"],
-  discount: ["Discount", "is-promo"],
-  coupon: ["Coupon code", "is-coupon"],
-  advert: ["Featured", "is-advert"],
-  notice: ["Notice", "is-notice"]
+  promotion: ["Promotion", ""],
+  discount: ["Discount", ""],
+  coupon: ["Coupon", ""],
+  advert: ["Featured", ""],
+  notice: ["Notice", ""]
 };
 // What a buyer is told when a phase is not open. The server decides the state
 // and sends it with every ticket type; this only names it.

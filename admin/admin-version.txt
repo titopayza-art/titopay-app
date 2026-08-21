@@ -1,6 +1,13 @@
 TitoPay Admin
-Build: admin-console-v92
+Build: admin-console-v93
 Date: 2026-08-21
+
+v93 - Rewards card design refinement.
+
+  - The Customer Preview card matches the app's refined card anatomy: one
+    quiet small-caps category row with right-aligned validity, then title,
+    body and a solid labelled Code field. No colored pills, stripes or
+    dashed borders. Cosmetic only; nothing functional changed.
 
 v92 - Rewards ad images.
 

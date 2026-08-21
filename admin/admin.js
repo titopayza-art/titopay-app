@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v92";
+  return "admin-console-v93";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -5928,13 +5928,13 @@ function rewardPreviewCardHtml({ kind = "promotion", title = "", body = "", coup
   const endsText = ends && !Number.isNaN(ends.getTime()) ? `Ends ${ends.toLocaleDateString("en-ZA", { day: "numeric", month: "short" })}` : "";
   return `<article class="reward-preview-card">
     ${imageData ? `<img class="reward-preview-image" src="${escapeHtml(imageData)}" alt="Ad image preview">` : ""}
-    <div class="reward-preview-top">
-      <span class="reward-preview-chip">${escapeHtml(kindLabel)}</span>
+    <div class="reward-preview-meta">
+      <span class="reward-preview-kind">${escapeHtml(kindLabel)}</span>
       ${endsText ? `<span class="reward-preview-ends">${escapeHtml(endsText)}</span>` : ""}
     </div>
     <strong class="reward-preview-title">${escapeHtml(title || "Offer title")}</strong>
     <p class="reward-preview-body">${escapeHtml(body || "The offer message customers will read.")}</p>
-    ${couponCode ? `<div class="reward-preview-coupon"><strong class="reward-preview-code">${escapeHtml(String(couponCode).toUpperCase())}</strong><span class="reward-preview-copy">Copy code</span></div>` : ""}
+    ${couponCode ? `<div class="reward-preview-coupon"><span class="reward-preview-code-group"><span class="reward-preview-code-label">Code</span><strong class="reward-preview-code">${escapeHtml(String(couponCode).toUpperCase())}</strong></span><span class="reward-preview-copy">Copy</span></div>` : ""}
   </article>`;
 }
 function renderRewardPublications(publications = [], approvalRole = null) {
