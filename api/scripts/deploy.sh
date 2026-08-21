@@ -47,6 +47,23 @@ deploy_main() {
     echo "WARNING: no .env in $appdir - the API will boot with warnings. Continuing."
   fi
 
+  # Optional integrity check. If a checksum sidecar sits next to the zip
+  # (api.zip.sha256), the archive must match it before we extract — so a
+  # truncated or tampered upload is caught, not unzipped over a running API.
+  # No sidecar means no check: existing deploys are unaffected.
+  if [ -f "${zip}.sha256" ]; then
+    echo "== verifying integrity (${zip}.sha256) =="
+    expected=$(awk '{print $1}' "${zip}.sha256")
+    actual=$(sha256sum "$zip" | awk '{print $1}')
+    if [ "$expected" != "$actual" ]; then
+      echo "ABORT: $zip does not match its checksum. Not extracting."
+      echo "  expected $expected"
+      echo "  actual   $actual"
+      return 1
+    fi
+    echo "integrity OK"
+  fi
+
   echo "== extracting $zip =="
   unzip -o -q "$zip"
 
