@@ -339,28 +339,52 @@ async function payQr(actor, payload) {
       `This amount is too small to pay by QR. The fee on a QR payment would take the whole sale, `
       + `so nothing has been taken from your wallet. Payments of R${roundMoney(merchantFee + 0.01).toFixed(2)} and up work normally.`);
   }
-  const tx = await createTransaction(actor, {
-    serviceCode: "qr_payment",
-    amount,
-    recipient: qr.username,
-    idempotencyKey: payload.idempotencyKey,
-    merchantReceivesFee: false,
-    recipientFee: merchantFee,
-    metadata: {
-      qrId: qr.id,
-      qrReference: qr.reference,
-      merchantUserId: qr.user_id,
-      merchantFeeServiceCode: "merchant_qr_payment",
-      merchantFeePercentage: Number(merchantPricing.percentageFee || 0)
+  // ONE SALE, ONE PAYER. The already-paid check above ran unlocked on the
+  // pool, so two customers scanning the same Make-a-Sale code in the same
+  // instant both passed it, both settled, and the merchant was credited twice
+  // for one till sale. A dynamic code is now CLAIMED atomically before any
+  // money moves — the conditional UPDATE admits exactly one payer; the loser
+  // gets the same "already been paid" answer the late scanner gets. If the
+  // charge then fails, the claim is put back so the sale stays payable.
+  let dynamicClaimed = false;
+  if (qr.code_type === "dynamic") {
+    const claim = await pool.query(
+      "UPDATE qr_codes SET status = 'paid', updated_at = NOW() WHERE id = $1 AND status = 'active' RETURNING id",
+      [qr.id]
+    );
+    if (!claim.rows[0]) throw new AppError(409, "This QR code has already been paid");
+    dynamicClaimed = true;
+  }
+  let tx;
+  try {
+    tx = await createTransaction(actor, {
+      serviceCode: "qr_payment",
+      amount,
+      recipient: qr.username,
+      idempotencyKey: payload.idempotencyKey,
+      merchantReceivesFee: false,
+      recipientFee: merchantFee,
+      metadata: {
+        qrId: qr.id,
+        qrReference: qr.reference,
+        merchantUserId: qr.user_id,
+        merchantFeeServiceCode: "merchant_qr_payment",
+        merchantFeePercentage: Number(merchantPricing.percentageFee || 0)
+      }
+    });
+  } catch (error) {
+    if (dynamicClaimed) {
+      await pool.query(
+        "UPDATE qr_codes SET status = 'active', updated_at = NOW() WHERE id = $1 AND status = 'paid'",
+        [qr.id]
+      ).catch(() => {});
     }
-  });
+    throw error;
+  }
   await pool.query(
     "UPDATE transactions SET qr_code_id = $2, merchant_id = $3 WHERE id = $1",
     [tx.transactionId, qr.id, qr.merchant_row_id || null]
   );
-  if (qr.code_type === "dynamic") {
-    await pool.query("UPDATE qr_codes SET status = 'paid', updated_at = NOW() WHERE id = $1", [qr.id]);
-  }
   await writeAuditLog({
     actorType: actor.userType,
     actorId: actor.userId,

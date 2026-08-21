@@ -164,3 +164,76 @@ test("submitProfilePhoto uses the FormData captured before the fields were disab
   assert.match(app, /async function submitProfilePhoto\(form, formData\)[\s\S]{0,400}formData \|\| new FormData\(form\)/,
     "and the handler prefers it over rebuilding from a disabled form");
 });
+
+/* ================= Batch A2: money correctness (source pins) ================= */
+
+test("reversing a transaction closes any open pending-credit hold (no double-pay)", () => {
+  const src = read("src", "services", "transaction-service.js");
+  const fn = src.slice(src.indexOf("async function reverseTransaction"));
+  assert.match(fn, /UPDATE pending_credits[\s\S]{0,220}status = 'returned'[\s\S]{0,320}status = 'awaiting_verification'/,
+    "the hold must be closed inside the reversal transaction so the expiry sweep can never pay the sender twice");
+});
+
+test("the reversal claws back what revenue actually collected, not just the payer fee", () => {
+  const src = read("src", "services", "transaction-service.js");
+  const fn = src.slice(src.indexOf("async function reverseTransaction"));
+  assert.match(fn, /SUM\(fee_collected\)/, "the clawback sums the transaction's real revenue rows");
+  assert.doesNotMatch(fn, /-Math\.abs\(Number\(transaction\.fee\)\)/,
+    "the payer-fee-only clawback (which left recipient-fee revenue standing) must be gone");
+});
+
+test("limit checks are re-run under a per-user lock inside the money transaction", () => {
+  const tx = read("src", "services", "transaction-service.js");
+  const wd = read("src", "services", "peach-withdrawal-service.js");
+  assert.match(tx, /pg_advisory_xact_lock\(hashtext\(\$1\)\)", \[`limits:\$\{actor\.userId\}`\]/,
+    "two concurrent sends must serialize on the sender's limits");
+  assert.match(wd, /pg_advisory_xact_lock\(hashtext\(\$1\)\)", \[`limits:\$\{actor\.userId\}`\]/,
+    "withdrawals consume the same limit pool, so they take the same lock");
+});
+
+test("a dynamic QR sale admits exactly one payer (atomic claim)", () => {
+  const src = read("src", "services", "qr-service.js");
+  assert.match(src, /UPDATE qr_codes SET status = 'paid'[^"]*WHERE id = \$1 AND status = 'active' RETURNING id/,
+    "the claim happens before money moves and only one scanner can win it");
+  assert.match(src, /SET status = 'active'[^"]*WHERE id = \$1 AND status = 'paid'/,
+    "a failed charge puts the claim back so the sale stays payable");
+});
+
+test("a TitoKids request is decided exactly once (atomic claim before funding)", () => {
+  const src = read("src", "services", "titokids-service.js");
+  const fn = src.slice(src.indexOf("async function decideRequest"));
+  assert.match(fn, /WHERE id = \$1 AND status = 'requested'\s*RETURNING id/,
+    "two parents answering at once must not both fund the child");
+  assert.match(fn, /SET status = 'requested', decided_by = NULL/,
+    "a failed funding returns the request so it is not stranded approved-but-unfunded");
+});
+
+test("a ticket admits exactly one scan at the gate", () => {
+  const src = read("src", "services", "ticketing-service.js");
+  assert.match(src, /SET status = 'scanned', scanned_at = NOW\(\), scanned_by = \$2, updated_at = NOW\(\)\s*WHERE id = \$1 AND status = 'valid'/,
+    "two simultaneous scans of one ticket must not both approve entry");
+});
+
+test("the user's spending wallet never resolves to a TitoKids custody wallet", () => {
+  for (const file of ["peach-withdrawal-service.js", "pending-credit-service.js", "book-activation-service.js", "event-campaign-service.js"]) {
+    const src = read("src", "services", file);
+    assert.doesNotMatch(src, /FROM wallets WHERE user_id = \$1 ORDER BY created_at/,
+      `${file} must filter kind <> 'system' when picking the oldest wallet`);
+  }
+  assert.match(read("src", "services", "ticketing-service.js"), /AND kind <> 'system'/,
+    "ticketing's no-preference wallet pick excludes custody wallets");
+});
+
+test("monthly limits roll at South African midnight, not 02:00", () => {
+  for (const file of ["compliance-service.js", "limit-engine.js"]) {
+    const src = read("src", "services", file);
+    assert.match(src, /DATE_TRUNC\('month', NOW\(\) AT TIME ZONE 'Africa\/Johannesburg'\) AT TIME ZONE 'Africa\/Johannesburg'/,
+      `${file} must truncate in SAST wall-clock and anchor the boundary back to a real instant`);
+  }
+});
+
+test("a zero-priced fee-only service refuses cleanly instead of erroring in the ledger", () => {
+  const src = read("src", "services", "transaction-service.js");
+  assert.match(src, /if \(!\(debitTotal > 0\)\) throw new AppError\(400, "This service is not priced yet/,
+    "an operator pricing mistake must be a clean refusal, never a 500");
+});

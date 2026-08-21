@@ -534,7 +534,7 @@ async function monthUsage(userId) {
        COALESCE(SUM(ABS(wl.amount)) FILTER (WHERE wl.entry_type = 'debit'), 0) AS sent
      FROM wallet_ledger wl
      JOIN wallets w ON w.id = wl.wallet_id
-     WHERE w.user_id = $1 AND wl.created_at >= DATE_TRUNC('month', NOW())`,
+     WHERE w.user_id = $1 AND wl.created_at >= (DATE_TRUNC('month', NOW() AT TIME ZONE 'Africa/Johannesburg') AT TIME ZONE 'Africa/Johannesburg')`,
     [userId]
   );
   return { received: Number(rows[0]?.received || 0), sent: Number(rows[0]?.sent || 0) };

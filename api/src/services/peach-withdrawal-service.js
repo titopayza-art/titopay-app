@@ -219,10 +219,19 @@ async function createWithdrawal(actor, payload = {}) {
       return withdrawalResponse(raced[0], { idempotentReplay: true });
     }
 
+    // Serialize this user's limit consumption too: the assertCanWithdraw at
+    // the top ran unlocked, so two concurrent withdrawals that each fit the
+    // monthly cap could together exceed it. Same lock key as createTransaction
+    // — one gate for everything that consumes a user's limits.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`limits:${actor.userId}`]);
+    await require("./compliance-service").assertCanWithdraw(actor.userId, amount);
+
     // Lock the wallet so two concurrent withdrawals cannot both pass the
-    // balance check. This is what makes a double tap safe.
+    // balance check. This is what makes a double tap safe. kind <> 'system'
+    // keeps TitoKids custody wallets out of "the user's wallet" forever,
+    // whatever creation order a future backfill produces.
     const wallets = await client.query(
-      "SELECT * FROM wallets WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
+      "SELECT * FROM wallets WHERE user_id = $1 AND kind <> 'system' ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
       [actor.userId]
     );
     const wallet = wallets.rows[0];

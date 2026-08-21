@@ -169,7 +169,7 @@ async function activate(actor, meta = {}) {
 
     // The business's own wallet, locked for the duration.
     const { rows: wallets } = await client.query(
-      `SELECT * FROM wallets WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
+      `SELECT * FROM wallets WHERE user_id = $1 AND kind <> 'system' ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
       [businessUserId]
     );
     const wallet = wallets[0];

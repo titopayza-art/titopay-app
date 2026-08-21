@@ -222,7 +222,7 @@ async function campaignOverview(businessUserId, eventId) {
 async function chargeOrganiser(client, { businessUserId, amount, reference, metadata }) {
   const { applyWalletMovement, getRevenueWallet } = require("./wallet-service");
   const { rows } = await client.query(
-    `SELECT * FROM wallets WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
+    `SELECT * FROM wallets WHERE user_id = $1 AND kind <> 'system' ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
     [businessUserId]);
   const wallet = rows[0];
   if (!wallet) throw new AppError(404, "Business wallet not found");
@@ -457,7 +457,7 @@ async function refundOrganiser(businessUserId, amount, metadata) {
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
-      "SELECT * FROM wallets WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
+      "SELECT * FROM wallets WHERE user_id = $1 AND kind <> 'system' ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
       [businessUserId]);
     const wallet = rows[0];
     if (!wallet) throw new AppError(404, "Business wallet not found");

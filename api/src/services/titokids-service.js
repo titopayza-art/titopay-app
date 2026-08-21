@@ -953,17 +953,37 @@ async function decideRequest(parentUserId, requestId, approve) {
   // it throws 404 for anybody else — a stranger learns nothing.
   await loadOwnChild(parentUserId, request.child_id);
   if (request.status !== "requested") throw new AppError(409, `That request was already ${request.status}`);
-  let funded = null;
-  if (approve) {
-    funded = await fundChild(parentUserId, request.child_id, {
-      amount: money(request.amount),
-      note: request.note || `Approved ${CATEGORY_LABELS[request.category] || request.category} request`
-    }, { requestId });
-  }
-  await pool.query(
-    "UPDATE titokids_requests SET status = $2, decided_by = $3, decided_at = NOW() WHERE id = $1",
+  // CLAIM THE DECISION BEFORE MOVING MONEY. The status read above ran on the
+  // pool with no lock, so two parents answering at once (or a double-tap
+  // retry) both saw 'requested', both called fundChild, and the parent was
+  // debited twice for one request. The conditional UPDATE admits exactly one
+  // decider; the loser gets the same "already decided" answer a late tap gets.
+  const claim = await pool.query(
+    `UPDATE titokids_requests
+     SET status = $2, decided_by = $3, decided_at = NOW()
+     WHERE id = $1 AND status = 'requested'
+     RETURNING id`,
     [requestId, approve ? "approved" : "declined", parentUserId]
   );
+  if (!claim.rows[0]) throw new AppError(409, "That request has already been decided");
+  let funded = null;
+  if (approve) {
+    try {
+      funded = await fundChild(parentUserId, request.child_id, {
+        amount: money(request.amount),
+        note: request.note || `Approved ${CATEGORY_LABELS[request.category] || request.category} request`
+      }, { requestId });
+    } catch (error) {
+      // Funding failed (insufficient balance, limits): put the request back so
+      // the parent can fix the cause and answer it again — the claim must not
+      // strand it 'approved' with no money moved.
+      await pool.query(
+        "UPDATE titokids_requests SET status = 'requested', decided_by = NULL, decided_at = NULL WHERE id = $1 AND status = 'approved'",
+        [requestId]
+      ).catch(() => {});
+      throw error;
+    }
+  }
   await writeAuditLog({
     actorType: "customer", actorId: parentUserId, action: approve ? "titokids_request_approved" : "titokids_request_declined",
     entityType: "titokids_request", entityId: requestId, metadata: { amount: money(request.amount) }

@@ -176,7 +176,7 @@ async function releaseHold(pendingId, { actorId = null, note = null } = {}) {
     if (!hold) throw new AppError(404, "That held payment was not found.");
     if (hold.status !== "awaiting_verification") throw new AppError(409, "That payment has already been settled.");
     const { rows: wallets } = await client.query(
-      "SELECT id FROM wallets WHERE user_id = $1 ORDER BY created_at LIMIT 1", [hold.recipient_user_id]);
+      "SELECT id FROM wallets WHERE user_id = $1 AND kind <> 'system' ORDER BY created_at LIMIT 1", [hold.recipient_user_id]);
     if (!wallets[0]) throw new AppError(404, "The recipient has no wallet to receive into.");
     // Out of suspense, into the recipient: two legs, so the release balances
     // and the suspense wallet always equals the value of the open holds.
@@ -254,7 +254,7 @@ async function returnHold(pendingId, { actorId = null, note = "expired" } = {}) 
     if (!hold) throw new AppError(404, "That held payment was not found.");
     if (hold.status !== "awaiting_verification") throw new AppError(409, "That payment has already been settled.");
     const { rows: wallets } = await client.query(
-      "SELECT id FROM wallets WHERE user_id = $1 ORDER BY created_at LIMIT 1", [hold.sender_user_id]);
+      "SELECT id FROM wallets WHERE user_id = $1 AND kind <> 'system' ORDER BY created_at LIMIT 1", [hold.sender_user_id]);
     if (!wallets[0]) throw new AppError(404, "The sender has no wallet to return to.");
     // Out of suspense, back to the sender: the return balances the hold.
     const suspense = await require("./wallet-service").getSuspenseWallet(client);

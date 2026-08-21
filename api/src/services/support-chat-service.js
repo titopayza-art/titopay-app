@@ -114,7 +114,7 @@ const CONVERSATION_SELECT = `
     LEFT JOIN support_tickets t ON t.id = c.ticket_id
     LEFT JOIN admin_users a ON a.id = c.assigned_agent_id
     LEFT JOIN LATERAL (
-      SELECT wallet_number FROM wallets WHERE user_id = u.id ORDER BY created_at ASC LIMIT 1
+      SELECT wallet_number FROM wallets WHERE user_id = u.id AND kind <> 'system' ORDER BY created_at ASC LIMIT 1
     ) w ON TRUE
     LEFT JOIN LATERAL (
       SELECT body,sender_type,status,created_at

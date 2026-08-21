@@ -482,6 +482,9 @@ async function createTransaction(actor, payload) {
   let pendingHold = null;
   const debitTotal = payload.merchantReceivesFee ? chargedAmount : preview.total;
 
+  // A fee-only service priced at zero by an operator would otherwise reach the
+  // ledger's amount-must-be-positive guard as a 500. Refuse it as configuration.
+  if (!(debitTotal > 0)) throw new AppError(400, "This service is not priced yet. Please try again later.");
   if (Number(wallet.available_balance) < debitTotal) throw new AppError(400, "Insufficient balance");
 
   const client = await pool.connect();
@@ -515,6 +518,15 @@ async function createTransaction(actor, payload) {
         // transaction-scoped advisory lock is released either way.
         await client.query("ROLLBACK");
         return transactionResponseFromRow(replayed[0]);
+      }
+      // Serialize this sender's limit consumption. The assertCanSendAmount at
+      // the top of this function ran unlocked on the pool — two concurrent
+      // R150k sends each read usage 0 against a R200k month and both passed.
+      // Under this per-user lock, a competitor's ledger rows are committed
+      // before our re-read, so the second send sees the first one's usage.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`limits:${actor.userId}`]);
+      if (!feeOnly) {
+        await require("./compliance-service").assertCanSendAmount(actor.userId, chargedAmount, { serviceCode: normalizedServiceCode });
       }
     }
 
@@ -973,6 +985,23 @@ async function reverseTransaction(id, actor) {
       [id]
     );
     if (!ledgerRows.length) throw new AppError(409, "Transaction has no wallet ledger entries to reverse");
+    // A held payment has an open pending_credits row pointing at this
+    // transaction. The loop below refunds the sender and empties the suspense
+    // leg — if the hold stayed 'awaiting_verification', the expiry sweep would
+    // later debit suspense AGAIN (other customers' held funds) and pay the
+    // sender a second time. Close the hold inside this same transaction so
+    // neither releaseHold nor returnHold can ever fire for it.
+    await client.query(
+      `UPDATE pending_credits
+       SET status = 'returned',
+           returned_at = NOW(),
+           resolution_note = COALESCE(resolution_note, '') ||
+             CASE WHEN COALESCE(resolution_note,'') = '' THEN '' ELSE ' ' END ||
+             'Closed by admin reversal of the funding transaction.'
+       WHERE transaction_id = $1
+         AND status = 'awaiting_verification'`,
+      [id]
+    );
     const reversalReference = txReference("REV");
     for (const entry of ledgerRows) {
       const reverseType = {
@@ -994,19 +1023,27 @@ async function reverseTransaction(id, actor) {
         }
       });
     }
-    if (Number(transaction.fee || 0) > 0) {
-      const { rows: revenueRows } = await client.query(
-        "SELECT revenue_wallet_id FROM revenue_ledger WHERE transaction_id = $1 ORDER BY created_at DESC LIMIT 1",
-        [id]
+    // Claw back what revenue ACTUALLY collected on this transaction, not just
+    // the payer fee column. A merchant QR sale collects payerFee + recipientFee
+    // into revenue_ledger; writing only -transaction.fee left the recipient-fee
+    // share standing as income on every reversed sale. Summing the ledger rows
+    // nets out whatever was truly booked (and is naturally zero-safe if a prior
+    // clawback already ran).
+    const { rows: revenueRows } = await client.query(
+      `SELECT COALESCE(SUM(fee_collected), 0) AS collected,
+              MAX(revenue_wallet_id::TEXT) AS revenue_wallet_id
+       FROM revenue_ledger
+       WHERE transaction_id = $1`,
+      [id]
+    );
+    const collected = roundMoney(Number(revenueRows[0]?.collected || 0));
+    if (collected > 0 && revenueRows[0]?.revenue_wallet_id) {
+      await client.query(
+        `INSERT INTO revenue_ledger
+          (id, transaction_id, service_code, fee_collected, revenue_wallet_id)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [uuidv4(), id, transaction.service_code, -collected, revenueRows[0].revenue_wallet_id]
       );
-      if (revenueRows[0]?.revenue_wallet_id) {
-        await client.query(
-          `INSERT INTO revenue_ledger
-            (id, transaction_id, service_code, fee_collected, revenue_wallet_id)
-           VALUES ($1,$2,$3,$4,$5)`,
-          [uuidv4(), id, transaction.service_code, -Math.abs(Number(transaction.fee)), revenueRows[0].revenue_wallet_id]
-        );
-      }
     }
     const { rows: updatedRows } = await client.query(
       `UPDATE transactions

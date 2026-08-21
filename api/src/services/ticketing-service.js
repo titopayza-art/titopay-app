@@ -2205,7 +2205,9 @@ async function ticketPurchasePreview(slug, payload = {}, buyerUserId = null) {
 }
 
 async function loadWalletForUpdate(client, userId, kindPreference = null) {
-  const kindSql = kindPreference ? "AND kind = $2" : "";
+  // No-preference means "the user's own spending wallet" — never a TitoKids
+  // custody wallet, whatever creation order a backfill produces.
+  const kindSql = kindPreference ? "AND kind = $2" : "AND kind <> 'system'";
   const params = kindPreference ? [userId, kindPreference] : [userId];
   const { rows } = await client.query(
     `SELECT *
@@ -3120,13 +3122,21 @@ async function scanTicket(actor, payload = {}, meta = {}) {
   if (ticket.status !== "valid") {
     return { valid: false, status: ticket.status, ticket: ticketResponse(ticket), attendance: await eventAttendance(ticket.event_id), message: "Ticket is not valid for entry" };
   }
+  // ONE TICKET, ONE ENTRY. The status read above ran unlocked, so two gate
+  // scanners hitting the same ticket in the same instant both saw 'valid' and
+  // both approved entry — two people in on one ticket (a shared screenshot is
+  // exactly this attack). The guard admits one scan; the loser gets the same
+  // already-scanned answer a late scan gets.
   const { rows: updated } = await pool.query(
     `UPDATE tickets
      SET status = 'scanned', scanned_at = NOW(), scanned_by = $2, updated_at = NOW()
-     WHERE id = $1
+     WHERE id = $1 AND status = 'valid'
      RETURNING *`,
     [ticket.id, actor.userId]
   );
+  if (!updated[0]) {
+    return { valid: false, status: "already_scanned", ticket: ticketResponse(ticket), attendance: await eventAttendance(ticket.event_id), message: "Ticket has already been scanned" };
+  }
   await eventAudit({
     eventId: ticket.event_id,
     actorType: "customer",

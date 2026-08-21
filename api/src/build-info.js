@@ -19,10 +19,25 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 87;
+const API_BUILD = 88;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  88: "BUG AUDIT BATCH A2 - money correctness. Reversing a held payment now "
+      + "closes the pending-credit hold inside the same transaction (the expiry "
+      + "sweep could previously refund the sender a SECOND time from suspense); "
+      + "the reversal claws back the transaction's ACTUAL collected revenue, "
+      + "not just the payer fee; send and withdrawal limits are re-checked "
+      + "under a per-user advisory lock inside the money transaction (two "
+      + "concurrent R150k sends could both pass a R200k monthly cap); a "
+      + "dynamic Make-a-Sale QR admits exactly one payer via an atomic claim "
+      + "(two simultaneous scanners could both settle one sale); a TitoKids "
+      + "money request is decided exactly once (double-approve funded the "
+      + "child twice); a ticket admits exactly one gate scan; the user's "
+      + "spending wallet can never resolve to a TitoKids custody wallet "
+      + "(kind <> 'system' on every oldest-wallet pick); monthly limits roll "
+      + "at South African midnight instead of 02:00; a zero-priced fee-only "
+      + "service refuses cleanly. No migration.",
   87: "BUG AUDIT BATCH A1 - the lockout/critical set from the 21 Aug six-"
       + "dimension correctness sweep. API: users.login_mfa_enabled added to "
       + "schema.sql and the runtime self-heal (fresh installs no longer 500 on "

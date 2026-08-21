@@ -192,7 +192,7 @@ async function monthlyWithdrawn(userId) {
      JOIN transactions t ON t.id = wl.transaction_id
      WHERE w.user_id = $1 AND wl.entry_type = 'debit'
        AND t.service_code = ANY($2::TEXT[])
-       AND wl.created_at >= DATE_TRUNC('month', NOW())`,
+       AND wl.created_at >= (DATE_TRUNC('month', NOW() AT TIME ZONE 'Africa/Johannesburg') AT TIME ZONE 'Africa/Johannesburg')`,
     [userId, WITHDRAWAL_SERVICE_CODES]
   );
   return Number(rows[0]?.withdrawn || 0);
