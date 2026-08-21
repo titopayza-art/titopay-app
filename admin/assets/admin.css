@@ -6385,3 +6385,7 @@ html[data-theme="dark"] .auth-panel-mark {
 .tkt-trend-host { padding: 4px 2px 10px; }
 .tkt-trend { display: flex; align-items: flex-end; gap: 2px; height: 46px; margin: 6px 0 2px; }
 .tkt-trend-bar { flex: 1; min-width: 3px; background: var(--tp-blue, #2f5cff); border-radius: 2px 2px 0 0; }
+/* The maintenance form's grid cells are full panels, so a submit button
+   sharing the grid stretched into a giant block. It keeps its width but sits
+   at its natural height at the end of the cell. */
+#maintenance-form > .primary-btn { align-self: end; height: auto; }

@@ -15,6 +15,18 @@ v94 - Design-audit fixes across the console.
   - Ticketing: all currency through the shared ZAR formatter, and the 30-day
     trend strip draws again - its bars used inline styles that the console
     CSP silently stripped, so the strip rendered invisible.
+  - Service Builder no longer dies on a stored record that is missing a
+    sub-object (meta, availability, api, ...): every record loaded from the
+    API or this browser is normalised against the full service shape first.
+  - Tables drop the Actions column when no row offers an action - a header
+    over a column of empty cells read as broken on Revenue, Audit, Staff and
+    Merchants.
+  - Audit log: readable en-ZA timestamps, single-dash empty targets, action
+    names without underscores. Revenue: service keys as display names.
+  - Platform Settings: the maintenance form's save button no longer inflates
+    into a panel-sized block. Staff Management and the failure panel lose
+    database-table and internal-ops language. Security Dashboard's subtitle
+    matches what the page actually configures.
 
 v93 - Rewards card design refinement.
 

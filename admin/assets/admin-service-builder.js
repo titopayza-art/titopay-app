@@ -49,7 +49,7 @@
  * Contents
  *
  *    1. Small helpers and identity           9 functions
- *    2. Service definitions and the registry   7 functions
+ *    2. Service definitions and the registry   8 functions
  *    3. Validation and safety                5 functions
  *    4. Export in the catalogue schema       2 functions
  *    5. Usage analytics                      2 functions
@@ -214,11 +214,31 @@ function writeLocalRegistry() {
     HOST.showToast("Unable to store the service registry in this browser (storage full?)");
   }
 }
+/* Every record that enters state.services passes through the blankService
+   shape first. Records stored by an earlier build, another tool, or the API
+   itself can be missing a sub-object (meta, availability, api, ...) - and one
+   such record used to crash the whole page on its first property read. */
+function normalizeStoredService(record) {
+  if (!record || typeof record !== "object") return null;
+  const base = blankService(String(record.name || ""));
+  const merged = { ...base, ...record };
+  for (const key of Object.keys(base)) {
+    const defaults = base[key];
+    if (defaults && typeof defaults === "object" && !Array.isArray(defaults)) {
+      merged[key] = { ...defaults, ...(record[key] && typeof record[key] === "object" ? record[key] : {}) };
+    } else if (Array.isArray(defaults) && !Array.isArray(merged[key])) {
+      merged[key] = defaults;
+    }
+  }
+  if (!Array.isArray(merged.versions)) merged.versions = [];
+  if (!Array.isArray(merged.audit)) merged.audit = [];
+  return merged;
+}
 async function loadRegistry() {
   try {
     const result = await HOST.apiFetch(SB_API_BASE);
     if (Array.isArray(result.services) || Array.isArray(result.items)) {
-      state.services = result.services || result.items;
+      state.services = (result.services || result.items).map(normalizeStoredService).filter(Boolean);
       state.storageMode = "api";
       writeLocalRegistry(); // local mirror, so the console degrades gracefully
       return;
@@ -226,7 +246,7 @@ async function loadRegistry() {
   } catch {
     // The endpoint does not exist yet. Local mode, stated on the page.
   }
-  state.services = readLocalRegistry();
+  state.services = readLocalRegistry().map(normalizeStoredService).filter(Boolean);
   state.storageMode = "local";
 }
 async function persistService(service) {

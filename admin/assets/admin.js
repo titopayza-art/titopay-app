@@ -1498,7 +1498,7 @@ function renderModuleError(page, me, error) {
   document.getElementById("page-content").innerHTML = `
     <section class="table-card">
       <h3>Operational notice</h3>
-      <p class="table-card-note">Refresh this module first. If the same error returns, the backend API needs attention.</p>
+      <p class="table-card-note">Refresh this module first. If the same error returns, report it to your engineering contact with the reference below.</p>
       ${renderKeyValueList(detailRows)}
       <div class="action-row">
         <button class="secondary-btn admin-refresh-btn" type="button" data-admin-page-refresh="${escapeHtml(page || "dashboard")}">Refresh</button>
@@ -1559,17 +1559,21 @@ function renderRows(rows, columns, actions = () => "", { actionsColumn = true } 
   if (!rows.length) {
     return `<div class="empty"><strong>Nothing to show yet</strong><small>The TitoPay API returned no records for this view. Adjust the filters above, or refresh once the queue has activity.</small></div>`;
   }
+  // A column of empty cells reads as broken, so the Actions column only
+  // renders when at least one row actually has an action to offer.
+  const renderedActions = actionsColumn ? rows.map((row) => String(actions(row) || "")) : [];
+  const showActions = actionsColumn && renderedActions.some((cell) => cell.trim() !== "");
   return `
     <div class="table-wrap">
       <table>
         <thead>
-          <tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}${actionsColumn ? "<th>Actions</th>" : ""}</tr>
+          <tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}${showActions ? "<th>Actions</th>" : ""}</tr>
         </thead>
         <tbody>
-          ${rows.map((row) => `
+          ${rows.map((row, rowIndex) => `
             <tr>
               ${columns.map((column) => `<td>${column.render ? column.render(row) : escapeHtml(row[column.key] ?? "")}</td>`).join("")}
-              ${actionsColumn ? `<td><div class="action-row">${actions(row)}</div></td>` : ""}
+              ${showActions ? `<td><div class="action-row">${renderedActions[rowIndex]}</div></td>` : ""}
             </tr>
           `).join("")}
         </tbody>
@@ -3064,7 +3068,7 @@ async function renderRevenue() {
     ])}
     <section class="panel-grid">
       ${tableCard("Revenue by Service", renderRows(result.byService, [
-        { label: "Service", key: "service_type" },
+        { label: "Service", render: (row) => escapeHtml(String(row.service_type || "-").replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())) },
         { label: "Collected", render: (row) => money(row.total) },
       ], () => ""))}
       ${tableCard("Daily Revenue", renderRows(result.daily, [
@@ -3278,9 +3282,9 @@ async function renderAudit() {
     "Audit Logs",
     renderRows(result.items, [
       { label: "Actor", render: (row) => `${escapeHtml(row.actor_type)}<br><small>${escapeHtml(row.actor_id || "-")}</small>` },
-      { label: "Action", key: "action" },
-      { label: "Target", render: (row) => `${escapeHtml(row.target_type || "-")}<br><small>${escapeHtml(row.target_id || "-")}</small>` },
-      { label: "Time", key: "created_at" },
+      { label: "Action", render: (row) => escapeHtml(String(row.action || "-").replaceAll("_", " ")) },
+      { label: "Target", render: (row) => row.target_type || row.target_id ? `${escapeHtml(row.target_type || "")}${row.target_id ? `<br><small>${escapeHtml(row.target_id)}</small>` : ""}` : "-" },
+      { label: "Time", render: (row) => escapeHtml(row.created_at ? new Date(row.created_at).toLocaleString("en-ZA") : "-") },
     ], () => "")
   );
 }
@@ -4933,7 +4937,7 @@ async function renderStaffManagement() {
     ])}
     <section class="panel">
       <h3>Add Staff Member</h3>
-      <p>Create real Admin Portal staff access. Only CEO, Developer, Owner, Root and Super Admin roles may create staff accounts.</p>
+      <p>Create Admin Portal staff access. Only CEO, Developer, Owner, Root and Super Admin roles may create staff accounts.</p>
       <form id="staff-create-form" class="form-grid">
         <label>Full name<input name="fullName" required maxlength="160" placeholder="Staff full name"></label>
         <label>Username<input name="username" required maxlength="80" placeholder="firstname.lastname"></label>
@@ -4962,7 +4966,7 @@ async function renderStaffManagement() {
       { label: "Status", render: (row) => `<span class="chip ${chipClass(row.status)}">${escapeHtml(row.status || "-")}</span>` },
       { label: "Failed Login", render: (row) => escapeHtml(row.failed_login_attempts || 0) },
       { label: "Last Login", render: (row) => escapeHtml(row.last_login_at ? new Date(row.last_login_at).toLocaleString("en-ZA") : "Never") },
-    ], () => ""), "This page reads and creates real admin_users records only. Temporary passwords are never displayed again.")}
+    ], () => ""), "This page manages live Admin Portal accounts. Temporary passwords are never displayed again.")}
   `;
 }
 async function renderEngineeringTools() {
@@ -6996,7 +7000,7 @@ function adminPageDescriptors() {
     compliance: ["Compliance Dashboard", "Monitor FICA, KYC and verification workflows."],
     "company-documents": ["Company Documents", "Manage controlled policies, contracts, compliance documents and staff acknowledgements."],
     revenue: ["Revenue Dashboard", "Review fee income and the TitoPay revenue wallet."],
-    security: ["Security Dashboard", "Track OTP, login and profile lock events."],
+    security: ["Security Dashboard", "Configure staff sign-in, email OTP and messaging for the platform."],
     audit: ["Audit Dashboard", "Review immutable platform and admin actions."],
     search: ["Global Search", "Search customers, businesses, wallets and transactions from one operational view."],
     pricing: ["Pricing Engine", "Single source of truth for all TitoPay fees, VAT, effective dates and service pricing."],
