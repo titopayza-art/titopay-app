@@ -1,6 +1,18 @@
 TitoPay Admin
-Build: admin-console-v91
+Build: admin-console-v92
 Date: 2026-08-21
+
+v92 - Rewards ad images.
+
+  - "Publish to Rewards" gains an Ad image upload: JPG, PNG or WebP, resized
+    in the browser exactly like an event poster (longest edge 1400px, stepped
+    JPEG quality) before it is sent. The Customer Preview shows the image on
+    the card as the app renders it, and the queue shows a thumbnail.
+  - In the app the images become the big Rewards banner beside Search on the
+    Services screen and a swipeable ad carousel at the top of the Rewards
+    screen. Publications without an image behave exactly as in v91.
+  - Requires API build 91 for the image to be stored; against build 90 the
+    upload field submits and the API refuses politely.
 
 v91 - Rewards publications.
 

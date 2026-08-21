@@ -43,6 +43,11 @@ async function ensureRewardsSchema(queryable = pool) {
   await queryable.query(
     "CREATE INDEX IF NOT EXISTS idx_reward_publications_status ON reward_publications (status, created_at DESC)"
   );
+  // Ad image (build 91): a poster-style banner shown in the Rewards carousel
+  // and on the Services screen's Rewards banner. Metadata-only migration.
+  await queryable.query(
+    "ALTER TABLE reward_publications ADD COLUMN IF NOT EXISTS image_url TEXT"
+  );
   await queryable.query(`
     CREATE TABLE IF NOT EXISTS reward_publication_reads (
       publication_id UUID NOT NULL REFERENCES reward_publications(id) ON DELETE CASCADE,
@@ -61,12 +66,29 @@ function customerAudience(accountType) {
   return String(accountType || "").toLowerCase() === "business" ? "business" : "personal";
 }
 
+// The ad image, exactly the event-poster contract: an uploaded image arrives
+// as a base64 data URL (the admin console resizes first, this is the
+// backstop), a plain http(s) URL stays working, anything else is dropped.
+function cleanRewardImage(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(raw)) {
+    if (Buffer.byteLength(raw, "utf8") > 700 * 1024) {
+      throw new AppError(413, "The ad image is too large. Choose a smaller image.");
+    }
+    return raw;
+  }
+  if (/^https?:\/\//i.test(raw)) return raw.slice(0, 800);
+  throw new AppError(400, "The ad image must be an uploaded JPG, PNG or WebP");
+}
+
 function publicPublication(row = {}) {
   return {
     id: row.id,
     kind: row.kind,
     title: row.title,
     body: row.body,
+    imageUrl: row.image_url || "",
     couponCode: row.coupon_code || "",
     startsAt: row.starts_at || null,
     endsAt: row.ends_at || null,
@@ -169,11 +191,12 @@ async function createPublication(payload = {}, adminId, meta = {}) {
   if (startsAt && endsAt && endsAt.getTime() <= startsAt.getTime()) {
     throw new AppError(400, "The end date must come after the start date");
   }
+  const imageUrl = cleanRewardImage(payload.imageUrl ?? payload.imageData ?? payload.image_url);
   const { rows } = await pool.query(
-    `INSERT INTO reward_publications (id, kind, title, body, coupon_code, audience, starts_at, ends_at, created_by)
-     VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9)
+    `INSERT INTO reward_publications (id, kind, title, body, coupon_code, audience, starts_at, ends_at, image_url, created_by)
+     VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, NULLIF($9, ''), $10)
      RETURNING *`,
-    [uuidv4(), kind, title, body, couponCode, audience, startsAt, endsAt, adminId]
+    [uuidv4(), kind, title, body, couponCode, audience, startsAt, endsAt, imageUrl, adminId]
   );
   await writeAuditLog({
     actorType: "admin", actorId: adminId,
@@ -270,6 +293,7 @@ async function listPublicationsForAdmin() {
     kind: row.kind,
     title: row.title,
     body: row.body,
+    imageUrl: row.image_url || "",
     couponCode: row.coupon_code || "",
     audience: row.audience,
     startsAt: row.starts_at,

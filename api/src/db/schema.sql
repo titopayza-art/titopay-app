@@ -765,6 +765,7 @@ CREATE TABLE IF NOT EXISTS reward_publications (
   kind TEXT NOT NULL CHECK (kind IN ('promotion', 'discount', 'coupon', 'advert', 'notice')),
   title TEXT NOT NULL,
   body TEXT NOT NULL,
+  image_url TEXT,
   coupon_code TEXT,
   audience TEXT NOT NULL DEFAULT 'both' CHECK (audience IN ('personal', 'business', 'both')),
   starts_at TIMESTAMPTZ,

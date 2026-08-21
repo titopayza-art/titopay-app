@@ -149,6 +149,42 @@ test("audience targeting and expiry window filter the feed", async () => {
   }
 });
 
+test("ad images follow the event-poster contract", async () => {
+  const customer = await makeCustomer();
+  const admin = await makeAdmin();
+  const created = [];
+  try {
+    const tinyPng = "data:image/png;base64," + Buffer.from("png-bytes-for-test").toString("base64");
+    const withImage = await createPublication(
+      { kind: "advert", title: "Poster advert", body: "An advert carrying a poster image for the carousel.", imageData: tinyPng },
+      admin, meta
+    ).then((p) => approvePublication(p.id, admin, "ceo", meta));
+    created.push(withImage.id);
+    assert.equal(withImage.image_url, tinyPng, "a valid data URL is stored as-is");
+    const feedItem = findMine(await listRewardsForCustomer(customer.id, "personal"), withImage.id);
+    assert.equal(feedItem.imageUrl, tinyPng, "the feed serves the image to the app");
+
+    await assert.rejects(
+      () => createPublication({
+        kind: "advert", title: "Oversized", body: "An image over the 700KB backstop must refuse.",
+        imageData: "data:image/png;base64," + "A".repeat(800 * 1024)
+      }, admin, meta),
+      /too large/i
+    );
+    await assert.rejects(
+      () => createPublication({
+        kind: "advert", title: "Wrong shape", body: "A non-image value in the image field must refuse.",
+        imageData: "javascript:alert(1)"
+      }, admin, meta),
+      /must be an uploaded/i
+    );
+  } finally {
+    await cleanupPublications(created);
+    await cleanupUser(customer.id);
+    await cleanupAdmin(admin);
+  }
+});
+
 test("coupon rules, engagement counts, rejection needs a reason", async () => {
   const customer = await makeCustomer();
   const admin = await makeAdmin();

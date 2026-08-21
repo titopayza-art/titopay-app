@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 90;
+const API_BUILD = 91;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  91: "REWARDS AD IMAGES. reward_publications gains image_url (metadata-only "
+      + "ALTER, event-poster contract: data-URL JPG/PNG/WebP <= 700KB or an "
+      + "http(s) URL). The PWA (v460) shows a big Rewards ad banner beside "
+      + "Search on the Services screen and a swipeable poster carousel on the "
+      + "Rewards screen; the admin console (v92) uploads and previews the "
+      + "image. No behaviour change for publications without an image.",
   90: "REWARDS. New customer Rewards screen (PWA v459) served by GET "
       + "/me/rewards: admin-published promotions, discounts, coupon codes, "
       + "adverts and notices. Marketing drafts a publication in the console "

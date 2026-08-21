@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v91";
+  return "admin-console-v92";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -5883,11 +5883,51 @@ function rewardStatusChip(publication = {}) {
   if (stateLabel === "withdrawn" || stateLabel === "rejected") return `<span class="chip red">${escapeHtml(text)}</span>`;
   return `<span class="chip">${escapeHtml(text)}</span>`;
 }
-function rewardPreviewCardHtml({ kind = "promotion", title = "", body = "", couponCode = "", endsAt = "" } = {}) {
+function readRewardFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+/* Resize an ad image exactly the way the PWA resizes event posters: longest
+   edge 1400px, JPEG, quality stepped down until it fits the 700KB server
+   backstop with room to spare. */
+async function resizeRewardAdImage(file) {
+  const source = await readRewardFileAsDataUrl(file);
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const w = image.naturalWidth || image.width;
+      const h = image.naturalHeight || image.height;
+      const scale = Math.min(1, 1400 / Math.max(w, h));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      const context = canvas.getContext("2d");
+      if (!context) { resolve(source); return; }
+      context.fillStyle = "#0b1f4d";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      let quality = 0.85;
+      let out = canvas.toDataURL("image/jpeg", quality);
+      while (out.length > 600 * 1024 && quality > 0.4) {
+        quality -= 0.1;
+        out = canvas.toDataURL("image/jpeg", quality);
+      }
+      resolve(out);
+    };
+    image.onerror = () => resolve(source);
+    image.src = source;
+  });
+}
+function rewardPreviewCardHtml({ kind = "promotion", title = "", body = "", couponCode = "", endsAt = "", imageData = "" } = {}) {
   const kindLabel = REWARD_KIND_LABELS[kind] || "Offer";
   const ends = endsAt ? new Date(endsAt) : null;
   const endsText = ends && !Number.isNaN(ends.getTime()) ? `Ends ${ends.toLocaleDateString("en-ZA", { day: "numeric", month: "short" })}` : "";
   return `<article class="reward-preview-card">
+    ${imageData ? `<img class="reward-preview-image" src="${escapeHtml(imageData)}" alt="Ad image preview">` : ""}
     <div class="reward-preview-top">
       <span class="reward-preview-chip">${escapeHtml(kindLabel)}</span>
       ${endsText ? `<span class="reward-preview-ends">${escapeHtml(endsText)}</span>` : ""}
@@ -5912,7 +5952,7 @@ function renderRewardPublications(publications = [], approvalRole = null) {
           ? `<button type="button" class="secondary-btn reject-btn" data-reward-withdraw="${escapeHtml(p.id)}">Withdraw now</button>`
           : escapeHtml((p.decisionReason ? `${p.status}: ${p.decisionReason}` : (p.decidedBy ? `${p.status} by ${p.decidedBy}` : p.status)).replaceAll("_", " "));
       return `<tr>
-        <td><strong>${escapeHtml(p.title)}</strong><small>${escapeHtml(String(p.body || "").slice(0, 120))}${String(p.body || "").length > 120 ? "…" : ""}</small>${p.couponCode ? `<small>Code: ${escapeHtml(p.couponCode)}</small>` : ""}</td>
+        <td>${p.imageUrl ? `<img class="reward-queue-thumb" src="${escapeHtml(p.imageUrl)}" alt="">` : ""}<strong>${escapeHtml(p.title)}</strong><small>${escapeHtml(String(p.body || "").slice(0, 120))}${String(p.body || "").length > 120 ? "…" : ""}</small>${p.couponCode ? `<small>Code: ${escapeHtml(p.couponCode)}</small>` : ""}</td>
         <td>${escapeHtml(REWARD_KIND_LABELS[p.kind] || p.kind)}</td>
         <td>${escapeHtml(p.audience)}</td>
         <td>${escapeHtml(windowText)}</td>
@@ -6039,6 +6079,7 @@ async function renderMarketing(me = {}) {
           <div class="field field-full"><label>Title</label><input name="title" maxlength="80" minlength="3" placeholder="What customers see first" required></div>
           <div class="field field-full"><label>Message</label><textarea name="body" rows="4" maxlength="600" minlength="10" placeholder="Write the offer exactly as customers should read it." required></textarea></div>
           <div class="field" id="reward-coupon-field"><label>Coupon code</label><input name="couponCode" maxlength="40" placeholder="e.g. SPRING25"><small>Required for the Coupon kind. Customers get a one-tap copy button.</small></div>
+          <div class="field field-full"><label>Ad image (optional)</label><input type="file" accept="image/*" id="reward-image-input"><small>Shown in the app's ad carousel and on the big Rewards banner. Same size as an event poster - 16:9 looks best; it is resized automatically. <button type="button" class="secondary-btn" id="reward-image-clear" hidden>Remove image</button></small></div>
           <div class="field"><label>Starts (optional)</label><input name="startsAt" type="datetime-local"></div>
           <div class="field"><label>Ends (optional)</label><input name="endsAt" type="datetime-local"><small>The offer disappears from the app by itself when it ends.</small></div>
           <button class="primary-btn" type="submit">Submit for approval</button>
@@ -6083,9 +6124,33 @@ async function renderMarketing(me = {}) {
       title: String(data.get("title") || ""),
       body: String(data.get("body") || ""),
       couponCode: String(data.get("couponCode") || ""),
-      endsAt: String(data.get("endsAt") || "")
+      endsAt: String(data.get("endsAt") || ""),
+      imageData: rewardAdImage
     });
   };
+  let rewardAdImage = "";
+  const rewardImageInput = document.getElementById("reward-image-input");
+  const rewardImageClear = document.getElementById("reward-image-clear");
+  rewardImageInput?.addEventListener("change", async () => {
+    const file = rewardImageInput.files && rewardImageInput.files[0];
+    if (!file) return;
+    if (!String(file.type || "").startsWith("image/")) { showToast("Choose an image file (JPG, PNG or WebP)"); rewardImageInput.value = ""; return; }
+    if (file.size > 15 * 1024 * 1024) { showToast("Choose an image under 15MB"); rewardImageInput.value = ""; return; }
+    try {
+      rewardAdImage = await resizeRewardAdImage(file);
+      if (rewardImageClear) rewardImageClear.hidden = false;
+      syncRewardPreview();
+    } catch (error) {
+      showToast("That image could not be used. Try another.");
+      rewardImageInput.value = "";
+    }
+  });
+  rewardImageClear?.addEventListener("click", () => {
+    rewardAdImage = "";
+    if (rewardImageInput) rewardImageInput.value = "";
+    rewardImageClear.hidden = true;
+    syncRewardPreview();
+  });
   rewardsForm?.addEventListener("input", syncRewardPreview);
   rewardsForm?.addEventListener("change", syncRewardPreview);
   syncRewardPreview();
@@ -6101,6 +6166,7 @@ async function renderMarketing(me = {}) {
           title: data.get("title"),
           body: data.get("body"),
           couponCode: data.get("couponCode"),
+          imageData: rewardAdImage,
           startsAt: data.get("startsAt") ? new Date(data.get("startsAt")).toISOString() : "",
           endsAt: data.get("endsAt") ? new Date(data.get("endsAt")).toISOString() : ""
         })

@@ -24680,14 +24680,16 @@ function servicesView() {
   // never a broken Services screen.
   if (state.auth?.accessToken && state.rewardsUnseen == null) {
     state.rewardsUnseen = 0;
-    loadRewardsUnseen().then((count) => {
-      if (count > 0 && state.route === "services") render();
+    loadRewardsUnseen().then(() => {
+      if (state.route === "services" && ((state.rewardsFeed || []).length || state.rewardsUnseen > 0)) render();
     }).catch(() => {});
   }
   // Pure navigation entries. Each of these routes to a tab that already exists
   // in the bottom navigation, so a tile for them is a duplicate of the nav, not
   // a service. Business Profile was the one still leaking into the grid.
-  const hiddenServiceTiles = new Set(["transactions", "profile-security", "business-profile"]);
+  // Rewards is hidden here too: the big banner beside Search IS its tile, and
+  // one entry point reads better than two.
+  const hiddenServiceTiles = new Set(["transactions", "profile-security", "business-profile", "rewards", "business-rewards"]);
   const shouldShowServiceTile = (service) => {
     const action = String(service.action || "").toLowerCase();
     const id = String(service.id || service.serviceCode || service.service_code || "").toLowerCase();
@@ -24713,7 +24715,7 @@ function servicesView() {
   return `
     ${state.auth?.accessToken ? securityStatusStrip() : ""}
     ${state.serviceError ? promoCarousel() : ""}
-    ${searchTile ? `<section class="service-grid">${searchTile}</section>` : ""}
+    <section class="service-grid">${searchTile}${rewardsBannerTile(Boolean(searchTile))}</section>
     ${active.length ? groupedServiceSections(active) : `<section class="service-grid">${serviceEmptyState()}</section>`}
     ${soon.length ? `
       <section class="section-head">
@@ -24870,11 +24872,61 @@ function handleService(id) {
 async function loadRewardsUnseen() {
   try {
     const result = await api("/v1/auth/me/rewards");
+    state.rewardsFeed = result.items || [];
     state.rewardsUnseen = Number(result.unseenCount) || 0;
   } catch (error) {
+    state.rewardsFeed = state.rewardsFeed || [];
     state.rewardsUnseen = 0;
   }
   return state.rewardsUnseen;
+}
+// The big Rewards banner on the Services screen. Three honest states: live ad
+// images rotating; live text offers with the newest title; and a clean coming
+// soon panel when nothing is published - the space never sits empty or broken.
+function rewardsBannerTile(besideSearch) {
+  const authed = Boolean(state.auth?.accessToken);
+  const feed = Array.isArray(state.rewardsFeed) ? state.rewardsFeed : [];
+  const ads = feed.filter((item) => item.imageUrl);
+  const unseen = Number(state.rewardsUnseen) || 0;
+  const newChip = unseen ? ` · ${unseen > 9 ? "9+" : unseen} new` : "";
+  const attrs = authed ? `data-service="rewards"` : `data-auth-tab="login"`;
+  let inner;
+  if (ads.length) {
+    inner = `<div class="rewards-banner-slides" data-rewards-banner-slides>
+        ${ads.slice(0, 5).map((item, index) => `<img class="rewards-banner-img${index === 0 ? " is-active" : ""}" src="${esc(item.imageUrl)}" alt="${esc(item.title)}">`).join("")}
+      </div>
+      <span class="rewards-banner-tag">${icon("gift")} Rewards${newChip}</span>`;
+    setTimeout(settleRewardsBannerRotation, 60);
+  } else if (feed.length) {
+    const latest = feed[0];
+    inner = `<div class="rewards-banner-brand">
+        <span class="rewards-banner-kicker">${icon("gift")} Rewards${newChip}</span>
+        <strong>${esc(latest.title)}</strong>
+        <small>${feed.length === 1 ? "Tap to see the offer" : `${feed.length} offers inside`}</small>
+      </div>`;
+  } else {
+    inner = `<div class="rewards-banner-brand">
+        <span class="rewards-banner-kicker">${icon("gift")} Rewards</span>
+        <strong>${authed ? "Offers are coming soon" : "Offers & Rewards"}</strong>
+        <small>${authed ? "Promotions, discounts and coupon codes will land here first." : "Sign in to see promotions, discounts and coupon codes."}</small>
+      </div>`;
+  }
+  return `<button class="service-tile rewards-banner${besideSearch ? "" : " rewards-banner-full"}" type="button" ${attrs} aria-label="Open Rewards">${inner}</button>`;
+}
+// Rotates the banner's ad images. The timer lives on state so a re-render
+// replaces it instead of stacking a second one, and it retires itself the
+// moment the banner leaves the page.
+function settleRewardsBannerRotation() {
+  if (state.rewardsBannerTimer) { clearInterval(state.rewardsBannerTimer); state.rewardsBannerTimer = null; }
+  const host = document.querySelector("[data-rewards-banner-slides]");
+  if (!host || host.children.length < 2) return;
+  state.rewardsBannerTimer = setInterval(() => {
+    const slides = document.querySelectorAll("[data-rewards-banner-slides] .rewards-banner-img");
+    if (!slides.length) { clearInterval(state.rewardsBannerTimer); state.rewardsBannerTimer = null; return; }
+    const activeIndex = Math.max(0, [...slides].findIndex((el) => el.classList.contains("is-active")));
+    slides[activeIndex].classList.remove("is-active");
+    slides[(activeIndex + 1) % slides.length].classList.add("is-active");
+  }, 4000);
 }
 function rewardEndsCopy(endsAt) {
   if (!endsAt) return "";
@@ -24889,7 +24941,7 @@ function rewardEndsCopy(endsAt) {
 function rewardCard(item) {
   const [chipLabel, chipTone] = REWARD_KIND_CHIPS[item.kind] || ["Offer", "is-promo"];
   const ends = rewardEndsCopy(item.endsAt);
-  return `<article class="reward-card${item.seen ? "" : " is-new"}">
+  return `<article class="reward-card${item.seen ? "" : " is-new"}" data-reward-card="${esc(item.id)}">
     <div class="reward-card-top">
       <span class="reward-chip ${chipTone}">${esc(chipLabel)}</span>
       ${ends ? `<span class="reward-ends">${esc(ends)}</span>` : ""}
@@ -24902,6 +24954,31 @@ function rewardCard(item) {
       <button class="btn ghost mini" type="button" data-copy-value="${esc(item.couponCode)}" data-copy-label="Coupon code" data-reward-copied="${esc(item.id)}">${icon("copy")} Copy code</button>
     </div>` : ""}
   </article>`;
+}
+// The ad carousel on the Rewards screen: swipeable, dots track position,
+// auto-advances gently until the person touches it, and tapping a poster
+// scrolls its offer card into view.
+function settleRewardAdsCarousel(host) {
+  const rail = host.querySelector("[data-reward-ads]");
+  if (!rail) return;
+  rail.addEventListener("click", (event) => {
+    const slide = event.target.closest("[data-reward-jump]");
+    if (!slide) return;
+    host.querySelector(`[data-reward-card="${slide.dataset.rewardJump}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  if (rail.children.length < 2) return;
+  const dots = host.querySelectorAll(".reward-ads-dot");
+  const syncDots = () => {
+    const index = Math.round(rail.scrollLeft / Math.max(1, rail.clientWidth));
+    dots.forEach((dot, i) => dot.classList.toggle("is-active", i === index));
+  };
+  rail.addEventListener("scroll", () => requestAnimationFrame(syncDots), { passive: true });
+  let auto = setInterval(() => {
+    if (!document.body.contains(rail)) { clearInterval(auto); return; }
+    const index = Math.round(rail.scrollLeft / Math.max(1, rail.clientWidth));
+    rail.scrollTo({ left: ((index + 1) % rail.children.length) * rail.clientWidth, behavior: "smooth" });
+  }, 4500);
+  rail.addEventListener("pointerdown", () => { if (auto) { clearInterval(auto); auto = null; } }, { passive: true });
 }
 // The Rewards screen. Read-only: everything on it was published by TitoPay's
 // team and signed off by an approval seat, and nothing here can move money.
@@ -24935,7 +25012,9 @@ async function openRewardsModal() {
     host.innerHTML = `<section class="empty-state compact-state">${icon("gift")}<strong>No offers right now</strong><p>When TitoPay publishes promotions, discounts or coupon codes, they appear here first - watch for the badge on the Rewards tile.</p></section>`;
     return;
   }
-  host.innerHTML = items.map(rewardCard).join("");
+  const adSlides = items.filter((item) => item.imageUrl);
+  host.innerHTML = `${adSlides.length ? `<div class="reward-ads" data-reward-ads>${adSlides.map((item) => `<img class="reward-ad-slide" src="${esc(item.imageUrl)}" alt="${esc(item.title)}" data-reward-jump="${esc(item.id)}">`).join("")}</div>${adSlides.length > 1 ? `<div class="reward-ads-dots" aria-hidden="true">${adSlides.map((_, index) => `<span class="reward-ads-dot${index === 0 ? " is-active" : ""}"></span>`).join("")}</div>` : ""}` : ""}${items.map(rewardCard).join("")}`;
+  settleRewardAdsCarousel(host);
   // Copy itself is handled by the global data-copy-value delegate; this only
   // feeds the marketing dashboard's engagement count, so it never blocks.
   host.querySelectorAll("[data-reward-copied]").forEach((button) => {
