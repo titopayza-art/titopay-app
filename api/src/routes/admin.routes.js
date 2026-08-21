@@ -3519,6 +3519,18 @@ router.put("/compliance/limits", requireAdminPermission("services"), async (req,
     // and the audit record keeps the previous and new values side by side.
     const reason = String(req.body?.reason || "").trim();
     if (!reason) throw new AppError(400, "State the reason for this limit change. It becomes part of the audit record.");
+    const dualAuth = require("../services/dual-auth-service");
+    if (await dualAuth.requiresLimitChangeDualAuth()) {
+      const request = await dualAuth.createRequest({
+        actionType: "limit_change",
+        payload: { config: req.body?.config || req.body || {}, reason },
+        summary: `Limit framework change: ${reason.slice(0, 200)}`,
+        adminId: req.auth.userId,
+        meta: { ipAddress: req.ip, userAgent: req.get("user-agent") }
+      });
+      res.status(202).json({ ok: true, pendingApproval: true, request });
+      return;
+    }
     const compliance = require("../services/compliance-service");
     const config = await compliance.saveComplianceConfig(req.auth, req.body?.config || req.body || {}, { reason });
     // Warnings never block a save. They tell the operator what the change they
@@ -4245,6 +4257,45 @@ router.post("/marketing/rewards/:id/withdraw", requireAdminPermission("marketing
   try {
     const publicationId = requireUuid(req.params.id, "Publication ID");
     res.json({ ok: true, publication: await rewardsService.withdrawPublication(publicationId, req.auth.userId, req.body?.reason, {
+      ipAddress: req.ip, userAgent: req.get("user-agent")
+    }) });
+  } catch (error) { next(error); }
+});
+
+// SECOND APPROVALS. Listing and deciding the dual-authorisation queue.
+// Reversals and limit changes both sit under operational transaction
+// authority; the binding control is that the approver must be a DIFFERENT
+// admin, enforced in the service and by a database CHECK.
+const dualAuthService = require("../services/dual-auth-service");
+
+router.get("/dual-auth", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, requests: await dualAuthService.listRequests({ status: String(req.query.status || "pending") }) });
+  } catch (error) { next(error); }
+});
+
+router.post("/dual-auth/:id/approve", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    const requestId = requireUuid(req.params.id, "Request ID");
+    res.json({ ok: true, ...(await dualAuthService.approveRequest(requestId, req.auth.userId, {
+      ipAddress: req.ip, userAgent: req.get("user-agent")
+    })) });
+  } catch (error) { next(error); }
+});
+
+router.post("/dual-auth/:id/decline", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    const requestId = requireUuid(req.params.id, "Request ID");
+    res.json({ ok: true, request: await dualAuthService.declineRequest(requestId, req.auth.userId, req.body?.note, {
+      ipAddress: req.ip, userAgent: req.get("user-agent")
+    }) });
+  } catch (error) { next(error); }
+});
+
+router.post("/dual-auth/:id/cancel", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    const requestId = requireUuid(req.params.id, "Request ID");
+    res.json({ ok: true, request: await dualAuthService.cancelRequest(requestId, req.auth.userId, {
       ipAddress: req.ip, userAgent: req.get("user-agent")
     }) });
   } catch (error) { next(error); }

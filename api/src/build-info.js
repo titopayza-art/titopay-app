@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 91;
+const API_BUILD = 92;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  92: "DUAL AUTHORISATION + LEDGER UNIQUENESS. Reversals at/above a "
+      + "configured amount (default R1,000) and every limit-framework change "
+      + "are captured as requests that a SECOND, different admin approves "
+      + "and executes (admin_dual_auth_requests; self-approval refused in "
+      + "code and by DB CHECK; decide-once claim). New endpoints under "
+      + "/admin/dual-auth. A partial unique index on wallet_ledger "
+      + "(transaction_id, wallet_id, entry_type, reference) makes duplicate "
+      + "postings structurally impossible; attempted at boot and NEVER "
+      + "fatal - blocked history logs loudly and raises an integrity alert. "
+      + "Stokvel server errors say 'Stokvel group'; the app states TitoPay "
+      + "holds no group pot (PWA v464, console v96).",
   91: "REWARDS AD IMAGES. reward_publications gains image_url (metadata-only "
       + "ALTER, event-poster contract: data-URL JPG/PNG/WebP <= 700KB or an "
       + "http(s) URL). The PWA (v460) shows a big Rewards ad banner beside "

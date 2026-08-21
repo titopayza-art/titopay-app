@@ -29,6 +29,8 @@ const APP = read("pwa/app.js");
 const INDEX = read("pwa/index.html");
 const LISTING = read("store/listing/store-listing-copy.md");
 const TRANSACTIONS = read("api/src/services/transaction-service.js");
+const STOCKVEL = read("api/src/services/stockvel-service.js");
+const SCHEMA = read("api/src/db/schema.sql");
 
 // Strip comments so a warning ABOUT forbidden language never trips the scan
 // that exists to enforce it.
@@ -102,4 +104,20 @@ test("the proof-of-account letter is a wallet letter, not a bank artifact", () =
   assert.match(APP, /Download a letter confirming your TitoPay wallet\./);
   assert.doesNotMatch(stripComments(APP), /official stamped letter/i);
   assert.match(APP, /TitoPay is not a bank\. This letter confirms a TitoPay wallet, not a bank account\./);
+});
+
+test("a stokvel has no pot: contributions are member-to-treasurer transfers", () => {
+  // The regulatory audit's stokvel finding rests on this shape: TitoPay
+  // never holds pooled group money. Contributions are ordinary
+  // wallet-to-wallet transfers to the group's treasurer, and the register is
+  // derived from those transactions - no group wallet, no group balance.
+  assert.match(STOCKVEL, /wallet-to-wallet\s+transfer from the member to the chair/);
+  assert.match(STOCKVEL, /createTransaction/);
+  assert.doesNotMatch(STOCKVEL, /INSERT INTO wallet_ledger|applyWalletMovement/,
+    "the stokvel service must never post ledger rows of its own");
+  const groupTable = SCHEMA.match(/CREATE TABLE IF NOT EXISTS stockvel_groups \(([\s\S]*?)\);/);
+  assert.ok(groupTable, "stockvel_groups table exists");
+  assert.doesNotMatch(groupTable[1], /balance|wallet_id|pot/i,
+    "a stokvel group carries no balance and owns no wallet");
+  assert.match(APP, /TitoPay holds no group pot/);
 });

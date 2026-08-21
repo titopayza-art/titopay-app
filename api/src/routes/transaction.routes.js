@@ -2,6 +2,7 @@ const express = require("express");
 const { requireAuth } = require("../middleware/auth");
 const { requireAdminPermission } = require("../middleware/rbac");
 const { requireUuid } = require("../lib/validation");
+const { AppError } = require("../lib/errors");
 const {
   feePreview,
   createTransaction,
@@ -53,6 +54,26 @@ router.post("/:id/reverse", requireAdminPermission("transactions"), async (req, 
     // demanded so existing consoles keep working; an unstated reason is
     // itself recorded as unstated.
     const reason = String(req.body?.reason || "").trim().slice(0, 300) || "not stated";
+    // Dual authorisation: at or above the configured amount, a reversal is
+    // captured as a request and a SECOND admin executes it via approval.
+    // Below it, the single-admin path (reason + integrity alert) continues.
+    const dualAuth = require("../services/dual-auth-service");
+    const { rows: txRows } = await require("../db/pool").pool.query(
+      "SELECT id, total, amount, reference, user_id FROM transactions WHERE id = $1", [transactionId]);
+    if (!txRows[0]) throw new AppError(404, "Transaction not found");
+    const gateAmount = Number(txRows[0].total ?? txRows[0].amount ?? 0);
+    if (await dualAuth.requiresReversalDualAuth(gateAmount)) {
+      const request = await dualAuth.createRequest({
+        actionType: "transaction_reversal",
+        payload: { transactionId, reason },
+        summary: `Reverse ${txRows[0].reference} (R ${gateAmount.toFixed(2)})`,
+        amount: gateAmount,
+        adminId: req.auth.userId,
+        meta: { ipAddress: req.ip, userAgent: req.get("user-agent") }
+      });
+      res.status(202).json({ ok: true, pendingApproval: true, request });
+      return;
+    }
     const transaction = await reverseTransaction(transactionId, req.auth);
     const integrity = require("../services/money-integrity-service");
     await integrity.raiseAlert({

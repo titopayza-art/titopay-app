@@ -162,6 +162,7 @@ if (chatSocketEnabled) attachChatSocketServer(server);
   console.log("");
 
 server.listen(config.apiPort, config.apiHost, () => {
+  require("./services/wallet-service").ensureLedgerPostingIndex().catch(() => {});
   console.log("TitoPay API service started", {
     role: inClusteredWorker ? `worker ${cluster.worker.id} of ${apiWorkers}` : "single process",
     pid: process.pid,
@@ -185,6 +186,7 @@ server.listen(config.apiPort, config.apiHost, () => {
   // this existed.
   console.error("[deployment-safety] the check did not complete; serving anyway", { message: error.message });
   server.listen(config.apiPort, config.apiHost, () => {
+  require("./services/wallet-service").ensureLedgerPostingIndex().catch(() => {});
     console.log("TitoPay API service started (deployment safety check incomplete)", { pid: process.pid });
   });
 });

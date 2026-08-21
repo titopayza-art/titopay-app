@@ -1,6 +1,19 @@
 TitoPay Admin
-Build: admin-console-v95
+Build: admin-console-v96
 Date: 2026-08-21
+
+v96 - Second approvals (dual authorisation).
+
+  - New "Second Approvals" card on Transaction Monitoring: reversals at or
+    above the configured amount (default R1,000) and every limit-framework
+    change are captured as requests that a SECOND, different administrator
+    approves and executes. Self-approval is refused by the API and by a
+    database constraint; the requester sees "Yours - awaiting another
+    admin" and can only cancel.
+  - Reversal and limit-save flows understand the new 202 answer and say
+    plainly that the action is waiting for a second admin.
+  - Degrades to an empty queue against an older API. Requires API build 92
+    for the queue itself.
 
 v95 - Marketing red lines on Rewards publishing.
 

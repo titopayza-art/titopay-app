@@ -17461,7 +17461,7 @@ function openStockvelStatementModal(id) {
   ].filter(([, value]) => value);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Stokvel</p><h2>Group statement</h2><p class="lead">A record of this stokvel group built from what TitoPay holds today.</p></div>
+      <div><p class="eyebrow">Stokvel</p><h2>Group statement</h2><p class="lead">A record of the contributions members have paid to the group's treasurer. TitoPay holds no group pot.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="receipt-card sv-statement">

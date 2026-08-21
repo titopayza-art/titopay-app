@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v95";
+  return "admin-console-v96";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -2713,8 +2713,27 @@ function reverseActionCell(row = {}) {
   if (!reason) return `<button data-transaction-reverse="${escapeHtml(row.id)}">Reverse</button>`;
   return `<button type="button" disabled title="${escapeHtml(reason.full)}" aria-label="${escapeHtml(`Reverse unavailable. ${reason.full}`)}">Reverse</button><br><small class="action-note">${escapeHtml(reason.short)}</small>`;
 }
+function renderDualAuthRequests(requests = []) {
+  if (!requests.length) return `<p class="table-card-note">Nothing is waiting for a second administrator.</p>`;
+  const myId = PAGE_EXPORTS.currentMe?.id || "";
+  return `<div class="table-wrap"><table><thead><tr><th>Request</th><th>Type</th><th>Amount</th><th>Requested by</th><th>Actions</th></tr></thead><tbody>${requests.map((row) => `
+    <tr>
+      <td><strong>${escapeHtml(row.summary)}</strong><small>${escapeHtml(new Date(row.createdAt).toLocaleString("en-ZA"))}</small></td>
+      <td>${escapeHtml(row.actionType === "limit_change" ? "Limit change" : "Reversal")}</td>
+      <td>${row.amount == null ? "-" : escapeHtml(money(row.amount))}</td>
+      <td>${escapeHtml(row.requestedByName || "-")}</td>
+      <td>${row.requestedBy === myId
+        ? `<small>Yours - awaiting another admin</small> <button type="button" class="secondary-btn" data-dualauth-cancel="${escapeHtml(row.id)}">Cancel</button>`
+        : `<button type="button" class="secondary-btn" data-dualauth-approve="${escapeHtml(row.id)}">Approve &amp; execute</button>
+           <button type="button" class="secondary-btn reject-btn" data-dualauth-decline="${escapeHtml(row.id)}">Decline</button>`}</td>
+    </tr>`).join("")}</tbody></table></div>`;
+}
 async function renderTransactions() {
   const filters = getTransactionFilterValues();
+  // Second approvals ship in API build 92; an older API degrades to an
+  // empty queue instead of breaking the page.
+  const dualAuthState = await apiFetch("/admin/dual-auth?status=pending").catch(() => ({ requests: [] }));
+  PAGE_EXPORTS.dualAuthRequests = dualAuthState.requests || [];
   const result = await apiFetch(`/admin/transactions${transactionFilterQuery(filters)}`);
   const rows = result.items || [];
   PAGE_EXPORTS.transactions = rows;
@@ -2727,7 +2746,10 @@ async function renderTransactions() {
   const totalRevenue = rows.reduce((sum, row) => sum + Number(row.revenue_recorded || 0), 0);
   const reviewCount = rows.filter((row) => row.reconciliation_status === "review").length;
   const attemptCount = rows.length - settled.length;
-  document.getElementById("page-content").innerHTML = tableCard(
+  const dualAuthCard = tableCard("Second Approvals",
+    renderDualAuthRequests(PAGE_EXPORTS.dualAuthRequests),
+    "Reversals at or above the configured amount and limit-framework changes execute only when a second, different administrator approves them. Self-approval is refused by the API and the database.");
+  document.getElementById("page-content").innerHTML = dualAuthCard + tableCard(
     "All Transactions",
     `
       ${renderMetrics([
@@ -7951,12 +7973,57 @@ document.addEventListener("click", async (event) => {
   const reverseTx = event.target.closest("[data-transaction-reverse]");
   if (reverseTx) {
     try {
-      await apiFetch(`/transactions/${reverseTx.dataset.transactionReverse}/reverse`, { method: "POST" });
-      showToast("Transaction reversed");
+      const result = await apiFetch(`/transactions/${reverseTx.dataset.transactionReverse}/reverse`, { method: "POST" });
+      showToast(result?.pendingApproval
+        ? "Reversal sent for second-admin approval - it executes when another administrator approves it below"
+        : "Transaction reversed");
       await renderTransactions();
     } catch (error) {
       showToast(adminErrorMessage(error.message));
     }
+  }
+  const dualAuthApprove = event.target.closest("[data-dualauth-approve]");
+  if (dualAuthApprove) {
+    const row = (PAGE_EXPORTS.dualAuthRequests || []).find((item) => item.id === dualAuthApprove.dataset.dualauthApprove);
+    if (!window.confirm(`Approve and execute: ${row?.summary || "this request"}? You are the second authoriser - this runs the action immediately.`)) return;
+    dualAuthApprove.disabled = true;
+    try {
+      await apiFetch(`/admin/dual-auth/${dualAuthApprove.dataset.dualauthApprove}/approve`, { method: "POST", body: "{}" });
+      showToast("Approved and executed");
+      await renderTransactions();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+      dualAuthApprove.disabled = false;
+    }
+    return;
+  }
+  const dualAuthDecline = event.target.closest("[data-dualauth-decline]");
+  if (dualAuthDecline) {
+    const note = window.prompt("Why is this request declined? The note becomes part of the record.");
+    if (note === null) return;
+    dualAuthDecline.disabled = true;
+    try {
+      await apiFetch(`/admin/dual-auth/${dualAuthDecline.dataset.dualauthDecline}/decline`, { method: "POST", body: JSON.stringify({ note }) });
+      showToast("Request declined");
+      await renderTransactions();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+      dualAuthDecline.disabled = false;
+    }
+    return;
+  }
+  const dualAuthCancel = event.target.closest("[data-dualauth-cancel]");
+  if (dualAuthCancel) {
+    dualAuthCancel.disabled = true;
+    try {
+      await apiFetch(`/admin/dual-auth/${dualAuthCancel.dataset.dualauthCancel}/cancel`, { method: "POST", body: "{}" });
+      showToast("Request cancelled");
+      await renderTransactions();
+    } catch (error) {
+      showToast(adminErrorMessage(error.message));
+      dualAuthCancel.disabled = false;
+    }
+    return;
   }
   const pricingEdit = event.target.closest("[data-pricing-edit]");
   if (pricingEdit) {
@@ -8786,6 +8853,11 @@ document.addEventListener("click", async (event) => {
       const saved = await apiFetch("/admin/compliance/limits", {
         method: "PUT", body: JSON.stringify({ config: { tiers }, reason })
       });
+      if (saved?.pendingApproval) {
+        showToast("Limit change sent for second-admin approval - it applies when another administrator approves it");
+        await renderCompliance();
+        return;
+      }
       const warnings = saved?.warnings || [];
       showToast(warnings.length
         ? `Saved and audit-logged. ${warnings.length} thing${warnings.length === 1 ? "" : "s"} to look at: ${warnings[0]}`
@@ -8809,6 +8881,11 @@ document.addEventListener("click", async (event) => {
     if (!window.confirm("Apply this configuration? It takes effect on the very next transaction.")) return;
     try {
       const saved = await apiFetch("/admin/compliance/limits", { method: "PUT", body: JSON.stringify({ config, reason }) });
+      if (saved?.pendingApproval) {
+        showToast("Configuration change sent for second-admin approval");
+        await renderCompliance();
+        return;
+      }
       const warnings = saved?.warnings || [];
       showToast(warnings.length ? `Saved. Note: ${warnings[0]}` : "Configuration saved and audit-logged");
       await renderCompliance();

@@ -107,7 +107,7 @@ async function membership(groupId, userId) {
 async function requireMember(groupId, userId) {
   await ensureStockvelSchema();
   const member = await membership(groupId, userId);
-  if (!member) throw new AppError(404, "Savings group not found");
+  if (!member) throw new AppError(404, "Stokvel group not found");
   return member;
 }
 
@@ -220,7 +220,7 @@ async function updateGroup(userId, groupId, payload = {}) {
   await requireManager(groupId, userId);
   const { rows: current } = await pool.query("SELECT * FROM stockvel_groups WHERE id = $1", [groupId]);
   const group = current[0];
-  if (!group) throw new AppError(404, "Savings group not found");
+  if (!group) throw new AppError(404, "Stokvel group not found");
   const name = payload.name !== undefined ? boundedText(payload.name, "Group name", { min: 2, max: 120 }) : group.name;
   const description = payload.description !== undefined ? String(payload.description).slice(0, 600) : group.description;
   const contributionAmount = payload.contributionAmount !== undefined ? money(payload.contributionAmount) : money(group.contribution_amount);
@@ -266,7 +266,7 @@ async function getGroup(userId, groupId) {
   const member = await requireMember(groupId, userId);
   const { rows } = await pool.query("SELECT * FROM stockvel_groups WHERE id = $1", [groupId]);
   const group = rows[0];
-  if (!group) throw new AppError(404, "Savings group not found");
+  if (!group) throw new AppError(404, "Stokvel group not found");
   const { rows: memberRows } = await pool.query(
     `SELECT sm.user_id AS id, sm.role, sm.status, sm.joined_at, u.full_name AS name, u.username
      FROM stockvel_members sm
@@ -573,7 +573,7 @@ async function contributionTreasurer(groupId) {
     [groupId]
   );
   const group = rows[0];
-  if (!group) throw new AppError(404, "Savings group not found");
+  if (!group) throw new AppError(404, "Stokvel group not found");
   if (group.status === "draft") throw new AppError(409, "This group is still a draft. The organiser must activate it before contributions start.");
   if (group.status === "closed") throw new AppError(409, "This group has been closed. No further contributions are taken.");
   return group;
@@ -629,7 +629,7 @@ async function inviteMembers(userId, groupId, identifiers = []) {
     [groupId]
   );
   const group = groupRows[0];
-  if (!group) throw new AppError(404, "Savings group not found");
+  if (!group) throw new AppError(404, "Stokvel group not found");
   const { rows: inviterRows } = await pool.query("SELECT full_name, username FROM users WHERE id = $1", [userId]);
   const inviterName = inviterRows[0]?.full_name || `@${inviterRows[0]?.username || "a TitoPay user"}`;
   const { verifyRecipient } = require("./security-service");

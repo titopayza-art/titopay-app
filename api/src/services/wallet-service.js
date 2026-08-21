@@ -370,6 +370,34 @@ async function emailWalletStatement(userId, walletId, range = {}, actor = {}) {
   } finally {client.release();}
 }
 
+// THE LEDGER'S STRUCTURAL DUPLICATE GUARD. The money-integrity sweep detects
+// duplicate postings within its window; this index makes them impossible at
+// the database. Attempted once per boot, and NEVER fatal: an installation
+// whose history already contains a duplicate logs the failure loudly and
+// keeps serving - the sweep still watches - instead of refusing to start.
+// (No-502 principle: a control that cannot be installed must degrade to the
+// monitoring that already exists, not take the platform down.)
+async function ensureLedgerPostingIndex() {
+  try {
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_ledger_unique_posting
+         ON wallet_ledger (transaction_id, wallet_id, entry_type, reference)
+         WHERE transaction_id IS NOT NULL`
+    );
+  } catch (error) {
+    console.error("[ledger] unique posting index could not be created - duplicate history present; the integrity sweep remains the guard", {
+      message: error.message
+    });
+    try {
+      await require("./money-integrity-service").raiseAlert({
+        alertType: "duplicate_postings", severity: "high",
+        fingerprint: "ledger_unique_index_blocked",
+        details: { reason: "existing duplicate wallet_ledger rows block idx_wallet_ledger_unique_posting", error: String(error.message).slice(0, 200) }
+      });
+    } catch {}
+  }
+}
+
 async function applyWalletMovement(client, { walletId, transactionId, entryType, amount, reference, metadata = {} }) {
   const movementAmount = Math.abs(Number(amount));
   if (!Number.isFinite(movementAmount) || movementAmount <= 0) {
@@ -493,6 +521,7 @@ async function listAllWallets() {
 }
 
 module.exports = {
+  ensureLedgerPostingIndex,
   ensureWalletNumbersForAllWallets,
   getPrimaryWalletForUser,
   getRevenueWallet,

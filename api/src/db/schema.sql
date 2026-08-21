@@ -791,6 +791,30 @@ CREATE TABLE IF NOT EXISTS reward_publication_reads (
 CREATE INDEX IF NOT EXISTS idx_reward_publication_reads_user
   ON reward_publication_reads (user_id, seen_at DESC);
 
+-- Dual authorisation: reversals at/above the configured amount and limit
+-- framework changes are requested by one admin and executed by a second,
+-- different admin. Mirrored by ensureDualAuthSchema in dual-auth-service.js.
+CREATE TABLE IF NOT EXISTS admin_dual_auth_requests (
+  id UUID PRIMARY KEY,
+  action_type TEXT NOT NULL CHECK (action_type IN ('transaction_reversal', 'limit_change')),
+  payload JSONB NOT NULL DEFAULT '{}'::JSONB,
+  summary TEXT NOT NULL,
+  amount NUMERIC(18,2),
+  requested_by UUID NOT NULL REFERENCES admin_users(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'executed', 'declined', 'cancelled', 'failed')),
+  decided_by UUID REFERENCES admin_users(id) ON DELETE SET NULL,
+  decided_at TIMESTAMPTZ,
+  decision_note TEXT,
+  executed_at TIMESTAMPTZ,
+  execution_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT dual_auth_second_admin CHECK (decided_by IS NULL OR status = 'cancelled' OR decided_by <> requested_by)
+);
+CREATE INDEX IF NOT EXISTS idx_admin_dual_auth_status
+  ON admin_dual_auth_requests (status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS trusted_devices (
   id UUID PRIMARY KEY,
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -961,6 +985,11 @@ CREATE TABLE IF NOT EXISTS wallet_ledger (
 );
 
 CREATE INDEX IF NOT EXISTS idx_wallet_ledger_wallet ON wallet_ledger (wallet_id, created_at DESC);
+-- One posting per (transaction, wallet, entry type, reference): duplicates
+-- become structurally impossible rather than merely detected by the sweep.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_ledger_unique_posting
+  ON wallet_ledger (transaction_id, wallet_id, entry_type, reference)
+  WHERE transaction_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS revenue_ledger (
   id UUID PRIMARY KEY,
