@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v96";
+  return "admin-console-v97";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -486,8 +486,8 @@ function validateAdminHost() {
     <main class="auth-shell">
       <section class="auth-card">
         <div class="brand">
-          <div class="brand-mark">TP</div>
           <div>
+            <img class="auth-blocked-wordmark" src="${new URL(`titopay-logo-light.png?v=${ADMIN_ASSET_VERSION}`, ADMIN_ASSET_URL).href}" alt="TitoPay" width="480" height="118" decoding="async">
             <h1>TitoPay Admin</h1>
             <p class="auth-copy">This environment is restricted to the secure TitoPay admin domain.</p>
           </div>
@@ -998,10 +998,10 @@ function printQrAsset(asset = {}) {
       .sheet{max-width:720px;margin:0 auto;border:1px solid #dbe6f7;border-radius:28px;padding:34px;text-align:center}
       h1{margin:0 0 8px;font-size:30px} p{color:#66748f}
       img{width:320px;max-width:80%;height:auto;margin:24px auto;display:block}
-      .brand{font-weight:900;color:#0057ff;letter-spacing:.08em;text-transform:uppercase}
+      img.brand{width:170px;margin:0 auto 10px}
     </style></head><body>
       <main class="sheet">
-        <div class="brand">TitoPay</div>
+        <img class="brand" src="${new URL("titopay-logo-light.png", ADMIN_ASSET_URL).href}" alt="TitoPay">
         <h1>${escapeHtml(asset.label || "QR Asset")}</h1>
         <p>${escapeHtml(asset.destinationUrl || "")}</p>
         <img alt="TitoPay QR" src="${asset.pngDataUrl}">
@@ -1201,9 +1201,8 @@ function renderSidebar(page, me) {
   return `
     <aside class="sidebar" id="admin-sidebar">
       <div class="brand">
-        <div class="brand-mark">TP</div>
         <div class="brand-copy">
-          <strong>TitoPay</strong>
+          <img class="brand-wordmark" src="${new URL(`titopay-logo-night.png?v=${ADMIN_ASSET_VERSION}`, ADMIN_ASSET_URL).href}" alt="TitoPay" width="480" height="118" decoding="async">
           <small>Operations Console</small>
         </div>
       </div>

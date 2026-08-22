@@ -1,6 +1,16 @@
 TitoPay Admin
-Build: admin-console-v96
-Date: 2026-08-21
+Build: admin-console-v97
+Date: 2026-08-22
+
+v97 - Official wordmark throughout.
+
+  - The sign-in brand column, the sidebar, the light sign-in panel, the
+    blocked-environment screen and the QR asset print sheet now carry the
+    official TitoPay wordmark images: the white-and-blue mark on dark navy
+    surfaces (titopay-logo-night.png) and the navy-and-blue mark on light
+    surfaces (titopay-logo-light.png). The old roughly-keyed
+    titopay-wordmark.png, the "TP" initials tile and the typeset stand-in
+    are gone.
 
 v96 - Second approvals (dual authorisation).
 

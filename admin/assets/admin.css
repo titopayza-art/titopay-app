@@ -779,11 +779,9 @@ body[data-page="login"] {
    wordmark is set in type here instead: nothing sits behind it, and it stays
    sharp at any resolution. The artwork is still used on the light panel, where
    its white background is invisible. */
-/* The real mark, with its geometric cuts on the T and the y, keyed to
-   transparency from the brand artwork. It belongs on this column and nowhere
-   else in the console: "Tito" is white, so on the light sign-in panel it could
-   only be shown by putting a dark plate behind it — the same sticker the old
-   logo was. That panel keeps the wordmark set in type. */
+/* The official dark-surface wordmark: white "Tito", blue "Pay", transparent
+   background. Light surfaces use titopay-logo-light.png (navy "Tito") instead
+   — never this one, which would vanish on white. */
 .auth-brand-wordmark {
   display: block;
   width: auto;
@@ -945,19 +943,11 @@ body[data-page="login"] {
    symptom. The brand column already sets the wordmark in type; the sign-in
    column now does the same, which renders crisply at any density and needs no
    asset at all. */
+/* The official light-surface wordmark, replacing the typeset stand-in. */
 .auth-panel-mark {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 1px;
-  color: var(--tp-ink);
-  font-size: 1.375rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1;
-}
-
-.auth-panel-mark span {
-  color: var(--tp-blue);
+  display: block;
+  width: auto;
+  height: 22px;
 }
 
 .auth-card {
@@ -1214,6 +1204,23 @@ body[data-page="login"] {
   display: grid;
   min-width: 0;
   line-height: 1.3;
+}
+
+/* The real wordmark, white "Tito" and blue "Pay", sits directly on the navy
+   rail - no plate, no initials tile. Height, not width, pins its scale so the
+   PNG's aspect ratio survives. */
+.brand-wordmark {
+  display: block;
+  width: auto;
+  height: 21px;
+  margin-bottom: 3px;
+}
+
+.auth-blocked-wordmark {
+  display: block;
+  width: auto;
+  height: 26px;
+  margin-bottom: 12px;
 }
 
 .brand-copy strong {
