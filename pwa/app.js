@@ -28063,7 +28063,7 @@ function renderBookOffer() {
     </div>
     <section class="panel">
       <p class="eyebrow">Once-off</p>
-      <h3 class="bk-price">R${price.toFixed(2)}</h3>
+      <h3 class="bk-price">${money(price)}</h3>
       <p class="muted">Paid once from your TitoPay wallet. No monthly subscription.</p>
     </section>
     <section class="settings-list">
@@ -28078,7 +28078,7 @@ function renderBookOffer() {
         </div>`).join("")}
     </section>
     <div class="auth-actions">
-      <button class="btn primary" type="button" data-action="book-activate">${icon("check-circle")} Get Book for R${price.toFixed(2)}</button>
+      <button class="btn primary" type="button" data-action="book-activate">${icon("check-circle")} Get Book for ${money(price)}</button>
     </div>
   `);
 }
@@ -28718,7 +28718,7 @@ function renderBookDiscover() {
           <div>
             <p><strong>${esc(venue.name)}</strong></p>
             <small>${esc([venue.categoryLabel, venue.suburb || venue.city].filter(Boolean).join(" · "))}${
-              venue.fromPrice ? ` · from R${Number(venue.fromPrice).toFixed(2)}` : ""}</small>
+              venue.fromPrice ? ` · from ${money(venue.fromPrice)}` : ""}</small>
           </div>
         </button>`).join("")}
     </section>` : `<section class="empty-state">
@@ -28820,7 +28820,7 @@ function renderBookVenuePage() {
         <button class="settings-row-button" type="button" data-action="book-service:${esc(service.id)}">
           <span class="icon-bubble">${icon("calendar")}</span>
           <span class="settings-row-body"><strong>${esc(service.name)}</strong>
-            <small>${service.durationMinutes} min${service.price ? ` · R${Number(service.price).toFixed(2)}` : " · Free"}</small></span>
+            <small>${service.durationMinutes} min${service.price ? ` · ${money(service.price)}` : " · Free"}</small></span>
           <span class="settings-row-chevron">${icon("arrow-right")}</span>
         </button>`).join("")}
     </section>
@@ -28854,7 +28854,7 @@ async function openBookTimes(serviceId, dateValue) {
     <div class="modal-head modal-head-nested">
       <button class="icon-btn" type="button" data-action="book-venue:${esc(venue.slug)}" aria-label="Back" title="Back">${icon("arrow-left")}</button>
       <div><p class="eyebrow">${esc(venue.name)}</p><h2>${esc(service.name)}</h2>
-        <p class="lead">${service.durationMinutes} min${service.price ? ` · R${Number(service.price).toFixed(2)}` : ""}</p></div>
+        <p class="lead">${service.durationMinutes} min${service.price ? ` · ${money(service.price)}` : ""}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <nav class="bk-tabs" aria-label="Day">
@@ -28873,7 +28873,7 @@ async function openBookTimes(serviceId, dateValue) {
     <div class="modal-head modal-head-nested">
       <button class="icon-btn" type="button" data-action="book-venue:${esc(venue.slug)}" aria-label="Back" title="Back">${icon("arrow-left")}</button>
       <div><p class="eyebrow">${esc(venue.name)}</p><h2>${esc(service.name)}</h2>
-        <p class="lead">${service.durationMinutes} min${service.price ? ` · R${Number(service.price).toFixed(2)}` : ""}</p></div>
+        <p class="lead">${service.durationMinutes} min${service.price ? ` · ${money(service.price)}` : ""}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <nav class="bk-tabs" aria-label="Day">
@@ -28915,7 +28915,7 @@ function openBookConfirm(startsAt) {
       ${settingsRow("What", service.name, "calendar")}
       ${settingsRow("When", bookWhenText(startsAt), "calendar")}
       ${settingsRow("How long", `${service.durationMinutes} minutes`, "calendar")}
-      ${settingsRow("Cost", service.price ? `R${Number(service.price).toFixed(2)}` : "Free", "wallet")}
+      ${settingsRow("Cost", service.price ? money(service.price) : "Free", "wallet")}
     </section>
     <form class="form-grid" data-form="book-confirm">
       ${service.capacity > 1 ? `
