@@ -860,16 +860,19 @@ async function runSettlementSweep({ requestId = null } = {}) {
   // The lock and its unlock must ride ONE connection (the webhook fan-out
   // taught this the hard way).
   const client = await pool.connect();
-  const lock = await client.query("SELECT pg_try_advisory_lock(hashtext($1)) locked", [SWEEP_LOCK]);
-  if (!lock.rows[0].locked) {
-    client.release();
-    return { swept: 0, skippedLock: true };
-  }
   let due = [];
   try {
+    const lock = await client.query("SELECT pg_try_advisory_lock(hashtext($1)) locked", [SWEEP_LOCK]);
+    if (!lock.rows[0].locked) {
+      return { swept: 0, skippedLock: true };
+    }
     due = await dueMerchants(client);
   } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtext($1))", [SWEEP_LOCK]).catch(() => {});
+    // Bulletproof unlock: the acquire and the early-return are now INSIDE the
+    // try, and pg_advisory_unlock_all releases any session advisory lock this
+    // connection holds before it returns to the pool - so a tick can never leave
+    // a pooled connection poisoned (which stranded the pool and 500'd sign-in).
+    await client.query("SELECT pg_advisory_unlock_all()").catch(() => {});
     client.release();
   }
   const results = [];

@@ -83,6 +83,21 @@ test("statement money-in/out totals are filtered to completed transactions", () 
     "both money_in_total and money_out_total must FILTER on status = 'completed' so a failed/reversed row cannot inflate a statement");
 });
 
+test("worker advisory-lock holders release every lock before returning the connection", () => {
+  // A session-level pg_try_advisory_lock left on a pooled connection strands it
+  // as "idle" forever (not caught by idle_in_transaction_timeout), and one
+  // stranded per 5s tick exhausted the whole pool until every query - sign-in,
+  // /health - timed out "trying to connect". Any file that takes a session
+  // advisory lock on a pooled connection must clear it with unlock_all in a
+  // finally before release, so a poisoned connection can never re-enter the pool.
+  for (const file of ["services/webhook-service.js", "services/settlement-service.js"]) {
+    const text = fs.readFileSync(path.join(SRC, file), "utf8");
+    if (!/pg_try_advisory_lock/.test(text)) continue;
+    assert.match(text, /pg_advisory_unlock_all\(\)/,
+      `${file} takes a session advisory lock but does not pg_advisory_unlock_all() before returning the connection to the pool`);
+  }
+});
+
 test("webhook delivery does not follow redirects (SSRF protection)", () => {
   const text = fs.readFileSync(path.join(SRC, "services", "webhook-service.js"), "utf8");
   assert.match(text, /redirect:\s*"manual"/,

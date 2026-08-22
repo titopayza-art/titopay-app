@@ -19,10 +19,26 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 105;
+const API_BUILD = 106;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  106: "THE REAL POOL-EXHAUSTION FIX: leaked session advisory locks. Sign-in and "
+      + "/v1/health kept dying with 'timeout exceeded when trying to connect'. "
+      + "pg_stat_activity while broken showed all pool connections stranded 'idle' "
+      + "with their last query = SELECT pg_try_advisory_lock(...), held for 20+ "
+      + "minutes. The webhook fan-out worker (5s tick) and the settlement sweep "
+      + "both took a SESSION-level advisory lock on a POOLED connection with the "
+      + "acquire and the not-acquired early-return OUTSIDE the try/finally, and "
+      + "unlocked only one key - so a poisoned connection could return to the pool "
+      + "still holding a lock. One stranded per tick exhausted the pool; every "
+      + "query then timed out. build 105's idle_in_transaction timeout could not "
+      + "catch these (they are 'idle', not 'idle in transaction'), and lowering "
+      + "the pool made it die faster. Both workers now put the acquire + "
+      + "early-return INSIDE the try and call pg_advisory_unlock_all() in the "
+      + "finally before release, so no connection can re-enter the pool poisoned. "
+      + "Guardrail test added. Operators can stabilise instantly without this "
+      + "build by setting WEBHOOK_WORKER_INLINE=0 and SETTLEMENT_WORKER_INLINE=0.",
   105: "CONNECTION-POOL SELF-HEAL. Production sign-in and /v1/health began "
       + "timing out with 'timeout exceeded when trying to connect' - the DB "
       + "connection pool was exhausted and only a Postgres restart cleared it, "

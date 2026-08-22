@@ -374,12 +374,11 @@ async function fanOutOnce() {
   // must run on the same client - through the pool they can land on
   // different connections and the lock leaks forever.
   const client = await pool.connect();
-  const lock = await client.query("SELECT pg_try_advisory_lock(hashtext($1)) locked", [FANOUT_LOCK]);
-  if (!lock.rows[0].locked) {
-    client.release();
-    return { created: 0, scanned: 0, skippedLock: true };
-  }
   try {
+    const lock = await client.query("SELECT pg_try_advisory_lock(hashtext($1)) locked", [FANOUT_LOCK]);
+    if (!lock.rows[0].locked) {
+      return { created: 0, scanned: 0, skippedLock: true };
+    }
     const cursorRow = await client.query("SELECT value FROM platform_settings WHERE key = $1", [CURSOR_KEY]);
     const cursor = cursorRow.rows[0]?.value || {};
     const { rows: events } = await client.query(
@@ -436,7 +435,14 @@ async function fanOutOnce() {
     );
     return { created, scanned: events.length };
   } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtext($1))", [FANOUT_LOCK]).catch(() => {});
+    // Release ANY advisory lock this connection holds before returning it to the
+    // pool. pg_advisory_unlock_all is bulletproof where unlocking one key was
+    // not: the lock acquisition and the "not acquired" early-return now sit
+    // INSIDE this try, so the finally always runs, and unlock_all clears the
+    // lock even if a re-entrant acquire or an earlier poisoned tick left one on
+    // this pooled connection. A session advisory lock that survived a release is
+    // exactly what stranded pool connections as "idle" and 500'd every request.
+    await client.query("SELECT pg_advisory_unlock_all()").catch(() => {});
     client.release();
   }
 }
