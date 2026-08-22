@@ -19,10 +19,17 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 92;
+const API_BUILD = 93;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  93: "DARK-SAFE EMAIL HEADER. Every branded email now carries the white-and-"
+      + "blue wordmark on a fixed navy band. Dark-mode mail clients (Gmail "
+      + "above all) recolour light backgrounds but never image pixels, so the "
+      + "old navy logo on a white header went invisible on phones in dark "
+      + "mode. The wordmark ships inside the API at /brand/email-logo.png "
+      + "(bundled like the favicon), so the fix deploys atomically with this "
+      + "build and never depends on the website's asset folder.",
   92: "DUAL AUTHORISATION + LEDGER UNIQUENESS. Reversals at/above a "
       + "configured amount (default R1,000) and every limit-framework change "
       + "are captured as requests that a SECOND, different admin approves "

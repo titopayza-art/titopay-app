@@ -95,6 +95,15 @@ app.get("/favicon.ico", (_req, res) => {
   res.type("image/x-icon").sendFile(path.join(__dirname, "assets", "favicon.ico"));
 });
 
+// The email-header wordmark. Mail clients fetch this when a customer opens a
+// TitoPay email; bundling it here means an email never depends on the
+// website's asset folder being deployed in step with the API. Like the
+// favicon, this is one fixed image and exposes nothing else.
+app.get("/brand/email-logo.png", (_req, res) => {
+  res.set("Cache-Control", "public, max-age=604800");
+  res.type("image/png").sendFile(path.join(__dirname, "assets", "email-logo.png"));
+});
+
 app.use(validateJsonContentType);
 // The Service Builder saves a whole service definition in one POST, and a
 // definition legitimately carries up to four branding images as data URIs

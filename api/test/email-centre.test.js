@@ -137,13 +137,19 @@ test("template markup sanitation removes scripts, event handlers and javascript 
   assert.match(clean,/Verify/);
 });
 
-test("transactional emails use the official TitoPay logo with accessible fallback text", () => {
+test("transactional emails carry the dark-safe wordmark on a fixed navy header", () => {
   const rendered=email.renderTemplate(
     {subject:"Welcome to {{companyName}}",html_body:"<p>Welcome {{firstName}}.</p>",text_body:"Welcome {{firstName}}."},
     {firstName:"Thuso"},
     {company_name:"TitoPay",support_email:"support@titopay.co.za",support_url:"https://titopay.co.za/support",website_url:"https://titopay.co.za",tagline:"Smart Payments, Simplified."}
   );
-  assert.match(rendered.html,/https:\/\/titopay\.co\.za\/assets\/titopay-official-logo\.png/);
+  // The header band is pinned navy and the wordmark ships from the API itself.
+  // Dark-mode mail clients recolour light backgrounds but leave dark ones and
+  // image pixels alone, so this exact pairing is what keeps the logo readable
+  // on a phone in dark mode. A white header here is a regression.
+  assert.match(rendered.html,/\/brand\/email-logo\.png/);
+  assert.match(rendered.html,/class="tp-head" style="background:#0b1f3f/);
+  assert.doesNotMatch(rendered.html,/tp-head" style="background:#fff/);
   assert.match(rendered.html,/alt="TitoPay"/);
   assert.match(rendered.html,/width="210"/);
 });
