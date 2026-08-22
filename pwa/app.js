@@ -22,7 +22,7 @@
  *    6. Forms, inputs and event handling    14 functions
  *    7. Sign in, registration and OTP       38 functions
  *    8. Security, devices and the session   30 functions
- *    9. Profile, settings and preferences   38 functions
+ *    9. Profile, settings and preferences   35 functions
  *   10. Wallet, balances and activity       38 functions
  *   11. Top-up and withdrawal               29 functions
  *   12. Transfers, recipients and splitting  53 functions
@@ -107,7 +107,6 @@ const TITOPAY_CHAT_REMOVED_KEY = "titopay_chat_removed_v1";
 const PWA_REVIEW_QUEUE_KEY = "titopay_pending_pwa_reviews_v1";
 const TITOPAY_RECEIPTS_KEY = "titopay_receipts_v1";
 const INSTALL_DISMISSED_KEY = "titopay_install_dismissed_v1";
-const THEME_KEY = "titopay_theme_v1";
 const QUICK_SERVICES_STORAGE_PREFIX = "titopay_quick_services_v1";
 const QUICK_SERVICES_LIMIT = 6;
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -531,14 +530,12 @@ if (standaloneQuery) {
   if (typeof standaloneQuery.addEventListener === "function") standaloneQuery.addEventListener("change", onStandaloneChange);
   else if (typeof standaloneQuery.addListener === "function") standaloneQuery.addListener(onStandaloneChange);
 }
-// Night mode applies before first render so a night-mode user never sees a
-// light flash; "Follow device" re-applies whenever the phone's setting flips.
+// Night mode applies before first render so a night-phone user never sees a
+// light flash, and re-applies live whenever the phone's setting flips.
 applyThemePreference();
 const colorSchemeQuery = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 if (colorSchemeQuery) {
-  const onColorSchemeChange = () => {
-    if (themePreference() === "system") applyThemePreference();
-  };
+  const onColorSchemeChange = () => applyThemePreference();
   if (typeof colorSchemeQuery.addEventListener === "function") colorSchemeQuery.addEventListener("change", onColorSchemeChange);
   else if (typeof colorSchemeQuery.addListener === "function") colorSchemeQuery.addListener(onColorSchemeChange);
 }
@@ -3668,11 +3665,6 @@ async function onClick(event) {
     // sign-in button clears the memory - stale intent must never redirect.
     state.postLoginRoute = authTab.dataset.postLogin || null;
     openAuthModal(tab);
-    return;
-  }
-  const themeChoice = event.target.closest("[data-theme-choice]");
-  if (themeChoice) {
-    setThemePreference(themeChoice.dataset.themeChoice);
     return;
   }
   const route = event.target.closest("[data-route]");
@@ -7425,26 +7417,14 @@ function unlockPageScroll() {
    ========================================================================== */
 
 // Night mode is TitoPay navy, never black — the same deep blue the brand
-// already uses for its cards. It is opt-in: nothing changes for anyone until
-// they choose it under Profile > Appearance, and "Follow device" tracks the
-// phone's own light/dark setting.
-function themePreference() {
+// already uses for its cards. There is no in-app switch: the app simply
+// follows the phone's own light/dark setting, like the rest of the device.
+function effectiveTheme() {
   try {
-    const stored = localStorage.getItem(THEME_KEY);
-    return stored === "night" || stored === "system" ? stored : "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "night" : "light";
   } catch {
     return "light";
   }
-}
-function effectiveTheme(preference = themePreference()) {
-  if (preference === "system") {
-    try {
-      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "night" : "light";
-    } catch {
-      return "light";
-    }
-  }
-  return preference;
 }
 function applyThemePreference() {
   const theme = effectiveTheme();
@@ -7452,32 +7432,6 @@ function applyThemePreference() {
   else document.documentElement.removeAttribute("data-theme");
   const themeColorMeta = document.querySelector('meta[name="theme-color"]');
   if (themeColorMeta) themeColorMeta.setAttribute("content", theme === "night" ? "#071433" : "#0a4dff");
-}
-function setThemePreference(preference) {
-  const value = preference === "night" || preference === "system" ? preference : "light";
-  try {
-    localStorage.setItem(THEME_KEY, value);
-  } catch {
-    // Private browsing: the theme still applies for this visit.
-  }
-  applyThemePreference();
-  document.querySelectorAll("[data-theme-choice]").forEach((option) => {
-    option.setAttribute("aria-checked", option.dataset.themeChoice === value ? "true" : "false");
-  });
-}
-function themePickerHtml() {
-  const preference = themePreference();
-  const option = (value, label, hint, swatch) => `
-    <button type="button" class="theme-option" role="radio" aria-checked="${preference === value}" data-theme-choice="${value}">
-      <span class="theme-swatch swatch-${swatch}" aria-hidden="true"></span>
-      <span><strong>${label}</strong><small>${hint}</small></span>
-    </button>`;
-  return `
-    <section class="theme-picker panel" role="radiogroup" aria-label="App appearance">
-      ${option("light", "Light", "The classic TitoPay look.", "light")}
-      ${option("night", "Night", "TitoPay navy for low light.", "night")}
-      ${option("system", "Follow device", "Match this phone's light or dark setting.", "system")}
-    </section>`;
 }
 function switchLandingAccount(account) {
   if (!LANDING_ACCOUNTS.includes(account) || state.accountType === account) return;
@@ -7664,8 +7618,6 @@ function profileView() {
       ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
       ${isBusiness && !enterpriseDistributionTileVisible() ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
     </section>
-    <section class="section-head compact"><h2>Appearance</h2></section>
-    ${themePickerHtml()}
     <section class="section-head compact"><h2>Help & learning</h2></section>
     <section class="profile-feature-grid">
       ${profileFeature("How TitoPay Works", "Take a quick guided tour of the app's key features.", "learn", "how-titopay-works")}

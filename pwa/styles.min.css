@@ -280,16 +280,6 @@ html[data-theme=night] body.sv-printing,html[data-theme=night] body.qr-poster-pr
 .signin-terms{margin:10px 0 0;text-align:center;font-size:13px;line-height:1.5;color:var(--muted)}
 .signin-terms a{color:var(--blue);font-weight:600;text-decoration:underline}
 
-/* Appearance picker on the Profile screen. */
-.theme-picker{display:grid;gap:8px}
-.theme-picker .theme-option{display:flex;align-items:center;gap:12px;width:100%;padding:14px 16px;text-align:left;color:var(--text);background:var(--card);border:1px solid var(--line);border-radius:var(--radius-control);cursor:pointer;transition:border-color 160ms var(--ease-premium),box-shadow 160ms var(--ease-premium)}
-.theme-picker .theme-option[aria-checked=true]{border-color:var(--blue);box-shadow:0 0 0 2px rgba(46,99,255,.22)}
-.theme-picker .theme-option .theme-swatch{width:34px;height:34px;flex:none;border-radius:10px;border:1px solid var(--card-line)}
-.theme-picker .theme-option .theme-swatch.swatch-light{background:linear-gradient(160deg,#f3f8ff 0,#dfe9fb 100%)}
-.theme-picker .theme-option .theme-swatch.swatch-night{background:linear-gradient(160deg,#1b3bff 0,#0b1f3f 100%)}
-.theme-picker .theme-option .theme-swatch.swatch-system{background:linear-gradient(105deg,#f3f8ff 0 50%,#0b1f3f 50% 100%)}
-.theme-picker .theme-option strong{display:block;font-size:15px}
-.theme-picker .theme-option small{display:block;color:var(--muted)}
 html[data-theme=night] .app-topbar{background:#0a1c40;border-bottom-color:rgba(44,69,115,.6)}
 html[data-theme=night] .brand-logo{content:url("./assets/titopay-logo-night.png")}
 html[data-theme=night] .profile-feature.primary{background:linear-gradient(180deg,#122650,#0d1f45)}
