@@ -19,10 +19,24 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 104;
+const API_BUILD = 105;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  105: "CONNECTION-POOL SELF-HEAL. Production sign-in and /v1/health began "
+      + "timing out with 'timeout exceeded when trying to connect' - the DB "
+      + "connection pool was exhausted and only a Postgres restart cleared it, "
+      + "for a few hours at a time. A code audit found no forgot-to-release leak "
+      + "(all 86 pool.connect() sites release; single pool; measuredQuery uses "
+      + "try/finally), so the cause is a connection held idle-in-transaction "
+      + "until a manual restart. src/db/pool.js now sets "
+      + "idle_in_transaction_session_timeout=60s on every connection, so Postgres "
+      + "reclaims any connection left open-and-idle inside a transaction - the "
+      + "pool can no longer be starved to the point where every query fails. Only "
+      + "affects a connection doing NOTHING inside an open transaction; an active "
+      + "query, migration or report is never interrupted. Operators can apply the "
+      + "same setting live with ALTER SYSTEM, no deploy required. No API "
+      + "behaviour change.",
   104: "READINESS SWEEP - REMAINDER CLOSED. The low-severity items deferred from "
       + "build 103 are now fixed, so the audit backlog is empty. Email Centre "
       + "analytics (today counts, per-day trend, the daily/weekly/monthly rollup) "

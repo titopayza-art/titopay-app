@@ -87,6 +87,15 @@ const pool = new Pool({
   max: poolSize(),
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  // A connection can NEVER be held indefinitely. If any code path opens a
+  // transaction and does not COMMIT/ROLLBACK it (a leak), Postgres closes that
+  // connection after 60s of sitting idle-in-transaction and returns it to the
+  // pool - so leaked transactions can no longer accumulate until the pool is
+  // exhausted and every query (login, /health) times out "trying to connect".
+  // This only affects a connection doing NOTHING inside an open transaction; an
+  // ACTIVE query is never touched - so a long migration or report (which runs
+  // through this same pool) is safe, and only a genuine leak is reclaimed.
+  idle_in_transaction_session_timeout: 60000,
   ssl: postgresSslForUrl(
     config.postgresUrl,
     config.env,
