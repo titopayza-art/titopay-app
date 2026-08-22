@@ -163,6 +163,15 @@ if (chatSocketEnabled) attachChatSocketServer(server);
 
 server.listen(config.apiPort, config.apiHost, () => {
   require("./services/wallet-service").ensureLedgerPostingIndex().catch(() => {});
+  // Webhook tables + delivery loop. Inline by default so every deployment
+  // delivers; a standalone src/webhook-worker.js process takes over when
+  // WEBHOOK_WORKER_INLINE=0. Neither the ensure nor the loop may ever be
+  // fatal - webhooks degrade, the API does not.
+  require("./services/webhook-service").ensureWebhookSchema()
+    .catch((error) => console.error("[webhooks] schema ensure failed", { message: error.message }))
+    .finally(() => {
+      if (process.env.WEBHOOK_WORKER_INLINE !== "0") require("./services/webhook-service").startWebhookWorker();
+    });
   console.log("TitoPay API service started", {
     role: inClusteredWorker ? `worker ${cluster.worker.id} of ${apiWorkers}` : "single process",
     pid: process.pid,
@@ -187,6 +196,15 @@ server.listen(config.apiPort, config.apiHost, () => {
   console.error("[deployment-safety] the check did not complete; serving anyway", { message: error.message });
   server.listen(config.apiPort, config.apiHost, () => {
   require("./services/wallet-service").ensureLedgerPostingIndex().catch(() => {});
+  // Webhook tables + delivery loop. Inline by default so every deployment
+  // delivers; a standalone src/webhook-worker.js process takes over when
+  // WEBHOOK_WORKER_INLINE=0. Neither the ensure nor the loop may ever be
+  // fatal - webhooks degrade, the API does not.
+  require("./services/webhook-service").ensureWebhookSchema()
+    .catch((error) => console.error("[webhooks] schema ensure failed", { message: error.message }))
+    .finally(() => {
+      if (process.env.WEBHOOK_WORKER_INLINE !== "0") require("./services/webhook-service").startWebhookWorker();
+    });
     console.log("TitoPay API service started (deployment safety check incomplete)", { pid: process.pid });
   });
 });

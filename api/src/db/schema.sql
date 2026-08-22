@@ -1570,6 +1570,50 @@ CREATE TABLE IF NOT EXISTS pos_refunds (
 );
 CREATE INDEX IF NOT EXISTS idx_pos_refunds_payment ON pos_refunds (payment_intent_id, created_at);
 
+-- Outbound webhooks. Merchants and POS partners subscribe an HTTPS endpoint;
+-- a delivery worker fans the pos_payment_events stream out to matching
+-- subscriptions and delivers signed requests with retries. One delivery row
+-- per (subscription, source event, public event type) - the UNIQUE constraint
+-- is what makes re-running fan-out harmless.
+CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  merchant_id UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
+  endpoint_url TEXT NOT NULL,
+  secret_encrypted TEXT NOT NULL,
+  secret_fingerprint TEXT NOT NULL,
+  previous_secret_encrypted TEXT,
+  previous_secret_expires_at TIMESTAMPTZ,
+  events TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'disabled')),
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  created_by UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (merchant_id, endpoint_url)
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_merchant ON webhook_subscriptions (merchant_id, status);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  subscription_id UUID NOT NULL REFERENCES webhook_subscriptions(id) ON DELETE CASCADE,
+  event_id UUID NOT NULL,
+  event_type TEXT NOT NULL,
+  request_payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'delivering', 'delivered', 'failed', 'dead')),
+  attempt_number INTEGER NOT NULL DEFAULT 0,
+  attempt_log JSONB NOT NULL DEFAULT '[]'::JSONB,
+  response_code INTEGER,
+  response_body TEXT,
+  last_error TEXT,
+  delivered_at TIMESTAMPTZ,
+  next_retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (subscription_id, event_id, event_type)
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries (status, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_subscription ON webhook_deliveries (subscription_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS pos_provider_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id TEXT NOT NULL UNIQUE,

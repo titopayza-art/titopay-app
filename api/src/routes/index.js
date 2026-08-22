@@ -34,6 +34,7 @@ const stockvelRoutes = require("./stockvel.routes");
 const titokidsRoutes = require("./titokids.routes");
 const enterpriseDistributionRoutes = require("./enterprise-distribution.routes");
 const posRoutes = require("../pos/routes");
+const webhookRoutes = require("./webhooks.routes");
 const bookRoutes = require("./book.routes");
 const emailCentreRoutes = require("./email-centre.routes");
 const emailOtpAdminRoutes = require("./email-otp-admin.routes");
@@ -150,6 +151,10 @@ function mountVersionedRoutes(prefix) {
   router.use(`${prefix}/tito-kids`, titokidsRoutes);
   router.use(`${prefix}/enterprise-distribution`, enterpriseDistributionRoutes);
   router.use(`${prefix}/pos`, posRoutes);
+  // Merchant webhook management. The inbound POS provider webhook is matched
+  // earlier at the literal /v1/webhooks/pos-provider path; these subpaths
+  // never collide with it.
+  router.use(`${prefix}/webhooks`, webhookRoutes);
   // ABOVE lookupRoutes DELIBERATELY. That router sits on the bare prefix with
   // requireAuth on it, so anything mounted after it never sees a request and
   // every unmatched path becomes 401 instead of 404. Book's public venue page

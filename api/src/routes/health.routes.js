@@ -113,7 +113,13 @@ async function healthStatus(_req, res, next) {
       // Reported so that "is the deployed API current?" is one request rather
       // than an investigation. See src/build-info.js.
       ...buildInfo(),
-      emailWorker
+      emailWorker,
+      // Outbound webhook delivery, same contract as emailWorker: enough to see
+      // whether events are flowing and whether anything is stuck, never the
+      // endpoints or secrets themselves. Fail-soft - a deployment without the
+      // webhook tables reports not_migrated rather than failing health.
+      webhookWorker: await require("../services/webhook-service").workerStatus()
+        .catch(() => ({ status: "not_migrated" }))
     });
   } catch (error) {
     next(error);

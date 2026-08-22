@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 96;
+const API_BUILD = 97;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  97: "OUTBOUND WEBHOOKS. Merchants and POS partners subscribe HTTPS "
+      + "endpoints (max 10, public HTTPS only) and receive signed real-time "
+      + "payment events fanned out from the transactional pos_payment_events "
+      + "stream: payment.created/scanned/completed/failed/cancelled/expired "
+      + "and refund.created/completed (settlement.completed reserved). "
+      + "HMAC-SHA256 signatures with timestamped canonical requests and a "
+      + "24-hour dual-signature secret rotation; retries at 1m/5m/15m/1h/6h "
+      + "then dead-letter with API replay; 410 unsubscribes; ten consecutive "
+      + "dead deliveries auto-pause. Delivery runs in-process by default or "
+      + "as a standalone src/webhook-worker.js; /v1/health reports "
+      + "webhookWorker. Docs + OpenAPI in docs/webhooks/.",
   96: "INLINE EMAIL WORDMARK. The header logo now travels inside the message "
       + "as an inline CID attachment, so webmail that blocks remote images "
       + "(the Afrihost default among others) still renders it - dark mode and "
