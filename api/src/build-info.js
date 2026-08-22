@@ -19,10 +19,15 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 93;
+const API_BUILD = 94;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  94: "DARK-SAFE EMAIL FOOTER. The footer follows the build-93 header onto a "
+      + "fixed navy band: light text, white company name and light-blue links "
+      + "with explicit inline colours, so dark-mode mail clients cannot render "
+      + "the support, legal and unsubscribe links as dark blue on a darkened "
+      + "background. The test suite pins the navy footer alongside the header.",
   93: "DARK-SAFE EMAIL HEADER. Every branded email now carries the white-and-"
       + "blue wordmark on a fixed navy band. Dark-mode mail clients (Gmail "
       + "above all) recolour light backgrounds but never image pixels, so the "

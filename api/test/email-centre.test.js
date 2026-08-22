@@ -150,6 +150,10 @@ test("transactional emails carry the dark-safe wordmark on a fixed navy header",
   assert.match(rendered.html,/\/brand\/email-logo\.png/);
   assert.match(rendered.html,/class="tp-head" style="background:#0b1f3f/);
   assert.doesNotMatch(rendered.html,/tp-head" style="background:#fff/);
+  assert.match(rendered.html,/class="tp-foot" style="[^"]*background:#0b1f3f/);
+  assert.doesNotMatch(rendered.html,/tp-foot" style="[^"]*background:#eaf5fc/);
+  assert.match(rendered.html,/Terms and Conditions<\/a>/);
+  assert.match(rendered.html,/<a [^>]*style="color:#8fb2ff">Support<\/a>/);
   assert.match(rendered.html,/alt="TitoPay"/);
   assert.match(rendered.html,/width="210"/);
 });
