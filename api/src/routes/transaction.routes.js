@@ -7,6 +7,7 @@ const {
   feePreview,
   createTransaction,
   listTransactionsForUser,
+  todaySummaryForUser,
   reverseTransaction
 } = require("../services/transaction-service");
 
@@ -40,6 +41,16 @@ router.post("/", async (req, res, next) => {
 router.get("/", async (req, res, next) => {
   try {
     res.json({ ok: true, items: await listTransactionsForUser(req.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Today's settled activity for the dashboard "Today" card (SA time, uncapped).
+// A literal path, so it cannot collide with any /:id route.
+router.get("/today-summary", async (req, res, next) => {
+  try {
+    res.json({ ok: true, summary: await todaySummaryForUser(req.auth.userId) });
   } catch (error) {
     next(error);
   }

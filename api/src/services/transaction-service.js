@@ -826,6 +826,33 @@ async function listTransactionsForUser(userId) {
   return rows;
 }
 
+// Today's settled activity for the dashboard "Today" card, in South African
+// time (the same clock the limit engine rolls on). This is a SQL aggregate,
+// not a slice of the 100-row list, so it is scoped to the actual day and
+// never capped: however busy the day, the count and totals stay correct.
+// Counts COMPLETED transactions only - money that actually moved - so a
+// failed or pending row cannot inflate "Out". Same data source (the
+// transactions table owned by this user) the card has always used.
+async function todaySummaryForUser(userId) {
+  // "Today" is the calendar day in South African time, bounded on BOTH ends:
+  // a row dated after today (e.g. a future-scheduled settlement) must not
+  // inflate the card, so we window [start-of-today, start-of-tomorrow).
+  const { rows } = await pool.query(
+    `SELECT
+       COUNT(*)::INT AS records,
+       COALESCE(SUM(total) FILTER (WHERE direction = 'credit'), 0)::NUMERIC AS money_in,
+       COALESCE(SUM(total) FILTER (WHERE direction = 'debit'), 0)::NUMERIC AS money_out
+     FROM transactions
+     WHERE user_id = $1
+       AND status = 'completed'
+       AND created_at >= (DATE_TRUNC('day', NOW() AT TIME ZONE 'Africa/Johannesburg') AT TIME ZONE 'Africa/Johannesburg')
+       AND created_at <  ((DATE_TRUNC('day', NOW() AT TIME ZONE 'Africa/Johannesburg') + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg')`,
+    [userId]
+  );
+  const row = rows[0] || {};
+  return { records: Number(row.records || 0), moneyIn: Number(row.money_in || 0), moneyOut: Number(row.money_out || 0) };
+}
+
 function boundedInteger(value, fallback, min, max) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -1116,6 +1143,7 @@ module.exports = {
   feePreview,
   createTransaction,
   listTransactionsForUser,
+  todaySummaryForUser,
   listAllTransactions,
   reverseTransaction,
   revenueSummary

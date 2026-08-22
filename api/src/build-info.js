@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 100;
+const API_BUILD = 101;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  101: "ACCURATE \"TODAY\" CARD. The dashboard summary card labelled \"Today\" "
+      + "was summing the 100 most-recent transactions across ALL time (the "
+      + "list endpoint is ORDER BY created_at DESC LIMIT 100, no date filter), "
+      + "so its Records/In/Out never matched the actual day. New read-only "
+      + "endpoint GET /v1/transactions/today-summary returns a SQL aggregate "
+      + "over COMPLETED transactions dated to the current calendar day in "
+      + "South African time, bounded on BOTH ends [start-of-today, "
+      + "start-of-tomorrow) so a future-scheduled row cannot inflate it, split "
+      + "by direction and UNCAPPED. The PWA reads it for the card and keeps a "
+      + "client-side same-day fallback for offline. Additive and read-only: no "
+      + "table, ledger or existing endpoint changed; full suite green.",
   100: "TWO CONTROL FIXES, NO NEW SURFACE. (1) The settlement fee "
       + "(pricing rule pos_settlement) is skimmed from every merchant "
       + "payout, so re-pricing it now requires a SECOND admin through the "

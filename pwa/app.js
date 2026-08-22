@@ -198,6 +198,7 @@ const state = {
   merchantRecord: null,
   wallets: [],
   transactions: [],
+  todaySummary: null,
   beneficiaries: [],
   beneficiarySearch: "",
   // Holds the outcome of the verification step a new beneficiary has to pass
@@ -729,6 +730,26 @@ function totalByDirection(direction) {
   return state.transactions
     .filter((item) => (item.direction || "debit") === direction)
     .reduce((sum, item) => sum + Number(item.total || item.amount || 0), 0);
+}
+// The dashboard "Today" card. Prefer the server aggregate (settled activity
+// for the day in SA time, uncapped); it is fetched with the account and on
+// the heartbeat poll. If it is briefly unavailable, fall back to today's
+// COMPLETED transactions from the loaded list - which is accurate because the
+// list is newest-first, so today's activity always sits within it.
+function todaySummaryView() {
+  const s = state.todaySummary;
+  if (s) return { records: Number(s.records || 0), moneyIn: Number(s.moneyIn || 0), moneyOut: Number(s.moneyOut || 0) };
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end = new Date(start); end.setDate(end.getDate() + 1);
+  return state.transactions.reduce((acc, item) => {
+    if (String(item.status || "") !== "completed") return acc;
+    const when = new Date(item.created_at || item.createdAt || 0);
+    if (when < start || when >= end) return acc;
+    acc.records += 1;
+    const value = Number(item.total || item.amount || 0);
+    if ((item.direction || "debit") === "credit") acc.moneyIn += value; else acc.moneyOut += value;
+    return acc;
+  }, { records: 0, moneyIn: 0, moneyOut: 0 });
 }
 function initials(name) {
   return String(name).trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "TP";
@@ -1852,6 +1873,7 @@ async function submitBusinessForVerification(businessId) {
 function dashboardView() {
   const wallet = primaryWallet();
   const quickServices = homeQuickServices();
+  const today = todaySummaryView();
   return `
     ${dashboardGreetingLine()}
     <section class="dashboard-grid">
@@ -1907,9 +1929,9 @@ function dashboardView() {
             <p class="eyebrow">Today</p>
           </div>
           <div class="stats-grid">
-            <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : state.transactions.length}</strong><span>Records</span></div>
-            <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(totalByDirection("credit"))}</strong><span>In</span></div>
-            <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(totalByDirection("debit"))}</strong><span>Out</span></div>
+            <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : today.records}</strong><span>Records</span></div>
+            <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(today.moneyIn)}</strong><span>In</span></div>
+            <div class="stat"><strong>${state.loading && !state.transactions.length ? '<span class="skeleton skeleton-stat" aria-hidden="true"></span>' : money(today.moneyOut)}</strong><span>Out</span></div>
           </div>
         </section>
       </aside>
@@ -5696,6 +5718,7 @@ function clearAuth() {
   state.user = null;
   state.wallets = [];
   state.transactions = [];
+  state.todaySummary = null;
   state.beneficiaries = [];
   state.pendingBeneficiarySave = null;
   state.notifications = [];
@@ -7470,6 +7493,7 @@ async function loadAccount() {
     rememberLocalTitoPayUser(state.user);
     state.wallets = wallets.items || [];
     state.transactions = transactions.items || [];
+    api("/v1/transactions/today-summary").then((r) => { state.todaySummary = (r && r.summary) || null; }).catch(() => {});
     state.profileQr = profileQr.qr || null;
     state.securityCentre = securityCentre.centre || null;
     state.enterpriseDistribution.eligibility = enterpriseDistribution.eligibility || null;
@@ -7512,6 +7536,9 @@ async function syncTitoPayAccountStatus(options = {}) {
       state.transactions = latest.items;
       if (syncTransactionNotifications()) refreshNotificationBadge();
     }
+    // Keep the dashboard "Today" figure live on the heartbeat too.
+    const summary = await api("/v1/transactions/today-summary").catch(() => null);
+    if (summary && summary.summary) state.todaySummary = summary.summary;
   } catch (error) {
     // Auth failures fall through to the profile call below, which owns
     // session-expiry handling; anything else is just a missed poll.
