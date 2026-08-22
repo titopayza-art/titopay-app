@@ -19,10 +19,14 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 94;
+const API_BUILD = 95;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  95: "EMAIL LOGO FALLBACK. Mail clients that block remote images now show "
+      + "'TitoPay' in white bold on the navy header band instead of a broken-"
+      + "image glyph - the wordmark img carries styled alt text. The image "
+      + "itself is unchanged and confirmed serving in production.",
   94: "DARK-SAFE EMAIL FOOTER. The footer follows the build-93 header onto a "
       + "fixed navy band: light text, white company name and light-blue links "
       + "with explicit inline colours, so dark-mode mail clients cannot render "
