@@ -208,14 +208,19 @@ async function childLimits(childId) {
 }
 
 // Spending already recorded in the window, from the ledger, so a cap can be
-// enforced against truth. Days and months are calendar (SAST is UTC+2 all
-// year; windows use UTC dates for determinism).
+// enforced against truth. Day/week/month are SOUTH AFRICAN calendar windows,
+// anchored the same way the main limit engine and the regulatory monthly cap
+// are: DATE_TRUNC over NOW() shifted into Africa/Johannesburg, then shifted
+// back to a timestamptz boundary. Using a bare UTC date_trunc would roll each
+// window at 02:00 SAST, so a child at their daily cap could spend it again in
+// the 00:00-02:00 SAST slice of the SAME SA day - the cap is an enforced block,
+// not a display, so this has to be the SA calendar day.
 async function spentInWindows(walletId) {
   const { rows } = await pool.query(
     `SELECT
-       COALESCE(SUM(ABS(amount)) FILTER (WHERE created_at >= date_trunc('day', NOW())), 0) AS day,
-       COALESCE(SUM(ABS(amount)) FILTER (WHERE created_at >= date_trunc('week', NOW())), 0) AS week,
-       COALESCE(SUM(ABS(amount)) FILTER (WHERE created_at >= date_trunc('month', NOW())), 0) AS month
+       COALESCE(SUM(ABS(amount)) FILTER (WHERE created_at >= (DATE_TRUNC('day',   NOW() AT TIME ZONE 'Africa/Johannesburg') AT TIME ZONE 'Africa/Johannesburg')), 0) AS day,
+       COALESCE(SUM(ABS(amount)) FILTER (WHERE created_at >= (DATE_TRUNC('week',  NOW() AT TIME ZONE 'Africa/Johannesburg') AT TIME ZONE 'Africa/Johannesburg')), 0) AS week,
+       COALESCE(SUM(ABS(amount)) FILTER (WHERE created_at >= (DATE_TRUNC('month', NOW() AT TIME ZONE 'Africa/Johannesburg') AT TIME ZONE 'Africa/Johannesburg')), 0) AS month
      FROM wallet_ledger
      WHERE wallet_id = $1 AND entry_type = 'debit'`,
     [walletId]
@@ -1016,6 +1021,7 @@ module.exports = {
   fundChild,
   payForChild,
   childLimits,
+  spentInWindows,
   setLimits,
   createGoal,
   listGoals,

@@ -8,6 +8,7 @@ const {
   createTransaction,
   listTransactionsForUser,
   todaySummaryForUser,
+  statementForUser,
   reverseTransaction
 } = require("../services/transaction-service");
 
@@ -51,6 +52,21 @@ router.get("/", async (req, res, next) => {
 router.get("/today-summary", async (req, res, next) => {
   try {
     res.json({ ok: true, summary: await todaySummaryForUser(req.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Full-period statement for the Statements screen: complete money-in/out
+// totals and record count (window aggregates, not a sum of the capped list),
+// plus the period's rows for the PDF/CSV. Literal path, so no /:id collision.
+router.get("/statement", async (req, res, next) => {
+  try {
+    const { items, totalCount, totals } = await statementForUser(req.auth.userId, {
+      from: req.query.from,
+      to: req.query.to
+    });
+    res.json({ ok: true, items, totalCount, totals });
   } catch (error) {
     next(error);
   }

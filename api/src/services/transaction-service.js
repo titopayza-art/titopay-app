@@ -853,6 +853,50 @@ async function todaySummaryForUser(userId) {
   return { records: Number(row.records || 0), moneyIn: Number(row.money_in || 0), moneyOut: Number(row.money_out || 0) };
 }
 
+// The customer's statement for a chosen period, computed over the WHOLE window
+// rather than the last 100 rows the Activity list caches. The money-in/out
+// totals and the record count come from window aggregates (COUNT/SUM OVER()),
+// so they are complete even when the row list is capped for delivery; the rows
+// themselves are capped at a generous 5000 for the PDF/CSV, and the caller is
+// told the true total so it can say "showing latest N of M". Same data source
+// (this user's transactions) and the same in=credit / out=everything-else
+// split the on-screen summary always used - only the cap is gone. Dates are SA
+// calendar dates, bounded [from 00:00 SAST, (to+1 day) 00:00 SAST).
+async function statementForUser(userId, { from = null, to = null } = {}) {
+  const fromDate = from ? String(from).slice(0, 10) : null;
+  const toDate = to ? String(to).slice(0, 10) : null;
+  const { rows } = await pool.query(
+    `SELECT t.*, pr.service_name, (t.metadata->>'netAmount')::NUMERIC AS net_amount,
+            (posted.entry_count > 0) AS wallet_posted,
+            posted.entry_count AS ledger_entry_count,
+            posted.net_posted AS posted_amount,
+            COUNT(*) OVER()::INT AS total_count,
+            COALESCE(SUM(ABS(COALESCE(t.total, t.amount, 0))) FILTER (WHERE t.direction = 'credit') OVER(), 0) AS money_in_total,
+            COALESCE(SUM(ABS(COALESCE(t.total, t.amount, 0))) FILTER (WHERE t.direction IS DISTINCT FROM 'credit') OVER(), 0) AS money_out_total
+     FROM transactions t
+     LEFT JOIN pricing_rules pr ON pr.service_code = t.service_code
+     ${POSTED_LEDGER_LATERAL}
+     WHERE t.user_id = $1
+       AND ($2::date IS NULL OR t.created_at >= ($2::date AT TIME ZONE 'Africa/Johannesburg'))
+       AND ($3::date IS NULL OR t.created_at <  (($3::date + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg'))
+     ORDER BY t.created_at DESC
+     LIMIT 5000`,
+    [userId, fromDate, toDate]
+  );
+  const totalCount = Number(rows[0]?.total_count || 0);
+  const totals = {
+    moneyIn: Number(rows[0]?.money_in_total || 0),
+    moneyOut: Number(rows[0]?.money_out_total || 0)
+  };
+  // Strip the window-aggregate columns from each returned row - they are the
+  // same on every row and belong at the top level, not on each transaction.
+  const items = rows.map((row) => {
+    const { total_count, money_in_total, money_out_total, ...rest } = row;
+    return rest;
+  });
+  return { items, totalCount, totals };
+}
+
 function boundedInteger(value, fallback, min, max) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -1144,6 +1188,7 @@ module.exports = {
   createTransaction,
   listTransactionsForUser,
   todaySummaryForUser,
+  statementForUser,
   listAllTransactions,
   reverseTransaction,
   revenueSummary

@@ -98,48 +98,146 @@ async function creditRows(userId, { from, to, limit = 1000 } = {}) {
   });
 }
 
-async function salesLedger(userId, { from, to } = {}) {
-  await requireBusiness(userId);
-  const items = await creditRows(userId, { from, to, limit: 500 });
-  const saleItems = items.filter((item) => item.isSale);
+// classifyCredit()'s rules, mirrored in SQL so the report's channel split
+// reconciles to the cent with the ledger list. The sale channels are exactly
+// those classifyCredit marks isSale=true. Kept as ONE expression, reused by
+// every aggregate below, so the JS and SQL classifications can never drift.
+const CHANNEL_SQL = `
+  CASE
+    WHEN lower(t.service_code) IN ('qr_payment','customer_qr_payment','scan_to_pay') THEN 'qr'
+    WHEN lower(t.service_code) IN ('ticket_purchase','ticket_sales') THEN 'tickets'
+    WHEN lower(t.service_code) = 'event_tag' THEN 'tag'
+    WHEN lower(t.service_code) IN ('wallet_transfer','bill_split','tip') THEN 'transfer'
+    WHEN lower(t.service_code) = 'ticket_refund' THEN 'refund'
+    WHEN lower(t.service_code) IN ('wallet_top_up','top_up','card_topups') THEN 'topup'
+    WHEN lower(coalesce(t.service_code,'')) LIKE 'bulk_distribution%' THEN 'distribution'
+    WHEN coalesce(t.service_code,'') = '' AND wl.reference ILIKE 'EBD%' THEN 'distribution'
+    ELSE 'other'
+  END`;
+const SALE_CHANNELS = "('qr','tickets','tag','transfer')";
+
+// Every credit that lands in the business wallet for the window, joined to the
+// transaction that caused it. The single FROM/WHERE the aggregates share.
+const CREDITS_FROM = `
+  FROM wallet_ledger wl
+  JOIN wallets w ON w.id = wl.wallet_id AND w.user_id = $1
+  LEFT JOIN transactions t ON t.id = wl.transaction_id
+  WHERE wl.entry_type = 'credit'`;
+
+function scope(userId, from, to) {
+  const values = [userId];
+  const clause = windowClause(from, to, "wl.created_at", values);
+  return { values, clause };
+}
+
+// Sales totals computed in SQL over the FULL window, never over a capped
+// display page - a business past a few hundred credits was silently losing its
+// oldest sales from every total. The items list stays capped for display; only
+// the numbers changed source.
+async function salesLedgerTotals(userId, { from, to } = {}) {
+  const { values, clause } = scope(userId, from, to);
+  const { rows } = await pool.query(
+    `SELECT
+       COALESCE(SUM(wl.amount) FILTER (WHERE ${CHANNEL_SQL} IN ${SALE_CHANNELS}), 0) AS sales,
+       COUNT(*)                FILTER (WHERE ${CHANNEL_SQL} IN ${SALE_CHANNELS}) AS sales_count,
+       COALESCE(SUM(wl.amount) FILTER (WHERE ${CHANNEL_SQL} NOT IN ${SALE_CHANNELS}), 0) AS other_in
+     ${CREDITS_FROM}${clause}`,
+    values
+  );
   return {
-    items,
-    totals: {
-      sales: money(saleItems.reduce((sum, item) => sum + item.amount, 0)),
-      salesCount: saleItems.length,
-      otherIn: money(items.filter((item) => !item.isSale).reduce((sum, item) => sum + item.amount, 0))
-    }
+    sales: money(rows[0].sales),
+    salesCount: Number(rows[0].sales_count || 0),
+    otherIn: money(rows[0].other_in)
   };
 }
 
-function dayKey(value) {
-  const date = new Date(value);
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+async function salesLedger(userId, { from, to } = {}) {
+  await requireBusiness(userId);
+  const items = await creditRows(userId, { from, to, limit: 500 });
+  const totals = await salesLedgerTotals(userId, { from, to });
+  return { items, totals };
+}
+
+// Just the sales total for a window (drives the growth line's previous period).
+async function salesTotalOnly(userId, { from, to } = {}) {
+  const { values, clause } = scope(userId, from, to);
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(wl.amount) FILTER (WHERE ${CHANNEL_SQL} IN ${SALE_CHANNELS}), 0) AS total
+     ${CREDITS_FROM}${clause}`,
+    values
+  );
+  return money(rows[0].total);
 }
 
 async function salesSummary(userId, { from, to } = {}) {
   await requireBusiness(userId);
-  const items = await creditRows(userId, { from, to, limit: 2000 });
-  const sales = items.filter((item) => item.isSale);
 
-  const perDay = {};
+  // Per-channel totals over the full window (sales channels feed total/count/
+  // average/perChannel; the rest feed otherIn).
+  const chanScope = scope(userId, from, to);
+  const { rows: channelRows } = await pool.query(
+    `SELECT ${CHANNEL_SQL} AS channel, COALESCE(SUM(wl.amount), 0) AS total, COUNT(*) AS count
+     ${CREDITS_FROM}${chanScope.clause}
+     GROUP BY 1`,
+    chanScope.values
+  );
+
   const perChannel = {};
-  const perHour = Array.from({ length: 24 }, () => 0);
-  let biggest = null;
-  for (const item of sales) {
-    const day = dayKey(item.createdAt);
-    perDay[day] = perDay[day] || { total: 0, count: 0 };
-    perDay[day].total = money(perDay[day].total + item.amount);
-    perDay[day].count += 1;
-    perChannel[item.channel] = perChannel[item.channel] || { label: item.channelLabel, total: 0, count: 0 };
-    perChannel[item.channel].total = money(perChannel[item.channel].total + item.amount);
-    perChannel[item.channel].count += 1;
-    // Hours reported in South African time (UTC+2, no daylight saving).
-    const saHour = (new Date(item.createdAt).getUTCHours() + 2) % 24;
-    perHour[saHour] = money(perHour[saHour] + item.amount);
-    if (!biggest || item.amount > biggest.amount) biggest = item;
+  let total = 0;
+  let count = 0;
+  let otherIn = 0;
+  for (const row of channelRows) {
+    const channel = row.channel;
+    const channelTotal = money(row.total);
+    const channelCount = Number(row.count || 0);
+    if (CHANNELS[channel] && CHANNELS[channel].isSale) {
+      total = money(total + channelTotal);
+      count += channelCount;
+      perChannel[channel] = { label: CHANNELS[channel].label, total: channelTotal, count: channelCount };
+    } else {
+      otherIn = money(otherIn + channelTotal);
+    }
   }
-  const total = money(sales.reduce((sum, item) => sum + item.amount, 0));
+
+  // Per-day and per-hour, both bucketed in SOUTH AFRICAN time so a sale at
+  // 00:30 SAST counts under today, and the day chart agrees with the hour chart.
+  const dayScope = scope(userId, from, to);
+  const { rows: dayRows } = await pool.query(
+    `SELECT to_char((wl.created_at AT TIME ZONE 'Africa/Johannesburg')::date, 'YYYY-MM-DD') AS day,
+            COALESCE(SUM(wl.amount), 0) AS total, COUNT(*) AS count
+     ${CREDITS_FROM} AND ${CHANNEL_SQL} IN ${SALE_CHANNELS}${dayScope.clause}
+     GROUP BY 1 ORDER BY 1`,
+    dayScope.values
+  );
+  const perDay = {};
+  for (const row of dayRows) perDay[row.day] = { total: money(row.total), count: Number(row.count || 0) };
+
+  const hourScope = scope(userId, from, to);
+  const { rows: hourRows } = await pool.query(
+    `SELECT EXTRACT(HOUR FROM (wl.created_at AT TIME ZONE 'Africa/Johannesburg'))::int AS hr,
+            COALESCE(SUM(wl.amount), 0) AS total
+     ${CREDITS_FROM} AND ${CHANNEL_SQL} IN ${SALE_CHANNELS}${hourScope.clause}
+     GROUP BY 1`,
+    hourScope.values
+  );
+  const perHour = Array.from({ length: 24 }, () => 0);
+  for (const row of hourRows) perHour[row.hr] = money(row.total);
+
+  // The single biggest sale in the window.
+  const bigScope = scope(userId, from, to);
+  const { rows: biggestRows } = await pool.query(
+    `SELECT wl.amount, ${CHANNEL_SQL} AS channel, wl.created_at
+     ${CREDITS_FROM} AND ${CHANNEL_SQL} IN ${SALE_CHANNELS}${bigScope.clause}
+     ORDER BY wl.amount DESC LIMIT 1`,
+    bigScope.values
+  );
+  const biggest = biggestRows[0]
+    ? {
+        amount: money(biggestRows[0].amount),
+        channelLabel: (CHANNELS[biggestRows[0].channel] || CHANNELS.other).label,
+        createdAt: biggestRows[0].created_at
+      }
+    : null;
 
   // The previous window of the same length, for the growth line.
   let previousTotal = null;
@@ -149,23 +247,21 @@ async function salesSummary(userId, { from, to } = {}) {
     const days = Math.max(1, Math.round((toDate - fromDate) / 86400000) + 1);
     const previousToDate = new Date(fromDate.getTime() - 86400000);
     const previousFromDate = new Date(previousToDate.getTime() - (days - 1) * 86400000);
-    const previousItems = await creditRows(userId, {
+    previousTotal = await salesTotalOnly(userId, {
       from: previousFromDate.toISOString().slice(0, 10),
-      to: previousToDate.toISOString().slice(0, 10),
-      limit: 2000
+      to: previousToDate.toISOString().slice(0, 10)
     });
-    previousTotal = money(previousItems.filter((item) => item.isSale).reduce((sum, item) => sum + item.amount, 0));
   }
 
   return {
     total,
-    count: sales.length,
-    average: sales.length ? money(total / sales.length) : 0,
-    biggest: biggest ? { amount: biggest.amount, channelLabel: biggest.channelLabel, createdAt: biggest.createdAt } : null,
+    count,
+    average: count ? money(total / count) : 0,
+    biggest,
     perDay,
     perChannel,
     perHour,
-    otherIn: money(items.filter((item) => !item.isSale).reduce((sum, item) => sum + item.amount, 0)),
+    otherIn,
     previousTotal,
     changePercent: previousTotal === null || previousTotal === 0
       ? null

@@ -19,10 +19,30 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 101;
+const API_BUILD = 102;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  102: "AUDIT: TOTALS THAT OVER-CLAIMED THEIR DATA. A sweep for the same class "
+      + "of bug as the build-101 \"Today\" card - a figure presented as complete "
+      + "but summed over a capped LIMIT list, or a window rolled in UTC instead "
+      + "of SA time - fixed the confirmed money/HIGH ones. (1) MONEY-CRITICAL: "
+      + "TitoKids child spend caps (day/week/month) were enforced with a bare "
+      + "UTC date_trunc, so between 00:00-02:00 SAST the day window pointed at "
+      + "yesterday and a child could spend up to 2x the daily cap in one SA day; "
+      + "spentInWindows now anchors each window in Africa/Johannesburg like the "
+      + "main limit engine. (2) Business Sales report + ledger totals "
+      + "(salesSummary/salesLedger) were summed over the most-recent 2000/500 "
+      + "credits (oldest days silently dropping); now SQL SUM/COUNT/GROUP BY "
+      + "over the full window, with per-day and per-hour both bucketed in SA "
+      + "time. (3) New GET /v1/transactions/statement returns whole-period "
+      + "money-in/out totals and record count (window aggregates) plus the "
+      + "period's rows, so the Statements screen summary, PDF and CSV stop "
+      + "totalling only the last 100 transactions. (4) Enterprise bulk "
+      + "distribution \"Funds locked\" now reads a per-organisation SQL SUM "
+      + "instead of summing the capped 300-batch page. All additive/read-only "
+      + "except the TitoKids window (a correctness fix to an existing block); "
+      + "no ledger or existing endpoint behaviour changed. Full suite green.",
   101: "ACCURATE \"TODAY\" CARD. The dashboard summary card labelled \"Today\" "
       + "was summing the 100 most-recent transactions across ALL time (the "
       + "list endpoint is ORDER BY created_at DESC LIMIT 100, no date filter), "

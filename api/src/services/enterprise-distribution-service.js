@@ -1138,11 +1138,28 @@ async function releaseBatch(batchId, actor, meta = {}) {
 
 async function listBatches(userId) {
   const organisation = await requireOrganisation(userId);
-  const { rows } = await pool.query(
-    "SELECT * FROM enterprise_distribution_batches WHERE organisation_id = $1 ORDER BY created_at DESC LIMIT 300",
-    [organisation.id]
-  );
-  return { organisation, items: rows };
+  // The list is capped for display; the headline figures (funds locked, batch
+  // count) come from a SQL aggregate over ALL of the organisation's batches, so
+  // an organisation past 300 batches never sees an understated "Funds locked".
+  const [{ rows }, { rows: agg }] = await Promise.all([
+    pool.query(
+      "SELECT * FROM enterprise_distribution_batches WHERE organisation_id = $1 ORDER BY created_at DESC LIMIT 300",
+      [organisation.id]
+    ),
+    pool.query(
+      `SELECT COUNT(*)::INT AS batch_count,
+              COALESCE(SUM(locked_total), 0)::NUMERIC AS locked_total,
+              COUNT(*) FILTER (WHERE status = 'draft_validated')::INT AS awaiting_funding
+       FROM enterprise_distribution_batches WHERE organisation_id = $1`,
+      [organisation.id]
+    )
+  ]);
+  const summary = {
+    batchCount: Number(agg[0]?.batch_count || 0),
+    lockedTotal: Number(agg[0]?.locked_total || 0),
+    awaitingFunding: Number(agg[0]?.awaiting_funding || 0)
+  };
+  return { organisation, items: rows, summary };
 }
 
 async function listAllBatches() {

@@ -199,6 +199,7 @@ const state = {
   wallets: [],
   transactions: [],
   todaySummary: null,
+  statementData: null,
   beneficiaries: [],
   beneficiarySearch: "",
   // Holds the outcome of the verification step a new beneficiary has to pass
@@ -5719,6 +5720,7 @@ function clearAuth() {
   state.wallets = [];
   state.transactions = [];
   state.todaySummary = null;
+  state.statementData = null;
   state.beneficiaries = [];
   state.pendingBeneficiarySave = null;
   state.notifications = [];
@@ -11358,26 +11360,62 @@ function statementPeriodLabel() {
   if (from) return `From ${friendlyDate(from)}`;
   return `Up to ${friendlyDate(to)}`;
 }
+// The rows the statement's summary, PDF and CSV are built from. The server
+// statement endpoint returns the WHOLE selected period (not the last-100 the
+// Activity list caches), so prefer it; fall back to the cached list only when
+// that fetch has not completed yet (e.g. offline), so the screen still works.
+function statementItems() {
+  if (state.statementData && Array.isArray(state.statementData.items)) return state.statementData.items;
+  return filteredTransactions();
+}
+// Fetch the full-period statement for the chosen window and re-render. Never
+// throws: on any failure it leaves the cached-list fallback in place.
+async function refreshStatementData() {
+  const { from, to } = state.transactionFilters;
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const query = params.toString();
+  try {
+    const result = await api(`/v1/transactions/statement${query ? `?${query}` : ""}`);
+    state.statementData = result && result.ok
+      ? { items: result.items || [], totalCount: Number(result.totalCount || 0), totals: result.totals || null }
+      : null;
+  } catch (error) {
+    state.statementData = null;
+  }
+  renderStatementSummary();
+}
 function renderStatementSummary() {
   const host = document.querySelector("[data-statement-summary]");
   if (!host) return;
-  const items = filteredTransactions();
-  const totals = statementTotals(items);
+  const data = state.statementData;
+  const items = statementItems();
+  // Totals and count come from the server's whole-period aggregate when we have
+  // it, so they are complete however many transactions the account holds; the
+  // cached-list fallback keeps the old client sum only while offline.
+  const totals = data && data.totals
+    ? { in: Number(data.totals.moneyIn || 0), out: Number(data.totals.moneyOut || 0) }
+    : statementTotals(items);
+  const totalCount = data ? Number(data.totalCount || 0) : items.length;
   const net = totals.in - totals.out;
+  const truncated = items.length < totalCount;
   host.innerHTML = `
     <p class="statement-period">${esc(statementPeriodLabel())}</p>
     <div class="statement-figures">
-      <div><span>Transactions</span><strong>${items.length}</strong></div>
+      <div><span>Transactions</span><strong>${totalCount}</strong></div>
       <div><span>Money in</span><strong class="is-credit">${esc(money(totals.in))}</strong></div>
       <div><span>Money out</span><strong class="is-debit">${esc(money(totals.out))}</strong></div>
       <div class="statement-net"><span>Net movement</span><strong>${esc(`${net < 0 ? "-" : ""}${money(Math.abs(net))}`)}</strong></div>
     </div>
-    ${items.length
-      ? `<p class="field-hint">These ${items.length} transaction${items.length === 1 ? "" : "s"} are exactly what the PDF and CSV will contain.</p>`
+    ${totalCount
+      ? (truncated
+          ? `<p class="field-hint">Totals cover all ${totalCount} transactions in this period. The PDF and CSV list the ${items.length} most recent of them.</p>`
+          : `<p class="field-hint">These ${totalCount} transaction${totalCount === 1 ? "" : "s"} are exactly what the PDF and CSV will contain.</p>`)
       : `<p class="field-hint">No transactions fall in this period, so an export would be empty. Choose a wider period.</p>`}`;
 
   const exports = document.querySelectorAll("[data-statement-export]");
-  exports.forEach((button) => { button.disabled = items.length === 0; });
+  exports.forEach((button) => { button.disabled = totalCount === 0; });
 }
 function applyStatementPeriod(id) {
   const range = statementPeriodRange(id);
@@ -11395,7 +11433,9 @@ function applyStatementPeriod(id) {
     chip.classList.toggle("is-active", active);
     chip.setAttribute("aria-pressed", active ? "true" : "false");
   });
+  state.statementData = null;
   renderStatementSummary();
+  refreshStatementData();
 }
 function applyStatementCustomRange() {
   const from = document.querySelector("[data-statement-from]");
@@ -11406,7 +11446,9 @@ function applyStatementCustomRange() {
     chip.classList.remove("is-active");
     chip.setAttribute("aria-pressed", "false");
   });
+  state.statementData = null;
   renderStatementSummary();
+  refreshStatementData();
 }
 function openStatementsModal() {
   // A statement is a period, not a search. Clearing these means the summary on
@@ -11592,7 +11634,7 @@ async function confirmEmailStatement(button) {
     : `Your statement is queued for ${result.recipient}. ${money(result.fee)} was charged.`);
 }
 function downloadTransactionsCsv() {
-  const items = filteredTransactions();
+  const items = statementItems();
   const rows = [
     // "Amount" and "Total" describe what was ATTEMPTED. The two columns that
     // say whether money actually moved are the last ones, taken from the wallet
@@ -11630,7 +11672,7 @@ function csvCell(value) {
   return /[",\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
 }
 async function downloadTransactionsPdf() {
-  const items = filteredTransactions();
+  const items = statementItems();
   const now = new Date();
   const statementNo = `TPS-${dateStamp(now)}-${leftPad(String(Math.floor(Math.random() * 999999)), 6, "0")}`;
   const referenceNo = `TP-${dateStamp(now)}-${leftPad(String(state.transactions.length + 1), 6, "0")}`;
@@ -12172,16 +12214,17 @@ function downloadBusinessDocumentPdf(document) {
   const pdf = businessDocumentPdf(document);
   downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${document.number || "titopay-document"}.pdf`);
 }
-function payoutReportPdf() {
+function payoutReportPdf(sourceItems = state.transactions) {
   const now = new Date();
   const businessName = businessProfileName();
   const businessContact = businessProfileContact();
   const businessAddress = businessProfileAddress();
-  const reportReference = `PAY-${dateStamp(now)}-${leftPad(String(state.transactions.length + 1), 5, "0")}`;
+  const reportReference = `PAY-${dateStamp(now)}-${leftPad(String((sourceItems || []).length + 1), 5, "0")}`;
   // Same rule as the account statement: a payout report is a financial document,
   // so it reports what the wallet ledger posted and never what was merely
-  // attempted.
-  const items = state.transactions.filter((item) => {
+  // attempted. sourceItems is the FULL payout history from the server, not the
+  // last-100 Activity cache, so "Total payouts" counts every payout.
+  const items = (sourceItems || []).filter((item) => {
     const key = `${item.service_code || item.serviceCode || ""} ${item.service_name || item.serviceName || ""}`.toLowerCase();
     if (!key.includes("payout") && !key.includes("settlement")) return false;
     return transactionPostedToWallet(item);
@@ -12252,8 +12295,18 @@ function payoutReportPdf() {
   rightText(543, 34, "Page 1 of 1", 7, "F1", "0.42 0.46 0.55");
   return makePdf(commands);
 }
-function downloadPayoutReportPdf() {
-  const pdf = payoutReportPdf();
+async function downloadPayoutReportPdf() {
+  // Pull the full payout history from the server (the account statement feed,
+  // whole period), so the report totals every payout rather than only those in
+  // the last-100 Activity cache. Falls back to the cache if the fetch fails.
+  let source = state.transactions;
+  try {
+    const result = await api("/v1/transactions/statement");
+    if (result && result.ok && Array.isArray(result.items)) source = result.items;
+  } catch (error) {
+    source = state.transactions;
+  }
+  const pdf = payoutReportPdf(source);
   downloadBlob(new Blob([pdf], { type: "application/pdf" }), `titopay-payout-report-${dateStamp(new Date())}.pdf`);
 }
 function pdfEscape(value) {
@@ -16242,8 +16295,15 @@ async function openEnterpriseDistributionDashboard(options = {}) {
   state.enterpriseDistribution.batches = batchResult.items || [];
   const beneficiaries = state.enterpriseDistribution.beneficiaries;
   const batches = state.enterpriseDistribution.batches;
+  // Headline figures come from the server's whole-organisation aggregate, never
+  // a sum over the capped 300-batch page; fall back to the page only if the
+  // summary is absent (older API).
+  const summary = batchResult.summary || null;
   const awaitingFunding = batches.filter((batch) => batch.status === "draft_validated");
-  const lockedTotal = batches.reduce((sum, batch) => sum + (Number(batch.locked_total) || 0), 0);
+  const batchCount = summary ? Number(summary.batchCount || 0) : batches.length;
+  const lockedTotal = summary
+    ? Number(summary.lockedTotal || 0)
+    : batches.reduce((sum, batch) => sum + (Number(batch.locked_total) || 0), 0);
   openModal(`
     <div class="modal-head">
       <div>
@@ -16258,7 +16318,7 @@ async function openEnterpriseDistributionDashboard(options = {}) {
 
     <section class="stats-grid">
       <div class="stat"><strong>${beneficiaries.length}</strong><span>Beneficiaries</span></div>
-      <div class="stat"><strong>${batches.length}</strong><span>Batches</span></div>
+      <div class="stat"><strong>${batchCount}</strong><span>Batches</span></div>
       <div class="stat"><strong>${esc(money(lockedTotal))}</strong><span>Funds locked</span></div>
     </section>
 
