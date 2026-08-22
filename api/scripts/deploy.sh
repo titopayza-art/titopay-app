@@ -76,9 +76,17 @@ deploy_main() {
   echo "== preflight (advisory since build 74: problems cannot cause a 502) =="
   node preflight.js || echo "Preflight reported problems above. The API will still start; fix them when calm."
 
-  echo "== restarting BOTH processes =="
+  echo "== restarting ALL TitoPay processes =="
+  # Restart every pm2 app, not just api + email-worker. The ecosystem also runs
+  # titopay-chat (live chat sockets) and may run a standalone webhook worker;
+  # restarting only two left those on the PREVIOUS build after every deploy -
+  # the exact "worker stuck on old code" failure the build stamps exist to catch.
+  # Named restarts first (so a missing name is a clear error), then a sweep for
+  # anything else pm2 is running.
   pm2 restart titopay-api --update-env
   pm2 restart titopay-email-worker --update-env
+  pm2 restart titopay-chat --update-env 2>/dev/null || echo "  (no titopay-chat app registered; skipping)"
+  pm2 restart all --update-env >/dev/null 2>&1 || true
   pm2 save >/dev/null
 
   echo "== waiting out the restart window =="

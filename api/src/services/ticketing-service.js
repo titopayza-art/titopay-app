@@ -3628,11 +3628,19 @@ async function listEventWaitlist(eventId) {
       LIMIT 500`,
     [eventId]
   );
-  const demand = rows.filter((row) => row.status === "waiting")
-    .reduce((total, row) => total + Number(row.quantity || 0), 0);
+  // demand/waiting are counts over the WHOLE waitlist, not the 500-row display
+  // page - a hot event past 500 entries drives the organiser's release decision,
+  // so an under-count there releases too few tickets.
+  const { rows: totals } = await pool.query(
+    `SELECT COALESCE(SUM(quantity) FILTER (WHERE status = 'waiting'), 0)::INT AS demand,
+            COUNT(*) FILTER (WHERE status = 'waiting')::INT AS waiting
+       FROM ticket_waitlist WHERE event_id = $1`,
+    [eventId]
+  );
+  const demand = Number(totals[0]?.demand || 0);
   return {
     demand,
-    waiting: rows.filter((row) => row.status === "waiting").length,
+    waiting: Number(totals[0]?.waiting || 0),
     items: rows.map((row) => ({
       id: row.id,
       name: row.full_name,
@@ -4480,12 +4488,12 @@ async function adminTicketingAnalytics() {
        WHERE status = 'approved'`
     ),
     pool.query(
-      `SELECT TO_CHAR(created_at::DATE, 'YYYY-MM-DD') AS day,
+      `SELECT TO_CHAR((created_at AT TIME ZONE 'Africa/Johannesburg')::DATE, 'YYYY-MM-DD') AS day,
               COUNT(*)::int AS orders,
               COALESCE(SUM(total), 0) AS gross
        FROM ticket_orders
        WHERE status = 'paid' AND created_at >= NOW() - INTERVAL '30 days'
-       GROUP BY created_at::DATE
+       GROUP BY (created_at AT TIME ZONE 'Africa/Johannesburg')::DATE
        ORDER BY day ASC`
     ),
     pool.query(

@@ -121,9 +121,19 @@ async function listRewardsForCustomer(userId, accountType) {
     [userId, customerAudience(accountType)]
   );
   const items = rows.map(publicPublication);
+  // Badge count over the WHOLE visible set, not the 50-row display page, so an
+  // account with more than 50 live publications still sees a correct unseen count.
+  const { rows: unseenRows } = await pool.query(
+    `SELECT COUNT(*)::INT AS unseen
+       FROM reward_publications p
+       LEFT JOIN reward_publication_reads r
+         ON r.publication_id = p.id AND r.user_id = $1
+      WHERE ${CUSTOMER_VISIBLE_SQL} AND r.user_id IS NULL`,
+    [userId, customerAudience(accountType)]
+  );
   return {
     items,
-    unseenCount: items.filter((item) => !item.seen).length
+    unseenCount: Number(unseenRows[0]?.unseen || 0)
   };
 }
 

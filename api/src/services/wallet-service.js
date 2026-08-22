@@ -185,8 +185,8 @@ async function loadEmailStatementData(db, userId, walletId, range = {}, { lockWa
             COALESCE(SUM(CASE WHEN wl.entry_type IN ('debit','reserve') THEN ABS(wl.amount) ELSE 0 END) OVER(),0) AS money_out_total
      FROM wallet_ledger wl
      WHERE wl.wallet_id=$1
-       AND ($2::date IS NULL OR wl.created_at >= $2::date)
-       AND ($3::date IS NULL OR wl.created_at < ($3::date + INTERVAL '1 day'))
+       AND ($2::date IS NULL OR wl.created_at >= ($2::date AT TIME ZONE 'Africa/Johannesburg'))
+       AND ($3::date IS NULL OR wl.created_at < (($3::date + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg'))
      ORDER BY wl.created_at DESC
      LIMIT 100`,
     [walletId,from,to]

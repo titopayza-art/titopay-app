@@ -19,10 +19,32 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 102;
+const API_BUILD = 103;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  103: "PRODUCTION-READINESS SWEEP. A six-lane adversarial audit (money/ledger, "
+      + "concurrency, crash/500, security, timezone, infra) and its fixes. "
+      + "MONEY-LOSS: reverseTransaction was service-code-blind and would re-credit "
+      + "a wallet for a completed BANK WITHDRAWAL whose money already left to the "
+      + "customer's bank (double-pay); it now refuses externally-settled codes "
+      + "(payouts, top-ups, tickets), which reverse only through their own flows. "
+      + "REGULATORY: the monthly send-cap re-check + per-user lock ran only when an "
+      + "idempotency key was supplied, so two concurrent key-less sends could "
+      + "exceed the cap; the lock + re-check are now unconditional. SECURITY: "
+      + "webhook delivery no longer follows redirects (a merchant could 3xx to an "
+      + "internal address past the private-range guard). CORRECTNESS: statement "
+      + "totals now count only completed money; the statement PDF uses authoritative "
+      + "whole-period totals when its row list is capped; banking intent transitions "
+      + "and stokvel withdrawal approvals are decide-once; a fee-mechanism conflict "
+      + "is asserted. TIMEZONE: business-sales, waitlist, rewards badge, chat-monitor "
+      + "counts, and several reports now compute over the full set / in SA time. "
+      + "HARDENING: boot deployment-inspection wrapped; a floating compliance review "
+      + "caught. GUARDRAILS: new test/guardrails.test.js + an api-tests CI job fail "
+      + "the build if any of these classes regress. deploy.sh restarts ALL pm2 apps "
+      + "(chat was left on old code); .env.example declares TITOPAY_ENV + pool/worker "
+      + "vars. Additive/behaviour-preserving except the reverse guard (a refusal) "
+      + "and the SA-time report windows. Full suite green.",
   102: "AUDIT: TOTALS THAT OVER-CLAIMED THEIR DATA. A sweep for the same class "
       + "of bug as the build-101 \"Today\" card - a figure presented as complete "
       + "but summed over a capped LIMIT list, or a window rolled in UTC instead "

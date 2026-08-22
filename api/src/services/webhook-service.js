@@ -472,7 +472,16 @@ async function postSigned(subscription, envelope, deliveryId) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), DELIVERY_TIMEOUT_MS);
   try {
-    const response = await fetch(subscription.endpoint_url, { method: "POST", headers, body, signal: controller.signal });
+    // redirect: "manual" — SSRF defence. assertDeliverableUrl validated the
+    // REGISTERED url (HTTPS, no private/link-local/loopback host), but following
+    // a redirect would let a merchant register a clean endpoint that 3xx-redirects
+    // to an internal address (169.254.169.254, 127.0.0.1, .internal), bypassing
+    // that guard from inside the network. A redirect is treated as a delivery
+    // failure instead of being followed.
+    const response = await fetch(subscription.endpoint_url, { method: "POST", headers, body, signal: controller.signal, redirect: "manual" });
+    if (response.status >= 300 && response.status < 400) {
+      return { ok: false, statusCode: response.status, body: "Redirect responses are not followed for webhook delivery (SSRF protection). Point the subscription directly at the final HTTPS endpoint." };
+    }
     const text = await response.text().catch(() => "");
     return { ok: response.ok, statusCode: response.status, body: text.slice(0, RESPONSE_BODY_LIMIT) };
   } finally {

@@ -74,7 +74,18 @@ if (startupWarnings.length) {
   console.warn("[config] Run `node preflight.js` for the same list with remedies.\n");
 }
 
-const deployment = inspectDeployment({ env: process.env, config });
+// inspectDeployment is designed never to throw — it only classifies env vars —
+// but a boot-time throw here would be a 502, the one outcome this codebase works
+// hardest to prevent. Guard it so an unexpected failure degrades to "serve with a
+// warning" instead of refusing to start. A genuine contradiction still refuses,
+// because that path is only reached when inspection SUCCEEDS and returns unsafe.
+let deployment;
+try {
+  deployment = inspectDeployment({ env: process.env, config });
+} catch (error) {
+  console.error("[config] deployment inspection failed to run; serving with a warning", { reason: error?.message || "unknown" });
+  deployment = { safe: true, blocking: [], warnings: ["Deployment safety inspection failed to run; see the server log."] };
+}
 if (!deployment.safe) refuseToStart(deployment.blocking);
 warnAboutDeployment(deployment.warnings);
 

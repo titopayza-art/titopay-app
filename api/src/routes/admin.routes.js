@@ -2113,8 +2113,21 @@ router.get("/chat-monitor/overview", requireSuperAdmin, async (_req, res, next) 
         connectedAt: item.connectedAt
       };
     });
-    const staleDeliveries = deliveryFailures.rows.filter((item) => item.failure_type === "delivery_timeout").length;
-    const failedDeliveries = deliveryFailures.rows.filter((item) => item.failure_type === "failed").length;
+    // Counts over the WHOLE set, not the 100-row display page: during an incident
+    // the failure count is exactly what must not saturate at 100.
+    const deliveryCounts = await safeQuery(
+      pool,
+      "admin.chatMonitor.deliveryFailureCounts",
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'failed')::INT AS failed,
+         COUNT(*) FILTER (WHERE status = 'sent' AND created_at < NOW() - INTERVAL '60 seconds')::INT AS stale
+       FROM chat_messages
+       WHERE status = 'failed' OR (status = 'sent' AND created_at < NOW() - INTERVAL '60 seconds')`,
+      [],
+      [{ failed: 0, stale: 0 }]
+    );
+    const staleDeliveries = Number(deliveryCounts.rows[0]?.stale || 0);
+    const failedDeliveries = Number(deliveryCounts.rows[0]?.failed || 0);
     const socketFailureCount = socketFailures.rows[0]?.total_in_window || 0;
     const queuedNotifications = queueStatus.rows
       .filter((item) => ["queued", "sent"].includes(item.status))

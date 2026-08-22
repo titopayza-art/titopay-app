@@ -568,6 +568,13 @@ async function transitionIntent(client, intentId, toState, {
     });
   }
 
+  // Decide-once, in the WHERE clause. `canonical_state = $8` makes the update
+  // conditional on the state we read still holding, so two callers that both read
+  // `fromState` (possible when this runs without a held transaction — the
+  // client === null / pool path drops the FOR UPDATE lock the instant that SELECT
+  // returns) cannot both apply the same transition: the first update wins and the
+  // second matches zero rows. Without this the second caller would write a second
+  // transition row and re-fire any settlement hung off the destination state.
   const { rows } = await queryable.query(
     `UPDATE banking_payment_intents
         SET canonical_state = $2,
@@ -578,11 +585,20 @@ async function transitionIntent(client, intentId, toState, {
             requires_review = COALESCE($7, requires_review),
             provider_updated_at = NOW(),
             updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND canonical_state = $8
       RETURNING *`,
     [intentId, toState, providerStatus, providerTransactionId, providerReference,
-     failureReason, requiresReview]
+     failureReason, requiresReview, fromState]
   );
+
+  // Zero rows means another caller transitioned this intent between our read and
+  // our write. Do not record a second transition; report the no-op.
+  if (!rows[0]) {
+    const { rows: current } = await queryable.query(
+      "SELECT * FROM banking_payment_intents WHERE id = $1", [intentId]
+    );
+    return { intent: current[0] || intent, changed: false, reason: "ALREADY_TRANSITIONED" };
+  }
 
   await recordTransition(queryable, {
     intentId, fromState, toState, source, providerStatus, actorType, actorId, requestId, metadata

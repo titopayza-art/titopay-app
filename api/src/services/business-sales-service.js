@@ -53,14 +53,18 @@ async function requireBusiness(userId) {
 }
 
 function windowClause(from, to, column, values) {
+  // Interpret from/to as SOUTH AFRICAN calendar dates. A bare ::DATE cast anchors
+  // the window at UTC midnight (02:00 SAST), so a day's first two hours would fall
+  // into the previous day; wrapping in Africa/Johannesburg makes the window the
+  // actual SA day, matching the SA per-day/per-hour bucketing in the summary.
   let clause = "";
   if (from) {
     values.push(from);
-    clause += ` AND ${column} >= $${values.length}::DATE`;
+    clause += ` AND ${column} >= ($${values.length}::DATE AT TIME ZONE 'Africa/Johannesburg')`;
   }
   if (to) {
     values.push(to);
-    clause += ` AND ${column} < ($${values.length}::DATE + INTERVAL '1 day')`;
+    clause += ` AND ${column} < (($${values.length}::DATE + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg')`;
   }
   return clause;
 }

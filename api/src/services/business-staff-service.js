@@ -402,8 +402,9 @@ async function staffSalesTotals(businessUserId, { from, to } = {}) {
   await ensureStaffSchema();
   const values = [businessUserId];
   let clause = "";
-  if (from) { values.push(from); clause += ` AND created_at >= $${values.length}::DATE`; }
-  if (to) { values.push(to); clause += ` AND created_at < ($${values.length}::DATE + INTERVAL '1 day')`; }
+  // SA calendar dates (UTC+2), so a day's first two hours are not misfiled.
+  if (from) { values.push(from); clause += ` AND created_at >= ($${values.length}::DATE AT TIME ZONE 'Africa/Johannesburg')`; }
+  if (to) { values.push(to); clause += ` AND created_at < (($${values.length}::DATE + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg')`; }
   const { rows } = await pool.query(
     `SELECT staff_user_id, staff_name, COUNT(*)::int AS sales_count, COALESCE(SUM(amount), 0) AS sales_total, MAX(created_at) AS last_sale_at
      FROM business_staff_sales

@@ -721,7 +721,10 @@ async function nudgeBeforeLimits(userId, config, tier, tierConfig) {
     ? 0 : Math.round((used / Number(limit)) * 100);
   const worst = Math.max(pct(usage.received, tierConfig.monthlyReceive), pct(usage.sent, tierConfig.monthlySend));
   if (worst < Number(config.promptAtPercent) || worst >= 100) return;
-  const monthKey = new Date().toISOString().slice(0, 7);
+  // SA calendar month (UTC+2, no DST) for the once-per-month nudge dedup key.
+  // A bare UTC month would, in the 00:00-02:00 SAST slice of the 1st, still read
+  // last month and suppress a new-month nudge for two hours.
+  const monthKey = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 7);
   const { createNotification } = require("./notification-service");
   await createNotification({
     user: { id: userId, user_type: "customer" },

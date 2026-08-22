@@ -474,6 +474,17 @@ async function createTransaction(actor, payload) {
   if (recipientFee > chargedAmount) {
     throw new AppError(400, "The fee on this payment is larger than the payment itself.");
   }
+  // The two fee mechanisms are mutually exclusive: merchantReceivesFee moves the
+  // single preview fee onto the recipient, while recipientFee is a separate
+  // recipient-side charge. Setting both would credit revenue payerFee+recipientFee
+  // while only debiting the payer chargedAmount, so credits would exceed debits by
+  // recipientFee and the double entry would not balance. No caller sets both today
+  // (the public route strips both fields; qr-service always passes
+  // merchantReceivesFee:false), but assert it so a future caller cannot unbalance
+  // the ledger.
+  if (payload.merchantReceivesFee && recipientFee > 0) {
+    throw new AppError(400, "A payment cannot apply both the merchant-fee and recipient-fee mechanisms at once.");
+  }
   const netAmount = roundMoney(
     payload.merchantReceivesFee ? chargedAmount - preview.fee : chargedAmount - recipientFee
   );
@@ -519,15 +530,19 @@ async function createTransaction(actor, payload) {
         await client.query("ROLLBACK");
         return transactionResponseFromRow(replayed[0]);
       }
-      // Serialize this sender's limit consumption. The assertCanSendAmount at
-      // the top of this function ran unlocked on the pool — two concurrent
-      // R150k sends each read usage 0 against a R200k month and both passed.
-      // Under this per-user lock, a competitor's ledger rows are committed
-      // before our re-read, so the second send sees the first one's usage.
+    }
+    // Serialize this sender's limit consumption, ALWAYS — not only when an
+    // idempotency key was supplied. The assertCanSendAmount at the top ran
+    // unlocked on the pool, so two concurrent R150k sends each read usage 0
+    // against a R200k month and both passed. The monthly/velocity cap is a
+    // regulatory control; whether the client sent an Idempotency-Key is the
+    // client's choice and must never decide whether the cap is enforced. Under
+    // this per-user lock a competitor's ledger rows are committed before our
+    // re-read, so the second send sees the first one's usage and is refused
+    // here — before any row is written, so the throw rolls back cleanly.
+    if (!feeOnly) {
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`limits:${actor.userId}`]);
-      if (!feeOnly) {
-        await require("./compliance-service").assertCanSendAmount(actor.userId, chargedAmount, { serviceCode: normalizedServiceCode });
-      }
+      await require("./compliance-service").assertCanSendAmount(actor.userId, chargedAmount, { serviceCode: normalizedServiceCode });
     }
 
     // The transaction row is written FIRST because every wallet_ledger entry
@@ -632,11 +647,15 @@ async function createTransaction(actor, payload) {
     client.release();
   }
 
-  require("./compliance-service").reviewForEdd(actor.userId, chargedAmount, normalizedServiceCode);
+  // Fire-and-forget monitoring: the transfer has already committed, so a review
+  // failure must never surface as a failed payment. reviewForEdd self-guards, but
+  // attach a .catch here too so the contract is local — a floating rejection can
+  // never become an unhandledRejection if that internal guard is ever removed.
+  Promise.resolve(require("./compliance-service").reviewForEdd(actor.userId, chargedAmount, normalizedServiceCode)).catch(() => {});
   // Monitoring follows the money. A held credit has not reached the
   // recipient, so their review happens when it is released, not now.
   if (recipientWallet?.user_id && !pendingHold) {
-    require("./compliance-service").reviewForEdd(recipientWallet.user_id, netAmount, normalizedServiceCode);
+    Promise.resolve(require("./compliance-service").reviewForEdd(recipientWallet.user_id, netAmount, normalizedServiceCode)).catch(() => {});
   }
   // The held payment is announced after the money is committed, so a
   // notification failure can never undo a transfer.
@@ -858,10 +877,12 @@ async function todaySummaryForUser(userId) {
 // totals and the record count come from window aggregates (COUNT/SUM OVER()),
 // so they are complete even when the row list is capped for delivery; the rows
 // themselves are capped at a generous 5000 for the PDF/CSV, and the caller is
-// told the true total so it can say "showing latest N of M". Same data source
-// (this user's transactions) and the same in=credit / out=everything-else
-// split the on-screen summary always used - only the cap is gone. Dates are SA
-// calendar dates, bounded [from 00:00 SAST, (to+1 day) 00:00 SAST).
+// told the true total so it can say "showing latest N of M". The money-in/out
+// totals count only COMPLETED transactions - settled money that actually moved -
+// so a failed, pending or reversed row cannot inflate them (matching
+// todaySummaryForUser and the ledger); the row list itself still shows every
+// status, each marked. Dates are SA calendar dates, bounded [from 00:00 SAST,
+// (to+1 day) 00:00 SAST).
 async function statementForUser(userId, { from = null, to = null } = {}) {
   const fromDate = from ? String(from).slice(0, 10) : null;
   const toDate = to ? String(to).slice(0, 10) : null;
@@ -871,8 +892,8 @@ async function statementForUser(userId, { from = null, to = null } = {}) {
             posted.entry_count AS ledger_entry_count,
             posted.net_posted AS posted_amount,
             COUNT(*) OVER()::INT AS total_count,
-            COALESCE(SUM(ABS(COALESCE(t.total, t.amount, 0))) FILTER (WHERE t.direction = 'credit') OVER(), 0) AS money_in_total,
-            COALESCE(SUM(ABS(COALESCE(t.total, t.amount, 0))) FILTER (WHERE t.direction IS DISTINCT FROM 'credit') OVER(), 0) AS money_out_total
+            COALESCE(SUM(ABS(COALESCE(t.total, t.amount, 0))) FILTER (WHERE t.direction = 'credit' AND t.status = 'completed') OVER(), 0) AS money_in_total,
+            COALESCE(SUM(ABS(COALESCE(t.total, t.amount, 0))) FILTER (WHERE t.direction IS DISTINCT FROM 'credit' AND t.status = 'completed') OVER(), 0) AS money_out_total
      FROM transactions t
      LEFT JOIN pricing_rules pr ON pr.service_code = t.service_code
      ${POSTED_LEDGER_LATERAL}
@@ -936,8 +957,12 @@ async function listAllTransactions(filters = {}) {
     }
     if (status) where.push(`LOWER(t.status) = ${addValue(status)}`);
     if (service) where.push(`LOWER(t.service_code) = ${addValue(service)}`);
-    if (from) where.push(`t.created_at >= ${addValue(from)}::TIMESTAMPTZ`);
-    if (to) where.push(`t.created_at < (${addValue(to)}::DATE + INTERVAL '1 day')`);
+    // Interpret the admin's date filter as SOUTH AFRICAN calendar dates, so an
+    // "Aug 1-31" report is exactly the SA month, not UTC-midnight boundaries
+    // (which would drop 00:00-02:00 SAST on the 1st and leak the same slice on
+    // Sep 1).
+    if (from) where.push(`t.created_at >= (${addValue(from)}::DATE AT TIME ZONE 'Africa/Johannesburg')`);
+    if (to) where.push(`t.created_at < ((${addValue(to)}::DATE + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg')`);
     const { rows } = await pool.query(
       `SELECT
          t.id,
@@ -1032,6 +1057,27 @@ async function listAllTransactions(filters = {}) {
   }
 }
 
+// Service codes that reverseTransaction MUST NOT unwind by flipping ledger legs.
+// It only knows how to reverse wallet_ledger entries, which is correct for a
+// wallet-internal transfer or QR sale, but wrong where the money settled OUTSIDE
+// the ledger or the transaction issued something a ledger flip does not undo:
+//   - bank withdrawals/payouts: the money is already at the customer's bank via
+//     the payout provider, so re-crediting the wallet pays them twice. These
+//     reverse ONLY through peach-withdrawal-service.releaseWithdrawalFunds, and
+//     only when the provider reports the payout failed.
+//   - top-ups: the card funds are not clawed back, so a ledger reversal removes a
+//     wallet credit the customer genuinely paid for.
+//   - ticket purchases: the ticket stays valid; refunds go through the ticket
+//     refund flow, which also invalidates the ticket.
+const NON_REVERSIBLE_SERVICES = new Set([
+  ...BANK_PAYOUT_SERVICES,
+  "wallet_top_up",
+  "top_up",
+  "card_topups",
+  "ticket_purchase",
+  "ticket_sales"
+]);
+
 async function reverseTransaction(id, actor) {
   const client = await pool.connect();
   let reversedTransaction;
@@ -1046,6 +1092,17 @@ async function reverseTransaction(id, actor) {
     if (transaction.status === "reversed") throw new AppError(409, "Transaction is already reversed");
     if (transaction.status !== "completed") {
       throw new AppError(409, "Only completed transactions can be reversed automatically");
+    }
+    // A blind ledger reversal is only safe when both legs live in the ledger.
+    // For money that has already left the platform (bank payout), card money that
+    // is not clawed back (top-up), or issued goods (tickets), flipping the ledger
+    // would pay the customer twice or leave the goods valid. Refuse here and send
+    // the operator to the correct flow.
+    if (NON_REVERSIBLE_SERVICES.has(String(transaction.service_code || "").toLowerCase())) {
+      throw new AppError(409,
+        "This transaction type cannot be reversed here. A bank withdrawal or payout is reversed only when the "
+        + "provider reports it failed; a top-up or ticket purchase has its own refund path. Reversing it here would "
+        + "move money twice.");
     }
     const { rows: ledgerRows } = await client.query(
       `SELECT *
@@ -1163,10 +1220,10 @@ async function revenueSummary() {
          ORDER BY total DESC`
       ),
       pool.query(
-        `SELECT TO_CHAR(created_at::DATE, 'YYYY-MM-DD') AS day, SUM(fee_collected)::NUMERIC AS total
+        `SELECT TO_CHAR((created_at AT TIME ZONE 'Africa/Johannesburg')::DATE, 'YYYY-MM-DD') AS day, SUM(fee_collected)::NUMERIC AS total
          FROM revenue_ledger
-         GROUP BY created_at::DATE
-         ORDER BY created_at::DATE DESC
+         GROUP BY (created_at AT TIME ZONE 'Africa/Johannesburg')::DATE
+         ORDER BY (created_at AT TIME ZONE 'Africa/Johannesburg')::DATE DESC
          LIMIT 30`
       )
     ]);

@@ -392,23 +392,42 @@ async function requestWithdrawal(userId, groupId, payload = {}) {
 
 async function decideWithdrawal(actorId, groupId, withdrawalId, approve) {
   await requireManager(groupId, actorId);
-  const { rows } = await pool.query(
-    "SELECT * FROM stockvel_withdrawals WHERE id = $1 AND group_id = $2 LIMIT 1", [withdrawalId, groupId]);
-  const withdrawal = rows[0];
-  if (!withdrawal) throw new AppError(404, "Withdrawal request not found");
-  if (withdrawal.status !== "requested") throw new AppError(409, `That request is already ${withdrawal.status}`);
-  if (withdrawal.requested_by === actorId && approve) {
-    throw new AppError(409, "You cannot approve your own withdrawal. Another organiser must");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Serialize decisions within a group. Without this, two managers approving
+    // two DIFFERENT requests at once each read the same balance, each pass, and
+    // both commit 'approved' - the recorded withdrawals then exceed the pot. The
+    // per-group advisory lock makes the first approval commit before the second
+    // reads the balance, so the second sees the first one's approved amount.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`stokvel-withdrawal:${groupId}`]);
+    const { rows } = await client.query(
+      "SELECT * FROM stockvel_withdrawals WHERE id = $1 AND group_id = $2 FOR UPDATE", [withdrawalId, groupId]);
+    const withdrawal = rows[0];
+    if (!withdrawal) throw new AppError(404, "Withdrawal request not found");
+    if (withdrawal.status !== "requested") throw new AppError(409, `That request is already ${withdrawal.status}`);
+    if (withdrawal.requested_by === actorId && approve) {
+      throw new AppError(409, "You cannot approve your own withdrawal. Another organiser must");
+    }
+    if (approve) {
+      const totals = await groupBalance(groupId);
+      if (money(withdrawal.amount) > totals.balance) throw new AppError(409, "The group no longer holds enough to approve this");
+    }
+    // Decide-once: the status guard means a second concurrent decision on the
+    // same request matches zero rows and is reported as already decided.
+    const { rows: updated } = await client.query(
+      "UPDATE stockvel_withdrawals SET status = $3, decided_by = $4, decided_at = NOW() WHERE id = $1 AND group_id = $2 AND status = 'requested' RETURNING id",
+      [withdrawalId, groupId, approve ? "approved" : "declined", actorId]
+    );
+    if (!updated[0]) throw new AppError(409, "That request was already decided");
+    await client.query("COMMIT");
+    return { status: approve ? "approved" : "declined" };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-  if (approve) {
-    const totals = await groupBalance(groupId);
-    if (money(withdrawal.amount) > totals.balance) throw new AppError(409, "The group no longer holds enough to approve this");
-  }
-  await pool.query(
-    "UPDATE stockvel_withdrawals SET status = $3, decided_by = $4, decided_at = NOW() WHERE id = $1 AND group_id = $2",
-    [withdrawalId, groupId, approve ? "approved" : "declined", actorId]
-  );
-  return { status: approve ? "approved" : "declined" };
 }
 
 /* ---- Group chat and meeting minutes ---------------------------------- */
