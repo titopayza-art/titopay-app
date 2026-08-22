@@ -167,6 +167,8 @@ server.listen(config.apiPort, config.apiHost, () => {
   // delivers; a standalone src/webhook-worker.js process takes over when
   // WEBHOOK_WORKER_INLINE=0. Neither the ensure nor the loop may ever be
   // fatal - webhooks degrade, the API does not.
+  require("./services/partner-service").ensurePartnerSchema()
+    .catch((error) => console.error("[partners] schema ensure failed", { message: error.message }));
   require("./services/webhook-service").ensureWebhookSchema()
     .catch((error) => console.error("[webhooks] schema ensure failed", { message: error.message }))
     .finally(() => {
@@ -200,6 +202,8 @@ server.listen(config.apiPort, config.apiHost, () => {
   // delivers; a standalone src/webhook-worker.js process takes over when
   // WEBHOOK_WORKER_INLINE=0. Neither the ensure nor the loop may ever be
   // fatal - webhooks degrade, the API does not.
+  require("./services/partner-service").ensurePartnerSchema()
+    .catch((error) => console.error("[partners] schema ensure failed", { message: error.message }));
   require("./services/webhook-service").ensureWebhookSchema()
     .catch((error) => console.error("[webhooks] schema ensure failed", { message: error.message }))
     .finally(() => {

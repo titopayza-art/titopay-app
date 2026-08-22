@@ -1614,6 +1614,54 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries (status, next_retry_at);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_subscription ON webhook_deliveries (subscription_id, created_at DESC);
 
+-- POS partner credentials and sandbox onboarding. A partner is a vendor
+-- organisation (Yoco-class platform, Android POS ISV, ERP). Keys are bearer
+-- credentials stored ONLY as SHA-256 hashes; the plaintext is shown once.
+-- Sandbox keys are self-service; production keys exist only after an admin
+-- approves the partner.
+CREATE TABLE IF NOT EXISTS api_partners (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_name TEXT NOT NULL,
+  contact_name TEXT,
+  email TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'suspended')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS api_partner_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  partner_id UUID NOT NULL REFERENCES api_partners(id) ON DELETE CASCADE,
+  environment TEXT NOT NULL CHECK (environment IN ('sandbox', 'production')),
+  key_prefix TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+  expires_at TIMESTAMPTZ,
+  last_used_at TIMESTAMPTZ,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_api_partner_keys_partner ON api_partner_keys (partner_id, status);
+
+CREATE TABLE IF NOT EXISTS api_partner_usage (
+  partner_id UUID NOT NULL REFERENCES api_partners(id) ON DELETE CASCADE,
+  day DATE NOT NULL,
+  requests INTEGER NOT NULL DEFAULT 0,
+  errors INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (partner_id, day)
+);
+
+-- Which sandbox resources a partner provisioned, so usage and activity views
+-- can be scoped to that partner without touching production tables' shapes.
+CREATE TABLE IF NOT EXISTS api_partner_resources (
+  partner_id UUID NOT NULL REFERENCES api_partners(id) ON DELETE CASCADE,
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('merchant', 'terminal', 'customer')),
+  resource_id UUID NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (partner_id, resource_type, resource_id)
+);
+
 CREATE TABLE IF NOT EXISTS pos_provider_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_id TEXT NOT NULL UNIQUE,

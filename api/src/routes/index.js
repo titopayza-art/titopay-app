@@ -35,6 +35,8 @@ const titokidsRoutes = require("./titokids.routes");
 const enterpriseDistributionRoutes = require("./enterprise-distribution.routes");
 const posRoutes = require("../pos/routes");
 const webhookRoutes = require("./webhooks.routes");
+const partnersRoutes = require("./partners.routes");
+const sandboxRoutes = require("./sandbox.routes");
 const bookRoutes = require("./book.routes");
 const emailCentreRoutes = require("./email-centre.routes");
 const emailOtpAdminRoutes = require("./email-otp-admin.routes");
@@ -155,6 +157,10 @@ function mountVersionedRoutes(prefix) {
   // earlier at the literal /v1/webhooks/pos-provider path; these subpaths
   // never collide with it.
   router.use(`${prefix}/webhooks`, webhookRoutes);
+  // Vendor credentials + the partner sandbox. The sandbox router refuses
+  // every request unless this deployment IS the sandbox.
+  router.use(`${prefix}/partners`, partnersRoutes);
+  router.use(`${prefix}/sandbox`, sandboxRoutes);
   // ABOVE lookupRoutes DELIBERATELY. That router sits on the bare prefix with
   // requireAuth on it, so anything mounted after it never sees a request and
   // every unmatched path becomes 401 instead of 404. Book's public venue page

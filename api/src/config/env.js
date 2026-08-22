@@ -282,6 +282,8 @@ const config = {
     "https://www.admin.titopay.co.za",
     process.env.HR_ORIGIN || "https://hr.titopay.co.za",
     "https://www.hr.titopay.co.za",
+    process.env.DEVELOPERS_ORIGIN || "https://developers.titopay.co.za",
+    "https://www.developers.titopay.co.za",
     ...listFromEnv("CORS_ORIGINS"),
     ...(includeLocalCorsOrigins ? localPreviewOrigins : [])
   ])),

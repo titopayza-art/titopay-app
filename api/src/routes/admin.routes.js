@@ -4787,6 +4787,56 @@ router.get("/security-summary", requireAdminPermission("security"), async (_req,
   }
 });
 
+// POS PARTNERS. Vendor organisations holding API credentials: approval gates
+// production keys, suspension kills every key at the next request, and usage
+// is the same series the partner sees on their own dashboard.
+const partnerService = require("../services/partner-service");
+
+router.get("/partners", requireAdminPermission("integrations"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, partners: await partnerService.adminListPartners() });
+  } catch (error) { next(error); }
+});
+
+router.post("/partners/:id/approve", requireAdminPermission("integrations"), async (req, res, next) => {
+  try {
+    const partnerId = requireUuid(req.params.id, "Partner ID");
+    res.json({ ok: true, partner: await partnerService.adminSetPartnerStatus(partnerId, "approved", req.auth, { ipAddress: req.ip, userAgent: req.get("user-agent") }) });
+  } catch (error) { next(error); }
+});
+
+router.post("/partners/:id/suspend", requireAdminPermission("integrations"), async (req, res, next) => {
+  try {
+    const partnerId = requireUuid(req.params.id, "Partner ID");
+    res.json({ ok: true, partner: await partnerService.adminSetPartnerStatus(partnerId, "suspended", req.auth, { ipAddress: req.ip, userAgent: req.get("user-agent") }) });
+  } catch (error) { next(error); }
+});
+
+// Issue a key on a partner's behalf - the only way a PRODUCTION key comes to
+// exist, and it requires the partner to already be approved.
+router.post("/partners/:id/keys", requireAdminPermission("integrations"), async (req, res, next) => {
+  try {
+    const partnerId = requireUuid(req.params.id, "Partner ID");
+    const environment = String(req.body?.environment || "production").trim();
+    res.status(201).json({ ok: true, ...(await partnerService.createKey(partnerId, environment, `admin:${req.auth.userId}`, { ipAddress: req.ip, userAgent: req.get("user-agent") })) });
+  } catch (error) { next(error); }
+});
+
+router.post("/partners/:id/keys/:keyId/revoke", requireAdminPermission("integrations"), async (req, res, next) => {
+  try {
+    const partnerId = requireUuid(req.params.id, "Partner ID");
+    const keyId = requireUuid(req.params.keyId, "Key ID");
+    res.json({ ok: true, key: await partnerService.revokeKey(partnerId, keyId, `admin:${req.auth.userId}`, { ipAddress: req.ip, userAgent: req.get("user-agent") }) });
+  } catch (error) { next(error); }
+});
+
+router.get("/partners/:id/usage", requireAdminPermission("integrations"), async (req, res, next) => {
+  try {
+    const partnerId = requireUuid(req.params.id, "Partner ID");
+    res.json({ ok: true, usage: await partnerService.usageSeries(partnerId, req.query.days), keys: await partnerService.listKeys(partnerId) });
+  } catch (error) { next(error); }
+});
+
 router.use((error, req, _res, next) => {
   console.error("[admin-api-error]", {
     method: req.method,

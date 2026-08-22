@@ -19,10 +19,26 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 97;
+const API_BUILD = 98;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  98: "PARTNER SANDBOX + CREDENTIALS. POS vendors self-serve the whole "
+      + "integration: register at /v1/partners (sandbox key issued instantly, "
+      + "production keys only after admin approval), manage keys "
+      + "(create/rotate with 24h grace/revoke, hashes stored - never the "
+      + "key), and read their own usage and delivery stats. A sandbox "
+      + "deployment (same api.zip, TITOPAY_ENV=sandbox, own database) "
+      + "exposes /v1/sandbox: provision real merchants/terminals/funded "
+      + "customers and drive every payment outcome (scan, complete, "
+      + "insufficient funds, expire, cancel, refund, reverse) through the "
+      + "REAL POS engine, plus a webhook event generator; production "
+      + "refuses /v1/sandbox outright. Admin console APIs approve/suspend "
+      + "partners under the integrations permission. Static developer "
+      + "portal in developers/ (developers.titopay.co.za), OpenAPI in "
+      + "docs/openapi-titopay.yaml, SDK starters (Node/Java/PHP/Kotlin) in "
+      + "docs/sdk-starters/. Tables api_partners/_keys/_usage/_resources "
+      + "are additive and inert in production until used.",
   97: "OUTBOUND WEBHOOKS. Merchants and POS partners subscribe HTTPS "
       + "endpoints (max 10, public HTTPS only) and receive signed real-time "
       + "payment events fanned out from the transactional pos_payment_events "

@@ -1519,6 +1519,9 @@ async function setLoginMfaEnabled(userId, enabled) {
 }
 
 module.exports = {
+  // Exported for the sandbox provisioner, which mints REAL sessions for the
+  // test principals it creates instead of imitating the token format.
+  issueTokens,
   ADMIN_ROLE_PERMISSIONS,
   normalizeAdminRole,
   isRootAdminRole,

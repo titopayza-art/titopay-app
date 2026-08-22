@@ -1,0 +1,303 @@
+openapi: 3.1.0
+info:
+  title: TitoPay POS Partner API
+  version: "1.0"
+  description: >
+    QR payments, terminals, partner credentials and the sandbox. Webhook
+    management is specified separately in webhooks/openapi-webhooks.yaml.
+    Sandbox base URL serves tpk_test_ keys; production serves tpk_live_ keys
+    issued to approved partners. Terminal-signed endpoints use the HMAC scheme
+    described under securitySchemes/terminalHmac.
+servers:
+  - url: https://api-sandbox.titopay.co.za/v1
+    description: Partner sandbox (self-service)
+  - url: https://api.titopay.co.za/v1
+    description: Production (approved partners)
+paths:
+  /partners/register:
+    post:
+      summary: Self-service partner registration
+      description: Creates the partner (status pending) and returns the first sandbox API key. The key is shown once.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [companyName, email]
+              properties:
+                companyName: { type: string, example: "Acme POS (Pty) Ltd" }
+                contactName: { type: string, example: "Integration Lead" }
+                email: { type: string, format: email, example: "dev@acmepos.co.za" }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              example:
+                ok: true
+                partner: { id: "3f7c...", companyName: "Acme POS (Pty) Ltd", status: pending }
+                sandboxKey: "tpk_test_Jr9..."
+        "409": { description: Email already registered }
+  /partners/me:
+    get:
+      summary: Partner profile and current environment
+      security: [{ partnerKey: [] }]
+      responses:
+        "200": { description: Profile }
+  /partners/keys:
+    get:
+      summary: List API keys (prefixes only; plaintext is never retrievable)
+      security: [{ partnerKey: [] }]
+      responses:
+        "200": { description: Keys }
+    post:
+      summary: Create an additional key
+      description: Sandbox keys are self-service. Production keys require the partner to be approved and are normally issued by TitoPay administration.
+      security: [{ partnerKey: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                environment: { type: string, enum: [sandbox, production], default: sandbox }
+      responses:
+        "201": { description: "Key created; plaintext returned once" }
+  /partners/keys/{id}/rotate:
+    post:
+      summary: Rotate a key (old key stays valid for 24 hours)
+      security: [{ partnerKey: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: "Replacement key returned once; retiring key expiry set" }
+  /partners/keys/{id}/revoke:
+    post:
+      summary: Revoke a key immediately
+      security: [{ partnerKey: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Revoked }
+  /partners/usage:
+    get:
+      summary: Daily request/error series (up to 90 days)
+      security: [{ partnerKey: [] }]
+      parameters: [{ name: days, in: query, schema: { type: integer, default: 30, maximum: 90 } }]
+      responses:
+        "200": { description: Series }
+  /partners/overview:
+    get:
+      summary: Dashboard aggregates - usage, webhook health, terminal activity
+      security: [{ partnerKey: [] }]
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              example:
+                ok: true
+                overview:
+                  environment: sandbox
+                  last30Days: { requests: 412, errors: 3 }
+                  webhookDeliveries: { total: 96, delivered: 94, dead: 0, in_flight: 2 }
+                  terminalActivity: { terminals: 2, payments: 45, completed: 41, completedAmount: 6120.5 }
+
+  /sandbox/merchants:
+    post:
+      summary: Provision a test merchant + funded test customer (sandbox only)
+      description: Returns one-time credentials for both principals and a merchant access token for webhook management. Refused with 404 on production deployments.
+      security: [{ partnerKey: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { businessName: { type: string, example: "Demo Cafe" } } }
+      responses:
+        "201":
+          description: Provisioned
+          content:
+            application/json:
+              example:
+                ok: true
+                merchant: { merchantId: "TPM-SBX-ABC123", businessName: "Demo Cafe", login: { username: "sbx_biz_democafe1a2b", password: "Sbx-..." }, accessToken: "eyJ..." }
+                testCustomer: { login: { username: "sbx_cus_democafe1a2b", password: "Sbx-..." }, walletBalance: 10000 }
+  /sandbox/terminals:
+    post:
+      summary: Register a sandbox terminal (real HMAC credentials, shown once)
+      security: [{ partnerKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchantId]
+              properties:
+                merchantId: { type: string, example: "TPM-SBX-ABC123" }
+                terminalId: { type: string, description: Optional; generated if omitted }
+                deviceIdentifier: { type: string }
+      responses:
+        "201": { description: "Terminal + one-time terminalSecret + signing recipe" }
+  /sandbox/payments/{paymentId}/simulate:
+    post:
+      summary: Drive a payment through the REAL engine to a chosen outcome
+      description: >
+        Outcomes: scan, complete (moves sandbox money and fires webhooks),
+        insufficient (returns the production refusal shape), expire (engine's
+        own lazy expiry), cancel, refund (partial supported via amount),
+        reverse. scan/complete/insufficient require the token from the
+        intent's qrPayload.
+      security: [{ partnerKey: [] }]
+      parameters: [{ name: paymentId, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome]
+              properties:
+                outcome: { type: string, enum: [scan, complete, insufficient, expire, cancel, refund, reverse] }
+                token: { type: string }
+                amount: { type: number }
+      responses:
+        "200": { description: Outcome applied }
+  /sandbox/webhooks/generate:
+    post:
+      summary: Emit a synthetic signed event through the real delivery pipeline
+      description: For event types the engine cannot mint on demand (payment.failed, settlement.completed). Payload carries data.sandboxGenerated true.
+      security: [{ partnerKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventType]
+              properties:
+                eventType: { type: string, example: payment.failed }
+                amount: { type: number }
+      responses:
+        "200": { description: "Queued + immediate delivery attempt result" }
+  /sandbox/reset:
+    post:
+      summary: Delete every sandbox resource this partner provisioned
+      security: [{ partnerKey: [] }]
+      responses:
+        "200": { description: Swept }
+
+  /pos/payment-intents:
+    post:
+      summary: Create a QR payment (terminal-signed)
+      security: [{ terminalHmac: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchantId, terminalId, amount, currency]
+              properties:
+                merchantId: { type: string, example: "TPM-SBX-ABC123" }
+                terminalId: { type: string, example: "SBX-TERM-01" }
+                amount: { type: number, example: 149.5 }
+                currency: { type: string, enum: [ZAR] }
+                merchantReference: { type: string, example: "TILL-7-0091" }
+      responses:
+        "201":
+          description: Intent created; the QR expires in 120 seconds
+          content:
+            application/json:
+              example:
+                ok: true
+                payment:
+                  paymentId: "POSP-8A11C4D2E9F0"
+                  status: PENDING
+                  amount: 149.5
+                  currency: ZAR
+                  qrPayload: "https://app.titopay.co.za/pos/pay/3xM...one-time-token"
+                  expiresIn: 120
+  /pos/payment-intents/{paymentId}:
+    get:
+      summary: Payment status (terminal-signed) - the reconciliation truth
+      security: [{ terminalHmac: [] }]
+      parameters: [{ name: paymentId, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: Current intent state }
+        "410": { description: QR expired }
+  /pos/payment-intents/{paymentId}/cancel:
+    post:
+      summary: Void an unpaid intent (terminal-signed)
+      security: [{ terminalHmac: [] }]
+      parameters:
+        - { name: paymentId, in: path, required: true, schema: { type: string } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Cancelled }
+        "409": { description: Not cancellable from its current state }
+  /pos/payment-intents/{paymentId}/refund:
+    post:
+      summary: Refund a completed payment (merchant or admin bearer token)
+      description: Partial refunds supported; cumulative refunds can never exceed the original amount.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: paymentId, in: path, required: true, schema: { type: string } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: { type: number, example: 49.5 }
+                reason: { type: string }
+      responses:
+        "200": { description: Refund executed }
+  /pos/payment-intents/{paymentId}/reverse:
+    post:
+      summary: Reverse a completed payment in full (merchant or admin bearer token)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: paymentId, in: path, required: true, schema: { type: string } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Reversal executed }
+
+components:
+  securitySchemes:
+    partnerKey:
+      type: apiKey
+      in: header
+      name: X-TitoPay-Api-Key
+      description: >
+        Partner API key (tpk_test_/tpk_live_). Also accepted as
+        Authorization: Bearer tpk_... . Keys are environment-bound.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A TitoPay merchant (business account) access token.
+    terminalHmac:
+      type: apiKey
+      in: header
+      name: X-TitoPay-Signature
+      description: >
+        Terminal request signing. Headers: X-TitoPay-Terminal-Id,
+        X-TitoPay-Timestamp (unix ms, ±300s), X-TitoPay-Nonce (unique,
+        12-160 chars; replays are refused), X-TitoPay-Signature
+        ("sha256=" + hex HMAC). Canonical string, joined with \n:
+        timestamp, nonce, METHOD, path-without-query, sha256hex(rawBody).
+        An empty body hashes as sha256 of zero bytes.
+
+        Worked example with secret "test-secret":
+        timestamp 1755855663000, nonce 6f1d2c3b4a5e6f70, POST
+        /v1/pos/payment-intents, body {"amount":10} ->
+        bodyHash 4eb1...
+        canonical "1755855663000\n6f1d2c3b4a5e6f70\nPOST\n/v1/pos/payment-intents\n<bodyHash>"
+        signature = hex(HMAC-SHA256(secret, canonical)).
+        The sandbox terminal response and docs/sdk-starters/ carry runnable
+        implementations in four languages.
