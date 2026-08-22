@@ -285,3 +285,20 @@ html[data-theme=night] .brand-logo{content:url("./assets/titopay-logo-night.png"
 html[data-theme=night] .profile-feature.primary{background:linear-gradient(180deg,#122650,#0d1f45)}
 html[data-theme=night] .input-affix,html[data-theme=night] .otp-channel-option,html[data-theme=night] .aftersale-picker>select,html[data-theme=night] .form-grid label>input:not([type=checkbox]):not([type=radio]),html[data-theme=night] .form-grid label>select,html[data-theme=night] .form-grid label>textarea,html[data-theme=night] .panel>label>select,html[data-theme=night] .panel>label>input:not([type=checkbox]):not([type=radio]),html[data-theme=night] .panel>label>textarea,html[data-theme=night] .panel-field>select,html[data-theme=night] .panel-field>input:not([type=checkbox]):not([type=radio]),html[data-theme=night] .panel-field>textarea{background:#0a1c40;color:var(--text)}
 html[data-theme=night] .chat-blue-on{background:linear-gradient(180deg,#16326b 0,#122650 100%) !important}
+/* Night mode: the tinted notice and content surfaces that hard-code a light
+   background. Each keeps its meaning - red warns, amber cautions, green
+   confirms - on a night-depth version of the same tint, with any pinned dark
+   text lightened to stay readable. */
+html[data-theme=night] .security-tip-card,html[data-theme=night] .fraud-first-aid,html[data-theme=night] .sv-cycle.failed,html[data-theme=night] .sv-danger,html[data-theme=night] .failure-panel,html[data-theme=night] .refund-policy-note.is-final{background:#331b26}
+html[data-theme=night] .security-tip-card p{color:#cbb9c6}
+html[data-theme=night] .error-box{background:#331b26;color:#ff9e9e;border-color:rgba(255,120,140,.3)}
+html[data-theme=night] .ticket-cancelled-flag{background:#331b26;color:#ff9e93}
+html[data-theme=night] .titopay-chat-thread-remove:active,html[data-theme=night] .titopay-chat-thread-remove:hover{background:#331b26}
+html[data-theme=night] .staff-row-unlinked,html[data-theme=night] .qr-owner-card.is-unknown,html[data-theme=night] .recipient-verify-result.is-missing,html[data-theme=night] .sv-cycle.warn{background:#312608}
+html[data-theme=night] .wv-status.warn{background:#312608;color:#ecb36e}
+html[data-theme=night] .recipient-verify-result,html[data-theme=night] .sv-cycle.settled{background:#0e3123}
+html[data-theme=night] .otp-channel-option:has(input:checked){background:#16326b}
+html[data-theme=night] .otp-delivery-confirmation,html[data-theme=night] .document-fee-card,html[data-theme=night] .payout-order-card,html[data-theme=night] .chat-message,html[data-theme=night] .titopay-chat-controls,html[data-theme=night] .merchant-sale-note-card,html[data-theme=night] .ticket-tier-row,html[data-theme=night] .chatbot-fullscreen-modal .chatbot-compose{background:#122650}
+html[data-theme=night] .merchant-keypad button{background:#152a58}
+html[data-theme=night] .modal-card.chatbot-fullscreen-modal{background:rgba(10,24,54,.97)}
+html[data-theme=night] .form-grid label>input:focus:not([type=checkbox]):not([type=radio]),html[data-theme=night] .form-grid label>select:focus,html[data-theme=night] .form-grid label>textarea:focus,html[data-theme=night] .aftersale-picker>select:focus,html[data-theme=night] .panel>label>select:focus,html[data-theme=night] .panel>label>input:focus:not([type=checkbox]):not([type=radio]),html[data-theme=night] .panel>label>textarea:focus,html[data-theme=night] .panel-field>select:focus,html[data-theme=night] .panel-field>input:focus:not([type=checkbox]):not([type=radio]),html[data-theme=night] .panel-field>textarea:focus,html[data-theme=night] .field input:focus,html[data-theme=night] .field select:focus,html[data-theme=night] .field textarea:focus{background:#10254e;color:var(--text)}
