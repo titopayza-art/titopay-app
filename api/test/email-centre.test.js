@@ -147,7 +147,15 @@ test("transactional emails carry the dark-safe wordmark on a fixed navy header",
   // Dark-mode mail clients recolour light backgrounds but leave dark ones and
   // image pixels alone, so this exact pairing is what keeps the logo readable
   // on a phone in dark mode. A white header here is a regression.
-  assert.match(rendered.html,/\/brand\/email-logo\.png/);
+  // The wordmark travels inside the message: the header references an inline
+  // CID attachment, so webmail that blocks remote images still shows the logo.
+  // Providers that cannot carry inline images swap the cid for the hosted URL
+  // at delivery time, and SMTP/Postmark/SendGrid mark the attachment inline.
+  assert.match(rendered.html,/cid:titopay-wordmark/);
+  const serviceSource=fs.readFileSync(path.join(root,"src/services/email-centre-service.js"),"utf8");
+  assert.match(serviceSource,/contentForDelivery\(JSON\.parse\(decrypt\(job\.encrypted_content\)\),\["smtp","ses","postmark","sendgrid"\]/);
+  assert.match(serviceSource,/cid:item\.cid.*ContentID|ContentID.*cid/);
+  assert.match(serviceSource,/contentDisposition:"inline"/);
   assert.match(rendered.html,/class="tp-head" style="background:#0b1f3f/);
   assert.doesNotMatch(rendered.html,/tp-head" style="background:#fff/);
   assert.match(rendered.html,/class="tp-foot" style="[^"]*background:#0b1f3f/);

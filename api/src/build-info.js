@@ -19,10 +19,16 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 95;
+const API_BUILD = 96;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  96: "INLINE EMAIL WORDMARK. The header logo now travels inside the message "
+      + "as an inline CID attachment, so webmail that blocks remote images "
+      + "(the Afrihost default among others) still renders it - dark mode and "
+      + "light mode alike. SMTP, Postmark and SendGrid carry it inline; "
+      + "providers without inline support automatically fall back to the "
+      + "hosted /brand/email-logo.png, which remains for already-queued mail.",
   95: "EMAIL LOGO FALLBACK. Mail clients that block remote images now show "
       + "'TitoPay' in white bold on the navy header band instead of a broken-"
       + "image glyph - the wordmark img carries styled alt text. The image "
