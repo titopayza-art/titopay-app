@@ -83,19 +83,36 @@ test("statement money-in/out totals are filtered to completed transactions", () 
     "both money_in_total and money_out_total must FILTER on status = 'completed' so a failed/reversed row cannot inflate a statement");
 });
 
-test("worker advisory-lock holders release every lock before returning the connection", () => {
-  // A session-level pg_try_advisory_lock left on a pooled connection strands it
-  // as "idle" forever (not caught by idle_in_transaction_timeout), and one
-  // stranded per 5s tick exhausted the whole pool until every query - sign-in,
-  // /health - timed out "trying to connect". Any file that takes a session
-  // advisory lock on a pooled connection must clear it with unlock_all in a
-  // finally before release, so a poisoned connection can never re-enter the pool.
-  for (const file of ["services/webhook-service.js", "services/settlement-service.js"]) {
-    const text = fs.readFileSync(path.join(SRC, file), "utf8");
-    if (!/pg_try_advisory_lock/.test(text)) continue;
-    assert.match(text, /pg_advisory_unlock_all\(\)/,
-      `${file} takes a session advisory lock but does not pg_advisory_unlock_all() before returning the connection to the pool`);
+test("every session advisory-lock holder releases before returning the connection", () => {
+  // A session-level advisory lock left on a pooled connection strands it as
+  // "idle" forever (not caught by idle_in_transaction_timeout), and one stranded
+  // per 5s worker tick exhausted the whole pool until every query - sign-in,
+  // /health - failed. Any file that takes a session advisory lock on a pooled
+  // connection must clear it in a finally before release, so a poisoned
+  // connection can never re-enter the pool.
+  //
+  // This scans EVERY source file rather than a hand-written list. The first
+  // version of this guardrail named webhook-service and settlement-service
+  // explicitly, which would have said nothing about a third file taking a lock -
+  // and there already was one (email-otp-service). A guardrail that only knows
+  // about the bugs already found is not a guardrail.
+  //
+  // Two forms count as taking a session lock: pg_try_advisory_lock and the
+  // blocking pg_advisory_lock. The transaction-scoped variants
+  // (pg_advisory_xact_lock) release themselves at COMMIT/ROLLBACK and are
+  // exempt - so the negative lookahead below deliberately does not match them.
+  const TAKES_SESSION_LOCK = /pg_(?:try_)?advisory_lock\(/;
+  const RELEASES = /pg_advisory_unlock(?:_all)?\(/;
+
+  const offenders = [];
+  for (const file of FILES) {
+    const text = fs.readFileSync(file, "utf8");
+    if (!TAKES_SESSION_LOCK.test(text)) continue;
+    if (!RELEASES.test(text)) offenders.push(path.relative(SRC, file));
   }
+
+  assert.deepEqual(offenders, [],
+    `these files take a SESSION advisory lock and never release it, so the connection returns to the pool poisoned — release it in a finally (pg_advisory_unlock_all() is the safe default), or switch to pg_advisory_xact_lock which releases itself: ${offenders.join(", ")}`);
 });
 
 test("webhook delivery does not follow redirects (SSRF protection)", () => {
