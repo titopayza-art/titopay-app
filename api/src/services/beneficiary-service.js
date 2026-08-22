@@ -92,7 +92,23 @@ async function listBeneficiaries(actor, options = {}) {
      LIMIT $${values.length - 1} OFFSET $${values.length}`,
     values
   );
-  return { items: rows, limit, offset, hasMore: rows.length === limit };
+  // Counts over the owner's WHOLE beneficiary set (ignoring search + the display
+  // cap), so the Saved/Favourites/Verified strip is accurate past 100 saved.
+  const { rows: totals } = await pool.query(
+    `SELECT COUNT(*)::int AS saved,
+            COUNT(*) FILTER (WHERE b.favourite)::int AS favourites,
+            COUNT(*) FILTER (WHERE u.fica_status IN ('approved','verified'))::int AS verified
+       FROM beneficiaries b
+       JOIN users u ON u.id = b.beneficiary_user_id
+      WHERE b.owner_user_id = $1 AND b.deleted_at IS NULL AND b.disabled_at IS NULL`,
+    [actor.userId]
+  );
+  const summary = {
+    saved: Number(totals[0]?.saved || 0),
+    favourites: Number(totals[0]?.favourites || 0),
+    verified: Number(totals[0]?.verified || 0)
+  };
+  return { items: rows, limit, offset, hasMore: rows.length === limit, summary };
 }
 
 async function resolveBeneficiaryUser(actor, payload) {

@@ -1644,7 +1644,10 @@ async function create(resourceName, auth, payload, meta = {}) {
   }
   if (effectiveResourceName === "attendance") {
     data.employee = data.employee || auth.name || auth.email || "Staff member";
-    data.work_date = data.work_date || new Date().toISOString().slice(0, 10);
+    // Default the attendance date to the South African calendar day (UTC+2), not
+    // the UTC day - a clock-in in the first two hours of the SA day would
+    // otherwise be filed under yesterday.
+    data.work_date = data.work_date || new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
     data.work_mode = data.work_mode || "Office";
     data.status = data.status || "present";
     data.attendance_source = data.attendance_source || "hr-portal";

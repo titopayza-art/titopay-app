@@ -201,6 +201,7 @@ const state = {
   todaySummary: null,
   statementData: null,
   beneficiaries: [],
+  beneficiarySummary: null,
   beneficiarySearch: "",
   // Holds the outcome of the verification step a new beneficiary has to pass
   // before it can be saved. Cleared whenever the recipient field is edited.
@@ -5722,6 +5723,7 @@ function clearAuth() {
   state.todaySummary = null;
   state.statementData = null;
   state.beneficiaries = [];
+  state.beneficiarySummary = null;
   state.pendingBeneficiarySave = null;
   state.notifications = [];
   state.emailNotificationPreferences = null;
@@ -7500,6 +7502,7 @@ async function loadAccount() {
     state.securityCentre = securityCentre.centre || null;
     state.enterpriseDistribution.eligibility = enterpriseDistribution.eligibility || null;
     state.beneficiaries = beneficiaries.items || [];
+    state.beneficiarySummary = beneficiaries.summary || null;
     state.merchantRecord = merchant.merchant || null;
     state.accountType = profile.user && (profile.user.accountType || profile.user.account_type) || state.accountType;
     loadInAppNotifications();
@@ -10369,14 +10372,18 @@ function beneficiaryManagementList() {
 }
 function beneficiarySummaryStrip() {
   const items = state.beneficiaries || [];
-  const favourites = items.filter((item) => item.favourite).length;
-  const verified = items.filter(beneficiaryIsVerified).length;
+  // Prefer the server's whole-set counts (accurate past the 100-row display cap);
+  // fall back to counting the loaded list only when the summary is unavailable.
+  const summary = state.beneficiarySummary;
+  const saved = summary ? Number(summary.saved || 0) : items.length;
+  const favourites = summary ? Number(summary.favourites || 0) : items.filter((item) => item.favourite).length;
+  const verified = summary ? Number(summary.verified || 0) : items.filter(beneficiaryIsVerified).length;
   // Its own compact strip rather than the dashboard's .stats-grid: those tiles
   // are sized for a full screen and stack into a tower inside a modal on a
   // narrow phone.
   return `
     <section class="beneficiary-summary" aria-label="Beneficiary summary">
-      <div><strong>${items.length}</strong><span>Saved</span></div>
+      <div><strong>${saved}</strong><span>Saved</span></div>
       <div><strong>${favourites}</strong><span>Favourites</span></div>
       <div><strong>${verified}</strong><span>Verified</span></div>
     </section>`;
@@ -10385,6 +10392,7 @@ async function openSavedBeneficiariesModal({ refresh = false } = {}) {
   if (refresh) {
     const result = await api("/v1/beneficiaries?limit=100");
     state.beneficiaries = result.items || [];
+    state.beneficiarySummary = result.summary || null;
   }
   openModal(`
     <div class="modal-head">

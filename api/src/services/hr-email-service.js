@@ -365,7 +365,7 @@ async function mandatoryTrainingReminders({ today } = {}) {
         AND en.status <> 'complete'
         AND e.status = 'active'
         AND e.email IS NOT NULL AND e.email <> ''
-        AND (en.created_at + (COALESCE(c.due_days, 14) || ' days')::INTERVAL)::date <= CURRENT_DATE`);
+        AND (en.created_at + (COALESCE(c.due_days, 14) || ' days')::INTERVAL)::date <= (NOW() AT TIME ZONE 'Africa/Johannesburg')::date`);
   const results = await Promise.all(rows.map((row) => send({
     event: "onboarding",
     employee: row,

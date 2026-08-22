@@ -303,7 +303,9 @@ test("expired admin access tokens return an authentication error instead of a se
 test("Email dashboard rounds delivery latency with PostgreSQL-compatible numeric arithmetic", () => {
   const service=fs.readFileSync(path.join(root,"src/services/email-centre-service.js"),"utf8");
   assert.match(service,/AVG\(EXTRACT\(EPOCH FROM\(delivered_at-sent_at\)\).*\)\)::numeric/);
-  assert.match(service,/created_at::date AS "day"/);
+  // The per-day trend buckets in South African time (build 104 timezone fix),
+  // not UTC, so the day boundary matches the SA calendar.
+  assert.match(service,/\(created_at AT TIME ZONE 'Africa\/Johannesburg'\)::date AS "day"/);
   const otp=fs.readFileSync(path.join(root,"src/services/email-otp-service.js"),"utf8");
   assert.match(otp,/AVG\(EXTRACT\(EPOCH FROM\(delivered_at-sent_at\)\).*\)\)::numeric/);
   assert.match(otp,/metadata->>'location' AS "location"/);

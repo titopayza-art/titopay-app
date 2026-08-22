@@ -19,10 +19,19 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 103;
+const API_BUILD = 104;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  104: "READINESS SWEEP - REMAINDER CLOSED. The low-severity items deferred from "
+      + "build 103 are now fixed, so the audit backlog is empty. Email Centre "
+      + "analytics (today counts, per-day trend, the daily/weekly/monthly rollup) "
+      + "bucket in South African time instead of UTC; the HR attendance-date "
+      + "default and the learning-overdue check use the SA calendar day; and the "
+      + "customer Saved-Beneficiaries strip (Saved/Favourites/Verified) now reads "
+      + "server-side SQL counts over the whole set instead of counting the "
+      + "100-row display page (PWA v474). Reporting/analytics only; no money path, "
+      + "ledger or existing endpoint behaviour changed. Full suite green.",
   103: "PRODUCTION-READINESS SWEEP. A six-lane adversarial audit (money/ledger, "
       + "concurrency, crash/500, security, timezone, infra) and its fixes. "
       + "MONEY-LOSS: reverseTransaction was service-code-blind and would re-credit "
