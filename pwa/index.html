@@ -50,7 +50,26 @@
     <link rel="apple-touch-startup-image" href="./assets/splash-1320x2868.png?v=445"
           media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
     <link rel="preload" href="./assets/titopay-logo.png" as="image" fetchpriority="high">
-    <link rel="stylesheet" href="./styles.min.css?v=470">
+    <!-- CRITICAL SPLASH CSS, inline so the branded launch screen paints on the
+         very first frame. The full stylesheet (styles.min.css, ~248KB) is
+         render-blocking: until it downloaded, a cold or slow launch showed a
+         blank WHITE screen instead of the splash. These few rules style the
+         launch screen (logo, spinner, tagline, legal) from the HTML itself, so
+         there is never a white frame; the full stylesheet then loads without
+         blocking (head-boot.js) and takes over. Values mirror styles.min.css
+         exactly, so nothing shifts when it arrives. -->
+    <style>
+      html{background:#eef4fe}
+      body{margin:0;background:#eef4fe;color:#10203f;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+      .launch-screen{min-height:100vh;min-height:100svh;min-height:100dvh;display:grid;place-items:center;align-content:center;gap:20px;padding:calc(28px + env(safe-area-inset-top,0px)) 28px calc(28px + env(safe-area-inset-bottom,0px));text-align:center}
+      .launch-logo{width:min(186px,49vw);height:auto;display:block;border:0}
+      .loader{width:36px;height:36px;border-radius:999px;border:4px solid #eaf1ff;border-top-color:#0a4dff;animation:spin .9s linear infinite}
+      .launch-legal{position:fixed;left:22px;right:22px;bottom:calc(18px + env(safe-area-inset-bottom,0px));display:grid;gap:3px;color:#62708a;font-size:.72rem;line-height:1.35;text-align:center}
+      @keyframes spin{to{transform:rotate(360deg)}}
+      @media (prefers-reduced-motion:reduce){.loader{animation:none}}
+    </style>
+    <script src="./head-boot.js?v=471"></script>
+    <noscript><link rel="stylesheet" href="./styles.min.css?v=470"></noscript>
     <script src="./app.min.js?v=470" defer></script>
     <script src="./notification-routing-fix.js?v=1" defer></script>
   </head>
