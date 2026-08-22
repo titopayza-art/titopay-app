@@ -4837,6 +4837,52 @@ router.get("/partners/:id/usage", requireAdminPermission("integrations"), async 
   } catch (error) { next(error); }
 });
 
+/* ------------------------------------------------------------ settlements */
+// The settlement, reconciliation and payout engine's operator view: every
+// batch across every merchant, the discrepancy detail, and the two recovery
+// actions - re-reconcile a discrepancy batch after the fault is fixed, and
+// retry a failed payout once funds are back.
+
+const settlementService = require("../services/settlement-service");
+
+router.get("/settlements", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, settlements: await settlementService.adminListSettlements({ status: req.query.status, merchantId: req.query.merchantId, limit: req.query.limit }) });
+  } catch (error) { next(error); }
+});
+
+router.get("/settlements/worker", requireAdminPermission("transactions"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, worker: await settlementService.workerStatus() });
+  } catch (error) { next(error); }
+});
+
+router.post("/settlements/sweep", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await settlementService.runSettlementSweep({ requestId: req.requestId })) });
+  } catch (error) { next(error); }
+});
+
+router.get("/settlements/:id", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    res.json({ ok: true, settlement: await settlementService.adminGetSettlement(requireUuid(req.params.id, "Settlement ID")) });
+  } catch (error) { next(error); }
+});
+
+router.post("/settlements/:id/reconcile", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    const batchId = requireUuid(req.params.id, "Settlement ID");
+    res.json({ ok: true, ...(await settlementService.rerunReconciliation(batchId, { actorType: "admin", actorId: req.auth.userId, requestId: req.requestId })) });
+  } catch (error) { next(error); }
+});
+
+router.post("/settlements/:id/payout", requireAdminPermission("transactions"), async (req, res, next) => {
+  try {
+    const batchId = requireUuid(req.params.id, "Settlement ID");
+    res.json({ ok: true, ...(await settlementService.executePayout(batchId, { actorType: "admin", actorId: req.auth.userId, requestId: req.requestId })) });
+  } catch (error) { next(error); }
+});
+
 router.use((error, req, _res, next) => {
   console.error("[admin-api-error]", {
     method: req.method,

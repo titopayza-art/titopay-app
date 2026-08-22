@@ -1614,6 +1614,78 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries (status, next_retry_at);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_subscription ON webhook_deliveries (subscription_id, created_at DESC);
 
+-- Settlement: the per-merchant statement of record for a POS trading window,
+-- derived from the ledger (never from a counter), reconciled three ways
+-- before anything is paid out. POS credits the merchant operating wallet in
+-- real time, so the payout leg either sweeps the net into a configured
+-- settlement wallet or records that the funds already settled in real time.
+-- The UNIQUE window makes closing a period idempotent by construction.
+CREATE TABLE IF NOT EXISTS settlement_batches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  settlement_reference TEXT NOT NULL UNIQUE,
+  merchant_id UUID NOT NULL REFERENCES merchants(id) ON DELETE RESTRICT,
+  period_start TIMESTAMPTZ NOT NULL,
+  period_end TIMESTAMPTZ NOT NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'ZAR' CHECK (currency = 'ZAR'),
+  gross_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  refund_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  reversal_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  fee_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  net_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  payment_count INTEGER NOT NULL DEFAULT 0,
+  refund_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'reconciling' CHECK (
+    status IN ('reconciling', 'reconciled', 'discrepancy', 'paid', 'failed')
+  ),
+  payout_mode TEXT CHECK (payout_mode IN ('realtime_wallet', 'settlement_wallet')),
+  payout_transaction_id UUID REFERENCES transactions(id) ON DELETE SET NULL,
+  discrepancy JSONB,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  reconciled_at TIMESTAMPTZ,
+  paid_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (period_end > period_start),
+  UNIQUE (merchant_id, period_start, period_end)
+);
+
+CREATE INDEX IF NOT EXISTS idx_settlement_batches_merchant ON settlement_batches (merchant_id, period_end DESC);
+CREATE INDEX IF NOT EXISTS idx_settlement_batches_status ON settlement_batches (status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS settlement_batch_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  batch_id UUID NOT NULL REFERENCES settlement_batches(id) ON DELETE CASCADE,
+  transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE RESTRICT,
+  payment_intent_id UUID REFERENCES pos_payment_intents(id) ON DELETE SET NULL,
+  item_type TEXT NOT NULL CHECK (item_type IN ('payment', 'refund', 'reversal')),
+  amount NUMERIC(18,2) NOT NULL CHECK (amount > 0),
+  occurred_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (batch_id, transaction_id, item_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_settlement_items_batch ON settlement_batch_items (batch_id, occurred_at);
+-- One POS transaction may appear in ONE batch only, whatever its type. The
+-- partial-free unique above is per batch; this one is global.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_settlement_items_transaction ON settlement_batch_items (transaction_id);
+
+-- The transactional event stream, mirroring pos_payment_events: every batch
+-- transition is written in the same database transaction that makes it true.
+CREATE TABLE IF NOT EXISTS settlement_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  batch_id UUID NOT NULL REFERENCES settlement_batches(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,
+  previous_status TEXT,
+  new_status TEXT NOT NULL,
+  actor_type TEXT NOT NULL,
+  actor_id UUID,
+  request_id TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_settlement_events_batch ON settlement_events (batch_id, created_at);
+
 -- POS partner credentials and sandbox onboarding. A partner is a vendor
 -- organisation (Yoco-class platform, Android POS ISV, ERP). Keys are bearer
 -- credentials stored ONLY as SHA-256 hashes; the plaintext is shown once.

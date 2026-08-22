@@ -119,6 +119,9 @@ async function healthStatus(_req, res, next) {
       // endpoints or secrets themselves. Fail-soft - a deployment without the
       // webhook tables reports not_migrated rather than failing health.
       webhookWorker: await require("../services/webhook-service").workerStatus()
+        .catch(() => ({ status: "not_migrated" })),
+      // Settlement sweep + batch backlog, same fail-soft contract.
+      settlementWorker: await require("../services/settlement-service").workerStatus()
         .catch(() => ({ status: "not_migrated" }))
     });
   } catch (error) {

@@ -266,6 +266,98 @@ paths:
         - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
       responses:
         "200": { description: Reversal executed }
+  /settlements:
+    get:
+      summary: List the merchant's settlement batches (merchant bearer token)
+      description: >
+        The statement of record for POS trading windows. Each batch is derived
+        from the ledger, reconciled three ways (double-entry legs, the payment
+        stream, header arithmetic) before it is paid out. Windows tile - each
+        starts where the previous ended.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [reconciling, reconciled, discrepancy, paid, failed] } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 200 } }
+      responses:
+        "200":
+          description: Batches, newest window first
+          content:
+            application/json:
+              example:
+                ok: true
+                settlements:
+                  - id: 0d5b7c7e-3f2a-4b62-9d3e-1a2b3c4d5e6f
+                    settlementReference: SET-1755907512-9F3C21AB
+                    periodStart: "2026-08-22T00:00:00.000Z"
+                    periodEnd: "2026-08-23T00:00:00.000Z"
+                    grossAmount: 12480.5
+                    refundAmount: 320
+                    reversalAmount: 0
+                    feeAmount: 0
+                    netAmount: 12160.5
+                    paymentCount: 214
+                    refundCount: 3
+                    status: paid
+                    payoutMode: realtime_wallet
+  /settlements/{id}:
+    get:
+      summary: One settlement batch with its per-payment items
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: The batch, itemised (items carry paymentId, type payment/refund/reversal, amount, occurredAt) }
+        "404": { description: Not this merchant's batch }
+  /settlements/close:
+    post:
+      summary: Close the next settlement window now (manual schedule)
+      description: >
+        Settles all POS activity since the previous window's end, up to now or
+        an explicit upTo. Idempotent by construction - the window is UNIQUE
+        and an empty window creates nothing. Scheduled merchants
+        (daily/weekly/monthly, configured via /settlements/config) are closed
+        automatically at South African midnight boundaries.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                upTo: { type: string, format: date-time }
+      responses:
+        "201": { description: "Window settled: { settled: true, batchId, status: paid | discrepancy }" }
+        "200": { description: "Nothing to settle: { settled: false, reason }" }
+  /settlements/config:
+    get:
+      summary: Settlement schedule and payout wallet
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current configuration
+          content:
+            application/json:
+              example: { ok: true, config: { schedule: daily, settlementWalletId: null, payoutMode: realtime_wallet } }
+    put:
+      summary: Update the schedule and/or the settlement wallet
+      description: >
+        schedule is manual/daily/weekly/monthly. settlementWalletId must be
+        one of the merchant's own active wallets and different from the
+        operating wallet; null reverts to real-time settlement (funds stay in
+        the operating wallet, which POS credits as payments complete).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                schedule: { type: string, enum: [manual, daily, weekly, monthly] }
+                settlementWalletId: { type: string, format: uuid, nullable: true }
+      responses:
+        "200": { description: Updated configuration }
 
 components:
   securitySchemes:

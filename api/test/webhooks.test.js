@@ -102,8 +102,26 @@ async function cleanup(merchants) {
   }
 }
 
+
+// The fan-out cursor persists in the shared test database, and other suites
+// (the settlement engine drives the REAL POS engine) leave a backlog of
+// events behind it. Production's worker loops until it catches up; a test
+// calls fanOutOnce once, so start each suite at the tip of the stream.
+async function fastForwardFanOutCursor() {
+  const { rows } = await pool.query(
+    "SELECT id, created_at FROM pos_payment_events ORDER BY created_at DESC, id DESC LIMIT 1");
+  if (!rows[0]) return;
+  await pool.query(
+    `INSERT INTO platform_settings (key, value)
+     VALUES ('webhook_fanout_cursor', jsonb_build_object('ts', $1::TEXT, 'id', $2::TEXT))
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [new Date(rows[0].created_at).toISOString(), rows[0].id]
+  );
+}
+
 test.before(async () => {
   await webhooks.ensureWebhookSchema();
+  await fastForwardFanOutCursor();
 });
 
 test("endpoint URLs are screened: https only, no private targets, no credentials", () => {

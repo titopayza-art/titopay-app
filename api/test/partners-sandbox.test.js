@@ -62,9 +62,27 @@ async function cleanupPartner(partnerId) {
   await pool.query("DELETE FROM api_partners WHERE id = $1", [partnerId]).catch(() => {});
 }
 
+
+// The fan-out cursor persists in the shared test database, and other suites
+// (the settlement engine drives the REAL POS engine) leave a backlog of
+// events behind it. Production's worker loops until it catches up; a test
+// calls fanOutOnce once, so start each suite at the tip of the stream.
+async function fastForwardFanOutCursor() {
+  const { rows } = await pool.query(
+    "SELECT id, created_at FROM pos_payment_events ORDER BY created_at DESC, id DESC LIMIT 1");
+  if (!rows[0]) return;
+  await pool.query(
+    `INSERT INTO platform_settings (key, value)
+     VALUES ('webhook_fanout_cursor', jsonb_build_object('ts', $1::TEXT, 'id', $2::TEXT))
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [new Date(rows[0].created_at).toISOString(), rows[0].id]
+  );
+}
+
 test.before(async () => {
   await partners.ensurePartnerSchema();
   await webhooks.ensureWebhookSchema();
+  await fastForwardFanOutCursor();
 });
 
 test("registration is self-service: partner + one-time sandbox key; duplicate email refused", async () => {
@@ -209,11 +227,21 @@ test("simulator drives the REAL engine: complete moves sandbox money and fires w
     assert.equal(refused.refusedWith.statusCode, 400);
     assert.match(refused.refusedWith.error, /Insufficient balance/);
 
-    // The real webhook pipeline saw all of it.
-    await webhooks.fanOutOnce();
-    await webhooks.deliverDueOnce();
-    const types = target.seen.map((hit) => JSON.parse(hit.body).type);
-    for (const expectedType of ["payment.created", "payment.completed", "refund.completed", "payment.expired", "payment.cancelled"]) {
+    // The real webhook pipeline saw all of it. One pass is usually enough,
+    // but under full-suite load a first delivery attempt can fail transiently
+    // and wait for its retry slot - so drive the worker's loop the way
+    // production does until everything expected has landed.
+    const expectedTypes = ["payment.created", "payment.completed", "refund.completed", "payment.expired", "payment.cancelled"];
+    let types = [];
+    for (let i = 0; i < 40; i += 1) {
+      await webhooks.fanOutOnce();
+      await pool.query("UPDATE webhook_deliveries SET next_retry_at = NOW() WHERE status IN ('pending','failed')");
+      await webhooks.deliverDueOnce();
+      types = target.seen.map((hit) => JSON.parse(hit.body).type);
+      if (expectedTypes.every((expectedType) => types.includes(expectedType))) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    for (const expectedType of expectedTypes) {
       assert.ok(types.includes(expectedType), `expected a ${expectedType} delivery, saw ${types.join(", ")}`);
     }
   } finally {

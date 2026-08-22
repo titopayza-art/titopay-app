@@ -174,6 +174,13 @@ server.listen(config.apiPort, config.apiHost, () => {
     .finally(() => {
       if (process.env.WEBHOOK_WORKER_INLINE !== "0") require("./services/webhook-service").startWebhookWorker();
     });
+  // Settlement tables + the schedule sweep, same contract: additive, inline
+  // by default, and never fatal - settlement degrades, the API does not.
+  require("./services/settlement-service").ensureSettlementSchema()
+    .catch((error) => console.error("[settlement] schema ensure failed", { message: error.message }))
+    .finally(() => {
+      if (process.env.SETTLEMENT_WORKER_INLINE !== "0") require("./services/settlement-service").startSettlementWorker();
+    });
   console.log("TitoPay API service started", {
     role: inClusteredWorker ? `worker ${cluster.worker.id} of ${apiWorkers}` : "single process",
     pid: process.pid,
@@ -208,6 +215,13 @@ server.listen(config.apiPort, config.apiHost, () => {
     .catch((error) => console.error("[webhooks] schema ensure failed", { message: error.message }))
     .finally(() => {
       if (process.env.WEBHOOK_WORKER_INLINE !== "0") require("./services/webhook-service").startWebhookWorker();
+    });
+  // Settlement tables + the schedule sweep, same contract: additive, inline
+  // by default, and never fatal - settlement degrades, the API does not.
+  require("./services/settlement-service").ensureSettlementSchema()
+    .catch((error) => console.error("[settlement] schema ensure failed", { message: error.message }))
+    .finally(() => {
+      if (process.env.SETTLEMENT_WORKER_INLINE !== "0") require("./services/settlement-service").startSettlementWorker();
     });
     console.log("TitoPay API service started (deployment safety check incomplete)", { pid: process.pid });
   });

@@ -26,7 +26,7 @@ committed.
 | `payment.expired` | The QR's 120-second life ended unused |
 | `refund.created` | A refund or reversal was initiated |
 | `refund.completed` | The refund/reversal money movement committed |
-| `settlement.completed` | Reserved for the settlement engine (not yet emitted) |
+| `settlement.completed` | A settlement batch reconciled and paid out (API build 99+) |
 | `test.ping` | Sent by the subscription test endpoint only |
 
 TitoPay refunds settle in a single database transaction, so `refund.created`
@@ -59,6 +59,41 @@ order, with distinct event `id`s.
 
 Refund events add a `refund` object: `{ "kind": "refund" | "reverse",
 "amount": 50.0, "reference": "POS-REF-..." }`.
+
+`settlement.completed` carries a settlement summary instead of payment
+fields. It fires exactly once per batch, after the batch has reconciled
+against the ledger and the payout leg has committed:
+
+```json
+{
+  "id": "evt_1c40a7d2b9f34e5c8a6d0e2f4b8c1a3d",
+  "type": "settlement.completed",
+  "apiVersion": "v1",
+  "createdAt": "2026-08-23T00:05:12.004Z",
+  "data": {
+    "settlementReference": "SET-1755907512-9F3C21AB",
+    "merchantId": "TPM-000123",
+    "periodStart": "2026-08-22T00:00:00.000Z",
+    "periodEnd": "2026-08-23T00:00:00.000Z",
+    "currency": "ZAR",
+    "grossAmount": 12480.5,
+    "refundAmount": 320.0,
+    "reversalAmount": 0,
+    "feeAmount": 0,
+    "netAmount": 12160.5,
+    "paymentCount": 214,
+    "refundCount": 3,
+    "payoutMode": "realtime_wallet",
+    "occurredAt": "2026-08-23T00:05:12.004Z"
+  }
+}
+```
+
+`payoutMode` is `realtime_wallet` when the merchant's operating wallet
+already holds the funds (POS credits it in real time), or
+`settlement_wallet` when the window's net was swept into a configured
+settlement wallet. Reconcile against `GET /v1/settlements` - the batch is
+the statement of record, itemised per payment.
 
 ## Verifying the signature
 

@@ -19,10 +19,29 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 98;
+const API_BUILD = 99;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  99: "SETTLEMENT, RECONCILIATION + MERCHANT PAYOUT. Per-merchant settlement "
+      + "batches over tiling POS trading windows (UNIQUE window = idempotent "
+      + "closeout), derived from transactions and verified three ways before "
+      + "anything is called settled: double-entry wallet_ledger legs per "
+      + "item, the pos_payment_intents stream cross-checked both directions, "
+      + "and header totals recomputed by SUM(). Clean batches pay out - into "
+      + "a configured settlement wallet, or recorded as realtime_wallet when "
+      + "the operating wallet already holds the money; a discrepancy parks "
+      + "the batch and raises a money-integrity alert; a payout the wallet "
+      + "cannot cover fails loudly and is retried from the console. Optional "
+      + "settlement fee prices rule pos_settlement (FREE until an operator "
+      + "sets it) and books to the revenue wallet + revenue_ledger. Paid "
+      + "batches emit settlement.completed through the existing webhook "
+      + "rails, exactly once. Schedules manual/daily/weekly/monthly roll at "
+      + "SA midnight via an inline sweep worker (SETTLEMENT_WORKER_INLINE=0 "
+      + "to disable); /v1/health reports settlementWorker. Merchant API "
+      + "/v1/settlements (+config, +close); admin /admin/settlements under "
+      + "the transactions permission. Tables settlement_batches/_items/"
+      + "_events are additive and inert until used.",
   98: "PARTNER SANDBOX + CREDENTIALS. POS vendors self-serve the whole "
       + "integration: register at /v1/partners (sandbox key issued instantly, "
       + "production keys only after admin approval), manage keys "

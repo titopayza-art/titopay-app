@@ -46,7 +46,10 @@ test("Email Centre seeds every required transactional template", () => {
 test("Email OTP generator is cryptographically random, numeric and correctly sized", () => {
   const otp=require("../src/services/email-otp-service");
   const values=new Set(Array.from({length:100},()=>otp.generateNumericOtp(6)));
-  assert.equal(values.size,100);
+  // 100 draws from a million-value space collide by birthday arithmetic in
+  // about one run in 200 - a single collision is randomness working, not
+  // failing. Two or more in one sample is beyond coincidence and still fails.
+  assert.ok(values.size>=99,`only ${values.size} distinct OTPs in 100 draws`);
   for(const value of values)assert.match(value,/^\d{6}$/);
   const cryptoSource=fs.readFileSync(path.join(root,"src/lib/crypto.js"),"utf8");
   assert.match(cryptoSource,/crypto\.randomInt/);
