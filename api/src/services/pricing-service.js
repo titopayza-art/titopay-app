@@ -353,6 +353,16 @@ async function getPricingRule(serviceCode) {
   return ensureDefaultPricingRule(normalizedCode);
 }
 
+// By primary key, for callers that hold a rule id (the pricing update route,
+// which needs the service_code to decide whether a change is dual-auth
+// gated). Returns null when the id is unknown - never invents a default,
+// because the caller is about to act on an existing row.
+async function getPricingRuleById(id) {
+  await ensurePricingSchema();
+  const { rows } = await pool.query("SELECT * FROM pricing_rules WHERE id = $1 LIMIT 1", [id]);
+  return rows[0] ? normalizePricingRow(rows[0]) : null;
+}
+
 // THE NEW QR PRICING, PUSHED ONCE TO A DATABASE THAT ALREADY HAS THE OLD ROWS.
 //
 // The schedule above is a DEFAULT: syncApprovedPricingSchedule only runs from

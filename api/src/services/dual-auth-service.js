@@ -22,6 +22,13 @@ const { writeAuditLog, writeSecurityLog } = require("./audit-service");
 //                         existing single-admin path with a reason and an
 //                         integrity alert continues unchanged)
 //   limit_change          always, while limitChanges stays true (default)
+//   pricing_change        a change to a PROTECTED fee rule (the settlement
+//                         fee, pos_settlement), while settlementFeeChanges
+//                         stays true (default). The settlement fee is skimmed
+//                         from every merchant payout, so re-pricing it moves
+//                         money exactly as a limit change does; every OTHER
+//                         pricing rule keeps its existing single-super-admin
+//                         path unchanged.
 //
 // Execution happens through the SAME services that own these actions today
 // (reverseTransaction, saveComplianceConfig) - this file adds a second pair
@@ -36,8 +43,12 @@ const { writeAuditLog, writeSecurityLog } = require("./audit-service");
 // Management - that is the point of the control, not a defect in it.
 
 const DUAL_AUTH_CONFIG_KEY = "dual_auth_config";
-const DEFAULT_CONFIG = { reversalMinAmount: 1000, limitChanges: true };
-const ACTION_TYPES = new Set(["transaction_reversal", "limit_change"]);
+const DEFAULT_CONFIG = { reversalMinAmount: 1000, limitChanges: true, settlementFeeChanges: true };
+const ACTION_TYPES = new Set(["transaction_reversal", "limit_change", "pricing_change"]);
+// Fee rules whose re-pricing directly re-prices money already owed to
+// merchants. Kept deliberately narrow: only the settlement fee is gated, so
+// routine pricing edits (QR fees, service fees) are untouched.
+const PROTECTED_FEE_CODES = new Set(["pos_settlement"]);
 
 let dualAuthSchemaReady = false;
 
@@ -46,7 +57,7 @@ async function ensureDualAuthSchema(queryable = pool) {
   await queryable.query(`
     CREATE TABLE IF NOT EXISTS admin_dual_auth_requests (
       id UUID PRIMARY KEY,
-      action_type TEXT NOT NULL CHECK (action_type IN ('transaction_reversal', 'limit_change')),
+      action_type TEXT NOT NULL CHECK (action_type IN ('transaction_reversal', 'limit_change', 'pricing_change')),
       payload JSONB NOT NULL DEFAULT '{}'::JSONB,
       summary TEXT NOT NULL,
       amount NUMERIC(18,2),
@@ -66,6 +77,26 @@ async function ensureDualAuthSchema(queryable = pool) {
   await queryable.query(
     "CREATE INDEX IF NOT EXISTS idx_admin_dual_auth_status ON admin_dual_auth_requests (status, created_at DESC)"
   );
+  // A table created before build 100 carries the two-value CHECK. Widen it to
+  // admit 'pricing_change' in one transactional DO block (existing rows are
+  // all in the old set, so the re-validation always passes), and NEVER let it
+  // be fatal - if the widening cannot happen, pricing dual-auth simply stays
+  // unavailable while every existing action keeps working.
+  try {
+    await queryable.query(`
+      DO $$
+      BEGIN
+        ALTER TABLE admin_dual_auth_requests
+          DROP CONSTRAINT IF EXISTS admin_dual_auth_requests_action_type_check;
+        ALTER TABLE admin_dual_auth_requests
+          ADD CONSTRAINT admin_dual_auth_requests_action_type_check
+          CHECK (action_type IN ('transaction_reversal', 'limit_change', 'pricing_change'));
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
+  } catch (error) {
+    console.error("[dual-auth] could not widen action_type CHECK to include pricing_change", { message: error.message });
+  }
   if (queryable === pool) dualAuthSchemaReady = true;
 }
 
@@ -78,7 +109,8 @@ async function getDualAuthConfig() {
     const minAmount = Number(stored.reversalMinAmount);
     return {
       reversalMinAmount: Number.isFinite(minAmount) && minAmount >= 0 ? minAmount : DEFAULT_CONFIG.reversalMinAmount,
-      limitChanges: stored.limitChanges === undefined ? DEFAULT_CONFIG.limitChanges : Boolean(stored.limitChanges)
+      limitChanges: stored.limitChanges === undefined ? DEFAULT_CONFIG.limitChanges : Boolean(stored.limitChanges),
+      settlementFeeChanges: stored.settlementFeeChanges === undefined ? DEFAULT_CONFIG.settlementFeeChanges : Boolean(stored.settlementFeeChanges)
     };
   } catch {
     // Config must never make the gate undecidable: unreadable settings mean
@@ -95,6 +127,15 @@ async function requiresReversalDualAuth(amount) {
 async function requiresLimitChangeDualAuth() {
   const config = await getDualAuthConfig();
   return config.limitChanges;
+}
+
+// True only for a protected fee rule while the control is enabled. A
+// non-protected service code (every routine pricing rule) returns false, so
+// its update path is completely unchanged.
+async function requiresPricingChangeDualAuth(serviceCode) {
+  if (!PROTECTED_FEE_CODES.has(String(serviceCode || "").trim().toLowerCase())) return false;
+  const config = await getDualAuthConfig();
+  return config.settlementFeeChanges;
 }
 
 function publicRequest(row = {}) {
@@ -177,6 +218,15 @@ async function executeAction(row, approverId) {
       reason: `${payload.reason || "not stated"} (requested by another admin; dual-auth ${row.id})`
     });
     return { applied: true };
+  }
+  if (row.action_type === "pricing_change") {
+    // The same updatePricingRule the route would have called directly - the
+    // approver is the acting admin, so the audit record shows two people.
+    const { updatePricingRule } = require("./pricing-service");
+    const updated = await updatePricingRule(payload.pricingRuleId, payload.pricingPayload || {}, {
+      userType: "admin", userId: approverId
+    });
+    return { pricingRuleId: payload.pricingRuleId, serviceCode: payload.serviceCode || updated.service_code };
   }
   throw new AppError(400, "Unknown dual-authorisation action");
 }
@@ -271,6 +321,7 @@ module.exports = {
   getDualAuthConfig,
   requiresReversalDualAuth,
   requiresLimitChangeDualAuth,
+  requiresPricingChangeDualAuth,
   createRequest,
   listRequests,
   approveRequest,

@@ -19,10 +19,25 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 99;
+const API_BUILD = 100;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  100: "TWO CONTROL FIXES, NO NEW SURFACE. (1) The settlement fee "
+      + "(pricing rule pos_settlement) is skimmed from every merchant "
+      + "payout, so re-pricing it now requires a SECOND admin through the "
+      + "existing dual-authorisation service - the same control that guards "
+      + "large reversals and limit changes. A new 'pricing_change' action "
+      + "type carries it; the action_type CHECK is widened idempotently and "
+      + "non-fatally at boot; config flag settlementFeeChanges defaults on. "
+      + "Every OTHER pricing rule keeps its existing single-super-admin path "
+      + "unchanged - only pos_settlement is gated. (2) Sign-in and "
+      + "password-change one-time codes now jump ahead of bulk mail in the "
+      + "email worker: claimJobs orders email_otp/password_change_otp first, "
+      + "so an auth code can no longer wait behind a marketing blast (the A3 "
+      + "OTP-priority gap; retry/dead-letter caps and worker-stall alerting "
+      + "were already in place). Additive and behaviour-preserving; full "
+      + "suite green.",
   99: "SETTLEMENT, RECONCILIATION + MERCHANT PAYOUT. Per-merchant settlement "
       + "batches over tiling POS trading windows (UNIQUE window = idempotent "
       + "closeout), derived from transactions and verified three ways before "

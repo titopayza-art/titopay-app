@@ -796,7 +796,7 @@ CREATE INDEX IF NOT EXISTS idx_reward_publication_reads_user
 -- different admin. Mirrored by ensureDualAuthSchema in dual-auth-service.js.
 CREATE TABLE IF NOT EXISTS admin_dual_auth_requests (
   id UUID PRIMARY KEY,
-  action_type TEXT NOT NULL CHECK (action_type IN ('transaction_reversal', 'limit_change')),
+  action_type TEXT NOT NULL CHECK (action_type IN ('transaction_reversal', 'limit_change', 'pricing_change')),
   payload JSONB NOT NULL DEFAULT '{}'::JSONB,
   summary TEXT NOT NULL,
   amount NUMERIC(18,2),

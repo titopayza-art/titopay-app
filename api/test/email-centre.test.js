@@ -584,3 +584,41 @@ test("the TitoKids guardian invite email says what to do and when", () => {
   // the configured origin rather than a hard-coded address.
   assert.match(invite, /href="\{\{appUrl\}\}"/);
 });
+
+test("a sign-in OTP jumps ahead of bulk mail already in the queue (A3)", async () => {
+  // The A3 report asked for OTP priority: an authentication code must not
+  // wait behind a marketing blast. claimJobs now orders auth OTPs first, so
+  // even when bulk mail was queued EARLIER, the OTP is claimed before it.
+  const { pool } = require("../src/db/pool");
+  await email.ensureEmailSchema();
+  const tag = `otpprio_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const workerId = `test-${tag}`;
+  // Make sending possible and generous for this isolated (per-file) process.
+  const before = (await pool.query(
+    "SELECT sending_enabled, daily_sending_limit FROM email_settings WHERE id=TRUE")).rows[0] || null;
+  await pool.query(
+    "UPDATE email_settings SET sending_enabled=TRUE, daily_sending_limit=100000 WHERE id=TRUE");
+  const insert = (key, ageSeconds) => pool.query(
+    `INSERT INTO email_queue (recipient,subject,template_key,template_version,encrypted_content,provider,idempotency_key,status,scheduled_at,created_at)
+     VALUES ($1,$2,$3,1,'x','smtp',$4,'queued',NOW()-($5||' seconds')::interval,NOW()-($5||' seconds')::interval)`,
+    [`${tag}@t.local`, "subject", key, `${tag}-${key}-${ageSeconds}`, ageSeconds]);
+  try {
+    // Three bulk jobs queued FIRST (older), then one OTP queued last (newest).
+    await insert("marketing_email", 40);
+    await insert("welcome_email", 30);
+    await insert("payment_received", 20);
+    await insert("email_otp", 1);
+
+    const claimed = await email.claimJobs(workerId, 2);
+    assert.ok(claimed.length >= 1, "at least one job should be claimed");
+    assert.equal(claimed[0].template_key, "email_otp",
+      "the OTP must be claimed first despite being the newest in the queue");
+  } finally {
+    await pool.query("DELETE FROM email_queue WHERE recipient=$1", [`${tag}@t.local`]).catch(() => {});
+    if (before) {
+      await pool.query(
+        "UPDATE email_settings SET sending_enabled=$1, daily_sending_limit=$2 WHERE id=TRUE",
+        [before.sending_enabled, before.daily_sending_limit]).catch(() => {});
+    }
+  }
+});

@@ -169,6 +169,59 @@ test("an approved limit change executes through saveComplianceConfig", async () 
   }
 });
 
+test("the settlement fee is gated, but routine pricing is not", async () => {
+  await pool.query("DELETE FROM platform_settings WHERE key='dual_auth_config'");
+  // Only the settlement fee triggers dual-auth; every other rule is untouched.
+  assert.equal(await dualAuth.requiresPricingChangeDualAuth("pos_settlement"), true);
+  assert.equal(await dualAuth.requiresPricingChangeDualAuth("POS_SETTLEMENT"), true);
+  assert.equal(await dualAuth.requiresPricingChangeDualAuth("pos_qr"), false);
+  assert.equal(await dualAuth.requiresPricingChangeDualAuth("wallet_transfer"), false);
+  assert.equal(await dualAuth.requiresPricingChangeDualAuth(""), false);
+});
+
+test("a settlement-fee change needs a second admin and then really re-prices", async () => {
+  const { ensureDefaultPricingRule, getPricingRule } = require("../src/services/pricing-service");
+  const requester = await makeAdmin("prc");
+  const approver = await makeAdmin("prc2");
+  const ids = { admins: [requester, approver], users: [] };
+  try {
+    // Start from a known settlement-fee rule and note its id.
+    await ensureDefaultPricingRule("pos_settlement");
+    await pool.query(
+      "UPDATE pricing_rules SET flat_fee = 0, percentage_fee = 0, fee_type = 'FREE', fee_value = 0 WHERE service_code = 'pos_settlement'");
+    const { rows: ruleRows } = await pool.query(
+      "SELECT id FROM pricing_rules WHERE service_code = 'pos_settlement' LIMIT 1");
+    const ruleId = ruleRows[0].id;
+
+    const request = await dualAuth.createRequest({
+      actionType: "pricing_change",
+      payload: { pricingRuleId: ruleId, pricingPayload: { flatFee: 7.5 }, serviceCode: "pos_settlement" },
+      summary: "Settlement fee change (pos_settlement) requested",
+      adminId: requester, meta
+    });
+    assert.equal(request.status, "pending");
+
+    // The requester cannot approve their own re-pricing.
+    await assert.rejects(() => dualAuth.approveRequest(request.id, requester, meta), /different administrator/i);
+
+    // The fee has NOT changed while the request is pending.
+    let rule = await getPricingRule("pos_settlement");
+    assert.equal(Number(rule.flat_fee), 0, "fee must not move before the second approval");
+
+    // A different admin approves; the fee is now applied.
+    const outcome = await dualAuth.approveRequest(request.id, approver, meta);
+    assert.equal(outcome.request.status, "executed");
+    rule = await getPricingRule("pos_settlement");
+    assert.equal(Number(rule.flat_fee), 7.5, "the approval really re-priced the settlement fee");
+
+    // Reset so later tests see a FREE settlement fee.
+    await pool.query(
+      "UPDATE pricing_rules SET flat_fee = 0, percentage_fee = 0, fee_type = 'FREE', fee_value = 0 WHERE service_code = 'pos_settlement'");
+  } finally {
+    await cleanup(ids);
+  }
+});
+
 test("duplicate ledger postings are structurally impossible once the index stands", async () => {
   await ensureLedgerPostingIndex();
   const { rows } = await pool.query(
