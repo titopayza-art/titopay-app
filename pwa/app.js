@@ -5781,7 +5781,6 @@ function authView() {
       <section class="auth-actions">
         <button class="btn primary" data-auth-tab="login">${icon("lock")} Sign in</button>
         <button class="btn secondary" data-auth-tab="register">${isBusiness ? "Create Business Account" : "Create Account"}</button>
-        <p class="signin-terms">By signing in, I agree to the <a href="https://www.titopay.co.za/legal#legal-terms" target="_blank" rel="noopener noreferrer">Ts&amp;Cs</a></p>
       </section>
 
       <footer class="scan-card landing-cta-footer" aria-label="${isBusiness ? "Accept payment" : "Scan to pay"}">
