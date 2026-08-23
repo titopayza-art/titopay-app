@@ -153,7 +153,7 @@ const SMS_ALERT_FEE = 0.3;
 // name has to break across two.
 const PDF_PAGE_A4 = { width: 595.28, height: 841.89 };
 const PDF_PAGE_A3 = { width: 841.89, height: 1190.55 };
-const MARKETING_NAME_SIZE = 190;
+const MARKETING_NAME_SIZE = 260;
 const MARKETING_NAME_SIZE_WRAPPED = 150;
 const FLOW_DAILY_COLUMNS = 7;
 const FLOW_MONTHLY_COLUMNS = 6;
@@ -14020,6 +14020,15 @@ async function openQrPosterModal(kind = "payment") {
 function posterFont(weight, size) {
   return `${weight} ${size}px -apple-system, "Segoe UI", Inter, Roboto, sans-serif`;
 }
+// The marketing sheet is drawn twice -- on a canvas for the PDF and in CSS for
+// the preview -- so the two have to MEASURE the same. posterFont's stack
+// resolves differently from the page's, and the same nominal size came out
+// about 18% wider in CSS: a line the canvas fitted, the preview wrapped. This
+// is the page's stack verbatim, so a size that fits one fits the other.
+// posterFont is left alone; the two A4 QR posters are laid out against it.
+function posterUiFont(weight, size) {
+  return `${weight} ${size}px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+}
 function posterRoundRectPath(g, x, y, w, h, r) {
   if (typeof g.roundRect === "function") {
     g.beginPath();
@@ -14045,12 +14054,12 @@ function posterLoadImage(src) {
 }
 // Shrinks a line until it fits the column rather than letting it clip. The
 // value is real data (a business name, a UUID), so it must all be on the sheet.
-function posterFitText(g, textValue, weight, startSize, maxWidth, minSize = 22) {
+function posterFitText(g, textValue, weight, startSize, maxWidth, minSize = 22, font = posterFont) {
   let size = startSize;
-  g.font = posterFont(weight, size);
+  g.font = font(weight, size);
   while (size > minSize && g.measureText(textValue).width > maxWidth) {
     size -= 2;
-    g.font = posterFont(weight, size);
+    g.font = font(weight, size);
   }
   return size;
 }
@@ -14282,7 +14291,7 @@ async function marketingPosterName() {
 // would have to drop below two thirds of the display size is broken at its most
 // balanced word instead, which buys back most of that size on two lines.
 function posterNameLayout(g, name, maxWidth) {
-  const single = posterFitText(g, name, 800, MARKETING_NAME_SIZE, maxWidth, 54);
+  const single = posterFitText(g, name, 800, MARKETING_NAME_SIZE, maxWidth, 54, posterUiFont);
   if (single >= Math.round(MARKETING_NAME_SIZE * 0.66)) return { lines: [name], size: single };
   const words = String(name).trim().split(/\s+/).filter(Boolean);
   if (words.length < 2) return { lines: [name], size: single };
@@ -14294,8 +14303,8 @@ function posterNameLayout(g, name, maxWidth) {
     if (!best || imbalance < best.imbalance) best = { head, tail, imbalance };
   }
   const wrapped = Math.min(
-    posterFitText(g, best.head, 800, MARKETING_NAME_SIZE_WRAPPED, maxWidth, 54),
-    posterFitText(g, best.tail, 800, MARKETING_NAME_SIZE_WRAPPED, maxWidth, 54)
+    posterFitText(g, best.head, 800, MARKETING_NAME_SIZE_WRAPPED, maxWidth, 54, posterUiFont),
+    posterFitText(g, best.tail, 800, MARKETING_NAME_SIZE_WRAPPED, maxWidth, 54, posterUiFont)
   );
   return wrapped > single ? { lines: [best.head, best.tail], size: wrapped } : { lines: [name], size: single };
 }
@@ -14324,24 +14333,25 @@ async function openMarketingPosterModal() {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <article class="mk-poster" data-marketing-poster aria-label="Printable marketing poster for ${esc(name)}">
-      <header class="mk-poster-band">
-        <img src="./assets/titopay-logo-night.png" alt="TitoPay" class="mk-poster-logo">
-        <p class="mk-poster-tagline">${esc(BRAND_TAGLINE)}</p>
+      <header class="mk-band">
+        <img src="./assets/titopay-logo-night.png" alt="TitoPay" class="mk-band-logo">
+        <p class="mk-band-kind">${esc(config.kind)}</p>
       </header>
-      <div class="mk-poster-hero">
-        <p class="mk-poster-lead">${esc(config.lead)}</p>
-        <p class="mk-poster-emphasis">${esc(config.emphasis)}</p>
+      <div class="mk-body">
+        <p class="mk-lead">${esc(config.lead)}</p>
+        <p class="mk-headline">${esc(config.leadBrand)} <em>${esc(config.leadEmphasis)}</em></p>
+        <span class="mk-hairline" aria-hidden="true"></span>
+        <div class="mk-namegroup">
+          <p class="mk-label">${esc(config.at)}</p>
+          <h3 class="mk-name${layout.lines.length > 1 ? " is-wrapped" : ""}">${layout.lines.map((line) => `<span>${esc(line)}</span>`).join("")}</h3>
+        </div>
+        <div class="mk-panel">
+          ${config.safety.map((line, index) => `<p${index === config.safety.length - 1 ? ' class="is-close"' : ""}>${esc(line)}</p>`).join("")}
+        </div>
       </div>
-      <div class="mk-poster-store">
-        <p class="mk-poster-at">${esc(config.at)}</p>
-        <h3 class="mk-poster-name${layout.lines.length > 1 ? " is-wrapped" : ""}">${layout.lines.map((line) => `<span>${esc(line)}</span>`).join("")}</h3>
-      </div>
-      <div class="mk-poster-safety">
-        <span class="mk-poster-rule" aria-hidden="true"></span>
-        ${config.safety.map((line, index) => `<p class="${index === config.safety.length - 1 ? "is-close" : ""}">${esc(line)}</p>`).join("")}
-      </div>
-      <footer class="mk-poster-foot">
-        <p class="mk-poster-site">${esc(config.site)}</p>
+      <footer class="mk-foot">
+        <p class="mk-site">${esc(config.site)}</p>
+        <p class="mk-foot-tagline">${esc(BRAND_TAGLINE)}</p>
       </footer>
     </article>
     <section class="auth-actions qr-poster-actions">
@@ -14350,9 +14360,13 @@ async function openMarketingPosterModal() {
     <p class="field-hint">The PDF is a finished A3 sheet: download it, then take it to any print shop. The name above is the one on your TitoPay business profile and the one customers see when they pay you. To change it, update Profile &amp; Verification and open this poster again.</p>
   `);
 }
-// A3 portrait at 200dpi. Laid out from fixed baselines rather than a running
-// cursor: a poster is one composition, and every block has to land where the
-// design puts it however long the shop's name turns out to be.
+// A3 portrait at 200dpi, set on the grid businessDocumentPdf uses.
+//
+// Every measurement here is that document scaled up: the margin is its 52pt of
+// 595 (8.7% of the width), the rule under the masthead is its 4pt of 842, the
+// section labels are its small mid-blue caps, the panel is its pale fill behind
+// a hairline, and the footer is its rule with the tagline set against the
+// opposite margin. Nothing is centred, because nothing in that document is.
 async function renderMarketingPosterCanvas(context) {
   const W = 2339;
   const H = 3307;
@@ -14361,112 +14375,131 @@ async function renderMarketingPosterCanvas(context) {
   canvas.width = W;
   canvas.height = H;
   const g = canvas.getContext("2d");
-  const centerX = W / 2;
-  const margin = 170;
+  const margin = Math.round(W * 0.0874); // the document's 52pt of 595
+  const right = W - margin;
   const colW = W - margin * 2;
-  const spaced = (value) => String(value).split("").join(" ");
+  const spaced = (value) => String(value).split("").join(" ");
 
   g.fillStyle = "#ffffff";
   g.fillRect(0, 0, W, H);
-  g.textAlign = "center";
   g.textBaseline = "alphabetic";
+  const left = (value, y, size, weight, colour) => {
+    g.textAlign = "left";
+    g.fillStyle = colour;
+    g.font = posterUiFont(weight, size);
+    g.fillText(value, margin, y);
+  };
+  const rightAt = (value, y, size, weight, colour) => {
+    g.textAlign = "right";
+    g.fillStyle = colour;
+    g.font = posterUiFont(weight, size);
+    g.fillText(value, right, y);
+  };
+  const rule = (y, colour, thickness) => {
+    g.fillStyle = colour;
+    g.fillRect(margin, y, colW, thickness);
+  };
 
-  // 1. Navy band. The night logo is the one drawn light, so it is the one that
-  //    survives being reversed out.
-  const bandH = 470;
-  g.fillStyle = POSTER_INK.navy;
+  // 1. Masthead: TitoPay's band, cut by the electric-blue rule that opens every
+  //    TitoPay business document. The shop is not named up here -- it gets the
+  //    white field below, where it is read at distance against paper.
+  const bandH = 480;
+  g.fillStyle = DOC_INK.navy;
   g.fillRect(0, 0, W, bandH);
+  g.fillStyle = DOC_INK.rule;
+  g.fillRect(0, bandH, W, Math.round(H * 0.0048)); // the document's 4pt of 842
+
   const logo = await posterLoadImage("./assets/titopay-logo-night.png");
   if (logo) {
-    const logoW = 900;
+    const logoW = 560;
     const logoH = logoW * (logo.naturalHeight / logo.naturalWidth);
-    g.drawImage(logo, centerX - logoW / 2, 150 - logoH / 2, logoW, logoH);
+    g.drawImage(logo, margin, 240 - logoH / 2, logoW, logoH);
   } else {
-    g.fillStyle = "#ffffff";
-    g.font = posterFont(800, 130);
-    g.fillText("TitoPay", centerX, 190);
+    left("TitoPay", 280, 130, 800, "#ffffff");
   }
-  g.fillStyle = "#9dc2ff";
-  g.font = posterFont(600, 54);
-  g.fillText(spaced(BRAND_TAGLINE.toUpperCase()), centerX, 360);
+  rightAt(spaced(config.kind.toUpperCase()), 262, 66, 800, "#ffffff");
 
-  // 2. Hero. "here" is the word that matters to somebody standing in the shop,
-  //    so it is the largest thing on the sheet and the only one in accent.
-  g.fillStyle = POSTER_INK.navy;
-  const leadText = config.lead.toUpperCase();
-  const leadSize = posterFitText(g, leadText, 800, 152, colW, 90);
-  g.font = posterFont(800, leadSize);
-  g.fillText(leadText, centerX, 900);
+  // 2. The message. "TitoPay" and "here" are the two words a person crossing the
+  //    road needs, so they carry the accent and the size; the rest of the
+  //    sentence is set quieter above them on the same left edge.
+  left(config.lead.toUpperCase(), 880, 150, 800, DOC_INK.ink);
+  const brand = `${config.leadBrand.toUpperCase()} `;
+  g.textAlign = "left";
+  g.font = posterUiFont(800, 240);
+  const brandW = g.measureText(brand).width;
+  g.fillStyle = DOC_INK.ink;
+  g.fillText(brand, margin, 1160);
+  g.fillStyle = DOC_INK.rule;
+  g.fillText(config.leadEmphasis.toUpperCase(), margin + brandW, 1160);
 
-  g.fillStyle = POSTER_INK.blue;
-  const emphasisText = spaced(config.emphasis.toUpperCase());
-  const emphasisSize = posterFitText(g, emphasisText, 800, 300, colW, 150);
-  g.font = posterFont(800, emphasisSize);
-  g.fillText(emphasisText, centerX, 1200);
+  const zoneTop = 1350;
+  rule(zoneTop, DOC_INK.hairline, 5);
 
-  // 3. The shop's name, reversed out of accent. Size is the hero's job and
-  //    colour is this block's, so the two headlines never compete.
-  //
-  //    The block is sized from its contents and hung from a fixed centre, so a
-  //    two-word name and a five-word one both sit optically centred and neither
-  //    pushes the safety copy below it out of place.
-  const blockCentreY = 1720;
-  const atSize = 62;
-  const atCap = atSize * 0.72;
-  const atToName = 96;
-  const name = posterNameLayout(g, context.name, colW - 160);
-  const nameCap = name.size * 0.72;
-  const lineH = name.size * 1.16;
-  const contentH = atCap + atToName + (name.lines.length - 1) * lineH + nameCap;
-  const blockH = Math.max(560, Math.min(740, contentH + 300));
-  const blockTop = blockCentreY - blockH / 2;
+  // 3. The shop. A section label in the document's mid blue, then the name in
+  //    ink, larger than anything else on the sheet -- half the reason a shop
+  //    puts this in its window is to see its own name in it.
+  const labelSize = 58;
+  const labelToName = 110;
+  const name = posterNameLayout(g, context.name, colW);
+  const nameLineH = name.size * 1.16;
 
-  g.fillStyle = POSTER_INK.blue;
-  posterRoundRectPath(g, margin, blockTop, colW, blockH, 56);
-  g.fill();
+  // 4. Supporting copy, in the document's pale panel behind a hairline. It is
+  //    hung from the footer rather than pushed down by the name, so the bottom
+  //    third of the sheet holds still whether the shop is called KB or Mama
+  //    Thandi's Spaza & Takeaways.
+  const panelPad = 130;
+  const safetySize = 100;
+  const safetyLineH = 180;
+  const panelH = panelPad * 2 + (config.safety.length - 1) * safetyLineH + safetySize;
+  // (safetySize is the ceiling; the drawn size may be smaller, which only adds air)
+  const panelTop = 2807 - panelH;
 
-  let blockY = blockCentreY - contentH / 2;
-  g.fillStyle = "rgba(255,255,255,.78)";
-  g.font = posterFont(700, atSize);
-  blockY += atCap;
-  g.fillText(spaced(config.at.toUpperCase()), centerX, blockY);
-  g.fillStyle = "#ffffff";
-  g.font = posterFont(800, name.size);
-  blockY += atToName + nameCap;
-  name.lines.forEach((line, index) => {
-    g.fillText(line, centerX, blockY + index * lineH);
-  });
+  // The label and the name are set as one group, optically centred in the band
+  // between the hairline and the panel. A shop called KB and one called Mama
+  // Thandi's Spaza & Takeaways then leave the same air above and below
+  // themselves, instead of a short name pooling all the leftover space at the
+  // bottom of the sheet.
+  const groupH = labelSize * 0.72 + labelToName + name.size * 0.72
+    + (name.lines.length - 1) * nameLineH + name.size * 0.24;
+  const groupTop = zoneTop + (panelTop - zoneTop - groupH) / 2;
+  left(spaced(config.at.toUpperCase()), groupTop + labelSize * 0.72, labelSize, 700, DOC_INK.label);
+  const nameY = groupTop + labelSize * 0.72 + labelToName + name.size * 0.72;
+  name.lines.forEach((line, index) => left(line, nameY + index * nameLineH, name.size, 800, DOC_INK.ink));
 
-  // 4. Safety copy.
-  g.strokeStyle = POSTER_INK.blue;
-  g.lineWidth = 10;
-  g.beginPath();
-  g.moveTo(centerX - 110, 2260);
-  g.lineTo(centerX + 110, 2260);
-  g.stroke();
-
-  let safetyY = 2450;
+  g.fillStyle = DOC_INK.panel;
+  g.fillRect(margin, panelTop, colW, panelH);
+  g.fillStyle = DOC_INK.panelLine;
+  g.fillRect(margin, panelTop, colW, 4);
+  g.fillRect(margin, panelTop + panelH - 4, colW, 4);
+  g.fillRect(margin, panelTop, 4, panelH);
+  g.fillRect(right - 4, panelTop, 4, panelH);
+  // One size for the whole block. Fitting each line on its own left three lines
+  // of the same paragraph set at three different sizes, which reads as a
+  // mistake; the size that fits the longest of them fits all of them.
+  const panelInner = colW - panelPad * 2;
+  const panelSize = config.safety.reduce(
+    (smallest, line, index) => Math.min(
+      smallest,
+      posterFitText(g, line, index === config.safety.length - 1 ? 800 : 600, safetySize, panelInner, 62, posterUiFont)
+    ),
+    safetySize
+  );
+  const safetyY = panelTop + panelPad + panelSize * 0.76;
   config.safety.forEach((line, index) => {
     const last = index === config.safety.length - 1;
-    g.fillStyle = last ? POSTER_INK.blue : POSTER_INK.navy;
-    const size = posterFitText(g, line, last ? 800 : 600, 104, colW, 60);
-    g.font = posterFont(last ? 800 : 600, size);
-    g.fillText(line, centerX, safetyY);
-    safetyY += last ? 0 : 140;
-    if (index === config.safety.length - 2) safetyY += 40;
+    g.textAlign = "left";
+    g.fillStyle = last ? DOC_INK.rule : DOC_INK.ink;
+    g.font = posterUiFont(last ? 800 : 600, panelSize);
+    g.fillText(line, margin + panelPad, safetyY + index * safetyLineH);
   });
 
-  // 5. Footer.
-  g.strokeStyle = POSTER_INK.line;
-  g.lineWidth = 4;
-  g.beginPath();
-  g.moveTo(margin, 2960);
-  g.lineTo(W - margin, 2960);
-  g.stroke();
-  g.fillStyle = POSTER_INK.blue;
-  const siteSize = posterFitText(g, config.site, 800, 116, colW, 60);
-  g.font = posterFont(800, siteSize);
-  g.fillText(config.site, centerX, 3110);
+  // 5. Footer: the document's hairline with the address against one margin and
+  //    the tagline against the other.
+  // The two footer items sit against opposite margins, as in the document. Set
+  // any larger and they close up into one run of text in the middle.
+  rule(2937, DOC_INK.hairline, 4);
+  left(config.site, 3090, 84, 800, DOC_INK.rule);
+  rightAt(BRAND_TAGLINE, 3090, 50, 600, DOC_INK.muted);
 
   return canvas;
 }
@@ -27768,12 +27801,31 @@ const POSTER_INK = { navy: "#061a3d", blue: "#0a4dff", muted: "#62708a", line: "
 // words, and a poster is not something anyone can correct afterwards.
 // ---------------------------------------------------------------------------
 const MARKETING_POSTER = {
-  lead: "Pay with TitoPay",
-  emphasis: "here",
+  kind: "Accepted here",
+  lead: "Pay with",
+  leadBrand: "TitoPay",
+  leadEmphasis: "here",
   at: "At",
   safety: ["No need to walk around with cash.", "Be wise and stay safe.", "Pay with TitoPay."],
   site: "www.titopay.co.za",
   filename: "titopay-marketing-poster"
+};
+// The palette of businessDocumentPdf, to the value. That document is the house
+// style for anything a business puts its name on -- a navy masthead cut by an
+// electric-blue rule, section labels in a mid blue, pale panels behind a
+// hairline, muted grey for anything supporting. Restating the numbers here
+// rather than approximating them is what makes the poster the same family as
+// the invoices and quotes rather than something that merely resembles them.
+const DOC_INK = {
+  navy: "#081438",
+  rule: "#0057ff",
+  label: "#1f529e",
+  ink: "#0f1a33",
+  muted: "#6b758c",
+  hairline: "#e0e8f5",
+  panel: "#f0f7ff",
+  panelLine: "#d1e0fa",
+  onNavy: "#d6e3fa"
 };
 // ---------------------------------------------------------------------------
 // Learn
