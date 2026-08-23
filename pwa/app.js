@@ -14372,7 +14372,7 @@ async function openMarketingPosterModal() {
         <span class="is-accent">${esc(config.leadEmphasis)}</span>
       </p>
       <span class="mk-capsule" aria-hidden="true"></span>
-      <span class="mk-phone" aria-hidden="true"><img src="./assets/poster-app-screen.jpg?v=485" alt=""></span>
+      <span class="mk-phone" aria-hidden="true"><img src="./assets/poster-app-screen.jpg?v=486" alt=""></span>
       <div class="mk-bottom">
         <span class="mk-hairline" aria-hidden="true"></span>
         <p class="mk-label">${esc(config.at)}</p>
@@ -14476,7 +14476,12 @@ async function posterJpegAsset(url) {
 // picks the right matte. Rendered at roughly 400dpi for its printed size, so
 // A3 has more pixels than it can show.
 async function posterWordmarkImage(widthPt, matte = DOC_INK.navy) {
-  const logo = await posterLoadImage(matte === "#ffffff" ? "./assets/titopay-logo.png" : "./assets/titopay-logo-night.png");
+  // Which wordmark to flatten is a question about the matte's brightness, not
+  // about one particular hex. This used to test for white exactly, so the
+  // moment the paper stopped being white the sheet would have taken the
+  // reversed night mark and printed it invisibly on its own near-white ground.
+  const level = [1, 3, 5].reduce((sum, i) => sum + parseInt(matte.slice(i, i + 2), 16), 0) / 3;
+  const logo = await posterLoadImage(level >= 128 ? "./assets/titopay-logo.png" : "./assets/titopay-logo-night.png");
   if (!logo) return null;
   const width = Math.round(widthPt * (400 / 72));
   const height = Math.round(width * (logo.naturalHeight / logo.naturalWidth));
@@ -14543,8 +14548,8 @@ async function marketingPosterPdf(context) {
   const rgb = (hex) => [1, 3, 5].map((i) => (parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(3)).join(" ");
   const INK = {
     sky: rgb(POSTER_GROUND), navy: rgb(DOC_INK.navy), blue: rgb(DOC_INK.rule),
-    ink: rgb(GROUND_INK.ink), label: rgb(GROUND_INK.label), hair: rgb(DOC_INK.hairline),
-    white: "1 1 1", wordmark: "0.25 0.67 1.000"
+    ink: rgb(GROUND_INK.ink), label: rgb(GROUND_INK.label), hair: rgb(POSTER_RULE),
+    paper: rgb(POSTER_PAPER), wordmark: "0.25 0.67 1.000"
   };
 
   const commands = [];
@@ -14574,13 +14579,16 @@ async function marketingPosterPdf(context) {
   };
 
   const [wordmark, screen] = await Promise.all([
-    posterWordmarkImage(150, "#ffffff"),
-    posterJpegAsset("./assets/poster-app-screen.jpg?v=485")
+    // The wordmark is flattened onto the paper it is printed on, not onto
+    // white: JPEG has no alpha, so a white matte would print the mark in a
+    // white box on a blue sheet.
+    posterWordmarkImage(150, POSTER_PAPER),
+    posterJpegAsset("./assets/poster-app-screen.jpg?v=486")
   ]);
   const images = [wordmark, screen];
 
   // paper
-  box(0, 0, W, H, INK.white);
+  box(0, 0, W, H, INK.paper);
 
   // 1. wordmark, small, top left -- the reference keeps its brand mark out of
   //    the way and lets the message carry the sheet.
@@ -27991,18 +27999,25 @@ const DOC_INK = {
   panelLine: "#d1e0fa",
   onNavy: "#d6e3fa"
 };
-// The marketing sheet is not printed on white. It is printed on sky, and three
-// of the document's colours stop working the moment the paper changes: the
-// electric blue drops to 3.1:1 against it, the muted grey to 2.6:1, and the
-// pale panel and hairline disappear into it altogether. So the sheet carries
-// its own set, derived from the document's but chosen for this ground and
-// measured against it rather than assumed.
+// The marketing sheet is not printed on white. The paper is a pale blue, and
+// the saturated sky is now only the capsule the phone sits on.
 //
-//   ink      #0f1a33 on #60cdff   9.6:1
-//   accent   #0637b8 on #60cdff   5.2:1   (the app's own --deep-blue)
-//   label    #123a72 on #60cdff   6.2:1
-//   panel    white, so its own copy sits at 19:1 and the block reads as the
-//            notice it is rather than a wash of the same blue
+// Every mark was re-measured against the new paper rather than assumed to
+// survive it. The type all does, comfortably -- the paper is light enough that
+// dark ink only loses about a tenth of its ratio:
+//
+//   navy   #081438 on #f0f4ff   16.4:1   (was 18.0:1 on white)
+//   ink    #0f1a33 on #f0f4ff   15.7:1
+//   label  #123a72 on #f0f4ff   10.2:1
+//   accent #0057ff on #f0f4ff    5.0:1
+//
+// The one mark that did not survive is the document's hairline. #e0e8f5 is a
+// deliberately faint rule against white at 1.23:1, and against this paper it
+// falls to 1.12:1 -- past faint and into invisible, which would quietly delete
+// two dividers the layout is built on. POSTER_RULE is that same rule re-derived
+// for this ground: 1.24:1, the weight it has always had, not a new one.
+const POSTER_PAPER = "#f0f4ff";
+const POSTER_RULE = "#d3ddf2";
 const POSTER_GROUND = "#60cdff";
 const GROUND_INK = {
   ink: "#0f1a33",

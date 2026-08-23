@@ -725,7 +725,7 @@ html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
    prints in, not the app's, and the weights match F1/F2 rather than the app's
    scale.
    ========================================================================== */
-.mk-poster{position:relative;font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:#0f1a33;container-type:inline-size;aspect-ratio:297/420;overflow:hidden;background:#fff;border:1px solid #dfe7f5;border-radius:18px}
+.mk-poster{position:relative;font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:#0f1a33;container-type:inline-size;aspect-ratio:297/420;overflow:hidden;background:#f0f4ff;border:1px solid #dfe7f5;border-radius:18px}
 .mk-mark{position:absolute;left:8.79%;top:5.2%;width:17.8%;height:auto}
 /* left column, clear of the capsule */
 .mk-head{position:absolute;left:8.79%;top:19.3%;width:42%;margin:0;font-size:8.31cqw;font-weight:700;line-height:1.114;letter-spacing:-.02em;color:#081438}
@@ -741,7 +741,7 @@ html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
 /* Colour pinned on the decorative spans as well as the sheet: none of them
    carries text today, but one whose text colour came from outside the poster
    would be near-white ink at night the moment anyone put a word in it. */
-.mk-hairline{display:block;height:.24cqw;margin-bottom:3.5cqw;color:#0f1a33;background:#dfe7f5}
+.mk-hairline{display:block;height:.24cqw;margin-bottom:3.5cqw;color:#0f1a33;background:#d3ddf2}
 .mk-label{margin:0;color:#123a72;font-size:2.02cqw;font-weight:700;letter-spacing:.32em;text-transform:uppercase}
 .mk-name{margin:2.4cqw 0 0;color:#081438;font-size:7.6cqw;font-weight:700;line-height:1.16;letter-spacing:-.02em}
 .mk-name.is-wrapped{font-size:5.94cqw}
@@ -749,7 +749,7 @@ html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
 .mk-safety{margin-top:5.2cqw}
 .mk-safety p{margin:0;color:#0f1a33;font-size:3.21cqw;font-weight:400;line-height:1.48}
 .mk-safety p.is-close{color:#0057ff;font-weight:700}
-.mk-foot{position:absolute;left:8.79%;right:8.79%;bottom:4.6%;display:flex;align-items:baseline;justify-content:space-between;gap:3cqw;padding-top:2.6cqw;border-top:.24cqw solid #dfe7f5}
+.mk-foot{position:absolute;left:8.79%;right:8.79%;bottom:4.6%;display:flex;align-items:baseline;justify-content:space-between;gap:3cqw;padding-top:2.6cqw;border-top:.24cqw solid #d3ddf2}
 .mk-site{margin:0;color:#0057ff;font-size:3.56cqw;font-weight:700;letter-spacing:-.01em}
 .mk-foot-tagline{margin:0;color:#123a72;font-size:2.02cqw;font-weight:400;white-space:nowrap}
 /* Paper stays paper at night. Only the frame around it follows the theme. */
