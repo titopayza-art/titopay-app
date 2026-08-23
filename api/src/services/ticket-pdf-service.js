@@ -10,7 +10,11 @@
 const PDFDocument = require("pdfkit");
 const QRCode = require("qrcode");
 
-const PAGE_BG = "#edf1fa";
+// The paper every printed TitoPay sheet shares -- the marketing poster, both
+// QR posters and this ticket. The ticket used to carry its own approximate
+// pale blue; it takes the real one now. The card stays white and the QR keeps
+// its own white quiet zone inside that card, so scanning is untouched.
+const PAGE_BG = "#f0f4ff";
 const NAVY = "#0b1f3f";
 const HEADER_NAVY = "#0a1b3d";
 const BLUE = "#5b9df9";

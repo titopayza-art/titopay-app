@@ -19,10 +19,18 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 108;
+const API_BUILD = 109;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  109: "The emailed event ticket prints on the paper the rest of TitoPay prints on. "
+      + "The ticket page ground was its own approximate pale blue (#edf1fa); it is "
+      + "now #f0f4ff, the same paper the A3 marketing poster and both A4 QR posters "
+      + "use, so a shop or an attendee holding two TitoPay sheets sees one "
+      + "stationery set. Nothing else in the ticket moved: the card stays white and "
+      + "the QR keeps its own white quiet zone inside that card, so scanning is "
+      + "untouched. No route, schema or behaviour changed - this build is a colour "
+      + "constant and nothing else.",
   108: "EVERY PRICING RULE IS EDITABLE FROM THE ADMIN PORTAL, PROVEN. Verified by "
       + "walking the console's own path - GET /pricing then PUT /pricing/:id - "
       + "against every rule in the database: each one saved, and calculateFee then "

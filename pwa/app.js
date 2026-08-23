@@ -14132,7 +14132,7 @@ async function renderQrPosterCanvas(context) {
   const g = canvas.getContext("2d");
   const centerX = W / 2;
   const colW = W - 300;
-  g.fillStyle = "#ffffff";
+  g.fillStyle = POSTER_PAPER;
   g.fillRect(0, 0, W, H);
   g.textAlign = "center";
   g.textBaseline = "alphabetic";
@@ -14190,6 +14190,14 @@ async function renderQrPosterCanvas(context) {
   const qrBox = context.config.banner ? 840 : 900;
   const qrPad = 52;
   y += 84;
+  // The card behind the code is filled white, not left as paper. A QR carries
+  // its own opaque white quiet zone, so on a coloured sheet an unfilled box
+  // would print a white square floating inside a blue ring. Filling the box
+  // makes that white deliberate -- and it is what the on-screen preview has
+  // always drawn, so the two now agree.
+  posterRoundRectPath(g, centerX - qrBox / 2, y, qrBox, qrBox, 44);
+  g.fillStyle = "#ffffff";
+  g.fill();
   g.strokeStyle = POSTER_INK.navy;
   g.lineWidth = 6;
   posterRoundRectPath(g, centerX - qrBox / 2, y, qrBox, qrBox, 44);
@@ -14372,7 +14380,7 @@ async function openMarketingPosterModal() {
         <span class="is-accent">${esc(config.leadEmphasis)}</span>
       </p>
       <span class="mk-capsule" aria-hidden="true"></span>
-      <span class="mk-phone" aria-hidden="true"><img src="./assets/poster-app-screen.jpg?v=486" alt=""></span>
+      <span class="mk-phone" aria-hidden="true"><img src="./assets/poster-app-screen.jpg?v=487" alt=""></span>
       <div class="mk-bottom">
         <span class="mk-hairline" aria-hidden="true"></span>
         <p class="mk-label">${esc(config.at)}</p>
@@ -14583,7 +14591,7 @@ async function marketingPosterPdf(context) {
     // white: JPEG has no alpha, so a white matte would print the mark in a
     // white box on a blue sheet.
     posterWordmarkImage(150, POSTER_PAPER),
-    posterJpegAsset("./assets/poster-app-screen.jpg?v=486")
+    posterJpegAsset("./assets/poster-app-screen.jpg?v=487")
   ]);
   const images = [wordmark, screen];
 
@@ -19777,7 +19785,7 @@ async function renderTicketCanvas({ ticket = {}, order = {}, event = {} }) {
   // a white card with a navy header band, a perforated tear line with punched
   // notches, the QR framed in the body, and the code writ large on the stub --
   // not a plain page of rows.
-  const PAGE_BG = "#eef2fa";
+  const PAGE_BG = POSTER_PAPER;
   g.fillStyle = PAGE_BG;
   g.fillRect(0, 0, W, H);
 
@@ -27999,8 +28007,21 @@ const DOC_INK = {
   panelLine: "#d1e0fa",
   onNavy: "#d6e3fa"
 };
-// The marketing sheet is not printed on white. The paper is a pale blue, and
-// the saturated sky is now only the capsule the phone sits on.
+// TitoPay does not print on white. POSTER_PAPER is the paper every printed
+// sheet the app produces shares -- the A3 marketing poster, both A4 QR posters
+// and the event ticket -- so a shop that prints all four gets one stationery
+// set rather than four sheets that happen to be near each other. The two QR
+// posters and the ticket each carried their own approximate pale blue before
+// this; they take the real one now.
+//
+// The one thing that must NOT follow the paper is a QR code. The codes are
+// generated server-side with an opaque white background including the four
+// modules of quiet zone the standard requires, and every code already issued
+// has that white baked into the stored image. A QR is drawn on a white card,
+// deliberately, and scanning is unaffected.
+//
+// On the marketing sheet the saturated sky is now only the capsule the phone
+// sits on.
 //
 // Every mark was re-measured against the new paper rather than assumed to
 // survive it. The type all does, comfortably -- the paper is light enough that
