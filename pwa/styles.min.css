@@ -470,11 +470,21 @@ html[data-theme=night] .empty-state{
   color:var(--text);
 }
 
-/* Chat bubbles. The user's own message was near-white with white text. */
+/* Chat bubbles.
+   The INCOMING bubble was rgba(255,255,255,.98) under color:var(--navy), and
+   --navy is inverted to #e8eeff at night - near-white text on a near-white
+   bubble.
+   It must NOT simply become blue: .me is already blue, and painting both sides
+   the same colour trades an unreadable bubble for an unreadable CONVERSATION,
+   where nobody can tell who said what. So incoming becomes a lifted neutral
+   surface - clearly distinct from both the chat window behind it and from the
+   blue of your own messages. */
 html[data-theme=night] .titopay-user-message{
-  background:var(--blue);
-  color:#fff;
+  background:rgba(143,165,204,.14);
+  border-color:rgba(143,165,204,.22);
+  color:var(--text);
 }
+html[data-theme=night] .titopay-user-message small{color:var(--muted)}
 html[data-theme=night] .titopay-user-message.system{
   background:var(--soft-blue);
   color:var(--text);
