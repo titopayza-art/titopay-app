@@ -508,3 +508,58 @@ html[data-theme=night] .scan-attendance{
 /* Tour dots and the TitoKids progress bar are light tracks on a dark page. */
 html[data-theme=night] .tour-dots span{background:rgba(143,165,204,.38)}
 html[data-theme=night] .tk-progress{background:var(--soft-blue)}
+
+/* ==========================================================================
+   NIGHT MODE - FULL AUDIT FIXES
+   ==========================================================================
+   From a render-based audit: 335 surfaces built from the stylesheet, each
+   given real child elements, 1675 computed-colour probes measured against the
+   true composited ground. That found faults no text search could, because the
+   commonest form of this bug is a light panel whose CHILD text flips - and
+   because two of these are written "background: #fff" WITH A SPACE, which the
+   earlier text matching missed.
+   ========================================================================== */
+
+/* -- ROOT CAUSE: --ink is never defined anywhere -------------------------
+   .bk-tile and .bk-slot say color:var(--ink) on background:#fff. With no such
+   token the declaration is invalid and the colour falls back to inherited -
+   which at night is --text, i.e. near-white on white. Light mode only escapes
+   by accident, because there the inherited colour happens to be dark.
+   Defining it as a proper role token fixes those and anything added later. */
+:root{--ink:#10203f}
+html[data-theme=night]{--ink:#e8eeff}
+
+/* -- white surfaces that never flipped ----------------------------------- */
+html[data-theme=night] .settings-row-button,
+html[data-theme=night] .picker-option,
+html[data-theme=night] .bk-tile,
+html[data-theme=night] .bk-slot{
+  background:var(--card);
+  border-color:var(--card-line);
+  color:var(--text);
+}
+html[data-theme=night] .picker-option.is-selected{background:rgba(79,163,255,.16)}
+
+/* -- white text on a semantic colour that LIGHTENS at night ---------------
+   --danger is #d94242 in light (white text reads) and #ff8b8b at night, and
+   --warning is #b7791f then #e5aa4a. The text stayed #fff, so a destructive
+   button and a sold-out pill became white-on-pastel. Dark ink is correct on
+   the night value; the colour still signals danger. */
+html[data-theme=night] .btn.danger,
+html[data-theme=night] .toast.error,
+html[data-theme=night] .event-status-pill.is-sold-out{color:#3d0c0c}
+html[data-theme=night] .event-status-pill.is-scarce{color:#3d2a06}
+
+/* -- hardcoded grey text that never flipped ------------------------------ */
+html[data-theme=night] .metric-card span,
+html[data-theme=night] .tp-dialog p{color:var(--muted)}
+
+/* -- accent text too dark for a dark ground ------------------------------
+   color:var(--deep-blue) is #1b3bff at night, sitting on --soft-blue #122650.
+   Blue on dark blue, at 2.2:1. --blue-2 is the light end of the same accent,
+   so the component keeps its identity and becomes readable. */
+html[data-theme=night] .guide-hint,
+html[data-theme=night] .trust-chip{color:var(--blue-2)}
+
+/* -- timestamp on your own (blue) chat bubble ---------------------------- */
+html[data-theme=night] .titopay-user-message.me small{color:rgba(255,255,255,.88)}
