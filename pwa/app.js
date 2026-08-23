@@ -24372,7 +24372,7 @@ function openHowItWorksModal() {
         </div>
         <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
       </div>
-      <div class="guide-progress tour-dots" aria-hidden="true">${steps.map(() => "<span></span>").join("")}</div>
+      <div class="guide-progress tour-dots" aria-hidden="true">${steps.map((_, stepNumber) => `<span>${stepNumber + 1}</span>`).join("")}</div>
       <article class="tour-body" data-guide-body></article>
       <p class="tour-count muted" data-guide-count aria-live="polite"></p>
       <div class="tour-nav">

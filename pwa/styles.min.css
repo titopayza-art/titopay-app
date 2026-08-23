@@ -570,3 +570,38 @@ html[data-theme=night] .trust-chip{color:var(--blue-2)}
 
 /* -- timestamp on your own (blue) chat bubble ---------------------------- */
 html[data-theme=night] .titopay-user-message.me small{color:rgba(255,255,255,.88)}
+
+/* ==========================================================================
+   GUIDED TOUR - NUMBERED STEPS
+   ==========================================================================
+   The dots became numbered so the step is readable from the track itself
+   rather than only from the "Step n of 15" line beneath it. Fifteen of them
+   have to fit a narrow phone, so the circle is sized from the two-digit case
+   (10-15) and the row is allowed to wrap rather than overflow. The track stays
+   aria-hidden: the counter line already announces position, and a screen
+   reader reciting "1 2 3 4 5..." would be noise.
+   ========================================================================== */
+/* 15 numbers must sit on ONE row at 390px (iPhone 14): 15x18 + 14x4 = 326px
+   inside a ~342px card. wrap stays as a safety net for narrower devices. */
+.tour-dots{flex-wrap:wrap;gap:3px}
+.tour-dots span{
+  width:17px;height:17px;border-radius:50%;
+  display:grid;place-items:center;
+  font-size:9.5px;font-weight:600;line-height:1;
+  font-variant-numeric:tabular-nums;
+  color:#5b6472;background:#e6ecf9;
+  transition:background .2s,color .2s,transform .2s,box-shadow .2s;
+}
+.tour-dots span.is-done{background:#8fb3ff;color:#0d2050}
+.tour-dots span.is-active{
+  background:var(--blue,#0a4dff);color:#fff;transform:scale(1.12);
+  box-shadow:0 0 0 3px rgba(10,77,255,.20);
+}
+
+/* night: same three tiers, restated at matching specificity */
+html[data-theme=night] .tour-dots span{background:rgba(143,165,204,.16);color:#c2d2ee}
+html[data-theme=night] .tour-dots span.is-done{background:rgba(111,176,255,.82);color:#06122c}
+html[data-theme=night] .tour-dots span.is-active{
+  background:var(--blue-2);color:#06122c;
+  box-shadow:0 0 0 3px rgba(111,176,255,.26);
+}
