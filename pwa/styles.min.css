@@ -732,11 +732,14 @@ html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
    white in both themes, and a sheet that repainted itself at night would show
    the shop something its printer will not produce.
    ========================================================================== */
-.mk-poster{color:#0f1a33;container-type:inline-size;display:grid;grid-template-rows:auto 1fr auto;aspect-ratio:297/420;overflow:hidden;background:#60cdff;border:1px solid #dfe7f5;border-radius:18px}
+/* The preview is set in the face the PDF actually prints in. It used to be the
+   app's Inter while the sheet came out in Helvetica, so the preview was showing
+   a poster nobody would receive. */
+.mk-poster{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:#0f1a33;container-type:inline-size;display:grid;grid-template-rows:auto 1fr auto;aspect-ratio:297/420;overflow:hidden;background:#60cdff;border:1px solid #dfe7f5;border-radius:18px}
 /* -- masthead ------------------------------------------------------------ */
-.mk-band{min-width:0;display:flex;align-items:center;justify-content:space-between;gap:4cqw;height:20.5cqw;padding:0 8.74cqw;background:#081438;border-bottom:.68cqw solid #0057ff}
-.mk-band-logo{width:23.9cqw;min-width:88px;height:auto}
-.mk-band-kind{margin:0;color:#fff;font-size:clamp(0.42rem,2.82cqw,1.4rem);font-weight:800;letter-spacing:.3em;text-transform:uppercase}
+.mk-band{min-width:0;display:flex;align-items:baseline;justify-content:space-between;gap:4cqw;height:20.5cqw;padding:0 8.74cqw;background:#081438;border-bottom:.68cqw solid #0057ff}
+.mk-band-logo{width:23.9cqw;min-width:88px;height:auto;align-self:center}
+.mk-band-kind{margin:0;align-self:center;color:#fff;font-size:clamp(0.42rem,2.82cqw,1.4rem);font-weight:800;letter-spacing:.3em;text-transform:uppercase}
 /* -- body ----------------------------------------------------------------
    Five rows, matching the canvas: message, rule, the name group, and the panel
    hung at the bottom. The 1fr sits on the name group, so it is optically
@@ -761,11 +764,14 @@ html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
    .mk-poster today, but a pale panel whose text colour comes from outside it is
    one careless move away from near-white ink at night. */
 .mk-panel{margin:0 0 5.6cqw;padding:5.56cqw;color:#0f1a33;background:#fff;border:.17cqw solid #1f529e}
-.mk-panel p{margin:0;color:#0f1a33;font-size:clamp(0.5rem,3.55cqw,1.95rem);font-weight:600;line-height:1.8}
+/* Regular, because the sheet prints these two lines in Helvetica and only the
+   closing line in Helvetica-Bold. At 600 the preview was showing a heavier
+   paragraph than the printer produces. */
+.mk-panel p{margin:0;color:#0f1a33;font-size:clamp(0.5rem,3.55cqw,1.95rem);font-weight:400;line-height:1.8}
 .mk-panel p.is-close{color:#0637b8;font-weight:800}
 /* -- footer -------------------------------------------------------------- */
 .mk-foot{min-width:0;display:flex;align-items:baseline;justify-content:space-between;gap:4cqw;margin:0 8.74cqw;padding:3.6cqw 0 5.2cqw;border-top:.21cqw solid #17457f}
 .mk-site{margin:0;color:#0637b8;font-size:clamp(0.5rem,3.59cqw,1.95rem);font-weight:800;letter-spacing:-.01em}
-.mk-foot-tagline{margin:0;color:#123a72;font-size:clamp(0.3rem,2.14cqw,1.1rem);font-weight:600;white-space:nowrap}
+.mk-foot-tagline{margin:0;color:#123a72;font-size:clamp(0.3rem,2.14cqw,1.1rem);font-weight:400;white-space:nowrap}
 /* Paper stays paper at night. Only the frame around it follows the theme. */
 html[data-theme=night] .mk-poster{border-color:#2c4573}

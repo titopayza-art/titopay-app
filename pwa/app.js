@@ -148,10 +148,60 @@ const SMS_ALERT_FEE = 0.3;
 // How many columns the Wallet activity money-flow chart draws. Seven reads as a
 // week and six as half a year; the chart picks between them from the span of
 // the transactions it is given.
+// The marketing sheet's layout grid. Both renderers are laid out against these
+// numbers -- the preview's container query units are percentages of the width,
+// and the PDF converts them to points once -- so the sheet on screen and the
+// sheet on paper come from one set of measurements.
+const SHEET_W = 2339;
+const SHEET_H = 3307;
+// Adobe's published Helvetica metrics, in 1000ths of an em, for the printable
+// Latin-1 range. The business documents estimate a string's width as
+// length * size * 0.5, which is close enough for an invoice column and nowhere
+// near close enough for a poster: at 94pt a mis-measured word lands visibly off
+// its margin, and the two-colour headline needs to know exactly where the first
+// half ends before it can start the second. These are the real numbers.
+const HELVETICA_METRICS = (() => {
+  const build = (spec) => {
+    const widths = {};
+    for (const part of spec.split(" ")) {
+      const width = Number(part.slice(part.indexOf(":") + 1));
+      for (const code of part.slice(0, part.indexOf(":")).split(",")) widths[String.fromCharCode(Number(code))] = width;
+    }
+    return widths;
+  };
+  const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i).join(",");
+  const regular = build([
+    "32:278 33:278 34:355 35:556 36:556 37:889 38:667 39:191 40:333 41:333 42:389 43:584 44:278 45:333 46:278 47:278",
+    `${range(48, 57)}:556`,
+    "58:278 59:278 60:584 61:584 62:584 63:556 64:1015",
+    "65:667 66:667 67:722 68:722 69:667 70:611 71:778 72:722 73:278 74:500 75:667 76:556 77:833 78:722 79:778",
+    "80:667 81:778 82:722 83:667 84:611 85:722 86:667 87:944 88:667 89:667 90:611",
+    "91:278 92:278 93:278 94:469 95:556 96:333",
+    "97:556 98:556 99:500 100:556 101:556 102:278 103:556 104:556 105:222 106:222 107:500 108:222 109:833",
+    "110:556 111:556 112:556 113:556 114:333 115:500 116:278 117:556 118:500 119:722 120:500 121:500 122:500",
+    "123:334 124:260 125:334 126:584"
+  ].join(" "));
+  const bold = build([
+    "32:278 33:333 34:474 35:556 36:556 37:889 38:722 39:238 40:333 41:333 42:389 43:584 44:278 45:333 46:278 47:278",
+    `${range(48, 57)}:556`,
+    "58:333 59:333 60:584 61:584 62:584 63:611 64:975",
+    "65:722 66:722 67:722 68:722 69:667 70:611 71:778 72:722 73:278 74:556 75:722 76:611 77:833 78:722 79:778",
+    "80:667 81:778 82:722 83:667 84:611 85:722 86:667 87:944 88:667 89:667 90:611",
+    "91:333 92:278 93:333 94:584 95:556 96:333",
+    "97:556 98:611 99:556 100:611 101:556 102:333 103:611 104:611 105:278 106:278 107:556 108:278 109:889",
+    "110:611 111:611 112:611 113:611 114:389 115:556 116:333 117:611 118:556 119:778 120:556 121:556 122:500",
+    "123:389 124:280 125:389 126:584"
+  ].join(" "));
+  // Anything outside the table -- an accent, a currency mark -- is charged the
+  // width of a lowercase o, which is the safe direction: a slight overestimate
+  // shrinks a fitted line rather than letting it run past its margin.
+  return { regular, bold, fallback: { regular: 556, bold: 611 } };
+})();
 // Poster page sizes in PDF points, and the two display sizes the A3 marketing
 // sheet sets a shop's name at -- full width on one line, or a step down when the
 // name has to break across two.
-const PDF_PAGE_A4 = { width: 595.28, height: 841.89 };
+const PDF_PAGE_A4 = { width: 595, height: 842 };
+const PDF_PAGE_A4_EXACT = { width: 595.28, height: 841.89 };
 const PDF_PAGE_A3 = { width: 841.89, height: 1190.55 };
 const MARKETING_NAME_SIZE = 260;
 const MARKETING_NAME_SIZE_WRAPPED = 150;
@@ -12289,14 +12339,25 @@ function assembleStatementStylePdf(commands, logo = null) {
   });
   return output;
 }
-function makePdf(commands) {
+function pdfTextWidth(value, size, bold = false, tracking = 0) {
+  const table = bold ? HELVETICA_METRICS.bold : HELVETICA_METRICS.regular;
+  const fallback = bold ? HELVETICA_METRICS.fallback.bold : HELVETICA_METRICS.fallback.regular;
+  const text = String(value == null ? "" : value);
+  let units = 0;
+  for (const character of text) units += table[character] === undefined ? fallback : table[character];
+  return (units / 1000) * size + Math.max(0, text.length - 1) * tracking;
+}
+function makePdf(commands, page = PDF_PAGE_A4) {
   const content = commands.join("\n");
   const objects = [
     "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
     "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
-    "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >> endobj",
-    "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
-    "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj",
+    `3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >> endobj`,
+    // WinAnsiEncoding rather than the default: it is a superset of what the
+    // documents already emit, so nothing they produce changes, and it lets a
+    // shop name carrying an accent print as itself instead of as a blank.
+    "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj",
+    "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> endobj",
     `6 0 obj << /Length ${content.length} >> stream\n${content}\nendstream endobj`
   ];
   let pdf = "%PDF-1.4\n";
@@ -12511,6 +12572,19 @@ async function downloadPayoutReportPdf() {
   }
   const pdf = payoutReportPdf(source);
   downloadBlob(new Blob([pdf], { type: "application/pdf" }), `titopay-payout-report-${dateStamp(new Date())}.pdf`);
+}
+// pdfEscape flattens anything outside printable ASCII to a space, which is fine
+// for a reference number and not fine for a shop's name: Cafe Mocambique came
+// out as "Cafe Mo ambique". The poster fonts declare WinAnsiEncoding, so the
+// Latin-1 range can be written as octal escapes instead -- which keeps the
+// content stream pure ASCII, so makePdf's byte count stays correct.
+function pdfEscapeWinAnsi(value) {
+  return String(value == null ? "" : value)
+    .replace(/[()\\]/g, "\\$&")
+    .replace(/[^\x20-\x7E]/g, (character) => {
+      const code = character.charCodeAt(0);
+      return code >= 0xa0 && code <= 0xff ? `\\${code.toString(8)}` : " ";
+    });
 }
 function pdfEscape(value) {
   return String(value == null ? "" : value)
@@ -14020,15 +14094,6 @@ async function openQrPosterModal(kind = "payment") {
 function posterFont(weight, size) {
   return `${weight} ${size}px -apple-system, "Segoe UI", Inter, Roboto, sans-serif`;
 }
-// The marketing sheet is drawn twice -- on a canvas for the PDF and in CSS for
-// the preview -- so the two have to MEASURE the same. posterFont's stack
-// resolves differently from the page's, and the same nominal size came out
-// about 18% wider in CSS: a line the canvas fitted, the preview wrapped. This
-// is the page's stack verbatim, so a size that fits one fits the other.
-// posterFont is left alone; the two A4 QR posters are laid out against it.
-function posterUiFont(weight, size) {
-  return `${weight} ${size}px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-}
 function posterRoundRectPath(g, x, y, w, h, r) {
   if (typeof g.roundRect === "function") {
     g.beginPath();
@@ -14054,12 +14119,12 @@ function posterLoadImage(src) {
 }
 // Shrinks a line until it fits the column rather than letting it clip. The
 // value is real data (a business name, a UUID), so it must all be on the sheet.
-function posterFitText(g, textValue, weight, startSize, maxWidth, minSize = 22, font = posterFont) {
+function posterFitText(g, textValue, weight, startSize, maxWidth, minSize = 22) {
   let size = startSize;
-  g.font = font(weight, size);
+  g.font = posterFont(weight, size);
   while (size > minSize && g.measureText(textValue).width > maxWidth) {
     size -= 2;
-    g.font = font(weight, size);
+    g.font = posterFont(weight, size);
   }
   return size;
 }
@@ -14200,7 +14265,7 @@ async function renderQrPosterCanvas(context) {
 // box. Built by hand like every other PDF in this app. The page defaults to A4
 // so the two QR posters call it exactly as they always did; the A3 marketing
 // sheet passes its own size.
-function posterJpegToPdf(jpegDataUrl, imageWidth, imageHeight, page = PDF_PAGE_A4) {
+function posterJpegToPdf(jpegDataUrl, imageWidth, imageHeight, page = PDF_PAGE_A4_EXACT) {
   const pageW = page.width;
   const pageH = page.height;
   const base64 = String(jpegDataUrl).split(",")[1] || "";
@@ -14290,8 +14355,13 @@ async function marketingPosterName() {
 // as the block allows rather than shrunk until it fits one line. A name that
 // would have to drop below two thirds of the display size is broken at its most
 // balanced word instead, which buys back most of that size on two lines.
-function posterNameLayout(g, name, maxWidth) {
-  const single = posterFitText(g, name, 800, MARKETING_NAME_SIZE, maxWidth, 54, posterUiFont);
+function posterNameLayout(name, maxWidth) {
+  const fit = (text, start) => {
+    let size = start;
+    while (size > 54 && pdfTextWidth(text, size, true) > maxWidth) size -= 2;
+    return size;
+  };
+  const single = fit(name, MARKETING_NAME_SIZE);
   if (single >= Math.round(MARKETING_NAME_SIZE * 0.66)) return { lines: [name], size: single };
   const words = String(name).trim().split(/\s+/).filter(Boolean);
   if (words.length < 2) return { lines: [name], size: single };
@@ -14302,10 +14372,7 @@ function posterNameLayout(g, name, maxWidth) {
     const imbalance = Math.abs(head.length - tail.length);
     if (!best || imbalance < best.imbalance) best = { head, tail, imbalance };
   }
-  const wrapped = Math.min(
-    posterFitText(g, best.head, 800, MARKETING_NAME_SIZE_WRAPPED, maxWidth, 54, posterUiFont),
-    posterFitText(g, best.tail, 800, MARKETING_NAME_SIZE_WRAPPED, maxWidth, 54, posterUiFont)
-  );
+  const wrapped = Math.min(fit(best.head, MARKETING_NAME_SIZE_WRAPPED), fit(best.tail, MARKETING_NAME_SIZE_WRAPPED));
   return wrapped > single ? { lines: [best.head, best.tail], size: wrapped } : { lines: [name], size: single };
 }
 async function openMarketingPosterModal() {
@@ -14318,11 +14385,7 @@ async function openMarketingPosterModal() {
   // it once and both renderers use the answer. Left to `text-wrap`, a long name
   // went to three lines on screen against two in print, and the third line
   // pushed the web address off the bottom of the sheet.
-  const layout = posterNameLayout(
-    document.createElement("canvas").getContext("2d"),
-    name,
-    2339 - 170 * 2 - 160
-  );
+  const layout = posterNameLayout(name, SHEET_W - Math.round(SHEET_W * 0.0874) * 2);
   openModal(`
     <div class="modal-head">
       <div>
@@ -14360,148 +14423,221 @@ async function openMarketingPosterModal() {
     <p class="field-hint">The PDF is a finished A3 sheet: download it, then take it to any print shop. The name above is the one on your TitoPay business profile and the one customers see when they pay you. To change it, update Profile &amp; Verification and open this poster again.</p>
   `);
 }
-// A3 portrait at 200dpi, set on the grid businessDocumentPdf uses.
+// A byte-accurate PDF writer for the marketing sheet.
 //
-// Every measurement here is that document scaled up: the margin is its 52pt of
-// 595 (8.7% of the width), the rule under the masthead is its 4pt of 842, the
-// section labels are its small mid-blue caps, the panel is its pale fill behind
-// a hairline, and the footer is its rule with the tagline set against the
-// opposite margin. Nothing is centred, because nothing in that document is.
-async function renderMarketingPosterCanvas(context) {
-  const W = 2339;
-  const H = 3307;
-  const config = MARKETING_POSTER;
-  const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  const g = canvas.getContext("2d");
-  const margin = Math.round(W * 0.0874); // the document's 52pt of 595
-  const right = W - margin;
-  const colW = W - margin * 2;
-  const spaced = (value) => String(value).split("").join(" ");
-
-  g.fillStyle = POSTER_GROUND;
-  g.fillRect(0, 0, W, H);
-  g.textBaseline = "alphabetic";
-  const left = (value, y, size, weight, colour) => {
-    g.textAlign = "left";
-    g.fillStyle = colour;
-    g.font = posterUiFont(weight, size);
-    g.fillText(value, margin, y);
+// makePdf assembles a JS string, which is correct for the documents because
+// everything they emit is ASCII. This sheet carries the TitoPay wordmark as an
+// actual image, and JPEG bytes cannot survive a string: a Blob encodes one as
+// UTF-8 and every byte above 127 turns into two. So the sheet is assembled as
+// bytes from the start, the way posterJpegToPdf already does it -- which is
+// also why that function is left exactly as it is, with the two A4 QR posters
+// still pointing at it.
+function posterVectorPdf({ page, commands, image }) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  const offsets = {};
+  let offset = 0;
+  const push = (part) => {
+    const bytes = typeof part === "string" ? encoder.encode(part) : part;
+    chunks.push(bytes);
+    offset += bytes.length;
   };
-  const rightAt = (value, y, size, weight, colour) => {
-    g.textAlign = "right";
-    g.fillStyle = colour;
-    g.font = posterUiFont(weight, size);
-    g.fillText(value, right, y);
-  };
-  const rule = (y, colour, thickness) => {
-    g.fillStyle = colour;
-    g.fillRect(margin, y, colW, thickness);
-  };
+  const content = commands.join("\n");
+  const count = image ? 7 : 6;
+  const resources = `/Font << /F1 4 0 R /F2 5 0 R >>${image ? " /XObject << /Im1 7 0 R >>" : ""}`;
 
-  // 1. Masthead: TitoPay's band, cut by the electric-blue rule that opens every
-  //    TitoPay business document. The shop is not named up here -- it gets the
-  //    white field below, where it is read at distance against paper.
-  const bandH = 480;
-  g.fillStyle = DOC_INK.navy;
-  g.fillRect(0, 0, W, bandH);
-  g.fillStyle = DOC_INK.rule;
-  g.fillRect(0, bandH, W, Math.round(H * 0.0048)); // the document's 4pt of 842
-
-  const logo = await posterLoadImage("./assets/titopay-logo-night.png");
-  if (logo) {
-    const logoW = 560;
-    const logoH = logoW * (logo.naturalHeight / logo.naturalWidth);
-    g.drawImage(logo, margin, 240 - logoH / 2, logoW, logoH);
-  } else {
-    left("TitoPay", 280, 130, 800, "#ffffff");
+  push("%PDF-1.4\n");
+  offsets[1] = offset;
+  push("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n");
+  offsets[2] = offset;
+  push("2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n");
+  offsets[3] = offset;
+  push(`3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 ${page.width} ${page.height}] /Resources << ${resources} >> /Contents 6 0 R >> endobj\n`);
+  offsets[4] = offset;
+  push("4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj\n");
+  offsets[5] = offset;
+  push("5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> endobj\n");
+  offsets[6] = offset;
+  push(`6 0 obj << /Length ${encoder.encode(content).length} >> stream\n${content}\nendstream endobj\n`);
+  if (image) {
+    offsets[7] = offset;
+    push(`7 0 obj << /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${image.bytes.length} >> stream\n`);
+    push(image.bytes);
+    push("\nendstream endobj\n");
   }
-  rightAt(spaced(config.kind.toUpperCase()), 262, 66, 800, "#ffffff");
+  const xrefStart = offset;
+  let xref = `xref\n0 ${count + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= count; i += 1) xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  push(`${xref}trailer << /Size ${count + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`);
 
-  // 2. The message. "TitoPay" and "here" are the two words a person crossing the
-  //    road needs, so they carry the accent and the size; the rest of the
-  //    sentence is set quieter above them on the same left edge.
-  left(config.lead.toUpperCase(), 880, 150, 800, GROUND_INK.ink);
+  const out = new Uint8Array(offset);
+  let position = 0;
+  for (const chunk of chunks) { out.set(chunk, position); position += chunk.length; }
+  return out;
+}
+// The wordmark, flattened onto the masthead navy so it can be a JPEG -- JPEG
+// has no alpha, and compositing it here is exact rather than hoping a viewer
+// picks the right matte. Rendered at roughly 400dpi for its printed size, so
+// A3 has more pixels than it can show.
+async function posterWordmarkImage(widthPt) {
+  const logo = await posterLoadImage("./assets/titopay-logo-night.png");
+  if (!logo) return null;
+  const width = Math.round(widthPt * (400 / 72));
+  const height = Math.round(width * (logo.naturalHeight / logo.naturalWidth));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const g = canvas.getContext("2d");
+  g.fillStyle = DOC_INK.navy;
+  g.fillRect(0, 0, width, height);
+  g.drawImage(logo, 0, 0, width, height);
+  const base64 = canvas.toDataURL("image/jpeg", 0.96).split(",")[1] || "";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return { bytes, width, height };
+}
+// The A3 marketing sheet, as a REAL PDF.
+//
+// It used to be a 200dpi JPEG of a canvas dropped into a page. That is a
+// photograph of a poster, not a poster: the type came out soft at A3, it
+// carried whatever face the device happened to fall back to -- so no two phones
+// produced the same sheet -- and the file ran to a third of a megabyte.
+//
+// This draws it the way every TitoPay invoice, quote and statement is already
+// drawn: vector text operators through makePdf. The type is sharp at any size a
+// print shop cares to blow it up to, it is the same Helvetica on every device,
+// and the whole sheet is a few kilobytes. The only thing that was ever a
+// bitmap, the wordmark, is set as type in the two brand colours -- exactly the
+// treatment payoutReportPdf already uses for it.
+//
+// The layout is kept in the same 2339-wide sheet units the preview's container
+// query units are derived from, and converted once, so the sheet on screen and
+// the sheet on paper are laid out from one set of numbers.
+async function marketingPosterPdf(context) {
+  const config = MARKETING_POSTER;
+  const W = PDF_PAGE_A3.width;
+  const H = PDF_PAGE_A3.height;
+  const k = W / SHEET_W;              // sheet units -> points
+  const u = (value) => +(value * k).toFixed(2);
+  const margin = u(Math.round(SHEET_W * 0.0874));
+  const colW = W - margin * 2;
+  const right = W - margin;
+  const down = (fromTop) => +(H - fromTop * k).toFixed(2);   // PDF counts up
+
+  const rgb = (hex) => [1, 3, 5].map((i) => (parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(3)).join(" ");
+  const INK = {
+    ground: rgb(POSTER_GROUND), navy: rgb(DOC_INK.navy), rule: rgb(DOC_INK.rule),
+    ink: rgb(GROUND_INK.ink), accent: rgb(GROUND_INK.accent), label: rgb(GROUND_INK.label),
+    hair: rgb(GROUND_INK.rule), panelLine: rgb(GROUND_INK.panelLine), white: "1 1 1",
+    wordmark: "0.25 0.67 1.000"
+  };
+
+  const commands = [];
+  const box = (x, y, w, h, colour) => commands.push(`q ${colour} rg ${x} ${y} ${w} ${h} re f Q`);
+  // Tracking is the PDF's own Tc operator, not spaces wedged between letters:
+  // it spaces the glyphs without inventing word breaks a reader could hear.
+  //
+  // Tc is TEXT STATE, not a property of one run: it survives ET and applies to
+  // everything drawn afterwards. Left unreset it letterspaced the entire sheet
+  // after the first tracked line, ran the footer off the page, and -- because
+  // the width used to place the second half of the two-colour headline was
+  // computed WITHOUT tracking while the first half was drawn WITH it -- printed
+  // "TITOPAYHERE" on top of itself. Every run therefore states its own Tc, zero
+  // included.
+  const put = (x, y, value, size, bold, colour, tracking = 0) => commands.push(
+    `BT /${bold ? "F2" : "F1"} ${size} Tf ${(+tracking).toFixed(2)} Tc ${colour} rg ${x} ${y} Td (${pdfEscapeWinAnsi(value)}) Tj ET`
+  );
+  const putRight = (x, y, value, size, bold, colour, tracking = 0) =>
+    put(+(x - pdfTextWidth(value, size, bold, tracking)).toFixed(2), y, value, size, bold, colour, tracking);
+
+  // ground
+  box(0, 0, W, H, INK.ground);
+
+  // 1. masthead, cut by the electric-blue rule that opens every TitoPay
+  //    business document
+  const bandH = u(480);
+  const ruleH = u(16);
+  box(0, H - bandH, W, bandH, INK.navy);
+  box(0, H - bandH - ruleH, W, ruleH, INK.rule);
+
+  // The real wordmark, not Helvetica standing in for it. If it cannot be loaded
+  // -- offline, asset missing -- the sheet still prints, with the two-colour
+  // type treatment payoutReportPdf uses for exactly this fallback.
+  const markW = u(560);
+  const markY = down(300);
+  const wordmark = await posterWordmarkImage(markW);
+  if (wordmark) {
+    const markH = +(markW * (wordmark.height / wordmark.width)).toFixed(2);
+    commands.push(`q ${markW} 0 0 ${markH} ${margin} ${+(markY - markH * 0.24).toFixed(2)} cm /Im1 Do Q`);
+  } else {
+    const markSize = u(150);
+    put(margin, markY, "Tito", markSize, true, INK.white);
+    put(+(margin + pdfTextWidth("Tito", markSize, true)).toFixed(2), markY, "Pay", markSize, true, INK.wordmark);
+  }
+
+  const kindSize = u(66);
+  const kindTrack = u(66) * 0.3;
+  // Level with the wordmark, the way the document sets its kind level with the
+  // business name rather than floating it somewhere up the band.
+  putRight(right, markY, config.kind.toUpperCase(), kindSize, true, INK.white, kindTrack);
+
+  // 2. the message
+  put(margin, down(880), config.lead.toUpperCase(), u(150), true, INK.ink);
+  const headSize = u(240);
   const brand = `${config.leadBrand.toUpperCase()} `;
-  g.textAlign = "left";
-  g.font = posterUiFont(800, 240);
-  const brandW = g.measureText(brand).width;
-  g.fillStyle = GROUND_INK.ink;
-  g.fillText(brand, margin, 1160);
-  g.fillStyle = GROUND_INK.accent;
-  g.fillText(config.leadEmphasis.toUpperCase(), margin + brandW, 1160);
+  put(margin, down(1160), brand, headSize, true, INK.ink);
+  put(+(margin + pdfTextWidth(brand, headSize, true)).toFixed(2), down(1160), config.leadEmphasis.toUpperCase(), headSize, true, INK.accent);
 
+  // 3. the shop, in a group optically centred between the rule and the panel
   const zoneTop = 1350;
-  rule(zoneTop, GROUND_INK.rule, 6);
+  box(margin, down(zoneTop) - u(6), colW, u(6), INK.hair);
 
-  // 3. The shop. A section label in the document's mid blue, then the name in
-  //    ink, larger than anything else on the sheet -- half the reason a shop
-  //    puts this in its window is to see its own name in it.
-  const labelSize = 58;
-  const labelToName = 110;
-  const name = posterNameLayout(g, context.name, colW);
-  const nameLineH = name.size * 1.16;
-
-  // 4. Supporting copy, in the document's pale panel behind a hairline. It is
-  //    hung from the footer rather than pushed down by the name, so the bottom
-  //    third of the sheet holds still whether the shop is called KB or Mama
-  //    Thandi's Spaza & Takeaways.
   const panelPad = 130;
-  const safetySize = 100;
   const safetyLineH = 180;
+  const safetyCeiling = 100;
+  const panelInner = SHEET_W - Math.round(SHEET_W * 0.0874) * 2 - panelPad * 2;
+  const safetySize = config.safety.reduce((smallest, line) => {
+    let size = safetyCeiling;
+    const bold = line === config.safety[config.safety.length - 1];
+    while (size > 62 && pdfTextWidth(line, size, bold) > panelInner) size -= 2;
+    return Math.min(smallest, size);
+  }, safetyCeiling);
   const panelH = panelPad * 2 + (config.safety.length - 1) * safetyLineH + safetySize;
-  // (safetySize is the ceiling; the drawn size may be smaller, which only adds air)
   const panelTop = 2807 - panelH;
 
-  // The label and the name are set as one group, optically centred in the band
-  // between the hairline and the panel. A shop called KB and one called Mama
-  // Thandi's Spaza & Takeaways then leave the same air above and below
-  // themselves, instead of a short name pooling all the leftover space at the
-  // bottom of the sheet.
+  const labelSize = 58;
+  const labelToName = 110;
+  const name = posterNameLayout(context.name, SHEET_W - Math.round(SHEET_W * 0.0874) * 2);
+  const nameLineH = name.size * 1.16;
   const groupH = labelSize * 0.72 + labelToName + name.size * 0.72
     + (name.lines.length - 1) * nameLineH + name.size * 0.24;
   const groupTop = zoneTop + (panelTop - zoneTop - groupH) / 2;
-  left(spaced(config.at.toUpperCase()), groupTop + labelSize * 0.72, labelSize, 700, GROUND_INK.label);
-  const nameY = groupTop + labelSize * 0.72 + labelToName + name.size * 0.72;
-  name.lines.forEach((line, index) => left(line, nameY + index * nameLineH, name.size, 800, GROUND_INK.ink));
 
-  g.fillStyle = GROUND_INK.panel;
-  g.fillRect(margin, panelTop, colW, panelH);
-  g.fillStyle = GROUND_INK.panelLine;
-  g.fillRect(margin, panelTop, colW, 4);
-  g.fillRect(margin, panelTop + panelH - 4, colW, 4);
-  g.fillRect(margin, panelTop, 4, panelH);
-  g.fillRect(right - 4, panelTop, 4, panelH);
-  // One size for the whole block. Fitting each line on its own left three lines
-  // of the same paragraph set at three different sizes, which reads as a
-  // mistake; the size that fits the longest of them fits all of them.
-  const panelInner = colW - panelPad * 2;
-  const panelSize = config.safety.reduce(
-    (smallest, line, index) => Math.min(
-      smallest,
-      posterFitText(g, line, index === config.safety.length - 1 ? 800 : 600, safetySize, panelInner, 62, posterUiFont)
-    ),
-    safetySize
-  );
-  const safetyY = panelTop + panelPad + panelSize * 0.76;
+  put(margin, down(groupTop + labelSize * 0.72), config.at.toUpperCase(), u(labelSize), true, INK.label, u(labelSize) * 0.34);
+  const nameTop = groupTop + labelSize * 0.72 + labelToName + name.size * 0.72;
+  name.lines.forEach((line, index) => put(margin, down(nameTop + index * nameLineH), line, u(name.size), true, INK.ink));
+
+  // 4. the notice: white on sky, behind the document's hairline
+  const panelY = down(panelTop + panelH);
+  box(margin, panelY, colW, u(panelH), INK.white);
+  const hair = u(4);
+  box(margin, panelY, colW, hair, INK.panelLine);
+  box(margin, panelY + u(panelH) - hair, colW, hair, INK.panelLine);
+  box(margin, panelY, hair, u(panelH), INK.panelLine);
+  box(right - hair, panelY, hair, u(panelH), INK.panelLine);
   config.safety.forEach((line, index) => {
     const last = index === config.safety.length - 1;
-    g.textAlign = "left";
-    g.fillStyle = last ? GROUND_INK.accent : GROUND_INK.ink;
-    g.font = posterUiFont(last ? 800 : 600, panelSize);
-    g.fillText(line, margin + panelPad, safetyY + index * safetyLineH);
+    put(margin + u(panelPad), down(panelTop + panelPad + safetySize * 0.76 + index * safetyLineH),
+      line, u(safetySize), last, last ? INK.accent : INK.ink);
   });
 
-  // 5. Footer: the document's hairline with the address against one margin and
-  //    the tagline against the other.
-  // The two footer items sit against opposite margins, as in the document. Set
-  // any larger and they close up into one run of text in the middle.
-  rule(2937, GROUND_INK.rule, 5);
-  left(config.site, 3090, 84, 800, GROUND_INK.accent);
-  rightAt(BRAND_TAGLINE, 3090, 50, 600, GROUND_INK.label);
+  // 5. footer
+  box(margin, down(2937) - u(5), colW, u(5), INK.hair);
+  put(margin, down(3090), config.site, u(84), true, INK.accent);
+  putRight(right, down(3090), BRAND_TAGLINE, u(50), false, INK.label);
 
-  return canvas;
+  return posterVectorPdf({ page: PDF_PAGE_A3, commands, image: wordmark });
 }
 async function downloadMarketingPosterPdf() {
   const context = state.marketingPosterContext;
@@ -14509,9 +14645,7 @@ async function downloadMarketingPosterPdf() {
     showToast("Open the poster before downloading it.", "error");
     return;
   }
-  const canvas = await renderMarketingPosterCanvas(context);
-  const jpeg = canvas.toDataURL("image/jpeg", 0.92);
-  const pdf = posterJpegToPdf(jpeg, canvas.width, canvas.height, PDF_PAGE_A3);
+  const pdf = await marketingPosterPdf(context);
   downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${MARKETING_POSTER.filename}-a3.pdf`);
   showToast("A3 poster downloaded as a PDF.");
 }
