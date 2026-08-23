@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v97";
+  return "admin-console-v98";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -7623,11 +7623,18 @@ document.addEventListener("submit", async (event) => {
       active: formData.get("enabled") === "on",
     };
     try {
-      await apiFetch(`/pricing/${pricingForm.dataset.pricingId}`, {
+      const saved = await apiFetch(`/pricing/${pricingForm.dataset.pricingId}`, {
         method: "PUT",
         body: JSON.stringify(body),
       });
-      showToast("Pricing rule updated");
+      // A protected fee (the settlement fee) does NOT save on the first press:
+      // the API returns pendingApproval and waits for a second admin. Saying
+      // "Pricing rule updated" there tells an operator a fee changed when it
+      // has not, and they walk away from a screen that then re-renders the old
+      // number. Report what actually happened.
+      showToast(saved?.pendingApproval
+        ? "Sent for approval - a second admin must approve this fee change before it takes effect"
+        : "Pricing rule updated");
       await renderPricing();
     } catch (error) {
       showToast(adminErrorMessage(error.message));

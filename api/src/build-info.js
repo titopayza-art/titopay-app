@@ -19,10 +19,24 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 107;
+const API_BUILD = 108;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  108: "EVERY PRICING RULE IS EDITABLE FROM THE ADMIN PORTAL, PROVEN. Verified by "
+      + "walking the console's own path - GET /pricing then PUT /pricing/:id - "
+      + "against every rule in the database: each one saved, and calculateFee then "
+      + "charged the new figure. Two real problems found and fixed while checking. "
+      + "(1) The settlement fee returns 202 pendingApproval because it needs a "
+      + "second admin, but the console showed 'Pricing rule updated' - an operator "
+      + "would leave believing a fee had changed when it had not. It now says the "
+      + "change was sent for approval. (2) Loading the Pricing Engine screen fired "
+      + "ONE upsert PER RULE - 107 sequential round-trips before the page could "
+      + "render, on the same pool that serves sign-in. Now a single bulk statement: "
+      + "2 queries, 5ms, with identical semantics (a rule that exists is left "
+      + "exactly as an operator set it). Admin cache-buster bumped v97>v98 across "
+      + "70 files, or browsers would keep serving the old bundle and the console "
+      + "fix would never reach anyone.",
   107: "THE APPROVED PRICING SCHEDULE. Every pricing rule now matches the signed-off "
       + "TitoPay schedule. Free stays free and is now explicit: personal wallet, the "
       + "monthly wallet fee, wallet-to-wallet (send/receive/transfer), OTP and security "

@@ -349,12 +349,46 @@ async function syncApprovedPricingSchedule(actorId = null) {
   return rows;
 }
 
+// Seeds any missing rule in ONE statement.
+//
+// This used to loop DEFAULT_PRICING_RULES and await a separate upsert for each,
+// which is one database round-trip per rule on a path the Pricing Engine screen
+// calls on every load - over a hundred of them, sequentially, before the page
+// could render. That is slow on a good day and it is exactly the kind of
+// avoidable pool pressure that took sign-in down earlier.
+//
+// The semantics are unchanged: a rule that already exists is left exactly as it
+// is (an operator's tuned figure is never overwritten here - only the one-shot
+// approved-schedule fixup does that, deliberately), and a missing one is
+// inserted at its scheduled price.
 async function ensureDefaultPricingRules() {
-  const rows = [];
+  await ensurePricingSchema();
+  const codes = [], names = [], feeTypes = [], feeValues = [];
+  const flats = [], pcts = [], mins = [], maxes = [], ids = [];
   for (const rule of DEFAULT_PRICING_RULES) {
-    rows.push(await ensureDefaultPricingRule(rule.serviceCode));
+    codes.push(rule.serviceCode);
+    names.push(rule.serviceName);
+    feeTypes.push(rule.percentageFee > 0 ? "PERCENTAGE" : rule.flatFee > 0 ? "FIXED" : "FREE");
+    feeValues.push(rule.percentageFee > 0 ? rule.percentageFee : rule.flatFee);
+    flats.push(rule.flatFee);
+    pcts.push(rule.percentageFee);
+    mins.push(rule.minimumFee);
+    maxes.push(rule.maximumFee);
+    ids.push(uuidv4());
   }
-  return rows;
+  const { rows } = await pool.query(
+    `INSERT INTO pricing_rules
+       (id, service_code, service_name, fee_type, fee_value, flat_fee, percentage_fee,
+        minimum_fee, maximum_fee, vat_percentage, enabled, active, effective_date)
+     SELECT id, code, name, fee_type, fee_value, flat, pct, min, max, 0, TRUE, TRUE, CURRENT_DATE
+       FROM unnest($1::UUID[], $2::TEXT[], $3::TEXT[], $4::TEXT[], $5::NUMERIC[],
+                   $6::NUMERIC[], $7::NUMERIC[], $8::NUMERIC[], $9::NUMERIC[])
+            AS seed(id, code, name, fee_type, fee_value, flat, pct, min, max)
+     ON CONFLICT (service_code) DO NOTHING
+     RETURNING *`,
+    [ids, codes, names, feeTypes, feeValues, flats, pcts, mins, maxes]
+  );
+  return rows.map(normalizePricingRow);
 }
 
 async function listPricingRules() {

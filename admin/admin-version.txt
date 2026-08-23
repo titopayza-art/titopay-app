@@ -1,5 +1,5 @@
 TitoPay Admin
-Build: admin-console-v97
+Build: admin-console-v98
 Date: 2026-08-22
 
 v97 - Official wordmark throughout.
