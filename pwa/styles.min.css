@@ -713,65 +713,44 @@ html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
 /* ==========================================================================
    A3 MARKETING POSTER (preview)
    ==========================================================================
-   Set on the grid businessDocumentPdf uses, because that document is the house
-   style for anything a business puts its name on. Its margin is 52pt of 595 --
-   8.74% -- so that is the margin here. Its masthead is navy cut by a 4pt
-   electric-blue rule; its section labels are small mid-blue caps; its panels
-   are a pale fill behind a hairline; its footer is a rule with the tagline set
-   against the opposite margin. Nothing is centred, because nothing there is.
+   The sheet is a product poster, not a notice: wordmark in the corner, the
+   message in a left column, and a sky capsule carrying a real screen of the
+   app. Everything is placed absolutely as a percentage of the sheet, because
+   the sheet's aspect ratio is fixed at A3 -- so a horizontal percentage is a
+   percentage of 841.89pt and a vertical one of 1190.55pt, and every number
+   here is the same number the PDF draws at, divided by one of those two.
 
-   The sheet is printed on sky (#60cdff), not white, so it carries its own ink
-   set: the electric blue drops to 3.1:1 on that ground and the muted grey to
-   2.6:1, and the pale panel and hairline vanish into it. Ink #0f1a33 reads at
-   9.6:1, the darkened accent #0637b8 at 5.2:1, the label #123a72 at 6.2:1, and
-   the panel goes white so its own copy sits at 19:1.
-
-   Every size is a container query unit against the poster's own width, and is
-   the same number the canvas renderer draws at, expressed against A3. Colours
-   are the document's own values and are absolute, never theme tokens: paper is
-   white in both themes, and a sheet that repainted itself at night would show
-   the shop something its printer will not produce.
+   Type sizes are container query units against the sheet's own width, so 8.31
+   cqw IS the 70pt the printed headline uses. The face is the one the PDF
+   prints in, not the app's, and the weights match F1/F2 rather than the app's
+   scale.
    ========================================================================== */
-/* The preview is set in the face the PDF actually prints in. It used to be the
-   app's Inter while the sheet came out in Helvetica, so the preview was showing
-   a poster nobody would receive. */
-.mk-poster{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:#0f1a33;container-type:inline-size;display:grid;grid-template-rows:auto 1fr auto;aspect-ratio:297/420;overflow:hidden;background:#60cdff;border:1px solid #dfe7f5;border-radius:18px}
-/* -- masthead ------------------------------------------------------------ */
-.mk-band{min-width:0;display:flex;align-items:baseline;justify-content:space-between;gap:4cqw;height:20.5cqw;padding:0 8.74cqw;background:#081438;border-bottom:.68cqw solid #0057ff}
-.mk-band-logo{width:23.9cqw;min-width:88px;height:auto;align-self:center}
-.mk-band-kind{margin:0;align-self:center;color:#fff;font-size:clamp(0.42rem,2.82cqw,1.4rem);font-weight:800;letter-spacing:.3em;text-transform:uppercase}
-/* -- body ----------------------------------------------------------------
-   Five rows, matching the canvas: message, rule, the name group, and the panel
-   hung at the bottom. The 1fr sits on the name group, so it is optically
-   centred between the hairline and the panel exactly as the printed sheet
-   centres it, and the bottom third of the poster holds still whether the shop
-   is called KB or Mama Thandi's Spaza & Takeaways. */
-.mk-body{min-width:0;display:grid;grid-template-rows:auto auto auto 1fr auto;padding:7.6cqw 8.74cqw 0}
-.mk-lead{margin:0;color:#0f1a33;font-size:clamp(0.62rem,6.41cqw,3.5rem);font-weight:800;line-height:1;letter-spacing:-.01em;text-transform:uppercase}
-.mk-headline{margin:1.2cqw 0 0;color:#0f1a33;font-size:clamp(0.98rem,10.26cqw,5.6rem);font-weight:800;line-height:1;letter-spacing:-.015em;text-transform:uppercase}
-.mk-headline em{font-style:normal;color:#0637b8}
-.mk-hairline{height:.26cqw;margin:8.1cqw 0 0;color:#0f1a33;background:#17457f}
-.mk-namegroup{align-self:center;padding:2cqw 0}
-.mk-label{margin:0;color:#123a72;font-size:clamp(0.36rem,2.48cqw,1.25rem);font-weight:700;letter-spacing:.34em;text-transform:uppercase}
-/* 11.12cqw and 6.41cqw are the 260px and 150px the canvas sets the name at.
-   3.55cqw below is the size the panel block settles on once the longest line
-   is fitted -- measured in the browser, not estimated. */
-.mk-name{margin:2.6cqw 0 0;color:#0f1a33;font-size:clamp(0.86rem,11.12cqw,6.1rem);font-weight:800;line-height:1.16;letter-spacing:-.02em}
-.mk-name.is-wrapped{font-size:clamp(0.7rem,6.41cqw,3.5rem)}
+.mk-poster{position:relative;font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:#0f1a33;container-type:inline-size;aspect-ratio:297/420;overflow:hidden;background:#fff;border:1px solid #dfe7f5;border-radius:18px}
+.mk-mark{position:absolute;left:8.79%;top:5.2%;width:17.8%;height:auto}
+/* left column, clear of the capsule */
+.mk-head{position:absolute;left:8.79%;top:19.3%;width:42%;margin:0;font-size:8.31cqw;font-weight:700;line-height:1.114;letter-spacing:-.02em;color:#081438}
+.mk-head span{display:block}
+.mk-head .is-accent{color:#0057ff}
+/* the capsule and the app on it */
+.mk-capsule{color:#0f1a33;position:absolute;right:8.79%;top:15.8%;width:44.2%;height:40%;border-radius:999px;background:#60cdff}
+.mk-phone{color:#0f1a33;position:absolute;right:14.3%;top:13.8%;width:33.3%;padding:1.07%;background:#081438;border-radius:3.6%/2.5%;line-height:0}
+.mk-phone img{display:block;width:100%;height:auto;border-radius:2.6%/1.8%}
+/* the shop block is anchored to the bottom and grows upward, as the sheet
+   measures it, so a long name pushes its own rule up and never the footer down */
+.mk-bottom{position:absolute;left:8.79%;right:8.79%;bottom:11.6%}
+/* Colour pinned on the decorative spans as well as the sheet: none of them
+   carries text today, but one whose text colour came from outside the poster
+   would be near-white ink at night the moment anyone put a word in it. */
+.mk-hairline{display:block;height:.24cqw;margin-bottom:3.5cqw;color:#0f1a33;background:#dfe7f5}
+.mk-label{margin:0;color:#123a72;font-size:2.02cqw;font-weight:700;letter-spacing:.32em;text-transform:uppercase}
+.mk-name{margin:2.4cqw 0 0;color:#081438;font-size:7.6cqw;font-weight:700;line-height:1.16;letter-spacing:-.02em}
+.mk-name.is-wrapped{font-size:5.94cqw}
 .mk-name span{display:block}
-/* -- pale panel behind a hairline, as in the document -------------------- */
-/* Colour pinned on the panel as well as the sheet: both only ever exist inside
-   .mk-poster today, but a pale panel whose text colour comes from outside it is
-   one careless move away from near-white ink at night. */
-.mk-panel{margin:0 0 5.6cqw;padding:5.56cqw;color:#0f1a33;background:#fff;border:.17cqw solid #1f529e}
-/* Regular, because the sheet prints these two lines in Helvetica and only the
-   closing line in Helvetica-Bold. At 600 the preview was showing a heavier
-   paragraph than the printer produces. */
-.mk-panel p{margin:0;color:#0f1a33;font-size:clamp(0.5rem,3.55cqw,1.95rem);font-weight:400;line-height:1.8}
-.mk-panel p.is-close{color:#0637b8;font-weight:800}
-/* -- footer -------------------------------------------------------------- */
-.mk-foot{min-width:0;display:flex;align-items:baseline;justify-content:space-between;gap:4cqw;margin:0 8.74cqw;padding:3.6cqw 0 5.2cqw;border-top:.21cqw solid #17457f}
-.mk-site{margin:0;color:#0637b8;font-size:clamp(0.5rem,3.59cqw,1.95rem);font-weight:800;letter-spacing:-.01em}
-.mk-foot-tagline{margin:0;color:#123a72;font-size:clamp(0.3rem,2.14cqw,1.1rem);font-weight:400;white-space:nowrap}
+.mk-safety{margin-top:5.2cqw}
+.mk-safety p{margin:0;color:#0f1a33;font-size:3.21cqw;font-weight:400;line-height:1.48}
+.mk-safety p.is-close{color:#0057ff;font-weight:700}
+.mk-foot{position:absolute;left:8.79%;right:8.79%;bottom:4.6%;display:flex;align-items:baseline;justify-content:space-between;gap:3cqw;padding-top:2.6cqw;border-top:.24cqw solid #dfe7f5}
+.mk-site{margin:0;color:#0057ff;font-size:3.56cqw;font-weight:700;letter-spacing:-.01em}
+.mk-foot-tagline{margin:0;color:#123a72;font-size:2.02cqw;font-weight:400;white-space:nowrap}
 /* Paper stays paper at night. Only the frame around it follows the theme. */
 html[data-theme=night] .mk-poster{border-color:#2c4573}

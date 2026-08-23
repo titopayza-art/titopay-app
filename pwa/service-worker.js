@@ -1,10 +1,10 @@
-const CACHE_NAME = "titopay-pwa-v484-vector-poster";
+const CACHE_NAME = "titopay-pwa-v485-product-poster";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./head-boot.js?v=484",
-  "./styles.min.css?v=484",
-  "./app.min.js?v=484",
+  "./head-boot.js?v=485",
+  "./styles.min.css?v=485",
+  "./app.min.js?v=485",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
@@ -18,6 +18,10 @@ const APP_SHELL = [
   "./verify-email/verify-email.js?v=228",
   "./assets/titopay-logo.png",
   "./assets/titopay-logo-night.png",
+  // The marketing poster draws a real screen of the app. A shop opening it
+  // behind a dead connection should still get the sheet it was shown, so the
+  // screen ships in the shell alongside the wordmarks.
+  "./assets/poster-app-screen.jpg?v=485",
   "./assets/icon-192.png?v=165",
   "./assets/icon-512.png?v=165",
   "./assets/maskable-512.png?v=165",
