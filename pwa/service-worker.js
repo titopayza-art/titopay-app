@@ -1,10 +1,10 @@
-const CACHE_NAME = "titopay-pwa-v482-marketing-poster";
+const CACHE_NAME = "titopay-pwa-v483-poster-ground";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./head-boot.js?v=482",
-  "./styles.min.css?v=482",
-  "./app.min.js?v=482",
+  "./head-boot.js?v=483",
+  "./styles.min.css?v=483",
+  "./app.min.js?v=483",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",

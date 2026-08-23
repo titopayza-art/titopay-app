@@ -14380,7 +14380,7 @@ async function renderMarketingPosterCanvas(context) {
   const colW = W - margin * 2;
   const spaced = (value) => String(value).split("").join(" ");
 
-  g.fillStyle = "#ffffff";
+  g.fillStyle = POSTER_GROUND;
   g.fillRect(0, 0, W, H);
   g.textBaseline = "alphabetic";
   const left = (value, y, size, weight, colour) => {
@@ -14422,18 +14422,18 @@ async function renderMarketingPosterCanvas(context) {
   // 2. The message. "TitoPay" and "here" are the two words a person crossing the
   //    road needs, so they carry the accent and the size; the rest of the
   //    sentence is set quieter above them on the same left edge.
-  left(config.lead.toUpperCase(), 880, 150, 800, DOC_INK.ink);
+  left(config.lead.toUpperCase(), 880, 150, 800, GROUND_INK.ink);
   const brand = `${config.leadBrand.toUpperCase()} `;
   g.textAlign = "left";
   g.font = posterUiFont(800, 240);
   const brandW = g.measureText(brand).width;
-  g.fillStyle = DOC_INK.ink;
+  g.fillStyle = GROUND_INK.ink;
   g.fillText(brand, margin, 1160);
-  g.fillStyle = DOC_INK.rule;
+  g.fillStyle = GROUND_INK.accent;
   g.fillText(config.leadEmphasis.toUpperCase(), margin + brandW, 1160);
 
   const zoneTop = 1350;
-  rule(zoneTop, DOC_INK.hairline, 5);
+  rule(zoneTop, GROUND_INK.rule, 6);
 
   // 3. The shop. A section label in the document's mid blue, then the name in
   //    ink, larger than anything else on the sheet -- half the reason a shop
@@ -14462,13 +14462,13 @@ async function renderMarketingPosterCanvas(context) {
   const groupH = labelSize * 0.72 + labelToName + name.size * 0.72
     + (name.lines.length - 1) * nameLineH + name.size * 0.24;
   const groupTop = zoneTop + (panelTop - zoneTop - groupH) / 2;
-  left(spaced(config.at.toUpperCase()), groupTop + labelSize * 0.72, labelSize, 700, DOC_INK.label);
+  left(spaced(config.at.toUpperCase()), groupTop + labelSize * 0.72, labelSize, 700, GROUND_INK.label);
   const nameY = groupTop + labelSize * 0.72 + labelToName + name.size * 0.72;
-  name.lines.forEach((line, index) => left(line, nameY + index * nameLineH, name.size, 800, DOC_INK.ink));
+  name.lines.forEach((line, index) => left(line, nameY + index * nameLineH, name.size, 800, GROUND_INK.ink));
 
-  g.fillStyle = DOC_INK.panel;
+  g.fillStyle = GROUND_INK.panel;
   g.fillRect(margin, panelTop, colW, panelH);
-  g.fillStyle = DOC_INK.panelLine;
+  g.fillStyle = GROUND_INK.panelLine;
   g.fillRect(margin, panelTop, colW, 4);
   g.fillRect(margin, panelTop + panelH - 4, colW, 4);
   g.fillRect(margin, panelTop, 4, panelH);
@@ -14488,7 +14488,7 @@ async function renderMarketingPosterCanvas(context) {
   config.safety.forEach((line, index) => {
     const last = index === config.safety.length - 1;
     g.textAlign = "left";
-    g.fillStyle = last ? DOC_INK.rule : DOC_INK.ink;
+    g.fillStyle = last ? GROUND_INK.accent : GROUND_INK.ink;
     g.font = posterUiFont(last ? 800 : 600, panelSize);
     g.fillText(line, margin + panelPad, safetyY + index * safetyLineH);
   });
@@ -14497,9 +14497,9 @@ async function renderMarketingPosterCanvas(context) {
   //    the tagline against the other.
   // The two footer items sit against opposite margins, as in the document. Set
   // any larger and they close up into one run of text in the middle.
-  rule(2937, DOC_INK.hairline, 4);
-  left(config.site, 3090, 84, 800, DOC_INK.rule);
-  rightAt(BRAND_TAGLINE, 3090, 50, 600, DOC_INK.muted);
+  rule(2937, GROUND_INK.rule, 5);
+  left(config.site, 3090, 84, 800, GROUND_INK.accent);
+  rightAt(BRAND_TAGLINE, 3090, 50, 600, GROUND_INK.label);
 
   return canvas;
 }
@@ -27826,6 +27826,27 @@ const DOC_INK = {
   panel: "#f0f7ff",
   panelLine: "#d1e0fa",
   onNavy: "#d6e3fa"
+};
+// The marketing sheet is not printed on white. It is printed on sky, and three
+// of the document's colours stop working the moment the paper changes: the
+// electric blue drops to 3.1:1 against it, the muted grey to 2.6:1, and the
+// pale panel and hairline disappear into it altogether. So the sheet carries
+// its own set, derived from the document's but chosen for this ground and
+// measured against it rather than assumed.
+//
+//   ink      #0f1a33 on #60cdff   9.6:1
+//   accent   #0637b8 on #60cdff   5.2:1   (the app's own --deep-blue)
+//   label    #123a72 on #60cdff   6.2:1
+//   panel    white, so its own copy sits at 19:1 and the block reads as the
+//            notice it is rather than a wash of the same blue
+const POSTER_GROUND = "#60cdff";
+const GROUND_INK = {
+  ink: "#0f1a33",
+  accent: "#0637b8",
+  label: "#123a72",
+  rule: "#17457f",
+  panel: "#ffffff",
+  panelLine: "#1f529e"
 };
 // ---------------------------------------------------------------------------
 // Learn
