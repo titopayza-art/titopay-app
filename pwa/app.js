@@ -14354,6 +14354,24 @@ async function marketingPosterName() {
   const existing = posterQrFrom(state.profileQr);
   return posterOwnerName(existing);
 }
+// The width the shop's block gets once the app code has taken its column.
+function marketingTextColumn() {
+  return PDF_PAGE_A3.width - 74 * 2 - MARKETING_QR_COL - MARKETING_QR_GUTTER;
+}
+// The same matrix the printed sheet draws, as an SVG for the preview -- one
+// source, so the code on screen cannot drift from the code on paper. Runs are
+// merged and the whole thing is a single path, which also stops the browser
+// leaving hairline gaps between adjacent modules at fractional zoom.
+function appQrSvg() {
+  const n = APP_QR_MODULES;
+  const box = n + APP_QR_QUIET * 2;
+  const path = appQrRuns()
+    .map(({ r, c, len }) => `M${c + APP_QR_QUIET} ${r + APP_QR_QUIET}h${len}v1h-${len}z`)
+    .join("");
+  return `<svg class="mk-app-code" viewBox="0 0 ${box} ${box}" role="img" aria-label="QR code linking to the TitoPay app">`
+    + `<rect width="${box}" height="${box}" fill="#ffffff"/>`
+    + `<path d="${path}" fill="${POSTER_INK.navy}"/></svg>`;
+}
 async function openMarketingPosterModal() {
   const name = await marketingPosterName();
   state.marketingPosterContext = { name };
@@ -14362,7 +14380,7 @@ async function openMarketingPosterModal() {
   // breaks it at, or the sheet on screen is not the sheet coming out of the
   // printer. CSS cannot pick a balanced break, so the measurement runs once and
   // both renderers use the answer.
-  const layout = marketingNameLayout(name, PDF_PAGE_A3.width - 74 * 2);
+  const layout = marketingNameLayout(name, marketingTextColumn());
   openModal(`
     <div class="modal-head">
       <div>
@@ -14380,7 +14398,7 @@ async function openMarketingPosterModal() {
         <span class="is-accent">${esc(config.leadEmphasis)}</span>
       </p>
       <span class="mk-capsule" aria-hidden="true"></span>
-      <span class="mk-phone" aria-hidden="true"><img src="./assets/poster-app-screen.jpg?v=487" alt=""></span>
+      <span class="mk-phone" aria-hidden="true"><img src="./assets/poster-app-screen.jpg?v=488" alt=""></span>
       <div class="mk-bottom">
         <span class="mk-hairline" aria-hidden="true"></span>
         <p class="mk-label">${esc(config.at)}</p>
@@ -14388,6 +14406,11 @@ async function openMarketingPosterModal() {
         <div class="mk-safety">
           ${config.safety.map((line, index) => `<p${index === config.safety.length - 1 ? ' class="is-close"' : ""}>${esc(line)}</p>`).join("")}
         </div>
+      </div>
+      <div class="mk-app">
+        <p class="mk-app-lead">${esc(APP_QR_CAPTION.lead)}</p>
+        ${APP_QR_CAPTION.rest.map((line) => `<p class="mk-app-rest">${esc(line)}</p>`).join("")}
+        <span class="mk-app-card">${appQrSvg()}</span>
       </div>
       <footer class="mk-foot">
         <p class="mk-site">${esc(config.site)}</p>
@@ -14546,6 +14569,43 @@ function marketingNameLayout(name, columnPt) {
   const wrapped = Math.min(fit(best.head, MARKETING_NAME_PT * 0.78), fit(best.tail, MARKETING_NAME_PT * 0.78));
   return wrapped > single ? { lines: [best.head, best.tail], size: wrapped } : { lines: [name], size: single };
 }
+// The supplied QR unpacked into rows of booleans. Each row was packed MSB
+// first and left-aligned in eight bytes, so row r starts at byte r * 8.
+function appQrMatrix() {
+  if (appQrMatrix.cache) return appQrMatrix.cache;
+  const n = APP_QR_MODULES;
+  const binary = atob(APP_QR_BITS);
+  const rows = [];
+  for (let r = 0; r < n; r += 1) {
+    const row = [];
+    for (let c = 0; c < n; c += 1) {
+      const byte = binary.charCodeAt(r * 8 + (c >> 3));
+      row.push(((byte >> (7 - (c & 7))) & 1) === 1);
+    }
+    rows.push(row);
+  }
+  appQrMatrix.cache = rows;
+  return rows;
+}
+// Horizontal runs of dark modules, so one rectangle covers a whole run instead
+// of one per module. Same picture, roughly a fifth of the drawing operators,
+// and it removes the hairline seams some renderers leave between abutting
+// rectangles -- which on a QR read as light pixels through a dark block.
+function appQrRuns() {
+  if (appQrRuns.cache) return appQrRuns.cache;
+  const rows = appQrMatrix();
+  const runs = [];
+  rows.forEach((row, r) => {
+    let start = -1;
+    for (let c = 0; c <= row.length; c += 1) {
+      const on = c < row.length && row[c];
+      if (on && start < 0) start = c;
+      if (!on && start >= 0) { runs.push({ r, c: start, len: c - start }); start = -1; }
+    }
+  });
+  appQrRuns.cache = runs;
+  return runs;
+}
 async function marketingPosterPdf(context) {
   const config = MARKETING_POSTER;
   const W = PDF_PAGE_A3.width;
@@ -14557,7 +14617,11 @@ async function marketingPosterPdf(context) {
   const INK = {
     sky: rgb(POSTER_GROUND), navy: rgb(DOC_INK.navy), blue: rgb(DOC_INK.rule),
     ink: rgb(GROUND_INK.ink), label: rgb(GROUND_INK.label), hair: rgb(POSTER_RULE),
-    paper: rgb(POSTER_PAPER), wordmark: "0.25 0.67 1.000"
+    paper: rgb(POSTER_PAPER), wordmark: "0.25 0.67 1.000",
+    // The app code's own ink, not the document navy. The two are a few points
+    // apart and nobody would see it, but the code was supplied in this colour
+    // and it is reproduced in this colour.
+    qr: rgb(POSTER_INK.navy)
   };
 
   const commands = [];
@@ -14591,7 +14655,7 @@ async function marketingPosterPdf(context) {
     // white: JPEG has no alpha, so a white matte would print the mark in a
     // white box on a blue sheet.
     posterWordmarkImage(150, POSTER_PAPER),
-    posterJpegAsset("./assets/poster-app-screen.jpg?v=487")
+    posterJpegAsset("./assets/poster-app-screen.jpg?v=488")
   ]);
   const images = [wordmark, screen];
 
@@ -14653,7 +14717,19 @@ async function marketingPosterPdf(context) {
   //    address is fixed where a reader expects it and the shop's name cannot
   //    push the safety copy through the footer -- which is exactly what a
   //    top-down cursor did on the first pass.
-  const colW = right - margin;
+  // The bottom is two columns now: the shop's block on the left, the app code
+  // on the right. It has to be a real column rather than a gap the code is
+  // dropped into, because the name is set as large as its column allows -- a
+  // long name used to run the full width and would have printed straight
+  // through the code. The rules still span the sheet; only the type is split.
+  //
+  // 454pt holds the longest safety line (412.7pt measured, not estimated) with
+  // room to spare, and every ordinary shop name still takes the full 64pt --
+  // only names long enough to wrap anyway lose a couple of points.
+  const qrColW = MARKETING_QR_COL;
+  const qrColX = right - qrColW;
+  const colW = qrColX - MARKETING_QR_GUTTER - margin;
+  const ruleW = right - margin;
   const siteBaseline = 76;
   const footRule = 118;
   const safetyLead = 40;
@@ -14671,7 +14747,7 @@ async function marketingPosterPdf(context) {
   // capsule above it. This is the gap that is left; the check alongside this
   // file asserts it stays positive for every name tested.
   marketingPosterPdf.lastClearance = +(H - 664 - ruleY).toFixed(1);
-  box(margin, ruleY, colW, 2, INK.hair);
+  box(margin, ruleY, ruleW, 2, INK.hair);
   put(margin, labelBaseline, config.at.toUpperCase(), 17, true, INK.label, 5.5);
   nameLines.forEach((line, index) => put(margin, nameTop - index * (nameSize * 1.16), line, nameSize, true, INK.navy));
   config.safety.forEach((line, index) => {
@@ -14679,7 +14755,50 @@ async function marketingPosterPdf(context) {
     put(margin, safetyTop - index * safetyLead, line, safetySize, last, last ? INK.blue : INK.ink);
   });
 
-  box(margin, footRule, colW, 2, INK.hair);
+  // 5. the app code, right column. The card is white because the code is: it
+  //    carries an opaque white background, so on this paper an uncarded code
+  //    would print as a white square. Carding it also supplies the quiet zone
+  //    the artwork is two modules short of.
+  const cardSize = qrColW;
+  const cardBottom = 146;
+  const quietModules = APP_QR_MODULES + APP_QR_QUIET * 2;
+  const moduleSize = cardSize / quietModules;
+  const codeSize = moduleSize * APP_QR_MODULES;
+  const codeX = qrColX + APP_QR_QUIET * moduleSize;
+  const codeY = cardBottom + APP_QR_QUIET * moduleSize;
+
+  roundedPath(qrColX, cardBottom, cardSize, cardSize, 14);
+  commands.push("q 1 1 1 rg f Q");
+  // One fill for the whole code. Every run is a subpath of a single path, so
+  // the renderer lays the modules down in one operation and cannot leave a
+  // seam between them.
+  appQrRuns().forEach(({ r, c, len }) => {
+    const x = codeX + c * moduleSize;
+    const y = codeY + codeSize - (r + 1) * moduleSize;
+    commands.push(`${x.toFixed(3)} ${y.toFixed(3)} ${(len * moduleSize).toFixed(3)} ${moduleSize.toFixed(3)} re`);
+  });
+  commands.push(`q ${INK.qr} rg f Q`);
+
+  // The call to action sits above the code: the instruction is read first and
+  // the code answers it. Each line is fitted to the column rather than assumed
+  // to fit, so no line can spill into the shop's block beside it.
+  const captionLead = 19;
+  const fitCaption = (text, size, bold) => {
+    let value = size;
+    while (value > 9 && pdfTextWidth(text, value, bold) > qrColW) value -= 0.5;
+    return value;
+  };
+  const restSize = Math.min(...APP_QR_CAPTION.rest.map((line) => fitCaption(line, 13, false)));
+  const leadSize = fitCaption(APP_QR_CAPTION.lead, 15, true);
+  let captionY = cardBottom + cardSize + 22;
+  APP_QR_CAPTION.rest.slice().reverse().forEach((line) => {
+    put(qrColX, captionY, line, restSize, false, INK.ink);
+    captionY += captionLead;
+  });
+  put(qrColX, captionY, APP_QR_CAPTION.lead, leadSize, true, INK.navy);
+  marketingPosterPdf.lastCaptionTop = +(captionY + leadSize * 0.72).toFixed(1);
+
+  box(margin, footRule, ruleW, 2, INK.hair);
   put(margin, siteBaseline, config.site, 30, true, INK.blue);
   putRight(right, siteBaseline + 3, BRAND_TAGLINE, 17, false, INK.label);
 
@@ -28037,6 +28156,47 @@ const DOC_INK = {
 // falls to 1.12:1 -- past faint and into invisible, which would quietly delete
 // two dividers the layout is built on. POSTER_RULE is that same rule re-derived
 // for this ground: 1.24:1, the weight it has always had, not a new one.
+// THE APP-DOWNLOAD QR, AS SUPPLIED.
+//
+// This is the artwork that was handed over, module for module. It was not
+// regenerated and its payload was not touched: the 57x57 matrix below was read
+// out of the supplied PNG and an image rebuilt from it decodes to the byte-
+// identical string, which is what the check alongside this file asserts on the
+// finished PDF as well.
+//
+// It is drawn as vector rectangles rather than embedded as a picture because
+// the only image format this PDF writer carries is JPEG, and JPEG is lossy:
+// it rings at every hard edge, and a QR code is nothing but hard edges. Drawn
+// as rectangles the code is exact at any size a print shop enlarges it to.
+//
+// The supplied artwork carries a two-module quiet zone. The standard asks for
+// four, and this codebase has already been bitten once by a starved quiet zone
+// on the payment QRs. The missing margin is added AROUND the code, in the
+// white card it sits on -- the code itself is untouched.
+//
+// The payload is a JSON envelope rather than a bare URL, so it is the TitoPay
+// scanner that reads it cleanly; a phone camera sees text with a link inside.
+// That is the supplied code's own property, reported rather than altered.
+// The bottom grid, defined once. The preview sets the shop's name to the size
+// its column allows and the printed sheet must break it at the same word, so
+// both read these numbers rather than each carrying its own copy.
+const MARKETING_QR_COL = 210;
+const MARKETING_QR_GUTTER = 30;
+const APP_QR_MODULES = 57;
+const APP_QR_QUIET = 4;
+const APP_QR_BITS = ""
+    + "/jsRGc4vP4CCXqbepw0ggLqTdhrFHy6Auql9K9OJLoC6KEa+o+UugIInhiN5ziCA/qqqqqqqv4AA"
+    + "S4Fjno4AABt73r949AYAEAXDnlr8pQDXgr5fdw0UgPCcbehhY3OAyo/WlEzfbYDZ9uZ82nzugLKG"
+    + "0yei1f4AXGpi6bJM3oDKTiWy+XxUgNQNdbtkVt2Abu4VEK9V3oCx7HzPErCQgDpgLH3s9XeAHU8F"
+    + "e++v44AX1aGYjDbTgGQ0KSLAisYAbpgU5/JPK4Ct4YJHKtn7gJ+Fln5aJPqA2IOuI9a1jgAa6jtq"
+    + "p8upAHiYOKNsK4uAX4mifsgc/4DctUVVN9FHgGPgSIjlpFAAlMilI28iigCWCBMMWs4vgPmj7URu"
+    + "e9aAWk5WbszdFYA8RfO9MXLBACtl1GFcliEADUX5sOVqs4Dye8X4qHH8ABTIuIofKw+AEqRGOmZC"
+    + "MIChbXAxD72HgA6EQoGQkrEAHeL/TNLjrYCnaFrfz8+lgPi2LxpxKjsAA+lcPmu7/YAA3CXiDvyN"
+    + "AP7xmerxlagAgjggoyYkiwC62BU/Aiz+gLrao3oJagAAuiperFCc3YCCPypeySe9gP4fU3TV5LIA";
+const APP_QR_CAPTION = {
+  lead: "Download TitoPay App",
+  rest: ["and set up your wallet", "in less than a minute"]
+};
 const POSTER_PAPER = "#f0f4ff";
 const POSTER_RULE = "#d3ddf2";
 const POSTER_GROUND = "#60cdff";

@@ -1,10 +1,10 @@
-const CACHE_NAME = "titopay-pwa-v487-shared-paper";
+const CACHE_NAME = "titopay-pwa-v488-app-qr";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./head-boot.js?v=487",
-  "./styles.min.css?v=487",
-  "./app.min.js?v=487",
+  "./head-boot.js?v=488",
+  "./styles.min.css?v=488",
+  "./app.min.js?v=488",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=269",
   "./manifest.webmanifest?v=193",
@@ -21,7 +21,7 @@ const APP_SHELL = [
   // The marketing poster draws a real screen of the app. A shop opening it
   // behind a dead connection should still get the sheet it was shown, so the
   // screen ships in the shell alongside the wordmarks.
-  "./assets/poster-app-screen.jpg?v=487",
+  "./assets/poster-app-screen.jpg?v=488",
   "./assets/icon-192.png?v=165",
   "./assets/icon-512.png?v=165",
   "./assets/maskable-512.png?v=165",

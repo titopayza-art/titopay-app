@@ -741,6 +741,9 @@ html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
 /* the shop block is anchored to the bottom and grows upward, as the sheet
    measures it, so a long name pushes its own rule up and never the footer down */
 .mk-bottom{position:absolute;left:8.79%;right:8.79%;bottom:11.6%}
+/* The rules still span the sheet, exactly as the PDF draws them -- only the
+   type is held back, so the shop's name can never run under the app code. */
+.mk-label,.mk-name,.mk-safety{max-width:65.412%}
 /* Colour pinned on the decorative spans as well as the sheet: none of them
    carries text today, but one whose text colour came from outside the poster
    would be near-white ink at night the moment anyone put a word in it. */
@@ -755,5 +758,17 @@ html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
 .mk-foot{position:absolute;left:8.79%;right:8.79%;bottom:4.6%;display:flex;align-items:baseline;justify-content:space-between;gap:3cqw;padding-top:2.6cqw;border-top:.24cqw solid #d3ddf2}
 .mk-site{margin:0;color:#0057ff;font-size:3.56cqw;font-weight:700;letter-spacing:-.01em}
 .mk-foot-tagline{margin:0;color:#123a72;font-size:2.02cqw;font-weight:400;white-space:nowrap}
+/* The app code, bottom right. Every number here is the PDF's own number
+   converted once: the column is 210pt of 841.89, the card sits 146pt off the
+   bottom of 1190.55, and the code is inset by the four modules of quiet zone
+   the supplied artwork is short of. The card is white because the code is --
+   it carries an opaque white background of its own. */
+.mk-app{position:absolute;right:8.79%;bottom:12.263%;width:24.944%;text-align:left}
+.mk-app p{margin:0;color:#0f1a33}
+.mk-app p.mk-app-lead{color:#081438;font-size:1.782cqw;font-weight:700;line-height:1.46}
+.mk-app-rest{font-size:1.544cqw;font-weight:400;line-height:1.46}
+.mk-app-card{color:#0f1a33;display:block;width:100%;margin-top:1.663cqw;padding:0;background:#fff;border-radius:1.66cqw;line-height:0}
+.mk-app-code{display:block;width:100%;height:auto}
+
 /* Paper stays paper at night. Only the frame around it follows the theme. */
 html[data-theme=night] .mk-poster{border-color:#2c4573}
