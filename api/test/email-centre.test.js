@@ -85,10 +85,10 @@ test("wallet unlock automatically uses the saved authentication preference with 
   assert.match(app, /wallet-lock\/unlock\/verify/);
 });
 
-test("Email OTP is free while Email Statements remain R0.10 and notifications are free", () => {
+test("Email OTP is free while Email Statements are R0.50 and notifications are free", () => {
   const pricing=fs.readFileSync(path.join(root,"src/services/pricing-service.js"),"utf8");
   assert.match(pricing,/\["email_otp", "Email OTP"\]/);
-  assert.match(pricing,/\["email_statement", "Email Statement", 0\.10\]/);
+  assert.match(pricing,/\["email_statement", "Email Statement", 0\.50\]/);
   assert.match(pricing,/\["email_notifications", "Email Notifications"\]/);
 });
 

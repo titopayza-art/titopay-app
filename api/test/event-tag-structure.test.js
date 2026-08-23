@@ -182,6 +182,9 @@ test("an Event Tag tap is registered as a real service code", () => {
   // transactions.service_code is a foreign key into pricing_rules, so without
   // this row a tap could not reach the ledger at all.
   const pricing = fs.readFileSync(path.join(__dirname, "../src/services/pricing-service.js"), "utf8");
-  assert.match(pricing, /\["event_tag", "Event Tag Payment"\]/);
+  // Asserts the ROW EXISTS, not its price: this test exists for the foreign
+  // key, and the approved figure is owned by approved-pricing-schedule.test.js
+  // so a price change does not have to be edited in two places.
+  assert.match(pricing, /\["event_tag", "Event Tag Payment"/);
   assert.match(ticketingSource, /ensureDefaultPricingRule\("event_tag"\)/);
 });

@@ -113,7 +113,7 @@ test("the QR fee is what the schedule says, and nothing overrides it in code", a
   // here, written when the QR fee WAS a flat 50c. It silently overrode anything
   // an operator configured below that figure, which is the wrong place for a
   // floor: a floor belongs in minimum_fee, where an admin can see it and change
-  // it. The schedule now carries a flat R1.50 on the customer side.
+  // it. The approved schedule carries a flat R0.50 on the customer side.
   await withRule(rule({ service_code: "qr_payment", fee_type: "FREE", flat_fee: 0, percentage_fee: 0 }), async () => {
     const fee = await calculateFee("qr_payment", 100);
     assert.equal(fee.fee, 0, "a rule set to free must actually be free, not silently 50c");
@@ -125,9 +125,11 @@ test("the QR fee is what the schedule says, and nothing overrides it in code", a
   });
 });
 
-test("a person pays a flat R1.50 to pay by QR, on any size of sale", async () => {
-  // The percentage sits on the business side. A person paying by QR pays the
-  // same R1.50 on a R20 coffee as on a R5000 sofa, so there is nothing to cap.
+test("a flat customer QR fee is the same on any size of sale", async () => {
+  // The percentage sits on the business side, so the customer side is flat and
+  // there is nothing to cap. This asserts the ARITHMETIC of a flat rule on its
+  // own seeded row - the approved figure itself is asserted in
+  // approved-pricing-schedule.test.js, so the two cannot drift together.
   await withRule(rule({ service_code: "qr_payment", fee_type: "FIXED", flat_fee: 1.5, percentage_fee: 0, minimum_fee: 0, maximum_fee: 0 }), async () => {
     for (const amount of [10, 50, 250, 850, 5000, 20000]) {
       const fee = await calculateFee("qr_payment", amount);
@@ -137,7 +139,7 @@ test("a person pays a flat R1.50 to pay by QR, on any size of sale", async () =>
   });
 });
 
-test("the QR merchant fee is R1.50 + 1.5%, and it is uncapped", async () => {
+test("a flat and a percentage on one rule add together, uncapped", async () => {
   await withRule(rule({ service_code: "merchant_qr_payment", fee_type: "PERCENTAGE", flat_fee: 1.5, percentage_fee: 1.5, minimum_fee: 0, maximum_fee: 0 }), async () => {
     for (const [amount, expected] of [[10, 1.65], [250, 5.25], [5000, 76.5], [20000, 301.5]]) {
       const fee = await calculateFee("merchant_qr_payment", amount);

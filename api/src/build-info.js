@@ -19,10 +19,31 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 106;
+const API_BUILD = 107;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  107: "THE APPROVED PRICING SCHEDULE. Every pricing rule now matches the signed-off "
+      + "TitoPay schedule. Free stays free and is now explicit: personal wallet, the "
+      + "monthly wallet fee, wallet-to-wallet (send/receive/transfer), OTP and security "
+      + "SMS, email and in-app notifications. Changed: top up R6>R5, withdraw R7>R10, "
+      + "customer QR R1.50>R0.50, merchant QR R1.50+1.5%>1.5% flat-free, payment request "
+      + "free>R1, bill split R1>R2, voucher R4>R3, event tag free>R1, make-a-sale "
+      + "1.7%>1.5%, ticket and marketplace commission 12%>10%, bulk distribution 4%>3%, "
+      + "refunds R0.50>R1, statements R0>R0.50, email statement R0.10>R0.50. New: "
+      + "personal KYC R30, business KYC R60, event marketing SMS R0.60, monthly wallet "
+      + "fee (free). The 12 live services that matched NO rule - and were therefore "
+      + "charging nothing - now resolve: airtime-data, refund, invoice, quote, "
+      + "proforma-invoice, tickets, ticketing, book, business-ticketing-staff, "
+      + "business-staff, enterprise-distribution, rewards. Editing the schedule alone "
+      + "never reaches a live database (syncApprovedPricingSchedule only runs from "
+      + "db:init), so it ships through a one-shot fixup keyed "
+      + "pricing_schedule_2026_08_approved, applied once and recorded, exactly as the "
+      + "QR fixup did. The QR tile copy that still advertised 'a flat R1.50' in "
+      + "service_config and schema.sql was corrected to R0.50 in the same change, so "
+      + "the price a customer READS and the price they are CHARGED cannot disagree. "
+      + "No rule is ever deleted: transactions.service_code is a foreign key into "
+      + "pricing_rules ON DELETE RESTRICT.",
   106: "THE REAL POOL-EXHAUSTION FIX: leaked session advisory locks. Sign-in and "
       + "/v1/health kept dying with 'timeout exceeded when trying to connect'. "
       + "pg_stat_activity while broken showed all pool connections stranded 'idle' "

@@ -5,123 +5,154 @@ const { writeAuditLog } = require("./audit-service");
 const { isMissingDbObjectError, logDbCompatibilityWarning } = require("../lib/db-safe");
 
 const APPROVED_PRICING_SCHEDULE = [
+  // THE APPROVED TITOPAY PRICING SCHEDULE.
+  //
+  // Tuple order is [serviceCode, serviceName, flatFee, minimumFee, percentageFee, maximumFee]
+  // - a flat fee:            ["code", "Name", 5]
+  // - a percentage:          ["code", "Name", 0, 0, 1.5]
+  // - a percentage, capped:  ["code", "Name", 0, 0, 1.5, 10]
+  // - free:                  ["code", "Name"]
+  //
+  // Several codes are ALIASES of one product (a withdrawal is submitted as
+  // withdraw, bank_transfer and withdraw_money_to_bank depending on the caller).
+  // Aliases carry identical numbers so the fee cannot depend on which entry
+  // point was used. Nothing is ever removed from this list: transactions
+  // .service_code is a foreign key into pricing_rules ON DELETE RESTRICT, so a
+  // deleted rule would orphan historical transactions.
+
+  // -- WALLET AND MONEY MOVEMENT ------------------------------------------
   ["personal_wallet", "Personal Wallet"],
-  ["wallet_top_up", "Wallet Top Up", 6],
-  ["top_up", "Wallet Top Up", 6],
+  ["monthly_wallet_fee", "Monthly Wallet Fee"],
+  ["wallet_top_up", "Wallet Top Up", 5],
+  ["top_up", "Wallet Top Up", 5],
   ["receive_money", "Receive Money"],
   ["send_money", "Send Money"],
   ["wallet_transfer", "Wallet Transfer"],
-  ["bank_transfer", "Withdraw Money to Bank", 7],
-  ["bank_withdrawal", "Bank Withdrawal", 7],
-  ["withdraw", "Withdraw Money to Bank", 7],
-  ["withdraw_money_to_bank", "Withdraw Money to Bank", 7],
+  ["withdraw_money_to_bank", "Withdraw Money to Bank", 10],
+  ["withdraw", "Withdraw Money to Bank", 10],
+  ["bank_transfer", "Withdraw Money to Bank", 10],
+  ["bank_withdrawal", "Bank Withdrawal", 10],
   ["cash_withdrawal", "Withdraw Cash", 10],
   ["withdraw_cash", "Withdraw Cash", 10],
-  // THE CUSTOMER SIDE OF A QR PAYMENT: A FLAT R1.50, WHATEVER THE SALE.
-  // flatFee 1.50, minimumFee 0 (the flat fee IS the floor), percentageFee 0,
-  // maximumFee 0 (nothing to cap when nothing scales). A person paying by QR
-  // pays R1.50 on a R20 coffee and R1.50 on a R5000 sofa. The percentage sits
-  // on the business side, where the sale is being earned from.
-  ["qr_payment", "QR Pay", 1.50, 0, 0, 0],
-  ["qr_pay", "QR Pay", 1.50, 0, 0, 0],
-  ["customer_qr_payment", "Customer QR Payment", 1.50, 0, 0, 0],
-  ["payment_request", "Payment Request"],
-  ["request_money", "Payment Request"],
-  ["bill_split", "Bill Split", 1],
+  ["payment_request", "Payment Request", 1],
+  ["request_money", "Payment Request", 1],
+  ["bill_split", "Bill Split", 2],
   ["send_gift", "Send Gift", 3],
+  ["tip", "Tip"],
+
+  // -- QR PAYMENTS ---------------------------------------------------------
+  // The customer pays a flat R0.50 whatever the sale; the percentage sits on
+  // the business side, where the sale is being earned from.
+  ["qr_payment", "QR Pay", 0.50],
+  ["qr_pay", "QR Pay", 0.50],
+  ["customer_qr_payment", "Customer QR Payment", 0.50],
+  ["merchant_qr", "Merchant QR Payments", 0, 0, 1.5],
+  ["merchant_qr_payment", "Merchant QR Payments", 0, 0, 1.5],
+  ["event_tag", "Event Tag Payment", 1],
+
+  // -- AIRTIME, DATA AND UTILITIES -----------------------------------------
   ["airtime", "Airtime", 1],
   ["data", "Data", 1],
+  ["airtime_data", "Airtime & Data", 1],
   ["electricity", "Electricity", 5],
-  ["voucher", "Voucher", 4],
-  ["vouchers", "Vouchers", 4],
+  ["voucher", "Voucher", 3],
+  ["vouchers", "Vouchers", 3],
   ["pay_bills", "Pay Bills", 5],
   ["bill_payments", "Bill Payments", 5],
-  ["stockvel", "Stockvel", 0, 0, 1.5, 10],
-  ["stockvel_contribution", "Stockvel Contribution", 0, 0, 1.5, 10],
-  ["statement_pdf", "Statement PDF"],
-  ["statements", "Statements"],
-  ["learn", "Learn"],
-  ["transactions", "Transactions"],
-  ["transaction_history", "Transaction History"],
-  ["profile_security", "Profile & Security"],
-  ["fica", "FICA Verification"],
-  ["kyc", "KYC Verification"],
+
+  // -- STOKVEL -------------------------------------------------------------
+  ["stockvel", "Stokvel", 0, 0, 1.5, 10],
+  ["stockvel_contribution", "Stokvel Contribution", 0, 0, 1.5, 10],
+
+  // -- BUSINESS AND MERCHANT -----------------------------------------------
   ["business_wallet", "Business Wallet"],
   ["business_registration", "Business Registration"],
+  ["business_profile", "Business Profile"],
   ["receive_payments", "Receive Payments"],
-  // THE BUSINESS SIDE: R1.50 + 1.5% of every successful QR payment, taken out
-  // of what the merchant is credited, and uncapped. The business is the side
-  // that carries the percentage, because the business is the side making the
-  // sale. It was 1.7% and, more to the point, no code read it: the merchant
-  // was credited in full on every payment TitoPay has ever settled.
-  ["merchant_qr", "Merchant QR Payments", 1.50, 0, 1.5, 0],
-  ["merchant_qr_payment", "Merchant QR Payments", 1.50, 0, 1.5, 0],
-  ["make_a_sale", "Make a Sale", 0, 0, 1.7],
-  // "payouts" is the code the business Payouts tile actually submits (see the
-  // service catalogue). It was missing from the approved schedule, so a fee
-  // preview auto-created it at zero and business payouts would have been free.
-  // Priced identically to Business Payout, which is the same product.
-  ["payouts", "Business Payout", 0, 0, 1.5],
+  ["make_a_sale", "Make a Sale", 0, 0, 1.5],
   ["business_payout", "Business Payout", 0, 0, 1.5],
+  ["payouts", "Business Payout", 0, 0, 1.5],
   ["merchant_payout", "Business Payout", 0, 0, 1.5],
   ["merchant_payouts", "Business Payouts", 0, 0, 1.5],
-  ["refund_processing", "Refund Processing", 0.50],
+  ["refund_processing", "Refund Processing", 1],
+  ["refund", "Refund Processing", 1],
+  ["business_statement_pdf", "Business Statement PDF", 0.50],
   ["business_document_pdf", "Business Document PDF", 2.50],
-  // TitoPay Book: the once-off charge that unlocks booking for a business.
-  //
-  // THE PRICE LIVES HERE, NOT IN BOOK'S CODE. R250 is the launch price and it is
-  // read at the moment of sale with calculateFee, so an operator can change it in
-  // the Pricing Engine and the next business pays the new figure. A constant in
-  // Book would mean the console shows one price and the customer is charged
-  // another. Charged once per business and enforced by a unique index, not by a
-  // check in code.
-  ["book_business_activation", "TitoPay Book Activation", 250],
-  ["invoice_pdf", "Invoice PDF", 2.50],
   ["invoice_creation", "Invoice Creation", 2.50],
-  ["quote_pdf", "Quote PDF", 2.50],
+  ["invoice_pdf", "Invoice PDF", 2.50],
+  ["invoice", "Invoice Creation", 2.50],
   ["quote_creation", "Quote Creation", 2.50],
-  ["proforma_invoice_pdf", "Proforma Invoice PDF", 2.50],
+  ["quote_pdf", "Quote PDF", 2.50],
+  ["quote", "Quote Creation", 2.50],
   ["pro_forma_creation", "Pro Forma Creation", 2.50],
-  ["business_statement_pdf", "Business Statement PDF"],
-  ["business_profile", "Business Profile"],
-  ["marketplace", "Marketplace"],
-  ["marketplace_seller_commission", "Marketplace Seller Commission", 0, 0, 12],
-  ["marketplace_commission", "Marketplace Commission", 0, 0, 12],
-  ["marketplace_buyer_service_fee", "Marketplace Buyer Service Fee", 5],
-  ["seller_payout", "Seller Payout", 0, 0, 1.5],
-  ["marketplace_refund_processing", "Marketplace Refund Processing", 0.50],
-  ["ticket_sales", "Ticket Sales"],
+  ["proforma_invoice_pdf", "Proforma Invoice PDF", 2.50],
+  ["proforma_invoice", "Pro Forma Creation", 2.50],
+  // TitoPay Book: the once-off charge that unlocks booking for a business.
+  // The price lives here, not in Book's code, so the Pricing Engine and the
+  // customer can never show two different figures.
+  ["book_business_activation", "TitoPay Book Activation", 250],
+  ["book", "TitoPay Book Activation", 250],
+
+  // -- BULK DISTRIBUTION ---------------------------------------------------
+  ["bulk_distribution_fee", "Bulk Distribution Fee", 0, 0, 3],
+  ["bulk_distribution_batch_fee", "Bulk Distribution Fee", 0, 0, 3],
+  ["enterprise_distribution", "Bulk Distribution Fee", 0, 0, 3],
+  ["bulk_distribution_wallet_payout", "Bulk Distribution Wallet Payout"],
+  ["bulk_distribution_bank_payout", "Bulk Distribution Bank Payout", 0, 0, 1.5],
+  ["bulk_distribution_failed_item_fee", "Bulk Distribution Failed Item Fee", 1],
+  ["bulk_distribution_reversal_fee", "Bulk Distribution Reversal Fee", 1],
+
+  // -- EVENTS AND TICKETING ------------------------------------------------
   ["ticket_purchase", "Ticket Purchase"],
+  ["ticket_sales", "Ticket Sales"],
+  ["tickets", "Ticket Purchase"],
   ["ticket_buyer_service_fee", "Ticket Buyer Service Fee", 10],
-  ["ticket_business_commission", "Ticket Business Commission", 0, 0, 12],
-  ["ticket_refund_processing", "Ticket Refund Processing", 0.50],
-  ["ticket_refund", "Ticket Refund", 0.50],
+  ["ticket_business_commission", "Ticket Business Commission", 0, 0, 10],
+  ["ticketing", "Ticket Business Commission", 0, 0, 10],
+  ["ticket_refund_processing", "Ticket Refund Processing", 1],
+  ["ticket_refund", "Ticket Refund", 1],
   ["ticket_scanning", "Ticket Scanning"],
   ["ticket_staff_access", "Ticket Staff Access"],
-  // An Event Tag tap is the cashless equivalent of a card tap at the same
-  // terminal, so it carries no customer fee — the same choice already made for
-  // pos_qr. Registered here because transactions.service_code is a foreign key
-  // into this table; without a row, a tap could not be written to the ledger.
-  ["event_tag", "Event Tag Payment"],
-  ["bulk_distribution_fee", "Bulk Distribution Fee", 0, 0, 4],
-  ["bulk_distribution_batch_fee", "Bulk Distribution Fee", 0, 0, 4],
-  ["bulk_distribution_wallet_payout", "Bulk Distribution Wallet Payout"],
-  ["bulk_distribution_bank_payout", "Bulk Distribution Bank Payout"],
-  ["bulk_distribution_failed_item_fee", "Bulk Distribution Failed Item Fee"],
-  ["bulk_distribution_reversal_fee", "Bulk Distribution Reversal Fee"],
+  ["business_ticketing_staff", "Ticket Staff Access"],
+  ["business_staff", "Staff"],
+  ["event_marketing_sms", "Event Marketing SMS", 0.60],
+
+  // -- MARKETPLACE ---------------------------------------------------------
+  ["marketplace", "Marketplace"],
+  ["marketplace_seller_commission", "Marketplace Seller Commission", 0, 0, 10],
+  ["marketplace_commission", "Marketplace Commission", 0, 0, 10],
+  ["marketplace_buyer_service_fee", "Marketplace Buyer Service Fee", 5],
+  ["seller_payout", "Seller Payout", 0, 0, 1.5],
+  ["marketplace_refund_processing", "Marketplace Refund Processing", 1],
+
+  // -- RECORDS AND DOCUMENTS ------------------------------------------------
+  ["statement_pdf", "Statement PDF", 0.50],
+  ["statements", "Statements", 0.50],
+  ["email_statement", "Email Statement", 0.50],
+  ["transactions", "Transactions"],
+  ["transaction_history", "Transaction History"],
+  ["learn", "Learn"],
+  ["rewards", "Rewards"],
+
+  // -- VERIFICATION AND SECURITY --------------------------------------------
+  ["fica", "FICA Verification"],
+  ["kyc", "KYC Verification"],
+  ["personal_kyc", "Personal KYC Verification", 30],
+  ["business_kyc", "Business KYC Verification", 60],
+  ["profile_security", "Profile & Security"],
   ["in_app_notifications", "In-App Notifications"],
-  ["email_otp", "Email OTP"],
-  ["email_statement", "Email Statement", 0.10],
   ["email_notifications", "Email Notifications"],
+  ["email_otp", "Email OTP"],
   ["otp_sms", "OTP SMS"],
   ["security_sms", "Security SMS"],
   ["optional_sms_notifications", "Optional SMS Notifications", 0.30],
+
+  // -- FUTURE SERVICES -------------------------------------------------------
   ["future_services", "Future Services"],
-  ["card_payments", "Card Payments"],
-  ["card_topups", "Card Top-ups"],
-  ["cash_services", "Cash Services"],
-  ["gift_cards", "Gift Cards"],
-  ["tip", "Tip"]
+  ["card_payments", "Card Payments", 0, 0, 1.9],
+  ["card_topups", "Card Top-ups", 0, 0, 2],
+  ["cash_services", "Cash Services", 10],
+  ["gift_cards", "Gift Cards", 3]
 ].map(([serviceCode, serviceName, flatFee = 0, minimumFee = 0, percentageFee = 0, maximumFee = 0]) => ({
   serviceCode,
   serviceName,
@@ -431,6 +462,76 @@ async function applyQrPricingFixupOnce() {
   }
 }
 
+// THE APPROVED SCHEDULE, PUSHED ONCE TO A DATABASE THAT ALREADY HAS ROWS.
+//
+// Editing APPROVED_PRICING_SCHEDULE on its own changes nothing on a running
+// installation: syncApprovedPricingSchedule is reached only from db:init, and
+// listPricingRules' ensureDefaultPricingRule deliberately COALESCEs to whatever
+// the database already holds. So a live wallet keeps charging yesterday's fee.
+// This carries the schedule across, using the same one-shot mechanism as the QR
+// fixup above: applied once, recorded in platform_settings, never applied again.
+//
+// It differs from that fixup in one deliberate way. The QR fixup was guarded on
+// the specific old values, so a rate an operator had tuned by hand survived.
+// This one is UNCONDITIONAL, because it is not a correction to one rate - it is
+// the adoption of a whole approved schedule, which supersedes earlier tuning by
+// definition. Anything an operator changes AFTER it runs is safe: the key is
+// recorded, so a later boot will not undo their work. Shipping a further price
+// change means a new key, not editing this one.
+const APPROVED_SCHEDULE_FIXUP_KEY = "pricing_schedule_2026_08_approved";
+async function applyApprovedScheduleFixupOnce() {
+  try {
+    await ensurePricingSchema();
+    const applied = await pool.query(
+      "SELECT 1 FROM platform_settings WHERE key = $1 LIMIT 1",
+      [APPROVED_SCHEDULE_FIXUP_KEY]
+    );
+    if (applied.rows.length) return { skipped: true };
+
+    let written = 0;
+    for (const rule of APPROVED_PRICING_SCHEDULE) {
+      // fee_type and fee_value are derived exactly as syncApprovedPricingSchedule
+      // derives them, so a rule written by this path and one written by that path
+      // cannot disagree about the same fee.
+      const feeType = rule.percentageFee > 0 ? "PERCENTAGE" : rule.flatFee > 0 ? "FIXED" : "FREE";
+      const feeValue = rule.percentageFee > 0 ? rule.percentageFee : rule.flatFee;
+      const { rowCount } = await pool.query(
+        `INSERT INTO pricing_rules
+          (id, service_code, service_name, fee_type, fee_value, flat_fee, percentage_fee,
+           minimum_fee, maximum_fee, vat_percentage, enabled, active, effective_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, TRUE, TRUE, CURRENT_DATE)
+         ON CONFLICT (service_code)
+         DO UPDATE SET
+           service_name    = EXCLUDED.service_name,
+           fee_type        = EXCLUDED.fee_type,
+           fee_value       = EXCLUDED.fee_value,
+           flat_fee        = EXCLUDED.flat_fee,
+           percentage_fee  = EXCLUDED.percentage_fee,
+           minimum_fee     = EXCLUDED.minimum_fee,
+           maximum_fee     = EXCLUDED.maximum_fee,
+           vat_percentage  = 0,
+           enabled         = TRUE,
+           active          = TRUE,
+           updated_at      = NOW()`,
+        [uuidv4(), rule.serviceCode, rule.serviceName, feeType, feeValue,
+          rule.flatFee, rule.percentageFee, rule.minimumFee, rule.maximumFee]
+      );
+      written += rowCount;
+    }
+
+    await pool.query(
+      "INSERT INTO platform_settings (key, value) VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING",
+      [APPROVED_SCHEDULE_FIXUP_KEY,
+        JSON.stringify({ appliedAt: new Date().toISOString(), rulesWritten: written })]
+    );
+    console.info("[pricing] approved schedule applied", { rulesWritten: written });
+    return { skipped: false, rulesWritten: written };
+  } catch (error) {
+    console.error("[pricing] could not apply the approved schedule", { message: error.message });
+    return { skipped: false, error: error.message };
+  }
+}
+
 async function calculateFee(serviceCode, amount) {
   const normalizedServiceCode = normalizeServiceCode(serviceCode);
   const rule = await getPricingRule(serviceCode);
@@ -535,6 +636,8 @@ module.exports = {
   DEFAULT_PRICING_RULES,
   APPROVED_PRICING_SCHEDULE,
   applyQrPricingFixupOnce,
+  applyApprovedScheduleFixupOnce,
+  APPROVED_SCHEDULE_FIXUP_KEY,
   roundMoney,
   normalizeServiceCode,
   ensureDefaultPricingRule,
