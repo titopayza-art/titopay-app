@@ -408,3 +408,93 @@ html[data-theme=night] .skeleton{
   background:linear-gradient(90deg,#122650 25%,#1b3260 50%,#122650 75%);
   background-size:200% 100%;
 }
+
+/* ==========================================================================
+   NIGHT MODE CONTRAST FIXES - ROUND 2
+   ==========================================================================
+   The same bug as the block above, in the places the first sweep could not
+   see. That sweep only understood a #hex background, so every surface painted
+   with rgba() was invisible to it - including the one that was reported:
+   .quick-service-option.is-selected is rgba(235,242,255,.72), a light lavender
+   that never flips, under text taking var(--text) which flips to #e8eeff.
+   White on lavender.
+
+   Same two treatments as before: a surface that is light by design keeps its
+   background and gets a pinned dark ink; a surface that belongs to the page
+   takes the token instead.
+   ========================================================================== */
+
+/* -- the reported bug: selected Quick Services rows ---------------------- */
+/* Selected must still read as "selected" at night, so it becomes a BLUE-tinted
+   dark row rather than a light one - the same signal, the right direction. */
+html[data-theme=night] .quick-service-option.is-selected{
+  background:rgba(79,163,255,.16);
+  border-color:rgba(79,163,255,.42);
+}
+html[data-theme=night] .quick-service-option.is-selected strong{color:var(--text)}
+html[data-theme=night] .quick-service-option.is-selected small{color:var(--muted)}
+
+/* An unchecked native checkbox under color-scheme:dark paints itself nearly
+   black, which on a navy card reads as a broken square rather than an empty
+   box. A visible rim makes it read as "tap me". */
+html[data-theme=night] .quick-service-option input[type=checkbox]{
+  accent-color:var(--blue);
+  outline:1px solid rgba(143,165,204,.45);
+  outline-offset:-1px;
+  border-radius:4px;
+}
+
+/* -- light by design: keep the surface, pin the ink --------------------- */
+
+/* White circle on the navy pay scrim, same as .pay-orbit-btn. */
+html[data-theme=night] .pay-orbit-close{background:rgba(255,255,255,.92);color:#10203f}
+html[data-theme=night] .pay-orbit-close svg{color:#10203f}
+
+/* A QR poster is made to be printed and scanned: it stays white in every
+   theme, so its text must be fixed dark rather than a token that flips. */
+html[data-theme=night] .qr-poster,
+html[data-theme=night] .qr-poster-qr{background:#fff;color:#10203f}
+html[data-theme=night] .qr-poster h1,
+html[data-theme=night] .qr-poster h2,
+html[data-theme=night] .qr-poster h3,
+html[data-theme=night] .qr-poster strong{color:#10203f}
+html[data-theme=night] .qr-poster p,
+html[data-theme=night] .qr-poster small{color:#62708a}
+
+/* -- page surfaces: take the token -------------------------------------- */
+
+html[data-theme=night] .pay-hub,
+html[data-theme=night] .empty-state{
+  background:var(--card);
+  border-color:var(--card-line);
+  color:var(--text);
+}
+
+/* Chat bubbles. The user's own message was near-white with white text. */
+html[data-theme=night] .titopay-user-message{
+  background:var(--blue);
+  color:#fff;
+}
+html[data-theme=night] .titopay-user-message.system{
+  background:var(--soft-blue);
+  color:var(--text);
+}
+html[data-theme=night] .chatbot-modal-backdrop{background:rgba(4,12,30,.72)}
+
+/* Pressed and hover states flashed a light patch under a dark thumb. */
+html[data-theme=night] .contact-picker-btn:active,
+html[data-theme=night] .contact-picker-btn:hover,
+html[data-theme=night] .recipient-verify-btn:active,
+html[data-theme=night] .recipient-verify-btn:hover{
+  background:rgba(79,163,255,.20);
+  color:var(--text);
+}
+
+html[data-theme=night] .scan-attendance{
+  background:var(--soft-blue);
+  color:var(--text);
+}
+
+/* Tour dots and the TitoKids progress bar are light tracks on a dark page. */
+html[data-theme=night] .tour-dots span{background:rgba(143,165,204,.38)}
+html[data-theme=night] .tk-progress{background:var(--soft-blue)}
