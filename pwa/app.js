@@ -148,6 +148,13 @@ const SMS_ALERT_FEE = 0.3;
 // How many columns the Wallet activity money-flow chart draws. Seven reads as a
 // week and six as half a year; the chart picks between them from the span of
 // the transactions it is given.
+// Poster page sizes in PDF points, and the two display sizes the A3 marketing
+// sheet sets a shop's name at -- full width on one line, or a step down when the
+// name has to break across two.
+const PDF_PAGE_A4 = { width: 595.28, height: 841.89 };
+const PDF_PAGE_A3 = { width: 841.89, height: 1190.55 };
+const MARKETING_NAME_SIZE = 190;
+const MARKETING_NAME_SIZE_WRAPPED = 150;
 const FLOW_DAILY_COLUMNS = 7;
 const FLOW_MONTHLY_COLUMNS = 6;
 const BALANCE_HIDDEN_KEY = "titopay_balance_hidden_v1";
@@ -5230,6 +5237,10 @@ async function handleAction(action, actionElement = null) {
     await openQrPosterModal("tip");
     return;
   }
+  if (action === "marketing-poster") {
+    await openMarketingPosterModal();
+    return;
+  }
   if (action === "tip-qr") {
     openTipQrModal();
     return;
@@ -5248,6 +5259,10 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "download-qr-poster-pdf") {
     await downloadQrPosterPdf();
+    return;
+  }
+  if (action === "download-marketing-poster-pdf") {
+    await downloadMarketingPosterPdf();
     return;
   }
   if (String(action || "").startsWith("enterprise-fund:")) {
@@ -7825,6 +7840,7 @@ function profileView() {
       ${profileFeature("Share TitoPay", "Invite friends, family or customers by WhatsApp, SMS or any sharing app.", "share", "share-titopay")}
       ${isBusiness ? profileFeature("Business Verification", "Verify the business itself, and add the businesses you are authorised on. Your own identity stays verified once.", "shield", "business-verification") : ""}
       ${isBusiness ? profileFeature("Payment QR Poster", "Print an A4 sheet customers can scan to pay you.", "qr-receive", "qr-poster") : ""}
+      ${isBusiness ? profileFeature("Marketing Poster", "Print an A3 window poster that advertises your shop and says you take TitoPay.", "store", "marketing-poster") : ""}
       ${profileFeature("Tip QR Poster", "Print an A4 tip sheet for your counter or table.", "tip", "tip-poster")}
       ${isBusiness && !enterpriseDistributionTileVisible() ? profileFeature("Bulk Distribution", enterpriseDistributionStatusCopy(state.enterpriseDistribution?.eligibility || {}), "bulk-distribution", "enterprise-distribution") : ""}
     </section>
@@ -14171,9 +14187,13 @@ async function renderQrPosterCanvas(context) {
 
   return canvas;
 }
-// A single-page PDF whose only content is the poster JPEG, scaled to the A4
-// media box. Built by hand like every other PDF in this app.
-function posterJpegToPdf(jpegDataUrl, imageWidth, imageHeight) {
+// A single-page PDF whose only content is the poster JPEG, scaled to the media
+// box. Built by hand like every other PDF in this app. The page defaults to A4
+// so the two QR posters call it exactly as they always did; the A3 marketing
+// sheet passes its own size.
+function posterJpegToPdf(jpegDataUrl, imageWidth, imageHeight, page = PDF_PAGE_A4) {
+  const pageW = page.width;
+  const pageH = page.height;
   const base64 = String(jpegDataUrl).split(",")[1] || "";
   const binary = atob(base64);
   const jpeg = new Uint8Array(binary.length);
@@ -14193,12 +14213,12 @@ function posterJpegToPdf(jpegDataUrl, imageWidth, imageHeight) {
   offsets[2] = offset;
   push("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
   offsets[3] = offset;
-  push("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
+  push(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n`);
   offsets[4] = offset;
   push(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);
   push(jpeg);
   push("\nendstream\nendobj\n");
-  const content = "q 595.28 0 0 841.89 0 0 cm /Im1 Do Q";
+  const content = `q ${pageW} 0 0 ${pageH} 0 0 cm /Im1 Do Q`;
   offsets[5] = offset;
   push(`5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`);
   const xrefStart = offset;
@@ -14241,6 +14261,226 @@ function printQrPoster() {
   window.addEventListener("afterprint", cleanup);
   window.print();
   setTimeout(cleanup, 1500);
+}
+// ---------------------------------------------------------------------------
+// A3 marketing poster: window advertising for a business, carrying the shop's
+// own name as the second headline.
+//
+// The name is resolved the same way the Payment poster resolves it -- through
+// the QR details endpoint, which is the one source the payer's phone also reads
+// -- so a printed sheet can never name the shop differently from the screen a
+// customer is looking at. No QR is generated for this: if the account already
+// has a profile QR its id is used to ask, and if it has none the local business
+// name is printed rather than making a network call this poster does not need.
+// ---------------------------------------------------------------------------
+async function marketingPosterName() {
+  const existing = posterQrFrom(state.profileQr);
+  return posterOwnerName(existing);
+}
+// The shop's name is half the reason a shop prints this, so it is set as large
+// as the block allows rather than shrunk until it fits one line. A name that
+// would have to drop below two thirds of the display size is broken at its most
+// balanced word instead, which buys back most of that size on two lines.
+function posterNameLayout(g, name, maxWidth) {
+  const single = posterFitText(g, name, 800, MARKETING_NAME_SIZE, maxWidth, 54);
+  if (single >= Math.round(MARKETING_NAME_SIZE * 0.66)) return { lines: [name], size: single };
+  const words = String(name).trim().split(/\s+/).filter(Boolean);
+  if (words.length < 2) return { lines: [name], size: single };
+  let best = null;
+  for (let cut = 1; cut < words.length; cut += 1) {
+    const head = words.slice(0, cut).join(" ");
+    const tail = words.slice(cut).join(" ");
+    const imbalance = Math.abs(head.length - tail.length);
+    if (!best || imbalance < best.imbalance) best = { head, tail, imbalance };
+  }
+  const wrapped = Math.min(
+    posterFitText(g, best.head, 800, MARKETING_NAME_SIZE_WRAPPED, maxWidth, 54),
+    posterFitText(g, best.tail, 800, MARKETING_NAME_SIZE_WRAPPED, maxWidth, 54)
+  );
+  return wrapped > single ? { lines: [best.head, best.tail], size: wrapped } : { lines: [name], size: single };
+}
+async function openMarketingPosterModal() {
+  const name = await marketingPosterName();
+  state.marketingPosterContext = { name };
+  const config = MARKETING_POSTER;
+  // The preview must break the shop's name at the SAME word the printed sheet
+  // breaks it at, or the sheet on screen is not the sheet coming out of the
+  // printer. CSS cannot pick a balanced break, so the canvas measurement does
+  // it once and both renderers use the answer. Left to `text-wrap`, a long name
+  // went to three lines on screen against two in print, and the third line
+  // pushed the web address off the bottom of the sheet.
+  const layout = posterNameLayout(
+    document.createElement("canvas").getContext("2d"),
+    name,
+    2339 - 170 * 2 - 160
+  );
+  openModal(`
+    <div class="modal-head">
+      <div>
+        <p class="eyebrow">Marketing</p>
+        <h2>Pay with TitoPay poster</h2>
+        <p class="lead">An A3 sheet for your window or wall. It tells the street that you take TitoPay, and it carries your business name.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <article class="mk-poster" data-marketing-poster aria-label="Printable marketing poster for ${esc(name)}">
+      <header class="mk-poster-band">
+        <img src="./assets/titopay-logo-night.png" alt="TitoPay" class="mk-poster-logo">
+        <p class="mk-poster-tagline">${esc(BRAND_TAGLINE)}</p>
+      </header>
+      <div class="mk-poster-hero">
+        <p class="mk-poster-lead">${esc(config.lead)}</p>
+        <p class="mk-poster-emphasis">${esc(config.emphasis)}</p>
+      </div>
+      <div class="mk-poster-store">
+        <p class="mk-poster-at">${esc(config.at)}</p>
+        <h3 class="mk-poster-name${layout.lines.length > 1 ? " is-wrapped" : ""}">${layout.lines.map((line) => `<span>${esc(line)}</span>`).join("")}</h3>
+      </div>
+      <div class="mk-poster-safety">
+        <span class="mk-poster-rule" aria-hidden="true"></span>
+        ${config.safety.map((line, index) => `<p class="${index === config.safety.length - 1 ? "is-close" : ""}">${esc(line)}</p>`).join("")}
+      </div>
+      <footer class="mk-poster-foot">
+        <p class="mk-poster-site">${esc(config.site)}</p>
+      </footer>
+    </article>
+    <section class="auth-actions qr-poster-actions">
+      <button class="btn primary" type="button" data-action="download-marketing-poster-pdf">${icon("download")} Download A3 PDF</button>
+    </section>
+    <p class="field-hint">The PDF is a finished A3 sheet: download it, then take it to any print shop. The name above is the one on your TitoPay business profile and the one customers see when they pay you. To change it, update Profile &amp; Verification and open this poster again.</p>
+  `);
+}
+// A3 portrait at 200dpi. Laid out from fixed baselines rather than a running
+// cursor: a poster is one composition, and every block has to land where the
+// design puts it however long the shop's name turns out to be.
+async function renderMarketingPosterCanvas(context) {
+  const W = 2339;
+  const H = 3307;
+  const config = MARKETING_POSTER;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const g = canvas.getContext("2d");
+  const centerX = W / 2;
+  const margin = 170;
+  const colW = W - margin * 2;
+  const spaced = (value) => String(value).split("").join(" ");
+
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, W, H);
+  g.textAlign = "center";
+  g.textBaseline = "alphabetic";
+
+  // 1. Navy band. The night logo is the one drawn light, so it is the one that
+  //    survives being reversed out.
+  const bandH = 470;
+  g.fillStyle = POSTER_INK.navy;
+  g.fillRect(0, 0, W, bandH);
+  const logo = await posterLoadImage("./assets/titopay-logo-night.png");
+  if (logo) {
+    const logoW = 900;
+    const logoH = logoW * (logo.naturalHeight / logo.naturalWidth);
+    g.drawImage(logo, centerX - logoW / 2, 150 - logoH / 2, logoW, logoH);
+  } else {
+    g.fillStyle = "#ffffff";
+    g.font = posterFont(800, 130);
+    g.fillText("TitoPay", centerX, 190);
+  }
+  g.fillStyle = "#9dc2ff";
+  g.font = posterFont(600, 54);
+  g.fillText(spaced(BRAND_TAGLINE.toUpperCase()), centerX, 360);
+
+  // 2. Hero. "here" is the word that matters to somebody standing in the shop,
+  //    so it is the largest thing on the sheet and the only one in accent.
+  g.fillStyle = POSTER_INK.navy;
+  const leadText = config.lead.toUpperCase();
+  const leadSize = posterFitText(g, leadText, 800, 152, colW, 90);
+  g.font = posterFont(800, leadSize);
+  g.fillText(leadText, centerX, 900);
+
+  g.fillStyle = POSTER_INK.blue;
+  const emphasisText = spaced(config.emphasis.toUpperCase());
+  const emphasisSize = posterFitText(g, emphasisText, 800, 300, colW, 150);
+  g.font = posterFont(800, emphasisSize);
+  g.fillText(emphasisText, centerX, 1200);
+
+  // 3. The shop's name, reversed out of accent. Size is the hero's job and
+  //    colour is this block's, so the two headlines never compete.
+  //
+  //    The block is sized from its contents and hung from a fixed centre, so a
+  //    two-word name and a five-word one both sit optically centred and neither
+  //    pushes the safety copy below it out of place.
+  const blockCentreY = 1720;
+  const atSize = 62;
+  const atCap = atSize * 0.72;
+  const atToName = 96;
+  const name = posterNameLayout(g, context.name, colW - 160);
+  const nameCap = name.size * 0.72;
+  const lineH = name.size * 1.16;
+  const contentH = atCap + atToName + (name.lines.length - 1) * lineH + nameCap;
+  const blockH = Math.max(560, Math.min(740, contentH + 300));
+  const blockTop = blockCentreY - blockH / 2;
+
+  g.fillStyle = POSTER_INK.blue;
+  posterRoundRectPath(g, margin, blockTop, colW, blockH, 56);
+  g.fill();
+
+  let blockY = blockCentreY - contentH / 2;
+  g.fillStyle = "rgba(255,255,255,.78)";
+  g.font = posterFont(700, atSize);
+  blockY += atCap;
+  g.fillText(spaced(config.at.toUpperCase()), centerX, blockY);
+  g.fillStyle = "#ffffff";
+  g.font = posterFont(800, name.size);
+  blockY += atToName + nameCap;
+  name.lines.forEach((line, index) => {
+    g.fillText(line, centerX, blockY + index * lineH);
+  });
+
+  // 4. Safety copy.
+  g.strokeStyle = POSTER_INK.blue;
+  g.lineWidth = 10;
+  g.beginPath();
+  g.moveTo(centerX - 110, 2260);
+  g.lineTo(centerX + 110, 2260);
+  g.stroke();
+
+  let safetyY = 2450;
+  config.safety.forEach((line, index) => {
+    const last = index === config.safety.length - 1;
+    g.fillStyle = last ? POSTER_INK.blue : POSTER_INK.navy;
+    const size = posterFitText(g, line, last ? 800 : 600, 104, colW, 60);
+    g.font = posterFont(last ? 800 : 600, size);
+    g.fillText(line, centerX, safetyY);
+    safetyY += last ? 0 : 140;
+    if (index === config.safety.length - 2) safetyY += 40;
+  });
+
+  // 5. Footer.
+  g.strokeStyle = POSTER_INK.line;
+  g.lineWidth = 4;
+  g.beginPath();
+  g.moveTo(margin, 2960);
+  g.lineTo(W - margin, 2960);
+  g.stroke();
+  g.fillStyle = POSTER_INK.blue;
+  const siteSize = posterFitText(g, config.site, 800, 116, colW, 60);
+  g.font = posterFont(800, siteSize);
+  g.fillText(config.site, centerX, 3110);
+
+  return canvas;
+}
+async function downloadMarketingPosterPdf() {
+  const context = state.marketingPosterContext;
+  if (!context) {
+    showToast("Open the poster before downloading it.", "error");
+    return;
+  }
+  const canvas = await renderMarketingPosterCanvas(context);
+  const jpeg = canvas.toDataURL("image/jpeg", 0.92);
+  const pdf = posterJpegToPdf(jpeg, canvas.width, canvas.height, PDF_PAGE_A3);
+  downloadBlob(new Blob([pdf], { type: "application/pdf" }), `${MARKETING_POSTER.filename}-a3.pdf`);
+  showToast("A3 poster downloaded as a PDF.");
 }
 function openTipQrModal() {
   openModal(`
@@ -27514,6 +27754,27 @@ const QR_POSTER_KINDS = {
 // ---------------------------------------------------------------------------
 
 const POSTER_INK = { navy: "#061a3d", blue: "#0a4dff", muted: "#62708a", line: "#dfe7f5" };
+// ---------------------------------------------------------------------------
+// A3 marketing poster
+//
+// The Payment and Tip posters are instruments: a customer scans them. This one
+// is advertising -- it goes in the window and tells the street two things, that
+// this shop takes TitoPay and what this shop is called. It carries no QR for
+// that reason; the counter sheet is where a code belongs, and a code on a
+// window poster only invites someone to scan from the pavement.
+//
+// The copy lives here rather than in the two renderers, because the sheet on
+// screen and the sheet that comes out of the printer have to say the same
+// words, and a poster is not something anyone can correct afterwards.
+// ---------------------------------------------------------------------------
+const MARKETING_POSTER = {
+  lead: "Pay with TitoPay",
+  emphasis: "here",
+  at: "At",
+  safety: ["No need to walk around with cash.", "Be wise and stay safe.", "Pay with TitoPay."],
+  site: "www.titopay.co.za",
+  filename: "titopay-marketing-poster"
+};
 // ---------------------------------------------------------------------------
 // Learn
 //

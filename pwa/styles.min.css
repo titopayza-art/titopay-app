@@ -710,3 +710,50 @@ html[data-theme=night]{--accent-ink:#6fb0ff;--deep-blue-ink:#6fb0ff}
    4.29:1. Same treatment as warn: a tinted dark pill with light ink. */
 html[data-theme=night] .wv-status.ok{background:#07301c;color:#6fe0a6}
 html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
+/* ==========================================================================
+   A3 MARKETING POSTER (preview)
+   ==========================================================================
+   The sheet is drawn twice - here for the screen and on a canvas for the PDF -
+   so this has to be the same composition, not a loose impression of it. Sizes
+   are container query units against the poster's own width, which is what makes
+   a 320px preview and a 297mm print read identically.
+
+   Everything is stated in absolute colours rather than theme tokens. Paper is
+   white in both themes, and a poster that repainted itself at night would show
+   the shop something other than what its printer is going to produce.
+   ========================================================================== */
+/* The poster is paper: white in both themes. That means its INHERITED text
+   colour has to be pinned too - without it a child added later with no colour
+   of its own inherits --text, which is near-white at night, onto white paper. */
+.mk-poster{color:#061a3d;container-type:inline-size;display:grid;grid-template-rows:auto auto auto 1fr auto;aspect-ratio:297/420;overflow:hidden;background:#fff;border:1px solid #dfe7f5;border-radius:18px;text-align:center}
+.mk-poster-band{display:grid;justify-items:center;align-content:center;gap:2.4cqw;padding:4.2cqw 6cqw;background:#061a3d}
+.mk-poster-logo{width:38%;min-width:110px;height:auto}
+.mk-poster-tagline{margin:0;color:#9dc2ff;font-size:clamp(0.5rem,1.9cqw,1rem);font-weight:600;letter-spacing:.28em;text-transform:uppercase}
+.mk-poster-hero{display:grid;justify-items:center;gap:1cqw;padding:8cqw 6cqw 5cqw}
+.mk-poster-lead{margin:0;color:#061a3d;font-size:clamp(1rem,6.2cqw,3.4rem);font-weight:800;line-height:1.02;letter-spacing:-.01em;text-transform:uppercase}
+.mk-poster-emphasis{margin:0;color:#0a4dff;font-size:clamp(1.9rem,12.5cqw,7rem);font-weight:800;line-height:.96;letter-spacing:.1em;text-transform:uppercase}
+.mk-poster-store{display:grid;justify-items:center;gap:2cqw;margin:0 7.2cqw;padding:5.6cqw 6cqw;background:#0a4dff;border-radius:2.4cqw}
+.mk-poster-at{margin:0;color:rgba(255,255,255,.78);font-size:clamp(0.5rem,2.6cqw,1.3rem);font-weight:700;letter-spacing:.34em;text-transform:uppercase}
+/* 8cqw and 6.2cqw are the 190px and 150px the canvas renderer uses, expressed
+   against the A3 width. A long name drops to the smaller size in both, so the
+   preview and the printed sheet break to two lines at the same point. */
+.mk-poster-name{margin:0;max-width:100%;color:#fff;font-size:clamp(1.1rem,8cqw,4.4rem);font-weight:800;line-height:1.16;letter-spacing:-.01em;text-wrap:balance;overflow-wrap:break-word}
+.mk-poster-name.is-wrapped{font-size:clamp(0.9rem,6.4cqw,3.5rem)}
+/* The lines come pre-broken from the same measurement the printed sheet uses,
+   so each one is its own block and nothing re-wraps them. */
+.mk-poster-name span{display:block}
+/* Belt and braces: the safety block is the flexible row, so it gives up its
+   height first and the web address can never be pushed off the sheet. */
+.mk-poster-safety{min-height:0}
+.mk-poster-safety{display:grid;justify-items:center;align-content:center;gap:1.6cqw;padding:6cqw 7cqw}
+.mk-poster-rule{width:9.4cqw;height:.42cqw;margin-bottom:2.6cqw;background:#0a4dff;border-radius:999px}
+/* No balance here: these three strings are set one line each on the printed
+   sheet, and balancing re-breaks the longest of them so the preview shows a
+   composition the printer will not produce. 4.15cqw is the size the canvas
+   renderer actually settles on for the longest line, expressed against A3. */
+.mk-poster-safety p{margin:0;color:#061a3d;font-size:clamp(0.56rem,4.15cqw,2.08rem);font-weight:600;line-height:1.22}
+.mk-poster-safety p.is-close{margin-top:1.6cqw;color:#0a4dff;font-weight:800}
+.mk-poster-foot{padding:0 7.2cqw 5.4cqw}
+.mk-poster-site{margin:0;padding-top:4.4cqw;color:#0a4dff;font-size:clamp(0.62rem,4.9cqw,2.4rem);font-weight:800;letter-spacing:-.01em;border-top:1px solid #dfe7f5}
+/* Paper stays paper at night. Only the frame around it follows the theme. */
+html[data-theme=night] .mk-poster{border-color:#2c4573}
