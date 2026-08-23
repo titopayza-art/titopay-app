@@ -506,7 +506,14 @@ html[data-theme=night] .scan-attendance{
 }
 
 /* Tour dots and the TitoKids progress bar are light tracks on a dark page. */
-html[data-theme=night] .tour-dots span{background:rgba(143,165,204,.38)}
+/* Tour dots carry the progress: upcoming, done and where you are now are three
+   different colours. A night rule on the bare span scores (0,2,2) and so beats
+   .tour-dots span.is-active at (0,2,1) - which flattened all fifteen dots to
+   one colour and threw the progress away. Each state is restated at night at
+   matching specificity so the count stays readable. */
+html[data-theme=night] .tour-dots span{background:rgba(143,165,204,.34)}
+html[data-theme=night] .tour-dots span.is-done{background:rgba(111,176,255,.58)}
+html[data-theme=night] .tour-dots span.is-active{background:var(--blue-2);box-shadow:0 0 0 3px rgba(111,176,255,.28)}
 html[data-theme=night] .tk-progress{background:var(--soft-blue)}
 
 /* ==========================================================================
