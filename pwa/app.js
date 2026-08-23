@@ -145,6 +145,11 @@ const SECURITY_CONTENT_DEFAULTS = {
 // device formats in South African style), while the copy said "R0.10".
 const EMAIL_STATEMENT_FEE = 0.1;
 const SMS_ALERT_FEE = 0.3;
+// How many columns the Wallet activity money-flow chart draws. Seven reads as a
+// week and six as half a year; the chart picks between them from the span of
+// the transactions it is given.
+const FLOW_DAILY_COLUMNS = 7;
+const FLOW_MONTHLY_COLUMNS = 6;
 const BALANCE_HIDDEN_KEY = "titopay_balance_hidden_v1";
 const OFFICIAL_APP_WARNING = "Use TitoPay only at https://app.titopay.co.za. Never enter your TitoPay details on any other website or link.";
 const BUSINESS_DOCUMENTS_KEY = "titopay_business_documents_v1";
@@ -1940,6 +1945,179 @@ function dashboardView() {
     </section>
   `;
 }
+// ---------------------------------------------------------------------------
+// Wallet flow: money in against money out, drawn from exactly the rows the
+// Activity list below it is showing, so the filters drive the picture too.
+//
+// A row is counted only when the wallet ledger POSTED it. An attempt that moved
+// no money still belongs in the list -- the customer needs to see it -- but
+// drawing it here would claim money arrived or left when it never did.
+//
+// The window follows the data rather than the calendar: a few days of activity
+// is read day by day, anything longer is read month by month. Both are anchored
+// on the newest settled row, so a filtered date range always draws something
+// instead of six empty columns to the right of the real activity.
+// ---------------------------------------------------------------------------
+function startOfDayValue(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+function walletFlowSummary(items = []) {
+  const rows = [];
+  for (const item of items || []) {
+    if (!transactionPostedToWallet(item)) continue;
+    const when = new Date(item.created_at || item.createdAt || 0);
+    if (Number.isNaN(when.getTime())) continue;
+    const value = statementPostedAmount(item);
+    if (!(value > 0)) continue;
+    rows.push({ when, credit: transactionIsCredit(item), value });
+  }
+  if (!rows.length) return null;
+
+  let newest = rows[0].when;
+  let oldest = rows[0].when;
+  for (const row of rows) {
+    if (row.when > newest) newest = row.when;
+    if (row.when < oldest) oldest = row.when;
+  }
+  // Read by day only when the whole span FITS in the daily columns. Anything
+  // wider goes monthly, so the day view never quietly drops the older half of a
+  // fortnight into a footnote.
+  const spanDays = (startOfDayValue(newest) - startOfDayValue(oldest)) / 86400000;
+  const daily = spanDays <= FLOW_DAILY_COLUMNS - 1;
+  const columns = daily ? FLOW_DAILY_COLUMNS : FLOW_MONTHLY_COLUMNS;
+  const anchor = daily
+    ? startOfDayValue(newest)
+    : new Date(newest.getFullYear(), newest.getMonth(), 1);
+
+  const buckets = [];
+  for (let index = 0; index < columns; index += 1) {
+    const back = columns - 1 - index;
+    const start = daily
+      ? new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - back)
+      : new Date(anchor.getFullYear(), anchor.getMonth() - back, 1);
+    buckets.push({
+      start,
+      label: start.toLocaleDateString("en-ZA", daily ? { weekday: "short" } : { month: "short" }),
+      full: start.toLocaleDateString("en-ZA", daily
+        ? { weekday: "long", day: "numeric", month: "short" }
+        : { month: "long", year: "numeric" }),
+      moneyIn: 0,
+      moneyOut: 0
+    });
+  }
+  const columnFor = (when) => (daily
+    ? columns - 1 + Math.round((startOfDayValue(when) - anchor) / 86400000)
+    : columns - 1 + (when.getFullYear() - anchor.getFullYear()) * 12 + (when.getMonth() - anchor.getMonth()));
+
+  let moneyIn = 0;
+  let moneyOut = 0;
+  let records = 0;
+  let older = 0;
+  for (const row of rows) {
+    const index = columnFor(row.when);
+    // Older than the window the columns cover. Left out of the totals as well
+    // as the columns, so the ring and the bars always describe one period.
+    if (index < 0 || index >= columns) { older += 1; continue; }
+    if (row.credit) { buckets[index].moneyIn += row.value; moneyIn += row.value; }
+    else { buckets[index].moneyOut += row.value; moneyOut += row.value; }
+    records += 1;
+  }
+  if (!records) return null;
+
+  const peak = buckets.reduce((most, bucket) => Math.max(most, bucket.moneyIn, bucket.moneyOut), 0);
+  const today = startOfDayValue(new Date());
+  const upToNow = daily
+    ? anchor.getTime() === today.getTime()
+    : anchor.getFullYear() === today.getFullYear() && anchor.getMonth() === today.getMonth();
+  const last = buckets[columns - 1];
+  const period = daily
+    ? (upToNow ? `Last ${columns} days` : `${columns} days to ${last.start.toLocaleDateString("en-ZA", { day: "numeric", month: "short" })}`)
+    : (upToNow ? `Last ${columns} months` : `${columns} months to ${last.full}`);
+  return { buckets, moneyIn, moneyOut, records, peak, period, daily, older };
+}
+// Two arcs on one circle. Each is a full-circumference stroke that is dashed
+// down to its own share, and the second is pushed past the first with a dash
+// offset, so the split needs no path arithmetic and stays exact at any ratio.
+function walletFlowRing(summary) {
+  const total = summary.moneyIn + summary.moneyOut;
+  const circumference = 339.29; // 2 * pi * r, r = 54
+  const split = summary.moneyIn > 0 && summary.moneyOut > 0;
+  const gap = split ? 7 : 0;
+  const usable = circumference - gap * 2;
+  const inLength = total ? usable * (summary.moneyIn / total) : 0;
+  const outLength = usable - inLength;
+  const arc = (className, length, offset) =>
+    `<circle class="flow-arc ${className}" cx="64" cy="64" r="54"
+      stroke-dasharray="${length.toFixed(2)} ${(circumference - length).toFixed(2)}"
+      stroke-dashoffset="${offset.toFixed(2)}"></circle>`;
+  return `<svg class="flow-ring-svg" viewBox="0 0 128 128" aria-hidden="true" focusable="false">
+    <circle class="flow-ring-track" cx="64" cy="64" r="54"></circle>
+    <g transform="rotate(-90 64 64)">
+      ${summary.moneyIn > 0 ? arc("is-in", inLength, 0) : ""}
+      ${summary.moneyOut > 0 ? arc("is-out", outLength, -(inLength + gap)) : ""}
+    </g>
+  </svg>`;
+}
+function walletFlowCard(items) {
+  const summary = walletFlowSummary(items);
+  if (!summary) return "";
+  const total = summary.moneyIn + summary.moneyOut;
+  const net = summary.moneyIn - summary.moneyOut;
+  const inShare = total ? Math.round((summary.moneyIn / total) * 100) : 0;
+  const barHeight = (value) => (value > 0
+    ? `max(3px, ${((value / summary.peak) * 100).toFixed(1)}%)`
+    : "2px");
+  const columns = summary.buckets.map((bucket) => `
+    <div class="flow-col" title="${esc(`${bucket.full}: ${money(bucket.moneyIn)} in, ${money(bucket.moneyOut)} out`)}">
+      <span class="flow-col-plot">
+        <span class="flow-bar is-in${bucket.moneyIn > 0 ? "" : " is-zero"}" style="height:${barHeight(bucket.moneyIn)}"></span>
+        <span class="flow-bar is-out${bucket.moneyOut > 0 ? "" : " is-zero"}" style="height:${barHeight(bucket.moneyOut)}"></span>
+      </span>
+      <small>${esc(bucket.label)}</small>
+    </div>`).join("");
+  const spoken = summary.buckets
+    .map((bucket) => `${bucket.full}, ${money(bucket.moneyIn)} in, ${money(bucket.moneyOut)} out`)
+    .join(". ");
+  return `
+    <section class="panel wallet-flow-card">
+      <div class="flow-head">
+        <div>
+          <p class="eyebrow">Money flow</p>
+          <h2>In and out</h2>
+        </div>
+        <p class="flow-period">${esc(summary.period)}</p>
+      </div>
+      <div class="flow-split">
+        <div class="flow-ring">
+          ${walletFlowRing(summary)}
+          <div class="flow-ring-centre" aria-hidden="true">
+            <strong>${inShare}%</strong>
+            <small>money in</small>
+          </div>
+        </div>
+        <dl class="flow-legend">
+          <div class="flow-legend-row">
+            <dt><span class="flow-key is-in" aria-hidden="true"></span>Money in</dt>
+            <dd>${money(summary.moneyIn)}</dd>
+          </div>
+          <div class="flow-legend-row">
+            <dt><span class="flow-key is-out" aria-hidden="true"></span>Money out</dt>
+            <dd>${money(summary.moneyOut)}</dd>
+          </div>
+          <div class="flow-legend-row is-net">
+            <dt>Net</dt>
+            <dd>${net >= 0 ? "+" : "-"}${money(Math.abs(net))}</dd>
+          </div>
+        </dl>
+      </div>
+      <div class="flow-trend" role="img" aria-label="${esc(`Money in and money out, ${summary.period}. ${spoken}`)}">
+        <div class="flow-cols">${columns}</div>
+        <span class="flow-baseline" aria-hidden="true"></span>
+      </div>
+      <p class="flow-note">Built from the ${summary.records} transaction${summary.records === 1 ? "" : "s"} your wallet ledger posted in this period. Attempts that moved no money are listed below but never counted here.${summary.older ? ` ${summary.older} older transaction${summary.older === 1 ? " is" : "s are"} outside this period.` : ""}</p>
+    </section>
+  `;
+}
 function activityView() {
   const items = filteredTransactions();
   const receipts = titoPayReceipts();
@@ -1957,6 +2135,7 @@ function activityView() {
         ${["all", "credit", "debit"].map((item) => `<option value="${item}" ${state.transactionFilters.direction === item ? "selected" : ""}>${esc(item[0].toUpperCase() + item.slice(1))}</option>`).join("")}
       </select></div>
     </section>
+    ${walletFlowCard(items)}
     ${activityList(items)}
     <section class="auth-actions">
       <button class="btn secondary" data-action="export-csv">${icon("download")} Export CSV</button>

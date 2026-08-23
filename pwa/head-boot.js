@@ -18,11 +18,11 @@
     if (existing) return;
     var link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = "./styles.min.css?v=480";
+    link.href = "./styles.min.css?v=481";
     link.setAttribute("data-titopay-main-css", "1");
     document.head.appendChild(link);
   } catch (e) {
     /* Last-ditch: a blocking link still beats no styles at all. */
-    document.write('<link rel="stylesheet" href="./styles.min.css?v=480">');
+    document.write('<link rel="stylesheet" href="./styles.min.css?v=481">');
   }
 })();
