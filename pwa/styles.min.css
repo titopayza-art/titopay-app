@@ -302,3 +302,109 @@ html[data-theme=night] .otp-delivery-confirmation,html[data-theme=night] .docume
 html[data-theme=night] .merchant-keypad button{background:#152a58}
 html[data-theme=night] .modal-card.chatbot-fullscreen-modal{background:rgba(10,24,54,.97)}
 html[data-theme=night] .form-grid label>input:focus:not([type=checkbox]):not([type=radio]),html[data-theme=night] .form-grid label>select:focus,html[data-theme=night] .form-grid label>textarea:focus,html[data-theme=night] .aftersale-picker>select:focus,html[data-theme=night] .panel>label>select:focus,html[data-theme=night] .panel>label>input:focus:not([type=checkbox]):not([type=radio]),html[data-theme=night] .panel>label>textarea:focus,html[data-theme=night] .panel-field>select:focus,html[data-theme=night] .panel-field>input:focus:not([type=checkbox]):not([type=radio]),html[data-theme=night] .panel-field>textarea:focus,html[data-theme=night] .field input:focus,html[data-theme=night] .field select:focus,html[data-theme=night] .field textarea:focus{background:#10254e;color:var(--text)}
+
+/* ==========================================================================
+   NIGHT MODE CONTRAST FIXES
+   ==========================================================================
+   One bug, found in many places: a rule hardcodes a LIGHT background, so the
+   surface stays light at night, while its text or icon comes from a token that
+   flips light. The result is light-on-light and unreadable - the white action
+   bubbles with near-invisible icons, and the unread notification whose title
+   could not be read.
+
+   Two different fixes, because there are two different situations.
+
+   1. A surface that is light BY DESIGN in both themes. A QR needs a white
+      quiet zone to scan at all, a photo cropper needs neutral white, and the
+      pay bubbles sit on a navy scrim in both themes. These keep their white
+      background and get a PINNED dark ink, because a fixed surface must have a
+      fixed foreground - a token that flips is what broke them.
+
+   2. A surface that is part of the page and should darken with it. These stop
+      hardcoding a hex and take the token instead, whose light value already
+      matches what was hardcoded, so light mode is unchanged.
+   ========================================================================== */
+
+/* -- 1. light by design: keep the surface, pin the ink ------------------- */
+
+/* The quick-pay bubbles. White circles on a navy scrim (rgba(6,26,61,.42)) in
+   BOTH themes, so the bubble is right and only the icon colour was wrong:
+   color:var(--text) resolved to #e8eeff at night, a near-white icon on white. */
+html[data-theme=night] .pay-orbit-btn{background:#fff;color:#10203f}
+html[data-theme=night] .pay-orbit-btn svg{color:#10203f}
+
+/* A QR must stay dark-on-white to scan. Keep the white frame, darken the text
+   sitting inside it. */
+html[data-theme=night] .qr-frame{background:#fff;color:#10203f;border-color:#dfe7f5}
+html[data-theme=night] .qr-frame small,
+html[data-theme=night] .qr-frame p{color:#62708a}
+
+/* White pill close button - the glyph inherits and went white-on-white. */
+html[data-theme=night] .install-float-dismiss svg{background:#fff;color:#10203f}
+
+/* Photo cropping needs a neutral white ground to judge the image against. */
+html[data-theme=night] .profile-photo-crop-layout,
+html[data-theme=night] .profile-photo-cropper,
+html[data-theme=night] .profile-photo-crop-placeholder{background:#fff;color:#10203f}
+
+/* -- 2. page surfaces: take the token, so they darken with the page ------ */
+
+/* The unread notification. #eef5ff never flipped, so the title (var(--muted)
+   -> #97a9d0 at night) sat on a near-white card. --soft-blue is #eaf1ff in
+   light, which is what was hardcoded, and #122650 at night. */
+html[data-theme=night] .notification-item.unread{
+  background:var(--soft-blue);
+  border-color:rgba(79,163,255,.34);
+}
+
+html[data-theme=night] .receipt-card,
+html[data-theme=night] .receipt-list-item,
+html[data-theme=night] .reward-card,
+html[data-theme=night] .merchant-pos-card,
+html[data-theme=night] .bk-day,
+html[data-theme=night] .bk-booking,
+html[data-theme=night] .bk-tab,
+html[data-theme=night] .support-escalation,
+html[data-theme=night] .support-rating,
+html[data-theme=night] .titopay-chat-window,
+html[data-theme=night] .chatbot-suggestions .chip{
+  background:var(--card);
+  border-color:var(--card-line);
+  color:var(--text);
+}
+
+html[data-theme=night] .integration-note,
+html[data-theme=night] .gift-receipt-card,
+html[data-theme=night] .row-emphasis-total{
+  background:var(--soft-blue);
+  color:var(--text);
+}
+
+/* Inputs: a light field with light text is not typeable. */
+html[data-theme=night] .chatbot-compose input,
+html[data-theme=night] .titopay-chat-compose textarea,
+html[data-theme=night] .input-affix:focus-within{
+  background:var(--soft);
+  border-color:var(--card-line);
+  color:var(--text);
+}
+html[data-theme=night] .chatbot-compose input::placeholder,
+html[data-theme=night] .titopay-chat-compose textarea::placeholder{color:var(--muted)}
+
+/* Pressed states flashed a light patch under a dark thumb. */
+html[data-theme=night] .btn.secondary:not(:disabled):active,
+html[data-theme=night] .merchant-keypad button:active,
+html[data-theme=night] .badge-btn:active{background:var(--soft-blue)}
+
+/* The security tip keeps its warning tint, at night weight. */
+html[data-theme=night] .security-tip-card{
+  background:rgba(255,139,139,.10);
+  border-color:rgba(255,139,139,.28);
+  color:var(--text);
+}
+
+/* A loading shimmer of light greys reads as a flash of white on a dark page. */
+html[data-theme=night] .skeleton{
+  background:linear-gradient(90deg,#122650 25%,#1b3260 50%,#122650 75%);
+  background-size:200% 100%;
+}
