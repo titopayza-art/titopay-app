@@ -45,7 +45,11 @@ test("one engine decides, and every rail asks it", () => {
 });
 
 test("limits layer verification, product, earned standing and risk, in that order", () => {
-  const base = { config: DEFAULT_CONFIG, tier: 1, riskStatus: "normal", earned: { applies: false, multiplier: 1 } };
+  // Assurance is pinned to `verified` here so this test measures the LAYERING
+  // and nothing else. What the assurance layer does on its own, and where it
+  // sits in the order, is the test below.
+  const base = { config: DEFAULT_CONFIG, tier: 1, riskStatus: "normal",
+    assurance: "verified", earned: { applies: false, multiplier: 1 } };
   const plain = engine.buildEffectiveLimits(base);
   // A product rule narrows one rail only.
   const gift = engine.buildEffectiveLimits({ ...base, serviceCode: "send_gift" });
@@ -65,6 +69,92 @@ test("limits layer verification, product, earned standing and risk, in that orde
   const contained = engine.buildEffectiveLimits({ ...base, tier: 2, riskStatus: "high_risk" });
   assert.ok(Number(contained.limits.monthlySend) > 0, "high risk bounds an otherwise unlimited level");
   assert.ok(Number(contained.limits.singleTransaction) > 0, "on every rail, not just the monthly one");
+});
+
+test("a level may not grant more than the evidence behind it can defend", () => {
+  // THE HOLE THIS CLOSES. "Basic Verified" grants a R200 000 month on the
+  // strength of an identity check that today confirms only that a document
+  // number is well formed, unused elsewhere in TitoPay, and not on TitoPay's
+  // screening list. Nothing establishes that the person exists. The number and
+  // the evidence were unrelated, and only a person remembering to edit a table
+  // connected them.
+  const kyc = require("../src/providers/kyc-provider");
+  const base = { config: DEFAULT_CONFIG, riskStatus: "normal", earned: { applies: false, multiplier: 1 } };
+
+  // The shipped identity adapter declares what it can actually evidence, and
+  // it is not a confirmed identity.
+  assert.equal(kyc.identityAssurance(), "structural",
+    "the shipped identity check is structural: no register match, no liveness");
+
+  const bounded = engine.buildEffectiveLimits({ ...base, tier: 1 });
+  assert.equal(bounded.basis.assurance, "structural");
+  assert.equal(bounded.basis.assuranceBound, true);
+  assert.ok(Number(bounded.limits.monthlySend) < Number(DEFAULT_CONFIG.tiers["1"].monthlySend),
+    "the effective limit is below the configured policy while the evidence is weaker than the policy assumes");
+
+  // VERIFYING IS STILL WORTH DOING. A bound that collapsed level 1 onto level 0
+  // would just delete the ladder, and a customer who verifies would get nothing.
+  for (const key of ["monthlyReceive", "monthlySend", "singleTransaction", "dailySend",
+    "singleWithdrawal", "monthlyWithdraw", "maxBalance"]) {
+    const unidentified = engine.buildEffectiveLimits({ ...base, tier: 0 }).limits[key];
+    assert.ok(Number(bounded.limits[key]) > Number(unidentified),
+      `${key}: a structurally checked identity still buys more than none at all`);
+  }
+
+  // THE ORDER MATTERS. Earned standing is a reward for behaviour, and behaviour
+  // is precisely what a synthetic identity manufactures. It must not be a route
+  // around the bound.
+  const earned = engine.buildEffectiveLimits({ ...base, tier: 1, earned: { applies: true, multiplier: 1.5 } });
+  assert.equal(earned.limits.monthlySend, bounded.limits.monthlySend,
+    "an account nobody has identified cannot earn its way past the bound");
+  // ...and it is still a real reward once the identity is confirmed.
+  const earnedVerified = engine.buildEffectiveLimits({
+    ...base, tier: 1, assurance: "verified", earned: { applies: true, multiplier: 1.5 } });
+  const plainVerified = engine.buildEffectiveLimits({ ...base, tier: 1, assurance: "verified" });
+  assert.ok(Number(earnedVerified.limits.monthlySend) > Number(plainVerified.limits.monthlySend));
+
+  // SELF-HEALING, BOTH WAYS. Contract a verification provider and the ladder
+  // applies in full, with no deploy and no number for anyone to remember.
+  assert.equal(plainVerified.limits.monthlySend, DEFAULT_CONFIG.tiers["1"].monthlySend);
+  assert.equal(plainVerified.basis.assuranceBound, false);
+  // Lose the capability entirely and the platform narrows itself rather than
+  // handing out capability on evidence it no longer has.
+  const unwired = engine.buildEffectiveLimits({ ...base, tier: 1, assurance: "none" });
+  assert.equal(unwired.limits.monthlySend, DEFAULT_CONFIG.tiers["0"].monthlySend,
+    "an unwired identity capability grants no more than no identity check at all");
+
+  // LEVEL 2 IS NOT GRANTED BY THE AUTOMATED CHECK, so it does not inherit the
+  // provider's assurance: it rests on TitoPay's own documentary review, which
+  // is a different piece of evidence and is named as one.
+  const top = engine.buildEffectiveLimits({ ...base, tier: 2 });
+  assert.equal(top.basis.assurance, "documentary");
+  assert.equal(top.limits.monthlySend, null, "documentary review is not restated by an identity vendor");
+
+  // Risk still wins over all of it.
+  const risky = engine.buildEffectiveLimits({ ...base, tier: 1, riskStatus: "high_risk" });
+  assert.ok(Number(risky.limits.monthlySend) < Number(bounded.limits.monthlySend));
+});
+
+test("the limits screen shows the number the engine will actually honour", () => {
+  // A screen that promises more than the engine allows does not read as a
+  // control to a customer. It reads as a broken app, and it is the one failure
+  // a limits screen exists to prevent. The ladder the customer is shown is
+  // therefore bounded by the same assurance table the engine uses.
+  const { shapeTier } = require("../src/services/compliance-service");
+  for (const tier of [0, 1, 2]) {
+    const shown = shapeTier(DEFAULT_CONFIG, tier);
+    const enforced = engine.buildEffectiveLimits({
+      config: DEFAULT_CONFIG, tier, riskStatus: "normal", earned: { applies: false, multiplier: 1 } });
+    for (const key of ["monthlyReceive", "monthlySend", "singleTransaction", "dailySend",
+      "singleWithdrawal", "monthlyWithdraw", "maxBalance"]) {
+      assert.equal(shown[key], enforced.limits[key],
+        `level ${tier}: the ${key} on the screen is the ${key} the engine enforces`);
+    }
+    assert.equal(shown.assurance, enforced.basis.assurance);
+  }
+  // The console still edits the POLICY, uncapped, because an operator setting
+  // policy has to see the policy rather than today's bound on it.
+  assert.equal(DEFAULT_CONFIG.tiers["1"].monthlySend, 200000);
 });
 
 test("a monthly VOLUME limit is never reused as a balance, daily or withdrawal limit", () => {
@@ -358,10 +448,17 @@ test("the product access level is a separate concept from compliance status", ()
   assert.deepEqual(levels.map((l) => l.of), [3, 3, 3]);
   assert.deepEqual(levels.map((l) => l.label), ["Limited Access", "Basic Verified", "Fully Verified"]);
 
-  // ONE monthly transaction limit per level, and it is the VOLUME rail.
-  assert.deepEqual(levels.map((l) => l.monthlyTransactionLimit), [25000, 200000, null]);
+  // ONE monthly transaction limit per level, and it is the VOLUME rail. These
+  // are the EFFECTIVE figures — what the level currently grants on the evidence
+  // behind it — because that is what an access level published to a customer
+  // has to mean. The configured policy for level 1 is R200 000 and is asserted
+  // where policy is asserted, above.
+  const { shapeTier } = require("../src/services/compliance-service");
+  assert.deepEqual(levels.map((l) => l.monthlyTransactionLimit),
+    [0, 1, 2].map((t) => shapeTier(CONFIG, t).monthlySend));
+  assert.deepEqual(levels.map((l) => l.monthlyTransactionLimit), [25000, 50000, null]);
   for (const level of levels) {
-    const tier = CONFIG.tiers[String(level.position - 1)];
+    const tier = shapeTier(CONFIG, level.position - 1);
     for (const other of ["maxBalance", "singleTransaction", "dailySend", "singleWithdrawal", "monthlyWithdraw"]) {
       if (tier[other] === null) continue;
       assert.notEqual(level.monthlyTransactionLimit, tier[other],
@@ -375,7 +472,7 @@ test("the product access level is a separate concept from compliance status", ()
 
   // An access level never grants anything by itself: risk is applied last and
   // narrows every level, including the one with no fixed limit.
-  assert.match(ENGINE, /4\. RISK\s+risk is applied LAST and always wins/);
+  assert.match(ENGINE, /5\. RISK\s+risk is applied LAST and always wins/);
   const topUnderRisk = engine.buildEffectiveLimits({
     config: CONFIG, tier: 2, riskStatus: "high_risk", earned: { applies: false, multiplier: 1 } });
   assert.ok(Number(topUnderRisk.limits.monthlySend) > 0, "a compliance decision binds the top level too");

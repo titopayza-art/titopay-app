@@ -19,10 +19,30 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 110;
+const API_BUILD = 111;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  111: "WHAT TITOPAY CLAIMS IS NOW BOUNDED BY WHAT ITS SUPPLIERS CAN EVIDENCE. Two "
+      + "claims rested on nothing but a number nobody had revisited. (1) Level 1 "
+      + "granted a R200 000 month on an identity check that confirms only that a "
+      + "document number is well formed, unused elsewhere in TitoPay and not on "
+      + "TitoPay's screening list - no register match, no liveness. The KYC adapter "
+      + "now declares its assurance (`structural`), and the limit engine gained an "
+      + "assurance layer that narrows a level to what the evidence behind it can "
+      + "defend: level 1 serves R50 000 a month, R7 500 a payment, R15 000 cash out. "
+      + "The configured R200 000 STAYS as the policy and applies in full the day "
+      + "KYC_PROVIDER selects a contracted adapter - no deploy, no number to "
+      + "remember. Applied AFTER earned capacity, deliberately: behaviour is what a "
+      + "synthetic identity manufactures. Level 0 and level 2 are unchanged; level 2 "
+      + "rests on TitoPay's own documentary review, not on the identity vendor. The "
+      + "limits SCREEN shows the same figures the engine enforces, so no customer is "
+      + "promised a limit that would then refuse. (2) Airtime, data, electricity, "
+      + "vouchers and bill payments were published as active while the VAS "
+      + "capability had no adapter that could send a purchase. Adapters now declare "
+      + "`canPurchase` and the catalogue serves those tiles as coming_soon until one "
+      + "can - the roadmap is kept, the claim is not. Nothing was weakened and no "
+      + "rail TitoPay does supply changed.",
   110: "ACTIVATION AND RETENTION ARE MEASURABLE FOR THE FIRST TIME. The platform "
       + "could report how many people registered and never how many of them ever "
       + "transacted, or came back. Four read-only endpoints under /v1/marketing "

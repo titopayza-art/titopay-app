@@ -129,6 +129,28 @@ function capabilityConfigured(capability) {
   return Boolean(registry.get(capability)?.get(configuredKey(capability)));
 }
 
+// WHAT AN ADAPTER DECLARES ABOUT ITSELF, read without invoking it and without
+// throwing when the capability is unwired.
+//
+// This is deliberately narrow. Core still may not ask WHO supplies a
+// capability, and nothing here lets it: the caller names an attribute, not a
+// provider, and every adapter answering that capability declares the same
+// attribute in the same vocabulary. What it makes possible is the one thing
+// core genuinely needs to know about a supplier — HOW STRONG the thing it
+// supplies is — so that what TitoPay grants on the back of a provider can be
+// bounded by what that provider can actually evidence, instead of by whoever
+// last remembered to edit a number.
+//
+// The fallback is returned for an unregistered capability and for an adapter
+// that declares nothing, so a caller reasoning about strength always gets the
+// weakest answer rather than an absent one.
+function providerAttribute(capability, name, fallback = null) {
+  if (!CAPABILITY_KEYS.has(capability)) return fallback;
+  const adapter = registry.get(capability)?.get(configuredKey(capability));
+  const value = adapter ? adapter[name] : undefined;
+  return value === undefined || value === null ? fallback : value;
+}
+
 // Ask an adapter for one operation. Keeping this in one place means an
 // operation a provider does not support fails the same way everywhere, and
 // core never has to branch on which provider is live.
@@ -145,16 +167,34 @@ function operation(capability, name) {
 // What the console and the diagnosis script may show an operator: which
 // capability resolves to which adapter, and whether it is wired. No secret and
 // no endpoint is included.
+// The declarations an adapter may make about the STRENGTH of what it supplies,
+// as opposed to the operations it exposes. Listed explicitly so the diagnosis
+// reports facts adapters actually assert, and never leaks an adapter's internal
+// state by enumerating its properties.
+const DECLARED_FACTS = ["identityAssurance", "canPurchase"];
+
 function describeProviders() {
   return Object.values(CAPABILITIES).map((capability) => {
     const key = configuredKey(capability);
     const adapter = registry.get(capability)?.get(key) || null;
+    // REGISTERED IS NOT THE SAME AS ABLE. Every capability has a default
+    // adapter, so every capability reports as registered, and the console read
+    // that as "wired" for rails that can only refuse. What an adapter declares
+    // about itself is the part that distinguishes a live rail from a seam.
+    const declares = {};
+    for (const fact of DECLARED_FACTS) {
+      if (adapter && adapter[fact] !== undefined && adapter[fact] !== null) declares[fact] = adapter[fact];
+    }
     return {
       capability,
       variable: environmentVariableFor(capability),
       configured: key,
       registered: Boolean(adapter),
       source: process.env[environmentVariableFor(capability)] ? "environment" : "default",
+      declares,
+      // True only where the adapter says so. A capability that declares
+      // nothing is not asserted either way, because silence is not a claim.
+      canTransact: adapter && adapter.canPurchase !== undefined ? Boolean(adapter.canPurchase) : null,
       operations: adapter ? Object.keys(adapter).filter((k) => typeof adapter[k] === "function").sort() : []
     };
   });
@@ -165,6 +205,7 @@ module.exports = {
   registerProvider,
   providerFor,
   capabilityConfigured,
+  providerAttribute,
   configuredKey,
   environmentVariableFor,
   operation,

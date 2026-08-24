@@ -206,6 +206,12 @@ const DEFAULT_CONFIG = {
   products: require("./limit-engine").DEFAULT_PRODUCT_LIMITS,
   riskBands: require("./limit-engine").DEFAULT_RISK_BANDS,
   earnedCapacity: require("./limit-engine").DEFAULT_EARNED_CAPACITY,
+  // The most a level may be granted on the evidence actually behind it. The
+  // tier numbers above are the POLICY — what a level is worth once identity is
+  // properly verified. These are the BOUND that applies until it is. Editable
+  // and versioned like everything else here; see limit-engine.js for what each
+  // assurance level means and why the bound is applied after earned capacity.
+  assuranceCeilings: require("./limit-engine").DEFAULT_ASSURANCE_CEILINGS,
   // RECEIVING. A payment that only fails because the recipient has no
   // receiving capacity left is held for them to claim by verifying, rather
   // than refused: the money is never lost, the sender is never blocked by
@@ -356,6 +362,7 @@ function mergeConfig(stored) {
     if (stored.products && typeof stored.products === "object") merged.products = { ...merged.products, ...stored.products };
     if (stored.riskBands && typeof stored.riskBands === "object") merged.riskBands = { ...merged.riskBands, ...stored.riskBands };
     if (stored.earnedCapacity && typeof stored.earnedCapacity === "object") merged.earnedCapacity = { ...merged.earnedCapacity, ...stored.earnedCapacity };
+    if (stored.assuranceCeilings && typeof stored.assuranceCeilings === "object") merged.assuranceCeilings = { ...merged.assuranceCeilings, ...stored.assuranceCeilings };
     if (stored.receiving && typeof stored.receiving === "object") merged.receiving = { ...merged.receiving, ...stored.receiving };
     if (stored.edd && typeof stored.edd === "object") merged.edd = { ...merged.edd, ...stored.edd };
     if (stored.monitoring && typeof stored.monitoring === "object") merged.monitoring = { ...merged.monitoring, ...stored.monitoring };
@@ -1117,19 +1124,52 @@ function productAccessLevel(config, tier) {
   };
 }
 
+// WHAT A CUSTOMER IS TOLD A LEVEL GIVES THEM.
+//
+// This must be the number the engine will actually honour. A screen that
+// promises R200 000 while the engine stops the payment at R50 000 does not
+// merely look wrong — it turns a deliberate control into what a customer
+// experiences as a broken app, and it is the exact failure the limits screen
+// exists to prevent. So the assurance ceiling is applied here too, from the
+// same table and the same function the engine uses.
+//
+// Nothing customer-specific belongs here: product profiles, earned standing
+// and risk are properties of a person, not of a level, and the ladder is a
+// statement about levels. The assurance ceiling IS a property of the level,
+// because it is a statement about the evidence that grants it.
+//
+// The admin console keeps editing the configured tier numbers, uncapped: those
+// are the policy, and an operator setting policy must see the policy.
 function shapeTier(config, tier) {
   const t = config.tiers[String(tier)] || {};
+  const { assurance, ceilings } = require("./limit-engine").assuranceCeilingFor(config, tier);
+  let assuranceBound = false;
+  const rail = (key) => {
+    const configured = t[key] ?? null;
+    const ceiling = ceilings[key];
+    if (!Number.isFinite(Number(ceiling))) return configured;
+    const served = configured === null || !Number.isFinite(Number(configured))
+      ? Number(ceiling)
+      : Math.min(Number(configured), Number(ceiling));
+    if (served !== configured) assuranceBound = true;
+    return served;
+  };
   return {
     tier,
     label: t.label,
     description: t.description,
-    monthlyReceive: t.monthlyReceive ?? null,
-    monthlySend: t.monthlySend ?? null,
-    singleTransaction: t.singleTransaction ?? null,
-    dailySend: t.dailySend ?? null,
-    singleWithdrawal: t.singleWithdrawal ?? null,
-    monthlyWithdraw: t.monthlyWithdraw ?? null,
-    maxBalance: t.maxBalance ?? null
+    monthlyReceive: rail("monthlyReceive"),
+    monthlySend: rail("monthlySend"),
+    singleTransaction: rail("singleTransaction"),
+    dailySend: rail("dailySend"),
+    singleWithdrawal: rail("singleWithdrawal"),
+    monthlyWithdraw: rail("monthlyWithdraw"),
+    maxBalance: rail("maxBalance"),
+    // Additive, so no existing client changes: which evidence stands behind
+    // this level, and whether that evidence is currently what holds the level
+    // below its configured policy.
+    assurance,
+    assuranceBound
   };
 }
 
@@ -1239,6 +1279,7 @@ module.exports = {
   ACCESS_LEVELS,
   validateLimitConfig,
   productAccessLevel,
+  shapeTier,
   ensureComplianceSchema,
   assertBalanceHeadroom,
   assertCanWithdraw,

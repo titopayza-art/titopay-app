@@ -150,7 +150,19 @@ function providerSummary() {
     require("../providers/banking-provider");
     return require("../providers").describeProviders().map((entry) => ({
       ...entry,
-      state: entry.configured === "none" ? "none" : entry.registered ? "wired" : "missing"
+      // "wired" claimed more than the registry knew. Every capability has a
+      // default adapter, so everything reported as wired — including the value
+      // added services rail, whose adapter can authenticate and list a
+      // catalogue but cannot sell from it. An adapter that declares it cannot
+      // transact is reported as a SEAM: the code is in place and waiting for a
+      // contract, which is a different thing for an operator to read.
+      state: entry.configured === "none"
+        ? "none"
+        : !entry.registered
+          ? "missing"
+          : entry.canTransact === false
+            ? "seam"
+            : "wired"
     }));
   } catch (error) {
     return [{ capability: "provider registry", state: "missing", error: errorDetail(error).message }];

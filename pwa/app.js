@@ -25004,7 +25004,12 @@ function howItWorksSteps() {
     {
       icon: "wallet",
       title: "What is TitoPay?",
-      body: "TitoPay is a digital wallet made in South Africa. Send and receive money, pay with a QR, buy airtime and electricity, sell as a business and get paid in seconds. All from one app, with the fees shown before any money moves.",
+      // WHAT THIS SAYS MUST BE WHAT THE APP DOES. Airtime and electricity were
+      // named here as things a customer can buy today, while the services
+      // behind them carry a "Coming soon" badge: the first screen of the tour
+      // promised a rail the Services tab does not open. The tour now describes
+      // what transacts, and the roadmap is named where it belongs, below.
+      body: "TitoPay is a digital wallet made in South Africa. Send and receive money, pay with a QR, buy event tickets, sell as a business and get paid in seconds. All from one app, with the fees shown before any money moves.",
       hint: "TitoPay. Smart Payments. Simplified.",
       tagline: true
     },
@@ -25066,7 +25071,7 @@ function howItWorksSteps() {
     {
       icon: "grid",
       title: "Everyday services",
-      body: "Buy airtime and electricity, pay bills, split costs, buy vouchers and save with a stokvel, straight from your wallet.",
+      body: "Split costs, request money, send a gift and save with a stokvel, straight from your wallet. Airtime, data, electricity, vouchers and bill payments are marked Coming soon until TitoPay can supply them.",
       hint: "Services tab"
     },
     {
@@ -25226,7 +25231,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 }
 async function loadDefaultServices() {
   if (!defaultServicesPromise) {
-    defaultServicesPromise = fetch("./services-default.json?v=269")
+    defaultServicesPromise = fetch("./services-default.json?v=270")
       .then((response) => {
         if (!response.ok) throw new Error("Default service catalogue unavailable");
         return response.json();

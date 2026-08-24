@@ -19,7 +19,13 @@
 //                     additional capacity, up to a configured ceiling. This
 //                     is what stops legitimate regulars living against a
 //                     wall they never asked for.
-//   4. RISK           risk is applied LAST and always wins. An elevated or
+//   4. ASSURANCE      a level may not grant more than the EVIDENCE BEHIND IT
+//                     can defend. Applied after earned capacity, deliberately,
+//                     because behaviour is exactly what a synthetic identity
+//                     manufactures: an account that nobody has actually
+//                     identified must not be able to earn its way past the
+//                     bound that not knowing who they are imposes.
+//   5. RISK           risk is applied LAST and always wins. An elevated or
 //                     high risk account is narrowed regardless of how
 //                     verified it is or how long it has been here, and a
 //                     level with no fixed limit gains one.
@@ -63,6 +69,83 @@ const DEFAULT_RISK_BANDS = {
   }
 };
 
+// WHAT A LEVEL MAY BE GRANTED ON THE EVIDENCE ACTUALLY BEHIND IT.
+//
+// A verification level is a claim about a customer. The strength of that claim
+// is not a property of the level — it is a property of the check that produced
+// it, and that check can be weaker than the level's name suggests. "Basic
+// Verified" grants a monthly figure on the assumption that identity was
+// established. Today it is established structurally: the document number is
+// well formed, unique within TitoPay, and not on TitoPay's screening list.
+// Nothing confirms the person exists.
+//
+// The old arrangement made that gap invisible, because the level's limits were
+// just numbers in a table. Numbers in a table have to be remembered. This
+// binds them instead: the identity provider declares what it can evidence
+// (see providers/kyc-provider.js), and each assurance level carries the most
+// TitoPay is prepared to grant on it. A level's configured limits stand as the
+// POLICY — what that level is worth when identity is properly verified — and
+// the ceiling narrows the effective limit until the evidence catches up.
+//
+// So this is self-healing in both directions. Contract a verification provider
+// and set KYC_PROVIDER: the adapter declares `verified`, the ceiling stops
+// binding, and the configured ladder applies in full with no deploy and no
+// number to remember. Lose the provider and the platform narrows itself.
+//
+// An empty entry means "this assurance imposes no ceiling of its own": the
+// level's configured limits stand, and product, earned standing and risk are
+// the only things that move them.
+//
+//   none         no identity evidence at all. Bounded at what the platform
+//                already grants an account nobody has identified, so an
+//                unwired KYC capability cannot silently hand out more.
+//   structural   TitoPay's own structural check. Materially more than nothing
+//                — it enforces one account per document and catches a listed
+//                number — so it is worth roughly twice the unidentified
+//                level, and cash out is tightened hardest, because cash out
+//                is where fraud realises.
+//   verified     an authoritative confirmation. The configured ladder stands.
+//   documentary  TitoPay's own compliance team has reviewed an identity
+//                document and proof of address by hand. No ceiling today: the
+//                population is small, hand-reviewed, and already carries
+//                ongoing due diligence review, EDD value triggers, screening
+//                and risk banding. Named here, and console-editable, so a
+//                ceiling can be set without a deploy if compliance wants one.
+const DEFAULT_ASSURANCE_CEILINGS = {
+  none: {
+    monthlyReceive: 25000, monthlySend: 25000, singleTransaction: 2500,
+    dailySend: 4000, singleWithdrawal: 1000, monthlyWithdraw: 3000, maxBalance: 10000
+  },
+  structural: {
+    monthlyReceive: 50000, monthlySend: 50000, singleTransaction: 7500,
+    dailySend: 15000, singleWithdrawal: 5000, monthlyWithdraw: 15000, maxBalance: 25000
+  },
+  verified: {},
+  documentary: {}
+};
+
+// Which assurance stands behind each level. Level 2 is not granted by the
+// automated identity check at all — it is granted by TitoPay's own documentary
+// review — so it does not inherit the provider's assurance, and contracting a
+// verification provider does not retroactively restate what level 2 rests on.
+// Level 0 makes no identity claim, so it carries none.
+function assuranceForTier(tier) {
+  const level = Number(tier);
+  if (level >= 2) return "documentary";
+  if (level <= 0) return "none";
+  // Lazily required so the engine never depends on provider load order, and
+  // so a caller may always override by passing `assurance` explicitly.
+  return require("../providers/kyc-provider").identityAssurance();
+}
+
+// The ceiling in force for one level. Console-editable through the compliance
+// config like every other number here, versioned and reversible.
+function assuranceCeilingFor(config, tier, assurance) {
+  const level = assurance || assuranceForTier(tier);
+  const table = config?.assuranceCeilings || DEFAULT_ASSURANCE_CEILINGS;
+  return { assurance: level, ceilings: table[level] || {} };
+}
+
 // Capacity a customer earns by simply being a good customer: an account
 // that has been here a while, has moved real money to real people without
 // incident, and carries no open compliance flag.
@@ -102,7 +185,7 @@ function narrower(current, candidate) {
 // Builds the effective limit set for one customer on one rail, and reports
 // how it was reached so the console and the audit trail can show the
 // reasoning rather than a bare number.
-function buildEffectiveLimits({ config, tier, riskStatus, serviceCode, earned }) {
+function buildEffectiveLimits({ config, tier, riskStatus, serviceCode, earned, assurance }) {
   const baseline = config.tiers?.[String(tier)] || {};
   const limits = {};
   for (const key of LIMIT_KEYS) limits[key] = isFixed(baseline[key]) ? Number(baseline[key]) : null;
@@ -125,7 +208,23 @@ function buildEffectiveLimits({ config, tier, riskStatus, serviceCode, earned })
     }
   }
 
-  // 4. Risk narrows last and always wins.
+  // 4. Assurance bounds what the level may be granted at all. It narrows only,
+  //    and it is applied AFTER earned capacity on purpose: earning capacity is
+  //    a reward for behaviour, and behaviour is the one thing an identity
+  //    nobody has confirmed can still produce.
+  const { assurance: assuranceLevel, ceilings } = assuranceCeilingFor(config, tier, assurance);
+  let assuranceBound = false;
+  for (const key of LIMIT_KEYS) {
+    const narrowed = narrower(limits[key], ceilings[key]);
+    // Bound means the ceiling ACTUALLY held this level below what was
+    // configured for it — not merely that a ceiling exists. A table whose
+    // numbers already sit above the level changes nothing and must not be
+    // reported as if it were doing work.
+    if (narrowed !== limits[key]) assuranceBound = true;
+    limits[key] = narrowed;
+  }
+
+  // 5. Risk narrows last and always wins.
   const bands = config.riskBands || DEFAULT_RISK_BANDS;
   const band = bands[String(riskStatus || "normal")] || bands.normal || { multiplier: 1 };
   const multiplier = Number(band.multiplier);
@@ -146,7 +245,13 @@ function buildEffectiveLimits({ config, tier, riskStatus, serviceCode, earned })
       riskMultiplier: Number.isFinite(multiplier) ? multiplier : 1,
       product: product ? serviceCode : null,
       earnedApplied: earnedMultiplier > 1,
-      earnedMultiplier
+      earnedMultiplier,
+      // Reported so the console and the audit trail can show that a limit was
+      // narrowed by the evidence behind the level rather than by the customer's
+      // own conduct — the two look identical in a bare number and are not the
+      // same thing to explain.
+      assurance: assuranceLevel,
+      assuranceBound
     }
   };
 }
@@ -370,9 +475,12 @@ module.exports = {
   evaluateBalanceHeadroom,
   buildEffectiveLimits,
   earnedStanding,
+  assuranceForTier,
+  assuranceCeilingFor,
   DEFAULT_PRODUCT_LIMITS,
   DEFAULT_RISK_BANDS,
   DEFAULT_EARNED_CAPACITY,
+  DEFAULT_ASSURANCE_CEILINGS,
   LIMIT_KEYS,
   WITHDRAWAL_SERVICE_CODES
 };

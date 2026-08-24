@@ -24,7 +24,37 @@
 // `pending` or `review_required` for real reasons, which the callers already
 // handle, because a level is granted on `verified` and on nothing else.
 
-const { registerProvider, operation, CAPABILITIES, capabilityConfigured, configuredKey } = require("./index");
+const { registerProvider, operation, CAPABILITIES, capabilityConfigured, configuredKey, providerAttribute } = require("./index");
+
+// HOW STRONG AN IDENTITY CHECK IS, in TitoPay's own vocabulary. Every KYC
+// adapter declares the STRONGEST assurance it can produce, so the platform can
+// bound what it grants on the back of that adapter without knowing or caring
+// which company supplies it. Ordered weakest first; the order is the meaning.
+//
+//   none         no identity check is possible at all — the capability is
+//                unwired, or the adapter cannot answer for identity.
+//   structural   the document number is well formed, no other TitoPay account
+//                is using it, and it is not on TitoPay's screening list. It
+//                does NOT establish that the person exists or that the
+//                document belongs to them. This is what `internal` does today.
+//   verified     the identity was confirmed against an authoritative source —
+//                a register match, document authentication, liveness, or some
+//                combination a contracted provider stands behind.
+//
+// A fourth value, `documentary`, exists for the assurance TitoPay produces
+// ITSELF when its compliance team reviews an identity document and proof of
+// address by hand. No provider declares it, because no provider supplies it.
+// It lives with the levels (see limit-engine) rather than here.
+const IDENTITY_ASSURANCE = ["none", "structural", "verified"];
+
+// The strongest identity assurance the platform can currently obtain. Read
+// from the configured adapter's own declaration, never inferred from its name,
+// and `none` when nothing is wired — so an unconfigured capability is treated
+// as the weakest case rather than an absent one.
+function identityAssurance() {
+  const declared = String(providerAttribute(CAPABILITIES.KYC, "identityAssurance", "none"));
+  return IDENTITY_ASSURANCE.includes(declared) ? declared : "none";
+}
 
 // THE TITOPAY VERIFICATION STATUSES. Every adapter normalises to these, so a
 // provider's own vocabulary ("APPROVED", "MANUAL_REVIEW", "DECLINED_RETRY")
@@ -54,6 +84,12 @@ registerProvider({
   capability: CAPABILITIES.KYC,
   key: "internal",
   isDefault: true,
+
+  // WHAT THIS ADAPTER CAN EVIDENCE, declared once and read by the limit
+  // engine. Saying it here rather than in a limits table is the point: the
+  // ceiling a level is granted under moves the day the adapter moves, and
+  // cannot be left behind by a number nobody remembered to change.
+  identityAssurance: "structural",
 
   // A natural person. The caller has already applied TitoPay's own structural
   // rules (which document types are accepted, the SA ID checksum, the date of
@@ -121,6 +157,8 @@ registerProvider({
 // ---------------------------------------------------------------------------
 module.exports = {
   VERIFICATION_STATUSES,
+  IDENTITY_ASSURANCE,
+  identityAssurance,
   normalizeVerificationStatus,
   verifyIdentity: (subject) => operation(CAPABILITIES.KYC, "verifyIdentity")(subject),
   verifyBusiness: (entity) => operation(CAPABILITIES.KYC, "verifyBusiness")(entity),

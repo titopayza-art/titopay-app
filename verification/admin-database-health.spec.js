@@ -51,8 +51,11 @@ const DIAGNOSIS = {
     appliedMigrations: 3
   },
   providers: [
-    { capability: "kyc", configured: "internal", variable: "KYC_PROVIDER", source: "default", registered: true, state: "wired" },
-    { capability: "vas", configured: "none", variable: "VAS_PROVIDER", source: "default", registered: true, state: "none" }
+    { capability: "kyc", configured: "internal", variable: "KYC_PROVIDER", source: "default", registered: true, state: "wired", declares: { identityAssurance: "structural" } },
+    { capability: "vas", configured: "none", variable: "VAS_PROVIDER", source: "default", registered: true, state: "none" },
+    // Registered, and declaring that it cannot transact: the state the console
+    // used to paint red as a fault when it is neither a fault nor a live rail.
+    { capability: "payment", configured: "flash", variable: "VAS_PROVIDER", source: "environment", registered: true, state: "seam", canTransact: false, declares: { canPurchase: false } }
   ],
   verdict: {
     ok: false,

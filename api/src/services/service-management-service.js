@@ -55,6 +55,60 @@ const DEFAULT_SERVICES = [
   ["cash-back", "Cash Back", "refresh", "cash-back", "Business cashback services.", "disabled", false, false, 390, "none"]
 ];
 
+// A SERVICE MAY NOT BE PUBLISHED AS ACTIVE WHILE THE CAPABILITY BEHIND IT
+// CANNOT TRANSACT.
+//
+// The catalogue is a promise. Every tile in it says: tap this and TitoPay will
+// do it. Six of them promised airtime, data, electricity, vouchers and bill
+// payments while the value-added services capability had no adapter that could
+// send a purchase — the seam exists, the contract does not. A customer tapping
+// one reached a refusal, and every screen that counts what TitoPay offers
+// counted them.
+//
+// Marking them by hand would work exactly once. This derives it instead: the
+// adapter declares whether it can transact (see providers/vas-provider.js) and
+// the catalogue reads that declaration on every read. Sign the contract, wire
+// the adapter, set VAS_PROVIDER, and the tiles come back on their own.
+//
+// It downgrades to `coming_soon`, never to `disabled`: the service is real, it
+// is coming, and the app already has an honest place for that — a separate
+// section, a "soon" badge, and a tap that explains instead of failing. Hiding
+// them would lose the roadmap; leaving them active would keep the claim.
+const CAPABILITY_BACKED_SERVICES = {
+  airtime: "vas",
+  data: "vas",
+  "mobile-data": "vas",
+  "airtime-data": "vas",
+  "airtime-and-data": "vas",
+  "airtime-data-bundles": "vas",
+  electricity: "vas",
+  voucher: "vas",
+  "pay-bills": "vas"
+};
+
+function capabilityCanTransact(capability) {
+  if (capability === "vas") return require("../providers/vas-provider").vasCanPurchase();
+  // A capability nobody has claimed here is not gated: this list names the
+  // rails TitoPay knows it buys from a supplier, and silence is not a claim.
+  return true;
+}
+
+// Applied to every read, so no surface — app, console, analytics or export —
+// can show a service as live that the platform cannot perform.
+function applyCapabilityGate(row) {
+  const capability = CAPABILITY_BACKED_SERVICES[row.service_code];
+  if (!capability || capabilityCanTransact(capability)) return row;
+  return {
+    ...row,
+    status: row.status === "disabled" ? row.status : "coming_soon",
+    // Said out loud, so the console shows an operator WHY the status they
+    // stored is not the status being served, instead of looking like a bug.
+    capability,
+    capabilityLive: false,
+    unavailableReason: "No provider is contracted for this capability yet, so the service cannot be published as active."
+  };
+}
+
 function normalizeAudience(audience = "all") {
   return VALID_AUDIENCES.has(audience) ? audience : "all";
 }
@@ -104,7 +158,7 @@ async function listServices({ audience = "all", includeDisabled = false } = {}) 
     `,
     params
   );
-  return rows;
+  return rows.map(applyCapabilityGate);
 }
 
 async function ensureDefaultServices() {
@@ -360,7 +414,7 @@ async function createService(payload, actor) {
     entityId: id,
     metadata: { service_code: item.service_code },
   });
-  return rows[0];
+  return applyCapabilityGate(rows[0]);
 }
 
 async function updateService(id, payload, actor) {
@@ -419,7 +473,10 @@ async function updateService(id, payload, actor) {
     entityId: id,
     metadata: payload,
   });
-  return rows[0];
+  // Gated on the way back too: an operator who sets a capability-backed service
+  // to active must be told immediately that it will still be served as coming
+  // soon, rather than discovering it on the next list.
+  return applyCapabilityGate(rows[0]);
 }
 
 module.exports = {

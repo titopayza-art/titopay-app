@@ -24,7 +24,7 @@
 // because a token issued by the provider and lost by TitoPay is money gone. It
 // must be reconciled, never blindly re-purchased.
 
-const { registerProvider, operation, CAPABILITIES, capabilityConfigured } = require("./index");
+const { registerProvider, operation, CAPABILITIES, capabilityConfigured, providerAttribute } = require("./index");
 const { AppError } = require("../lib/errors");
 
 function notAvailable() {
@@ -38,6 +38,12 @@ registerProvider({
   capability: CAPABILITIES.VAS,
   key: "none",
   isDefault: true,
+  // WHETHER A PURCHASE CAN ACTUALLY BE MADE, declared rather than inferred.
+  // `purchaseAirtime` exists on every adapter — that is the seam — so its
+  // presence proves nothing, and anything checking for the function would
+  // conclude the rail is live. This is the fact the catalogue reads before it
+  // publishes a service as active.
+  canPurchase: false,
   purchaseAirtime: notAvailable,
   purchaseData: notAvailable,
   purchaseElectricity: notAvailable,
@@ -52,6 +58,10 @@ registerProvider({
 registerProvider({
   capability: CAPABILITIES.VAS,
   key: "flash",
+  // Authenticating and listing a catalogue is not selling from it. Until a
+  // purchase can be sent and settled, this stays false, and the services it
+  // would supply stay off the shelf.
+  canPurchase: false,
   purchaseAirtime: notAvailable,
   purchaseData: notAvailable,
   purchaseElectricity: notAvailable,
@@ -69,5 +79,11 @@ module.exports = {
   purchaseData: (actor, request) => operation(CAPABILITIES.VAS, "purchaseData")(actor, request),
   purchaseElectricity: (actor, request) => operation(CAPABILITIES.VAS, "purchaseElectricity")(actor, request),
   listVasProducts: () => operation(CAPABILITIES.VAS, "listProducts")(),
-  vasCapabilityConfigured: () => capabilityConfigured(CAPABILITIES.VAS)
+  vasCapabilityConfigured: () => capabilityConfigured(CAPABILITIES.VAS),
+  // Can TitoPay actually sell any of this today? Read by the service catalogue
+  // so a rail that cannot transact is never published to a customer as one
+  // that can. Defaults to false for an unwired capability, so the failure mode
+  // is a service that is not offered rather than one that is offered and then
+  // refuses at the till.
+  vasCanPurchase: () => Boolean(providerAttribute(CAPABILITIES.VAS, "canPurchase", false))
 };

@@ -5118,12 +5118,16 @@ async function renderDatabaseHealth() {
 
   const providersHtml = d?.providers?.length ? tableCard("Which provider supplies which capability", renderRows(d.providers, [
     { label: "Capability", key: "capability" },
+    // "Wired" used to cover every registered adapter, which meant a capability
+    // whose adapter can only refuse showed green. A seam is the honest middle
+    // state: the code is in place, the contract is not.
     { label: "State", render: (row) => row.state === "wired"
       ? `<span class="chip green">wired</span>`
-      : row.state === "none" ? `<span class="chip">not contracted</span>` : `<span class="chip red">missing adapter</span>` },
+      : row.state === "seam" ? `<span class="chip orange">seam, no contract</span>`
+        : row.state === "none" ? `<span class="chip">not contracted</span>` : `<span class="chip red">missing adapter</span>` },
     { label: "Configured", render: (row) => `<code>${escapeHtml(String(row.configured || "-"))}</code>` },
     { label: "Set by", render: (row) => `<small>${escapeHtml(String(row.variable || "-"))} (${escapeHtml(String(row.source || "-"))})</small>` },
-  ], () => "", { actionsColumn: false }), "\"Not contracted\" means TitoPay has no supplier for that capability; the operations refuse rather than returning a fabricated result. \"Missing adapter\" is a real fault: check the *_PROVIDER value in the API environment.") : "";
+  ], () => "", { actionsColumn: false }), "\"Not contracted\" means TitoPay has no supplier for that capability; the operations refuse rather than returning a fabricated result. \"Seam, no contract\" means an adapter is in place but declares it cannot transact yet — the services it would supply are served to customers as coming soon, not as active. \"Missing adapter\" is a real fault: check the *_PROVIDER value in the API environment.") : "";
 
   document.getElementById("page-content").innerHTML = `
     ${renderMetrics([
