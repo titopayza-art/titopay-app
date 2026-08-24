@@ -19,10 +19,23 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 109;
+const API_BUILD = 110;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  110: "ACTIVATION AND RETENTION ARE MEASURABLE FOR THE FIRST TIME. The platform "
+      + "could report how many people registered and never how many of them ever "
+      + "transacted, or came back. Four read-only endpoints under /v1/marketing "
+      + "(activation, retention, frequency, growth) answer that off users, "
+      + "transactions and wallet_ledger - every user, not only campaign-attributed "
+      + "ones, which is what the existing marketing funnel counts. Three modelling "
+      + "errors were caught by the tests rather than shipped: identity "
+      + "verification is NOT a funnel stage (Tier 0 allows R25 000 a month, so "
+      + "users transact unverified and the funnel widened); funding must be read "
+      + "from wallet_ledger, not transactions.direction, which records only the "
+      + "initiating side of a transfer; and funded-never-spent is a set "
+      + "difference, not a subtraction, because the two sets do not nest. Nothing "
+      + "writes, nothing is on a payment path, every query is window-bounded.",
   109: "The emailed event ticket prints on the paper the rest of TitoPay prints on. "
       + "The ticket page ground was its own approximate pale blue (#edf1fa); it is "
       + "now #f0f4ff, the same paper the A3 marketing poster and both A4 QR posters "

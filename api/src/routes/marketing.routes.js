@@ -23,6 +23,7 @@ const { isMissingDbObjectError, logDbCompatibilityWarning } = require("../lib/db
 const marketing = require("../services/marketing-service");
 const sales = require("../services/marketing-sales-service");
 const analytics = require("../services/marketing-analytics-service");
+const activation = require("../services/activation-service");
 
 const router = express.Router();
 
@@ -111,6 +112,31 @@ router.get("/analytics", requireAdminPermission("marketing_analytics"), handle(a
 
 router.get("/roi", requireAdminPermission("marketing_analytics"), handle(async (req, res) => {
   res.json({ ok: true, items: await analytics.roi(req.query) });
+}));
+
+/* --------------------------------------------------- activation and retention */
+
+// These read every user, not only campaign-attributed ones, so they answer
+// "is this a product?" rather than "did that campaign work?". Same permission
+// as the rest of analytics: whoever may see acquisition cost may see whether
+// the users it bought ever came back.
+
+router.get("/activation", requireAdminPermission("marketing_analytics"), handle(async (req, res) => {
+  res.json({ ok: true, ...(await activation.activationFunnel(req.query)) });
+}));
+
+router.get("/retention", requireAdminPermission("marketing_analytics"), handle(async (req, res) => {
+  res.json({ ok: true, ...(await activation.retentionCohorts(req.query)) });
+}));
+
+router.get("/frequency", requireAdminPermission("marketing_analytics"), handle(async (req, res) => {
+  res.json({ ok: true, ...(await activation.frequency(req.query)) });
+}));
+
+// One call for the dashboard. Three separate round trips to draw one screen is
+// how a "never slow down a payment" rule gets broken by accident.
+router.get("/growth", requireAdminPermission("marketing_analytics"), handle(async (req, res) => {
+  res.json({ ok: true, ...(await activation.growthSnapshot(req.query)) });
 }));
 
 /* ----------------------------------------------------------------- campaigns */
