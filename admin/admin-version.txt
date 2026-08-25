@@ -1,6 +1,20 @@
 TitoPay Admin
-Build: admin-console-v98
-Date: 2026-08-22
+Build: admin-console-v99
+Date: 2026-08-25
+
+v99 - Activation & Retention.
+
+  - A new page under Marketing, second in the section: of everyone who
+    registered, how many were funded, how many ever transacted, how many
+    came back week by week, how often they transact, and how many were
+    funded and never spent anything. Every registration counts towards it,
+    not only the ones a tracked campaign brought in.
+  - The numbers came from API build 110 and had never been shown anywhere.
+  - Registration windows of 30, 60, 90 or 120 days; the grid follows each
+    cohort forwards for up to twelve weeks. Cohorts too small to read as a
+    percentage are marked, not hidden.
+  - Exports the cohort grid as CSV.
+
 
 v97 - Official wordmark throughout.
 

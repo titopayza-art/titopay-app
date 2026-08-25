@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v98";
+  return "admin-console-v99";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -98,6 +98,7 @@ const NAV_GROUPS = [
   ]},
   { title: "Marketing & Sales", items: [
     ["/marketing-sales/", "marketing-overview", "Overview"],
+    ["/marketing-sales/growth/", "marketing-growth", "Activation & Retention"],
     ["/marketing-sales/campaigns/", "marketing-campaigns", "Campaigns"],
     ["/marketing-sales/audiences/", "marketing-audiences", "Audiences"],
     ["/marketing-sales/promotions/", "marketing-promotions", "Promotions & Coupons"],
@@ -7062,6 +7063,8 @@ function adminPageDescriptors() {
     "email-otp": ["Email OTP", "Configure, monitor and audit queued Email OTP authentication."],
     "sms-analytics": ["SMS Analytics", "Delivery and campaign reporting for TitoPay SMS, mirroring the Email Analytics view."],
     "marketing-overview": ["Marketing · Overview", "Campaign, lead and revenue performance at a glance."],
+    "marketing-growth": ["Marketing · Activation & Retention",
+      "Of everyone who registered, how many transacted — and how many came back."],
     "marketing-campaigns": ["Marketing · Campaigns", "Plan campaigns, track budget and record spend."],
     "marketing-audiences": ["Marketing · Audiences", "Build and refresh customer segments."],
     "marketing-promotions": ["Marketing · Promotions & Coupons", "Create coupons and control how often they can be claimed."],
@@ -7082,6 +7085,7 @@ function adminPageLoaders() {
     alerts: renderAlertCentre,
     analytics: renderAnalytics,
     "marketing-overview": (me) => renderMarketingSales(me, "overview"),
+    "marketing-growth": (me) => renderMarketingSales(me, "growth"),
     "marketing-campaigns": (me) => renderMarketingSales(me, "campaigns"),
     "marketing-audiences": (me) => renderMarketingSales(me, "audiences"),
     "marketing-promotions": (me) => renderMarketingSales(me, "promotions"),

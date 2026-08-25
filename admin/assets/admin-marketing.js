@@ -26,6 +26,9 @@
 
 const VIEWS = [
   ["overview", "Overview"],
+  // Second, deliberately. These are the two numbers that say whether there is a
+  // business here, and a metric nobody looks at changes nobody's behaviour.
+  ["growth", "Activation & Retention"],
   ["campaigns", "Campaigns"],
   ["audiences", "Audiences"],
   ["promotions", "Promotions & Coupons"],
@@ -45,6 +48,21 @@ const RANGES = [
   ["last_month", "Last month"], ["quarter", "This quarter"], ["year", "This year"]
 ];
 
+// THE COHORT WINDOW IS A DIFFERENT THING FROM THE RANGE PICKER, and mixing them
+// would be a quiet lie. Every other page's range asks "what happened in this
+// period". A cohort window asks "who REGISTERED in this period", and then
+// follows those same people forwards for up to twelve weeks. The API caps it at
+// 120 days (activation-service.MAX_COHORT_DAYS) because a longer grid stops
+// being readable before it stops being fast, so the options stop there too
+// rather than offering a choice the server will refuse.
+const COHORT_WINDOWS = [[30, "30 days"], [60, "60 days"], [90, "90 days"], [120, "120 days"]];
+
+// Below this, a retention percentage is arithmetic rather than evidence. Ten
+// people is still small, but it is the point where one person leaving stops
+// moving the rate by a quarter. Cohorts under it are shown, never hidden, and
+// marked so nobody reads 50% off two users as a trend.
+const THIN_COHORT = 10;
+
 const CAMPAIGN_TYPES = ["acquisition", "activation", "retention", "referral", "merchant_acquisition",
   "promotional", "product_launch", "re_engagement", "seasonal"];
 const CHANNELS = ["push", "email", "sms", "in_app", "qr", "referral", "landing_page"];
@@ -54,7 +72,7 @@ const PIPELINE_STAGES = ["new", "contacted", "qualified", "demo", "negotiation",
   "approved", "activated"];
 
 let H = null;                 // console helpers, set on first render
-let state = { view: "overview", range: "30d" };
+let state = { view: "overview", range: "30d", cohortDays: 30 };
 
 const title = (value) => String(value || "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 const dash = (value) => (value === null || value === undefined || value === "" ? "—" : value);
@@ -717,6 +735,178 @@ function funnelPanel(heading, steps) {
     </ol></div>`;
 }
 
+/* ----------------------------------------------- activation and retention */
+
+// THE PAGE THIS CONSOLE DID NOT HAVE.
+//
+// Everything else under Marketing measures a CAMPAIGN. This measures the
+// PRODUCT, off every user, attributed or not. The two questions it exists to
+// answer are the ones registrations cannot: of the people who registered, how
+// many ever transacted, and of those, how many came back.
+//
+// It is deliberately hard to misread. Where the data is thin it says so, where
+// a number is not what it looks like it says that too, and nothing on the page
+// is computed here — every figure is one the API already returned.
+
+function cohortPicker() {
+  return `<div class="mk-range" role="group" aria-label="Registration window">
+    ${COHORT_WINDOWS.map(([days, label]) => `
+      <button type="button" class="mk-range-btn${state.cohortDays === days ? " is-active" : ""}"
+              data-mk-cohort="${days}">${H.escapeHtml(label)}</button>`).join("")}
+  </div>`;
+}
+
+// The heat ladder for the cohort grid, in the same ten steps the bars use, and
+// for the same reason: the page CSP forbids an inline style.
+function heatClass(percent) {
+  const step = Math.max(0, Math.min(10, Math.round((Number(percent) || 0) / 10)));
+  return `mk-heat mk-heat-${step * 10}`;
+}
+
+const weekLabel = (iso) => {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "—" : date.toISOString().slice(0, 10);
+};
+
+// The activation stages. NOT drawn as a nesting funnel, because they do not
+// nest — the service says so at length and it was learned twice. Tier 0 carries
+// a monthly allowance, so a user transacts without verifying; several services
+// are free, so a user transacts without ever being funded. Each stage is
+// therefore measured against Registered and shown on its own terms.
+function stagesPanel(steps) {
+  return `<div class="mk-panel">
+    <div class="mk-panel-head">
+      <div>
+        <h3>Activation stages</h3>
+        <small>Each measured against everyone who registered in the window.</small>
+      </div>
+    </div>
+    <ol class="mk-funnel">
+      ${steps.map((step) => `
+        <li class="mk-funnel-step">
+          <span class="mk-funnel-label">${H.escapeHtml(step.step)}</span>
+          <span class="mk-funnel-track"><span class="${barClass(step.rate)}"></span></span>
+          <span class="mk-funnel-value">${Number(step.value)}<small>${Number(step.rate)}%</small></span>
+        </li>`).join("")}
+    </ol>
+    <p class="mk-form-note">These are stages, not a funnel that narrows. A customer can
+      transact without being funded (several services are free) and without verifying
+      (the entry level carries its own monthly allowance), so each is counted
+      independently rather than as a share of the step above.</p>
+  </div>`;
+}
+
+// The retention grid. Week 0 is the registration week, so week 0 is activation
+// and weeks 1 and beyond are the only real retention on the page.
+function retentionPanel(cohorts) {
+  if (!cohorts.length) {
+    return `<div class="mk-panel"><h3>Weekly retention</h3>
+      ${emptyState("Nobody registered in this window.",
+        "Widen the registration window, or come back once there are cohorts to follow.")}</div>`;
+  }
+  const weeks = cohorts[0].retention.map((r) => r.week);
+  return `<div class="mk-panel">
+    <div class="mk-panel-head">
+      <div>
+        <h3>Weekly retention</h3>
+        <small>Grouped by the week each customer registered, then followed forwards.</small>
+      </div>
+    </div>
+    <div class="table-wrap"><table class="mk-cohort">
+      <thead><tr>
+        <th scope="col">Registered week</th>
+        <th scope="col">Size</th>
+        ${weeks.map((w) => `<th scope="col">W${w}</th>`).join("")}
+      </tr></thead>
+      <tbody>
+        ${cohorts.map((c) => `<tr${c.size < THIN_COHORT ? ' class="mk-thin"' : ""}>
+          <th scope="row">${H.escapeHtml(weekLabel(c.cohortWeek))}</th>
+          <td>${c.size}${c.size < THIN_COHORT ? '<small class="mk-warn">too small to read as a rate</small>' : ""}</td>
+          ${c.retention.map((cell) => `
+            <td class="${heatClass(cell.rate)}" title="${cell.retained} of ${c.size}">
+              ${cell.retained === 0 ? "—" : `${cell.rate}%`}
+            </td>`).join("")}
+        </tr>`).join("")}
+      </tbody>
+    </table></div>
+    <p class="mk-form-note">Week 0 is the week they registered, so week 0 is activation and
+      weeks 1 onwards are retention. A percentage on a cohort of a handful of people is
+      arithmetic, not evidence — those rows carry the size and are marked.</p>
+  </div>`;
+}
+
+async function viewGrowth(root) {
+  root.innerHTML = loadingState("activation and retention");
+  try {
+    // One call. The three figures are only meaningful together — activation
+    // without retention is a leaky bucket, retention without frequency is a
+    // dormant balance — and the API composes them in one round trip.
+    const data = await H.apiFetch(`/admin/marketing/growth?days=${encodeURIComponent(state.cohortDays)}`);
+    const funnel = data.funnel || {};
+    const first = funnel.firstTransaction || {};
+    const verification = funnel.verification || {};
+    const freq = data.frequency || {};
+    const cohorts = (data.cohorts || {}).cohorts || [];
+    const registered = funnel.steps?.[0]?.value ?? 0;
+    const activated = funnel.steps?.find((s) => s.step === "Transacted once")?.value ?? 0;
+
+    root.innerHTML = `
+      ${cohortPicker()}
+      <div class="mk-note"><strong>This page measures the product, not a campaign.</strong>
+        Every customer who registered in the window is counted, however they arrived —
+        the Campaigns and ROI pages count only customers a tracked campaign brought in.
+        Registrations on their own are a vanity number; these are the two that decide
+        whether there is a business here.</div>
+      ${metricCards([
+        ["Registered", registered, `in the last ${state.cohortDays} days`],
+        ["Ever transacted", activated, `${funnel.steps?.find((s) => s.step === "Transacted once")?.rate ?? 0}% of them`],
+        ["Day 1 activation", `${first.dayOneRate ?? 0}%`, "transacted within 24 hours"],
+        ["Week 1 activation", `${first.weekOneRate ?? 0}%`, "transacted within 7 days"],
+        ["Transactions per active", freq.averagePerActivePerWeek ?? 0, "per active customer, per week"],
+        ["Funded, never spent", funnel.fundedNeverSpent ?? 0, "money in, nothing bought"]
+      ])}
+      <div class="mk-growth-split">
+        ${stagesPanel(funnel.steps || [])}
+        <div class="mk-panel">
+          <div class="mk-panel-head"><div>
+            <h3>Verification</h3>
+            <small>Reported beside the stages, not inside them.</small>
+          </div></div>
+          ${metricCards([
+            ["Verified", verification.verified ?? 0, `${verification.rate ?? 0}% of the cohort`]
+          ])}
+          <p class="mk-form-note">${H.escapeHtml(verification.note
+            || "Verification raises the monthly limit. It is not required to transact.")}
+            It is a measure of how much headroom this cohort has before limits start
+            refusing them, not a step they must pass to become a customer.</p>
+        </div>
+      </div>
+      <div class="mk-panel">
+        <div class="mk-panel-head"><div>
+          <h3>Weekly frequency</h3>
+          <small>How often an active customer actually transacts — the habit metric.</small>
+        </div></div>
+        ${table(["Week", "Actives", "Transactions", "Per active"],
+          (freq.series || []).map((w) => [
+            H.escapeHtml(weekLabel(w.week)), w.actives, w.transactions, w.perActive
+          ]),
+          "No completed transactions in this window.")}
+        <p class="mk-form-note">Counted per active customer, not per registered one. A wallet
+          whose actives transact once a week is something people remember when a bill is due;
+          one whose actives transact four times a week is where their money lives.</p>
+      </div>
+      ${retentionPanel(cohorts)}`;
+
+    // Exported as the cohort grid, because that is the artefact somebody takes
+    // into a meeting. One row per cohort, one column per week.
+    H.PAGE_EXPORTS.marketing = () => H.downloadCsv("activation-retention.csv",
+      ["Registered week", "Cohort size", ...(cohorts[0]?.retention || []).map((r) => `Week ${r.week} %`)],
+      cohorts.map((c) => [weekLabel(c.cohortWeek), c.size, ...c.retention.map((r) => r.rate)]));
+  } catch (error) {
+    root.innerHTML = errorState(error);
+  }
+}
+
 /* --------------------------------------------------------------------- ROI */
 
 async function viewRoi(root) {
@@ -755,7 +945,7 @@ async function viewRoi(root) {
 /* -------------------------------------------------------------- dispatch */
 
 const RENDERERS = {
-  overview: viewOverview, campaigns: viewCampaigns, audiences: viewAudiences,
+  overview: viewOverview, growth: viewGrowth, campaigns: viewCampaigns, audiences: viewAudiences,
   promotions: viewPromotions, referrals: viewReferrals, leads: viewLeads,
   pipeline: viewPipeline, acquisition: viewAcquisition, team: viewTeam,
   links: viewLinks, experiments: viewExperiments, analytics: viewAnalytics, roi: viewRoi
@@ -796,6 +986,14 @@ function wire(container) {
     const range = event.target.closest("[data-mk-range]");
     if (range) {
       state.range = range.dataset.mkRange;
+      await renderCurrentView(container);
+      return;
+    }
+    // The cohort window is its own control, not the range picker: it selects
+    // WHO is being followed, not WHEN the activity happened.
+    const cohort = event.target.closest("[data-mk-cohort]");
+    if (cohort) {
+      state.cohortDays = Number(cohort.dataset.mkCohort) || 30;
       await renderCurrentView(container);
       return;
     }

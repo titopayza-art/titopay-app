@@ -5982,6 +5982,54 @@ html[data-theme="dark"] .auth-panel-mark {
 .mk-funnel-label { font-size: 0.8rem; color: var(--tp-muted); }
 .mk-funnel-track { height: 14px; background: var(--tp-surface-sunken); border-radius: 3px; overflow: hidden; }
 .mk-funnel-value { font-size: 0.85rem; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+/* The count leads, the rate sits under it. On the activation stages both matter
+   and neither should be read without the other: 40 is meaningless without "of
+   how many", and 60% is meaningless on a cohort of five. */
+.mk-funnel-value small { display: block; font-weight: 500; color: var(--tp-muted); font-size: 0.72rem; }
+.mk-funnel-step { grid-template-columns: 132px 1fr 62px; }
+
+/* Activation & Retention.
+
+   Its own split rather than the shared one: the stages panel carries a chart
+   and the side panel carries a table, so equal columns left a void under the
+   chart while the table beside it ran on. `align-items: start` also stops the
+   shorter panel being stretched to match the taller one, which read as an
+   empty box rather than a finished one. */
+.mk-growth-split {
+  display: grid; gap: 16px; align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+}
+/* A second heading inside a panel needs air after the paragraph above it, or
+   the two read as one block and the table below looks unlabelled. */
+.mk-panel .mk-heading { margin-top: 18px; }
+
+/* Retention cohort grid.
+
+   Eleven heat steps, matching the bar ladder, and for the same reason: the page
+   CSP declares style-src 'self', so a computed background has to arrive as a
+   class. The first background is a flat fallback for anything that cannot do
+   color-mix; the second wins where it can, and gives the grid a readable ramp
+   rather than eleven hand-picked hexes that would drift from the tokens. */
+.mk-cohort { font-variant-numeric: tabular-nums; }
+.mk-cohort th[scope="col"] { white-space: nowrap; }
+.mk-cohort th[scope="row"] { text-align: left; font-weight: 600; white-space: nowrap; }
+.mk-cohort td { text-align: center; }
+.mk-cohort td small { display: block; }
+/* A cohort too small to read as a percentage is shown, never hidden — it is
+   still the truth — but it recedes so the eye does not treat it as a trend. */
+.mk-cohort tr.mk-thin th[scope="row"], .mk-cohort tr.mk-thin td { color: var(--tp-muted); }
+.mk-heat { border-radius: 4px; }
+.mk-heat-0 { background: transparent; }
+.mk-heat-10 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 8%, transparent); }
+.mk-heat-20 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 16%, transparent); }
+.mk-heat-30 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 24%, transparent); }
+.mk-heat-40 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 32%, transparent); }
+.mk-heat-50 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 40%, transparent); }
+.mk-heat-60 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 48%, transparent); }
+.mk-heat-70 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 56%, transparent); }
+.mk-heat-80 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 64%, transparent); }
+.mk-heat-90 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 72%, transparent); }
+.mk-heat-100 { background: var(--tp-surface-sunken); background: color-mix(in srgb, var(--tp-blue) 80%, transparent); }
 
 /* Kanban */
 .mk-kanban {

@@ -1,4 +1,28 @@
-TitoPay Admin build: admin-console-v98-20260816
+TitoPay Admin build: admin-console-v99-20260825
+
+v99 (this build): the console can finally SEE activation and retention.
+
+  Marketing gains a page — Activation & Retention, second in the section,
+  at /marketing-sales/growth/. It reads GET /admin/marketing/growth, which
+  API build 110 already shipped and nothing had ever displayed: of everyone
+  who registered, how many were funded, how many transacted, how many came
+  back, how often, and how many were funded and never spent a cent.
+
+  It measures the PRODUCT, not a campaign. Every other page under Marketing
+  counts campaign-attributed users only; this one counts every registration,
+  however it arrived.
+
+  Read the page as it is written. The activation steps are STAGES, not a
+  narrowing funnel — a customer can transact without being funded and
+  without verifying — and cohorts too small to carry a percentage are
+  marked rather than hidden.
+
+  - REQUIRES api.zip build 110 or later. On an older API the page reports
+    the error rather than rendering an empty grid.
+  - Asset stamp moves to admin-console-v99 across every HTML file, so the
+    lazily-imported marketing module is actually re-fetched.
+  - No new endpoint, no schema change, and no other console page altered.
+
 
 v89 (this build): when a console page breaks, this console now tells you why.
 
