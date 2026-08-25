@@ -1,6 +1,11 @@
 node_modules/
 tests/artifacts/
 *.zip
+# Python bytecode. verification/ carries one .py script, and running it —
+# or merely syntax-checking it with py_compile — drops a __pycache__ beside
+# it. Build output, never source.
+__pycache__/
+*.pyc
 
 # SECRETS
 #
