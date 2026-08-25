@@ -622,7 +622,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 
 async function loadDefaultServices() {
   try {
-    const response = await fetch("./services-default.json?v=193", { cache: "no-store" });
+    const response = await fetch("./services-default.json?v=194", { cache: "no-store" });
     if (!response.ok) throw new Error("Default service catalogue unavailable");
     const payload = await response.json();
     return payload.items || [];

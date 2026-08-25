@@ -64,7 +64,11 @@ body {
   min-height: 100svh;
   overflow-x: hidden;
   overflow-x: clip;
-  overscroll-behavior: none;
+  /* The x axis only. `overscroll-behavior: none` here ends the scroll chain at
+     the body -- and on a browser without `overflow-x: clip` the `hidden`
+     fallback above turns the body into a scroll container with no scroll range
+     of its own. A dead-end box that refuses to chain swallows every wheel and
+     touch gesture, which is how a page stops scrolling altogether. */
   overscroll-behavior-x: none;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
@@ -130,7 +134,9 @@ a:focus-visible {
   margin: 0 auto;
   overflow-x: hidden;
   overflow-x: clip;
-  overscroll-behavior: contain;
+  /* x only -- see body. Containing the y axis on a box that is only a scroll
+     container because of the `hidden` fallback strands the gesture here. */
+  overscroll-behavior-x: contain;
   background: transparent;
   box-shadow: 0 0 0 1px rgba(223, 231, 245, 0.72);
 }
@@ -200,7 +206,8 @@ a:focus-visible {
   overflow-x: hidden;
   overflow-x: clip;
   overflow-y: visible;
-  overscroll-behavior: contain;
+  /* x only -- see body. */
+  overscroll-behavior-x: contain;
 }
 
 /* Authenticated screens sit under the fixed bar. The reserved space is the bar
