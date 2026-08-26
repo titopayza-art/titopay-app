@@ -15233,18 +15233,27 @@ function renderMerchantQrWaitingScreen() {
   setMerchantPosModalClass();
 }
 async function generateQr(data) {
-  // A basket built from the product picker is a sale being made at the till:
-  // record it (counting tracked stock down) before the payment QR appears.
-  if (data.basketSale === "1") await recordSaleBasket();
-  const body = {
-    label: data.label || "TitoPay payment",
-    codeType: data.amount ? "dynamic" : "static",
-    amount: data.amount ? parseAmount(data.amount) : null
-  };
-  const result = await api(data.amount ? "/v1/qr/generate-dynamic" : "/v1/qr/generate-static", {
-    method: "POST",
-    body
-  });
+  // A basket built from the product picker is a sale being RUNG UP, not one
+  // being made. It used to be recorded here — stock counted down the instant
+  // the QR appeared, before the customer had scanned anything — so a customer
+  // who walked away left the shelf count wrong for ever. The basket is now
+  // priced and bound to the QR, and the goods leave the shelf when the payment
+  // lands.
+  const tillItems = data.basketSale === "1" ? saleBasketItems() : [];
+  let result;
+  if (tillItems.length) {
+    result = { qr: (await mintTillSaleQr(tillItems, data.label)).qr || {} };
+  } else {
+    const body = {
+      label: data.label || "TitoPay payment",
+      codeType: data.amount ? "dynamic" : "static",
+      amount: data.amount ? parseAmount(data.amount) : null
+    };
+    result = await api(data.amount ? "/v1/qr/generate-dynamic" : "/v1/qr/generate-static", {
+      method: "POST",
+      body
+    });
+  }
   const qr = result.qr || {};
   const qrImage = qr.imageDataUrl || qr.image_url || "";
   const qrReference = qr.reference || qr.id || "TitoPay QR";
@@ -15254,6 +15263,7 @@ async function generateQr(data) {
       <div><p class="eyebrow">Receive Money</p><h2>Your TitoPay QR</h2><p class="lead">Reference ${esc(qrReference)}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${tillItems.length ? `<p class="field-hint">Waiting for the customer to pay. Your stock counts down once the payment lands, not before.</p>` : ""}
     <div class="qr-frame" data-qr-card>
       <img src="${esc(qrImage)}" alt="TitoPay QR code">
       <input class="qr-copy-value" value="${esc(qrCopyValue)}" readonly aria-label="TitoPay QR link or reference">
@@ -16387,23 +16397,42 @@ function syncSaleBasketToForm() {
     labelField.value = (lines.length > 1 ? `${first} +${lines.length - 1} more` : first).slice(0, 48);
   }
 }
-async function recordSaleBasket() {
+function saleBasketItems() {
   const basket = state.saleBasket || {};
-  const items = Object.entries(basket)
+  return Object.entries(basket)
     .filter(([, quantity]) => Number(quantity) > 0)
     .map(([productId, quantity]) => ({ productId, quantity: Number(quantity) }));
-  if (!items.length) return;
+}
+// RUNG UP, NOT SOLD.
+//
+// This replaced a call to /record-sale that ran before the QR was minted. The
+// endpoint it now calls prices the basket, mints the payment QR and files the
+// sale as pending; the stock movement happens on the server when a real
+// payment settles against that QR. Two consequences worth naming:
+//
+//   - an abandoned basket costs nothing. Nothing was ever taken off the shelf,
+//     so there is nothing to put back.
+//   - the shortage check still happens HERE, at ring-up, which is the only
+//     moment a cashier can do anything about it. It is a check, not a sale.
+async function mintTillSaleQr(items, label) {
+  const body = { items, label: label || undefined };
   try {
-    const result = await api("/v1/business/products/record-sale", { method: "POST", body: { items } });
+    const result = await api("/v1/business/products/till-sale", { method: "POST", body });
     state.saleBasket = {};
-    showToast(`Sale recorded: ${esc(money(result.sale.total))}. Tracked stock counted down.`);
+    return result.sale || {};
   } catch (error) {
     const message = String(error?.message || "");
-    if (/in stock/i.test(message) && await askToConfirm({ title: "Not enough stock", body: message, confirmLabel: "Sell anyway", cancelLabel: "Stop", tone: "danger", hint: "The count goes negative until your next stock take." })) {
-      const result = await api("/v1/business/products/record-sale", { method: "POST", body: { items, allowNegative: true } });
+    if (/in stock/i.test(message) && await askToConfirm({
+      title: "Not enough stock",
+      body: message,
+      confirmLabel: "Sell anyway",
+      cancelLabel: "Stop",
+      tone: "danger",
+      hint: "If the customer pays, the count goes negative until your next stock take."
+    })) {
+      const result = await api("/v1/business/products/till-sale", { method: "POST", body: Object.assign({}, body, { allowNegative: true }) });
       state.saleBasket = {};
-      showToast(`Sale recorded: ${esc(money(result.sale.total))}. Stock is oversold; fix it with a stock take.`);
-      return;
+      return result.sale || {};
     }
     throw error;
   }

@@ -85,6 +85,130 @@ test("a sale rung up on the till does not count until it is paid", async () => {
   }
 });
 
+test("nothing leaves the shelf until the customer has paid", async () => {
+  // The half of this that the first fix missed. Ringing up priced the basket
+  // AND took the goods off the shelf, so an abandoned sale left the count
+  // wrong for ever. Pricing and selling are now two acts, and only the second
+  // one happens when money moves.
+  await staff.ensureStaffSchema();
+  const products = require("../src/services/business-products-service");
+  const business = await makeUser("Shop");
+  const cashier = await makeUser("Cashier");
+  await pool.query("UPDATE users SET account_type = 'business' WHERE id = $1", [business]);
+  await pool.query(
+    `INSERT INTO business_staff (id, business_user_id, staff_user_id, full_name, role, contact, status)
+     VALUES ($1,$2,$3,'Cashier','Cashier','c@example.test','active')`,
+    [crypto.randomUUID(), business, cashier]);
+  const product = await products.createProduct(business, { name: "Test Shirt", price: 200, trackStock: true, openingStock: 5 });
+  const stock = async () => Number((await pool.query(
+    "SELECT stock_quantity FROM business_products WHERE id = $1", [product.id])).rows[0].stock_quantity);
+  try {
+    assert.equal(await stock(), 5);
+    const sale = await staff.staffSale(cashier, business, { items: [{ productId: product.id, quantity: 1 }] });
+    assert.equal(sale.total, 200, "the QR still carries the right amount");
+    assert.equal(await stock(), 5, "ringing up does NOT take the shirt off the shelf");
+
+    await staff.markStaffSalePaid(sale.qr.id, null);
+    assert.equal(await stock(), 4, "paying does");
+  } finally {
+    for (const t of ["business_stock_movements", "business_staff_sales", "business_products", "business_staff"]) {
+      await pool.query(`DELETE FROM ${t} WHERE business_user_id = $1`, [business]);
+    }
+    await pool.query("DELETE FROM qr_codes WHERE user_id = $1", [business]);
+    await pool.query("DELETE FROM users WHERE id = ANY($1)", [[business, cashier]]);
+  }
+});
+
+test("the owner's own till waits for payment too", async () => {
+  // THE HALF MOST BUSINESSES ACTUALLY USE. The staff till was fixed first, but
+  // the owner's Make a Sale still called /record-sale before the QR was minted,
+  // so the same defect survived on the busier path.
+  await staff.ensureStaffSchema();
+  const products = require("../src/services/business-products-service");
+  const owner = await makeUser("Corner Shop");
+  const cashier = await makeUser("Cashier");
+  await pool.query("UPDATE users SET account_type = 'business' WHERE id = $1", [owner]);
+  await pool.query(
+    `INSERT INTO business_staff (id, business_user_id, staff_user_id, full_name, role, contact, status)
+     VALUES ($1,$2,$3,'Cashier','Cashier','c@example.test','active')`,
+    [crypto.randomUUID(), owner, cashier]);
+  const product = await products.createProduct(owner, { name: "Bread", price: 25, trackStock: true, openingStock: 10 });
+  const stock = async () => Number((await pool.query(
+    "SELECT stock_quantity FROM business_products WHERE id = $1", [product.id])).rows[0].stock_quantity);
+  try {
+    const sale = await staff.ownerTillSale(owner, { items: [{ productId: product.id, quantity: 2 }] });
+    assert.equal(sale.total, 50, "the QR carries the basket total");
+    assert.equal(await stock(), 10, "ringing up takes nothing off the shelf");
+
+    // THE STAFF LEAGUE TABLE MUST NOT GAIN THE OWNER. That report answers
+    // "how are my cashiers doing"; the owner appearing in it would be a new
+    // and wrong answer to a report that already exists.
+    assert.equal((await staff.staffSalesTotals(owner)).length, 0, "no owner row before");
+
+    assert.equal(await staff.markStaffSalePaid(sale.qr.id, null), true);
+    assert.equal(await stock(), 8, "paying does");
+    assert.equal((await staff.staffSalesTotals(owner)).length, 0, "and none after");
+
+    // Scoped, not blunt: a real cashier still reports.
+    const byStaff = await staff.staffSale(cashier, owner, { items: [{ productId: product.id, quantity: 1 }] });
+    await staff.markStaffSalePaid(byStaff.qr.id, null);
+    const rows = await staff.staffSalesTotals(owner);
+    assert.equal(rows.length, 1, "the cashier still appears");
+    assert.equal(rows[0].salesTotal, 25);
+  } finally {
+    for (const t of ["business_stock_movements", "business_staff_sales", "business_products", "business_staff"]) {
+      await pool.query(`DELETE FROM ${t} WHERE business_user_id = $1`, [owner]);
+    }
+    await pool.query("DELETE FROM qr_codes WHERE user_id = $1", [owner]);
+    await pool.query("DELETE FROM users WHERE id = ANY($1)", [[owner, cashier]]);
+  }
+});
+
+test("only a business account can open a till", () => {
+  // The owner endpoint takes no business id from the caller — it uses the
+  // authenticated user's own — but it still has to refuse a personal account
+  // rather than mint a QR against one.
+  assert.match(STAFF_SERVICE, /account_type !== "business"/);
+  const routes = fs.readFileSync(path.join(ROOT, "api", "src", "routes", "business-products.routes.js"), "utf8");
+  assert.match(routes, /ownerTillSale\(req\.auth\.userId, req\.body \|\| \{\}\)/,
+    "the till is opened for the caller, never for an id they supply");
+});
+
+test("the owner's till no longer records a sale to mint a QR", () => {
+  // The specific line that was reported: recordSaleBasket() ran before
+  // generateQr's API call, so the stock moved at QR-mint time.
+  assert.doesNotMatch(APP, /recordSaleBasket/, "the record-then-mint path is gone");
+  assert.match(APP, /business\/products\/till-sale/, "the till mints through the pending path");
+  const generate = APP.slice(APP.indexOf("async function generateQr"), APP.indexOf("async function processQrPayment"));
+  assert.doesNotMatch(generate, /products\/record-sale/, "and generateQr records no sale of its own");
+  assert.match(generate, /Your stock counts down once the payment lands, not before/,
+    "and the screen says so");
+});
+
+test("pricing a basket writes nothing at all", () => {
+  // The read-only half, kept honest: if priceSale ever writes, the flow is
+  // back where it started.
+  //
+  // COMMENTS ARE STRIPPED FIRST, and that is not a convenience. priceSale
+  // carries a comment explaining why it does NOT use the FOR UPDATE loader,
+  // and reading that prose as evidence of a write is the same mistake in the
+  // other direction — a scanner that a comment can trip is a scanner a
+  // comment can also hide a real write from. Only executable code is scanned.
+  const source = fs.readFileSync(path.join(ROOT, "api", "src", "services", "business-products-service.js"), "utf8");
+  const whole = source.slice(source.indexOf("async function priceSale"), source.indexOf("async function recordSale"));
+  assert.ok(whole.includes("SELECT id, name, price"), "the slice is the real priceSale body");
+  const price = whole.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  // And the strip itself is pinned: it must remove the prose and keep the query.
+  assert.ok(!price.includes("FOR UPDATE row lock"), "comments are actually stripped");
+  assert.ok(price.includes("SELECT id, name, price"), "and the statement survives the strip");
+
+  for (const write of ["UPDATE ", "INSERT ", "DELETE ", "BEGIN"]) {
+    assert.ok(!price.includes(write), `priceSale must not ${write.trim()}`);
+  }
+  // And it must not borrow the locking loader, which exists to guard a write.
+  assert.ok(!price.includes("loadOwnProduct"), "pricing takes no row lock");
+});
+
 test("history is not retold as either paid or unpaid", async () => {
   // Rows written before this column existed: some were paid, some were
   // abandoned, and the platform does not know which. Backfilling them to

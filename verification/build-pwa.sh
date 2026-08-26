@@ -9,8 +9,13 @@
 # the tests reach functions by name (data-action handlers, render, boot).
 # The version has to move in three places or a stale service worker keeps
 # serving the previous bundle; api/test/pwa-structure.test.js checks all three.
+#
+# IT BUILDS THE REPOSITORY, resolved from this script's own location. It used
+# to cd into a scratch copy of the app made for a deployment, which meant a
+# clean-looking build could report success while pwa/app.min.js — the file
+# index.html actually loads and the file that ships — was never rebuilt at all.
 set -e
-cd /tmp/claude-0/-home-user-titopay-app/b46bca12-b8d1-59fa-a0f4-cf119e42703a/scratchpad/app
+cd "$(dirname "$(readlink -f "$0")")/../pwa"
 
 current=$(grep -o 'app\.min\.js?v=[0-9]*' index.html | head -1 | grep -o '[0-9]*')
 next=$((current + 1))
@@ -22,6 +27,11 @@ next=$((current + 1))
 npx --yes terser@5.49.2 app.js --compress --mangle --output app.min.js
 sed -i "s/app\.min\.js?v=${current}/app.min.js?v=${next}/g" index.html service-worker.js
 sed -i "s/titopay-pwa-v${current}/titopay-pwa-v${next}/g" service-worker.js
+# head-boot.js and the stylesheet move too. They were bumped by hand before, and
+# verification/asset-version-consistency.js fails the build when any one of the
+# four is left behind — so the build does all four rather than three.
+sed -i "s/head-boot\.js?v=${current}/head-boot.js?v=${next}/g" index.html service-worker.js
+sed -i "s/styles\.min\.css?v=${current}/styles.min.css?v=${next}/g" index.html service-worker.js head-boot.js
 
 echo "app.min.js rebuilt: $(wc -c < app.min.js) bytes, v${current} -> v${next}"
 for name in api render boot primaryWallet statementPdf; do

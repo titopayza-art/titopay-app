@@ -14,7 +14,7 @@ const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { boundedText } = require("../lib/validation");
 const { persistQr } = require("./qr-service");
-const { recordSale, listProducts } = require("./business-products-service");
+const { recordSale, priceSale, listProducts } = require("./business-products-service");
 const { createNotification } = require("./notification-service");
 
 const money = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -376,35 +376,39 @@ async function workplaceProducts(staffUserId, businessUserId) {
 // The staff sale: price the basket (or take a typed amount), count tracked
 // stock down on the business, log the sale under the staff member's name,
 // and mint the payment QR that pays the BUSINESS wallet.
-async function staffSale(staffUserId, businessUserId, payload = {}) {
-  const membership = await assertActiveStaff(staffUserId, businessUserId);
-  const { rows: staffRows } = await pool.query("SELECT full_name, username FROM users WHERE id = $1", [staffUserId]);
-  const staffName = staffRows[0]?.full_name || membership.full_name || "Staff";
+// THE TILL, WHOEVER IS STANDING AT IT.
+//
+// A cashier's till and the owner's own till are the same act — price a
+// basket, show a QR, wait — so they are the same code. Owning the shop only
+// changes who is named on the row and who is allowed to open it; it does not
+// change when the goods leave the shelf.
+async function mintTillSale({ businessUserId, operatorUserId, operatorName, operatorHandle, businessName, payload }) {
   const items = Array.isArray(payload.items) ? payload.items : [];
+  const reference = `SALE-${Date.now()}-BY-${String(operatorHandle || "staff").slice(0, 24)}`;
   let total;
   let lines = [];
-  let reference;
   if (items.length) {
-    const sale = await recordSale(businessUserId, {
+    // PRICED, NOT SOLD. The basket is valued so the QR can carry the right
+    // amount, and the stock check still refuses a basket the shelf cannot
+    // cover — but nothing leaves the shelf here. Goods move when the money
+    // does, in markStaffSalePaid() below.
+    const priced = await priceSale(businessUserId, {
       items,
-      allowNegative: payload.allowNegative === true,
-      reference: `SALE-${Date.now()}-BY-${(staffRows[0]?.username || "staff").slice(0, 24)}`
+      allowNegative: payload.allowNegative === true
     });
-    total = sale.total;
-    lines = sale.lines;
-    reference = sale.reference;
+    total = priced.total;
+    lines = priced.lines;
   } else {
     total = money(payload.amount);
     if (!(total > 0) || total > 100000) throw new AppError(400, "Enter a sale amount between R0.01 and R100,000");
-    reference = `SALE-${Date.now()}-BY-${(staffRows[0]?.username || "staff").slice(0, 24)}`;
   }
-  const label = boundedText(payload.label || `${membership.business_name} · served by ${staffName}`, "Label", { min: 1, max: 48 });
+  const label = boundedText(payload.label || `${businessName} · served by ${operatorName}`, "Label", { min: 1, max: 48 });
   const qr = await persistQr({
     userId: businessUserId,
     codeType: "dynamic",
     amount: total,
     label,
-    metadata: { staffSale: true, staffUserId, staffName, reference }
+    metadata: { staffSale: true, staffUserId: operatorUserId, staffName: operatorName, reference }
   });
   const saleId = uuidv4();
   // PENDING, said out loud rather than left to a column default. Nothing has
@@ -413,16 +417,62 @@ async function staffSale(staffUserId, businessUserId, payload = {}) {
   await pool.query(
     `INSERT INTO business_staff_sales (id, business_user_id, staff_user_id, staff_name, amount, reference, qr_id, items, status)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::JSONB, 'pending')`,
-    [saleId, businessUserId, staffUserId, staffName, total, reference, qr.id, JSON.stringify(lines)]
+    [saleId, businessUserId, operatorUserId, operatorName, total, reference, qr.id, JSON.stringify(lines)]
   );
   return {
     saleId,
     total,
     reference,
     lines,
-    businessName: membership.business_name,
+    businessName,
     qr: { id: qr.id, amount: qr.amount, label: qr.label, imageDataUrl: qr.imageDataUrl, reference: qr.reference }
   };
+}
+
+async function staffSale(staffUserId, businessUserId, payload = {}) {
+  const membership = await assertActiveStaff(staffUserId, businessUserId);
+  const { rows: staffRows } = await pool.query("SELECT full_name, username FROM users WHERE id = $1", [staffUserId]);
+  return mintTillSale({
+    businessUserId,
+    operatorUserId: staffUserId,
+    operatorName: staffRows[0]?.full_name || membership.full_name || "Staff",
+    operatorHandle: staffRows[0]?.username,
+    businessName: membership.business_name,
+    payload
+  });
+}
+
+// THE OWNER'S OWN TILL. Same act, same pending row, same settlement hook.
+//
+// Before this existed the owner's Make a Sale wrote the stock movement the
+// moment the QR appeared, so an abandoned basket left the shelf count wrong
+// for ever — the same defect the staff till had, on the path most businesses
+// actually use.
+//
+// The row is written with staff_user_id = business_user_id. That is what
+// marks it as the owner's own, and staffSalesTotals() drops those rows: the
+// staff performance report answers "how are my cashiers doing", and the owner
+// appearing in their own staff league table would be a new, wrong answer to
+// it. The owner's sale reports where it always has — the wallet transaction
+// and the stock movement, both of which now happen only on payment.
+async function ownerTillSale(businessUserId, payload = {}) {
+  await ensureStaffSchema();
+  const { rows } = await pool.query(
+    "SELECT full_name, username, account_type FROM users WHERE id = $1",
+    [businessUserId]
+  );
+  const owner = rows[0];
+  if (!owner) throw new AppError(404, "Account not found");
+  if (owner.account_type !== "business") throw new AppError(403, "Only a business account can take a sale");
+  const businessName = owner.full_name || "Your business";
+  return mintTillSale({
+    businessUserId,
+    operatorUserId: businessUserId,
+    operatorName: businessName,
+    operatorHandle: owner.username,
+    businessName,
+    payload
+  });
 }
 
 // CALLED BY qr-service WHEN A PAYMENT SETTLES AGAINST A TILL QR.
@@ -442,10 +492,28 @@ async function markStaffSalePaid(qrId, transactionId = null) {
     `UPDATE business_staff_sales
         SET status = 'paid', paid_at = NOW(), transaction_id = $2
       WHERE qr_id = $1 AND status = 'pending'
-      RETURNING id`,
+      RETURNING id, business_user_id, reference, items`,
     [qrId, transactionId]
   );
-  return rows.length > 0;
+  const sale = rows[0];
+  if (!sale) return false;
+  // AND NOW THE GOODS LEAVE THE SHELF, because now they have been paid for.
+  //
+  // allowNegative is true here and that is deliberate. The money has already
+  // moved; refusing the stock movement would leave a paid sale with the item
+  // still counted on the shelf, which is a worse lie than a negative count.
+  // If another till sold the last one while this customer was paying, the
+  // count goes negative and says so — the same state the "Sell anyway" path
+  // has always produced, and the same fix: a stock take.
+  const lines = Array.isArray(sale.items) ? sale.items : [];
+  if (lines.length) {
+    await recordSale(sale.business_user_id, {
+      items: lines.map((line) => ({ productId: line.productId, quantity: line.quantity })),
+      allowNegative: true,
+      reference: sale.reference
+    }).catch(() => null);
+  }
+  return true;
 }
 
 // Till sales per staff member in a window — merged into the Sales suite's
@@ -472,7 +540,8 @@ async function staffSalesTotals(businessUserId, { from, to } = {}) {
             COALESCE(SUM(amount) FILTER (WHERE status = 'legacy'), 0)  AS legacy_total,
             MAX(created_at) AS last_sale_at
      FROM business_staff_sales
-     WHERE business_user_id = $1${clause}
+     WHERE business_user_id = $1
+       AND staff_user_id <> business_user_id${clause}
      GROUP BY staff_user_id, staff_name`,
     values
   );
@@ -503,6 +572,7 @@ module.exports = {
   assertActiveStaff,
   workplaceProducts,
   staffSale,
+  ownerTillSale,
   staffSalesTotals,
   resolveStaffUser
 };

@@ -19,10 +19,27 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 112;
+const API_BUILD = 113;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  113: "THE SAME FIX, ON THE PATH MOST BUSINESSES ACTUALLY USE. Build 112 "
+      + "stopped a STAFF till from counting an unpaid sale, but the OWNER's own "
+      + "Make a Sale still called /business/products/record-sale before the "
+      + "payment QR was minted - so the stock left the shelf the moment the "
+      + "customer was shown a code they had not scanned yet, and an abandoned "
+      + "basket left the count wrong for ever. Ringing up and selling are now "
+      + "two acts on both paths: priceSale values the basket and refuses one "
+      + "the shelf cannot cover, without writing anything or taking a row lock, "
+      + "and the stock movement happens in markStaffSalePaid when qr-service "
+      + "settles a real payment. New endpoint POST /v1/business/products/"
+      + "till-sale opens the owner's till; /record-sale stays for what it is "
+      + "actually for - a manual stock movement with no payment attached. The "
+      + "owner's row is filed with staff_user_id = business_user_id and "
+      + "staffSalesTotals excludes it, so the staff performance report still "
+      + "answers only 'how are my cashiers doing'. No money path changed: the "
+      + "till still makes zero writes to wallet_ledger, transactions or any "
+      + "wallet balance.",
   112: "A TILL SALE IS NO LONGER A SALE UNTIL SOMEBODY PAYS IT. Staff selling "
       + "for a business mint a payment QR, and the row in business_staff_sales "
       + "was written at that moment and never revisited - so a customer who "

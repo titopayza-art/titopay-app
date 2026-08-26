@@ -262,6 +262,54 @@ async function listMovements(userId, productId) {
 // sell into negative only via the explicit allowNegative flag the till sends
 // — a wrong counter must never block a real customer at the counter — and
 // the report flags it for the next stock take.
+// PRICING A BASKET WITHOUT SELLING IT.
+//
+// A till needs the total before the customer has paid — that is the number on
+// the QR — but pricing a basket and taking goods off the shelf are two
+// different acts, and they were one function. So the till rang up a sale, the
+// stock went down, and a customer who walked away left the shelf count wrong
+// for ever.
+//
+// This is the read-only half: same validation, same prices, same stock
+// warning, and not one write. recordSale() below still does the writing, and
+// is now called when the payment settles rather than when the QR appears.
+async function priceSale(userId, payload = {}) {
+  await ensureProductsSchema();
+  await requireBusiness(userId);
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  if (!items.length) throw new AppError(400, "Add at least one product to the sale");
+  if (items.length > 100) throw new AppError(400, "A sale is limited to 100 line items");
+  let total = 0;
+  const lines = [];
+  const short = [];
+  for (const item of items) {
+    const quantity = money(item.quantity);
+    if (!(quantity > 0) || quantity > 10000) throw new AppError(400, "Each line needs a quantity between 1 and 10,000");
+    // A plain read, not loadOwnProduct(): that one takes a FOR UPDATE row lock
+    // because it is about to write. Pricing writes nothing and must not hold
+    // a lock on a product while a customer decides whether to pay.
+    const { rows } = await pool.query(
+      "SELECT id, name, price, status, track_stock, stock_quantity FROM business_products WHERE id = $1 AND business_user_id = $2 LIMIT 1",
+      [item.productId, userId]
+    );
+    const product = rows[0];
+    if (!product) throw new AppError(404, "Product not found");
+    if (product.status !== "active") throw new AppError(409, `"${product.name}" is archived and cannot be sold`);
+    const lineTotal = money(money(product.price) * quantity);
+    total = money(total + lineTotal);
+    if (product.track_stock && money(product.stock_quantity) - quantity < 0) {
+      short.push(`Only ${money(product.stock_quantity)} of "${product.name}" in stock`);
+    }
+    lines.push({ productId: product.id, name: product.name, quantity, unitPrice: money(product.price), lineTotal });
+  }
+  // The same refusal the till has always given, raised here instead of during
+  // the write, so a cashier still cannot ring up stock that is not there.
+  if (short.length && payload.allowNegative !== true) {
+    throw new AppError(409, `${short[0]}. Adjust the quantity, restock, or confirm selling anyway.`);
+  }
+  return { total, lines };
+}
+
 async function recordSale(userId, payload = {}) {
   await ensureProductsSchema();
   await requireBusiness(userId);
@@ -310,6 +358,7 @@ async function recordSale(userId, payload = {}) {
 }
 
 module.exports = {
+  priceSale,
   ensureProductsSchema,
   listProducts,
   createProduct,
