@@ -135,6 +135,38 @@ test("a level may not grant more than the evidence behind it can defend", () => 
   assert.ok(Number(risky.limits.monthlySend) < Number(bounded.limits.monthlySend));
 });
 
+test("the assurance ceiling cannot be switched off by a name", () => {
+  // The ceiling table is admin-editable and arrives as stored JSON, so a plain
+  // `table[level]` lookup reaches Object.prototype. "constructor" answers with
+  // a function whose limit keys are all undefined, and the ceiling would
+  // silently stop applying — a security control turned off by a name rather
+  // than by a decision.
+  //
+  // Nothing user-supplied reaches `level` today. This is here so that stays
+  // true no matter where the value comes from later.
+  const base = { config: DEFAULT_CONFIG, tier: 1, riskStatus: "normal", earned: { applies: false, multiplier: 1 } };
+  const bounded = engine.buildEffectiveLimits(base).limits.monthlySend;
+  const configured = DEFAULT_CONFIG.tiers["1"].monthlySend;
+
+  for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", "not-a-level"]) {
+    const result = engine.buildEffectiveLimits({ ...base, assurance: name });
+    assert.notEqual(result.limits.monthlySend, configured,
+      `${name}: an unrecognised assurance must not lift the level to its full configured policy`);
+    // And it fails CLOSED: bounded at what an account with no identity check
+    // at all is allowed, because an assurance nobody recognises is not evidence.
+    assert.equal(result.limits.monthlySend, DEFAULT_CONFIG.tiers["0"].monthlySend,
+      `${name}: an unrecognised assurance is bounded at the unidentified level`);
+    assert.ok(result.limits.monthlySend <= bounded);
+  }
+
+  // A stored table carrying a hostile key does not pollute anything either.
+  const config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  config.assuranceCeilings = JSON.parse('{"__proto__":{"monthlySend":999999999},"structural":{"monthlySend":50000}}');
+  const stored = engine.buildEffectiveLimits({ ...base, config });
+  assert.equal(stored.limits.monthlySend, 50000, "the real entry is used, not the injected one");
+  assert.equal({}.monthlySend, undefined, "and Object.prototype is untouched");
+});
+
 test("the limits screen shows the number the engine will actually honour", () => {
   // A screen that promises more than the engine allows does not read as a
   // control to a customer. It reads as a broken app, and it is the one failure

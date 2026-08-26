@@ -111,6 +111,24 @@ test("an expired session is killed at the server too, without weakening logout",
   assert.match(APP, /revokeExpiredSession\(expired\)\.catch\(\(\) => null\)/);
 });
 
+test("the gate cannot be taken out by a browser that refuses localStorage", () => {
+  // This runs at MODULE LOAD. Everywhere else in this file localStorage is
+  // touched from inside a function, where a throw costs one feature; a throw
+  // here happens before anything renders and takes out the whole app. Browsers
+  // do throw on it — site data blocked, some embedded webviews, some private
+  // modes — and an app that will not start is a worse outcome than the bug
+  // this fixes.
+  const gate = APP.slice(APP.indexOf("function restorableAuth"), APP.indexOf("let expiredSessionOnOpen"));
+  const reads = gate.match(/localStorage\.(getItem|removeItem)/g) || [];
+  assert.ok(reads.length >= 3, "the gate touches the store");
+  const guarded = gate.match(/try \{/g) || [];
+  assert.ok(guarded.length >= 2, "every store access in the gate sits inside a try");
+  // And an unreadable store fails CLOSED: it must not let a session through on
+  // the strength of a check that never ran.
+  assert.match(gate, /catch \(error\) \{\s*\n\s*lastActive = 0;/,
+    "a store that cannot be read reads as no timestamp, which is expired");
+});
+
 test("the customer is told why, and the bundle actually carries the change", () => {
   assert.match(APP, /Signed out after 10 minutes of inactivity/,
     "a sign-in screen with no explanation reads as the app forgetting them");

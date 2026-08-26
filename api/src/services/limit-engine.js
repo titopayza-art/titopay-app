@@ -143,7 +143,22 @@ function assuranceForTier(tier) {
 function assuranceCeilingFor(config, tier, assurance) {
   const level = assurance || assuranceForTier(tier);
   const table = config?.assuranceCeilings || DEFAULT_ASSURANCE_CEILINGS;
-  return { assurance: level, ceilings: table[level] || {} };
+  // OWN KEYS ONLY, AND AN UNKNOWN LEVEL FAILS CLOSED.
+  //
+  // This table is admin-editable and arrives as stored JSON, so a plain
+  // `table[level]` lookup reaches Object.prototype: "constructor" would answer
+  // with a function, whose limit keys are all undefined, and the ceiling would
+  // silently stop applying — a security control switched off by a name rather
+  // than by a decision. Nothing user-supplied reaches `level` today; this makes
+  // that fact stop mattering.
+  //
+  // An assurance nobody recognises is not evidence, so it is bounded at what
+  // the platform grants an account with no identity check at all rather than
+  // left unbounded.
+  const known = Object.prototype.hasOwnProperty.call(table, level)
+    ? table[level]
+    : (DEFAULT_ASSURANCE_CEILINGS.none || {});
+  return { assurance: level, ceilings: known && typeof known === "object" ? known : {} };
 }
 
 // Capacity a customer earns by simply being a good customer: an account

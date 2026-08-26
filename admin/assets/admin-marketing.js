@@ -756,6 +756,18 @@ function cohortPicker() {
   </div>`;
 }
 
+// EVERYTHING THE API RETURNS IS TREATED AS TEXT ON THE WAY INTO innerHTML,
+// including the figures. Every one of these is a number today — the service
+// coerces with Number() before it answers — so nothing here is exploitable as
+// written. It is done anyway because "this field happens to be numeric" is a
+// property of today's service, not of this page, and a console that renders
+// API values into markup should not depend on the other end staying careful.
+// A non-finite value renders as an em dash rather than as the word NaN.
+function num(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? String(n) : "—";
+}
+
 // The heat ladder for the cohort grid, in the same ten steps the bars use, and
 // for the same reason: the page CSP forbids an inline style.
 function heatClass(percent) {
@@ -786,7 +798,7 @@ function stagesPanel(steps) {
         <li class="mk-funnel-step">
           <span class="mk-funnel-label">${H.escapeHtml(step.step)}</span>
           <span class="mk-funnel-track"><span class="${barClass(step.rate)}"></span></span>
-          <span class="mk-funnel-value">${Number(step.value)}<small>${Number(step.rate)}%</small></span>
+          <span class="mk-funnel-value">${num(step.value)}<small>${num(step.rate)}%</small></span>
         </li>`).join("")}
     </ol>
     <p class="mk-form-note">These are stages, not a funnel that narrows. A customer can
@@ -816,15 +828,15 @@ function retentionPanel(cohorts) {
       <thead><tr>
         <th scope="col">Registered week</th>
         <th scope="col">Size</th>
-        ${weeks.map((w) => `<th scope="col">W${w}</th>`).join("")}
+        ${weeks.map((w) => `<th scope="col">W${num(w)}</th>`).join("")}
       </tr></thead>
       <tbody>
         ${cohorts.map((c) => `<tr${c.size < THIN_COHORT ? ' class="mk-thin"' : ""}>
           <th scope="row">${H.escapeHtml(weekLabel(c.cohortWeek))}</th>
-          <td>${c.size}${c.size < THIN_COHORT ? '<small class="mk-warn">too small to read as a rate</small>' : ""}</td>
+          <td>${num(c.size)}${c.size < THIN_COHORT ? '<small class="mk-warn">too small to read as a rate</small>' : ""}</td>
           ${c.retention.map((cell) => `
-            <td class="${heatClass(cell.rate)}" title="${cell.retained} of ${c.size}">
-              ${cell.retained === 0 ? "—" : `${cell.rate}%`}
+            <td class="${heatClass(cell.rate)}" title="${num(cell.retained)} of ${num(c.size)}">
+              ${cell.retained === 0 ? "—" : `${num(cell.rate)}%`}
             </td>`).join("")}
         </tr>`).join("")}
       </tbody>
@@ -888,7 +900,7 @@ async function viewGrowth(root) {
         </div></div>
         ${table(["Week", "Actives", "Transactions", "Per active"],
           (freq.series || []).map((w) => [
-            H.escapeHtml(weekLabel(w.week)), w.actives, w.transactions, w.perActive
+            H.escapeHtml(weekLabel(w.week)), num(w.actives), num(w.transactions), num(w.perActive)
           ]),
           "No completed transactions in this window.")}
         <p class="mk-form-note">Counted per active customer, not per registered one. A wallet

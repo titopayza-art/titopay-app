@@ -283,7 +283,21 @@ const APP_ROUTES = ["dashboard", "services", "qr", "activity", "profile"];
 function restorableAuth() {
   const auth = readJson(AUTH_KEY);
   if (!auth || !auth.accessToken) return auth;
-  const lastActive = Number(localStorage.getItem(LAST_ACTIVE_KEY));
+  // EVERY STORE ACCESS IS GUARDED, because this runs at MODULE LOAD. The rest
+  // of the app touches localStorage from inside functions, where a throw takes
+  // out one feature; a throw here happens before anything has rendered and
+  // takes out the whole app. Browsers do throw on this — site data blocked,
+  // some embedded webviews, some private modes.
+  //
+  // And it fails CLOSED: a store that cannot be read is treated as a session
+  // that cannot be trusted, so the customer signs in rather than being let
+  // through on the strength of a check that never ran.
+  let lastActive = 0;
+  try {
+    lastActive = Number(localStorage.getItem(LAST_ACTIVE_KEY));
+  } catch (error) {
+    lastActive = 0;
+  }
   const idleMs = Number.isFinite(lastActive) && lastActive > 0
     ? Date.now() - lastActive
     : Infinity;
@@ -292,8 +306,14 @@ function restorableAuth() {
   if (idleMs >= 0 && idleMs < SESSION_TIMEOUT_MS) return auth;
   // Take the credentials off the device first, so nothing downstream can use
   // them even if the network call below never completes.
-  localStorage.removeItem(AUTH_KEY);
-  localStorage.removeItem(LAST_ACTIVE_KEY);
+  try {
+    localStorage.removeItem(AUTH_KEY);
+    localStorage.removeItem(LAST_ACTIVE_KEY);
+  } catch (error) {
+    // A store that refuses writes cannot be cleared. The session is still not
+    // restored — state.auth stays null — and the server revocation below still
+    // runs, so the stored token is dead even though it is still on the device.
+  }
   expiredSessionOnOpen = auth;
   return null;
 }
