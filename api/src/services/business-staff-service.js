@@ -58,6 +58,32 @@ function ensureStaffSchema() {
       await pool.query(
         "CREATE INDEX IF NOT EXISTS idx_business_staff_sales_business ON business_staff_sales (business_user_id, created_at DESC)"
       );
+      // A TILL SALE IS NOT A PAYMENT UNTIL SOMEBODY PAYS IT.
+      //
+      // These rows were written when the QR was MINTED and nothing ever
+      // revisited them, so a customer who changed their mind and walked away
+      // still counted towards the cashier's totals for ever. The row is worth
+      // keeping at mint time — it is the record of who rang up what — but it
+      // has to say whether the money arrived.
+      //
+      //   pending  the QR is showing, nobody has paid it yet
+      //   paid     qr-service settled a payment against this QR
+      //   legacy   written before this column existed. Deliberately NOT
+      //            backfilled to either of the other two: some were paid and
+      //            some were abandoned, and this platform does not know which.
+      //            Guessing would put a fabricated number in a revenue report.
+      await pool.query("ALTER TABLE business_staff_sales ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'");
+      await pool.query("ALTER TABLE business_staff_sales ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ");
+      await pool.query("ALTER TABLE business_staff_sales ADD COLUMN IF NOT EXISTS transaction_id UUID");
+      // Only rows that predate the column: anything written from now on is
+      // created as pending by staffSale() and moved by qr-service.
+      await pool.query(
+        `UPDATE business_staff_sales SET status = 'legacy'
+          WHERE status = 'pending' AND paid_at IS NULL AND created_at < NOW() - INTERVAL '1 hour'`
+      );
+      await pool.query(
+        "CREATE INDEX IF NOT EXISTS idx_business_staff_sales_qr ON business_staff_sales (qr_id) WHERE qr_id IS NOT NULL"
+      );
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -381,9 +407,12 @@ async function staffSale(staffUserId, businessUserId, payload = {}) {
     metadata: { staffSale: true, staffUserId, staffName, reference }
   });
   const saleId = uuidv4();
+  // PENDING, said out loud rather than left to a column default. Nothing has
+  // been paid at this point: the QR has only just been minted and is about to
+  // be shown to the customer.
   await pool.query(
-    `INSERT INTO business_staff_sales (id, business_user_id, staff_user_id, staff_name, amount, reference, qr_id, items)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::JSONB)`,
+    `INSERT INTO business_staff_sales (id, business_user_id, staff_user_id, staff_name, amount, reference, qr_id, items, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::JSONB, 'pending')`,
     [saleId, businessUserId, staffUserId, staffName, total, reference, qr.id, JSON.stringify(lines)]
   );
   return {
@@ -396,6 +425,29 @@ async function staffSale(staffUserId, businessUserId, payload = {}) {
   };
 }
 
+// CALLED BY qr-service WHEN A PAYMENT SETTLES AGAINST A TILL QR.
+//
+// Scoped by qr_id and by status, so it can only ever move a row that is still
+// waiting: a replayed or duplicated settlement updates nothing rather than
+// double-counting a sale. Returns whether it moved one, so the caller can tell
+// a till payment from an ordinary QR payment without asking first.
+//
+// Best effort by the caller's choice, never by this function's: the money has
+// already moved by the time this runs, and a till row that fails to update is
+// a reporting problem, not a lost payment.
+async function markStaffSalePaid(qrId, transactionId = null) {
+  if (!qrId) return false;
+  await ensureStaffSchema();
+  const { rows } = await pool.query(
+    `UPDATE business_staff_sales
+        SET status = 'paid', paid_at = NOW(), transaction_id = $2
+      WHERE qr_id = $1 AND status = 'pending'
+      RETURNING id`,
+    [qrId, transactionId]
+  );
+  return rows.length > 0;
+}
+
 // Till sales per staff member in a window — merged into the Sales suite's
 // staff performance report next to door scans.
 async function staffSalesTotals(businessUserId, { from, to } = {}) {
@@ -405,8 +457,20 @@ async function staffSalesTotals(businessUserId, { from, to } = {}) {
   // SA calendar dates (UTC+2), so a day's first two hours are not misfiled.
   if (from) { values.push(from); clause += ` AND created_at >= ($${values.length}::DATE AT TIME ZONE 'Africa/Johannesburg')`; }
   if (to) { values.push(to); clause += ` AND created_at < (($${values.length}::DATE + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg')`; }
+  // SALES TOTAL IS PAID SALES. That is the number a business banks on, and
+  // reporting a rung-up-but-unpaid sale inside it is how a till total stops
+  // matching the wallet. Pending and legacy travel beside it, never inside it,
+  // so an abandoned sale is visible rather than silently counted.
   const { rows } = await pool.query(
-    `SELECT staff_user_id, staff_name, COUNT(*)::int AS sales_count, COALESCE(SUM(amount), 0) AS sales_total, MAX(created_at) AS last_sale_at
+    `SELECT staff_user_id,
+            staff_name,
+            COUNT(*) FILTER (WHERE status = 'paid')::int          AS paid_count,
+            COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0)    AS paid_total,
+            COUNT(*) FILTER (WHERE status = 'pending')::int       AS pending_count,
+            COALESCE(SUM(amount) FILTER (WHERE status = 'pending'), 0) AS pending_total,
+            COUNT(*) FILTER (WHERE status = 'legacy')::int        AS legacy_count,
+            COALESCE(SUM(amount) FILTER (WHERE status = 'legacy'), 0)  AS legacy_total,
+            MAX(created_at) AS last_sale_at
      FROM business_staff_sales
      WHERE business_user_id = $1${clause}
      GROUP BY staff_user_id, staff_name`,
@@ -415,13 +479,21 @@ async function staffSalesTotals(businessUserId, { from, to } = {}) {
   return rows.map((row) => ({
     staffUserId: row.staff_user_id,
     staffName: row.staff_name,
-    salesCount: Number(row.sales_count),
-    salesTotal: money(row.sales_total),
+    salesCount: Number(row.paid_count),
+    salesTotal: money(row.paid_total),
+    // Rung up and showing a QR, not yet paid.
+    pendingCount: Number(row.pending_count),
+    pendingTotal: money(row.pending_total),
+    // Written before payment was tracked; this platform cannot say whether
+    // these were paid, and says so rather than picking an answer.
+    legacyCount: Number(row.legacy_count),
+    legacyTotal: money(row.legacy_total),
     lastSaleAt: row.last_sale_at
   }));
 }
 
 module.exports = {
+  markStaffSalePaid,
   relinkStaff,
   ensureStaffSchema,
   listStaff,

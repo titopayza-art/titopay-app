@@ -19,10 +19,27 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 111;
+const API_BUILD = 112;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  112: "A TILL SALE IS NO LONGER A SALE UNTIL SOMEBODY PAYS IT. Staff selling "
+      + "for a business mint a payment QR, and the row in business_staff_sales "
+      + "was written at that moment and never revisited - so a customer who "
+      + "walked away without scanning still counted towards that cashier's "
+      + "totals in the Sales suite, for ever. No money was ever fabricated: the "
+      + "whole till path makes zero writes to wallet_ledger, transactions or any "
+      + "wallet balance. What was wrong was the business's own books. The row is "
+      + "still written when the QR is minted, because it records who rang up "
+      + "what, but it now carries a status: pending until qr-service settles a "
+      + "real payment against that QR, then paid. staffSalesTotals reports PAID "
+      + "as the sales total, with pending beside it so an abandoned sale is "
+      + "visible rather than counted. The mark is scoped to a pending row for "
+      + "that exact QR, so a replayed settlement cannot double-count, and it can "
+      + "never fail a payment that has already moved. Rows written before the "
+      + "column existed are marked `legacy` rather than guessed at: some were "
+      + "paid and some were not, and putting either answer in a revenue report "
+      + "would be a fabrication.",
   111: "WHAT TITOPAY CLAIMS IS NOW BOUNDED BY WHAT ITS SUPPLIERS CAN EVIDENCE. Two "
       + "claims rested on nothing but a number nobody had revisited. (1) Level 1 "
       + "granted a R200 000 month on an identity check that confirms only that a "

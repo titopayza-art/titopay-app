@@ -385,6 +385,20 @@ async function payQr(actor, payload) {
     "UPDATE transactions SET qr_code_id = $2, merchant_id = $3 WHERE id = $1",
     [tx.transactionId, qr.id, qr.merchant_row_id || null]
   );
+  // A TILL SALE BECOMES REAL HERE, AND NOWHERE EARLIER.
+  //
+  // Staff sell for a business by minting a QR, and the till row for that sale
+  // is written at mint time as `pending` — it is the record of who rang up
+  // what, not a claim that anybody paid. This is the moment the money actually
+  // moved, so this is the moment the row may say `paid`.
+  //
+  // Deliberately after the transaction has succeeded, and deliberately unable
+  // to fail the payment: the money is already settled by now, and a till row
+  // that will not update is a reporting problem. It is scoped to a pending row
+  // for this exact QR, so a replay moves nothing.
+  await require("./business-staff-service")
+    .markStaffSalePaid(qr.id, tx.transactionId)
+    .catch(() => false);
   await writeAuditLog({
     actorType: actor.userType,
     actorId: actor.userId,

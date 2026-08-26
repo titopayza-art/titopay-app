@@ -16603,7 +16603,8 @@ function renderStaffQrScreen(saleResult) {
           ? `<img src="${esc(qrImage)}" alt="Payment QR for ${esc(money(saleResult.total))}">`
           : `<div class="empty-state compact-state">${icon("qr")}<strong>QR generated</strong><p>Use the reference above if the image does not appear.</p></div>`}
       </div>
-      <p class="field-hint">Pays ${esc(saleResult.businessName || sale.businessName || "the business")} directly · recorded under your name.</p>
+      <p class="field-hint">Pays ${esc(saleResult.businessName || sale.businessName || "the business")} directly · rung up under your name.
+        It counts towards your till once the customer has paid.</p>
       <button class="btn primary" type="button" data-action="staff-new-sale">${icon("refresh")} New sale</button>
     </section>
   `);
@@ -16640,7 +16641,11 @@ async function submitStaffSale() {
   sale.amountDigits = "";
   sale.generating = false;
   renderStaffQrScreen(saleResult);
-  showToast(`Sale of ${money(saleResult.total)} recorded for ${sale.businessName}.`);
+  // NOT "recorded". Nothing has been paid at this point — the QR has just been
+  // minted and the customer has not scanned it. Saying a sale was recorded is
+  // what made a cashier believe the money was in, and it is the one person on
+  // the till who most needs to know the difference.
+  showToast(`R${Number(saleResult.total).toFixed(2)} QR ready. Waiting for the customer to pay.`);
 }
 /* ---- TitoKids: TitoPay's family money platform ---------------------------
    Parent side: children with real ring-fenced wallets, funding, category-
