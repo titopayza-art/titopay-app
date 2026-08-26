@@ -1,6 +1,18 @@
 TitoPay Admin
-Build: admin-console-v99
-Date: 2026-08-25
+Build: admin-console-v100
+Date: 2026-08-26
+
+v100 - Support Desk quick replies stay put.
+
+  - The panel flickered and closed itself while an agent worked a
+    conversation. The Support Desk repaints on every arriving message, and
+    the open/closed state of Quick replies was the one part of the
+    workspace the repaint did not restore — the draft, caret, focus and
+    thread scroll all were.
+  - Passive refreshes (the chat socket and the ten-second fallback poll)
+    now coalesce, so a burst of twelve messages repaints once instead of
+    twelve times. Opening a chat, sending a reply or taking one over still
+    repaints immediately.
 
 v99 - Activation & Retention.
 

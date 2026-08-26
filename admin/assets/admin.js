@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v99";
+  return "admin-console-v100";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -79,6 +79,8 @@ let chatMonitorRefreshTimer = null;
 let supportChatSocket = null;
 let supportChatReconnectTimer = null;
 let supportFallbackRefreshTimer = null;
+// Coalesces the passive Support Desk repaints; see scheduleSupportRefresh().
+let supportRefreshTimer = null;
 const NAV_GROUPS = [
   { title: "Operations", items: [
     ["/dashboard/", "dashboard", "Dashboard"],
@@ -761,10 +763,7 @@ function ensureAdminSupportSocket() {
     supportChatSocket = null;
     if (!supportFallbackRefreshTimer) {
       supportFallbackRefreshTimer = setInterval(() => {
-        const page = document.querySelector(".admin-shell[data-page]")?.dataset.page;
-        if (["support", "chatbot-escalations"].includes(page)) {
-          renderSupport().catch(() => null);
-        }
+        scheduleSupportRefresh();
       }, 10000);
     }
     return;
@@ -777,20 +776,14 @@ function ensureAdminSupportSocket() {
     try {
       const payload = JSON.parse(event.data || "{}");
       if (!String(payload.type || "").startsWith("support:")) return;
-      const page = document.querySelector(".admin-shell[data-page]")?.dataset.page;
-      if (["support", "chatbot-escalations"].includes(page)) {
-        renderSupport().catch(() => null);
-      }
+      scheduleSupportRefresh();
     } catch {}
   });
   supportChatSocket.addEventListener("close", () => {
     supportChatSocket = null;
     if (!supportFallbackRefreshTimer) {
       supportFallbackRefreshTimer = setInterval(() => {
-        const page = document.querySelector(".admin-shell[data-page]")?.dataset.page;
-        if (["support", "chatbot-escalations"].includes(page)) {
-          renderSupport().catch(() => null);
-        }
+        scheduleSupportRefresh();
       }, 10000);
     }
     supportChatReconnectTimer = setTimeout(ensureAdminSupportSocket, 3000);
@@ -3391,6 +3384,17 @@ function renderQrPreview(asset) {
    unambiguously inside that chat, with one way back. Rendering the conversation
    below the queue meant taking over a chat left the agent still looking at the
    queue with the conversation off-screen. */
+function scheduleSupportRefresh() {
+  const page = document.querySelector(".admin-shell[data-page]")?.dataset.page;
+  if (!["support", "chatbot-escalations"].includes(page)) return;
+  if (supportRefreshTimer) return;
+  supportRefreshTimer = setTimeout(() => {
+    supportRefreshTimer = null;
+    const stillHere = document.querySelector(".admin-shell[data-page]")?.dataset.page;
+    if (!["support", "chatbot-escalations"].includes(stillHere)) return;
+    renderSupport().catch(() => null);
+  }, 400);
+}
 async function renderSupport() {
   captureSupportWorkspace();
   ensureAdminSupportSocket();
@@ -3689,7 +3693,7 @@ function supportQuickReplyBody() {
 }
 function supportQuickReplyPanel() {
   return `
-    <details class="support-quick-replies" ${PAGE_EXPORTS.sqrManaging ? "open" : ""}>
+    <details class="support-quick-replies" ${PAGE_EXPORTS.sqrManaging || PAGE_EXPORTS.sqrOpen ? "open" : ""}>
       <summary>Quick replies <span class="segmented-count">${getSupportQuickReplies().length}</span></summary>
       <div class="sqr-body" id="sqr-body">${supportQuickReplyBody()}</div>
     </details>
@@ -3742,6 +3746,19 @@ function captureSupportWorkspace() {
     PAGE_EXPORTS.supportThreadPinned = distanceFromBottom <= 40;
     PAGE_EXPORTS.supportThreadScroll = thread.scrollTop;
   }
+  // THE ONE PIECE OF THE WORKSPACE THAT WAS NOT BEING KEPT.
+  //
+  // The draft, the caret, the focus and the thread scroll are all restored
+  // across a refresh — the quick replies were not, so every incoming support
+  // message snapped the panel shut under the agent while everything around it
+  // held its place. On a busy desk that is a message every few seconds.
+  //
+  // Read from the live element rather than from a click handler, so it is
+  // right however the panel was opened: the summary, the keyboard, or the
+  // manage button opening it programmatically.
+  const quickReplies = document.querySelector("details.support-quick-replies");
+  if (quickReplies) PAGE_EXPORTS.sqrOpen = quickReplies.open;
+
   const composer = document.getElementById("support-agent-message");
   if (!composer) return;
   PAGE_EXPORTS.supportDraft = composer.value;
