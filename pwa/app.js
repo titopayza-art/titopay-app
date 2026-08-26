@@ -4005,7 +4005,6 @@ async function onSubmit(event) {
     if (form.dataset.form === "support-ticket-reply") await submitSupportTicketReply(data);
     if (form.dataset.form === "business-product") await submitBusinessProduct(data);
     if (form.dataset.form === "ticket-claim") await submitTicketClaim(data);
-    if (form.dataset.form === "staff-sale") await submitStaffSale(data);
     if (form.dataset.form === "stockvel-chat") await submitStockvelChat(data);
     if (form.dataset.form === "titokids-add") await submitTitoKidsAdd(data);
     if (form.dataset.form === "titokids-fund") await submitTitoKidsFund(data);
@@ -4332,24 +4331,33 @@ async function onClick(event) {
     syncSaleBasketToForm();
     return;
   }
+  // The staff till's own keypad. Deliberately a separate key from the owner's
+  // till: both can be on screen in one session and typing into one must never
+  // move the other's amount.
+  const staffPosKey = event.target.closest("[data-staff-pos-key]");
+  if (staffPosKey) {
+    updateStaffSaleAmount(staffPosKey.dataset.staffPosKey);
+    return;
+  }
   const workSaleAdd = event.target.closest("[data-wsale-add]");
   if (workSaleAdd && state.workSale) {
     state.workSale.basket[workSaleAdd.dataset.wsaleAdd] = Number(state.workSale.basket[workSaleAdd.dataset.wsaleAdd] || 0) + 1;
-    renderStaffSellPicker();
+    // A tapped product IS the amount, so anything typed before it goes.
+    state.workSale.amountDigits = "";
+    renderStaffSellScreen();
     return;
   }
   const workSaleMinus = event.target.closest("[data-wsale-minus]");
   if (workSaleMinus && state.workSale) {
     state.workSale.basket[workSaleMinus.dataset.wsaleMinus] = Math.max(0, Number(state.workSale.basket[workSaleMinus.dataset.wsaleMinus] || 0) - 1);
-    renderStaffSellPicker();
+    renderStaffSellScreen();
     return;
   }
   const workSaleClear = event.target.closest("[data-wsale-clear]");
   if (workSaleClear && state.workSale) {
     state.workSale.basket = {};
-    const amountField = document.getElementById("wsale-amount");
-    if (amountField) amountField.value = "";
-    renderStaffSellPicker();
+    state.workSale.amountDigits = "";
+    renderStaffSellScreen();
     return;
   }
   const statementPeriod = event.target.closest("[data-statement-period]");
@@ -5979,6 +5987,14 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "merchant-generate-qr") {
     await generateMerchantSaleQr();
+  }
+  if (action === "staff-generate-qr") {
+    await submitStaffSale();
+  }
+  if (action === "staff-new-sale") {
+    // Straight back to an empty till: the next customer is already waiting,
+    // and re-opening the workplace list to sell again was a step for nothing.
+    if (state.workSale) openStaffSellModal(state.workSale.businessUserId);
   }
   if (action === "merchant-cancel-sale") {
     cancelMerchantSale();
@@ -16456,77 +16472,154 @@ async function openMyWorkplacesModal() {
     if (host) host.innerHTML = `<p class="field-hint">${esc(friendlyFormError(error, "staff"))}</p>`;
   }
 }
+/* TAKING A SALE IS THE SAME JOB WHOEVER IS HOLDING THE PHONE.
+   The owner's own till (openMerchantSaleModal) is a soft POS: a full-height
+   card, a big amount, an on-screen keypad, one primary action. A staff member
+   selling for that same business got something else entirely — a scrolling
+   form with a text field — and the difference was not a decision, it was two
+   screens written at different times.
+
+   It also broke on a phone, and for a reason worth recording. A text field
+   summons the OS keyboard; the keyboard takes roughly 40% of the screen; the
+   generated QR rendered BELOW the button, so it landed several hundred pixels
+   under the fold behind the keyboard. The cashier minted a payment QR that
+   nobody could see, and scrolling the sheet to find it slid content past the
+   blurred backdrop, which is what "the background is a mess" looked like.
+
+   The keypad is what fixes it, not a scroll tweak: with no text field the OS
+   keyboard never opens, so there is no viewport to fight. The QR then gets a
+   screen of its own rather than a slot at the bottom of a form. */
+function defaultStaffSaleState(businessUserId, businessName) {
+  return { businessUserId, businessName, amountDigits: "", basket: {}, products: [], qr: null, generating: false };
+}
+// Whole rand, like the owner's till, so a cashier types 200 for R200.00.
+function staffSaleBasketTotal() {
+  const sale = state.workSale;
+  if (!sale) return 0;
+  return (sale.products || []).reduce((sum, product) =>
+    sum + Number(product.price) * Number(sale.basket[product.id] || 0), 0);
+}
+// The basket wins when there is one: tapping products IS the amount, and a
+// stale typed figure must never be what the customer is asked to pay.
+function staffSaleAmount() {
+  const basket = staffSaleBasketTotal();
+  if (basket > 0) return basket;
+  return Number((state.workSale && state.workSale.amountDigits) || 0);
+}
+function staffSaleAmountText() {
+  return money(staffSaleAmount());
+}
+function updateStaffSaleAmount(key) {
+  const sale = state.workSale;
+  if (!sale || sale.generating) return;
+  // Typing replaces a basket rather than fighting it, so the number on screen
+  // is always the number that will be charged.
+  if (staffSaleBasketTotal() > 0) sale.basket = {};
+  if (key === "backspace") sale.amountDigits = String(sale.amountDigits || "").slice(0, -1);
+  else if (/^\d$/.test(key)) sale.amountDigits = (String(sale.amountDigits || "").replace(/^0+/, "") + key).slice(0, 7);
+  renderStaffSellScreen();
+}
 async function openStaffSellModal(businessUserId) {
   const workplace = (state.myWorkplaces || []).find((item) => item.businessUserId === businessUserId);
   const businessName = workplace?.businessName || "the business";
   state.currentModalAction = `staff-sell:${businessUserId}`;
-  state.workSale = { businessUserId, businessName, basket: {}, products: [] };
-  openModal(`
-    <div class="modal-head">
-      <div><p class="eyebrow">Take a sale</p><h2>${esc(businessName)}</h2><p class="lead">Tap products or enter an amount, then show the payment QR. The customer pays ${esc(businessName)} directly. You never hold the money.</p></div>
-      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
-    </div>
-    <div data-wsale-picker><p class="field-hint">Loading the products…</p></div>
-    <form class="form-grid" data-form="staff-sale">
-      <input type="hidden" name="businessUserId" value="${esc(businessUserId)}">
-      <div class="field">
-        <label for="wsale-amount">Amount</label>
-        <div class="input-affix currency-affix" data-prefix="R"><input id="wsale-amount" name="amount" inputmode="decimal" placeholder="Filled by the products above, or type it"></div>
-      </div>
-      <button class="btn primary" type="submit">${icon("qr")} Show payment QR</button>
-    </form>
-    <div data-wsale-result></div>
-  `);
+  state.workSale = defaultStaffSaleState(businessUserId, businessName);
+  renderStaffSellScreen();
   try {
     const result = await api(`/v1/staff-workspace/workplaces/${encodeURIComponent(businessUserId)}/products`);
     state.workSale.products = (result.items || []).filter((product) => product.status === "active");
   } catch (error) {
     state.workSale.products = [];
   }
-  renderStaffSellPicker();
+  renderStaffSellScreen();
 }
-function renderStaffSellPicker() {
-  const host = document.querySelector("[data-wsale-picker]");
+function renderStaffSellScreen() {
   const sale = state.workSale;
-  if (!host || !sale) return;
-  if (!sale.products.length) {
-    host.innerHTML = `<p class="field-hint">${esc(sale.businessName)} has no products loaded. Type the amount below instead.</p>`;
-    return;
-  }
-  const lines = sale.products.filter((product) => Number(sale.basket[product.id] || 0) > 0);
-  const total = lines.reduce((sum, product) => sum + Number(product.price) * Number(sale.basket[product.id]), 0);
-  host.innerHTML = `
-    <span class="field-label">Products</span>
-    <div class="suggestion-row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px">
-      ${sale.products.map((product) => {
-        const quantity = Number(sale.basket[product.id] || 0);
-        return `<button type="button" class="chip" style="${quantity ? "background:#2f5cff;color:#fff" : ""}" data-wsale-add="${esc(product.id)}">${esc(product.name)} · ${esc(money(product.price))}${quantity ? ` ×${quantity}` : ""}</button>`;
-      }).join("")}
-    </div>
-    ${lines.length ? `
-      <section class="integration-note">
-        ${lines.map((product) => `
-          <div style="display:flex;align-items:center;gap:8px;margin:2px 0">
-            <button type="button" class="chip" data-wsale-minus="${esc(product.id)}" aria-label="Remove one ${esc(product.name)}">−</button>
-            <span style="flex:1"><strong>${esc(product.name)}</strong> ×${Number(sale.basket[product.id])}</span>
-            <strong>${esc(money(Number(product.price) * Number(sale.basket[product.id])))}</strong>
-          </div>`).join("")}
-        <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f4;padding-top:6px">
-          <strong>Sale total</strong><strong>${esc(money(total))}</strong>
+  if (!sale) return;
+  const amount = staffSaleAmount();
+  const lines = (sale.products || []).filter((product) => Number(sale.basket[product.id] || 0) > 0);
+  openModal(`
+    <section class="merchant-sale-screen" aria-label="Take a sale">
+      <header class="merchant-sale-header">
+        <button class="icon-btn" type="button" data-close aria-label="Close">${icon("x")}</button>
+        <div>
+          <p class="eyebrow">Take a sale</p>
+          <h2>${esc(sale.businessName)}</h2>
         </div>
-        <div class="auth-actions" style="margin-top:6px"><button type="button" class="chip" data-wsale-clear>Clear</button></div>
-      </section>` : ""}`;
-  const amountField = document.getElementById("wsale-amount");
-  if (amountField) amountField.value = lines.length ? total.toFixed(2) : amountField.value;
+        <span class="merchant-sale-lock">${icon("shield")}</span>
+      </header>
+      <section class="merchant-sale-amount" aria-live="polite">
+        <span>Amount</span>
+        <strong>${staffSaleAmountText()}</strong>
+      </section>
+      <section class="staff-sale-products" aria-label="Products">
+        ${!sale.products.length
+          ? `<p class="field-hint">${sale.productsLoaded === false ? "Loading the products…" : `${esc(sale.businessName)} has no products loaded. Type the amount on the keypad.`}</p>`
+          : `<div class="staff-product-row">
+              ${sale.products.map((product) => {
+                const quantity = Number(sale.basket[product.id] || 0);
+                return `<button type="button" class="chip${quantity ? " is-picked" : ""}" data-wsale-add="${esc(product.id)}">${esc(product.name)} · ${esc(money(product.price))}${quantity ? ` ×${quantity}` : ""}</button>`;
+              }).join("")}
+            </div>
+            ${lines.length ? `<div class="staff-basket-line">
+              <button type="button" class="chip" data-wsale-clear>Clear ${lines.length} item${lines.length === 1 ? "" : "s"}</button>
+            </div>` : ""}`}
+      </section>
+      <section class="merchant-keypad" aria-label="Sale amount keypad">
+        ${["1", "2", "3", "4", "5", "6", "7", "8", "9", "backspace", "0"].map((key) => `
+          <button type="button" data-staff-pos-key="${key}" aria-label="${key === "backspace" ? "Delete digit" : `Enter ${key}`}">${key === "backspace" ? icon("arrow-left") : key}</button>
+        `).join("")}
+      </section>
+      <button class="btn primary merchant-generate-btn" type="button" data-action="staff-generate-qr" ${amount > 0 && !sale.generating ? "" : "disabled"}>
+        ${sale.generating ? `${icon("refresh")} Generating...` : `${icon("qr")} Show payment QR`}
+      </button>
+      <p class="field-hint staff-sale-foot">The customer pays ${esc(sale.businessName)} directly. You never hold the money.</p>
+    </section>
+  `);
+  setMerchantPosModalClass();
 }
-async function submitStaffSale(data) {
+// The QR gets a screen of its own. On the old form it rendered under the
+// primary action, which on a phone with the keyboard up meant off the bottom
+// of the sheet — a payment QR nobody could scan.
+function renderStaffQrScreen(saleResult) {
+  const sale = state.workSale || {};
+  const qr = saleResult.qr || {};
+  const qrImage = qr.imageDataUrl || qr.image_url || "";
+  const reference = saleResult.reference || qr.reference || qr.id || "";
+  openModal(`
+    <section class="merchant-sale-screen merchant-qr-screen" aria-label="Payment QR">
+      <header class="merchant-sale-header">
+        <button class="icon-btn" type="button" data-close aria-label="Close">${icon("x")}</button>
+        <div><p class="eyebrow">Scan to pay</p><h2>${esc(saleResult.businessName || sale.businessName || "")}</h2></div>
+        <span class="merchant-sale-lock">${icon("shield")}</span>
+      </header>
+      <section class="merchant-qr-summary">
+        <strong>Ask the customer to scan and pay</strong>
+        <span>${esc(money(saleResult.total))}</span>
+        ${reference ? `<small>Reference ${esc(reference)}</small>` : ""}
+      </section>
+      <div class="qr-frame merchant-dynamic-qr" data-qr-card>
+        ${qrImage
+          ? `<img src="${esc(qrImage)}" alt="Payment QR for ${esc(money(saleResult.total))}">`
+          : `<div class="empty-state compact-state">${icon("qr")}<strong>QR generated</strong><p>Use the reference above if the image does not appear.</p></div>`}
+      </div>
+      <p class="field-hint">Pays ${esc(saleResult.businessName || sale.businessName || "the business")} directly · recorded under your name.</p>
+      <button class="btn primary" type="button" data-action="staff-new-sale">${icon("refresh")} New sale</button>
+    </section>
+  `);
+  setMerchantPosModalClass();
+}
+async function submitStaffSale() {
   const sale = state.workSale;
   if (!sale) throw new Error("Open a workplace first.");
   const items = Object.entries(sale.basket || {})
     .filter(([, quantity]) => Number(quantity) > 0)
     .map(([productId, quantity]) => ({ productId, quantity: Number(quantity) }));
-  const body = items.length ? { items } : { amount: data.amount };
-  if (!items.length && !(parseAmount(data.amount) > 0)) throw new Error("Tap products or enter the sale amount.");
+  const typed = staffSaleAmount();
+  const body = items.length ? { items } : { amount: String(typed) };
+  if (!items.length && !(typed > 0)) throw new Error("Tap products or enter the sale amount.");
+  sale.generating = true;
+  renderStaffSellScreen();
   let result;
   try {
     result = await api(`/v1/staff-workspace/workplaces/${encodeURIComponent(sale.businessUserId)}/sale`, { method: "POST", body });
@@ -16535,22 +16628,18 @@ async function submitStaffSale(data) {
     if (/in stock/i.test(message) && await askToConfirm({ title: "Not enough stock", body: message, confirmLabel: "Sell anyway", cancelLabel: "Stop", tone: "danger", hint: "The count goes negative until the next stock take." })) {
       result = await api(`/v1/staff-workspace/workplaces/${encodeURIComponent(sale.businessUserId)}/sale`, { method: "POST", body: { ...body, allowNegative: true } });
     } else {
+      // Put the till back, or a declined sale leaves the button stuck saying
+      // "Generating..." with no way forward.
+      sale.generating = false;
+      renderStaffSellScreen();
       throw error;
     }
   }
   const saleResult = result.sale || {};
   sale.basket = {};
-  const host = document.querySelector("[data-wsale-result]");
-  if (host) {
-    host.innerHTML = `
-      <section class="integration-note" style="text-align:center">
-        <strong>Ask the customer to scan and pay ${esc(money(saleResult.total))}</strong>
-        ${saleResult.qr?.imageDataUrl ? `<img src="${esc(saleResult.qr.imageDataUrl)}" alt="Payment QR for ${esc(money(saleResult.total))}" style="width:min(260px,80%);margin:10px auto;display:block">` : ""}
-        <p class="field-hint" style="margin:4px 0 0">Pays ${esc(saleResult.businessName || sale.businessName)} directly · ref ${esc(saleResult.reference || "")} · recorded under your name.</p>
-      </section>`;
-    host.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
-  renderStaffSellPicker();
+  sale.amountDigits = "";
+  sale.generating = false;
+  renderStaffQrScreen(saleResult);
   showToast(`Sale of ${money(saleResult.total)} recorded for ${sale.businessName}.`);
 }
 /* ---- TitoKids: TitoPay's family money platform ---------------------------

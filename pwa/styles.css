@@ -6114,6 +6114,34 @@ body.landing-static .landing-flow.auth-screen {
   font-size: clamp(2rem, 6.4vh, 3.8rem);
 }
 
+/* The staff till's product shelf. The owner's till has no equivalent — a
+   cashier selling for someone else works from that business's catalogue — so
+   it sits between the amount and the keypad and takes only the room it needs,
+   scrolling within itself rather than pushing the keypad or the primary
+   action off the bottom of the card. */
+.staff-sale-products {
+  display: grid;
+  gap: 8px;
+  max-height: clamp(72px, 18vh, 168px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.staff-product-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.staff-product-row .chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.staff-product-row .chip.is-picked {
+  background: var(--tp-blue, #2f5cff);
+  border-color: var(--tp-blue, #2f5cff);
+  color: #fff;
+}
+.staff-basket-line { display: flex; justify-content: flex-end; }
+.staff-sale-foot { margin: 0; text-align: center; }
+
 .merchant-sale-header {
   display: grid;
   grid-template-columns: 48px 1fr 48px;

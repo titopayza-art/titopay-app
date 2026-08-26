@@ -772,3 +772,4 @@ html[data-theme=night] .wv-status.mid{background:#0d2a5e;color:#9dc2ff}
 
 /* Paper stays paper at night. Only the frame around it follows the theme. */
 html[data-theme=night] .mk-poster{border-color:#2c4573}
+.staff-sale-products{display:grid;gap:8px;max-height:clamp(72px,18vh,168px);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}.staff-product-row{display:flex;flex-wrap:wrap;gap:6px}.staff-product-row .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.staff-product-row .chip.is-picked{background:var(--tp-blue,#2f5cff);border-color:var(--tp-blue,#2f5cff);color:#fff}.staff-basket-line{display:flex;justify-content:flex-end}.staff-sale-foot{margin:0;text-align:center}
