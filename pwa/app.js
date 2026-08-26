@@ -111,6 +111,28 @@ const QUICK_SERVICES_STORAGE_PREFIX = "titopay_quick_services_v1";
 const QUICK_SERVICES_LIMIT = 6;
 const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
 const SESSION_WARNING_MS = 60 * 1000;
+// WHEN THE CUSTOMER WAS LAST HERE, written to the device so the idle policy
+// survives the app being closed.
+//
+// THE HOLE THIS CLOSES. The ten minute idle logout was a setTimeout, and a
+// setTimeout dies with the page. Close the app and the timer never fired,
+// while the refresh token sat in localStorage for its full seven days — so
+// reopening walked straight into the wallet with no credentials. The policy
+// only ever applied to an app left OPEN, which is the one case where the
+// customer is holding the phone. Closing it, which is the careful thing to do,
+// is what bypassed it.
+//
+// A timestamp on the device is not a strong clock: someone holding an unlocked
+// phone could wind it back. That is why expiring locally is only half of it —
+// the session is revoked on the server as well, so the stored refresh token is
+// dead whatever the handset believes the time is.
+const LAST_ACTIVE_KEY = "titopay_last_active_v1";
+// How often the timestamp is rewritten while the app is in use. Activity fires
+// on every scroll and tap; writing localStorage that often would be wasteful
+// and pointless, because the value only has to be accurate to well inside the
+// ten minute window. It is ALSO written on every hide and unload, which is the
+// write that actually matters.
+const LAST_ACTIVE_WRITE_MS = 30 * 1000;
 // THE SECURITY COPY, AND WHY IT STILL LIVES HERE.
 //
 // An admin can now rewrite this wording from the console, which matters when a
@@ -246,8 +268,48 @@ if (typeof Element !== "undefined" && !Element.prototype.closest) {
 // and a const cannot be read before it is initialised. navItems below must
 // carry these same five ids; api/test/pwa-structure.test.js holds them level.
 const APP_ROUTES = ["dashboard", "services", "qr", "activity", "profile"];
+// THE STORED SESSION, AND WHETHER IT IS STILL ALLOWED TO BE ONE.
+//
+// This runs before `state` exists, because `state.auth` is the very first thing
+// boot() trusts. A session that has been sitting on a closed phone for longer
+// than the idle window is not restored at all: the credentials are removed
+// here, and the server is told to revoke them a moment later.
+//
+// FAILING CLOSED IS THE POINT. A stored session with NO timestamp beside it is
+// treated as expired, not as fresh. That covers a customer upgrading from a
+// build that never wrote one, and it covers anyone deleting the timestamp to
+// keep a session alive. The cost is one sign-in on the first open after this
+// build lands, which is the correct price.
+function restorableAuth() {
+  const auth = readJson(AUTH_KEY);
+  if (!auth || !auth.accessToken) return auth;
+  const lastActive = Number(localStorage.getItem(LAST_ACTIVE_KEY));
+  const idleMs = Number.isFinite(lastActive) && lastActive > 0
+    ? Date.now() - lastActive
+    : Infinity;
+  // A clock wound BACKWARDS gives a negative idle time. Treat anything that is
+  // not a sane forward interval as expired rather than as "no time has passed".
+  if (idleMs >= 0 && idleMs < SESSION_TIMEOUT_MS) return auth;
+  // Take the credentials off the device first, so nothing downstream can use
+  // them even if the network call below never completes.
+  localStorage.removeItem(AUTH_KEY);
+  localStorage.removeItem(LAST_ACTIVE_KEY);
+  expiredSessionOnOpen = auth;
+  return null;
+}
+// Held so boot() can revoke it server-side and tell the customer why they are
+// looking at a sign-in screen. Local removal alone would leave a live refresh
+// token in anyone's hands who had copied it off the device.
+let expiredSessionOnOpen = null;
+// When the last-active stamp was last written. Lives up here with the other
+// order-sensitive declarations rather than beside markLastActive(), because
+// this file keeps every one of them in the two marked blocks — a `let` added
+// mid-section still works today and silently changes when it evaluates the
+// moment somebody moves a section. api/test/pwa-structure.test.js enforces it.
+let lastActiveWrittenAt = 0;
+
 const state = {
-  auth: readJson(AUTH_KEY),
+  auth: restorableAuth(),
   user: null,
   // The merchant record from GET /v1/merchants/me, for business accounts. Null
   // on a personal account and on any account with no merchant row, which is
@@ -540,6 +602,16 @@ document.addEventListener("keydown", handleVasPickerKeydown, true);
 document.addEventListener("change", onChange);
 ["pointerdown", "keydown", "scroll", "touchstart"].forEach((eventName) => {
   window.addEventListener(eventName, resetSessionTimers, { passive: true });
+});
+// THE WRITE THAT MAKES THE IDLE POLICY SURVIVE BEING CLOSED. An installed PWA
+// is rarely "closed" in a way that fires a tidy event, so the timestamp is
+// written on every route to the background: `pagehide` covers a real close and
+// a navigation away, `visibilitychange` covers the app being switched out or
+// the screen being locked, which on a phone is what actually happens. Both are
+// forced past the throttle, because this is the value the next open reads.
+window.addEventListener("pagehide", () => markLastActive(true));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") markLastActive(true);
 });
 window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
 window.addEventListener("appinstalled", onAppInstalled);
@@ -1242,9 +1314,55 @@ function landingSwipeMove(event) {
 function landingSwipeEnd() {
   landingSwipe = null;
 }
+// KILLING A SESSION THAT TIMED OUT WHILE THE APP WAS CLOSED.
+//
+// /v1/auth/logout requires a valid access token, and that is deliberate: it
+// used to revoke on a refresh-token hash alone, which meant a leaked refresh
+// token could sign a stranger out. Nothing here weakens that. Instead the
+// stored refresh token is spent the way any client would spend it — one
+// refresh, which the server rotates and which revokes the old session as a
+// side effect — and the fresh access token is then used to revoke the new one.
+// Both halves are ordinary authenticated operations, and the outcome is that
+// no live session is left behind on the server.
+//
+// Best effort by design. The credentials are already off the device before
+// this runs, so a customer opening the app on a train with no signal is still
+// signed out; this only closes the server side, and it will succeed on the
+// next open if it fails on this one.
+async function revokeExpiredSession(expired) {
+  if (!expired || !expired.refreshToken) return;
+  // Same request the normal refresh path sends, scope included, so this cannot
+  // drift from it.
+  const response = await fetch(`${API_BASE}/v1/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken: expired.refreshToken, scope: "customer" })
+  });
+  if (!response.ok) return;   // already expired or revoked: nothing left to kill
+  const payload = await response.json().catch(() => null);
+  const accessToken = payload && (payload.accessToken || payload.access_token || payload.token);
+  if (!accessToken) return;
+  await fetch(`${API_BASE}/v1/auth/logout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ refreshToken: payload.refreshToken || payload.refresh_token || null })
+  });
+}
+
 async function boot() {
   registerServiceWorker();
   renderConnectivityBanner();
+  // A session that timed out while the app was closed. The credentials are
+  // already off the device; this kills them at the server too, so the refresh
+  // token is dead even for someone who copied it off the handset, and tells
+  // the customer why they are looking at a sign-in screen instead of leaving
+  // them to conclude the app forgot them.
+  if (expiredSessionOnOpen) {
+    const expired = expiredSessionOnOpen;
+    expiredSessionOnOpen = null;
+    revokeExpiredSession(expired).catch(() => null);
+    showToast("Signed out after 10 minutes of inactivity. Please sign in again.");
+  }
   const defaults = await loadDefaultServices();
   state.services = sortServices(defaults.map(normalizeService));
   state.servicesLoaded = true;
@@ -5944,6 +6062,11 @@ function isFocusRestorationTarget(element) {
 function saveAuth(auth) {
   state.auth = auth;
   localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+  // Stamped the moment the session begins. Without this a customer who signs
+  // in and immediately closes the app would come back to a session with no
+  // timestamp, which the gate on the next open reads as expired.
+  lastActiveWrittenAt = 0;
+  markLastActive(true);
   resetSessionTimers();
   startTitoPayAccountSync();
   connectTitoPayChatSocket({ force: true });
@@ -5968,6 +6091,8 @@ function clearAuth() {
   state.emailNotificationPreferences = null;
   state.transactionFilters = { search: "", from: "", to: "", direction: "all" };
   localStorage.removeItem(AUTH_KEY);
+  localStorage.removeItem(LAST_ACTIVE_KEY);
+  lastActiveWrittenAt = 0;
   sessionStorage.removeItem(SESSION_KEY);
   clearPersonalDeviceData();
   clearTimeout(state.sessionTimer);
@@ -7012,8 +7137,21 @@ async function refreshCustomerSession() {
     authRefreshPromise = null;
   }
 }
+// Stamps "the customer was here" on the device. Throttled while the app is in
+// use; `force` is for the moments that matter — the app being hidden or closed,
+// which is exactly when the in-memory timer is about to be destroyed and the
+// stored timestamp becomes the only record of when they were last active.
+function markLastActive(force = false) {
+  if (!state.auth || !state.auth.accessToken) return;
+  const now = Date.now();
+  if (!force && now - lastActiveWrittenAt < LAST_ACTIVE_WRITE_MS) return;
+  lastActiveWrittenAt = now;
+  try { localStorage.setItem(LAST_ACTIVE_KEY, String(now)); } catch (error) {}
+}
+
 function resetSessionTimers() {
   if (!state.auth || !state.auth.accessToken) return;
+  markLastActive();
   clearTimeout(state.sessionTimer);
   clearTimeout(state.sessionWarningTimer);
   state.sessionWarningShown = false;
