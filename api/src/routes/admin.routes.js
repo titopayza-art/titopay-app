@@ -2,6 +2,7 @@ const express = require("express");
 const crypto = require("crypto");
 const net = require("net");
 const nodemailer = require("nodemailer");
+const { refreshCapabilityActivation } = require("../providers/capability-activation");
 const QRCode = require("qrcode");
 const { pool } = require("../db/pool");
 const { config } = require("../config/env");
@@ -3265,6 +3266,11 @@ router.put("/integrations/:provider", requireSuperAdmin, async (req, res, next) 
       body: req.body || {},
       adminId: req.auth.userId
     });
+    // The capability gate reads this state from a cache, because it runs on
+    // every service read and cannot await a query. Refresh it here so an
+    // operator who enables a rail sees it take effect on the next screen
+    // rather than up to half a minute later.
+    await refreshCapabilityActivation().catch(() => {});
     await writeAuditLog({
       actorType: req.auth.userType,
       actorId: req.auth.userId,
@@ -3290,6 +3296,10 @@ router.post("/integrations/:provider/disable", requireSuperAdmin, async (req, re
   try {
     const providerKey = requireEnum(req.params.provider, Object.keys(INTEGRATION_PROVIDERS), "Integration provider");
     const provider = await disableIntegrationConfig(providerKey, req.auth.userId);
+    // Immediate, deliberately. Disabling is what an operator reaches for when
+    // a supplier is failing, and a rail that stays up for another thirty
+    // seconds is thirty seconds of customers paying into a hole.
+    await refreshCapabilityActivation().catch(() => {});
     await writeAuditLog({
       actorType: req.auth.userType,
       actorId: req.auth.userId,

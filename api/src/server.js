@@ -174,6 +174,12 @@ if (chatSocketEnabled) attachChatSocketServer(server);
 
 server.listen(config.apiPort, config.apiHost, () => {
   require("./services/wallet-service").ensureLedgerPostingIndex().catch(() => {});
+  // Which capabilities an operator has switched on, read once at boot so the
+  // service catalogue answers from real state rather than from its
+  // fail-closed default. Never fatal: an unreadable snapshot leaves every
+  // capability off, which is the safe direction.
+  require("./providers/capability-activation").refreshCapabilityActivation()
+    .catch((error) => console.error("[capability-activation] boot refresh failed", { message: error.message }));
   // Webhook tables + delivery loop. Inline by default so every deployment
   // delivers; a standalone src/webhook-worker.js process takes over when
   // WEBHOOK_WORKER_INLINE=0. Neither the ensure nor the loop may ever be
@@ -216,6 +222,12 @@ server.listen(config.apiPort, config.apiHost, () => {
   console.error("[deployment-safety] the check did not complete; serving anyway", { message: error.message });
   server.listen(config.apiPort, config.apiHost, () => {
   require("./services/wallet-service").ensureLedgerPostingIndex().catch(() => {});
+  // Which capabilities an operator has switched on, read once at boot so the
+  // service catalogue answers from real state rather than from its
+  // fail-closed default. Never fatal: an unreadable snapshot leaves every
+  // capability off, which is the safe direction.
+  require("./providers/capability-activation").refreshCapabilityActivation()
+    .catch((error) => console.error("[capability-activation] boot refresh failed", { message: error.message }));
   // Webhook tables + delivery loop. Inline by default so every deployment
   // delivers; a standalone src/webhook-worker.js process takes over when
   // WEBHOOK_WORKER_INLINE=0. Neither the ensure nor the loop may ever be

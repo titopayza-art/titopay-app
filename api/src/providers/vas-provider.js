@@ -60,6 +60,7 @@
 
 const { registerProvider, operation, CAPABILITIES, capabilityConfigured, providerAttribute } = require("./index");
 const { AppError } = require("../lib/errors");
+const { capabilityActivated } = require("./capability-activation");
 
 function notAvailable() {
   throw new AppError(503, "This service is not available right now. Please try again later.");
@@ -119,5 +120,22 @@ module.exports = {
   // that can. Defaults to false for an unwired capability, so the failure mode
   // is a service that is not offered rather than one that is offered and then
   // refuses at the till.
+  //
+  // TWO HALVES, AND BOTH ARE REQUIRED.
+  //
+  //   1. the adapter declares it can send a purchase — the presence of code
+  //      that speaks the supplier's protocol, which no console field can
+  //      conjure into existence, and
+  //   2. an operator has switched the capability on in the Integration Centre
+  //      — enabled, configured, and with a connection test that passed.
+  //
+  // An AND, never an OR. The console can close this gate but can never open
+  // one the code cannot honour, which is the property that stops a switch
+  // publishing a service that would debit a customer and hand back a 503.
+  //
+  // The second half is what makes activation operational rather than a
+  // release: moving supplier, or killing the rail during a supplier outage, is
+  // now something the person who noticed can actually do.
   vasCanPurchase: () => Boolean(providerAttribute(CAPABILITIES.VAS, "canPurchase", false))
+    && capabilityActivated(CAPABILITIES.VAS)
 };

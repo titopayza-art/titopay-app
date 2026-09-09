@@ -97,8 +97,27 @@ test("the gate is derived on every read, so it cannot be left behind", async () 
   // flag was set by hand once and nothing moves it again". Proven by moving
   // the declaration and watching the catalogue follow, with no data change.
   const registry = require("../src/providers/index");
+  const { pool } = require("../src/db/pool");
+  const activation = require("../src/providers/capability-activation");
   const original = registry.providerAttribute;
+  // CONTRACTING A PROVIDER NOW HAS TWO HALVES, and this drives both, because
+  // both are the gate: the adapter must be able to send a purchase, AND an
+  // operator must have switched the capability on in the Integration Centre.
+  // The second half moved there so that changing supplier, or killing a rail
+  // during an outage, no longer needs a release. Satisfying only the first
+  // half here would assert a gate that no longer exists.
+  const { rows: before } = await pool.query(
+    "SELECT value FROM platform_settings WHERE key = 'integration_flash'");
+  const storedIntegration = before[0] ? before[0].value : null;
   try {
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, updated_at)
+       VALUES ('integration_flash', $1::JSONB, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify({ label: "Flash", enabled: true, configured: true,
+        environment: "production", health: { status: "connected" } })]);
+    await activation.refreshCapabilityActivation();
+
     registry.providerAttribute = (capability, name, fallback) =>
       (capability === "vas" && name === "canPurchase" ? true : original(capability, name, fallback));
     // Re-read through a fresh require of the reader so the stub is in force.
@@ -116,6 +135,16 @@ test("the gate is derived on every read, so it cannot be left behind", async () 
     }
   } finally {
     registry.providerAttribute = original;
+    if (storedIntegration) {
+      await pool.query(
+        `INSERT INTO platform_settings (key, value, updated_at)
+         VALUES ('integration_flash', $1::JSONB, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [JSON.stringify(storedIntegration)]);
+    } else {
+      await pool.query("DELETE FROM platform_settings WHERE key = 'integration_flash'");
+    }
+    await activation.refreshCapabilityActivation();
     delete require.cache[require.resolve("../src/providers/vas-provider")];
     delete require.cache[require.resolve("../src/services/service-management-service")];
     require("../src/providers/vas-provider");

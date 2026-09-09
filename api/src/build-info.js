@@ -19,10 +19,24 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 124;
+const API_BUILD = 125;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  125: "ACTIVATION MOVES TO THE CONSOLE. Whether TitoPay can sell airtime was "
+      + "one hardcoded boolean in an adapter file, so switching the VAS rail "
+      + "on, changing supplier, or killing it during a supplier outage all "
+      + "needed a release. The gate now also reads the Integration Centre - "
+      + "enabled, configured, and a connection test that passed - which is "
+      + "already Super Admin only, encrypted and audited. It is an AND, never "
+      + "an OR: the adapter must declare it can send a purchase AND an "
+      + "operator must have switched it on, so the console can close the gate "
+      + "and can never open one the code cannot honour. Nothing about today "
+      + "changes - both shipped adapters still declare canPurchase false, so "
+      + "the five VAS services are still served as coming soon, which a test "
+      + "pins. The cache is refreshed at boot, on every integration save and "
+      + "disable, and on a 30s backstop; it fails closed, so an unreadable "
+      + "snapshot leaves every capability off rather than on.",
   124: "THE SERVICE CATALOGUE IS EDITABLE. The console page was read-only "
       + "because five rows - airtime, data, electricity, vouchers, bill "
       + "payments - have a status DERIVED from whether a supplier can "
