@@ -1520,13 +1520,21 @@ function walletVerificationChip() {
     else if (c.tier === 1) { tone = "mid"; label = "Basic"; }
     else { tone = "warn"; label = "Verify"; }
   }
+  // NO PILL, NO DOT, NO ARROW.
+  //
+  // The first version of this was a glass pill with a 1px border, an amber dot
+  // with a glow halo, and an arrow inside a thing that was already a button —
+  // four ornaments for one word, and the tint and the dot both saying the same
+  // thing. It read as a component pasted onto the card rather than part of it.
+  //
+  // It is set in the eyebrow's own type instead, at the other end of the
+  // eyebrow's own line, so the header is one typographic row with two ends.
+  // The STATE is carried by the word: "Verified" is a fact and sits back at
+  // the eyebrow's weight; "Verify" is a verb and comes forward to full white.
+  // That is the whole signal, and it needs no colour to carry it.
   return `
-    <button class="wallet-verify-chip${tone ? ` ${esc(tone)}` : ""}" type="button" data-action="limits-verification"
-            aria-label="${esc(label)}. Open limits and verification.">
-      <span class="wvc-dot" aria-hidden="true"></span>
-      <span class="wvc-label">${esc(label)}</span>
-      <span class="wvc-caret" aria-hidden="true">${icon("arrow-right")}</span>
-    </button>`;
+    <button class="wallet-verify${tone === "warn" ? " needs-action" : ""}" type="button" data-action="limits-verification"
+            aria-label="${esc(label)}. Open limits and verification.">${esc(label)}</button>`;
 }
 async function loadComplianceStatus({ silent = true } = {}) {
   try {

@@ -14,13 +14,13 @@ r.writeHead(200,{"Content-Type":T[path.extname(f)]||"application/octet-stream"})
 let bad=0; const ok=(l,v,d)=>{if(!v)bad++;console.log(`  ${v?"PASS":"FAIL"}  ${l}${d!==undefined?": "+d:""}`);};
 
 const STATES = [
-  ["unknown (still loading)", null, "Limits", ""],
+  ["unknown (still loading)", null, "Limits", "quiet"],
   ["not verified",            {tier:0,verified:false}, "Verify", "warn"],
-  ["basic",                   {tier:1,verified:false}, "Basic", "mid"],
-  ["fully verified",          {tier:2,verified:true},  "Verified", "ok"],
+  ["basic",                   {tier:1,verified:false}, "Basic", "quiet"],
+  ["fully verified",          {tier:2,verified:true},  "Verified", "quiet"],
   ["under review",            {tier:1,verified:false,eddActive:true}, "In review", "warn"],
-  ["API state fully_verified",  {verificationState:"fully_verified",verificationLabel:"\u2713 Fully Verified"}, "Verified", "ok"],
-  ["API label it does not know", {verificationState:"basic_verified",verificationLabel:"Provisional"}, "Provisional", "mid"],
+  ["API state fully_verified",  {verificationState:"fully_verified",verificationLabel:"\u2713 Fully Verified"}, "Verified", "quiet"],
+  ["API label it does not know", {verificationState:"basic_verified",verificationLabel:"Provisional"}, "Provisional", "quiet"],
   ["an API state it does not know", {verificationState:"brand_new_state",verificationLabel:"Something new"}, "Something new", "warn"],
 ];
 
@@ -75,11 +75,11 @@ const paint = async (compliance) => {
 for (const [name, compliance, expectLabel, expectTone] of STATES) {
   await paint(compliance);
   const chip = await p.evaluate(() => {
-    const el = document.querySelector(".wallet-verify-chip");
-    return el ? { label: el.querySelector(".wvc-label").textContent.trim(),
-      tone: (el.className.match(/\b(ok|mid|warn)\b/) || ["", "neutral"])[1] } : null;
+    const el = document.querySelector(".wallet-verify");
+    return el ? { label: el.textContent.trim(),
+      tone: el.classList.contains("needs-action") ? "warn" : "quiet" } : null;
   });
-  const good = chip && chip.label === expectLabel && chip.tone === (expectTone || "neutral");
+  const good = chip && chip.label === expectLabel && chip.tone === (expectTone || "quiet");
   ok(`${name} reads "${expectLabel}"`, good, chip ? `"${chip.label}" (${chip.tone})` : "MISSING");
 }
 
@@ -87,12 +87,26 @@ for (const [name, compliance, expectLabel, expectTone] of STATES) {
 await paint({ tier: 0, verified: false });
 const s = await p.evaluate(() => {
   const card = document.querySelector(".wallet-card");
-  const chip = document.querySelector(".wallet-verify-chip");
+  const chip = document.querySelector(".wallet-verify");
   const id = document.querySelector(".wallet-id-line");
   return {
     chipInHeader: !!(chip && chip.closest(".wallet-card-top")),
     chipTap: chip ? chip.getBoundingClientRect().height : 0,
+    // Slop check: the affordance must be TYPE, not a component. No child
+    // elements (so no dot and no arrow), no border, no fill.
+    noOrnament: !!chip && chip.children.length === 0
+      && getComputedStyle(chip).borderTopWidth === "0px"
+      && getComputedStyle(chip).backgroundImage === "none"
+      && getComputedStyle(chip).backgroundColor === "rgba(0, 0, 0, 0)",
+    ornament: chip ? `children=${chip.children.length} border=${getComputedStyle(chip).borderTopWidth} bg=${getComputedStyle(chip).backgroundColor}` : "missing",
     oldStrip: !!document.querySelector(".wallet-verification"),
+    noOrnament: (() => { const v=document.querySelector(".wallet-verify"); if(!v) return false;
+      const cs=getComputedStyle(v);
+      return v.children.length===0 && cs.borderTopWidth==="0px" &&
+        (cs.backgroundImage==="none") && cs.backgroundColor==="rgba(0, 0, 0, 0)"; })(),
+    ornament: (() => { const v=document.querySelector(".wallet-verify"); if(!v) return "missing";
+      const cs=getComputedStyle(v);
+      return `children=${v.children.length} border=${cs.borderTopWidth} bg=${cs.backgroundColor}`; })(),
     idCopyable: !!(id && id.tagName === "BUTTON" && id.dataset.copyValue),
     idTag: id ? id.tagName : "none",
     idText: id ? id.textContent.trim().replace(/\s+/g," ") : "",
@@ -105,7 +119,8 @@ const s = await p.evaluate(() => {
   };
 });
 console.log("");
-ok("the verification chip is in the card header", s.chipInHeader);
+ok("the verification affordance is in the card header", s.chipInHeader);
+ok("it carries no badge, dot or arrow", s.noOrnament, s.ornament);
 ok("it is a real tap target", s.chipTap >= 30, `${Math.round(s.chipTap)}px tall`);
 ok("the old full-width strip is gone", !s.oldStrip);
 ok("the wallet ID is tap-to-copy", s.idCopyable, `${s.idTag||"?"} "${s.idText||""}" bal="${s.bal||""}"`);

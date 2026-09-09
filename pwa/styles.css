@@ -13698,88 +13698,65 @@ img {
 /* Limits and Verification --------------------------------------------------- */
 
 /* The wallet card's one quiet line: status pill left, door right. */
-/* THE VERIFICATION CHIP. Replaces .wallet-verification, which was a
-   full-width strip across the middle of the card carrying "Verification" on
-   one side and "Limits & Verification" on the other. This states the status
-   and gets out of the way; the dot carries the state before the label is read.
-   Sized as a real tap target despite being visually small. */
-.wallet-verify-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+/* THE VERIFICATION AFFORDANCE, set as type rather than built as a component.
+   It replaced a glass pill with a border, a glowing status dot and an arrow —
+   four decorations around one word, which is what made it read as generated
+   rather than designed. It now uses the eyebrow's own size, weight and
+   tracking, sitting at the other end of the eyebrow's line, so the header is a
+   single typographic row instead of a label with a badge stuck beside it.
+
+   The underline is the only affordance and it is deliberately faint: enough to
+   say "this is a link" on a touch screen where there is no hover to discover.
+   Padding gives it a full tap target without drawing a box. */
+.wallet-verify {
   flex: 0 1 auto;
   min-width: 0;
-  min-height: 32px;
-  padding: 6px 10px 6px 11px;
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.13);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
+  /* The visible thing is one line of type; the tap target is 34px. The
+     negative margin gives the padding back so the header line does not
+     grow around it. */
+  padding: 10px 0 10px 14px;
+  margin: -10px 0;
+  color: rgba(255, 255, 255, 0.72);
+  background: none;
+  border: 0;
   font: inherit;
-  font-size: 0.72rem;
-  font-weight: 650;
-  letter-spacing: 0.01em;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: right;
   white-space: nowrap;
-  cursor: pointer;
-  transition: background 160ms ease, border-color 160ms ease;
-}
-
-.wallet-verify-chip:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-.wallet-verify-chip:active {
-  transform: scale(0.97);
-}
-
-.wallet-verify-chip:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.6);
-  outline-offset: 2px;
-}
-
-.wvc-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.7);
-}
-
-/* The three states, as the dot. Colours are the same ones the old pill used,
-   read here against the blue card rather than as a filled badge. */
-.wallet-verify-chip.ok .wvc-dot { background: #3ddc8a; box-shadow: 0 0 0 3px rgba(61, 220, 138, 0.22); }
-.wallet-verify-chip.mid .wvc-dot { background: #8fc0ff; box-shadow: 0 0 0 3px rgba(143, 192, 255, 0.22); }
-.wallet-verify-chip.warn .wvc-dot { background: #ffc46b; box-shadow: 0 0 0 3px rgba(255, 196, 107, 0.24); }
-
-/* Unverified is the one state worth pulling the eye, because it is the one
-   with something to do. */
-.wallet-verify-chip.warn {
-  background: rgba(255, 196, 107, 0.18);
-  border-color: rgba(255, 196, 107, 0.42);
-}
-
-.wallet-verify-chip.warn:hover {
-  background: rgba(255, 196, 107, 0.26);
-}
-
-.wvc-label {
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 42vw;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.28);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+  transition: color 160ms ease, text-decoration-color 160ms ease;
 }
 
-.wvc-caret {
-  display: grid;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  opacity: 0.75;
+/* An action comes forward; a state stays back. This is the entire difference
+   between "Verify" and "Verified" — no colour, no dot, no badge. */
+.wallet-verify.needs-action {
+  color: #fff;
+  text-decoration-color: rgba(255, 255, 255, 0.6);
 }
 
-.wvc-caret svg {
-  width: 14px;
-  height: 14px;
+.wallet-verify:hover,
+.wallet-verify:focus-visible {
+  color: #fff;
+  text-decoration-color: rgba(255, 255, 255, 0.8);
+}
+
+.wallet-verify:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.55);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.wallet-verify:active {
+  opacity: 0.7;
 }
 
 .limit-line {
@@ -13855,9 +13832,9 @@ img {
   .wallet-meta-line { margin: -2px 0 8px; padding: 6px 11px; }
   .balance-toggle { width: 40px; height: 40px; flex: 0 0 40px; }
   .wallet-id-line { padding: 4px 8px 4px 0; }
-  /* The chip keeps its full tap target on a small screen; only the label is
-     allowed to shorten, and it truncates rather than wrapping the header. */
-  .wvc-label { max-width: 38vw; }
+  /* Only the label may shorten on a narrow phone, and it truncates rather
+     than wrapping the header onto two lines. */
+  .wallet-verify { max-width: 38vw; font-size: 0.72rem; }
   .wallet-actions-compact { margin-top: 12px; gap: 10px; }
   .wallet-actions-compact button { min-height: 48px; }
   .section-head.quick-services-head { margin-top: 10px; }
