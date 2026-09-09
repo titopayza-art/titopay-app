@@ -186,5 +186,21 @@ test("an Event Tag tap is registered as a real service code", () => {
   // key, and the approved figure is owned by approved-pricing-schedule.test.js
   // so a price change does not have to be edited in two places.
   assert.match(pricing, /\["event_tag", "Event Tag Payment"/);
-  assert.match(ticketingSource, /ensureDefaultPricingRule\("event_tag"\)/);
+
+  // The ticketing bootstrap used to call ensureDefaultPricingRule("event_tag")
+  // directly. It now applies a named list, because the whole bootstrap is
+  // fingerprinted and skipped once a database is already at that fingerprint.
+  // The guarantee is unchanged and is asserted just as tightly: event_tag must
+  // be IN the list, and the list must actually be applied.
+  const codes = ticketingSource.match(/const TICKETING_PRICING_CODES = \[([\s\S]*?)\];/);
+  assert.ok(codes, "the bootstrap's pricing codes must be a named list");
+  assert.ok(codes[1].includes('"event_tag"'),
+    "event_tag must be in the list the bootstrap applies, or a tap cannot reach the ledger");
+  assert.match(ticketingSource,
+    /for \(const code of TICKETING_PRICING_CODES\) await ensureDefaultPricingRule\(code\);/,
+    "and the list must be applied, not merely declared");
+  // Changing the list changes the fingerprint, so an existing database picks
+  // up a newly added code instead of skipping it forever.
+  assert.match(ticketingSource, /update\(TICKETING_PRICING_CODES/,
+    "the fingerprint must cover the pricing codes");
 });

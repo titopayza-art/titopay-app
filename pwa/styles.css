@@ -16085,3 +16085,31 @@ button.is-busy.btn-primary::after {
     transition: none;
   }
 }
+
+/* THE WALLET CARD, BACK TO ITS FULL HEIGHT ON A PHONE.
+   ---------------------------------------------------------------------------
+   Moving verification out of the card and into the header was right — the
+   full-width strip it used to occupy competed with Top Up and Withdraw — but
+   it took about fifty pixels of the card's height with it, and the card is the
+   first thing on the screen and the reason most people open the app. It ended
+   up reading as a small band above a large expanse of nothing.
+
+   The height comes back through the card's own rhythm rather than by putting
+   the strip back: more padding, a larger balance, and taller action buttons.
+   That restores the presence without restoring the clutter, and the buttons
+   gain touch target while they are at it.
+
+   Scoped to 480px and below, so tablet and desktop widths are untouched. The
+   colours are inherited, so night mode needs nothing here. Appended, because
+   the phone block above already sets these properties and the later rule is
+   what wins. */
+@media (max-width: 480px) {
+  .wallet-card { padding: 26px 20px 24px; }
+  .wallet-balance { margin: 12px 0 14px; font-size: clamp(2.15rem, 9.6vw, 2.95rem); }
+  .wallet-id-line { padding: 6px 8px 6px 0; }
+  /* The action row is .wallet-actions.wallet-actions-compact and its children
+     are bare <button> elements, not .btn — a .btn selector here matches
+     nothing and is the kind of dead rule that later reads as a decision. */
+  .wallet-actions-compact { margin-top: 20px; gap: 12px; }
+  .wallet-actions-compact button { min-height: 54px; }
+}

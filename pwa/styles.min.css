@@ -781,3 +781,11 @@ html[data-theme=night] .mk-poster{border-color:#2c4573}
 .ticket-seating-cell span{color:var(--blue-2);font-size:.66rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
 .ticket-seating-cell strong{font-size:1.22rem;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;text-align:center}
 @media (max-width:360px){.ticket-seating-cell strong{font-size:1.05rem}}
+/* WALLET CARD BACK TO FULL HEIGHT ON A PHONE. Appended; see styles.css. */
+@media (max-width:480px){
+.wallet-card{padding:26px 20px 24px}
+.wallet-balance{margin:12px 0 14px;font-size:clamp(2.15rem,9.6vw,2.95rem)}
+.wallet-id-line{padding:6px 8px 6px 0}
+.wallet-actions-compact{margin-top:20px;gap:12px}
+.wallet-actions-compact button{min-height:54px}
+}
