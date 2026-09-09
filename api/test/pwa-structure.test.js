@@ -574,11 +574,66 @@ test("a ticket stub shows the event's start time, read as a UTC calendar date", 
   // event that travels with the ticket.
   const stubStart = source.indexOf("function ticketStub(");
   assert.ok(stubStart > 0, "ticketStub should exist");
-  const stub = source.slice(stubStart, stubStart + 1800);
+  // The whole function, bounded by the next top-level declaration, rather than
+  // a guessed byte count. A fixed 1800-char window silently stopped covering
+  // the header the moment the ticket face grew a poster band and a seat block,
+  // and a slice that ends early turns every doesNotMatch below into a test
+  // that passes because it looked at nothing.
+  const stubEnd = source.indexOf("\nfunction ", stubStart + 10);
+  assert.ok(stubEnd > stubStart, "the end of ticketStub should be findable");
+  const stub = source.slice(stubStart, stubEnd);
+  assert.match(stub, /<article class="ticket-stub/, "the slice reaches the markup it is asserting about");
   assert.match(stub, /const startTime = ticket\.startTime \|\| ticket\.event\?\.startTime/,
     "ticketStub must resolve the start time, including from the ticket's own event");
   assert.match(stub, /ticketWhenText\(eventDate, startTime\)/,
     "ticketStub must render through ticketWhenText");
   assert.doesNotMatch(stub, /formatDate\(eventDate\)/,
     "the old time-bearing formatter must be gone from the stub");
+});
+
+test("the seat band survives night mode, where --navy is nearly white", () => {
+  // THE TRAP THIS TEST EXISTS FOR.
+  //
+  // In night mode the palette inverts and --navy becomes #e8eeff — a near
+  // white. Any dark surface written as `background: var(--navy)` with white
+  // text on it therefore renders white-on-white and disappears. The ticket
+  // header already had to be pinned to the literal for exactly this reason,
+  // through a separate night override that is easy to forget to add.
+  //
+  // The seat band uses the literal directly instead, so there is nothing to
+  // forget. Both files are checked because styles.css is the readable source
+  // of record and styles.min.css is the one the browser actually loads.
+  for (const name of ["styles.css", "styles.min.css"]) {
+    const css = fs.readFileSync(pwaFile(name), "utf8");
+    const start = css.indexOf(".ticket-seating {") >= 0
+      ? css.indexOf(".ticket-seating {")
+      : css.indexOf(".ticket-seating{");
+    assert.ok(start > 0, `.ticket-seating must be defined in ${name}`);
+    const rule = css.slice(start, css.indexOf("}", start));
+    assert.match(rule, /background:\s*#061a3d/,
+      `${name}: the seat band must name the dark navy literally`);
+    assert.doesNotMatch(rule, /background:\s*var\(--navy\)/,
+      `${name}: var(--navy) inverts to near-white at night and would hide the seat`);
+  }
+});
+
+test("a general admission ticket grows no seat block", () => {
+  // Seating must be additive. Every event already selling is general
+  // admission, and the API omits the seating field entirely for those, so the
+  // band has to be conditional on the field being there rather than on it
+  // being non-empty — an empty band of three dashes would be worse than none.
+  const start = source.indexOf("function ticketSeatingBand(");
+  assert.ok(start > 0, "ticketSeatingBand should exist");
+  const fn = source.slice(start, source.indexOf("\nfunction ", start + 10));
+  assert.match(fn, /if \(!seating\) return "";/,
+    "no seating field means no band at all");
+  assert.match(fn, /\.filter\(\(\[, value\]\) => String\(value \|\| ""\)\.trim\(\)\)/,
+    "only the cells that carry a value are drawn");
+  assert.match(fn, /if \(!cells\.length\) return "";/);
+
+  // And the old flat seat row is suppressed when the band renders, so a seat
+  // is never stated twice on one ticket.
+  const stub = source.slice(source.indexOf("function ticketStub("));
+  assert.match(stub, /seat && !seatingBand \? `<div><span>Seat<\/span>/,
+    "the label-and-value seat row only appears when there is no band");
 });

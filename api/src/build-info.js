@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 118;
+const API_BUILD = 119;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  119: "SEATING REACHES THE TICKET, AND THE SEAT MAP GETS AN OWNER. Build 118 "
+      + "could allocate seats but nothing could define one and no seat ever "
+      + "left the database: defineSeating had no route and no ownership check, "
+      + "and listMyTickets did not read the seat. An event id is published on "
+      + "the public event page, so without that check any signed-in customer "
+      + "could lay seats over a rival's event and flip its ticket types to "
+      + "seated, which stops general admission selling. Now scoped by "
+      + "business_user_id like every other business path, exposed as POST and "
+      + "GET /ticketing/business/events/:id/seating, and a seated ticket "
+      + "carries its section, row and seat to the app. General admission "
+      + "tickets return no seat field at all and are unchanged.",
   118: "RESERVED SEATING: SECTION, ROW, SEAT. Ticketing was general admission "
       + "only - a ticket type was a name, a price and a quantity, and tickets "
       + "carried no seat at all, though the app's ticket stub already read one. "

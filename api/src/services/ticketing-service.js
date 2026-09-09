@@ -1860,7 +1860,27 @@ function ticketResponse(row = {}) {
     deliveryStatus: row.delivery_status,
     scannedAt: row.scanned_at,
     refundedAt: row.refunded_at,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    // SEATING, WHEN THERE IS ANY. A general admission ticket has no seat and
+    // says so by omission rather than by empty strings, so the stub renders
+    // exactly as it always has.
+    //
+    // Two shapes on purpose. `seat` is the one line a person reads out at the
+    // door and is what the existing stub already prints; `seating` is the
+    // structured form the ticket face sets as separate SEC / ROW / SEAT
+    // blocks. Deriving the label here rather than in the client means the
+    // ticket, the PDF, the wallet pass and the email all say the same thing.
+    ...(row.seat_number
+      ? {
+        seat: [row.seat_section, row.seat_row && `Row ${row.seat_row}`, `Seat ${row.seat_number}`]
+          .filter(Boolean).join(" · "),
+        seating: {
+          section: row.seat_section || "",
+          row: row.seat_row || "",
+          seat: row.seat_number
+        }
+      }
+      : {})
   };
 }
 
@@ -2919,8 +2939,36 @@ const TICKET_CLAIM_MAX_FAILURES_PER_HOUR = 8;
 // Idempotent by construction: the unique index on
 // (event_id, section, row_label, seat_number) means re-running a definition
 // adds only what is missing and never duplicates a seat.
+// THE SEAT MAP BELONGS TO THE ORGANISER, NOT TO WHOEVER HAS THE EVENT ID.
+//
+// Every other business path on this service scopes by business_user_id, and
+// seating has to as well: an event id is published on the public event page,
+// so without this check any signed-in customer could lay 20,000 seats over
+// somebody else's event and flip their ticket types to seated — which stops
+// general admission selling, because allocation would then find no seats.
+//
+// It answers 404 rather than 403 for an event owned by someone else, matching
+// the rest of the service and declining to confirm that the id exists.
+async function assertEventOwnedBy(userId, eventId) {
+  const { rows } = await pool.query(
+    "SELECT id, status FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1",
+    [eventId, userId || null]
+  );
+  if (!rows.length) throw new AppError(404, "Event not found");
+  return rows[0];
+}
+
 async function defineSeating(actor, eventId, spec = {}) {
   await ensureTicketingSchema();
+  const event = await assertEventOwnedBy(actor?.userId, eventId);
+  // Seats may be added to an event that is already selling — a venue opening
+  // another block is normal, and the insert only ever adds what is missing, so
+  // no seat already sold can be moved or removed by this call. A finished or
+  // cancelled event is not selling anything, so a seat map on it could only be
+  // a mistake.
+  if (["cancelled", "completed"].includes(event.status)) {
+    throw new AppError(409, "This event is closed, so its seating can no longer be changed.");
+  }
   const section = cleanText(spec.section, 60);
   if (!section) throw new AppError(400, "Name the section, for example Block A or Grand Tier");
   const ticketTypeId = spec.ticketTypeId || spec.ticket_type_id || null;
@@ -3202,6 +3250,9 @@ async function listMyTickets(userId, { includeRemoved = false } = {}) {
             o.order_reference, o.status AS order_status, o.created_at AS order_created_at,
             tt.ticket_name,
             e.event_name, e.slug, e.event_date, e.start_time, e.venue_name, e.city, e.province,
+            -- The organiser's own poster, so the ticket in the wallet looks
+            -- like the event the person is going to rather than a form.
+            e.event_banner_url,
             -- The event's own state travels with the ticket. Without it a
             -- cancelled event looked exactly like a live one, so the holder
             -- kept a ticket that was never going to be scanned and only found
@@ -3211,11 +3262,17 @@ async function listMyTickets(userId, { includeRemoved = false } = {}) {
             EXISTS (
               SELECT 1 FROM event_tags g
                WHERE g.ticket_id = t.id AND g.status IN ('ASSIGNED','ACTIVE')
-            ) AS wristband_linked
+            ) AS wristband_linked,
+            -- LEFT, because most tickets are general admission and must keep
+            -- listing exactly as they do now. A seated ticket picks up its
+            -- section, row and seat here; an unseated one picks up nulls and
+            -- ticketResponse leaves the fields off entirely.
+            s.section AS seat_section, s.row_label AS seat_row, s.seat_number AS seat_number
        FROM tickets t
        JOIN ticket_orders o ON o.id = t.order_id
        JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
        JOIN events e ON e.id = t.event_id
+       LEFT JOIN event_seats s ON s.id = t.seat_id
       WHERE t.owner_user_id = $1
         AND ($2::BOOLEAN OR t.hidden_at IS NULL)
       ORDER BY t.created_at DESC
@@ -3244,6 +3301,7 @@ async function listMyTickets(userId, { includeRemoved = false } = {}) {
     removedAt: row.hidden_at,
     eventName: row.event_name,
     eventDate: row.event_date,
+    eventBannerUrl: row.event_banner_url || "",
     venueName: row.venue_name,
     city: row.city,
     order: {
@@ -4759,6 +4817,7 @@ async function adminTicketingAnalytics() {
 }
 
 module.exports = {
+  assertEventOwnedBy,
   defineSeating,
   seatingAvailability,
   allocateSeats,

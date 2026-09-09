@@ -20128,6 +20128,35 @@ function ticketWhenText(eventDate, startTime) {
   return clock ? `${text}, ${clock}` : text;
 }
 
+// SEC · ROW · SEAT, THE WAY A TICKET ACTUALLY READS.
+//
+// These three values are not three more rows of a label-and-value list. They
+// are what somebody reads at speed in a dim aisle while an usher waits, so
+// they get the largest figures on the ticket and sit above the tear, where a
+// printed ticket puts them.
+//
+// Only the cells that have a value are drawn. A hall with no sections gives a
+// row and a seat and nothing else, and an empty "Sec —" would be an invitation
+// to go looking for a section that does not exist.
+function ticketSeatingBand(ticket = {}) {
+  const seating = ticket.seating || ticket.seat_assignment || null;
+  if (!seating) return "";
+  const cells = [
+    ["Sec", seating.section],
+    ["Row", seating.row],
+    ["Seat", seating.seat]
+  ].filter(([, value]) => String(value || "").trim());
+  if (!cells.length) return "";
+  return `
+      <div class="ticket-seating" role="group" aria-label="Your seat">
+        ${cells.map(([label, value]) => `
+          <div class="ticket-seating-cell">
+            <span>${esc(label)}</span>
+            <strong>${esc(String(value))}</strong>
+          </div>`).join("")}
+      </div>`;
+}
+
 function ticketStub(ticket = {}, order = {}, event = {}) {
   rememberRenderedTicket(ticket, order, event);
   const holder = ticket.holderName || ticket.holder_name || order.buyerName || order.buyer_name
@@ -20147,20 +20176,30 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
   const cancelled = Boolean(ticket.eventCancelled) || String(ticket.eventStatus || event.status || "") === "cancelled";
   const removed = Boolean(ticket.removed);
   const ticketId = ticket.id || ticket.ticketId || "";
+  // The organiser's own poster, drawn the way the event card draws it: a
+  // background image with a placeholder class behind it, so a poster the page
+  // is not allowed to load leaves the ticket's own colours rather than a
+  // broken-image mark.
+  const poster = String(ticket.eventBannerUrl || event.eventBannerUrl || "").trim();
+  const seatingBand = ticketSeatingBand(ticket);
   return `
     <article class="ticket-stub${cancelled ? " is-cancelled" : ""}">
       ${cancelled ? `<p class="ticket-cancelled-flag">${icon("ban")} Event cancelled by the organiser</p>` : ""}
       <header class="ticket-stub-head">
+        ${poster
+          ? `<div class="ticket-stub-poster" style="background-image:url('${esc(poster)}')" role="img" aria-label="${esc(eventName)} poster"></div>`
+          : ""}
         <p class="eyebrow">TitoPay Ticket</p>
         <strong>${esc(eventName)}</strong>
         <span>${esc(ticketWhenText(eventDate, startTime))}</span>
         ${venue ? `<span>${esc([venue, city].filter(Boolean).join(", "))}</span>` : ""}
       </header>
+      ${seatingBand}
       <div class="ticket-stub-body">
         <div class="ticket-stub-meta">
           ${typeName ? `<div><span>Ticket</span><strong>${esc(typeName)}</strong></div>` : ""}
           ${holder ? `<div><span>Holder</span><strong>${esc(holder)}</strong></div>` : ""}
-          ${seat ? `<div><span>Seat</span><strong>${esc(seat)}</strong></div>` : ""}
+          ${seat && !seatingBand ? `<div><span>Seat</span><strong>${esc(seat)}</strong></div>` : ""}
           ${code ? `<div><span>Ticket code</span><strong class="ticket-code">${esc(code)}</strong></div>` : ""}
           ${order.orderReference ? `<div><span>Order</span><strong>${esc(order.orderReference)}</strong></div>` : ""}
         </div>

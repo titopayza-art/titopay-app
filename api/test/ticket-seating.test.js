@@ -212,6 +212,65 @@ test("the database refuses a second ticket on one seat, whatever the code does",
   }
 });
 
+test("A STRANGER CANNOT LAY SEATS OVER SOMEONE ELSE'S EVENT", async () => {
+  // An event id is published on the public event page. Without an owner check
+  // any signed-in customer could define seating on a rival's event and flip
+  // its ticket types to seated — which would stop general admission selling
+  // altogether, because allocation would then look for seats and find none.
+  //
+  // Sabotage dressed as a feature. The check is the same business_user_id
+  // scope every other business path on this service uses.
+  const organiser = await makeUser("Organiser");
+  const stranger = await makeUser("Stranger");
+  const { eventId, typeId } = await makeSeatedEvent(organiser, { rows: ["A"], seatsPerRow: 2 });
+  try {
+    await assert.rejects(
+      () => ticketing.defineSeating({ userId: stranger }, eventId, {
+        section: "Hostile Block", rows: ["Z"], seatsPerRow: 50, ticketTypeId: typeId
+      }),
+      (error) => {
+        // 404, not 403: the refusal declines to confirm the id exists at all.
+        assert.equal(error.statusCode, 404);
+        return true;
+      });
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM event_seats WHERE event_id = $1", [eventId]);
+    assert.equal(rows[0].n, 2, "the organiser's own two seats, and nothing added");
+  } finally {
+    await cleanup(eventId, [organiser, stranger]);
+  }
+});
+
+test("a seated ticket carries its seat all the way to the app", async () => {
+  // Seating that never reaches the ticket face is a database feature. The
+  // holder reads one line at the door, so the label is derived once in the API
+  // and the structured parts travel beside it for the ticket face to set as
+  // separate blocks.
+  const organiser = await makeUser("Organiser");
+  const buyer = await makeUser("Buyer");
+  const { eventId, typeId } = await makeSeatedEvent(organiser, { rows: ["G"], seatsPerRow: 1 });
+  try {
+    const { rows: seat } = await pool.query("SELECT id FROM event_seats WHERE event_id = $1", [eventId]);
+    const orderId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO ticket_orders (id, event_id, ticket_type_id, buyer_user_id, order_reference, quantity, status)
+       VALUES ($1,$2,$3,$4,$5,1,'paid')`,
+      [orderId, eventId, typeId, buyer, "SR-" + orderId.slice(0, 8)]);
+    await pool.query(
+      `INSERT INTO tickets (id, order_id, event_id, ticket_type_id, owner_user_id, ticket_code, status, seat_id)
+       VALUES ($1,$2,$3,$4,$5,$6,'valid',$7)`,
+      [crypto.randomUUID(), orderId, eventId, typeId, buyer,
+        String(Math.floor(1000000 + Math.random() * 8999999)), seat[0].id]);
+
+    const items = await ticketing.listMyTickets(buyer);
+    assert.equal(items.length, 1);
+    assert.deepEqual(items[0].seating, { section: "Block A", row: "G", seat: "1" });
+    assert.equal(items[0].seat, "Block A · Row G · Seat 1", "one line a person can read out");
+  } finally {
+    await cleanup(eventId, [organiser, buyer]);
+  }
+});
+
 test("general admission is untouched: no seats, no allocation, no change", async () => {
   // Every event already selling must keep working exactly as it did.
   const organiser = await makeUser("Organiser");
@@ -226,12 +285,31 @@ test("general admission is untouched: no seats, no allocation, no change", async
     `INSERT INTO event_ticket_types (id, event_id, ticket_name, price, quantity_available)
      VALUES ($1,$2,'General Admission',100,100)`,
     [typeId, eventId]);
+  const buyer = await makeUser("Buyer");
   try {
     const { rows } = await pool.query("SELECT seated FROM event_ticket_types WHERE id = $1", [typeId]);
     assert.equal(rows[0].seated, false, "a ticket type is general admission unless seating is defined");
     const { rows: seats } = await pool.query("SELECT COUNT(*)::int AS n FROM event_seats WHERE event_id = $1", [eventId]);
     assert.equal(seats[0].n, 0);
+
+    // And the ticket itself is shaped exactly as it was before seating existed:
+    // no seat, no seating, no empty strings for the stub to render a blank
+    // "Seat —" row from.
+    const orderId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO ticket_orders (id, event_id, ticket_type_id, buyer_user_id, order_reference, quantity, status)
+       VALUES ($1,$2,$3,$4,$5,1,'paid')`,
+      [orderId, eventId, typeId, buyer, "GA-" + orderId.slice(0, 8)]);
+    await pool.query(
+      `INSERT INTO tickets (id, order_id, event_id, ticket_type_id, owner_user_id, ticket_code, status)
+       VALUES ($1,$2,$3,$4,$5,$6,'valid')`,
+      [crypto.randomUUID(), orderId, eventId, typeId, buyer,
+        String(Math.floor(1000000 + Math.random() * 8999999))]);
+    const items = await ticketing.listMyTickets(buyer);
+    assert.equal(items.length, 1);
+    assert.equal("seat" in items[0], false, "a general admission ticket has no seat field at all");
+    assert.equal("seating" in items[0], false);
   } finally {
-    await cleanup(eventId, [organiser]);
+    await cleanup(eventId, [organiser, buyer]);
   }
 });

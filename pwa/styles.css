@@ -3527,6 +3527,72 @@ body.landing-static .landing-flow.auth-screen {
   color: #fff;
 }
 
+/* The organiser's poster, sitting above the event name rather than behind it.
+   Behind it the text needed a scrim, and a scrim heavy enough to be legible
+   over every possible poster left the poster unreadable — so neither the words
+   nor the picture worked. Above it, both do.
+
+   Negative margins pull it out to the header's edges without a second wrapper.
+   16/6 is wide enough to read as a band rather than a cropped photo. */
+.ticket-stub-poster {
+  margin: -16px -16px 10px;
+  aspect-ratio: 16 / 6;
+  background-color: #0b2450;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+/* SEC · ROW · SEAT.
+   The three figures somebody reads at speed in a dim aisle, so they carry the
+   largest type on the ticket after the event name and sit above the tear,
+   where a printed ticket puts them. Equal columns because no one of the three
+   matters more than the others. */
+.ticket-seating {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  /* The literal, NOT var(--navy). In night mode --navy inverts to #e8eeff,
+     which would put white figures on a near-white band. The header carries an
+     explicit night override to this same value for exactly that reason; using
+     the literal here means the band needs no override and cannot be missed if
+     one is ever added. */
+  background: #061a3d;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.ticket-seating-cell {
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  padding: 10px 8px 12px;
+  min-width: 0;
+}
+
+.ticket-seating-cell + .ticket-seating-cell {
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.ticket-seating-cell span {
+  color: var(--blue-2);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ticket-seating-cell strong {
+  font-size: 1.22rem;
+  font-weight: 700;
+  line-height: 1.15;
+  /* Seat numbers sit in a row of three and must not shuffle sideways as the
+     digits change. */
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
 .ticket-stub-head .eyebrow {
   margin: 0;
   color: var(--blue-2);

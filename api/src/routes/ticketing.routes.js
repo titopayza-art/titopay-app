@@ -36,6 +36,9 @@ const {
   listMyTickets,
   setMyTicketRemoved,
   claimTicketByCode,
+  defineSeating,
+  seatingAvailability,
+  assertEventOwnedBy,
   canManageEventTicketing,
   EVENT_CATEGORIES,
   ticketOrderRefundPolicy,
@@ -497,6 +500,36 @@ router.put("/business/events/:id", requireAuth, async (req, res, next) => {
   try {
     const eventId = requireUuid(req.params.id, "Event ID");
     res.json({ ok: true, event: await updateEventDraft(req.auth.userId, eventId, req.body, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// RESERVED SEATING. The organiser describes a section as its rows and how many
+// seats are in each; the seats are created once and re-posting the same section
+// adds only what is missing. Ownership is checked inside the service against
+// business_user_id, like every other business route here, because an event id
+// is public and a seat map is not.
+router.post("/business/events/:id/seating", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, seating: await defineSeating(req.auth, eventId, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// What is left to sell, per section. Read by the organiser's own event page;
+// the counts are derived from event_seats rather than stored, so they cannot
+// drift from what has actually been allocated.
+router.get("/business/events/:id/seating", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    // The same owner check the write path uses. A seat map says how full an
+    // event is, which is the organiser's commercial information, so the read
+    // is scoped exactly as tightly as the write.
+    await assertEventOwnedBy(req.auth.userId, eventId);
+    res.json({ ok: true, sections: await seatingAvailability(eventId) });
   } catch (error) {
     next(error);
   }
