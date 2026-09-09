@@ -3052,6 +3052,20 @@ async function defineSeating(actor, eventId, spec = {}) {
   const section = cleanText(spec.section, 60);
   if (!section) throw new AppError(400, "Name the section, for example Block A or Grand Tier");
   const ticketTypeId = spec.ticketTypeId || spec.ticket_type_id || null;
+  // THE TICKET TYPE MUST BELONG TO THIS EVENT.
+  //
+  // Without this the seats are still created, and the type is simply not
+  // marked seated — so allocation looks for seats matching a ticket_type_id
+  // from another event, finds none, and the section quietly never sells. A
+  // silent no-op is the worst outcome available here, because the organiser
+  // sees seats in the list and believes the venue is laid out.
+  if (ticketTypeId) {
+    const { rows: typeRows } = await pool.query(
+      "SELECT 1 FROM event_ticket_types WHERE id = $1 AND event_id = $2 LIMIT 1",
+      [ticketTypeId, eventId]
+    );
+    if (!typeRows.length) throw new AppError(400, "That ticket type does not belong to this event.");
+  }
   const rows = Array.isArray(spec.rows) && spec.rows.length
     ? spec.rows.map((row) => cleanText(row, 12)).filter(Boolean)
     : [];

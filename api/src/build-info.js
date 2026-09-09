@@ -19,10 +19,27 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 121;
+const API_BUILD = 122;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  122: "AN ORGANISER CAN NOW ACTUALLY LAY OUT SEATS. The seating routes "
+      + "existed and no screen called them, so seating was reachable only by "
+      + "an API client. It opens from the event itself rather than as a "
+      + "seventh door on the ticketing hub: a seat map is per-event setup like "
+      + "ticket types are, most events are general admission, and a hub door "
+      + "for something most organisers never touch is the menu the hub exists "
+      + "to avoid. Opening from one event also removes a whole class of bug - "
+      + "a hub door needs an event picker AND a ticket type picker, and the "
+      + "two can fall out of step, which would create seats against a ticket "
+      + "type the event does not have. Allocation would then match none of "
+      + "them and the section would silently never sell while it sat in the "
+      + "organiser's list looking correct. defineSeating now refuses a ticket "
+      + "type from another event as well, so the mismatch is impossible from "
+      + "either side. Seating and resale are also driven over a real socket "
+      + "now, which is where an ownership scope has to hold: a service can be "
+      + "perfectly guarded and still reachable unguarded if the route forgets "
+      + "to pass the caller.",
   121: "RESALE REACHES THE CUSTOMER. Build 120 could sell a ticket over the "
       + "API and no screen offered it. A holder now gets a Sell ticket control "
       + "on the ticket itself, with the ceiling shown BEFORE the price is "

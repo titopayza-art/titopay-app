@@ -4083,6 +4083,7 @@ async function onSubmit(event) {
     }
     if (form.dataset.form === "ticketing-cashless") await submitTicketingCashless(data);
     if (form.dataset.form === "ticketing-coupon") await submitTicketingCoupon(data);
+    if (form.dataset.form === "ticketing-seating") await submitEventSeating(data, form);
     if (form.dataset.form === "ticketing-promoter") await submitTicketingPromoter(data);
     if (form.dataset.form === "ticketing-vendor") await submitTicketingVendor(data, form);
     if (form.dataset.form === "ticketing-tag-issue") await submitTicketingTagIssue(data);
@@ -5282,6 +5283,10 @@ async function handleAction(action, actionElement = null) {
   }
   if (String(action || "").startsWith("request-refund:")) {
     await requestOrderRefund(action.slice("request-refund:".length));
+    return;
+  }
+  if (String(action || "").startsWith("ticketing-seating:")) {
+    await openEventSeating(action.slice("ticketing-seating:".length));
     return;
   }
   if (String(action || "").startsWith("ticket-sell:")) {
@@ -21530,6 +21535,135 @@ function ticketingSalesSection(events, approved = []) {
     ${cards}
     ${approved.length ? aftersalesPanels(approved) : ""}`;
 }
+/* ---- SEATING, FROM THE ORGANISER'S SIDE ------------------------------------
+   A section is described the way a venue actually is: a name, a list of rows,
+   and how many seats are in each row. That covers a block of numbered rows,
+   which is what most seated venues are, and it is honest about what it does
+   not do — curved tiers, tables, and boxes with their own numbering need a
+   real map and should not be faked with a grid.
+
+   IT OPENS FROM THE EVENT, not from a door on the hub. Two reasons, and the
+   second is the one that matters. A seat map is per-event setup, like ticket
+   types are, so the event is where an organiser looks for it — and most events
+   are general admission, so a permanent hub door for something most organisers
+   never touch is the menu the hub exists to avoid.
+
+   The other reason is that a hub door needs an event picker AND a ticket type
+   picker, and the two can fall out of step: change the event, leave the type
+   list behind, and the form posts a type id from a DIFFERENT event. The seats
+   are then created against a type this event does not have, allocation matches
+   none of them, and the section silently never sells while it sits in the list
+   looking correct. Opening from one event means there is no picker to
+   desynchronise. The API refuses the mismatch as well, but the best version of
+   a bug is the one the screen cannot express.
+
+   Adding a section is safe to repeat. The seats are keyed on
+   (event, section, row, seat), so re-posting the same description adds only
+   what is missing and can never duplicate a seat or disturb one already sold.
+   That matters because the obvious mistake here is a typo in one field and a
+   re-submit, and it must not double the venue. */
+async function openEventSeating(eventId) {
+  const event = (state.ticketing.events || []).find((item) => String(item.id) === String(eventId));
+  if (!event) return;
+  const types = Array.isArray(event.ticketTypes) ? event.ticketTypes : [];
+  state.currentModalAction = `ticketing-seating:${eventId}`;
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div>
+        <p class="eyebrow">${esc(event.eventName || "Event")}</p>
+        <h2>Seating</h2>
+        <p class="lead">Numbered seats for a seated venue. Leave it empty and the event sells as general admission.</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="panel inner-panel">
+      <h3>Add a section</h3>
+      <p class="muted">Buyers of this ticket type are given a real seat at checkout, and no seat can go to two people.</p>
+      <form class="form-grid" data-form="ticketing-seating">
+        <input type="hidden" name="eventId" value="${esc(eventId)}">
+        ${types.length
+          ? `<label>Ticket type<select name="ticketTypeId">${types.map((type) =>
+              `<option value="${esc(type.id)}">${esc(type.ticketName)}</option>`).join("")}</select></label>
+             <p class="field-hint">Only this ticket type gets seats. Other tiers stay general admission.</p>`
+          : `<p class="field-hint">Add a ticket type to this event first, so the seats have something to belong to.</p>`}
+        <label>Section name<input name="section" placeholder="Block A" required maxlength="60" autocomplete="off"></label>
+        <label>Rows<input name="rows" placeholder="A, B, C" required autocomplete="off"></label>
+        <p class="field-hint">Separated by commas, in the order people walk them.</p>
+        <label>Seats in each row<input name="seatsPerRow" type="number" min="1" max="500" placeholder="20" required inputmode="numeric"></label>
+        <button class="btn secondary" type="submit"${types.length ? "" : " disabled"}>${icon("grid")} Add section</button>
+      </form>
+    </section>
+    <section class="panel inner-panel">
+      <h3>Seats in this event</h3>
+      <div data-seating-list><p class="muted">Loading seating…</p></div>
+    </section>`);
+  await refreshEventSeating(eventId);
+}
+
+// What is left to sell, per section. Derived from the seats themselves rather
+// than stored anywhere, so the count cannot drift from what has been allocated.
+async function refreshEventSeating(eventId) {
+  const host = document.querySelector("[data-seating-list]");
+  if (!host || !eventId) return;
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/seating`);
+    const sections = Array.isArray(result.sections) ? result.sections : [];
+    if (!sections.length) {
+      host.innerHTML = `<p class="muted">No seating on this event. It is selling as general admission.</p>`;
+      return;
+    }
+    host.innerHTML = `
+      <div class="settings-list">
+        ${sections.map((section) => {
+          const total = Number(section.total || 0);
+          const available = Number(section.available || 0);
+          const gone = Math.max(0, total - available);
+          return `
+            <article class="settings-row">
+              <span class="icon-bubble">${icon("grid")}</span>
+              <div>
+                <strong>${esc(section.section)}</strong>
+                <small>${available} of ${total} still free${gone ? ` · ${gone} gone` : ""}</small>
+              </div>
+            </article>`;
+        }).join("")}
+      </div>`;
+  } catch (error) {
+    host.innerHTML = `<p class="muted">Seating could not be loaded. ${esc(friendlyFormError(error, "ticketing"))}</p>`;
+  }
+}
+
+async function submitEventSeating(data, form) {
+  const rows = String(data.rows || "").split(",").map((row) => row.trim()).filter(Boolean);
+  if (!rows.length) {
+    showToast("List the rows, for example A, B, C", "error");
+    return;
+  }
+  try {
+    const result = await api(`/v1/ticketing/business/events/${encodeURIComponent(data.eventId)}/seating`, {
+      method: "POST",
+      body: {
+        section: data.section,
+        ticketTypeId: data.ticketTypeId || null,
+        rows,
+        seatsPerRow: Number(data.seatsPerRow)
+      }
+    });
+    const created = Number(result.seating?.seatsCreated || 0);
+    // "Nothing was changed" is the honest answer to a re-submit and is worth
+    // saying: it tells the organiser the section is already there rather than
+    // leaving them to press again and wonder.
+    showToast(created
+      ? `${created} seat${created === 1 ? "" : "s"} added to ${data.section}`
+      : `${data.section} already has those seats. Nothing was changed.`, created ? "success" : "info");
+    if (form) form.reset();
+    await refreshEventSeating(data.eventId);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
+
 /* ---- DISCOUNT CODES, FROM THE ORGANISER'S SIDE -----------------------------
    A code is the organiser's own promotion, so the screen says plainly whose
    money pays for it. There is no control here for editing what a code is
@@ -22351,6 +22485,7 @@ function ticketingEventRow(event) {
         ${event.status === "approved" && event.slug ? `<button class="btn ghost mini" type="button" data-action="ticketing-open-event:${esc(event.slug)}">${icon("eye")} Preview ticket</button>` : ""}
         ${event.marketingLink ? `<a class="btn ghost mini" href="${esc(event.marketingLink)}" target="_blank" rel="noopener">${icon("share")} Public page</a>` : ""}
         ${["approved", "suspended"].includes(event.status) && !event.pendingChangeRequest ? `<button class="btn ghost mini" type="button" data-action="ticketing-request-change:${esc(event.id)}">${icon("feedback")} Request change</button>` : ""}
+        ${!["cancelled", "completed"].includes(event.status) && types.length ? `<button class="btn ghost mini" type="button" data-action="ticketing-seating:${esc(event.id)}">${icon("grid")} Seating</button>` : ""}
       </div>
     </article>
   `;

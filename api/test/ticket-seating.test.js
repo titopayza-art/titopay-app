@@ -348,3 +348,34 @@ test("CONCURRENT TICKETING CALLS DO NOT DEADLOCK EACH OTHER", async () => {
     }
   }
 });
+
+test("seats cannot be attached to another event's ticket type", async () => {
+  // The organiser's form picks an event and a ticket type from two separate
+  // selects. If the type list is left behind when the event changes, the form
+  // posts a type id belonging to a DIFFERENT event — and the failure is
+  // silent: the seats are created, the type is never marked seated, allocation
+  // matches none of them, and the section quietly never sells while it sits in
+  // the organiser's list looking perfectly correct.
+  //
+  // A silent no-op is the worst outcome available here, so it is refused.
+  const organiser = await makeUser("Organiser");
+  const a = await makeSeatedEvent(organiser, { rows: ["A"], seatsPerRow: 2 });
+  const b = await makeSeatedEvent(organiser, { rows: ["A"], seatsPerRow: 2, section: "Block B" });
+  try {
+    await assert.rejects(
+      () => ticketing.defineSeating({ userId: organiser }, a.eventId, {
+        section: "Wrong Block", rows: ["Z"], seatsPerRow: 5, ticketTypeId: b.typeId
+      }),
+      (error) => {
+        assert.equal(error.statusCode, 400);
+        assert.match(error.message, /does not belong to this event/i);
+        return true;
+      });
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM event_seats WHERE event_id = $1", [a.eventId]);
+    assert.equal(rows[0].n, 2, "no stray seats were created before the refusal");
+  } finally {
+    await cleanup(a.eventId, []);
+    await cleanup(b.eventId, [organiser]);
+  }
+});
