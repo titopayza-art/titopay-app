@@ -13,16 +13,38 @@
  * the app's own bundle (app.min.js, far larger) would have failed too, so it
  * introduces no new hard-failure mode. */
 (function () {
+  /* NIGHT MODE, BEFORE THE FIRST PAINT.
+   *
+   * app.js applies data-theme="night" from prefers-color-scheme, but app.js is
+   * the deferred bundle — so a dark-mode phone got a pale-blue splash that
+   * flipped to navy once the bundle ran. Worse, the splash wordmark is chosen
+   * by <picture> from prefers-color-scheme, which resolves during PARSE: the
+   * white night mark was being painted onto that still-light ground, which is
+   * the mirror of the bug this was fixing.
+   *
+   * Setting the attribute here, synchronously in <head>, means the ground and
+   * the wordmark are decided by the same signal at the same moment. app.js sets
+   * the very same attribute later and keeps it in step when the phone's setting
+   * flips; this only moves the first application earlier. */
+  try {
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      document.documentElement.setAttribute("data-theme", "night");
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", "#071433");
+    }
+  } catch (themeError) {
+    /* No matchMedia: the light theme is the default and stays. */
+  }
   try {
     var existing = document.querySelector('link[data-titopay-main-css]');
     if (existing) return;
     var link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = "./styles.min.css?v=495";
+    link.href = "./styles.min.css?v=496";
     link.setAttribute("data-titopay-main-css", "1");
     document.head.appendChild(link);
   } catch (e) {
     /* Last-ditch: a blocking link still beats no styles at all. */
-    document.write('<link rel="stylesheet" href="./styles.min.css?v=495">');
+    document.write('<link rel="stylesheet" href="./styles.min.css?v=496">');
   }
 })();

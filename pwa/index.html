@@ -49,7 +49,10 @@
           media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
     <link rel="apple-touch-startup-image" href="./assets/splash-1320x2868.png?v=445"
           media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
-    <link rel="preload" href="./assets/titopay-logo.png" as="image" fetchpriority="high">
+    <!-- Preloaded per scheme, so a dark-mode phone fetches the mark it is
+         actually going to show instead of racing the wrong one to the screen. -->
+    <link rel="preload" href="./assets/titopay-logo.png" as="image" fetchpriority="high" media="(prefers-color-scheme: light)">
+    <link rel="preload" href="./assets/titopay-logo-night.png" as="image" fetchpriority="high" media="(prefers-color-scheme: dark)">
     <!-- CRITICAL SPLASH CSS, inline so the branded launch screen paints on the
          very first frame. The full stylesheet (styles.min.css, ~248KB) is
          render-blocking: until it downloaded, a cold or slow launch showed a
@@ -67,21 +70,51 @@
       .launch-legal{position:fixed;left:22px;right:22px;bottom:calc(18px + env(safe-area-inset-bottom,0px));display:grid;gap:3px;color:#62708a;font-size:.72rem;line-height:1.35;text-align:center}
       @keyframes spin{to{transform:rotate(360deg)}}
       @media (prefers-reduced-motion:reduce){.loader{animation:none}}
+      /* <picture> is only a wrapper for choosing the mark; display:contents
+         keeps the <img> itself as the grid item, so the layout is byte for
+         byte what it was when the img was a direct child. */
+      .launch-screen picture{display:contents}
+      /* NIGHT. Keyed on data-theme, NOT on a bare prefers-color-scheme media
+         query, and that distinction is load-bearing. styles.min.css is appended
+         at runtime by head-boot.js, so it comes after this block: a plain
+         `body{...}` here loses to its light `body` gradient on source order,
+         and the splash went dark, then light, then dark again — with the white
+         night wordmark stranded on the light ground in the middle. Keyed this
+         way it matches how the full stylesheet keys its own night rules, so the
+         two agree instead of fighting. head-boot.js sets the attribute in
+         <head> before this paints. Values mirror the [data-theme=night] tokens
+         in styles.min.css exactly, so nothing shifts when it arrives. */
+      html[data-theme=night]{background:#071433}
+      html[data-theme=night] body{background:linear-gradient(180deg,#0a1c40 0,#081739 45%,#071433 100%);color:#e8eeff}
+      html[data-theme=night] .loader{border-color:#122650;border-top-color:#2e63ff}
+      html[data-theme=night] .launch-legal{color:#97a9d0}
     </style>
-    <script src="./head-boot.js?v=495"></script>
-    <noscript><link rel="stylesheet" href="./styles.min.css?v=495"></noscript>
-    <script src="./app.min.js?v=495" defer></script>
+    <script src="./head-boot.js?v=496"></script>
+    <noscript><link rel="stylesheet" href="./styles.min.css?v=496"></noscript>
+    <script src="./app.min.js?v=496" defer></script>
     <script src="./notification-routing-fix.js?v=1" defer></script>
   </head>
   <body>
     <div id="app" class="app-shell" aria-live="polite">
       <main class="launch-screen">
-        <img src="./assets/titopay-logo.png" alt="TitoPay" class="launch-logo" width="512" height="512" fetchpriority="high">
+        <!-- The wordmark is inked navy (#030f41) for light grounds. On the
+             night ground that is near-black on near-black: the screenshot that
+             reported this showed "Tito" missing entirely and only "Pay"
+             legible. titopay-logo-night.png is the same mark inked white.
+             A <picture> chooses it from prefers-color-scheme, which is the very
+             same signal the app's own theme follows, and it resolves during
+             parse — so the right mark is on the first frame with no JavaScript.
+             width/height are the wordmark's real 881x224; they used to say
+             512x512, which reserved a square box that collapsed to a wide strip
+             the moment the image decoded. -->
+        <picture>
+          <source srcset="./assets/titopay-logo-night.png" media="(prefers-color-scheme: dark)">
+          <img src="./assets/titopay-logo.png" alt="TitoPay" class="launch-logo" width="881" height="224" fetchpriority="high">
+        </picture>
         <div class="loader" aria-label="Loading"></div>
         <p>Smart Payments. Simplified.</p>
-        <footer class="launch-legal" aria-label="TitoPay legal and payment partner">
+        <footer class="launch-legal" aria-label="TitoPay legal">
           <span>TitoPay (Pty) Ltd | Reg No: 2026/399418/07</span>
-          <span>Powered by Peach Payments (PCI DSS Level 1 Certified)</span>
         </footer>
       </main>
     </div>
