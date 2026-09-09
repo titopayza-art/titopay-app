@@ -74,17 +74,13 @@ const DEFAULT_SERVICES = [
 // is coming, and the app already has an honest place for that — a separate
 // section, a "soon" badge, and a tap that explains instead of failing. Hiding
 // them would lose the roadmap; leaving them active would keep the claim.
-const CAPABILITY_BACKED_SERVICES = {
-  airtime: "vas",
-  data: "vas",
-  "mobile-data": "vas",
-  "airtime-data": "vas",
-  "airtime-and-data": "vas",
-  "airtime-data-bundles": "vas",
-  electricity: "vas",
-  voucher: "vas",
-  "pay-bills": "vas"
-};
+// Built from the ONE canonical list in lib/vas-services.js, which the
+// transaction engine and the purchase rail read too. It was a hand-written map
+// here and a separate Set there, and they had already drifted apart.
+const { VAS_SERVICE_CODES, isVasService } = require("../lib/vas-services");
+const CAPABILITY_BACKED_SERVICES = Object.fromEntries(
+  VAS_SERVICE_CODES.map((code) => [code, "vas"])
+);
 
 function capabilityCanTransact(capability) {
   if (capability === "vas") return require("../providers/vas-provider").vasCanPurchase();
@@ -96,7 +92,9 @@ function capabilityCanTransact(capability) {
 // Applied to every read, so no surface — app, console, analytics or export —
 // can show a service as live that the platform cannot perform.
 function applyCapabilityGate(row) {
-  const capability = CAPABILITY_BACKED_SERVICES[row.service_code];
+  // Asked through isVasService, not by indexing the map: a stored code may be
+  // spelt with hyphens or underscores and both must gate.
+  const capability = isVasService(row.service_code) ? "vas" : null;
   if (!capability || capabilityCanTransact(capability)) return row;
   return {
     ...row,

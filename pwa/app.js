@@ -7076,6 +7076,16 @@ async function registerServiceWorker() {
         } catch (storageError) {
           // Storage unavailable: fall back to the once-per-page-life guard above.
         }
+        // NOT WHILE OFFLINE. This reload is a convenience — it moves an
+        // already-open app onto a new build sooner than the next launch would.
+        // Reloading with no connection asks the new worker to serve a shell it
+        // may have just failed to cache, and that is the exact step that turned
+        // a bad update into a white screen. The service worker can now always
+        // answer a navigation with a real document, so this is belt to that
+        // braces: if there is nothing to reload onto, do not reload. The build
+        // applies on the next natural launch, which is what it was going to do
+        // anyway.
+        if (navigator.onLine === false) return;
         window.titoPaySwReloaded = true;
         location.reload();
       });

@@ -55,17 +55,9 @@ const { integrationEncryptionKey } = require("../lib/integration-secret-key");
 const { calculateFee, normalizeServiceCode } = require("./pricing-service");
 const walletService = require("./wallet-service");
 
-// The service codes this rail owns. Kept in step with VAS_SERVICES in
-// transaction-service.js, which refuses these on the plain debit path.
-const VAS_SERVICES = new Set([
-  "airtime",
-  "data",
-  "electricity",
-  "voucher",
-  "vouchers",
-  "pay_bills",
-  "bill_payments"
-]);
+// The service codes this rail owns — the ONE canonical list, shared with the
+// catalogue gate and the transaction engine so the three cannot drift.
+const { VAS_SERVICE_CODES, isVasService } = require("../lib/vas-services");
 
 // Which provider operation delivers which service. A service with no operation
 // is refused rather than sent to a guessed one.
@@ -232,7 +224,7 @@ async function purchaseVas(actor, payload = {}) {
   await ensureVasSchema();
 
   const serviceCode = normalizeServiceCode(payload.serviceCode || payload.service || "");
-  if (!VAS_SERVICES.has(serviceCode)) {
+  if (!isVasService(serviceCode)) {
     throw new AppError(400, "This service is not a value-added service purchase", { code: "NOT_A_VAS_SERVICE" });
   }
 
@@ -568,7 +560,7 @@ async function listPurchasesNeedingReview(limit = 100) {
 }
 
 module.exports = {
-  VAS_SERVICES,
+  VAS_SERVICE_CODES,
   ensureVasSchema,
   purchaseVas,
   getPurchase,

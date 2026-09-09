@@ -351,12 +351,42 @@ test("layer 2 asks the capability instead of keeping a list", () => {
   // It used to be flat entries in PROVIDER_DEPENDENT_SERVICES: true when
   // written, but a hard-coded fact about a supplier that somebody would have
   // had to find and edit on the day a contract went live.
-  assert.match(TX_SERVICE, /const VAS_SERVICES = new Set\(\[/);
+  assert.match(TX_SERVICE, /require\("\.\.\/lib\/vas-services"\)/);
   assert.match(TX_SERVICE, /require\("\.\.\/providers\/vas-provider"\)\.vasCanPurchase\(\)/);
   const dependent = TX_SERVICE.slice(TX_SERVICE.indexOf("const PROVIDER_DEPENDENT_SERVICES"),
     TX_SERVICE.indexOf("function splitRecipientList"));
   for (const code of ['"airtime"', '"electricity"', '"voucher"', '"pay_bills"']) {
     assert.ok(!dependent.includes(code), `${code} must no longer be hard-coded in the list`);
+  }
+});
+
+test("EVERY spelling of a VAS service is gated, not just the plain ones", async () => {
+  // THE DEAD TRANSACTION THIS CLOSES. The catalogue gate knew the alias codes
+  // the app actually uses — "airtime-and-data" is the real service_code behind
+  // the Airtime & Data tile — and the transaction engine kept its own copy of
+  // the list that did not. So the tile was correctly held at "coming soon"
+  // while the engine would have accepted airtime_and_data straight through to
+  // a bare wallet debit: money out, nothing delivered, and no supplier
+  // contracted to deliver it. An endpoint does not care what a tile says.
+  const { VAS_SERVICE_CODES, isVasService } = require("../src/lib/vas-services");
+  for (const code of VAS_SERVICE_CODES) {
+    // Both spellings, because the catalogue stores hyphens and the engine
+    // normalizes to underscores.
+    assert.ok(isVasService(code), `${code} must be a VAS service`);
+    assert.ok(isVasService(code.replace(/-/g, "_")), `${code} underscored must be too`);
+    await assert.rejects(() => transactions.feePreview({ service: code.replace(/-/g, "_"), amount: 50 }),
+      (error) => /not enabled for live processing yet/.test(error.message),
+      `${code} must be refused at the fee preview`);
+  }
+});
+
+test("the three places that gate VAS all read the one list", () => {
+  // The bug was two copies drifting. A third copy would do it again.
+  const CATALOGUE = fs.readFileSync(path.join(ROOT, "api", "src", "services", "service-management-service.js"), "utf8");
+  for (const [name, source] of [["transaction-service", TX_SERVICE],
+    ["service-management-service", CATALOGUE], ["vas-purchase-service", VAS_SERVICE]]) {
+    assert.match(source, /require\("\.\.\/lib\/vas-services"\)/, `${name} must read the shared list`);
+    assert.ok(!/const VAS_SERVICES = new Set\(\[/.test(source), `${name} must not keep its own copy`);
   }
 });
 
@@ -376,10 +406,32 @@ test("a VAS purchase can never be a bare wallet debit, contracted or not", () =>
   // guard that will one day be open when it should not be.
   const live = TX_SERVICE.slice(TX_SERVICE.indexOf("async function assertLiveTransactionSupported"),
     TX_SERVICE.indexOf("async function feePreview"));
-  const block = live.slice(live.indexOf("if (VAS_SERVICES.has(normalizedServiceCode))"));
+  const block = live.slice(live.indexOf("if (isVasService(normalizedServiceCode))"));
   assert.ok(block.includes("USE_VAS_PURCHASE_FLOW"), "it points at the purchase flow");
   assert.ok(!block.includes("vasCanPurchase"), "and does not ask the capability");
   assert.match(block, /\/v1\/vas\/purchase/);
+});
+
+test("the bare debit path refuses every VAS spelling, even with a contracted supplier", async () => {
+  // The behaviour behind the structural test above, driven for real — and for
+  // the alias codes specifically, because those were the ones that used to slip
+  // through into a wallet debit.
+  const { VAS_SERVICE_CODES } = require("../src/lib/vas-services");
+  const realVasCanPurchase = vasProvider.vasCanPurchase;
+  vasProvider.vasCanPurchase = () => true;
+  const { userId, walletId } = await makeFundedUser(500);
+  try {
+    for (const code of VAS_SERVICE_CODES) {
+      await assert.rejects(
+        () => transactions.createTransaction({ userId }, { service: code.replace(/-/g, "_"), amount: 50, recipient: "0821234567" }),
+        (error) => error.details?.code === "USE_VAS_PURCHASE_FLOW",
+        `${code} must be sent to the purchase flow, never debited here`);
+    }
+    assert.equal(await balanceOf(walletId), 500, "and not one cent moved");
+  } finally {
+    vasProvider.vasCanPurchase = realVasCanPurchase;
+    await cleanup(userId);
+  }
 });
 
 test("the supplier is reached through the capability, never by name", () => {

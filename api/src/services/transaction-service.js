@@ -12,6 +12,17 @@ const { calculateFee, roundMoney, normalizeServiceCode } = require("./pricing-se
 const { recipientLookupValues, recipientPhoneLookupValues, verifyRecipient } = require("./security-service");
 const { getPrimaryWalletForUser, getRevenueWallet, applyWalletMovement } = require("./wallet-service");
 const { isMissingDbObjectError, logDbCompatibilityWarning } = require("../lib/db-safe");
+// VALUE-ADDED SERVICES: airtime, data, electricity, vouchers, bill payments.
+//
+// ONE canonical list, in lib/vas-services.js, read by the catalogue gate and
+// the purchase rail as well. It used to be a second copy in this file and the
+// two disagreed: the catalogue knew the alias codes the app actually uses
+// ("airtime-and-data" is the real service_code behind the Airtime & Data tile)
+// and this copy did not. So the tile was correctly held at "coming soon" while
+// this engine would have accepted airtime_and_data straight through to a bare
+// wallet debit — money out, nothing delivered, no supplier contracted to
+// deliver it. An endpoint does not care what a tile says.
+const { isVasService } = require("../lib/vas-services");
 
 const REGISTERED_RECIPIENT_SERVICES = new Set([
   "wallet_transfer",
@@ -122,30 +133,6 @@ const BANK_PAYOUT_SERVICES = new Set([
   "bulk_distribution_bank_payout"
 ]);
 
-// VALUE-ADDED SERVICES: AIRTIME, DATA, ELECTRICITY, VOUCHERS, BILL PAYMENTS.
-//
-// These used to sit in PROVIDER_DEPENDENT_SERVICES below as flat entries, which
-// refused them unconditionally. That was true when it was written and it is
-// still true today — but it was a hard-coded fact about a supplier, in a list
-// that would have to be found and edited by hand on the day a contract went
-// live. The catalogue already learned this lesson (see applyCapabilityGate in
-// service-management-service.js): ask the capability, do not keep a list.
-//
-// So they are asked, exactly the way BANK_PAYOUT_SERVICES asks the payout
-// capability. Behaviour today is unchanged — the VAS adapter declares
-// canPurchase: false, so these still refuse with the same message — but the
-// day an adapter can really buy, this opens with it instead of being the thing
-// somebody forgot.
-const VAS_SERVICES = new Set([
-  "airtime",
-  "data",
-  "electricity",
-  "voucher",
-  "vouchers",
-  "pay_bills",
-  "bill_payments"
-]);
-
 const PROVIDER_DEPENDENT_SERVICES = new Set([
   // Cash out at a till or ATM. The payout capability cannot do this — it pays
   // bank accounts — so it stays unavailable until it has its own provider.
@@ -228,7 +215,7 @@ async function assertServiceLaunched(normalizedServiceCode) {
   // Asked, not listed. The adapter declares whether it can send a purchase; if
   // it cannot, the customer is told here at the fee preview rather than after
   // filling in a form and pressing Confirm.
-  if (VAS_SERVICES.has(normalizedServiceCode)) {
+  if (isVasService(normalizedServiceCode)) {
     if (!require("../providers/vas-provider").vasCanPurchase()) {
       throw new AppError(503, providerPendingMessage(normalizedServiceCode));
     }
@@ -273,7 +260,7 @@ async function assertLiveTransactionSupported(normalizedServiceCode, payload = {
   // supplier is contracted has no bearing on whether this endpoint is the
   // right door, and a guard that relaxes on someone else's configuration is a
   // guard that will one day be open when it should not be.
-  if (VAS_SERVICES.has(normalizedServiceCode)) {
+  if (isVasService(normalizedServiceCode)) {
     throw new AppError(
       409,
       "Airtime, data, electricity, vouchers and bill payments are completed through the purchase flow. No wallet debit was made.",

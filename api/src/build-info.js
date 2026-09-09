@@ -19,10 +19,27 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 115;
+const API_BUILD = 116;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  116: "ONE LIST OF VAS SERVICE CODES, AND A DEAD TRANSACTION CLOSED. The "
+      + "catalogue gate and the transaction engine each kept their own copy of "
+      + "which service codes are value-added services, and the two had drifted: "
+      + "the catalogue knew the alias codes the app actually uses "
+      + "(airtime-and-data is the real service_code behind the Airtime & Data "
+      + "tile, plus airtime-data and mobile-data) and the engine did not. So "
+      + "the tile was correctly held at coming soon while the ENGINE would have "
+      + "accepted airtime_and_data straight through to a bare wallet debit - "
+      + "money out, nothing delivered, no supplier contracted to deliver it. "
+      + "Nothing in the app reached it because the tile was gated, but an "
+      + "endpoint does not care what a tile says. The canonical list now lives "
+      + "in lib/vas-services.js and is read by all three gates (catalogue, fee "
+      + "preview, purchase rail) through isVasService(), which normalizes both "
+      + "spellings. Verified: every spelling now refuses at the fee preview, "
+      + "and every spelling is sent to the purchase flow rather than debited "
+      + "even with a contracted adapter. No behaviour change for any service "
+      + "that was already correct.",
   115: "THE VAS PURCHASE RAIL. Airtime, data, electricity, vouchers and bill "
       + "payments were held back by three independent layers and only the first "
       + "was a status: the catalogue gate served them as coming_soon, "
