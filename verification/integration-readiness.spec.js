@@ -24,7 +24,7 @@ const ARTIFACTS = require("path").join(__dirname, "artifacts");
 require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 
 const ADMIN = "/home/user/titopay-app/admin";
-const PORT = 8141;
+const PORT = 8144;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
   ".json": "application/json", ".png": "image/png", ".ico": "image/x-icon" };
@@ -116,7 +116,11 @@ const ok = (label, pass, detail) => {
 (async () => {
   await new Promise((r) => server.listen(PORT, "127.0.0.1", r));
   const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium", args: ["--no-sandbox"] });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  // An ordinary desktop with the rail where an operator leaves it, because the
+  // screenshot is meant to show the page they will actually see. It used to be
+  // 1900px wide with the rail forced closed, which was not a viewport — it was
+  // a workaround for a table that overflowed its card.
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2 });
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e.message)));
 
@@ -151,6 +155,53 @@ const ok = (label, pass, detail) => {
   for (const r of rows) console.log(`    ${(r[1]||"").padEnd(9)} ${(r[0]||"").padEnd(38)} ${(r[2]||"").slice(0,44)}`);
   ok("twelve checks render", rows.length === 12, String(rows.length));
   ok("no page errors", errors.length === 0, errors.slice(0,2).join(" | "));
+
+  // A PAGE THAT IS READ AS AN IMAGE HAS TO BE WHOLE IN THE IMAGE.
+  //
+  // fullPage captures the document, not the inside of a scroll container, so
+  // anything the table clips is simply absent from the screenshot — silently,
+  // and in the one column the page exists for. Measured rather than eyeballed:
+  // the wrapper must not be scrolling in either direction, and no rationale
+  // cell may be wider than the space it was given.
+  const fit = await page.evaluate(() => {
+    const wrap = document.querySelector(".table-wrap");
+    const clipped = [...document.querySelectorAll(".readiness-why")]
+      .filter((el) => el.scrollWidth > el.clientWidth + 1).length;
+    return {
+      wrapW: wrap.clientWidth, tableW: wrap.scrollWidth,
+      wrapH: wrap.clientHeight, tableH: wrap.scrollHeight,
+      clipped
+    };
+  });
+  console.log(`  table ${fit.tableW}x${fit.tableH} inside wrap ${fit.wrapW}x${fit.wrapH}`);
+  ok("the table is not scrolling sideways inside its card",
+    fit.tableW <= fit.wrapW + 1, `${fit.tableW} > ${fit.wrapW}`);
+  ok("every row is in frame, not below a scroll line",
+    fit.tableH <= fit.wrapH + 1, `${fit.tableH} > ${fit.wrapH}`);
+  ok("no rationale cell is cut off", fit.clipped === 0, `${fit.clipped} clipped`);
+
+  // The console is a fixed-height app shell — `.main-area` scrolls inside a
+  // 100dvh frame — so `fullPage` does not mean full page here: the document is
+  // exactly one viewport tall and the screenshot simply ends wherever the
+  // viewport did, with the rest of the table absent rather than cut. Grow the
+  // viewport until nothing is scrolling, then capture what is genuinely whole.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const short = await page.evaluate(() => {
+      const main = document.querySelector(".main-area");
+      return Math.max(main.scrollHeight - main.clientHeight,
+        document.documentElement.scrollHeight - document.documentElement.clientHeight);
+    });
+    if (short <= 1) break;
+    const size = page.viewportSize();
+    await page.setViewportSize({ width: size.width, height: size.height + short + 8 });
+    await page.waitForTimeout(250);
+  }
+  const whole = await page.evaluate(() => {
+    const main = document.querySelector(".main-area");
+    return main.scrollHeight - main.clientHeight;
+  });
+  ok("the whole page is inside the frame being captured", whole <= 1, `${whole}px below the fold`);
+
   await page.screenshot({ path: `${ARTIFACTS}/readiness.png`, fullPage: true });
   await browser.close(); server.close();
   console.log(bad ? `\n${bad} check(s) failed` : "\nall checks passed");

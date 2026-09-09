@@ -6496,3 +6496,73 @@ html[data-theme="dark"] .auth-panel-mark {
   line-height: 1.45;
   color: var(--tp-muted);
 }
+
+/* THE READINESS TABLE IS PROSE IN COLUMNS, NOT A LEDGER.
+   Every other table here sizes to its content and scrolls sideways, which is
+   right for twenty columns of transactions and wrong for four columns of
+   sentences: the widest sentence sets the table width, the table overflows the
+   card, and the rationale column — the only reason to open this page — sits
+   off the right edge where nobody scrolls to find it. So this one table is
+   given the card's width and fixed proportions, and the sentences wrap into
+   them. The height cap goes with it: twelve derived checks are the whole page,
+   with nothing below them to scroll toward, so half of them hidden behind a
+   scroll line is just half a page. */
+[data-page="integration-readiness"] .table-wrap {
+  max-height: none;
+}
+
+[data-page="integration-readiness"] table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+[data-page="integration-readiness"] th,
+[data-page="integration-readiness"] td,
+[data-page="integration-readiness"] th:first-child,
+[data-page="integration-readiness"] td:first-child,
+[data-page="integration-readiness"] th:not(:last-child),
+[data-page="integration-readiness"] td:not(:last-child) {
+  min-width: 0;
+  max-width: none;
+  vertical-align: top;
+}
+
+[data-page="integration-readiness"] th:nth-child(1),
+[data-page="integration-readiness"] td:nth-child(1) { width: 21%; }
+[data-page="integration-readiness"] th:nth-child(2),
+[data-page="integration-readiness"] td:nth-child(2) { width: 10%; }
+[data-page="integration-readiness"] th:nth-child(3),
+[data-page="integration-readiness"] td:nth-child(3) { width: 29%; }
+[data-page="integration-readiness"] th:nth-child(4),
+[data-page="integration-readiness"] td:nth-child(4) { width: 40%; }
+
+/* THE LAST COLUMN HERE IS PROSE, NOT BUTTONS.
+   renderRows() builds this page with `actionsColumn: false`, but the console's
+   table styling assumes a trailing Actions rail and pins the last column to
+   the right: sticky, opaque, and `white-space: nowrap`. Inherited into a
+   sentence that is the whole point of the column, nowrap turned it into a
+   single line running off the card — invisible in a screenshot and unreachable
+   without a horizontal scroll the page otherwise has no reason to have.
+   The header cell keeps its sticky top so the column titles still hold. */
+[data-page="integration-readiness"] th:last-child,
+[data-page="integration-readiness"] td:last-child {
+  right: auto;
+  min-width: 0;
+  max-width: none;
+  white-space: normal;
+  box-shadow: none;
+}
+
+[data-page="integration-readiness"] td:last-child {
+  position: static;
+  background: transparent;
+}
+
+[data-page="integration-readiness"] th:last-child {
+  box-shadow: var(--tp-shadow-sticky);
+}
+
+[data-page="integration-readiness"] .readiness-why {
+  max-width: none;
+}

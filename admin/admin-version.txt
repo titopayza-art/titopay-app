@@ -1,6 +1,17 @@
 TitoPay Admin
-Build: admin-console-v104
+Build: admin-console-v105
 Date: 2026-09-09
+
+v105 - The Integration Readiness table fits its card.
+
+  - Every other table in the console sizes to its content and scrolls
+    sideways, which is right for twenty columns of transactions and wrong
+    for four columns of sentences: the widest sentence set the table width,
+    the table overflowed the card, and "Why it matters" — the only reason
+    to open the page — sat off the right edge. That one table now takes the
+    card's width in fixed proportions and wraps into them.
+  - The 620px height cap is lifted with it. Twelve derived checks are the
+    whole page, so half of them behind a scroll line was half a page.
 
 v104 - Integration Readiness.
 
