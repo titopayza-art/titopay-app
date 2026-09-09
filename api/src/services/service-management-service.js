@@ -103,10 +103,63 @@ function applyCapabilityGate(row) {
     status: row.status === "disabled" ? row.status : "coming_soon",
     // Said out loud, so the console shows an operator WHY the status they
     // stored is not the status being served, instead of looking like a bug.
+    //
+    // storedStatus is the row as it actually sits in service_config. Without
+    // it the console can only show the served answer, so an operator who sets
+    // a service active, saves it, and sees "coming soon" come back has no way
+    // to tell a gate from a failed write.
+    storedStatus: row.status,
     capability,
     capabilityLive: false,
     unavailableReason: "No provider is contracted for this capability yet, so the service cannot be published as active."
   };
+}
+
+// WHAT THE CATALOGUE IS READING WHEN IT HOLDS A SERVICE BACK.
+//
+// The gate is derived, so a service stuck on "coming soon" is not a row an
+// operator can edit — it is a fact about a supplier. Without this, the console
+// could show that a service is held back but not what would release it, which
+// leaves an operator hunting for a toggle that does not exist.
+//
+// It reads the adapters' own declarations rather than naming any vendor, so it
+// stays true when a contract is signed: wire the adapter, declare canPurchase,
+// set the variable named here, and both this report and the tiles move on
+// their own.
+function capabilityReport() {
+  const gated = [...new Set(Object.values(CAPABILITY_BACKED_SERVICES))];
+  // AN ADAPTER THAT NOTHING HAS LOADED DECLARES NOTHING.
+  //
+  // Registration is a side effect of requiring the provider module, so reading
+  // the registry before that happens returns an empty declaration — and the
+  // page would say "declares: nothing" for an adapter that plainly declares
+  // canPurchase: false. The API server loads every provider at boot so it
+  // never saw this, but nothing about this function guaranteed it.
+  //
+  // capabilityCanTransact() requires the module it asks about, so resolving
+  // `live` FIRST is what makes the declaration below readable. The order is
+  // load-bearing; it is not a tidy-up.
+  const live = new Map(gated.map((capability) => [capability, capabilityCanTransact(capability)]));
+  const declared = require("../providers").describeProviders();
+  return gated.map((capability) => {
+    const provider = declared.find((entry) => entry.capability === capability) || null;
+    const services = Object.keys(CAPABILITY_BACKED_SERVICES)
+      .filter((code) => CAPABILITY_BACKED_SERVICES[code] === capability);
+    return {
+      capability,
+      live: live.get(capability),
+      // Which adapter is selected, and by what. Both are needed: "none" set by
+      // default and "none" set deliberately in the environment are different
+      // situations for whoever is trying to fix it.
+      configured: provider?.configured || null,
+      variable: provider?.variable || `${String(capability).toUpperCase()}_PROVIDER`,
+      source: provider?.source || null,
+      declares: provider?.declares || {},
+      services,
+      releasedBy: "Wire the adapter so it can send a purchase, declare canPurchase: true on it, and select it with "
+        + `${provider?.variable || `${String(capability).toUpperCase()}_PROVIDER`}. The catalogue then publishes these services on its own.`
+    };
+  });
 }
 
 function normalizeAudience(audience = "all") {
@@ -480,6 +533,7 @@ async function updateService(id, payload, actor) {
 }
 
 module.exports = {
+  capabilityReport,
   createService,
   ensureDefaultServices,
   listServices,

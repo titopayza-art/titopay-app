@@ -1,6 +1,25 @@
 TitoPay Admin
-Build: admin-console-v100
-Date: 2026-08-26
+Build: admin-console-v101
+Date: 2026-09-09
+
+v101 - Service Catalogue.
+
+  - New page under Platform: every service TitoPay offers, the status
+    customers actually see, and - where those differ - what is holding a
+    service back.
+  - Answers the question the console could not. Airtime, data, electricity,
+    vouchers and bill payments show as "SOON" in the app, and no screen
+    anywhere said why or what would change it. Their status is DERIVED from
+    whether a supplier can send a purchase, so there was never a toggle to
+    find.
+  - Each held-back capability gets its own card: which adapter is selected,
+    which environment variable selected it, what that adapter declares about
+    itself, which services it holds, and exactly what releases them.
+  - Read only. The rows an operator comes here about cannot be flipped - the
+    gate re-derives on every read - so the page explains rather than offering
+    a lever that does nothing.
+  - Needs API build 114 for the explanation panel; the catalogue itself
+    renders against older builds.
 
 v100 - Support Desk quick replies stay put.
 

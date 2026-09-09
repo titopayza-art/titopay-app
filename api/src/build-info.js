@@ -19,10 +19,26 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 113;
+const API_BUILD = 114;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  114: "THE CATALOGUE NOW SAYS WHY A SERVICE IS NOT LIVE. Six services are "
+      + "served to customers as coming soon because the VAS capability has no "
+      + "adapter that can send a purchase, and that status is derived on every "
+      + "read - there is no toggle for it. The console had no way to show that: "
+      + "GET /services/admin returned the SERVED status only, so an operator "
+      + "could not tell a capability gate from a failed write. Two additions, "
+      + "both read-only: applyCapabilityGate now returns `storedStatus` (the "
+      + "row as it actually sits in service_config, beside the status being "
+      + "served), and GET /services/admin returns a `capabilities` report "
+      + "saying which capability is not live, which adapter is selected, which "
+      + "environment variable selected it, what that adapter declares about "
+      + "itself, which services it holds back, and what would release them. It "
+      + "reads the adapters' own declarations and names no vendor, so it stays "
+      + "true the day a contract is signed. Same endpoint, same "
+      + "requireAdminPermission(\"services\") guard, no behaviour change to "
+      + "the gate itself.",
   113: "THE SAME FIX, ON THE PATH MOST BUSINESSES ACTUALLY USE. Build 112 "
       + "stopped a STAFF till from counting an unpaid sale, but the OWNER's own "
       + "Make a Sale still called /business/products/record-sale before the "

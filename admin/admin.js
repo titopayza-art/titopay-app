@@ -24,7 +24,7 @@
  *    9. Operations — money and accounts     17 functions
  *   10. Support and chat monitoring         16 functions
  *   11. Integration centre                  17 functions
- *   12. Platform administration             12 functions
+ *   12. Platform administration             14 functions
  *   13. Ticketing and enterprise distribution   4 functions
  *   14. Marketing                           17 functions
  *   15. Email centre                        14 functions
@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v100";
+  return "admin-console-v101";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -118,6 +118,7 @@ const NAV_GROUPS = [
     ["/service-builder/", "service-builder", "Service Builder"],
     ["/pricing/", "pricing", "Pricing Engine"],
     ["/integrations/", "integrations", "Integration Centre"],
+    ["/services/", "service-catalogue", "Service Catalogue"],
     ["/feature-management/", "feature-management", "Feature Management"],
     ["/api-provider-settings/", "api-provider-settings", "API Provider Settings"],
     ["/security-content/", "security-content", "Security Content"],
@@ -205,6 +206,7 @@ const NAV_ICON_PATHS = {
   pricing: "M12 3v18M8.5 7.5h6.2a2.5 2.5 0 0 1 0 5H9.3a2.5 2.5 0 0 0 0 5h6.2",
   integrations: "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
   "integration-provider": "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
+  "service-catalogue": "M4.5 5h5.5v5.5H4.5V5Zm9.5 0h5.5v5.5H14V5ZM4.5 14h5.5v5.5H4.5V14Zm9.5 0h5.5v5.5H14V14Z",
   "feature-management": "M5 8h9m2 0h3M5 16h3m2 0h9M14 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Zm-4 8a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z",
   "api-provider-settings": "M6 7h12M6 12h12M6 17h6M18 15v4m2-2h-4",
   "security-content": "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm-3 6.5h6m-6 3h4",
@@ -1153,6 +1155,7 @@ function renderSidebar(page, me) {
       pricing: "__super_admin__",
       integrations: "__super_admin__",
       "integration-provider": "__super_admin__",
+      "service-catalogue": "services",
       "feature-management": "__super_admin__",
       "api-provider-settings": "__owner__",
       support: "support",
@@ -4387,6 +4390,108 @@ async function renderFeatureManagement(me = {}) {
     }
   });
 }
+// THE SERVICE CATALOGUE, AND WHY A SERVICE IS NOT LIVE.
+//
+// Read-only, deliberately. Most of this catalogue is editable through
+// PUT /services/admin, but the rows an operator actually comes here about —
+// airtime, data, electricity, vouchers, bill payments — are not: their status
+// is DERIVED from whether a supplier can transact, and re-derived on every
+// read. Setting one active would store, return "coming soon" in the same
+// response, and read as a broken button.
+//
+// So the page answers the question instead of offering a lever that does
+// nothing: which services are live, which are held back, by what, and what
+// would release them.
+function serviceServedChip(row) {
+  const status = String(row.status || "");
+  if (status === "active") return `<span class="chip green">live</span>`;
+  if (status === "coming_soon") return `<span class="chip orange">coming soon</span>`;
+  if (status === "disabled") return `<span class="chip">disabled</span>`;
+  return `<span class="chip">${escapeHtml(status || "unknown")}</span>`;
+}
+async function renderServiceCatalogue() {
+  const result = await apiFetch("/services/admin");
+  const items = result.items || [];
+  // An older API returns the catalogue without the capability report. The page
+  // still works — it just cannot explain the gate — so it says which build
+  // adds it rather than rendering an empty panel.
+  const capabilities = Array.isArray(result.capabilities) ? result.capabilities : null;
+  const held = items.filter((item) => item.capabilityLive === false);
+  PAGE_EXPORTS["service-catalogue"] = items.map((item) => ({
+    service: item.service_name,
+    code: item.service_code,
+    served: item.status,
+    stored: item.storedStatus || item.status,
+    capability: item.capability || "",
+    personal: item.personal_visible ? "yes" : "no",
+    business: item.business_visible ? "yes" : "no",
+  }));
+
+  const audience = (row) => {
+    const who = [];
+    if (row.personal_visible) who.push("Personal");
+    if (row.business_visible) who.push("Business");
+    return who.length ? who.join(" + ") : "Hidden";
+  };
+
+  const gatedCapabilities = capabilities ? capabilities.filter((entry) => !entry.live) : [];
+  const gateHtml = gatedCapabilities.length ? gatedCapabilities.map((entry) => tableCard(
+    `"${entry.capability}" cannot transact yet`,
+    `
+      ${renderKeyValueList([
+        ["Adapter selected", entry.configured || "none"],
+        ["Selected by", `${entry.variable || "-"} (${entry.source === "environment" ? "set in the API environment" : "platform default"})`],
+        ["Adapter declares", Object.keys(entry.declares || {}).length
+          ? Object.entries(entry.declares).map(([fact, value]) => `${fact}: ${value}`).join(", ")
+          : "nothing"],
+        // The capability's own list carries alias codes it would gate if they
+        // existed; showing all nine when five are real reads as a bigger
+        // outage than it is. This names the rows actually in this catalogue.
+        ["Services held back", items
+          .filter((item) => item.capability === entry.capability)
+          .map((item) => item.service_name || item.service_code)
+          .join(", ") || "-"],
+      ])}
+      <p class="table-card-note">${escapeHtml(entry.releasedBy || "")}</p>
+      <p class="table-card-note">There is nothing to switch on here. This status is derived on every read, so marking a service active by hand would be undone by the next response — and by every new environment.</p>
+    `,
+    "The catalogue holds these services at “coming soon” until an adapter can send a real purchase.",
+    "Derived, not stored"
+  )).join("") : "";
+
+  const noReport = capabilities === null ? tableCard(
+    "This API cannot explain the gate yet",
+    `<div class="empty"><strong>No capability report returned</strong><small>GET /services/admin began returning <code>capabilities</code> in API build 114. The catalogue below is still accurate; only the explanation panel is missing. Upload the current api.zip to restore it.</small></div>`
+  ) : "";
+
+  document.getElementById("page-content").innerHTML = `
+    ${renderMetrics([
+      ["Services", items.length],
+      ["Live", items.filter((item) => item.status === "active").length],
+      ["Coming soon", items.filter((item) => item.status === "coming_soon").length],
+      ["Disabled", items.filter((item) => item.status === "disabled").length],
+      ["Held by a capability", held.length],
+    ])}
+    ${noReport}
+    ${gateHtml}
+    ${tableCard("Service catalogue", renderRows(items, [
+      { label: "Service", render: (row) => `<strong>${escapeHtml(row.service_name || "")}</strong>` },
+      { label: "Code", render: (row) => `<code>${escapeHtml(row.service_code || "")}</code>` },
+      { label: "Audience", render: (row) => escapeHtml(audience(row)) },
+      { label: "Served as", render: (row) => serviceServedChip(row) },
+      // Only shown where the two differ, which is the whole point of the
+      // column: a matching pair is noise, a mismatch is the explanation.
+      { label: "Stored as", render: (row) => row.storedStatus && row.storedStatus !== row.status
+        ? `<code>${escapeHtml(row.storedStatus)}</code>`
+        : "<small>-</small>" },
+      { label: "Why", render: (row) => row.capabilityLive === false
+        ? `<small>${escapeHtml(row.unavailableReason || "")}</small>`
+        : "<small>-</small>" },
+    ], () => "", { actionsColumn: false }),
+    "“Served as” is what the app and every report actually see. Where “stored as” differs, a capability gate is overriding the stored row — the service is real and planned, but nothing behind it can transact yet.",
+    "Read only")}
+  `;
+}
 async function renderCompanyDocuments() {
   const result = await apiFetch("/admin/company-documents");
   const categories = result.categories || [];
@@ -7058,6 +7163,7 @@ function adminPageDescriptors() {
     pricing: ["Pricing Engine", "Single source of truth for all TitoPay fees, VAT, effective dates and service pricing."],
     integrations: ["Integration Centre", "Securely configure third-party providers for payments, compliance, VAS, email and SMS."],
     "integration-provider": ["Provider Configuration", "Configure, test, disable and rotate one provider connection."],
+    "service-catalogue": ["Service Catalogue", "Every service TitoPay offers, the status customers actually see, and what is holding any of them back."],
     "feature-management": ["Feature Management", "Enable or disable TitoPay platform modules from one Super Admin console."],
     "api-provider-settings": ["API Provider Settings", "Configure, test and monitor third-party providers through the TitoPay API."],
     settings: ["Platform Settings", "Review notification billing, provider abstraction and role visibility."],
@@ -7134,6 +7240,7 @@ function adminPageLoaders() {
     pricing: renderPricing,
     integrations: renderIntegrations,
     "integration-provider": renderIntegrationProvider,
+    "service-catalogue": renderServiceCatalogue,
     "feature-management": renderFeatureManagement,
     "api-provider-settings": renderIntegrations,
     settings: renderSettings,
