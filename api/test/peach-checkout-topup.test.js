@@ -178,13 +178,33 @@ test("A stale review screen cannot send a customer to Peach for the wrong total"
 
 test("Withdraw and payout are gated by the payout capability", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "services", "transaction-service.js"), "utf8");
-  // They belong to the payout capability, never to Collection/Checkout.
-  for (const code of ["withdraw", "withdraw_money_to_bank", "withdraw_cash", "bank_withdrawal",
-    "cash_withdrawal", "payouts", "business_payout", "merchant_payout", "merchant_payouts", "seller_payout"]) {
-    assert.ok(
-      new RegExp(`BANK_PAYOUT_SERVICES = new Set\\(\\[[\\s\\S]{0,600}"${code}"`).test(source),
-      `${code} must be routed to the payout capability`
-    );
+
+  // MEMBERSHIP, NOT PROXIMITY. This used to match each code within 600
+  // characters of the BANK_PAYOUT_SERVICES declaration, which is not the same
+  // question: withdraw_cash and cash_withdrawal are deliberately NOT bank
+  // payouts — a cash-out at a till or ATM is not something a rail that pays
+  // bank accounts can do — and they were passing only because they sat in the
+  // next Set along, inside the window. Adding an unrelated Set between the two
+  // moved them out of it and the test failed for a service that had not
+  // changed. Reading the actual Set body asks what the test meant to ask.
+  const setBody = (name) => {
+    const start = source.indexOf(`${name} = new Set([`);
+    assert.notEqual(start, -1, `${name} must exist`);
+    return source.slice(start, source.indexOf("]);", start));
+  };
+  const bankPayouts = setBody("BANK_PAYOUT_SERVICES");
+  const providerDependent = setBody("PROVIDER_DEPENDENT_SERVICES");
+
+  // Paid to a bank account: these route to the payout capability.
+  for (const code of ["withdraw", "withdraw_money_to_bank", "bank_withdrawal",
+    "payouts", "business_payout", "merchant_payout", "merchant_payouts", "seller_payout"]) {
+    assert.ok(bankPayouts.includes(`"${code}"`), `${code} must be routed to the payout capability`);
+  }
+  // Cash at a till or ATM: a different rail that has no provider, so it stays
+  // refused rather than being pointed at a payout it cannot use.
+  for (const code of ["withdraw_cash", "cash_withdrawal"]) {
+    assert.ok(!bankPayouts.includes(`"${code}"`), `${code} is not a bank payout`);
+    assert.ok(providerDependent.includes(`"${code}"`), `${code} must stay provider-dependent`);
   }
   // The gate consults the payout capability at the fee preview, so an
   // unconfigured, disabled or unverified payout provider is reported as itself

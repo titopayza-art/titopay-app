@@ -122,18 +122,35 @@ const BANK_PAYOUT_SERVICES = new Set([
   "bulk_distribution_bank_payout"
 ]);
 
-const PROVIDER_DEPENDENT_SERVICES = new Set([
-  // Cash out at a till or ATM. The payout capability cannot do this — it pays
-  // bank accounts — so it stays unavailable until it has its own provider.
-  "withdraw_cash",
-  "cash_withdrawal",
+// VALUE-ADDED SERVICES: AIRTIME, DATA, ELECTRICITY, VOUCHERS, BILL PAYMENTS.
+//
+// These used to sit in PROVIDER_DEPENDENT_SERVICES below as flat entries, which
+// refused them unconditionally. That was true when it was written and it is
+// still true today — but it was a hard-coded fact about a supplier, in a list
+// that would have to be found and edited by hand on the day a contract went
+// live. The catalogue already learned this lesson (see applyCapabilityGate in
+// service-management-service.js): ask the capability, do not keep a list.
+//
+// So they are asked, exactly the way BANK_PAYOUT_SERVICES asks the payout
+// capability. Behaviour today is unchanged — the VAS adapter declares
+// canPurchase: false, so these still refuse with the same message — but the
+// day an adapter can really buy, this opens with it instead of being the thing
+// somebody forgot.
+const VAS_SERVICES = new Set([
   "airtime",
   "data",
   "electricity",
   "voucher",
   "vouchers",
   "pay_bills",
-  "bill_payments",
+  "bill_payments"
+]);
+
+const PROVIDER_DEPENDENT_SERVICES = new Set([
+  // Cash out at a till or ATM. The payout capability cannot do this — it pays
+  // bank accounts — so it stays unavailable until it has its own provider.
+  "withdraw_cash",
+  "cash_withdrawal",
   "cash_services",
   "gift_cards",
   "marketplace",
@@ -208,6 +225,15 @@ async function assertServiceLaunched(normalizedServiceCode) {
   if (MULTI_PARTY_SERVICES_PENDING_SETTLEMENT.has(normalizedServiceCode)) {
     throw new AppError(503, `${providerPendingMessage(normalizedServiceCode)} This service needs its dedicated settlement workflow before launch.`);
   }
+  // Asked, not listed. The adapter declares whether it can send a purchase; if
+  // it cannot, the customer is told here at the fee preview rather than after
+  // filling in a form and pressing Confirm.
+  if (VAS_SERVICES.has(normalizedServiceCode)) {
+    if (!require("../providers/vas-provider").vasCanPurchase()) {
+      throw new AppError(503, providerPendingMessage(normalizedServiceCode));
+    }
+    return;
+  }
   if (PROVIDER_DEPENDENT_SERVICES.has(normalizedServiceCode)) {
     throw new AppError(503, providerPendingMessage(normalizedServiceCode));
   }
@@ -234,6 +260,24 @@ async function assertLiveTransactionSupported(normalizedServiceCode, payload = {
       409,
       "Withdrawals are completed through the payout flow. No wallet debit was made.",
       { code: "USE_WITHDRAWAL_FLOW", endpoint: "/v1/payouts/withdrawals" }
+    );
+  }
+  // A VAS PURCHASE MAY NEVER BE A BARE WALLET DEBIT. Same reasoning as a
+  // withdrawal, and it is the reason making the tiles "available" is not one
+  // change but two: a VAS purchase debits the wallet AND has to deliver a
+  // redeemable token. createTransaction only does the first, so opening the
+  // fee preview above without this refusal would let a working adapter take
+  // the money with nothing on the other side to deliver.
+  //
+  // This refusal is UNCONDITIONAL — it does not ask the capability. Whether a
+  // supplier is contracted has no bearing on whether this endpoint is the
+  // right door, and a guard that relaxes on someone else's configuration is a
+  // guard that will one day be open when it should not be.
+  if (VAS_SERVICES.has(normalizedServiceCode)) {
+    throw new AppError(
+      409,
+      "Airtime, data, electricity, vouchers and bill payments are completed through the purchase flow. No wallet debit was made.",
+      { code: "USE_VAS_PURCHASE_FLOW", endpoint: "/v1/vas/purchase" }
     );
   }
   if (LIVE_QR_WALLET_SERVICES.has(normalizedServiceCode)) {

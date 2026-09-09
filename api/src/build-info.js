@@ -19,10 +19,34 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 114;
+const API_BUILD = 115;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  115: "THE VAS PURCHASE RAIL. Airtime, data, electricity, vouchers and bill "
+      + "payments were held back by three independent layers and only the first "
+      + "was a status: the catalogue gate served them as coming_soon, "
+      + "transaction-service refused them with a HARD-CODED 503, and no adapter "
+      + "could purchase - there was no route, no purchase function, and nothing "
+      + "anywhere called purchaseAirtime. Making the tiles active alone would "
+      + "have walked a customer through a three-step form to that 503. Two "
+      + "changes. (1) Layer 2 now ASKS the capability instead of keeping a "
+      + "list, the way BANK_PAYOUT_SERVICES already asks the payout capability; "
+      + "behaviour today is identical because the adapter still declares "
+      + "canPurchase: false. (2) New services/vas-purchase-service.js and POST "
+      + "/v1/vas/purchase: the dedicated lifecycle a VAS purchase needs, "
+      + "because it debits a wallet AND delivers a redeemable token and "
+      + "createTransaction only does the first. Idempotency key with an "
+      + "advisory lock and a unique index so a retry never buys twice; the "
+      + "token encrypted and persisted BEFORE it is returned; a timeout treated "
+      + "as UNKNOWN - money held, never refunded, never re-purchased, queued "
+      + "for reconciliation; and a single guarded release so a definite refusal "
+      + "returns the money exactly once. The generic wallet-debit path now "
+      + "refuses these service codes unconditionally and points at the purchase "
+      + "flow. NOTHING IS LIVE: both adapters still declare canPurchase: false, "
+      + "so the tiles still read coming soon and purchaseVas refuses before any "
+      + "wallet is touched. Wiring a supplier is now one adapter - see the "
+      + "header of providers/vas-provider.js for the four things it must do.",
   114: "THE CATALOGUE NOW SAYS WHY A SERVICE IS NOT LIVE. Six services are "
       + "served to customers as coming soon because the VAS capability has no "
       + "adapter that can send a purchase, and that status is derived on every "

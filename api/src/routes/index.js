@@ -17,6 +17,7 @@ const payoutsRoutes = require("./payouts.routes");
 const usersRoutes = require("./users.routes");
 const lookupRoutes = require("./lookup.routes");
 const servicesRoutes = require("./services.routes");
+const vasRoutes = require("./vas.routes");
 const beneficiariesRoutes = require("./beneficiaries.routes");
 const securityRoutes = require("./security.routes");
 const securityContentRoutes = require("./security-content.routes");
@@ -131,6 +132,7 @@ function mountVersionedRoutes(prefix) {
   router.use(`${prefix}/payouts`, payoutsRoutes);
   router.use(`${prefix}/users`, usersRoutes);
   router.use(`${prefix}/services`, servicesRoutes);
+  router.use(`${prefix}/vas`, vasRoutes);
   router.use(`${prefix}/beneficiaries`, beneficiariesRoutes);
   router.use(`${prefix}/security`, securityRoutes);
   // Public, and it has to be mounted here rather than alongside the health

@@ -23,6 +23,40 @@
 // customer is shown it, and a timeout treated as UNKNOWN rather than failed,
 // because a token issued by the provider and lost by TitoPay is money gone. It
 // must be reconciled, never blindly re-purchased.
+//
+// ---------------------------------------------------------------------------
+// ALL OF THAT IS NOW BUILT. See services/vas-purchase-service.js: the debit,
+// the idempotency key with its advisory lock and unique index, the token
+// encrypted and persisted before it is returned, timeout-as-unknown with a
+// review queue, and a single guarded release. It is tested against a real
+// database in api/test/vas-purchase.test.js with a fake adapter.
+//
+// WHAT IS LEFT IS THIS FILE. To make airtime, data, electricity, vouchers and
+// bill payments live, an adapter has to:
+//
+//   1. implement purchaseAirtime / purchaseData / purchaseElectricity with the
+//      signature (actor, request) where request is
+//        { serviceCode, amount, recipient, productCode, reference }
+//      `reference` is TitoPay's and is STABLE ACROSS RETRIES — send it as the
+//      supplier's idempotency key, so a retried request returns the original
+//      purchase instead of issuing a second token. flashTransactionReference()
+//      in flash-service.js exists for exactly this.
+//
+//   2. return { token } — or { pin } / { voucherCode } — carrying the
+//      redeemable value, plus an optional `receipt` object kept for audit.
+//
+//   3. raise a 4xx (AppError or any error with a status) ONLY when the
+//      supplier actually refused. Anything else — a timeout, a socket error,
+//      a 5xx, a 408, a 429 — must propagate as-is so the rail records it as
+//      unknown. An adapter that converts a timeout into a 400 would cause a
+//      refund for a token the customer is holding.
+//
+//   4. declare canPurchase: true. That one line opens the fee preview, the
+//      purchase route and the app tiles together, because all three read this
+//      same declaration rather than keeping their own lists.
+//
+// Nothing else in the platform needs to change.
+// ---------------------------------------------------------------------------
 
 const { registerProvider, operation, CAPABILITIES, capabilityConfigured, providerAttribute } = require("./index");
 const { AppError } = require("../lib/errors");
