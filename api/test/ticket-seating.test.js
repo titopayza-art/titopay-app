@@ -313,3 +313,38 @@ test("general admission is untouched: no seats, no allocation, no change", async
     await cleanup(eventId, [organiser, buyer]);
   }
 });
+
+test("CONCURRENT TICKETING CALLS DO NOT DEADLOCK EACH OTHER", async () => {
+  // A real deadlock, found by running the seating and resale suites together —
+  // the first thing in this codebase to drive concurrent ticketing traffic.
+  //
+  // ensureTicketingSchema is awaited at the top of every entry point in the
+  // service and used to re-run its whole DDL block each time. CREATE TABLE IF
+  // NOT EXISTS takes locks on a table that already exists, and an ordinary
+  // insert needs a row-share lock on the same table for its foreign key, so
+  // two calls in flight at once could each hold what the other waited for:
+  //
+  //   Process A waits for ShareLock on event_seats; blocked by process B.
+  //   Process B waits for RowShareLock on events;   blocked by process A.
+  //
+  // In production that is two customers buying at the same second and one of
+  // them getting an error they did nothing to cause. The bootstrap now runs
+  // once per process, which is what "IF NOT EXISTS" always meant.
+  const organisers = await Promise.all([1, 2, 3, 4, 5, 6].map((n) => makeUser("Organiser " + n)));
+  const made = [];
+  try {
+    const results = await Promise.allSettled(organisers.map((id) =>
+      makeSeatedEvent(id, { rows: ["A", "B"], seatsPerRow: 4 })));
+    for (const r of results) if (r.status === "fulfilled") made.push(r.value.eventId);
+    const failures = results.filter((r) => r.status === "rejected").map((r) => r.reason);
+    const deadlocks = failures.filter((e) => e && e.code === "40P01");
+    assert.deepEqual(deadlocks.map((e) => e.message), [], "no call may lose a lock race to another");
+    assert.deepEqual(failures.map((e) => e.message), [], "and none may fail for any other reason either");
+  } finally {
+    for (const eventId of made) await cleanup(eventId, []);
+    for (const id of organisers) {
+      await pool.query("DELETE FROM event_audit_logs WHERE actor_id = $1", [id]).catch(() => null);
+      await pool.query("DELETE FROM users WHERE id = $1", [id]).catch(() => null);
+    }
+  }
+});

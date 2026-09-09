@@ -39,6 +39,11 @@ const {
   defineSeating,
   seatingAvailability,
   assertEventOwnedBy,
+  listTicketForResale,
+  cancelTicketListing,
+  browseTicketListings,
+  myTicketListings,
+  buyTicketListing,
   canManageEventTicketing,
   EVENT_CATEGORIES,
   ticketOrderRefundPolicy,
@@ -345,6 +350,61 @@ router.patch("/tickets/:id/removed", requireAuth, async (req, res, next) => {
     const removed = req.body?.removed;
     if (typeof removed !== "boolean") throw new AppError(400, "removed must be true or false");
     res.json({ ok: true, ticket: await setMyTicketRemoved(req.auth.userId, req.params.id, removed) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* RESALE.
+   A holder who cannot go offers their ticket; another customer buys it. The
+   money and the ownership change in one database transaction, so there is no
+   escrow to hold and no window in which the buyer has paid and does not hold
+   the ticket. The organiser's transfer_allowed setting gates resale exactly as
+   it gates gifting, and a ticket may never be listed above what was paid for
+   it. */
+router.post("/tickets/:id/listing", requireAuth, async (req, res, next) => {
+  try {
+    const ticketId = requireUuid(req.params.id, "Ticket ID");
+    res.status(201).json({ ok: true, listing: await listTicketForResale(req.auth, ticketId, req.body || {}, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/listings/:id", requireAuth, async (req, res, next) => {
+  try {
+    const listingId = requireUuid(req.params.id, "Listing ID");
+    res.json({ ok: true, listing: await cancelTicketListing(req.auth, listingId, meta(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The seller's own listings, sold and cancelled ones included, so a sale that
+// has happened is visible rather than simply gone from the list.
+router.get("/listings/mine", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ok: true, items: await myTicketListings(req.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// What is on resale for one event. The seller is not named: a resale runs on
+// the platform's rails and is not an introduction between two customers.
+router.get("/events/:id/listings", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = requireUuid(req.params.id, "Event ID");
+    res.json({ ok: true, items: await browseTicketListings(eventId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/listings/:id/buy", requireAuth, async (req, res, next) => {
+  try {
+    const listingId = requireUuid(req.params.id, "Listing ID");
+    res.json({ ok: true, purchase: await buyTicketListing(req.auth, listingId, meta(req)) });
   } catch (error) {
     next(error);
   }

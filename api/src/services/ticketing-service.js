@@ -52,7 +52,49 @@ function money(value) {
   return Math.max(0, Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100);
 }
 
+// An amount as it is written to a person, in the shape this file already uses
+// in ticket emails: "R 250.00". Named so a refusal that quotes a price cannot
+// drift from the way the same figure is printed elsewhere.
+function formatMoney(value) {
+  return `R ${money(value).toFixed(2)}`;
+}
+
+// THE SCHEMA BOOTSTRAP RUNS ONCE PER PROCESS, NOT ONCE PER CALL.
+//
+// ensureTicketingSchema is awaited at the top of all 57 entry points in this
+// service, and it used to re-run its whole DDL block every time. That is not
+// merely wasteful — it DEADLOCKS. `CREATE TABLE IF NOT EXISTS events` takes
+// locks on events and everything referencing it even when the table is already
+// there, while an ordinary `INSERT INTO event_ticket_types` needs a row-share
+// lock on events for its foreign key. Two ticketing calls in flight at the
+// same moment can each hold what the other is waiting for, and Postgres kills
+// one of them:
+//
+//   Process A waits for ShareLock on event_seats; blocked by process B.
+//   Process B waits for RowShareLock on events;   blocked by process A.
+//
+// In production that is two customers buying tickets at the same second and
+// one of them getting an error for no reason they could have caused. It was
+// found by running the seating and resale suites together, which is the first
+// thing in this codebase to drive concurrent ticketing traffic.
+//
+// The bootstrap is idempotent by construction — every statement in it is
+// IF NOT EXISTS — so "once, at first use" is what it always meant. The promise
+// is cached, and cleared again if it rejects, so a failure during startup is
+// retried rather than remembered forever.
+let ticketingSchemaReady = null;
+
 async function ensureTicketingSchema() {
+  if (!ticketingSchemaReady) {
+    ticketingSchemaReady = buildTicketingSchema().catch((error) => {
+      ticketingSchemaReady = null;
+      throw error;
+    });
+  }
+  return ticketingSchemaReady;
+}
+
+async function buildTicketingSchema() {
   await pool.query(`
     DO $$
     BEGIN
@@ -336,6 +378,37 @@ async function ensureTicketingSchema() {
     -- would be ambiguous the moment a seated event sells out, so it is stated.
     ALTER TABLE event_ticket_types ADD COLUMN IF NOT EXISTS seated BOOLEAN NOT NULL DEFAULT FALSE;
 
+    -- RESALE. A holder offers a ticket they can no longer use; another
+    -- customer buys it. The listing is the offer, not the money: the money and
+    -- the ownership change together in one transaction when somebody buys, so
+    -- there is nothing held in between and nothing to release.
+    CREATE TABLE IF NOT EXISTS ticket_listings (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      ticket_id UUID NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      seller_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      price NUMERIC(14,2) NOT NULL CHECK (price >= 0),
+      -- What the seller paid, recorded at listing time. Kept so the cap that
+      -- was applied stays auditable even if the ticket type's price changes.
+      face_value NUMERIC(14,2) NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'open',
+      buyer_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      transaction_id UUID,
+      commission NUMERIC(14,2) NOT NULL DEFAULT 0,
+      seller_net NUMERIC(14,2) NOT NULL DEFAULT 0,
+      sold_at TIMESTAMPTZ,
+      cancelled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    -- ONE OPEN LISTING PER TICKET, enforced by the database rather than by a
+    -- check in the code. It is what stops the same ticket being offered twice
+    -- and sold to two people.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_listings_one_open
+      ON ticket_listings (ticket_id) WHERE status = 'open';
+    CREATE INDEX IF NOT EXISTS idx_ticket_listings_event ON ticket_listings (event_id, status);
+    CREATE INDEX IF NOT EXISTS idx_ticket_listings_seller ON ticket_listings (seller_user_id, status);
+
     CREATE TABLE IF NOT EXISTS ticket_refunds (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       order_id UUID NOT NULL REFERENCES ticket_orders(id) ON DELETE CASCADE,
@@ -599,6 +672,13 @@ async function ensureTicketingSchema() {
   // transactions.service_code is a foreign key into pricing_rules, so this row
   // has to exist before the first Event Tag tap can be written to the ledger.
   await ensureDefaultPricingRule("event_tag");
+  // The same reason, for resale. `ticket_resale` is the service code on both
+  // sides of the sale, and `ticket_resale_commission` carries the rate. Without
+  // the first row every resale would fail on the foreign key at the moment of
+  // payment — the dead-transaction shape exactly: a customer pressing Buy on a
+  // feature that cannot complete.
+  await ensureDefaultPricingRule("ticket_resale");
+  await ensureDefaultPricingRule("ticket_resale_commission");
 }
 
 async function eventAudit({ eventId, actorType, actorId, action, metadata = {}, ipAddress, userAgent }) {
@@ -3074,6 +3154,418 @@ async function attachSeatToTicket(client, seatId, ticketId) {
   );
 }
 
+/* ==========================================================================
+   RESALE
+   ==========================================================================
+   Somebody cannot go and offers their ticket to another customer.
+
+   WHY THERE IS NO ESCROW HERE, which is the first question resale usually
+   raises. Escrow exists to bridge a gap in time between a buyer paying and a
+   seller delivering, when the two cannot be made to happen together. On this
+   platform both sides are wallets in the same ledger and the ticket is a row
+   in the same database, so the debit, the credit and the change of ownership
+   are one transaction. They commit together or not at all. There is no
+   interval in which the buyer has paid and does not hold the ticket, so there
+   is nothing to hold and nothing to release — and no held balance to strand if
+   a release job ever failed.
+
+   The rules that make resale safe rather than merely possible:
+
+   1. THE ORGANISER STILL DECIDES. transfer_allowed gates resale exactly as it
+      gates gifting. An organiser who said a ticket stays with its buyer said
+      that about money changing hands too — in fact especially about that.
+   2. A TICKET IS NEVER SOLD ABOVE WHAT WAS PAID FOR IT. The cap is the face
+      value recorded on the order, so resale cannot become touting. It is
+      enforced at listing AND re-read at purchase.
+   3. ONE OPEN LISTING PER TICKET, by unique index, and the listing row is
+      locked FOR UPDATE before the sale. Two buyers pressing at once: one buys,
+      the other is told it has gone.
+   4. BOTH SIDES OF THE MONEY ARE WRITTEN AS TRANSACTIONS. The seller gets a
+      credit row of their own, not just a ledger posting, so the money they
+      have been paid appears in their activity and on their statement rather
+      than only moving their balance.
+   ========================================================================== */
+
+// What the holder actually paid for one ticket, which is the ceiling on what
+// they may ask for it. Read from the order rather than from the ticket type,
+// because a coupon means the two differ and the buyer's own price is the
+// honest cap. A ticket with no order behind it falls back to the type's price.
+async function ticketFaceValue(client, ticket) {
+  const { rows } = await client.query(
+    `SELECT o.subtotal, o.quantity, tt.price
+       FROM tickets t
+       LEFT JOIN ticket_orders o ON o.id = t.order_id
+       JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
+      WHERE t.id = $1`,
+    [ticket.id]
+  );
+  const row = rows[0] || {};
+  const quantity = Number(row.quantity || 0);
+  if (quantity > 0 && row.subtotal != null) return money(Number(row.subtotal) / quantity);
+  return money(Number(row.price || 0));
+}
+
+// The checks a ticket must pass to be offered at all, shared by listing and by
+// purchase. Run again inside the buying transaction because every one of them
+// can change while a listing sits open: the event can be cancelled, the ticket
+// can be scanned in at the gate, the organiser can switch transfer off.
+async function assertTicketResalable(client, ticketId, { sellerUserId } = {}) {
+  const { rows } = await client.query(
+    `SELECT t.*, e.status AS event_status, e.event_name, e.event_date,
+            tt.transfer_allowed, tt.ticket_name AS ticket_type_name
+       FROM tickets t
+       JOIN events e ON e.id = t.event_id
+       JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
+      WHERE t.id = $1
+      FOR UPDATE OF t`,
+    [ticketId]
+  );
+  const ticket = rows[0];
+  if (!ticket) throw new AppError(404, "Ticket not found");
+  if (sellerUserId && ticket.owner_user_id !== sellerUserId) {
+    throw new AppError(404, "Ticket not found");
+  }
+  if (!ticket.transfer_allowed) {
+    throw new AppError(409, `${ticket.ticket_type_name || "This ticket"} cannot be resold. The organiser set it to stay with the person who bought it.`);
+  }
+  if (ticket.status === "scanned") throw new AppError(409, "That ticket has already been scanned in at the gate.");
+  if (ticket.status !== "valid") throw new AppError(409, "That ticket is no longer valid, so it cannot be sold.");
+  if (["cancelled", "suspended"].includes(ticket.event_status)) {
+    throw new AppError(409, "That event is not selling at the moment, so its tickets cannot be resold.");
+  }
+  if (ticket.event_date && new Date(ticket.event_date) < new Date(new Date().toDateString())) {
+    throw new AppError(409, "That event has already taken place.");
+  }
+  // A wristband linked to the ticket belongs to the current holder. Selling the
+  // ticket underneath it would leave a live tag on somebody else's entry, so
+  // the seller unlinks first — the same rule gifting has.
+  const { rows: tagRows } = await client.query(
+    "SELECT 1 FROM event_tags WHERE ticket_id = $1 AND status IN ('ASSIGNED','ACTIVE') LIMIT 1",
+    [ticketId]
+  ).catch(() => ({ rows: [] }));
+  if (tagRows[0]) {
+    throw new AppError(409, "Unlink your event wristband from this ticket before selling it.");
+  }
+  return ticket;
+}
+
+async function listTicketForResale(actor, ticketId, payload = {}, meta = {}) {
+  await ensureTicketingSchema();
+  if (actor.profileLocked) throw new AppError(423, "Profile is locked. Ticket resale is disabled.");
+  const price = money(Number(payload.price ?? payload.amount ?? NaN));
+  if (!Number.isFinite(price) || price < 0) throw new AppError(400, "Enter the price you are asking for the ticket.");
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const ticket = await assertTicketResalable(client, ticketId, { sellerUserId: actor.userId });
+    const faceValue = await ticketFaceValue(client, ticket);
+    // THE ANTI-TOUTING CAP. Resale exists so somebody who cannot go gets their
+    // money back, not so a ticket becomes a tradeable asset. Above face value
+    // this platform would be running a scalping market on its own rails.
+    if (price > faceValue) {
+      throw new AppError(400,
+        `A ticket cannot be resold for more than the ${formatMoney(faceValue)} that was paid for it. Set your price at ${formatMoney(faceValue)} or less.`);
+    }
+    let listing;
+    try {
+      const { rows } = await client.query(
+        `INSERT INTO ticket_listings (ticket_id, event_id, seller_user_id, price, face_value)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [ticketId, ticket.event_id, actor.userId, price, faceValue]
+      );
+      listing = rows[0];
+    } catch (error) {
+      // The unique partial index, not a check in this function, is what makes
+      // "one open listing" true under concurrency.
+      if (error.code === "23505") throw new AppError(409, "That ticket is already listed for sale.");
+      throw error;
+    }
+    await client.query("COMMIT");
+    await eventAudit({
+      eventId: ticket.event_id,
+      actorType: "customer",
+      actorId: actor.userId,
+      action: "ticket_listed_for_resale",
+      metadata: { ticketId, listingId: listing.id, price, faceValue },
+      ipAddress: meta.ipAddress,
+      userAgent: meta.userAgent
+    }).catch(() => {});
+    return ticketListingResponse(listing, ticket);
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function cancelTicketListing(actor, listingId, meta = {}) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `UPDATE ticket_listings
+        SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW()
+      WHERE id = $1 AND seller_user_id = $2 AND status = 'open'
+      RETURNING *`,
+    [listingId, actor.userId]
+  );
+  if (!rows[0]) throw new AppError(404, "That listing is not open, or is not yours.");
+  await eventAudit({
+    eventId: rows[0].event_id,
+    actorType: "customer",
+    actorId: actor.userId,
+    action: "ticket_listing_cancelled",
+    metadata: { listingId, ticketId: rows[0].ticket_id },
+    ipAddress: meta.ipAddress,
+    userAgent: meta.userAgent
+  }).catch(() => {});
+  return ticketListingResponse(rows[0]);
+}
+
+function ticketListingResponse(row = {}, ticket = null) {
+  return {
+    id: row.id,
+    ticketId: row.ticket_id,
+    eventId: row.event_id,
+    sellerUserId: row.seller_user_id,
+    price: Number(row.price || 0),
+    faceValue: Number(row.face_value || 0),
+    status: row.status,
+    soldAt: row.sold_at,
+    createdAt: row.created_at,
+    ...(row.event_name ? { eventName: row.event_name } : {}),
+    ...(row.ticket_name ? { ticketTypeName: row.ticket_name } : {}),
+    ...(row.seat_number
+      ? { seating: { section: row.seat_section || "", row: row.seat_row || "", seat: row.seat_number } }
+      : {}),
+    ...(ticket ? { ticketCode: ticket.ticket_code } : {})
+  };
+}
+
+// What is on sale for one event. Public: a listing is an offer to anybody, and
+// the seller is not named — a resale is between the buyer and the platform's
+// rails, not an introduction between two customers.
+async function browseTicketListings(eventId) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `SELECT l.*, e.event_name, tt.ticket_name,
+            s.section AS seat_section, s.row_label AS seat_row, s.seat_number
+       FROM ticket_listings l
+       JOIN tickets t ON t.id = l.ticket_id
+       JOIN events e ON e.id = l.event_id
+       JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
+       LEFT JOIN event_seats s ON s.id = t.seat_id
+      WHERE l.event_id = $1 AND l.status = 'open'
+      ORDER BY l.price ASC, l.created_at ASC
+      LIMIT 200`,
+    [eventId]
+  );
+  return rows.map((row) => ticketListingResponse(row));
+}
+
+async function myTicketListings(userId) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `SELECT l.*, e.event_name, tt.ticket_name
+       FROM ticket_listings l
+       JOIN tickets t ON t.id = l.ticket_id
+       JOIN events e ON e.id = l.event_id
+       JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
+      WHERE l.seller_user_id = $1
+      ORDER BY l.created_at DESC
+      LIMIT 100`,
+    [userId]
+  );
+  return rows.map((row) => ticketListingResponse(row));
+}
+
+// THE SALE. One transaction: the buyer is debited, the seller is credited, the
+// platform takes its commission, and the ticket changes hands. Any failure
+// rolls all four back together.
+async function buyTicketListing(actor, listingId, meta = {}) {
+  await ensureTicketingSchema();
+  if (actor.profileLocked) throw new AppError(423, "Profile is locked. Ticket purchases are disabled.");
+  const client = await pool.connect();
+  const txId = randomUUID();
+  const sellerTxId = randomUUID();
+  const reference = `RESALE-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+  let result = null;
+  try {
+    await client.query("BEGIN");
+    // The listing row is locked FIRST. Everything after this is settled against
+    // a listing nobody else can be selling at the same moment.
+    const { rows: listingRows } = await client.query(
+      "SELECT * FROM ticket_listings WHERE id = $1 FOR UPDATE",
+      [listingId]
+    );
+    const listing = listingRows[0];
+    if (!listing) throw new AppError(404, "That listing was not found.");
+    if (listing.status !== "open") throw new AppError(409, "That ticket has already been sold.");
+    if (listing.seller_user_id === actor.userId) {
+      throw new AppError(400, "That is your own listing. Cancel it instead if you want the ticket back.");
+    }
+
+    // Re-checked under the lock, not trusted from listing time. A listing can
+    // sit open for days, and in that time the event can be cancelled, the
+    // ticket can be scanned in, or the organiser can switch transfer off.
+    const ticket = await assertTicketResalable(client, listing.ticket_id, { sellerUserId: listing.seller_user_id });
+    // And the cap is re-read too, so a listing cannot outlive the price rule
+    // that allowed it.
+    const faceValue = await ticketFaceValue(client, ticket);
+    const price = money(Number(listing.price || 0));
+    if (price > faceValue) {
+      throw new AppError(409, "That listing is priced above what the ticket is worth and can no longer be bought.");
+    }
+
+    const buyerWallet = await loadWalletForUpdate(client, actor.userId);
+    if (!buyerWallet) throw new AppError(404, "Buyer wallet not found");
+    if (price > 0 && Number(buyerWallet.available_balance || 0) < price) {
+      throw new AppError(400, "Insufficient balance");
+    }
+    const sellerWallet = await loadWalletForUpdate(client, listing.seller_user_id);
+    if (!sellerWallet) throw new AppError(404, "Seller wallet not found");
+
+    // The buyer pays exactly the price on the listing. TitoPay's commission
+    // comes off the seller's proceeds, so the number the buyer agreed to is the
+    // number they are charged and there is no fee revealed at the last step.
+    const commission = price > 0 ? (await calculateFee("ticket_resale_commission", price)).fee : 0;
+    const sellerNet = money(price - commission);
+    const revenueWallet = commission > 0 ? await loadRevenueWalletForUpdate(client) : null;
+    if (commission > 0 && !revenueWallet) throw new AppError(500, "Revenue wallet not configured");
+
+    const { rows: buyerRows } = await client.query(
+      "SELECT full_name, email, phone FROM users WHERE id = $1", [actor.userId]);
+    const buyer = buyerRows[0] || {};
+
+    // BOTH SIDES ARE WRITTEN. A single debit row would move the seller's
+    // balance and leave their activity and statement silent about why — every
+    // reporting query in the app reads transactions WHERE user_id = the
+    // reader, so money with no row of its own is money the recipient cannot
+    // see.
+    //
+    // transactions.reference is UNIQUE, so the two rows cannot share one
+    // string. The seller's carries a -CR suffix and both carry the sale's own
+    // reference in metadata, which is what joins the two halves back together
+    // in a reconciliation or a support query.
+    const sellerReference = `${reference}-CR`;
+    const saleMetadata = { listingId, ticketId: ticket.id, eventId: ticket.event_id, saleReference: reference };
+    await client.query(
+      `INSERT INTO transactions
+        (id, user_id, wallet_id, service_code, amount, fee, total, status, direction, reference, recipient_reference, metadata)
+       VALUES ($1,$2,$3,'ticket_resale',$4,0,$4,'completed','debit',$5,$6,$7::JSONB)`,
+      [txId, actor.userId, buyerWallet.id, price, reference, ticket.event_name,
+        JSON.stringify({ ...saleMetadata, role: "buyer" })]
+    );
+    await client.query(
+      `INSERT INTO transactions
+        (id, user_id, wallet_id, service_code, amount, fee, total, status, direction, reference, recipient_reference, metadata)
+       VALUES ($1,$2,$3,'ticket_resale',$4,$5,$6,'completed','credit',$7,$8,$9::JSONB)`,
+      [sellerTxId, listing.seller_user_id, sellerWallet.id, price, commission, sellerNet, sellerReference,
+        ticket.event_name,
+        JSON.stringify({ ...saleMetadata, role: "seller" })]
+    );
+
+    if (price > 0) {
+      await applyWalletMovement(client, {
+        walletId: buyerWallet.id,
+        transactionId: txId,
+        entryType: "debit",
+        amount: price,
+        reference,
+        metadata: { serviceCode: "ticket_resale", listingId, ticketId: ticket.id }
+      });
+    }
+    if (sellerNet > 0) {
+      await applyWalletMovement(client, {
+        walletId: sellerWallet.id,
+        transactionId: sellerTxId,
+        entryType: "credit",
+        amount: sellerNet,
+        reference: sellerReference,
+        metadata: { serviceCode: "ticket_resale", listingId, ticketId: ticket.id, saleReference: reference }
+      });
+    }
+    if (commission > 0 && revenueWallet) {
+      await applyWalletMovement(client, {
+        walletId: revenueWallet.id,
+        transactionId: txId,
+        entryType: "credit",
+        amount: commission,
+        reference,
+        metadata: { serviceCode: "ticket_resale", source: "ticket_resale_commission", listingId }
+      });
+      await client.query(
+        `INSERT INTO revenue_ledger (id, transaction_id, service_code, fee_collected, revenue_wallet_id)
+         VALUES ($1,$2,'ticket_resale',$3,$4)`,
+        [randomUUID(), txId, commission, revenueWallet.id]
+      );
+    }
+
+    // The ticket moves in the same transaction as the money. The attendee
+    // details become the buyer's, the way a claimed ticket's do, because entry
+    // is under the name of whoever holds it.
+    await client.query(
+      `UPDATE tickets
+          SET owner_user_id = $2, attendee_name = $3, attendee_email = $4, attendee_phone = $5,
+              hidden_at = NULL, updated_at = NOW()
+        WHERE id = $1`,
+      [ticket.id, actor.userId, buyer.full_name || ticket.attendee_name, buyer.email || null, buyer.phone || null]
+    );
+    await client.query(
+      `UPDATE ticket_listings
+          SET status = 'sold', buyer_user_id = $2, transaction_id = $3, commission = $4,
+              seller_net = $5, sold_at = NOW(), updated_at = NOW()
+        WHERE id = $1`,
+      [listingId, actor.userId, txId, commission, sellerNet]
+    );
+    await client.query("COMMIT");
+    result = { listing, ticket, price, commission, sellerNet };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  // Everything below is after the commit and is deliberately best-effort: a
+  // failed notification must never undo a completed sale.
+  await eventAudit({
+    eventId: result.ticket.event_id,
+    actorType: "customer",
+    actorId: actor.userId,
+    action: "ticket_resold",
+    metadata: {
+      listingId,
+      ticketId: result.ticket.id,
+      sellerUserId: result.listing.seller_user_id,
+      price: result.price,
+      commission: result.commission,
+      sellerNet: result.sellerNet
+    },
+    ipAddress: meta.ipAddress,
+    userAgent: meta.userAgent
+  }).catch(() => {});
+  try {
+    await createNotification({
+      user: { id: result.listing.seller_user_id, user_type: "customer" },
+      channel: "in_app",
+      notificationType: "ticket_resold",
+      title: "Your ticket sold",
+      body: `Your ticket for ${result.ticket.event_name} sold for ${formatMoney(result.price)}. ${formatMoney(result.sellerNet)} is in your wallet.`,
+      provider: "in_app",
+      metadata: { listingId, ticketId: result.ticket.id, clientNotificationId: `ticket-resale-${listingId}` }
+    });
+  } catch (error) {
+    console.error("[ticket-resale] seller notification failed", { listingId, message: error.message });
+  }
+  return {
+    ticketId: result.ticket.id,
+    eventName: result.ticket.event_name,
+    price: result.price,
+    reference
+  };
+}
+
 async function claimTicketByCode(actor, rawCode, meta = {}) {
   await ensureTicketingSchema();
   const code = String(rawCode || "").replace(/\s+/g, "");
@@ -3162,6 +3654,15 @@ async function claimTicketByCode(actor, rawCode, meta = {}) {
      WHERE id = $1`,
     [ticket.id, actor.userId, claimant.full_name || ticket.attendee_name, claimant.email || null, claimant.phone || null]
   );
+  // A ticket that has just been gifted away cannot still be for sale. The sale
+  // would refuse anyway — buyTicketListing re-checks that the seller still owns
+  // the ticket — but leaving the offer standing advertises something that
+  // cannot be bought, so it is withdrawn here.
+  await pool.query(
+    `UPDATE ticket_listings SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW()
+      WHERE ticket_id = $1 AND status = 'open'`,
+    [ticket.id]
+  ).catch(() => null);
   await eventAudit({
     eventId: ticket.event_id,
     actorType: "customer",
@@ -4818,6 +5319,11 @@ async function adminTicketingAnalytics() {
 
 module.exports = {
   assertEventOwnedBy,
+  listTicketForResale,
+  cancelTicketListing,
+  browseTicketListings,
+  myTicketListings,
+  buyTicketListing,
   defineSeating,
   seatingAvailability,
   allocateSeats,

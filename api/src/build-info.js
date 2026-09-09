@@ -19,10 +19,27 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 119;
+const API_BUILD = 120;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  120: "TICKET RESALE, AND A DEADLOCK THAT WAS ALREADY THERE. A holder who "
+      + "cannot go lists their ticket and another customer buys it. No escrow: "
+      + "both wallets and the ticket are in one database, so the debit, the "
+      + "credit and the change of ownership are one transaction and there is no "
+      + "interval in which a buyer has paid and does not hold the ticket. A "
+      + "ticket may never be listed above what was paid for it, checked at "
+      + "listing and again at purchase, so resale cannot become touting. The "
+      + "organiser's transfer_allowed setting gates resale as it gates gifting. "
+      + "Both sides of the money are written as transactions, so the seller can "
+      + "SEE what they were paid rather than only watching a balance move. "
+      + "Separately: ensureTicketingSchema re-ran its whole DDL block on every "
+      + "one of the service's 57 entry points, and CREATE TABLE IF NOT EXISTS "
+      + "takes locks on tables that already exist - so two ticketing calls in "
+      + "flight at once could deadlock each other, and in production that is "
+      + "two customers buying at the same second with one getting an error "
+      + "they did nothing to cause. The bootstrap now runs once per process, "
+      + "which is what IF NOT EXISTS always meant.",
   119: "SEATING REACHES THE TICKET, AND THE SEAT MAP GETS AN OWNER. Build 118 "
       + "could allocate seats but nothing could define one and no seat ever "
       + "left the database: defineSeating had no route and no ownership check, "

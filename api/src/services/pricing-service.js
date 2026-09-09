@@ -109,6 +109,10 @@ const APPROVED_PRICING_SCHEDULE = [
   ["ticket_buyer_service_fee", "Ticket Buyer Service Fee", 10],
   ["ticket_business_commission", "Ticket Business Commission", 0, 0, 10],
   ["ticketing", "Ticket Business Commission", 0, 0, 10],
+  // Resale commission comes off the SELLER's proceeds, so the buyer pays
+  // exactly the price on the listing with nothing revealed at the last step.
+  ["ticket_resale_commission", "Ticket Resale Commission", 0, 0, 10],
+  ["ticket_resale", "Ticket Resale"],
   ["ticket_refund_processing", "Ticket Refund Processing", 1],
   ["ticket_refund", "Ticket Refund", 1],
   ["ticket_scanning", "Ticket Scanning"],
