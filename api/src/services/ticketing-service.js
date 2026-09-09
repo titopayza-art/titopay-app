@@ -78,10 +78,32 @@ function formatMoney(value) {
 // found by running the seating and resale suites together, which is the first
 // thing in this codebase to drive concurrent ticketing traffic.
 //
-// The bootstrap is idempotent by construction — every statement in it is
-// IF NOT EXISTS — so "once, at first use" is what it always meant. The promise
-// is cached, and cleared again if it rejects, so a failure during startup is
-// retried rather than remembered forever.
+// Caching it per process was the first fix and it was not enough. node --test
+// starts one worker per core and a clustered API forks one process per worker,
+// so "once per process" is still four or eight concurrent DDL runs at boot,
+// each colliding with the ordinary traffic the others are already serving.
+// The deadlocks got rarer and did not stop:
+//
+//   Process A waits for AccessShareLock on events; blocked by process B.
+//   Process B waits for AccessExclusiveLock on tickets; blocked by process A.
+//   Process A: SELECT t.*, e.status ... FROM tickets t JOIN events e ...
+//
+// That is a customer's read losing a race with another process's boot.
+//
+// So the bootstrap now runs ONCE PER DATABASE PER DEPLOY, not once per
+// process. The DDL is fingerprinted and the fingerprint is recorded; a process
+// whose fingerprint already matches does no DDL at all, which is every process
+// after the first and every boot after the first. Change the DDL and the
+// fingerprint changes with it, so a new table or column still arrives exactly
+// once, by itself, without anyone remembering to write a migration.
+//
+// An advisory lock serialises the processes that DO have work to do, so a cold
+// start with four workers runs the DDL once rather than four times at once.
+// The promise is cached and cleared again if it rejects, so a failure during
+// startup is retried rather than remembered forever.
+const TICKETING_SCHEMA_KEY = "ticketing_schema_fingerprint";
+// Any stable 64-bit number; it only has to differ from other advisory locks.
+const TICKETING_SCHEMA_LOCK = 8123407;
 let ticketingSchemaReady = null;
 
 async function ensureTicketingSchema() {
@@ -94,8 +116,77 @@ async function ensureTicketingSchema() {
   return ticketingSchemaReady;
 }
 
+async function ticketingSchemaFingerprint() {
+  // The DDL itself plus the pricing codes, so changing either re-runs the
+  // bootstrap and changing neither never does.
+  return createHash("sha256")
+    .update(TICKETING_DDL_FUNCTIONS)
+    .update(TICKETING_DDL_TABLES)
+    .update(TICKETING_PRICING_CODES.join(","))
+    .digest("hex")
+    .slice(0, 32);
+}
+
+async function ticketingSchemaRecorded(fingerprint) {
+  const { rows } = await pool.query(
+    "SELECT value FROM platform_settings WHERE key = $1 LIMIT 1",
+    [TICKETING_SCHEMA_KEY]
+  ).catch(() => ({ rows: [] }));
+  return rows[0]?.value?.fingerprint === fingerprint;
+}
+
 async function buildTicketingSchema() {
-  await pool.query(`
+  const fingerprint = await ticketingSchemaFingerprint();
+  // The fast path, taken by every process after the first: one indexed read
+  // and no DDL, so there is nothing for a customer's query to deadlock with.
+  if (await ticketingSchemaRecorded(fingerprint)) return;
+
+  const client = await pool.connect();
+  try {
+    // Serialises the processes that still have work. Whoever arrives second
+    // waits here and then finds the fingerprint already recorded below.
+    await client.query("SELECT pg_advisory_lock($1)", [TICKETING_SCHEMA_LOCK]);
+    if (await ticketingSchemaRecorded(fingerprint)) return;
+    await applyTicketingSchema();
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, updated_at)
+       VALUES ($1, $2::JSONB, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [TICKETING_SCHEMA_KEY, JSON.stringify({ fingerprint, appliedAt: new Date().toISOString() })]
+    ).catch(() => {
+      // A database without platform_settings still gets a correct schema; it
+      // just pays for the DDL on every boot, which is the old behaviour.
+    });
+  } finally {
+    await client.query("SELECT pg_advisory_unlock($1)", [TICKETING_SCHEMA_LOCK]).catch(() => {});
+    client.release();
+  }
+}
+
+async function applyTicketingSchema() {
+  await pool.query(TICKETING_DDL_FUNCTIONS);
+  await pool.query(TICKETING_DDL_TABLES);
+  for (const code of TICKETING_PRICING_CODES) await ensureDefaultPricingRule(code);
+}
+
+// transactions.service_code is a foreign key into pricing_rules, so each of
+// these rows has to exist before the first transaction that names it can be
+// written. Without ticket_resale, every resale would fail on the foreign key
+// at the moment of payment — a customer pressing Buy on something that cannot
+// complete.
+const TICKETING_PRICING_CODES = [
+  "ticket_purchase",
+  "ticket_business_commission",
+  "ticket_buyer_service_fee",
+  "ticket_refund_processing",
+  "ticket_scanning",
+  "ticket_staff_access",
+  "event_tag",
+  "ticket_resale",
+  "ticket_resale_commission"
+];
+
+const TICKETING_DDL_FUNCTIONS = `
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -126,8 +217,11 @@ async function buildTicketingSchema() {
         $fn$;
       END IF;
     END $$;
-  `);
-  await pool.query(`
+`;
+
+// The tables. Separate from the block above because that one defines a
+// function and has to have run before anything uses it as a column default.
+const TICKETING_DDL_TABLES = `
     CREATE TABLE IF NOT EXISTS events (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       business_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -662,24 +756,7 @@ async function buildTicketingSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_event_promoters_event_code ON event_promoters (event_id, code);
     ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS promoter_id UUID;
     CREATE INDEX IF NOT EXISTS idx_ticket_orders_promoter ON ticket_orders (promoter_id) WHERE promoter_id IS NOT NULL;
-  `);
-  await ensureDefaultPricingRule("ticket_purchase");
-  await ensureDefaultPricingRule("ticket_business_commission");
-  await ensureDefaultPricingRule("ticket_buyer_service_fee");
-  await ensureDefaultPricingRule("ticket_refund_processing");
-  await ensureDefaultPricingRule("ticket_scanning");
-  await ensureDefaultPricingRule("ticket_staff_access");
-  // transactions.service_code is a foreign key into pricing_rules, so this row
-  // has to exist before the first Event Tag tap can be written to the ledger.
-  await ensureDefaultPricingRule("event_tag");
-  // The same reason, for resale. `ticket_resale` is the service code on both
-  // sides of the sale, and `ticket_resale_commission` carries the rate. Without
-  // the first row every resale would fail on the foreign key at the moment of
-  // payment — the dead-transaction shape exactly: a customer pressing Buy on a
-  // feature that cannot complete.
-  await ensureDefaultPricingRule("ticket_resale");
-  await ensureDefaultPricingRule("ticket_resale_commission");
-}
+  `;
 
 async function eventAudit({ eventId, actorType, actorId, action, metadata = {}, ipAddress, userAgent }) {
   await ensureTicketingSchema();

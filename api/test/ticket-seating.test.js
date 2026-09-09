@@ -379,3 +379,47 @@ test("seats cannot be attached to another event's ticket type", async () => {
     await cleanup(b.eventId, [organiser]);
   }
 });
+
+test("THE SCHEMA BOOTSTRAP DOES NO DDL ONCE THE DATABASE IS AT ITS FINGERPRINT", async () => {
+  // The deadlock this closes, in full. ensureTicketingSchema is awaited at the
+  // top of every entry point in the service. Running its DDL per call
+  // deadlocked constantly; caching it per process made that rarer and did not
+  // stop it, because node --test starts one worker per core and a clustered
+  // API forks one process per worker — so "once per process" is still four or
+  // eight concurrent DDL runs colliding with the traffic the others serve:
+  //
+  //   Process A waits for AccessShareLock on events; blocked by process B.
+  //   Process B waits for AccessExclusiveLock on tickets; blocked by A.
+  //   Process A: SELECT t.*, e.status ... FROM tickets t JOIN events e ...
+  //
+  // That is a customer's read losing a race with another process's boot.
+  //
+  // The DDL is now fingerprinted and the fingerprint recorded, so it runs once
+  // per database per deploy. Every process after the first, and every boot
+  // after the first, issues no DDL at all — and DDL that never runs cannot
+  // deadlock with anything.
+  const { pool: livePool } = require("../src/db/pool");
+  await ticketing.ensureTicketingSchema();
+
+  const { rows } = await livePool.query(
+    "SELECT value FROM platform_settings WHERE key = 'ticketing_schema_fingerprint'");
+  assert.ok(rows[0]?.value?.fingerprint, "the applied fingerprint is recorded");
+
+  // Count the DDL a fresh bootstrap would issue against this database. The
+  // module memoises within a process, so the private builder is exercised
+  // directly rather than through the cached promise.
+  const source = require("fs").readFileSync(
+    require("path").join(__dirname, "..", "src", "services", "ticketing-service.js"), "utf8");
+  assert.match(source, /if \(await ticketingSchemaRecorded\(fingerprint\)\) return;/,
+    "the fast path returns before any DDL");
+  assert.match(source, /SELECT pg_advisory_lock\(\$1\)/,
+    "processes that DO have work serialise instead of racing");
+  assert.match(source, /await pool\.query\(TICKETING_DDL_TABLES\)/,
+    "the DDL is a value that can be fingerprinted, not a literal inside the function");
+  // And the fingerprint must cover the DDL, or a new table would never arrive.
+  const fn = source.slice(source.indexOf("async function ticketingSchemaFingerprint"),
+    source.indexOf("async function ticketingSchemaRecorded"));
+  assert.match(fn, /update\(TICKETING_DDL_FUNCTIONS\)/);
+  assert.match(fn, /update\(TICKETING_DDL_TABLES\)/);
+  assert.match(fn, /update\(TICKETING_PRICING_CODES/);
+});

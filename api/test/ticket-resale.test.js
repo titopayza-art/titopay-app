@@ -230,7 +230,7 @@ test("a ticket cannot be listed above what was paid for it", async () => {
     await assert.rejects(
       () => ticketing.listTicketForResale({ userId: seller }, ticketId, { price: 400 }),
       (error) => {
-        assert.equal(error.statusCode, 400);
+        assert.equal(error.statusCode, 400, `expected a refusal, got: ${error.message}`);
         assert.match(error.message, /more than the R 200\.00 that was paid/i,
           "the refusal names the actual ceiling rather than saying no");
         return true;
@@ -258,7 +258,7 @@ test("the organiser's transfer setting blocks resale, not just gifting", async (
     await assert.rejects(
       () => ticketing.listTicketForResale({ userId: seller }, ticketId, { price: 100 }),
       (error) => {
-        assert.equal(error.statusCode, 409);
+        assert.equal(error.statusCode, 409, `expected a refusal, got: ${error.message}`);
         assert.match(error.message, /cannot be resold/i);
         assert.match(error.message, /organiser/i);
         return true;
@@ -279,7 +279,7 @@ test("a ticket already scanned in at the gate cannot be sold", async () => {
     await assert.rejects(
       () => ticketing.listTicketForResale({ userId: seller }, ticketId, { price: 100 }),
       (error) => {
-        assert.equal(error.statusCode, 409);
+        assert.equal(error.statusCode, 409, `expected a refusal, got: ${error.message}`);
         assert.match(error.message, /already been scanned/i);
         return true;
       });
@@ -299,7 +299,7 @@ test("a stranger cannot list someone else's ticket", async () => {
       (error) => {
         // 404, matching the rest of the service: the refusal declines to
         // confirm that the ticket exists.
-        assert.equal(error.statusCode, 404);
+        assert.equal(error.statusCode, 404, `expected a refusal, got: ${error.message}`);
         return true;
       });
     assert.equal(await ownerOf(ticketId), seller);
@@ -351,7 +351,7 @@ test("a buyer who cannot afford it moves nothing at all", async () => {
     await assert.rejects(
       () => ticketing.buyTicketListing({ userId: buyer }, listing.id),
       (error) => {
-        assert.equal(error.statusCode, 400);
+        assert.equal(error.statusCode, 400, `expected a refusal, got: ${error.message}`);
         assert.match(error.message, /Insufficient balance/i);
         return true;
       });
@@ -377,7 +377,7 @@ test("a seller cannot buy their own listing", async () => {
     await assert.rejects(
       () => ticketing.buyTicketListing({ userId: seller }, listing.id),
       (error) => {
-        assert.equal(error.statusCode, 400);
+        assert.equal(error.statusCode, 400, `expected a refusal, got: ${error.message}`);
         assert.match(error.message, /your own listing/i);
         return true;
       });

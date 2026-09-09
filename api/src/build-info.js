@@ -19,10 +19,27 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 122;
+const API_BUILD = 123;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  123: "ZERO DEPENDENCY ADVISORIES, AND THE BOOT DEADLOCK CLOSED PROPERLY. "
+      + "nodemailer 9.0.3 -> ^9.1.1 clears a high plus three others; two of "
+      + "those never applied here, but two are address-parsing flaws where a "
+      + "crafted recipient sends a message somewhere other than where it was "
+      + "addressed, and this platform emails one-time codes and statements. "
+      + "qs is pinned to ^6.16.0 by an overrides entry because Express 4.22.2 "
+      + "is the newest Express 4 and pins qs ~6.15.1, so no Express 4 resolves "
+      + "it and Express 5 is a major bump on a live payments API. req.query "
+      + "was driven with the shapes this API receives and parses identically. "
+      + "See api/DEPENDENCY_SECURITY.md before removing the override. "
+      + "Separately: caching the ticketing schema bootstrap per process made "
+      + "the boot deadlock rarer, not gone - node --test runs one worker per "
+      + "core and a clustered API forks one per worker, so it was still four "
+      + "concurrent DDL runs colliding with the traffic the others served. The "
+      + "DDL is now fingerprinted and the fingerprint recorded, so it runs "
+      + "once per database per deploy and every later process issues none at "
+      + "all. DDL that never runs cannot deadlock with a customer's read.",
   122: "AN ORGANISER CAN NOW ACTUALLY LAY OUT SEATS. The seating routes "
       + "existed and no screen called them, so seating was reachable only by "
       + "an API client. It opens from the event itself rather than as a "
