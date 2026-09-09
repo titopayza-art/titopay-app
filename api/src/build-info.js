@@ -19,10 +19,27 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 116;
+const API_BUILD = 117;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  117: "THE ORGANISER'S TRANSFER SETTING NOW MEANS SOMETHING. "
+      + "event_ticket_types.transfer_allowed has existed since the table was "
+      + "written, is editable through the API and is returned to the console - "
+      + "and nothing ever read it. /ticketing/tickets/claim moved a ticket into "
+      + "whoever presented the code, so an organiser who switched transfer OFF "
+      + "was shown it as off while transfers carried on. claimTicketByCode now "
+      + "joins the ticket's own type and refuses when the organiser said no, "
+      + "naming the reason rather than implying the code was wrong. THE "
+      + "NON-BREAKING HALF MATTERS MORE: the column defaulted to FALSE and no "
+      + "UI has ever sent it, so every ticket type on the platform carried "
+      + "false by accident, not by choice - enforcing the column against that "
+      + "data would have revoked gifting from every ticket already sold. The "
+      + "default is now TRUE in both the live schema and the create path, and "
+      + "migration 20260909_ticket_transfer_default backfills existing rows "
+      + "once. Being tracked is the point: an organiser who deliberately turns "
+      + "transfer off after this will not have it turned back on by the next "
+      + "deploy.",
   116: "ONE LIST OF VAS SERVICE CODES, AND A DEAD TRANSACTION CLOSED. The "
       + "catalogue gate and the transaction engine each kept their own copy of "
       + "which service codes are value-added services, and the two had drifted: "

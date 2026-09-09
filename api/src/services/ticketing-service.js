@@ -150,7 +150,7 @@ async function ensureTicketingSchema() {
       sales_closing_at TIMESTAMPTZ,
       per_customer_purchase_limit INTEGER,
       attendee_details_required BOOLEAN NOT NULL DEFAULT FALSE,
-      transfer_allowed BOOLEAN NOT NULL DEFAULT FALSE,
+      transfer_allowed BOOLEAN NOT NULL DEFAULT TRUE,
       refunds_allowed BOOLEAN NOT NULL DEFAULT FALSE,
       refund_deadline TIMESTAMPTZ,
       refund_conditions TEXT NOT NULL DEFAULT '',
@@ -865,7 +865,12 @@ function normalizeTicketTypes(items = [], { forceFree = false } = {}) {
       salesClosingAt: item.salesClosingAt || item.sales_closing_at || null,
       perCustomerPurchaseLimit: item.perCustomerPurchaseLimit || item.per_customer_purchase_limit || null,
       attendeeDetailsRequired: Boolean(item.attendeeDetailsRequired ?? item.attendee_details_required),
-      transferAllowed: Boolean(item.transferAllowed ?? item.transfer_allowed),
+      // Defaults to ALLOWED, not to false. Boolean(undefined) is false, and no
+      // organiser UI has ever sent this field — so defaulting to false meant
+      // every ticket type on the platform said "not transferable" while the
+      // claim happily transferred it. Now that the claim enforces the column,
+      // the default has to describe the behaviour organisers actually expect.
+      transferAllowed: item.transferAllowed ?? item.transfer_allowed ?? true,
       refundsAllowed: Boolean(item.refundsAllowed ?? item.refunds_allowed),
       refundDeadline: item.refundDeadline || item.refund_deadline || null,
       refundConditions: cleanText(item.refundConditions || item.refund_conditions, 800),
@@ -2859,10 +2864,12 @@ async function claimTicketByCode(actor, rawCode, meta = {}) {
   }
 
   const { rows } = await pool.query(
-    `SELECT t.*, e.event_name, e.status AS event_status, u.full_name AS owner_name, u.email AS owner_email
+    `SELECT t.*, e.event_name, e.status AS event_status, u.full_name AS owner_name, u.email AS owner_email,
+            tt.transfer_allowed, tt.ticket_name AS ticket_type_name
      FROM tickets t
      JOIN events e ON e.id = t.event_id
      JOIN users u ON u.id = t.owner_user_id
+     JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
      WHERE t.ticket_code = $1
      LIMIT 1`,
     [code]
@@ -2888,6 +2895,25 @@ async function claimTicketByCode(actor, rawCode, meta = {}) {
   if (ticket.status !== "valid") return failClaim("That ticket is no longer valid, so it cannot be added.", 409);
   if (["cancelled", "suspended"].includes(ticket.event_status)) {
     return failClaim("That event is not accepting entries at the moment, so the ticket cannot be added.", 409);
+  }
+  // THE ORGANISER'S OWN SETTING, ACTUALLY ENFORCED.
+  //
+  // event_ticket_types.transfer_allowed has been stored, editable in the
+  // organiser's ticket form and returned by the API since the table was
+  // written — and nothing ever read it. An organiser who switched transfer OFF
+  // was told it was off while anybody holding the code could still pull the
+  // ticket into their own account. A control that does nothing is worse than
+  // no control: it is a promise to the organiser that the platform was not
+  // keeping.
+  //
+  // Non-transferable is a real and common choice — named tickets for a
+  // licensed venue, an age-restricted event, a corporate allocation — so the
+  // refusal names the reason rather than pretending the code was wrong.
+  if (!ticket.transfer_allowed) {
+    return failClaim(
+      `${ticket.ticket_type_name || "This ticket"} cannot be transferred. The organiser set it to stay with the person who bought it, so it has to be used from their account.`,
+      409
+    );
   }
   // A wristband already linked to this ticket belongs to the current holder.
   // Moving the ticket underneath it would leave a live tag on someone else's
