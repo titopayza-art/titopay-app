@@ -22,7 +22,7 @@
     "backend:audit": "node scripts/audit-production-backend.js",
     "email:verify": "node scripts/verify-email-otp.js",
     "verify:infra": "node scripts/verify-infrastructure.js",
-    "test": "node --test",
+    "test": "POSTGRES_POOL_MAX=8 node --test",
     "peach:diagnose-payout": "node scripts/diagnose-peach-payout.js",
     "db:apply-migrations": "node scripts/apply-migrations.js",
     "hr:hygiene": "node scripts/hr-data-hygiene.js",

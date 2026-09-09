@@ -317,7 +317,13 @@ test("one open listing per ticket, enforced by the database", async () => {
     await assert.rejects(
       () => ticketing.listTicketForResale({ userId: seller }, ticketId, { price: 100 }),
       (error) => {
-        assert.equal(error.statusCode, 409);
+        // The message is carried into the assertion deliberately. An exhausted
+        // connection pool throws a plain Error with no statusCode, and a bare
+        // "expected 409, got undefined" reads exactly like a broken money path
+        // rather than the environment running out of sockets. npm test now
+        // pins POSTGRES_POOL_MAX so that cannot happen; this makes it obvious
+        // if it ever does again.
+        assert.equal(error.statusCode, 409, `expected a refusal, got: ${error.message}`);
         assert.match(error.message, /already listed/i);
         return true;
       });

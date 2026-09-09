@@ -68,6 +68,16 @@ function postgresSslForUrl(connectionString, environment, explicitSetting) {
 //
 // With API_WORKERS unset it resolves to 20 — byte-for-byte today's behaviour —
 // so this changes nothing until someone actually runs more than one process.
+// POSTGRES_POOL_MAX is also how `npm test` keeps itself honest. node --test
+// runs one worker process PER CORE, and each of those builds its own pool
+// sizing itself as though it were the only process on the machine — four
+// workers times twenty is eighty connections against a server that allows a
+// hundred. When that tips over, pool.connect() throws a plain Error reading
+// "timeout exceeded when trying to connect" after five seconds, with no
+// statusCode on it. A test asserting `error.statusCode === 409` then fails
+// while looking exactly like a broken money path, which is how an afternoon
+// gets spent on a bug that was never there. The test script pins the pool
+// small so the arithmetic cannot tip over.
 function poolSize() {
   const explicit = Number(process.env.POSTGRES_POOL_MAX);
   if (Number.isFinite(explicit) && explicit > 0) return Math.floor(explicit);
