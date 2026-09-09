@@ -7,6 +7,11 @@
 // finger and reappear later somewhere else. This watches the card for a full
 // minute — fifteen poll cycles — and fails if it ever disappears or moves.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const PWA = "http://127.0.0.1:8010";
 const API = "http://127.0.0.1:8110/v1";
 
@@ -135,7 +140,7 @@ const SAMPLE_MS = 500;
   check("nothing calls the API without a token while the chat is open", unauthenticated === 0,
     `${unauthenticated} unauthenticated request(s)`);
 
-  await page.screenshot({ path: "pwa-support-escalation.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-support-escalation.png` });
 
   /* ---- the rest of the conversation's life -------------------------------- */
   // Every card in the thread is only true at one stage. Walk the conversation
@@ -190,7 +195,7 @@ const SAMPLE_MS = 500;
     ended.systemLines >= 3 && ended.avatarsOnSystemLines === 0,
     `${ended.systemLines} status lines, ${ended.avatarsOnSystemLines} of them wearing an avatar`);
 
-  await page.screenshot({ path: "pwa-support-closed.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-support-closed.png` });
   check("no script errors", errors.length === 0, errors.slice(0, 2).join(" | ").slice(0, 160));
 
   await browser.close();

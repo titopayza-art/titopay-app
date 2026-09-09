@@ -1,6 +1,11 @@
 // Drive the real PWA bundle (app.min.js, the file index.html loads) through a
 // complete Peach card top-up in Chromium.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 
 const PWA = "http://127.0.0.1:8010";
 const API = "http://127.0.0.1:8110/v1";
@@ -135,7 +140,7 @@ async function apiCall(path, body, token) {
   const realErrors = consoleErrors.filter((e) => !/favicon|manifest|service-?worker|404|Failed to load resource|frame-ancestors|chat\/socket/i.test(e));
   check("no JavaScript errors in the page", realErrors.length === 0, realErrors.slice(0, 3).join(" | "));
 
-  await page.screenshot({ path: "pwa-topup-success.png", fullPage: false });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-topup-success.png`, fullPage: false });
   await browser.close();
 
   console.log("\n=================================================================");

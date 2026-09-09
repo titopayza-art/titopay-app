@@ -7,6 +7,11 @@
 // This drives the real Top Up and Withdraw forms to their review screens in a
 // browser and reads what is actually on the glass.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 
 const PWA = "http://127.0.0.1:8010";
 const API = "http://127.0.0.1:8110/v1";
@@ -136,7 +141,7 @@ async function fundWallet(token, amount) {
   check("top up numbers are the server's, exactly",
     topup.includes(String(tp.amount.toFixed(2))) && topup.includes(String(tp.fee.toFixed(2))) && topup.includes(String(tp.total.toFixed(2))),
     `expected ${tp.amount.toFixed(2)} / ${tp.fee.toFixed(2)} / ${tp.total.toFixed(2)}`);
-  await page.screenshot({ path: "pwa-fees-topup.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-fees-topup.png` });
 
   await page.evaluate(() => closeModal());
   await page.waitForTimeout(700);
@@ -167,7 +172,7 @@ async function fundWallet(token, amount) {
   check("the money lines are stated once, not twice",
     (withdrawScreen.match(/Withdrawal amount/gi) || []).length === 1,
     `${(withdrawScreen.match(/Withdrawal amount/gi) || []).length} occurrence(s)`);
-  await page.screenshot({ path: "pwa-fees-withdraw.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-fees-withdraw.png` });
 
   /* =========================================== nothing may have happened */
   const walletNow = Number(((await apiCall("/wallets", null, token)).payload.items || [])[0]?.available_balance ?? NaN);

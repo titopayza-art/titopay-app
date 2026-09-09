@@ -33,3 +33,7 @@ __pycache__/
 pwa-journeys-*.png
 pwa-money-screens.png
 *.zip.sha256
+
+# Verification harness output. Screenshots from a Playwright run are build
+# artifacts, not source; three were committed to the repo root before this rule.
+verification/artifacts/

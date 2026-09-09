@@ -10,6 +10,11 @@
 //     Security filter in the inbox stayed empty — while the alerts a customer
 //     most needs to check were the ones missing from it.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const PWA = "http://127.0.0.1:8010";
 const API = "http://127.0.0.1:8110/v1";
 
@@ -152,7 +157,7 @@ const IGNORED = /favicon|manifest|Failed to load resource|429|frame-ancestors|We
   const reopened = await page.evaluate(() => document.querySelectorAll("[data-support-rating]").length);
   check("reopening the chat does not ask for the rating again", reopened === 0, `${reopened} stars`);
 
-  await page.screenshot({ path: "pwa-rating-done.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-rating-done.png` });
   check("no script errors", errors.length === 0, errors.slice(0, 2).join(" | ").slice(0, 160));
 
   await browser.close();

@@ -7,6 +7,11 @@
 // button the wallet already has rather than a second one built for events.
 const { chromium } = require("playwright");
 const crypto = require("crypto");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const PWA = "http://127.0.0.1:8010";
 const API = "http://127.0.0.1:8110/v1";
 const PEACH = "http://127.0.0.1:4400";
@@ -217,7 +222,7 @@ async function fundWallet(token, amount) {
     (card.buttons || []).every((b) => b.height >= 24),
     (card.buttons || []).map((b) => `${b.text}:${b.height}`).join(" "));
 
-  await page.screenshot({ path: "pwa-event-tag.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-event-tag.png` });
 
   console.log("\n--- Top Up opens the ordinary wallet top-up ---\n");
   await page.evaluate(() => document.querySelector('.event-tag-card [data-service="top-up"]')?.click());
@@ -273,7 +278,7 @@ async function fundWallet(token, amount) {
   const serverSide = await db.query("SELECT status FROM event_tags WHERE id = $1", [tagId]);
   check("the server agrees the tag is blocked", serverSide.rows[0]?.status === "LOST", serverSide.rows[0]?.status);
 
-  await page.screenshot({ path: "pwa-event-tag-lost.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-event-tag-lost.png` });
 
   console.log("\n--- an attendee with no Event Tag sees no change ---\n");
   const plain = await register("pnon", "PWA No Tag");

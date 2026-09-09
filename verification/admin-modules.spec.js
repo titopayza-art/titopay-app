@@ -6,6 +6,11 @@
 // surface as a ReferenceError the moment one of those code paths runs, and only
 // then.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 
 const ADMIN = "http://127.0.0.1:8020";
 const API = "http://127.0.0.1:8110/v1";
@@ -150,7 +155,7 @@ const RANGES = ["today", "yesterday", "last_7", "last_30", "last_90", "this_mont
       requested.some((u) => /admin\.js\?v=/.test(u)) && requested.some((u) => /admin-analytics\.js\?v=/.test(u)),
       requested.map((u) => u.split("/assets/")[1]).join(" "));
 
-    await page.screenshot({ path: "admin-analytics-module.png" });
+    await page.screenshot({ path: `${ARTIFACTS}/admin-analytics-module.png` });
     check("no script errors anywhere in Analytics", errors.length === 0, errors.slice(0, 2).join(" | ").slice(0, 200));
     await page.close();
   }
@@ -244,7 +249,7 @@ const RANGES = ["today", "yesterday", "last_7", "last_30", "last_90", "this_mont
     check("the service builder module is fetched at the page's own build stamp", stamps(requested).length === 1 && stamps(requested)[0],
       `${requested.length} asset request(s) at ${stamps(requested).join(", ") || "no stamp"}`);
 
-    await page.screenshot({ path: "admin-service-builder-module.png" });
+    await page.screenshot({ path: `${ARTIFACTS}/admin-service-builder-module.png` });
     check("no script errors anywhere in Service Builder", errors.length === 0, errors.slice(0, 2).join(" | ").slice(0, 200));
     await page.close();
   }

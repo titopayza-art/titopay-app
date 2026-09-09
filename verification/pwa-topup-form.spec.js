@@ -5,6 +5,11 @@
 // through the secure card payment flow" — the earlier spec called
 // startCardTopup() directly and never went through the form.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 
 const PWA = "http://127.0.0.1:8010";
 const API = "http://127.0.0.1:8110/v1";
@@ -116,7 +121,7 @@ const flat = (t) => String(t || "").replace(/\s+/g, " ").trim();
   check(`review total is R${expectedTotal.toFixed(2)}`, Number(shown?.total) === expectedTotal, String(shown?.total));
   check("the total is on screen for the customer", new RegExp(expectedTotal.toFixed(2).replace(".", "\\.")).test(review), review.slice(0, 200));
 
-  await page.screenshot({ path: "pwa-topup-review.png", fullPage: false });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-topup-review.png`, fullPage: false });
 
   /* ----------------------------------------------------- 4. Confirm -> Peach */
   console.log("\n--- 4. Confirm takes the customer to Peach for the total ---");
@@ -153,7 +158,7 @@ const flat = (t) => String(t || "").replace(/\s+/g, " ").trim();
   const realErrors = consoleErrors.filter((e) => !/favicon|manifest|service-?worker|404|Failed to load resource|frame-ancestors|chat\/socket/i.test(e));
   check("no JavaScript errors in the page", realErrors.length === 0, realErrors.slice(0, 3).join(" | "));
 
-  await page.screenshot({ path: "pwa-topup-form-success.png", fullPage: false });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-topup-form-success.png`, fullPage: false });
   await browser.close();
 
   console.log("\n  toasts raised during the run:");

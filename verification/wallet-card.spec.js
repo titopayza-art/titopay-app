@@ -3,6 +3,11 @@
 // right in each of them.
 const { chromium } = require("playwright");
 const http = require("http"); const fs = require("fs"); const path = require("path");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const PWA="/home/user/titopay-app/pwa"; const PORT=8145;
 const T={".html":"text/html",".js":"text/javascript",".css":"text/css",".json":"application/json",
 ".webmanifest":"application/manifest+json",".png":"image/png",".jpg":"image/jpeg",".ico":"image/x-icon"};
@@ -129,6 +134,6 @@ ok("the card has a gradient, not a flat fill", /gradient/.test(s.cardBg), s.card
 ok("the sheen is painting", s.sheen !== "none", s.sheen);
 ok("no page errors", errs.length === 0, errs.join(" | "));
 
-await p.locator(".wallet-card").screenshot({path:"wallet-card.png"});
+await p.locator(".wallet-card").screenshot({path:`${ARTIFACTS}/wallet-card.png`});
 await b.close(); srv.close();
 console.log(bad?`\n${bad} check(s) failed`:"\nall checks passed"); process.exit(bad?1:0);})();

@@ -1,5 +1,10 @@
 // The exact page from the screenshot: Platform / API Provider Settings.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const ADMIN = "http://127.0.0.1:8020";
 const API = "http://127.0.0.1:8110/v1";
 const results = [];
@@ -74,7 +79,7 @@ async function api(path, body, token) {
   check("payout Test Connection works from this page", after.length === 2, JSON.stringify(after));
   check("Collection unaffected by the payout test", after[0] === "Connected", JSON.stringify(after));
 
-  await page.screenshot({ path: "admin-api-provider-settings.png", fullPage: false });
+  await page.screenshot({ path: `${ARTIFACTS}/admin-api-provider-settings.png`, fullPage: false });
   const real = errors.filter((e) => !/favicon|manifest|404|Failed to load resource|frame-ancestors/i.test(e));
   check("no JavaScript errors", real.length === 0, real.slice(0, 2).join(" | "));
   await browser.close();

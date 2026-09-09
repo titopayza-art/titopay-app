@@ -24,6 +24,11 @@ const flat = (t) => String(t || "").replace(/[\s  ]+/g, " ").trim();
   // counters is a test-environment action and touches nothing else.
   const fs = require("fs");
   const { Client } = require("./api/node_modules/pg");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
   const db = new Client({ connectionString: process.env.POSTGRES_URL
     || fs.readFileSync(`${__dirname}/local.env`, "utf8").match(/^POSTGRES_URL=(.*)$/m)[1] });
   await db.connect();
@@ -73,7 +78,7 @@ const flat = (t) => String(t || "").replace(/[\s  ]+/g, " ").trim();
   check("overview explains the attribution rule", /never added into the total/i.test(overview));
   const tabs = await page.evaluate(() => document.querySelectorAll("[data-mk-view]").length);
   check("all thirteen sections are reachable as tabs", tabs === 13, `${tabs} tabs`);
-  await page.screenshot({ path: "mk-overview.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/mk-overview.png` });
 
   /* ----------------------------------------------------------- campaigns */
   const campaigns = await open("/marketing-sales/campaigns/", ".table-wrap, .mk-empty");
@@ -93,7 +98,7 @@ const flat = (t) => String(t || "").replace(/[\s  ]+/g, " ").trim();
   const columns = await page.evaluate(() => document.querySelectorAll(".mk-column").length);
   check("the pipeline renders one column per stage", columns === 8, `${columns} columns`);
   check("a lead card is on the board", /Spaza/i.test(pipeline));
-  await page.screenshot({ path: "mk-pipeline.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/mk-pipeline.png` });
 
   /* --------------------------------------------------------------- links */
   const links = await open("/marketing-sales/links/", ".table-wrap, .mk-empty");
@@ -104,7 +109,7 @@ const flat = (t) => String(t || "").replace(/[\s  ]+/g, " ").trim();
   check("ROI separates direct, assisted and estimated revenue",
     /Direct revenue/i.test(roi) && /Assisted/i.test(roi) && /Estimated/i.test(roi));
   check("ROI explains that only direct feeds the return", /Only direct revenue/i.test(roi));
-  await page.screenshot({ path: "mk-roi.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/mk-roi.png` });
 
   /* ----------------------------------------------------------- analytics */
   const analytics = await open("/marketing-sales/analytics/", ".mk-funnel");

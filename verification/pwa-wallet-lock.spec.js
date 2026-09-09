@@ -7,6 +7,11 @@
 // always has. Freezing is the admin portal's separate action and is not
 // exercised here.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const PWA = "http://127.0.0.1:8010";
 const API = "http://127.0.0.1:8110/v1";
 
@@ -94,7 +99,7 @@ const check = (n, p, d = "") => { results.push({ n, p }); console.log(`${p ? "  
   });
   check("choosing the authentication method opens its own screen", chooser.open, chooser.text.slice(0, 160));
   check("it offers more than one method to pick from", chooser.choices.length > 1, chooser.choices.join(", "));
-  await page.screenshot({ path: "pwa-auth-method.png", fullPage: true });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-auth-method.png`, fullPage: true });
 
   /* ---- 2. freeze and unlock the wallet ----------------------------------- */
   console.log("\n--- Lock and unlock ---\n");
@@ -109,7 +114,7 @@ const check = (n, p, d = "") => { results.push({ n, p }); console.log(`${p ? "  
   await page.waitForTimeout(2500);
   const flipped = await page.evaluate(() => isWalletLocked());
   check("confirming the lock actually locks the wallet", flipped === true, `isWalletLocked()=${flipped}`);
-  await page.screenshot({ path: "pwa-wallet-lock.png", fullPage: true });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-wallet-lock.png`, fullPage: true });
 
   await openCentre();
   const unlockRow = await page.evaluate(() => {
@@ -123,7 +128,7 @@ const check = (n, p, d = "") => { results.push({ n, p }); console.log(`${p ? "  
     await page.waitForTimeout(1600);
     const unlockScreen = await page.evaluate(() => (document.querySelector(".modal-backdrop .modal-card")?.innerText || "").replace(/\n+/g, " | ").slice(0, 400));
     check("Unlock Wallet opens the OTP verification screen", /otp|one-time|code|verify/i.test(unlockScreen), unlockScreen.slice(0, 170));
-    await page.screenshot({ path: "pwa-wallet-unlock.png", fullPage: true });
+    await page.screenshot({ path: `${ARTIFACTS}/pwa-wallet-unlock.png`, fullPage: true });
   }
 
   const usesAdminWord = await page.evaluate(() => /freeze|frozen/i.test(document.body.innerText || ""));

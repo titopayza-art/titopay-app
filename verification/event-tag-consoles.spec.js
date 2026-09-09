@@ -9,6 +9,11 @@
 //      able to see a credential or a balance — there is no balance to see.
 const { chromium } = require("playwright");
 const crypto = require("crypto");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const PWA = "http://127.0.0.1:8010";
 const ADMIN = "http://127.0.0.1:8020";
 const API = "http://127.0.0.1:8110/v1";
@@ -241,7 +246,7 @@ const proxyToLocalApi = async (route) => {
     (minted?.tokens || []).every((t) => !hashes.includes(t)
       && hashes.includes(crypto.createHash("sha256").update(t).digest("hex"))));
 
-  await orgPage.screenshot({ path: "event-tag-organiser.png" });
+  await orgPage.screenshot({ path: `${ARTIFACTS}/event-tag-organiser.png` });
 
   // Assign one to the attendee.
   await orgPage.evaluate((code) => { window.__ticketCode = code; }, ticketCode);
@@ -315,7 +320,7 @@ const proxyToLocalApi = async (route) => {
     !/\bbalance\b/i.test(tagPanel) && !/load funds|top ?up/i.test(tagPanel),
     tagPanel.slice(0, 100));
 
-  await adminPage.screenshot({ path: "event-tag-admin.png", fullPage: true });
+  await adminPage.screenshot({ path: `${ARTIFACTS}/event-tag-admin.png`, fullPage: true });
 
   // Read the tag's history.
   await adminPage.evaluate(() => document.querySelector('[data-event-tag-action="audit"]')?.click());

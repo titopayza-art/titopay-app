@@ -20,6 +20,11 @@
 // T-03 is the one that matters: an announcement reaching every TitoPay
 // customer with the words "[[DATE]]" in it is worse than no announcement.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 
 const ADMIN = "http://127.0.0.1:8020";
 const API = "http://127.0.0.1:8110/v1";
@@ -245,7 +250,7 @@ const COMPOSERS = [
   check("T-08 no page error while doing any of the above",
     errors.length === 0, errors.slice(0, 3).join(" | "));
 
-  await page.screenshot({ path: "marketing-templates.png", fullPage: false });
+  await page.screenshot({ path: `${ARTIFACTS}/marketing-templates.png`, fullPage: false });
   await browser.close();
 
   const failed = results.filter((r) => !r.pass);

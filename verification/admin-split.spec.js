@@ -1,6 +1,11 @@
 // Drive the real Admin Portal bundle in Chromium and verify the Peach card
 // shows two independent capabilities.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const ADMIN = "http://127.0.0.1:8020";
 const API = "http://127.0.0.1:8110/v1";
 
@@ -84,7 +89,7 @@ async function api(path, body, token, method) {
   check("no payout secret in the DOM", !html.includes("payout-secret-value-XYZ9"));
   check("collection secret shown masked", /••••/.test(html));
 
-  await page.screenshot({ path: "admin-peach-split.png", fullPage: true });
+  await page.screenshot({ path: `${ARTIFACTS}/admin-peach-split.png`, fullPage: true });
 
   // Configure payout through the UI and confirm Collection is untouched.
   console.log("\n  --- configuring Payout through the Admin form ---");
@@ -125,7 +130,7 @@ async function api(path, body, token, method) {
   check("Payout now shows Connected", chipsAfter[1] === "Connected", JSON.stringify(chipsAfter));
   check("Collection still shows Connected", chipsAfter[0] === "Connected", JSON.stringify(chipsAfter));
 
-  await page.screenshot({ path: "admin-peach-both-connected.png", fullPage: true });
+  await page.screenshot({ path: `${ARTIFACTS}/admin-peach-both-connected.png`, fullPage: true });
 
   const realErrors = errors.filter((e) => !/favicon|manifest|404|Failed to load resource|frame-ancestors/i.test(e));
   check("no JavaScript errors", realErrors.length === 0, realErrors.slice(0, 2).join(" | "));

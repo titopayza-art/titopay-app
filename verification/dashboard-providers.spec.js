@@ -1,5 +1,10 @@
 // The dashboard Platform-health provider tile must agree with the Integration Centre.
 const { chromium } = require("playwright");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const ADMIN = "http://127.0.0.1:8020", API = "http://127.0.0.1:8110/v1";
 const results = [];
 const check = (n, p, d = "") => { results.push({ n, p, d }); console.log(`${p ? "  PASS" : "  FAIL"}  ${n}${d ? "  — " + d : ""}`); };
@@ -56,7 +61,7 @@ async function api(path, body, token) {
 
   await page.goto(`${ADMIN}/dashboard/`, { waitUntil: "networkidle" });
   await page.waitForTimeout(5000);
-  await page.screenshot({ path: "admin-dashboard-providers.png", fullPage: false });
+  await page.screenshot({ path: `${ARTIFACTS}/admin-dashboard-providers.png`, fullPage: false });
   check("no JavaScript errors", errors.filter((e) => !/favicon|manifest|404/i.test(e)).length === 0, errors.slice(0, 2).join(" | "));
   await browser.close();
 

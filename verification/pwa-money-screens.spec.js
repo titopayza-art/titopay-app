@@ -7,6 +7,11 @@
 // pipeline dressed up as a UI change, which it must not be.
 const { chromium } = require("playwright");
 const crypto = require("crypto");
+// Harness screenshots go here, not into the repo root. A verification run
+// must never leave build artifacts in the working tree; three got committed
+// that way before this existed. The directory is gitignored.
+const ARTIFACTS = require("path").join(__dirname, "artifacts");
+require("fs").mkdirSync(ARTIFACTS, { recursive: true });
 const PWA = "http://127.0.0.1:8010";
 const API = "http://127.0.0.1:8110/v1";
 const PEACH = "http://127.0.0.1:4400";
@@ -236,7 +241,7 @@ async function fundWallet(token, amount) {
 
   check("no script errors anywhere", errors.length === 0, errors.slice(0, 2).join(" | ").slice(0, 160));
 
-  await page.screenshot({ path: "pwa-money-screens.png" });
+  await page.screenshot({ path: `${ARTIFACTS}/pwa-money-screens.png` });
   await browser.close();
   const failed = results.filter((x) => !x.p);
   console.log(`\n  ${results.length - failed.length}/${results.length} checks passed`);
