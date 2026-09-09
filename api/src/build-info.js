@@ -19,10 +19,21 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 117;
+const API_BUILD = 118;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  118: "RESERVED SEATING: SECTION, ROW, SEAT. Ticketing was general admission "
+      + "only - a ticket type was a name, a price and a quantity, and tickets "
+      + "carried no seat at all, though the app's ticket stub already read one. "
+      + "An organiser can now describe a section and its rows, and buyers of a "
+      + "seated type are allocated real seats at purchase. A seat may be sold "
+      + "once: (event, section, row, seat) is unique, tickets.seat_id is unique, "
+      + "and allocation runs FOR UPDATE SKIP LOCKED inside the existing purchase "
+      + "transaction, so two buyers reaching for the last seat get different "
+      + "seats or an honest refusal - never the same seat each. General "
+      + "admission is untouched: a ticket type is unseated unless seating is "
+      + "defined for it, and no existing event changes behaviour.",
   117: "THE ORGANISER'S TRANSFER SETTING NOW MEANS SOMETHING. "
       + "event_ticket_types.transfer_allowed has existed since the table was "
       + "written, is editable through the API and is returned to the console - "

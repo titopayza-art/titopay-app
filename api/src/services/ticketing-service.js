@@ -295,6 +295,47 @@ async function ensureTicketingSchema() {
     CREATE INDEX IF NOT EXISTS idx_tickets_event ON tickets (event_id, status);
     CREATE INDEX IF NOT EXISTS idx_tickets_order ON tickets (order_id);
 
+    -- RESERVED SEATING.
+    --
+    -- Until now every ticket type was general admission: a name, a price and a
+    -- quantity. A seat is the other model — a specific place that exactly one
+    -- person may hold — and the difference that matters is not the display, it
+    -- is that a seat can be sold twice if nothing stops it.
+    --
+    -- Two constraints do the stopping, and they are in the database rather
+    -- than in application code on purpose:
+    --   * (event_id, section, row_label, seat_number) is unique, so a venue
+    --     layout cannot contain the same seat twice.
+    --   * tickets.seat_id is unique, so one seat can back at most one ticket.
+    --     Whatever races, whatever retries, the second insert fails.
+    CREATE TABLE IF NOT EXISTS event_seats (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      ticket_type_id UUID REFERENCES event_ticket_types(id) ON DELETE SET NULL,
+      section TEXT NOT NULL,
+      row_label TEXT NOT NULL,
+      seat_number TEXT NOT NULL,
+      -- available: on sale. held: allocated to an order in flight. sold: has a
+      -- ticket. blocked: the organiser has taken it out of sale (a camera
+      -- position, a broken seat, a wheelchair space held back).
+      status TEXT NOT NULL DEFAULT 'available',
+      ticket_id UUID,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_event_seats_unique
+      ON event_seats (event_id, section, row_label, seat_number);
+    CREATE INDEX IF NOT EXISTS idx_event_seats_available
+      ON event_seats (event_id, ticket_type_id, status) WHERE status = 'available';
+
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS seat_id UUID REFERENCES event_seats(id) ON DELETE SET NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_seat_unique ON tickets (seat_id) WHERE seat_id IS NOT NULL;
+
+    -- A ticket type is seated or it is not. Derived from "does it have seats"
+    -- would be ambiguous the moment a seated event sells out, so it is stated.
+    ALTER TABLE event_ticket_types ADD COLUMN IF NOT EXISTS seated BOOLEAN NOT NULL DEFAULT FALSE;
+
     CREATE TABLE IF NOT EXISTS ticket_refunds (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       order_id UUID NOT NULL REFERENCES ticket_orders(id) ON DELETE CASCADE,
@@ -2707,14 +2748,31 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
       );
     }
 
+    // SEATS, IF THIS TICKET TYPE HAS THEM. Allocated inside this transaction,
+    // under FOR UPDATE SKIP LOCKED, so two buyers reaching for the last seat
+    // get different seats rather than the same one — and so a rollback below
+    // puts the seats back on sale along with the money.
+    const { rows: seatedRows } = await client.query(
+      "SELECT seated FROM event_ticket_types WHERE id = $1",
+      [preview.ticketTypeId]
+    );
+    const seats = seatedRows[0]?.seated
+      ? await allocateSeats(client, {
+        eventId: preview.eventId,
+        ticketTypeId: preview.ticketTypeId,
+        quantity: preview.quantity
+      })
+      : [];
+
     for (let index = 0; index < preview.quantity; index += 1) {
       const ticketId = randomUUID();
       const ticketCode = await uniqueNumericCode("tickets", "ticket_code", 10);
+      const seat = seats[index] || null;
       const qrPayload = { type: "titopay_ticket", ticketId, ticketCode, orderReference, eventId: preview.eventId };
       const { rows: inserted } = await client.query(
         `INSERT INTO tickets
-          (id, order_id, event_id, ticket_type_id, owner_user_id, ticket_code, qr_payload, attendee_name, attendee_phone, attendee_email, status, delivery_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::JSONB,$8,$9,$10,'valid','queued')
+          (id, order_id, event_id, ticket_type_id, owner_user_id, ticket_code, qr_payload, attendee_name, attendee_phone, attendee_email, status, delivery_status, seat_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::JSONB,$8,$9,$10,'valid','queued',$11)
          RETURNING *`,
         [
           ticketId,
@@ -2726,9 +2784,11 @@ async function purchaseTickets(actor, slug, payload = {}, meta = {}) {
           JSON.stringify(qrPayload),
           cleanText(payload.attendeeName || payload.buyerDetails?.name || "", 180),
           cleanPhone(payload.attendeePhone || payload.buyerDetails?.phone || ""),
-          cleanEmail(payload.attendeeEmail || payload.buyerDetails?.email || "")
+          cleanEmail(payload.attendeeEmail || payload.buyerDetails?.email || ""),
+          seat ? seat.id : null
         ]
       );
+      if (seat) await attachSeatToTicket(client, seat.id, ticketId);
       ticketRows.push(inserted[0]);
     }
     await client.query("COMMIT");
@@ -2845,6 +2905,126 @@ async function canManageEventTicketing(userId, eventId, permission = "scan") {
 // gets nowhere at 8 tries an hour), and the previous owner is told the
 // moment their ticket moves, in the app and by email.
 const TICKET_CLAIM_MAX_FAILURES_PER_HOUR = 8;
+
+/* ---------------------------------------------------------------- seating */
+
+// DEFINE A VENUE LAYOUT.
+//
+// Not a seat-map editor: the organiser describes a section as rows and seats
+// per row, and the platform generates the seats. That covers the shape almost
+// every venue actually is — a block of numbered rows — and it is honest about
+// what it does not do, which is curved tiers, tables, and boxes with their own
+// numbering. Those need a real map and should not be faked with a grid.
+//
+// Idempotent by construction: the unique index on
+// (event_id, section, row_label, seat_number) means re-running a definition
+// adds only what is missing and never duplicates a seat.
+async function defineSeating(actor, eventId, spec = {}) {
+  await ensureTicketingSchema();
+  const section = cleanText(spec.section, 60);
+  if (!section) throw new AppError(400, "Name the section, for example Block A or Grand Tier");
+  const ticketTypeId = spec.ticketTypeId || spec.ticket_type_id || null;
+  const rows = Array.isArray(spec.rows) && spec.rows.length
+    ? spec.rows.map((row) => cleanText(row, 12)).filter(Boolean)
+    : [];
+  const seatsPerRow = Math.max(0, Number.parseInt(spec.seatsPerRow ?? spec.seats_per_row ?? 0, 10) || 0);
+  if (!rows.length) throw new AppError(400, "List the rows in this section, for example A, B, C");
+  if (!seatsPerRow) throw new AppError(400, "Say how many seats are in each row");
+  if (rows.length * seatsPerRow > 20000) {
+    throw new AppError(400, "That is more than 20,000 seats in one section. Split it into smaller sections.");
+  }
+  const startAt = Math.max(1, Number.parseInt(spec.startNumber ?? 1, 10) || 1);
+
+  const values = [];
+  const placeholders = [];
+  let order = 0;
+  for (const rowLabel of rows) {
+    for (let seat = 0; seat < seatsPerRow; seat += 1) {
+      const offset = values.length;
+      values.push(eventId, ticketTypeId, section, rowLabel, String(startAt + seat), order);
+      placeholders.push(`($${offset + 1},$${offset + 2},$${offset + 3},$${offset + 4},$${offset + 5},$${offset + 6})`);
+      order += 1;
+    }
+  }
+  const { rowCount } = await pool.query(
+    `INSERT INTO event_seats (event_id, ticket_type_id, section, row_label, seat_number, sort_order)
+     VALUES ${placeholders.join(",")}
+     ON CONFLICT (event_id, section, row_label, seat_number) DO NOTHING`,
+    values
+  );
+  if (ticketTypeId) {
+    await pool.query("UPDATE event_ticket_types SET seated = TRUE, updated_at = NOW() WHERE id = $1 AND event_id = $2",
+      [ticketTypeId, eventId]);
+  }
+  await eventAudit({
+    eventId,
+    actorType: "customer",
+    actorId: actor?.userId || null,
+    action: "event_seating_defined",
+    metadata: { section, rows: rows.length, seatsPerRow, created: rowCount }
+  }).catch(() => {});
+  return { section, rows: rows.length, seatsPerRow, seatsCreated: rowCount };
+}
+
+// WHAT IS LEFT TO SELL, for the event page.
+async function seatingAvailability(eventId) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    `SELECT section,
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE status = 'available')::int AS available
+       FROM event_seats WHERE event_id = $1 GROUP BY section ORDER BY section`,
+    [eventId]
+  );
+  return rows;
+}
+
+// ALLOCATE SEATS TO AN ORDER, INSIDE THE CALLER'S TRANSACTION.
+//
+// This is the whole reason seating is not just three extra columns. Two buyers
+// reaching for the last seat at the same moment must not both get it.
+//
+// FOR UPDATE SKIP LOCKED is what makes that both correct and usable: the first
+// transaction locks the rows it is taking, and the second SKIPS them and takes
+// the next ones free rather than queueing behind the first and then failing.
+// Two people buying at once get different seats instead of one waiting.
+//
+// The client is the caller's — the same transaction that writes the order and
+// the tickets — so seats and tickets commit together or not at all.
+async function allocateSeats(client, { eventId, ticketTypeId, quantity }) {
+  const { rows } = await client.query(
+    `SELECT id, section, row_label, seat_number
+       FROM event_seats
+      WHERE event_id = $1
+        AND ($2::uuid IS NULL OR ticket_type_id = $2)
+        AND status = 'available'
+      ORDER BY sort_order, row_label, seat_number
+      LIMIT $3
+      FOR UPDATE SKIP LOCKED`,
+    [eventId, ticketTypeId, quantity]
+  );
+  if (rows.length < quantity) {
+    // Deliberately not "sold out": somebody else may be mid-checkout and the
+    // seats may come back. The message says what the buyer can do about it.
+    throw new AppError(409, rows.length
+      ? `Only ${rows.length} seat${rows.length === 1 ? "" : "s"} left in that section. Choose a smaller quantity or another section.`
+      : "Those seats have just gone. Choose another section.");
+  }
+  await client.query(
+    "UPDATE event_seats SET status = 'held', updated_at = NOW() WHERE id = ANY($1)",
+    [rows.map((row) => row.id)]
+  );
+  return rows;
+}
+
+// Called once the ticket exists, in the same transaction: the seat stops being
+// held and starts being sold, and points at the ticket holding it.
+async function attachSeatToTicket(client, seatId, ticketId) {
+  await client.query(
+    "UPDATE event_seats SET status = 'sold', ticket_id = $2, updated_at = NOW() WHERE id = $1",
+    [seatId, ticketId]
+  );
+}
 
 async function claimTicketByCode(actor, rawCode, meta = {}) {
   await ensureTicketingSchema();
@@ -4579,6 +4759,9 @@ async function adminTicketingAnalytics() {
 }
 
 module.exports = {
+  defineSeating,
+  seatingAvailability,
+  allocateSeats,
   ensureTicketingSchema,
   adminTicketingAnalytics,
   // Exported so the Event Tag routes can gate on exactly the same staff rules
