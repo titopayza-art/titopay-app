@@ -789,3 +789,9 @@ html[data-theme=night] .mk-poster{border-color:#2c4573}
 .wallet-actions-compact{margin-top:20px;gap:12px}
 .wallet-actions-compact button{min-height:54px}
 }
+/* WALLET CARD ON TALL PHONES. Appended; see styles.css for the reasoning. */
+@media (min-width:360px) and (max-width:759px) and (min-height:890px){
+body:not(.modal-open):has(.dashboard-grid) .wallet-card{padding:30px 22px 28px}
+body:not(.modal-open):has(.dashboard-grid) .wallet-balance{margin:14px 0 18px;font-size:clamp(2.15rem,9.6vw,2.95rem)}
+body:not(.modal-open):has(.dashboard-grid) .wallet-actions button{min-height:58px}
+}

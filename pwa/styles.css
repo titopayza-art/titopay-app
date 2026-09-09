@@ -16113,3 +16113,43 @@ button.is-busy.btn-primary::after {
   .wallet-actions-compact { margin-top: 20px; gap: 12px; }
   .wallet-actions-compact button { min-height: 54px; }
 }
+
+/* THE WALLET CARD ON A TALL PHONE, which is most of them.
+   ---------------------------------------------------------------------------
+   The 480px rule above restored the card's height and did nothing on an
+   iPhone 11, XR, 15 Pro Max or anything else 414px and wider. Those match the
+   fixed-band layout further up this file, whose selectors are
+   `body:not(.modal-open):has(.dashboard-grid) .wallet-card` — specificity
+   0,3,1 against the 0,1,0 of a bare class. Source order never came into it;
+   the band simply won, and it deliberately COMPRESSES the card so the whole
+   dashboard fits without scrolling.
+
+   Measured, because the difference was invisible from the code:
+
+     390px  card 256px   30% of the screen
+     414px  card 220px   25%
+     430px  card 222px   24%
+
+   A preview rendered at 390px therefore looked correct while the phone it was
+   being compared against did not, which is exactly what happened.
+
+   The band's compression was solving a problem that no longer exists on these
+   widths: there is slack below the summary card, not a shortage. So the card
+   takes its height back at the band's own specificity, and every phone width
+   now lands between 28% and 30%. The remaining space below the tiles is the
+   band anchoring the summary near the bottom rather than leaving a void at the
+   end of the screen, which is what it is for. */
+@media (min-width: 360px) and (max-width: 759px) and (min-height: 890px) {
+  body:not(.modal-open):has(.dashboard-grid) .wallet-card {
+    padding: 30px 22px 28px;
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .wallet-balance {
+    margin: 14px 0 18px;
+    font-size: clamp(2.15rem, 9.6vw, 2.95rem);
+  }
+
+  body:not(.modal-open):has(.dashboard-grid) .wallet-actions button {
+    min-height: 58px;
+  }
+}
