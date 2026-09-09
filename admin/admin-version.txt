@@ -1,6 +1,22 @@
 TitoPay Admin
-Build: admin-console-v102
+Build: admin-console-v103
 Date: 2026-09-09
+
+v103 - The catalogue stops contradicting itself.
+
+  - A row read "Coming Soon | active | Live" across three columns and looked
+    like three answers to one question. Two of those are the same fact in
+    different words: "Stored as: active" printed the raw database value one
+    cell away from a control reading "Live". That column is gone. The control
+    already shows the stored status, so showing it twice added nothing but
+    the confusion.
+  - The columns are now "Customers see", "You set", and "Why the difference".
+    The first two match on every row unless a capability gate is holding the
+    service back, and then the third says which gate and what it means.
+  - The reason wraps instead of truncating. It read "No prov... so the s..."
+    in the width available, which tells nobody anything. It now says the
+    supplier is not contracted yet and that your choice is saved and applies
+    the moment one is.
 
 v102 - The Service Catalogue is editable.
 

@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v102";
+  return "admin-console-v103";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -4427,6 +4427,19 @@ function serviceServedChip(row) {
 // chip. It shows the STORED status, because that is the thing an operator is
 // choosing; the "Served as" column beside it keeps showing what a customer
 // actually gets, and the two differing is information, not a bug.
+// WHY A ROW DISAGREES WITH ITSELF, in a few words rather than a sentence that
+// truncates to "No prov... so the s..." and tells nobody anything.
+//
+// Only rendered where the served status and the stored one actually differ.
+// On every other row it is a dash, because "no gate here" is not news.
+function serviceGateNote(row) {
+  const stored = String(row.storedStatus || row.status || "");
+  if (row.capabilityLive !== false || stored === row.status) return "<small>-</small>";
+  return `<small class="service-gate-note">No supplier contracted for
+    <code>${escapeHtml(row.capability || "this capability")}</code> yet, so it cannot take a payment.
+    Your choice is saved and applies the moment one is.</small>`;
+}
+
 function serviceStatusSelect(row) {
   const stored = String(row.storedStatus || row.status || "");
   const option = (value, label) =>
@@ -4511,18 +4524,18 @@ async function renderServiceCatalogue() {
       { label: "Service", render: (row) => `<strong>${escapeHtml(row.service_name || "")}</strong>` },
       { label: "Code", render: (row) => `<code>${escapeHtml(row.service_code || "")}</code>` },
       { label: "Audience", render: (row) => escapeHtml(audience(row)) },
-      { label: "Served as", render: (row) => serviceServedChip(row) },
-      // Only shown where the two differ, which is the whole point of the
-      // column: a matching pair is noise, a mismatch is the explanation.
-      { label: "Stored as", render: (row) => row.storedStatus && row.storedStatus !== row.status
-        ? `<code>${escapeHtml(row.storedStatus)}</code>`
-        : "<small>-</small>" },
-      { label: "Why", render: (row) => row.capabilityLive === false
-        ? `<small>${escapeHtml(row.unavailableReason || "")}</small>`
-        : "<small>-</small>" },
-      { label: "Set to", render: (row) => serviceStatusSelect(row) },
+      { label: "Customers see", render: (row) => serviceServedChip(row) },
+      // "Stored as" used to sit here and it is gone on purpose. It printed the
+      // raw column value — "active" — one cell away from a control reading
+      // "Live", which is the SAME FACT in a second vocabulary, and one cell
+      // away from a chip reading "Coming Soon", which is not. A row then said
+      // Coming Soon / active / Live and read as three answers to one question.
+      // The control below already shows the stored status; showing it twice
+      // added nothing but the contradiction.
+      { label: "You set", render: (row) => serviceStatusSelect(row) },
+      { label: "Why the difference", render: (row) => serviceGateNote(row) },
     ], () => "", { actionsColumn: false }),
-    "“Served as” is what the app and every report actually see. “Set to” is the stored status, which you control. Where the two differ, a capability gate is holding the service back — it is real and planned, but nothing behind it can transact yet, and setting it live will not change that until a supplier can.",
+    "“Customers see” is what the app and every report actually get. “You set” is what you have chosen. They match unless a capability gate is holding the service back, and then the last column says which one and why.",
     "Editable")}
   `;
 
