@@ -16104,8 +16104,8 @@ button.is-busy.btn-primary::after {
    the phone block above already sets these properties and the later rule is
    what wins. */
 @media (max-width: 480px) {
-  .wallet-card { padding: 26px 20px 24px; }
-  .wallet-balance { margin: 12px 0 14px; font-size: clamp(2.15rem, 9.6vw, 2.95rem); }
+  .wallet-card { padding: 30px 20px 28px; }
+  .wallet-balance { margin: 14px 0 18px; font-size: clamp(2.15rem, 9.6vw, 2.95rem); }
   .wallet-id-line { padding: 6px 8px 6px 0; }
   /* The action row is .wallet-actions.wallet-actions-compact and its children
      are bare <button> elements, not .btn — a .btn selector here matches

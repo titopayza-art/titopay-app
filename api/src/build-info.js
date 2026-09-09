@@ -19,10 +19,26 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 123;
+const API_BUILD = 124;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  124: "THE SERVICE CATALOGUE IS EDITABLE. The console page was read-only "
+      + "because five rows - airtime, data, electricity, vouchers, bill "
+      + "payments - have a status DERIVED from whether a supplier can "
+      + "transact, so a toggle on those would have stored one thing and "
+      + "returned another. Refusing the control on the whole catalogue for "
+      + "that reason was the wrong trade: Events, Shop Marketplace, Virtual "
+      + "Doctor and Travel are held at their stored status and nothing else. "
+      + "Each row now carries a Live / Coming soon / Disabled control. The "
+      + "gate is NOT weakened: the control writes the stored status and "
+      + "applyCapabilityGate still decides what a customer is served, so "
+      + "setting a gated service live stores active and still serves coming "
+      + "soon - which is the protection that stops somebody paying for what "
+      + "no supplier can fulfil. The difference is the operator is now told "
+      + "that happened, in the same breath as the save. No API change was "
+      + "needed; PUT /services/admin/:id already existed, already gated on "
+      + "the way back, and already audited.",
   123: "ZERO DEPENDENCY ADVISORIES, AND THE BOOT DEADLOCK CLOSED PROPERLY. "
       + "nodemailer 9.0.3 -> ^9.1.1 clears a high plus three others; two of "
       + "those never applied here, but two are address-parsing flaws where a "

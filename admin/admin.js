@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v101";
+  return "admin-console-v102";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -164,6 +164,11 @@ ADMIN_PAGE_ROUTES.set("/integrations/ott/", "integration-provider");
 ADMIN_PAGE_ROUTES.set("/integrations/email-smtp/", "integration-provider");
 ADMIN_PAGE_ROUTES.set("/integrations/sms-provider/", "integration-provider");
 const PAGE_EXPORTS = {};
+/* The stored service statuses, in the words an operator reads. The API's own
+   values are what get sent; these exist so a toast says "Coming soon" rather
+   than "coming_soon". Anything unrecognised falls through to the raw value
+   rather than being rewritten into a status TitoPay has not seen. */
+const SERVICE_STATUS_WORDS = { active: "Live", coming_soon: "Coming soon", disabled: "Disabled" };
 /* Enterprise Analytics is gated on its own reporting permission. This is
    additive: it grants nothing new on any other module, and full-access roles
    keep the access they already had. */
@@ -4390,18 +4395,27 @@ async function renderFeatureManagement(me = {}) {
     }
   });
 }
-// THE SERVICE CATALOGUE, AND WHY A SERVICE IS NOT LIVE.
+// THE SERVICE CATALOGUE: WHAT IS LIVE, WHAT IS NOT, AND WHO DECIDES.
 //
-// Read-only, deliberately. Most of this catalogue is editable through
-// PUT /services/admin, but the rows an operator actually comes here about —
-// airtime, data, electricity, vouchers, bill payments — are not: their status
-// is DERIVED from whether a supplier can transact, and re-derived on every
-// read. Setting one active would store, return "coming soon" in the same
-// response, and read as a broken button.
+// The page used to be read-only. That was the right call while the only rows
+// anyone came here about were capability-gated — airtime, data, electricity,
+// vouchers, bill payments — because their SERVED status is derived from
+// whether a supplier can actually transact, so a toggle would have stored one
+// thing and returned another in the same response.
 //
-// So the page answers the question instead of offering a lever that does
-// nothing: which services are live, which are held back, by what, and what
-// would release them.
+// It is editable now, because most of the catalogue is not gated at all:
+// Events, Shop Marketplace, Virtual Doctor, Travel and the rest are held at
+// their stored status and nothing else. Refusing to offer the control on
+// every row because it is complicated on five of them is the wrong trade.
+//
+// THE GATE IS NOT WEAKENED BY THIS, and that is the part that matters. The
+// select writes the STORED status. What a customer is served still passes
+// through applyCapabilityGate on the way back, so setting a gated service
+// live stores "active" and still serves "coming soon" — which is exactly the
+// protection that stops a customer pressing Buy on something no supplier can
+// fulfil. The difference is that the operator is now TOLD that happened, in
+// the same breath as the save, rather than being denied the control and left
+// to wonder.
 function serviceServedChip(row) {
   const status = String(row.status || "");
   if (status === "active") return `<span class="chip green">live</span>`;
@@ -4409,6 +4423,25 @@ function serviceServedChip(row) {
   if (status === "disabled") return `<span class="chip">disabled</span>`;
   return `<span class="chip">${escapeHtml(status || "unknown")}</span>`;
 }
+// The three states a service can be stored in, as a control rather than a
+// chip. It shows the STORED status, because that is the thing an operator is
+// choosing; the "Served as" column beside it keeps showing what a customer
+// actually gets, and the two differing is information, not a bug.
+function serviceStatusSelect(row) {
+  const stored = String(row.storedStatus || row.status || "");
+  const option = (value, label) =>
+    `<option value="${value}"${stored === value ? " selected" : ""}>${label}</option>`;
+  return `
+    <select class="service-status-select" data-service-id="${escapeHtml(row.id || "")}"
+      data-service-name="${escapeHtml(row.service_name || row.service_code || "This service")}"
+      data-current="${escapeHtml(stored)}"
+      aria-label="Status for ${escapeHtml(row.service_name || row.service_code || "service")}">
+      ${option("active", "Live")}
+      ${option("coming_soon", "Coming soon")}
+      ${option("disabled", "Disabled")}
+    </select>`;
+}
+
 async function renderServiceCatalogue() {
   const result = await apiFetch("/services/admin");
   const items = result.items || [];
@@ -4453,7 +4486,7 @@ async function renderServiceCatalogue() {
           .join(", ") || "-"],
       ])}
       <p class="table-card-note">${escapeHtml(entry.releasedBy || "")}</p>
-      <p class="table-card-note">There is nothing to switch on here. This status is derived on every read, so marking a service active by hand would be undone by the next response — and by every new environment.</p>
+      <p class="table-card-note">You can set these rows live in the table below and the choice will be stored, but customers keep seeing “coming soon” until an adapter can send a real purchase. That is deliberate: the gate is what stops somebody paying for something no supplier can fulfil. Releasing it is the contract above, not a switch here.</p>
     `,
     "The catalogue holds these services at “coming soon” until an adapter can send a real purchase.",
     "Derived, not stored"
@@ -4487,10 +4520,49 @@ async function renderServiceCatalogue() {
       { label: "Why", render: (row) => row.capabilityLive === false
         ? `<small>${escapeHtml(row.unavailableReason || "")}</small>`
         : "<small>-</small>" },
+      { label: "Set to", render: (row) => serviceStatusSelect(row) },
     ], () => "", { actionsColumn: false }),
-    "“Served as” is what the app and every report actually see. Where “stored as” differs, a capability gate is overriding the stored row — the service is real and planned, but nothing behind it can transact yet.",
-    "Read only")}
+    "“Served as” is what the app and every report actually see. “Set to” is the stored status, which you control. Where the two differ, a capability gate is holding the service back — it is real and planned, but nothing behind it can transact yet, and setting it live will not change that until a supplier can.",
+    "Editable")}
   `;
+
+  // Saving is per row and immediate, because there is one field and a Save
+  // button for a single select is ceremony. The select is disabled while the
+  // request is in flight so a second change cannot race the first.
+  document.querySelectorAll(".service-status-select").forEach((select) => {
+    select.addEventListener("change", async (event) => {
+      const el = event.currentTarget;
+      const id = el.dataset.serviceId;
+      const previous = el.dataset.current;
+      const wanted = el.value;
+      const name = el.dataset.serviceName;
+      if (!id || wanted === previous) return;
+      el.disabled = true;
+      try {
+        const saved = await apiFetch(`/services/admin/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          body: JSON.stringify({ status: wanted }),
+        });
+        // The API returns the row AFTER the capability gate, so this is the
+        // truth about what customers will now see — not what was asked for.
+        const served = String(saved?.item?.status || wanted);
+        el.dataset.current = wanted;
+        if (served === wanted) {
+          showToast(`${name} is now ${SERVICE_STATUS_WORDS[wanted] || wanted}`);
+        } else {
+          // The one message this page exists to be able to give honestly.
+          showToast(`${name} is stored as ${SERVICE_STATUS_WORDS[wanted] || wanted}, but customers still see ${SERVICE_STATUS_WORDS[served] || served} until a supplier can transact.`);
+        }
+        await renderServiceCatalogue();
+      } catch (error) {
+        // Put the control back where it was, so the screen never shows a
+        // status the server did not accept.
+        el.value = previous;
+        el.disabled = false;
+        showToast(adminErrorMessage(error.message));
+      }
+    });
+  });
 }
 async function renderCompanyDocuments() {
   const result = await apiFetch("/admin/company-documents");

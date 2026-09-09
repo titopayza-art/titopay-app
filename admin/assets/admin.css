@@ -6447,3 +6447,29 @@ html[data-theme="dark"] .auth-panel-mark {
 .reward-redlines { border: 1px solid var(--tp-border, #dbe3f0); border-radius: 10px; padding: 12px 14px; }
 .reward-redlines ul { margin: 8px 0 10px; padding-left: 18px; }
 .reward-redlines li { margin: 4px 0; }
+
+/* The service catalogue's per-row status control. Styled here rather than
+   inline because the console is served with style-src 'self' and an inline
+   style attribute is silently dropped, which would leave the select wearing
+   the browser default in the middle of a styled table. */
+.service-status-select {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--tp-border-strong);
+  border-radius: var(--tp-radius);
+  background: var(--tp-surface);
+  color: var(--tp-text-strong);
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.service-status-select:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.service-status-select:focus-visible {
+  outline: 2px solid var(--tp-focus);
+  outline-offset: 2px;
+}

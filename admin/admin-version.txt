@@ -1,6 +1,31 @@
 TitoPay Admin
-Build: admin-console-v101
+Build: admin-console-v102
 Date: 2026-09-09
+
+v102 - The Service Catalogue is editable.
+
+  - Every row now carries a Live / Coming soon / Disabled control, saved as
+    soon as it is changed. The page was read-only because five rows -
+    airtime, data, electricity, vouchers, bill payments - have a status
+    DERIVED from whether a supplier can transact, so a toggle on those would
+    have stored one thing and returned another. Refusing the control on the
+    whole catalogue for that reason was the wrong trade: Events, Shop
+    Marketplace, Virtual Doctor and Travel are held at their stored status
+    and nothing else.
+  - The capability gate is NOT weakened. The control writes the STORED
+    status; what a customer is served still passes through the gate. Setting
+    a gated service live stores "active" and still serves "coming soon",
+    which is the protection that stops somebody paying for something no
+    supplier can fulfil.
+  - The difference is that you are told. A save that the gate overrode says
+    so in the same breath: "stored as Live, but customers still see Coming
+    soon until a supplier can transact." A save that took effect just says
+    so plainly.
+  - The gate card no longer claims there is nothing to switch on, because
+    that sentence became false the moment the control existed, and an
+    operator believes the sentence over the widget.
+  - No API change. PUT /services/admin/:id already existed, already applied
+    the gate on the way back, and already wrote an audit entry.
 
 v101 - Service Catalogue.
 

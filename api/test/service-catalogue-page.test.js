@@ -112,18 +112,59 @@ test("the console has a Service Catalogue page, reachable and permissioned to ma
   assert.match(shell, /style-src 'self'/, "carrying the same CSP as every other page");
 });
 
-test("the page offers no control that could not work", () => {
-  // The rows an operator comes here about are derived. A status field on them
-  // would store and be overridden in the same response.
+test("THE STATUS CONTROL CANNOT LIE ABOUT WHAT CUSTOMERS WILL SEE", () => {
+  // The page was read-only, and this test used to assert that it rendered no
+  // controls at all. It is editable now, because most of the catalogue is not
+  // capability-gated and refusing the control everywhere because it is
+  // complicated on five rows was the wrong trade.
+  //
+  // What replaces that assertion is the guarantee that actually mattered
+  // underneath it: an operator must never be shown a status the platform will
+  // not serve. The gate is unchanged — the select writes the STORED status and
+  // applyCapabilityGate still decides what a customer gets — so the danger is
+  // no longer a dead control, it is a control that reports success when the
+  // gate quietly overrode it. That is what is pinned here.
+  const page = CONSOLE.slice(CONSOLE.indexOf("function serviceStatusSelect"),
+    CONSOLE.indexOf("async function renderCompanyDocuments"));
+  assert.ok(page.length > 0, "the catalogue page must be findable");
+
+  // It writes the status, through the endpoint that gates on the way back.
+  assert.match(page, /method: "PUT"/);
+  assert.match(page, /`\/services\/admin\/\$\{encodeURIComponent\(id\)\}`/,
+    "the per-service endpoint, not a bulk write");
+  assert.match(page, /JSON\.stringify\(\{ status: wanted \}\)/,
+    "only the status is sent; nothing else on the row is touched");
+
+  // AND THE ANSWER IS READ FROM THE RESPONSE, not assumed from the request.
+  assert.match(page, /const served = String\(saved\?\.item\?\.status \|\| wanted\);/,
+    "what customers will see comes from the gated response");
+  assert.match(page, /if \(served === wanted\)/,
+    "the two are compared rather than assumed equal");
+  assert.match(page, /customers still see \$\{SERVICE_STATUS_WORDS\[served\]/,
+    "and a gated save says what customers actually get");
+
+  // A failed save must not leave the screen showing a status the server
+  // refused, which is the same class of lie in the other direction.
+  assert.match(page, /el\.value = previous;/, "a rejected change is put back");
+
+  // The control shows the STORED status, because that is the thing being
+  // chosen. Showing the served status would make a gated row un-settable: it
+  // would snap back to "coming soon" on every render.
+  const select = CONSOLE.slice(CONSOLE.indexOf("function serviceStatusSelect"),
+    CONSOLE.indexOf("async function renderServiceCatalogue"));
+  assert.match(select, /const stored = String\(row\.storedStatus \|\| row\.status \|\| ""\);/);
+});
+
+test("the page no longer claims there is nothing to switch on", () => {
+  // The gate card carried that sentence while the page was read-only. Leaving
+  // it beside a working control would have the page contradicting itself, and
+  // an operator believes the sentence over the widget.
   const page = CONSOLE.slice(CONSOLE.indexOf("async function renderServiceCatalogue"),
     CONSOLE.indexOf("async function renderCompanyDocuments"));
-  for (const control of ["<form", "<select", "<textarea", "<input", "addEventListener"]) {
-    assert.ok(!page.includes(control), `the page must not render ${control}`);
-  }
-  for (const write of ["method: \"PUT\"", "method: \"POST\"", "method: \"DELETE\""]) {
-    assert.ok(!page.includes(write), `the page must not ${write}`);
-  }
-  assert.match(page, /nothing to switch on here/, "and it says so in words");
+  assert.ok(!page.includes("nothing to switch on here"),
+    "that sentence is false now that the select exists");
+  assert.match(page, /customers keep seeing .coming soon. until an adapter can send a real purchase/,
+    "it says what setting a gated row live will and will not do");
 });
 
 test("the page explains itself against an older API instead of rendering blank", () => {
@@ -206,4 +247,70 @@ test("the rail hides what the API would refuse", () => {
 test("both copies of admin.js are the same file", () => {
   const root = fs.readFileSync(path.join(ROOT, "admin", "admin.js"), "utf8");
   assert.equal(root, CONSOLE, "admin/admin.js and admin/assets/admin.js have drifted");
+});
+
+/* ---- THE GATE, DRIVEN RATHER THAN READ ------------------------------------
+   Everything above reads the source. This calls the thing.
+
+   Now that the console offers a status control, the question stops being
+   "does the code look right" and becomes "if an operator sets a
+   capability-gated service live, can a customer then press Buy on something
+   no supplier can fulfil?" That is the dead-purchase shape this platform is
+   built to not have, and it deserves an answer from the function itself. */
+
+test("SETTING A GATED SERVICE LIVE STORES IT AND STILL SERVES COMING SOON", async () => {
+  const { pool } = require("../src/db/pool");
+  const { rows } = await pool.query(
+    "SELECT id, status FROM service_config WHERE service_code = 'airtime' LIMIT 1");
+  if (!rows[0]) return; // a database without the default catalogue has nothing to prove
+  const original = rows[0].status;
+  try {
+    const served = await catalogue.updateService(rows[0].id, { status: "active" }, { userId: null });
+    // What the operator asked for was stored...
+    assert.equal(served.storedStatus, "active", "the operator's choice is stored");
+    // ...and what a customer is served is NOT what was asked for.
+    assert.equal(served.status, "coming_soon",
+      "a customer must not be offered a service no supplier can fulfil");
+    assert.equal(served.capabilityLive, false);
+    assert.ok(String(served.unavailableReason || "").length > 0,
+      "and the row carries the reason, so the console can say why");
+
+    // The database really holds the operator's choice, so the console's
+    // control is not a no-op that quietly discards input.
+    const { rows: after } = await pool.query(
+      "SELECT status FROM service_config WHERE id = $1", [rows[0].id]);
+    assert.equal(after[0].status, "active");
+  } finally {
+    await pool.query("UPDATE service_config SET status = $2 WHERE id = $1", [rows[0].id, original]);
+  }
+});
+
+test("an ungated service goes live for real when an operator sets it live", async () => {
+  // The other half, and the reason the control exists at all. Most of the
+  // catalogue is not gated: Events, Shop Marketplace, Virtual Doctor, Travel.
+  // A guard that refused everything would pass the test above and be useless.
+  const { pool } = require("../src/db/pool");
+  const { rows } = await pool.query(
+    "SELECT id, status FROM service_config WHERE service_code = 'events' LIMIT 1");
+  if (!rows[0]) return;
+  const original = rows[0].status;
+  try {
+    const live = await catalogue.updateService(rows[0].id, { status: "active" }, { userId: null });
+    assert.equal(live.status, "active", "no gate holds this one, so live means live");
+    // An ungated row carries no storedStatus at all: applyCapabilityGate adds
+    // that field only when it OVERRIDES, so its absence is what says "served
+    // and stored are the same thing here". The console reads
+    // storedStatus || status for exactly this reason.
+    assert.equal(live.storedStatus, undefined,
+      "no override happened, so there is no separate stored status to report");
+    assert.equal(live.capabilityLive, undefined, "and nothing is gating it");
+
+    const soon = await catalogue.updateService(rows[0].id, { status: "coming_soon" }, { userId: null });
+    assert.equal(soon.status, "coming_soon", "and it can be moved back");
+
+    const off = await catalogue.updateService(rows[0].id, { status: "disabled" }, { userId: null });
+    assert.equal(off.status, "disabled", "all three states are reachable");
+  } finally {
+    await pool.query("UPDATE service_config SET status = $2 WHERE id = $1", [rows[0].id, original]);
+  }
 });

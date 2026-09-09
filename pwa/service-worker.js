@@ -1,10 +1,10 @@
-const CACHE_NAME = "titopay-pwa-v509-verify-type";
+const CACHE_NAME = "titopay-pwa-v510-verify-type";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./head-boot.js?v=509",
-  "./styles.min.css?v=509",
-  "./app.min.js?v=509",
+  "./head-boot.js?v=510",
+  "./styles.min.css?v=510",
+  "./app.min.js?v=510",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=270",
   "./manifest.webmanifest?v=193",
