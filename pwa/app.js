@@ -5284,6 +5284,18 @@ async function handleAction(action, actionElement = null) {
     await requestOrderRefund(action.slice("request-refund:".length));
     return;
   }
+  if (String(action || "").startsWith("ticket-sell:")) {
+    await sellTicket(action.slice("ticket-sell:".length));
+    return;
+  }
+  if (String(action || "").startsWith("ticket-unlist:")) {
+    await cancelTicketListing(action.slice("ticket-unlist:".length));
+    return;
+  }
+  if (String(action || "").startsWith("resale-buy:")) {
+    await buyResaleTicket(action.slice("resale-buy:".length));
+    return;
+  }
   if (String(action || "").startsWith("event-share:")) {
     await shareTicketingEvent(action.slice("event-share:".length));
     return;
@@ -19693,7 +19705,11 @@ async function openPublicTicketingEvent(slug) {
   if (!slug) return openPersonalTicketsDashboard();
   try {
     const result = await api(`/v1/ticketing/public/events/${encodeURIComponent(slug)}`, { auth: false });
-    openModal(publicTicketingEventModal(result.event || {}));
+    const event = result.event || {};
+    openModal(publicTicketingEventModal(event));
+    // After the sheet is on screen, never before it: resale is an extra way to
+    // get a ticket and must not delay the page that sells them.
+    if (state.auth?.accessToken) loadEventResaleListings(event.id).catch(() => null);
   } catch (error) {
     openInfoModal("Event unavailable", error.friendlyMessage || "This event is not available right now. Please try again.");
   }
@@ -19754,7 +19770,48 @@ function publicTicketingEventModal(event = {}) {
         </div>
       `}
     </section>
+    ${state.auth?.accessToken ? `<section class="panel inner-panel" data-resale-panel="${esc(event.id || "")}"></section>` : ""}
   `;
+}
+
+// TICKETS OTHER PEOPLE ARE SELLING, on the event's own page — the only place a
+// buyer would think to look. Loaded after the sheet is drawn rather than with
+// it, so an event with none, or a lookup that fails, costs the page nothing.
+async function loadEventResaleListings(eventId) {
+  const host = document.querySelector(`[data-resale-panel="${CSS.escape(String(eventId || ""))}"]`);
+  if (!host || !eventId) return;
+  let items = [];
+  try {
+    const result = await api(`/v1/ticketing/events/${encodeURIComponent(eventId)}/listings`);
+    items = Array.isArray(result.items) ? result.items : [];
+  } catch (error) {
+    // Silent: resale is an extra way to get a ticket, not the way. An error
+    // here must not put a red panel on a page that is selling tickets fine.
+    host.innerHTML = "";
+    return;
+  }
+  state.ticketing.resaleListings = items;
+  if (!items.length) {
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = `
+    <h3>Resale from other customers</h3>
+    <p class="muted">Tickets people can no longer use, sold at or below what they paid. Buying one moves it straight into My Tickets.</p>
+    <div class="settings-list">
+      ${items.map((listing) => `
+        <article class="settings-row">
+          <span class="icon-bubble">${icon("tag")}</span>
+          <div>
+            <strong>${esc(listing.ticketTypeName || "Ticket")}</strong>
+            <small>${money(listing.price)}${listing.seating
+              ? ` · ${esc([listing.seating.section, listing.seating.row && `Row ${listing.seating.row}`, `Seat ${listing.seating.seat}`].filter(Boolean).join(" · "))}`
+              : ""}</small>
+          </div>
+          <button class="btn secondary" type="button" data-action="resale-buy:${esc(listing.id)}">Buy</button>
+        </article>
+      `).join("")}
+    </div>`;
 }
 async function loadPublicEventFromPath() {
   const match = location.pathname.match(/\/events\/([^/?#]+)/);
@@ -20199,6 +20256,7 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
         <div class="ticket-stub-meta">
           ${typeName ? `<div><span>Ticket</span><strong>${esc(typeName)}</strong></div>` : ""}
           ${holder ? `<div><span>Holder</span><strong>${esc(holder)}</strong></div>` : ""}
+          ${ticket.listing ? `<div><span>For sale</span><strong>${esc(money(ticket.listing.price))}</strong></div>` : ""}
           ${seat && !seatingBand ? `<div><span>Seat</span><strong>${esc(seat)}</strong></div>` : ""}
           ${code ? `<div><span>Ticket code</span><strong class="ticket-code">${esc(code)}</strong></div>` : ""}
           ${order.orderReference ? `<div><span>Order</span><strong>${esc(order.orderReference)}</strong></div>` : ""}
@@ -20214,6 +20272,11 @@ function ticketStub(ticket = {}, order = {}, event = {}) {
         ${code ? `<button class="btn secondary ticket-email-btn" type="button" data-action="ticket-email:${esc(code)}">${icon("mail")} Email ticket</button>` : ""}
         ${ticketWalletControl(ticket)}
         ${linkableTicketId(ticket) ? `<button class="btn primary" type="button" data-action="event-tag-link:${esc(linkableTicketId(ticket))}">${icon("scan")} Link wristband</button>` : ""}
+        ${ticket.listing
+          ? `<button class="btn ghost" type="button" data-action="ticket-unlist:${esc(ticket.listing.id)}">${icon("x")} Take off sale</button>`
+          : ticket.canResell
+            ? `<button class="btn ghost" type="button" data-action="ticket-sell:${esc(ticketId)}">${icon("tag")} Sell ticket</button>`
+            : ""}
         ${order.id || order.orderId ? `<button class="btn ghost" type="button" data-action="request-refund:${esc(order.id || order.orderId)}">${icon("refund-card")} Refund</button>` : ""}
         ${ticketId ? `<button class="btn ghost ticket-remove-btn" type="button" data-action="ticket-${removed ? "restore" : "remove"}:${esc(ticketId)}">${icon(removed ? "refresh" : "x")} ${removed ? "Put back" : "Remove"}</button>` : ""}
       </div>
@@ -20591,6 +20654,88 @@ async function setTicketRemoved(ticketId, removed, button) {
     setButtonBusy(button, false);
   }
 }
+// RESALE, FROM THE HOLDER'S SIDE.
+//
+// The ceiling is shown before the price is typed rather than after it is
+// rejected. A cap discovered by being refused reads as the platform being
+// difficult; a cap stated up front reads as the rule it is — a ticket is
+// resold to get your money back, not at a profit.
+async function sellTicket(ticketId) {
+  const ticket = (state.ticketing.myTickets || []).find((item) => String(item.id) === String(ticketId));
+  if (!ticket) return;
+  const ceiling = Number(ticket.resaleCeiling || 0);
+  const typed = await appDialog({
+    title: "Sell this ticket",
+    body: `Another TitoPay customer can buy it from you. When they do, the ticket moves to them and the money lands in your wallet straight away.`,
+    label: "Your price",
+    value: ceiling ? String(ceiling) : "",
+    placeholder: "0.00",
+    inputMode: "decimal",
+    hint: `You paid ${money(ceiling)} for this ticket and cannot ask more than that. TitoPay keeps 10% of what it sells for.`,
+    confirmLabel: "List for sale",
+    withInput: true
+  });
+  if (typed === null) return;
+  const price = Number(String(typed).replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(price) || price <= 0) {
+    showToast("Enter the price you are asking", "error");
+    return;
+  }
+  if (price > ceiling) {
+    showToast(`A ticket cannot be sold for more than the ${money(ceiling)} you paid`, "error");
+    return;
+  }
+  try {
+    await api(`/v1/ticketing/tickets/${encodeURIComponent(ticketId)}/listing`, {
+      method: "POST",
+      body: { price }
+    });
+    showToast(`Listed for ${money(price)}`, "success");
+    await refreshMyTickets();
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
+
+async function cancelTicketListing(listingId) {
+  if (!await askToConfirm({
+    title: "Take it off sale?",
+    body: "The ticket stays yours and goes back to My Tickets. You can list it again at any time.",
+    confirmLabel: "Take off sale"
+  })) return;
+  try {
+    await api(`/v1/ticketing/listings/${encodeURIComponent(listingId)}`, { method: "DELETE" });
+    showToast("No longer for sale");
+    await refreshMyTickets();
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
+
+// The buyer's side. The price is confirmed before anything moves, because this
+// spends real money from the wallet the moment it is agreed.
+async function buyResaleTicket(listingId) {
+  const listings = state.ticketing.resaleListings || [];
+  const listing = listings.find((item) => String(item.id) === String(listingId));
+  if (!listing) return;
+  if (!await askToConfirm({
+    title: "Buy this ticket",
+    body: `${money(listing.price)} comes out of your TitoPay wallet now, and the ticket moves into My Tickets straight away.`,
+    confirmLabel: `Pay ${money(listing.price)}`
+  })) return;
+  try {
+    await api(`/v1/ticketing/listings/${encodeURIComponent(listingId)}/buy`, { method: "POST", body: {} });
+    showToast("Ticket bought. It is in My Tickets.", "success");
+    // The ticket list is refreshed here because the customer is looking at it.
+    // The balance refreshes when they next open the dashboard, which is how
+    // buying a ticket at full price already behaves.
+    await refreshMyTickets().catch(() => null);
+    await loadEventResaleListings(listing.eventId).catch(() => null);
+  } catch (error) {
+    showToast(friendlyFormError(error, "ticketing"), "error");
+  }
+}
+
 async function refreshMyTickets() {
   const host = document.querySelector("[data-my-ticket-list]");
   if (!host) return;

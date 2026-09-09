@@ -3768,12 +3768,22 @@ async function listMyTickets(userId, { includeRemoved = false } = {}) {
             -- listing exactly as they do now. A seated ticket picks up its
             -- section, row and seat here; an unseated one picks up nulls and
             -- ticketResponse leaves the fields off entirely.
-            s.section AS seat_section, s.row_label AS seat_row, s.seat_number AS seat_number
+            s.section AS seat_section, s.row_label AS seat_row, s.seat_number AS seat_number,
+            -- RESALE, ANSWERED BY THE SERVER. Whether this ticket may be sold
+            -- is the organiser's setting, the ticket's state and the event's
+            -- state together. The app must not re-derive that from parts: a
+            -- Sell button that appears on a ticket the API will refuse is a
+            -- dead end the customer walks into.
+            tt.transfer_allowed,
+            CASE WHEN o.quantity > 0 AND o.subtotal IS NOT NULL
+                 THEN ROUND(o.subtotal / o.quantity, 2) ELSE tt.price END AS face_value,
+            l.id AS listing_id, l.price AS listing_price
        FROM tickets t
        JOIN ticket_orders o ON o.id = t.order_id
        JOIN event_ticket_types tt ON tt.id = t.ticket_type_id
        JOIN events e ON e.id = t.event_id
        LEFT JOIN event_seats s ON s.id = t.seat_id
+       LEFT JOIN ticket_listings l ON l.ticket_id = t.id AND l.status = 'open'
       WHERE t.owner_user_id = $1
         AND ($2::BOOLEAN OR t.hidden_at IS NULL)
       ORDER BY t.created_at DESC
@@ -3798,6 +3808,16 @@ async function listMyTickets(userId, { includeRemoved = false } = {}) {
     // ticket holder can be told, and it was the one thing this list did not say.
     eventStatus: row.event_status,
     eventCancelled: row.event_status === "cancelled",
+    // The one question the Sell button asks, answered here rather than
+    // reassembled in the app from three separate fields.
+    canResell: Boolean(row.transfer_allowed)
+      && row.status === "valid"
+      && !["cancelled", "suspended"].includes(row.event_status)
+      && !row.listing_id,
+    resaleCeiling: Number(row.face_value || 0),
+    ...(row.listing_id
+      ? { listing: { id: row.listing_id, price: Number(row.listing_price || 0) } }
+      : {}),
     removed: Boolean(row.hidden_at),
     removedAt: row.hidden_at,
     eventName: row.event_name,

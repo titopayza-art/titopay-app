@@ -19,10 +19,19 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 120;
+const API_BUILD = 121;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  121: "RESALE REACHES THE CUSTOMER. Build 120 could sell a ticket over the "
+      + "API and no screen offered it. A holder now gets a Sell ticket control "
+      + "on the ticket itself, with the ceiling shown BEFORE the price is "
+      + "typed rather than after it is refused, and tickets other people are "
+      + "selling appear on the event's own page. Whether a ticket may be sold "
+      + "is answered by the server as one field (canResell) rather than "
+      + "reassembled in the app from the organiser's setting, the ticket's "
+      + "state and the event's state - a Sell button on a ticket the API will "
+      + "refuse is a dead end a customer walks into. PWA v505.",
   120: "TICKET RESALE, AND A DEADLOCK THAT WAS ALREADY THERE. A holder who "
       + "cannot go lists their ticket and another customer buys it. No escrow: "
       + "both wallets and the ticket are in one database, so the debit, the "

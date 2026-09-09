@@ -424,3 +424,40 @@ test("the listing browse does not name the seller", async () => {
     await cleanup(eventId, [organiser, seller]);
   }
 });
+
+test("the app is told whether a ticket may be sold, and at what ceiling", async () => {
+  // The Sell button must never appear on a ticket the API will refuse. Whether
+  // a ticket may be sold is the organiser's setting, the ticket's state and
+  // the event's state together, so the server answers it as one field rather
+  // than leaving the app to reassemble it from parts and get it wrong.
+  const organiser = await makeUser("Organiser");
+  const seller = await makeUser("Seller", 0);
+  const { eventId, ticketId } = await makeSoldTicket({ organiserId: organiser, ownerId: seller, price: 240 });
+  try {
+    const [before] = await ticketing.listMyTickets(seller);
+    assert.equal(before.canResell, true);
+    assert.equal(before.resaleCeiling, 240, "what was actually paid, so the cap can be shown before it is hit");
+    assert.equal("listing" in before, false, "not listed yet");
+
+    const listing = await ticketing.listTicketForResale({ userId: seller }, ticketId, { price: 200 });
+    const [after] = await ticketing.listMyTickets(seller);
+    assert.equal(after.canResell, false, "an already-listed ticket offers no second Sell button");
+    assert.deepEqual(after.listing, { id: listing.id, price: 200 },
+      "and the app can show the price and offer to take it off sale");
+  } finally {
+    await cleanup(eventId, [organiser, seller]);
+  }
+});
+
+test("a non-transferable ticket never offers a Sell button", async () => {
+  const organiser = await makeUser("Organiser");
+  const seller = await makeUser("Seller", 0);
+  const { eventId } = await makeSoldTicket({
+    organiserId: organiser, ownerId: seller, price: 240, transferAllowed: false });
+  try {
+    const [ticket] = await ticketing.listMyTickets(seller);
+    assert.equal(ticket.canResell, false, "the organiser said no, so the app never offers it");
+  } finally {
+    await cleanup(eventId, [organiser, seller]);
+  }
+});
