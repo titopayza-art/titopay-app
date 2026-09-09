@@ -74,6 +74,18 @@ const LIMITS_COPY_DEFAULTS = {
   atTopHint: "You are at TitoPay's highest verification level. Higher capability may still be reviewed against your risk profile and ongoing monitoring."
 };
 
+// The API's own wording, trimmed to chip length. Anything it sends that is not
+// one of the known phrases is passed through and the chip truncates it, which
+// is the right failure: a new status TitoPay has not seen must never be
+// rewritten into one it has.
+const SHORT_VERIFICATION_LABELS = {
+  "fully verified": "Verified",
+  "basic verified": "Basic",
+  "under review": "In review",
+  "verify identity": "Verify",
+  "not verified": "Verify",
+  "unverified": "Verify"
+};
 const VERIFICATION_TONES = {
   fully_verified: "ok",
   basic_verified: "mid",
@@ -1471,23 +1483,49 @@ function dashboardGreetingLine() {
 // The wallet card says WHERE the account stands, not a tier number: a quiet
 // status and one door to the full picture. The badge mirrors the backend's
 // verification state; VERIFICATION_TONES (top block) only chooses its colour.
-function walletVerificationRow() {
+// THE VERIFICATION CHIP, in the card's header rather than across its middle.
+//
+// It used to be a full-width strip sitting between the wallet ID and the
+// buttons: a third translucent surface, the same weight as the two it was
+// wedged between, carrying the word "Verification" on the left and "Limits &
+// Verification" on the right \u2014 the same word twice in one row. That is most of
+// why the card read as cluttered.
+//
+// As a header chip it says what it is (a status), it sits on the line the eye
+// reaches first, it is visible without scrolling on every screen size, and it
+// is still exactly one tap to the same screen. The status now carries a
+// coloured dot instead of a tick glyph, so the state is legible before the
+// words are read.
+function shortVerificationLabel(label) {
+  const clean = String(label || "").replace(/[\u2713\u2714]\s*/g, "").trim();
+  return SHORT_VERIFICATION_LABELS[clean.toLowerCase()] || clean;
+}
+function walletVerificationChip() {
   const c = state.compliance;
   let tone = "";
-  let label = "Verification";
+  // Before /compliance/status answers there is no status to state. "Limits"
+  // names the screen this opens without asserting a verification level the app
+  // does not know yet \u2014 the old placeholder read "Verification", which looked
+  // like a status and was not one.
+  let label = "Limits";
+  // CHIP-LENGTH LABELS. A chip that has to truncate says less than a short
+  // word: "Verify identi…" is worse than "Verify". The full sentence lives in
+  // the aria-label and on the screen this opens, so nothing is lost.
   if (c) {
     if (c.verificationState && c.verificationLabel) {
       tone = VERIFICATION_TONES[c.verificationState] || "warn";
-      label = c.verificationLabel;
-    } else if (c.eddActive) { tone = "warn"; label = "Under Review"; }
-    else if (c.verified) { tone = "ok"; label = "\u2713 Fully Verified"; }
-    else if (c.tier === 1) { tone = "mid"; label = "\u2713 Basic Verified"; }
-    else { tone = "warn"; label = "Verify Identity"; }
+      label = shortVerificationLabel(c.verificationLabel);
+    } else if (c.eddActive) { tone = "warn"; label = "In review"; }
+    else if (c.verified) { tone = "ok"; label = "Verified"; }
+    else if (c.tier === 1) { tone = "mid"; label = "Basic"; }
+    else { tone = "warn"; label = "Verify"; }
   }
   return `
-    <button class="wallet-verification" type="button" data-action="limits-verification" aria-label="Limits and verification">
-      <span class="wv-status ${tone}">${esc(label)}</span>
-      <span class="wv-link">Limits &amp; Verification <span aria-hidden="true">\u2192</span></span>
+    <button class="wallet-verify-chip${tone ? ` ${esc(tone)}` : ""}" type="button" data-action="limits-verification"
+            aria-label="${esc(label)}. Open limits and verification.">
+      <span class="wvc-dot" aria-hidden="true"></span>
+      <span class="wvc-label">${esc(label)}</span>
+      <span class="wvc-caret" aria-hidden="true">${icon("arrow-right")}</span>
     </button>`;
 }
 async function loadComplianceStatus({ silent = true } = {}) {
@@ -2076,7 +2114,10 @@ function dashboardView() {
     <section class="dashboard-grid">
       <div>
         <section class="wallet-card${state.accountType === "business" ? " wallet-card-business" : ""}">
-          <p class="eyebrow muted">${state.accountType === "business" ? "Business Wallet" : "Personal Wallet"} <span class="wallet-currency">ZAR</span></p>
+          <div class="wallet-card-top">
+            <p class="eyebrow muted">${state.accountType === "business" ? "Business Wallet" : "Personal Wallet"} <span class="wallet-currency">ZAR</span></p>
+            ${walletVerificationChip()}
+          </div>
           <div class="wallet-balance-line">
             <div class="wallet-balance">${state.loading && !state.wallets.length ? '<span class="skeleton skeleton-balance" aria-hidden="true"></span>' : displayMoney(wallet ? wallet.available_balance : undefined)}</div>
             <button class="balance-toggle" type="button" data-action="toggle-balance" aria-label="${state.balanceHidden ? "Show wallet balance" : "Hide wallet balance"}">${icon(state.balanceHidden ? "eye" : "eye-off")}</button>
@@ -2098,11 +2139,25 @@ function dashboardView() {
             <span class="wallet-held-hint">See why</span>
           </button>`;
           })()}
-          <div class="wallet-meta-line">
+          ${(() => {
+            // The wallet ID is the one thing on this card a customer needs to
+            // GIVE to somebody, and it was set in a filled pill that read as
+            // heavily as the buttons while doing nothing at all. It is quiet
+            // metadata now, and tapping it copies — reusing the same
+            // data-copy-value handler the rest of the app already uses.
+            const id = displayWalletId(wallet || {});
+            const copyable = id && id !== "Generating";
+            if (!copyable) {
+              return `<p class="wallet-id-line is-pending"><span>Wallet ID</span><strong>${esc(id)}</strong></p>`;
+            }
+            return `
+          <button class="wallet-id-line" type="button" data-copy-value="${esc(id)}" data-copy-label="Wallet ID"
+                  aria-label="Wallet ID ${esc(id)}. Tap to copy.">
             <span>Wallet ID</span>
-            <strong>${esc(displayWalletId(wallet || {}))}</strong>
-          </div>
-          ${walletVerificationRow()}
+            <strong>${esc(id)}</strong>
+            <span class="wallet-id-copy" aria-hidden="true">${icon("copy")}</span>
+          </button>`;
+          })()}
           <div class="wallet-actions wallet-actions-compact">
             ${walletAction("Top Up", "upload", "top-up")}
             ${state.accountType === "business" ? walletAction("Payout", "withdraw", "payouts") : walletAction("Withdraw", "withdraw", "withdraw")}

@@ -131,13 +131,32 @@ test("the limits screen shows the full limit set with the approved copy", () => 
 });
 
 test("the wallet card shows status, not tier arithmetic, with one door", () => {
-  const row = APP.slice(APP.indexOf("function walletVerificationRow("));
-  const body = row.slice(0, row.indexOf("\n}") + 2);
-  assert.match(body, /Fully Verified/);
-  assert.match(body, /Basic Verified/);
-  assert.match(body, /Verify Identity/, "tier 0 shows a call to action, not a shaming label");
-  assert.match(body, /Limits &amp; Verification/);
+  // The card's status moved from a full-width strip (walletVerificationRow) to
+  // a chip in the card header (walletVerificationChip). Everything this test
+  // was written to protect is unchanged; only where it reads it has moved.
+  const start = APP.indexOf("function walletVerificationChip(");
+  assert.notEqual(start, -1, "the card's verification component must be findable");
+  const body = APP.slice(start, APP.indexOf("\n}", start) + 2);
+
+  // The three states are still stated, in chip-length words. The API's own
+  // longer wording is preserved and shortened through one map, so a status
+  // TitoPay has not seen is passed through rather than rewritten.
+  assert.match(body, /"Verified"/);
+  assert.match(body, /"Basic"/);
+  assert.match(body, /"Verify"/, "tier 0 shows a call to action, not a shaming label");
+  assert.match(APP, /"fully verified": "Verified"/);
+  assert.match(APP, /"basic verified": "Basic"/);
+  assert.match(APP, /return SHORT_VERIFICATION_LABELS\[clean\.toLowerCase\(\)\] \|\| clean/,
+    "an unknown status is passed through, never rewritten into a known one");
+
+  // ONE DOOR, and it is still named in full for anyone who cannot see the chip.
+  assert.match(body, /data-action="limits-verification"/);
+  assert.match(body, /Open limits and verification/);
+
   assert.doesNotMatch(body, /Tier \d/, "no tier numbers on the card");
+  // And no status is asserted before the platform knows one: the placeholder
+  // names the screen it opens rather than claiming a verification level.
+  assert.match(body, /let label = "Limits"/);
   // Fully Verified must never read as unlimited. The top level genuinely has
   // no standing cap, so the copy is allowed to SAY that — what it may never do
   // is say it on its own, without the supervision that still applies.

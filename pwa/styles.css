@@ -3747,20 +3747,59 @@ body.landing-static .landing-flow.auth-screen {
   position: relative;
   overflow: hidden;
   isolation: isolate;
-  padding: clamp(22px, 5.4vw, 38px) clamp(16px, 5vw, 34px) clamp(22px, 5vw, 32px);
+  padding: clamp(20px, 4.8vw, 32px) clamp(18px, 5vw, 34px) clamp(20px, 4.6vw, 30px);
   color: #fff;
-  background: var(--blue);
-  border-color: rgba(255, 255, 255, 0.2);
-  border-radius: 24px;
-  box-shadow: 0 10px 26px rgba(10, 77, 255, 0.2);
+  /* A single flat fill is what made this read as a plain rectangle. The
+     gradient is shallow on purpose - enough to give the surface a direction,
+     not enough to become a decoration competing with the balance. */
+  background: linear-gradient(158deg, #2f6bff 0%, var(--blue) 46%, #063bcc 100%);
+  border-color: rgba(255, 255, 255, 0.16);
+  border-radius: 26px;
+  box-shadow: 0 18px 38px -14px rgba(10, 77, 255, 0.55), 0 2px 6px rgba(6, 26, 61, 0.18);
 }
 
+/* A soft light source off the top-right corner. Clipped by the card's own
+   overflow:hidden, and behind everything because the card sets isolation. */
 .wallet-card::before {
-  content: none;
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -55%;
+  right: -25%;
+  width: 78%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 68%);
+  pointer-events: none;
 }
 
+/* The hairline along the top edge that separates a printed rectangle from a
+   lit surface. */
 .wallet-card::after {
-  content: none;
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.55) 50%, rgba(255, 255, 255, 0) 100%);
+  pointer-events: none;
+}
+
+/* Identity on the left, verification status on the right. */
+.wallet-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+/* The eyebrow holds its line; the chip is the part that gives way, and only
+   its label does, by truncating. Without this the chip pushed "ZAR" onto a
+   second line and the header read as two rows instead of one. */
+.wallet-card-top .eyebrow {
+  margin: 0;
+  white-space: nowrap;
 }
 
 .wallet-card .muted {
@@ -3787,6 +3826,7 @@ body.landing-static .landing-flow.auth-screen {
   margin-right: 2px;
 }
 
+/* Kept: other screens still render .wallet-meta-line. */
 .wallet-meta-line {
   width: fit-content;
   display: inline-flex;
@@ -3807,6 +3847,76 @@ body.landing-static .landing-flow.auth-screen {
   color: #fff;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.08em;
+}
+
+/* THE WALLET ID. No pill, no border, no fill: it is the quietest thing on the
+   card because it is reference data, not an action. The only affordance is the
+   copy glyph, which is the one thing anybody actually wants to do with it. */
+.wallet-id-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 2px 0 0;
+  padding: 6px 10px 6px 0;
+  color: rgba(255, 255, 255, 0.66);
+  background: none;
+  border: 0;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.wallet-id-line.is-pending {
+  cursor: default;
+}
+
+.wallet-id-line strong {
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+  text-transform: none;
+}
+
+.wallet-id-copy {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  opacity: 0.6;
+  transition: opacity 160ms ease;
+}
+
+.wallet-id-copy svg {
+  width: 15px;
+  height: 15px;
+}
+
+.wallet-id-line:hover,
+.wallet-id-line:focus-visible {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.wallet-id-line:hover .wallet-id-copy,
+.wallet-id-line:focus-visible .wallet-id-copy {
+  opacity: 1;
+}
+
+.wallet-id-line:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.5);
+  outline-offset: 2px;
+}
+
+.wallet-id-line:active {
+  transform: scale(0.98);
 }
 
 .balance-toggle {
@@ -13588,42 +13698,88 @@ img {
 /* Limits and Verification --------------------------------------------------- */
 
 /* The wallet card's one quiet line: status pill left, door right. */
-.wallet-verification {
-  display: flex;
-  flex-wrap: wrap;
+/* THE VERIFICATION CHIP. Replaces .wallet-verification, which was a
+   full-width strip across the middle of the card carrying "Verification" on
+   one side and "Limits & Verification" on the other. This states the status
+   and gets out of the way; the dot carries the state before the label is read.
+   Sized as a real tap target despite being visually small. */
+.wallet-verify-chip {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px 8px;
-  width: 100%;
-  margin: 10px 0 2px;
-  padding: 9px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: var(--radius-control);
-  background: rgba(255, 255, 255, 0.08);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.wv-status {
-  white-space: nowrap;
-  padding: 3px 7px;
+  gap: 7px;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 10px 6px 11px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.13);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  background: rgba(255, 255, 255, 0.16);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
 }
 
-.wv-status.ok { background: #d9f4e4; color: #0b7a3b; }
-.wv-status.mid { background: #e2ebff; color: #2f5cff; }
-.wv-status.warn { background: #ffe9d6; color: #a8560f; }
+.wallet-verify-chip:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+}
 
-.wv-link {
-  white-space: nowrap;
-  font-size: 0.76rem;
-  font-weight: 700;
-  opacity: 0.92;
+.wallet-verify-chip:active {
+  transform: scale(0.97);
+}
+
+.wallet-verify-chip:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.6);
+  outline-offset: 2px;
+}
+
+.wvc-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+/* The three states, as the dot. Colours are the same ones the old pill used,
+   read here against the blue card rather than as a filled badge. */
+.wallet-verify-chip.ok .wvc-dot { background: #3ddc8a; box-shadow: 0 0 0 3px rgba(61, 220, 138, 0.22); }
+.wallet-verify-chip.mid .wvc-dot { background: #8fc0ff; box-shadow: 0 0 0 3px rgba(143, 192, 255, 0.22); }
+.wallet-verify-chip.warn .wvc-dot { background: #ffc46b; box-shadow: 0 0 0 3px rgba(255, 196, 107, 0.24); }
+
+/* Unverified is the one state worth pulling the eye, because it is the one
+   with something to do. */
+.wallet-verify-chip.warn {
+  background: rgba(255, 196, 107, 0.18);
+  border-color: rgba(255, 196, 107, 0.42);
+}
+
+.wallet-verify-chip.warn:hover {
+  background: rgba(255, 196, 107, 0.26);
+}
+
+.wvc-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42vw;
+}
+
+.wvc-caret {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  opacity: 0.75;
+}
+
+.wvc-caret svg {
+  width: 14px;
+  height: 14px;
 }
 
 .limit-line {
@@ -13695,10 +13851,13 @@ img {
 
 @media (max-width: 480px) {
   .wallet-card { padding: 18px 16px 16px; }
-  .wallet-balance { margin: 6px 0 10px; font-size: clamp(1.9rem, 8.6vw, 2.6rem); }
+  .wallet-balance { margin: 6px 0 8px; font-size: clamp(1.9rem, 8.6vw, 2.6rem); }
   .wallet-meta-line { margin: -2px 0 8px; padding: 6px 11px; }
   .balance-toggle { width: 40px; height: 40px; flex: 0 0 40px; }
-  .wallet-verification { margin: 8px 0 0; padding: 8px 10px; }
+  .wallet-id-line { padding: 4px 8px 4px 0; }
+  /* The chip keeps its full tap target on a small screen; only the label is
+     allowed to shorten, and it truncates rather than wrapping the header. */
+  .wvc-label { max-width: 38vw; }
   .wallet-actions-compact { margin-top: 12px; gap: 10px; }
   .wallet-actions-compact button { min-height: 48px; }
   .section-head.quick-services-head { margin-top: 10px; }
