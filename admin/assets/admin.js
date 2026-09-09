@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v103";
+  return "admin-console-v104";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -119,6 +119,7 @@ const NAV_GROUPS = [
     ["/pricing/", "pricing", "Pricing Engine"],
     ["/integrations/", "integrations", "Integration Centre"],
     ["/services/", "service-catalogue", "Service Catalogue"],
+    ["/integration-readiness/", "integration-readiness", "Integration Readiness"],
     ["/feature-management/", "feature-management", "Feature Management"],
     ["/api-provider-settings/", "api-provider-settings", "API Provider Settings"],
     ["/security-content/", "security-content", "Security Content"],
@@ -212,6 +213,7 @@ const NAV_ICON_PATHS = {
   integrations: "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
   "integration-provider": "M9 4v4M15 4v4M6 8h12v5a6 6 0 0 1-12 0V8Zm6 11v3",
   "service-catalogue": "M4.5 5h5.5v5.5H4.5V5Zm9.5 0h5.5v5.5H14V5ZM4.5 14h5.5v5.5H4.5V14Zm9.5 0h5.5v5.5H14V14Z",
+  "integration-readiness": "M9 3v6m6-6v6M6 9h12v3a6 6 0 0 1-12 0V9Zm6 9v3",
   "feature-management": "M5 8h9m2 0h3M5 16h3m2 0h9M14 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Zm-4 8a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z",
   "api-provider-settings": "M6 7h12M6 12h12M6 17h6M18 15v4m2-2h-4",
   "security-content": "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm-3 6.5h6m-6 3h4",
@@ -1161,6 +1163,9 @@ function renderSidebar(page, me) {
       integrations: "__super_admin__",
       "integration-provider": "__super_admin__",
       "service-catalogue": "services",
+      // Matches requireSuperAdmin on GET /admin/integration-readiness, so the
+      // rail never offers a page the request would be refused from.
+      "integration-readiness": "__super_admin__",
       "feature-management": "__super_admin__",
       "api-provider-settings": "__owner__",
       support: "support",
@@ -4395,6 +4400,50 @@ async function renderFeatureManagement(me = {}) {
     }
   });
 }
+// INTEGRATION READINESS: what an aggregator would find if they integrated
+// TitoPay as a payment option today.
+//
+// Nothing on this page is written down. Every row is answered by the API from
+// the mounted routes, the live schema and the running configuration, so the day
+// somebody builds the hosted payment page this page notices, and the day
+// somebody deletes the idempotency guard it notices that too. A readiness list
+// maintained by hand is read as current long after it stopped being true, which
+// is worse than not having one.
+function readinessChip(status) {
+  if (status === "ready") return `<span class="chip green">ready</span>`;
+  if (status === "partial") return `<span class="chip orange">partial</span>`;
+  return `<span class="chip">missing</span>`;
+}
+
+async function renderIntegrationReadiness() {
+  const result = await apiFetch("/admin/integration-readiness");
+  const checks = Array.isArray(result.checks) ? result.checks : [];
+  const summary = result.summary || {};
+  PAGE_EXPORTS["integration-readiness"] = checks.map((check) => ({
+    capability: check.label,
+    status: check.status,
+    detail: check.detail,
+    why: check.why,
+  }));
+
+  document.getElementById("page-content").innerHTML = `
+    ${renderMetrics([
+      ["Checks", summary.total || 0],
+      ["Ready", summary.ready || 0],
+      ["Partial", summary.partial || 0],
+      ["Missing", summary.missing || 0],
+    ])}
+    ${tableCard("What an integrator would find", renderRows(checks, [
+      { label: "Capability", render: (row) => `<strong>${escapeHtml(row.label || "")}</strong>` },
+      { label: "State", render: (row) => readinessChip(row.status) },
+      { label: "What the platform reports", render: (row) => `<small>${escapeHtml(row.detail || "")}</small>` },
+      { label: "Why it matters", render: (row) => `<small class="readiness-why">${escapeHtml(row.why || "")}</small>` },
+    ], () => "", { actionsColumn: false }),
+    "Read from the running platform on every load: the routes actually mounted, the tables actually present, the configuration actually in force. Nothing here is a description of intent.",
+    "Derived")}
+  `;
+}
+
 // THE SERVICE CATALOGUE: WHAT IS LIVE, WHAT IS NOT, AND WHO DECIDES.
 //
 // The page used to be read-only. That was the right call while the only rows
@@ -7249,6 +7298,7 @@ function adminPageDescriptors() {
     integrations: ["Integration Centre", "Securely configure third-party providers for payments, compliance, VAS, email and SMS."],
     "integration-provider": ["Provider Configuration", "Configure, test, disable and rotate one provider connection."],
     "service-catalogue": ["Service Catalogue", "Every service TitoPay offers, the status customers actually see, and what is holding any of them back."],
+    "integration-readiness": ["Integration Readiness", "What an aggregator or merchant would find if they integrated TitoPay as a payment option today. Every answer is read from the running platform, never from a list."],
     "feature-management": ["Feature Management", "Enable or disable TitoPay platform modules from one Super Admin console."],
     "api-provider-settings": ["API Provider Settings", "Configure, test and monitor third-party providers through the TitoPay API."],
     settings: ["Platform Settings", "Review notification billing, provider abstraction and role visibility."],
@@ -7326,6 +7376,7 @@ function adminPageLoaders() {
     integrations: renderIntegrations,
     "integration-provider": renderIntegrationProvider,
     "service-catalogue": renderServiceCatalogue,
+    "integration-readiness": renderIntegrationReadiness,
     "feature-management": renderFeatureManagement,
     "api-provider-settings": renderIntegrations,
     settings: renderSettings,

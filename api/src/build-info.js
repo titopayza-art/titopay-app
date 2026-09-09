@@ -19,10 +19,22 @@
 // the notes below. The number is deliberately a plain integer: it only has to
 // answer "newer or older than the build that contains the fix".
 
-const API_BUILD = 125;
+const API_BUILD = 126;
 
 // Most recent first. Keep this short; it is a deployment aid, not a changelog.
 const BUILD_NOTES = {
+  126: "INTEGRATION READINESS, DERIVED. A Super Admin page answering the "
+      + "question an aggregator asks: can TitoPay be a payment option in "
+      + "somebody else's checkout. Twelve checks, none of them written down - "
+      + "tables read from information_schema, routes by walking the mounted "
+      + "router, the intent state machine by counting the states the engine "
+      + "defines, configuration by asking it. A hand-maintained readiness list "
+      + "is read as current long after it stopped being true, in both "
+      + "directions. A test renames a table away and asserts the report "
+      + "follows, then renames it back and asserts it follows again, which is "
+      + "the only way to tell a derived answer from a hardcoded one that "
+      + "happens to be right today. Read-only: every value is a fact about the "
+      + "platform, and the way to change one is to build the thing.",
   125: "ACTIVATION MOVES TO THE CONSOLE. Whether TitoPay can sell airtime was "
       + "one hardcoded boolean in an adapter file, so switching the VAS rail "
       + "on, changing supplier, or killing it during a supplier outage all "

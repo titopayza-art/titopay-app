@@ -1,6 +1,23 @@
 TitoPay Admin
-Build: admin-console-v103
+Build: admin-console-v104
 Date: 2026-09-09
+
+v104 - Integration Readiness.
+
+  - A new page under Platform, Super Admin only: what an aggregator or a
+    merchant would find if they integrated TitoPay as a payment option
+    today. Twelve checks, each answered by the platform about itself.
+  - Nothing on it is written down. Tables are checked in
+    information_schema, routes by walking the router that is actually
+    mounted, the state machine by counting the states the engine defines,
+    configuration by asking it. Build the hosted payment page and this page
+    notices on the next load with nothing to edit.
+  - Three states rather than two. "The engine exists but only a physical
+    till can reach it" is neither a yes nor a no, and flattening it to
+    either misleads the person reading.
+  - It reports the gaps as plainly as the strengths: no hosted payment
+    page, no return URL on an intent, and settlement to a merchant bank
+    account being commercial rather than technical.
 
 v103 - The catalogue stops contradicting itself.
 

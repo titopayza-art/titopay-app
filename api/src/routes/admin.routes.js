@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const net = require("net");
 const nodemailer = require("nodemailer");
 const { refreshCapabilityActivation } = require("../providers/capability-activation");
+const { integrationReadiness } = require("../services/integration-readiness-service");
 const QRCode = require("qrcode");
 const { pool } = require("../db/pool");
 const { config } = require("../config/env");
@@ -3087,6 +3088,20 @@ router.get("/integrations/config/:provider", requireSuperAdmin, async (req, res,
   try {
     const providerKey = requireEnum(req.params.provider, Object.keys(INTEGRATION_PROVIDERS), "Integration provider");
     res.json({ ok: true, provider: publicIntegrationState(providerKey, await getStoredIntegration(providerKey)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// CAN TITOPAY BE A PAYMENT OPTION IN SOMEBODY ELSE'S CHECKOUT?
+//
+// Read-only and entirely derived — every answer comes from the mounted routes,
+// the live schema and the running configuration, never from a list somebody
+// maintains. Super Admin, matching the Integration Centre beside it, because it
+// describes the platform's own architecture.
+router.get("/integration-readiness", requireSuperAdmin, async (_req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await integrationReadiness()) });
   } catch (error) {
     next(error);
   }
