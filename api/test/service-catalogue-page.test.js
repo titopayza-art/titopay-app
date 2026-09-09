@@ -133,6 +133,76 @@ test("the page explains itself against an older API instead of rendering blank",
   assert.match(page, /API build 114/, "it names the build that adds the report");
 });
 
+/* ---- RBAC ---------------------------------------------------------------
+   A new console page has two gates and they must agree. The rail decides what
+   is OFFERED; the API decides what is SERVED. Looser rail than API and an
+   operator finds a page that 403s; tighter and they lose a page they are
+   entitled to; looser API than rail and the permission is not a permission at
+   all, because the URL is open to any signed-in admin.
+
+   Both gates are driven with real role-limited accounts in
+   verification/service-catalogue-rbac.spec.js. These hold the wiring. */
+
+test("the page reuses an existing permission and invents nothing", () => {
+  // A brand-new permission would be held by nobody, appear on no role, and
+  // need a migration before anyone could be granted it. "services" already
+  // guards this endpoint and is already grantable.
+  const { getAdminRolePermissions } = require("../src/services/auth-service");
+  assert.ok(getAdminRolePermissions("engineering").includes("services"),
+    "engineering already holds it");
+  assert.match(CONSOLE, /"service-catalogue": "services"/);
+  assert.match(ROUTES, /requireAdminPermission\("services"\)/);
+});
+
+test("no role's access was changed to make this page work", () => {
+  // The page must earn its audience through the permission that already
+  // exists, never by widening a role. These are the shipped defaults as they
+  // stood before the Service Catalogue, pinned so a future convenience edit
+  // has to be deliberate.
+  const { getAdminRolePermissions } = require("../src/services/auth-service");
+  const before = {
+    customer_support: ["dashboard", "users", "wallets", "support", "transactions", "profile_lock",
+      "ticketing", "event_tags", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
+    compliance: ["dashboard", "compliance", "users", "merchants", "ticketing", "event_tags",
+      "enterprise_distribution", "audit", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
+    engineering: ["engineering", "security", "audit", "dashboard", "transactions", "services",
+      "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_QUEUE_MANAGE", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
+  };
+  for (const [role, permissions] of Object.entries(before)) {
+    assert.deepEqual(getAdminRolePermissions(role), permissions, `${role} must be untouched`);
+  }
+  // And nobody outside engineering and the root roles picked up "services".
+  for (const role of ["customer_support", "compliance", "finance", "marketing", "senior_marketing", "coo"]) {
+    assert.ok(!getAdminRolePermissions(role).includes("services"),
+      `${role} must not have been granted "services"`);
+  }
+});
+
+test("an owner can grant it without a code change", () => {
+  // The RBAC screen builds its checklist from the API's availablePermissions
+  // plus everything already held by a role. "services" satisfies the second,
+  // so it is offered on that screen today — which is what makes this page
+  // delegable to, say, compliance without touching this repository.
+  const { getAdminRolePermissions } = require("../src/services/auth-service");
+  assert.ok(getAdminRolePermissions("engineering").includes("services"));
+  const rbac = CONSOLE.slice(CONSOLE.indexOf("async function renderRbacPermissions"),
+    CONSOLE.indexOf("async function renderStaffManagement"));
+  assert.match(rbac, /items\.flatMap\(\(row\) => row\.permissions\)/,
+    "the checklist includes every permission any role already holds");
+});
+
+test("the rail hides what the API would refuse", () => {
+  // Every slug the rail offers must resolve to a gate. A slug that falls
+  // through to its own name would be checked against a permission nobody
+  // holds, and the page would vanish for everyone including its owner.
+  const map = CONSOLE.slice(CONSOLE.indexOf("const canSee = (slug) =>"),
+    CONSOLE.indexOf("const initials = adminName"));
+  assert.match(map, /"service-catalogue": "services"/,
+    "the rail checks the same permission the endpoint enforces");
+  assert.ok(!/"service-catalogue": "__/.test(map),
+    "and does not quietly restrict it to a root role instead");
+});
+
 test("both copies of admin.js are the same file", () => {
   const root = fs.readFileSync(path.join(ROOT, "admin", "admin.js"), "utf8");
   assert.equal(root, CONSOLE, "admin/admin.js and admin/assets/admin.js have drifted");
