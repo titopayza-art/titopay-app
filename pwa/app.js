@@ -2486,17 +2486,42 @@ function openPayHub() {
 }
 function landingMenuSection(section) {
   const links = (section.links || []).filter(Boolean);
+  const content = `
+      ${section.body ? `<p class="menu-section-body">${esc(section.body)}</p>` : ""}
+      ${section.benefits ? `<dl class="menu-benefits">${section.benefits.map(([term, detail]) => `<div><dt>${esc(term)}</dt><dd>${esc(detail)}</dd></div>`).join("")}</dl>` : ""}
+      ${section.tags && section.tags.length ? `<ul class="menu-tag-list">${section.tags.map((tag) => `<li>${esc(tag)}</li>`).join("")}</ul>` : ""}
+      ${section.form || ""}
+      ${links.length ? `<div class="menu-section-links">${links.map((link) => `<a class="text-link" href="${esc(link.href)}"${link.href.startsWith("http") ? ' target="_blank" rel="noopener"' : ""}>${esc(link.label)}</a>`).join("")}</div>` : ""}`;
+  // A SECTION THAT OPENS ON A TAP.
+  //
+  // Used for Contact us, which sat permanently expanded: five fields, a
+  // consent tick and a send button, pushed into everyone reading the menu for
+  // any other reason, and pushing the company details below the fold.
+  //
+  // Native <details>, deliberately, rather than the button + aria-expanded +
+  // re-render pattern the Learn screen uses. This menu is a modal built once,
+  // so a re-render would rebuild the form and throw away whatever had been
+  // typed into it. <details> toggles nothing but its own open state: the form
+  // keeps its input, and the keyboard and screen-reader behaviour comes free.
+  if (section.collapsible) {
+    return `
+    <details class="menu-section menu-section-collapsible">
+      <summary class="menu-section-head menu-section-summary">
+        <span class="icon-bubble">${icon(section.icon)}</span>
+        <h3 id="menu-${esc(section.id)}">${esc(section.title)}</h3>
+        <span class="menu-section-caret" aria-hidden="true">${icon("chevron-down")}</span>
+      </summary>
+      <div class="menu-section-content">${content}</div>
+    </details>
+  `;
+  }
   return `
     <section class="menu-section" aria-labelledby="menu-${esc(section.id)}">
       <header class="menu-section-head">
         <span class="icon-bubble">${icon(section.icon)}</span>
         <h3 id="menu-${esc(section.id)}">${esc(section.title)}</h3>
       </header>
-      ${section.body ? `<p class="menu-section-body">${esc(section.body)}</p>` : ""}
-      ${section.benefits ? `<dl class="menu-benefits">${section.benefits.map(([term, detail]) => `<div><dt>${esc(term)}</dt><dd>${esc(detail)}</dd></div>`).join("")}</dl>` : ""}
-      ${section.tags && section.tags.length ? `<ul class="menu-tag-list">${section.tags.map((tag) => `<li>${esc(tag)}</li>`).join("")}</ul>` : ""}
-      ${section.form || ""}
-      ${links.length ? `<div class="menu-section-links">${links.map((link) => `<a class="text-link" href="${esc(link.href)}"${link.href.startsWith("http") ? ' target="_blank" rel="noopener"' : ""}>${esc(link.label)}</a>`).join("")}</div>` : ""}
+      ${content}
     </section>
   `;
 }
@@ -2562,6 +2587,9 @@ function openLandingMenu() {
       id: "contact",
       title: "Contact us",
       icon: "chat",
+      // Closed until it is asked for: most people open this menu to read what
+      // TitoPay is or what it costs, not to write to Customer Care.
+      collapsible: true,
       body: "Complete the form below and our Customer Care team will respond as soon as possible.",
       form: `
         <form class="form-grid landing-contact-form" data-form="public-contact">

@@ -15821,3 +15821,65 @@ button.is-busy.btn-primary::after {
 .bk-booking-who small{color:var(--muted);font-size:.82rem}
 .bk-booking-head .ticket-status{flex:0 0 auto;white-space:nowrap}
 .bk-booking-actions{display:flex;gap:8px;margin-top:10px}
+
+/* A MENU SECTION THAT OPENS ON A TAP.
+   Used by Contact us. Native <details>, so there is no state to keep and no
+   re-render: whatever has been typed into the form survives opening and
+   closing it. .menu-section supplies the card; these rules move its padding
+   onto the summary and the content so the closed state is a neat header row. */
+.menu-section-collapsible {
+  display: block;
+  padding: 0;
+}
+
+.menu-section-summary {
+  padding: 16px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--radius-control);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The default disclosure triangle, removed in both dialects. */
+.menu-section-summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu-section-summary::marker {
+  content: "";
+}
+
+.menu-section-summary h3 {
+  flex: 1 1 auto;
+}
+
+.menu-section-summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.menu-section-caret {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+
+.menu-section-collapsible[open] .menu-section-caret {
+  transform: rotate(180deg);
+}
+
+.menu-section-content {
+  display: grid;
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-section-caret {
+    transition: none;
+  }
+}
