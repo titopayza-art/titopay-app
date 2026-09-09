@@ -53,17 +53,30 @@ test("it reports what the platform actually has, not a written list", async () =
   assert.match(byKey.get("partner_intent_creation").detail, /terminal authentication/);
 });
 
-test("THE STATE MACHINE IS COUNTED FROM THE SOURCE THAT DEFINES IT", async () => {
-  // The check that proves derivation rather than description. The number of
-  // states is read out of pos/service.js, so it cannot drift from the machine.
+test("THE STATE MACHINE IS READ FROM THE MACHINE, NOT FROM A LIST OF ITS NAMES", async () => {
+  // The check that proves derivation rather than description — and the one
+  // that failed to. Both this test and the service used to match the state
+  // names with the same regex alternation, which is a written list twice over:
+  // neither listed PROCESSING, so the two agreed with each other and disagreed
+  // with the engine, and a ten-state machine was published as nine.
+  //
+  // So the states are compared against the TRANSITIONS block parsed out of
+  // pos/service.js — every key it declares, whatever they come to be — while
+  // the service reads the exported object. Two independent routes to the same
+  // machine, which is what makes this an assertion instead of an echo.
   const report = await integrationReadiness();
   const intents = report.checks.find((check) => check.key === "payment_intents");
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "pos", "service.js"), "utf8");
-  const inSource = new Set((source.match(/"(PENDING|SCANNED|AUTHORIZED|COMPLETED|CANCELLED|EXPIRED|FAILED|REFUNDED|REVERSED)"/g) || [])
-    .map((s) => s.replace(/"/g, "")));
-  assert.equal(intents.evidence.split(", ").length, inSource.size,
-    "the reported states match the states the engine actually defines");
-  assert.ok(inSource.has("SCANNED"), "and SCANNED is one of them, which is what makes it a QR engine");
+  const block = source.match(/const TRANSITIONS = \{([\s\S]*?)\n\};/);
+  assert.ok(block, "pos/service.js must still declare the machine as TRANSITIONS");
+  const declared = [...block[1].matchAll(/^\s+([A-Z_]+):/gm)].map((match) => match[1]);
+
+  assert.deepEqual(intents.evidence.split(", ").sort(), [...declared].sort(),
+    "the reported states are the states the engine actually defines");
+  assert.match(intents.detail, new RegExp(`${declared.length} states`));
+  assert.ok(declared.includes("SCANNED"), "SCANNED is what makes it a QR engine");
+  assert.ok(declared.includes("PROCESSING"),
+    "PROCESSING is the state the old alternation dropped; it must be counted now");
 });
 
 test("a missing table turns a ready check into a missing one", async () => {

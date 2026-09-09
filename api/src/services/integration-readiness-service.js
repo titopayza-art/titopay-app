@@ -87,10 +87,19 @@ async function integrationReadiness() {
   const terminalGuarded = intentRoutes.filter((r) => r.guards.includes("requireTerminalAuth"));
   const partnerGuarded = intentRoutes.filter((r) => r.guards.includes("requirePartnerKey"));
 
-  // The state machine, counted from the source that defines it rather than
-  // from a number written here.
-  const states = [...new Set((posSource.match(/"(PENDING|SCANNED|AUTHORIZED|COMPLETED|CANCELLED|EXPIRED|FAILED|REFUNDED|REVERSED)"/g) || [])
-    .map((s) => s.replace(/"/g, "")))];
+  // The state machine, READ FROM THE MACHINE ITSELF.
+  //
+  // This was a regex alternation of the state names — which is a written list
+  // wearing the costume of a derived one, and it drifted immediately: the
+  // alternation never listed PROCESSING, so a ten-state machine was reported
+  // as nine on a page whose entire premise is that it does not describe the
+  // platform, it asks it. pos/service.js exports TRANSITIONS, so ask that.
+  let states = [];
+  try {
+    states = Object.keys(require("../pos/service").TRANSITIONS || {});
+  } catch (error) {
+    states = [];
+  }
 
   let sandboxOn = false;
   try { sandboxOn = require("./sandbox-service").sandboxEnabled(); } catch (error) { sandboxOn = false; }

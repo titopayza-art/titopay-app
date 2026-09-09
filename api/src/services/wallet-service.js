@@ -185,8 +185,16 @@ async function loadEmailStatementData(db, userId, walletId, range = {}, { lockWa
             COALESCE(SUM(CASE WHEN wl.entry_type IN ('debit','reserve') THEN ABS(wl.amount) ELSE 0 END) OVER(),0) AS money_out_total
      FROM wallet_ledger wl
      WHERE wl.wallet_id=$1
-       AND ($2::date IS NULL OR wl.created_at >= ($2::date AT TIME ZONE 'Africa/Johannesburg'))
-       AND ($3::date IS NULL OR wl.created_at < (($3::date + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg'))
+       -- ::timestamp BEFORE AT TIME ZONE, and it is not decoration. A bare
+       -- date is cast to timestamptz in the SESSION's zone first, so
+       -- $2::date AT TIME ZONE 'Africa/Johannesburg' returns a timestamp
+       -- WITHOUT a zone that then gets read back in the session's zone -- two
+       -- shifts, and on a UTC server the day opened at 04:00 SAST. The upper
+       -- bound was already right by accident (date + interval yields a plain
+       -- timestamp), so the window silently lost the first four hours of the
+       -- day rather than moving as a block.
+       AND ($2::date IS NULL OR wl.created_at >= ($2::date::timestamp AT TIME ZONE 'Africa/Johannesburg'))
+       AND ($3::date IS NULL OR wl.created_at < (($3::date::timestamp + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg'))
      ORDER BY wl.created_at DESC
      LIMIT 100`,
     [walletId,from,to]

@@ -929,8 +929,20 @@ async function statementForUser(userId, { from = null, to = null } = {}) {
      LEFT JOIN pricing_rules pr ON pr.service_code = t.service_code
      ${POSTED_LEDGER_LATERAL}
      WHERE t.user_id = $1
-       AND ($2::date IS NULL OR t.created_at >= ($2::date AT TIME ZONE 'Africa/Johannesburg'))
-       AND ($3::date IS NULL OR t.created_at <  (($3::date + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg'))
+       -- A STATEMENT DAY IS A SOUTH AFRICAN CALENDAR DAY, MIDNIGHT TO MIDNIGHT.
+       --
+       -- The ::timestamp cast is load-bearing. Postgres casts a bare date to
+       -- timestamptz in the SESSION's zone, so $2::date AT TIME ZONE 'SAST'
+       -- is timestamptz -> timestamp WITHOUT a zone, which is then compared
+       -- against a timestamptz column by reading it back in the session zone.
+       -- Two shifts on a UTC server, and the window opened at 04:00 SAST. The
+       -- upper bound was accidentally correct -- date + interval produces a
+       -- plain timestamp, so only one shift -- which is why this never looked
+       -- like an off-by-a-day: the day simply lost its first four hours, and a
+       -- payment made at 01:00 was missing from that day's statement and
+       -- absent from the next one too.
+       AND ($2::date IS NULL OR t.created_at >= ($2::date::timestamp AT TIME ZONE 'Africa/Johannesburg'))
+       AND ($3::date IS NULL OR t.created_at <  (($3::date::timestamp + INTERVAL '1 day') AT TIME ZONE 'Africa/Johannesburg'))
      ORDER BY t.created_at DESC
      LIMIT 5000`,
     [userId, fromDate, toDate]

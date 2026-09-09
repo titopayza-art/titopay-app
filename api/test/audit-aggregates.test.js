@@ -110,11 +110,52 @@ test("statement totals cover the whole period even when the row list is capped s
     assert.equal(Number(all.totals.moneyOut), 40);
 
     // A single-day window excludes the 40-days-ago credit.
-    const today = new Date();
-    const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    //
+    // "Today" has to be asked of the calendar the query uses. statementForUser
+    // resolves the window as `$2::date AT TIME ZONE 'Africa/Johannesburg'`,
+    // while this line used to build the date from the server's own clock —
+    // UTC on every runner we have. So every night between 22:00 and midnight
+    // UTC, SA was already on the next day, the rows were stamped into it, the
+    // window asked for the previous one, and 151 rows became 0. A two-hour
+    // band of red CI a day, and not a product fault at all.
+    const iso = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Johannesburg" })
+      .format(new Date());
     const windowed = await statementForUser(acct.userId, { from: iso, to: iso });
     assert.equal(windowed.totalCount, 151, "only today's rows");
     assert.equal(Number(windowed.totals.moneyIn), 1500, "the older credit is outside the window");
+  } finally {
+    await cleanup(acct.userId);
+  }
+});
+
+test("A STATEMENT DAY RUNS MIDNIGHT TO MIDNIGHT IN SOUTH AFRICA", async () => {
+  // Found by the test above failing at 00:19 SAST, which is the only window in
+  // the day where it shows. `$2::date AT TIME ZONE 'Africa/Johannesburg'` was
+  // shifted twice on a UTC session and opened the day at 04:00 SAST, while the
+  // upper bound — accidentally correct — still closed it at midnight. So a
+  // statement for a day quietly omitted its first four hours: a payment made
+  // at 01:00 appeared on no statement at all, not that day's and not the next.
+  //
+  // Pinned at FIXED instants rather than relative to now, so this asserts the
+  // boundary itself and cannot pass or fail depending on the hour it runs.
+  const acct = await makeUser("personal");
+  try {
+    await tx(acct, { amount: 11, direction: "credit", whenSql: "TIMESTAMPTZ '2026-03-15 00:30:00+02'" });
+    await tx(acct, { amount: 22, direction: "credit", whenSql: "TIMESTAMPTZ '2026-03-15 12:00:00+02'" });
+    await tx(acct, { amount: 33, direction: "credit", whenSql: "TIMESTAMPTZ '2026-03-15 23:59:00+02'" });
+    // The neighbours, one minute outside on each side.
+    await tx(acct, { amount: 44, direction: "credit", whenSql: "TIMESTAMPTZ '2026-03-14 23:59:00+02'" });
+    await tx(acct, { amount: 55, direction: "credit", whenSql: "TIMESTAMPTZ '2026-03-16 00:01:00+02'" });
+
+    const day = await statementForUser(acct.userId, { from: "2026-03-15", to: "2026-03-15" });
+    assert.equal(day.totalCount, 3, "the whole SA day, including the 00:30 payment that used to vanish");
+    assert.equal(Number(day.totals.moneyIn), 66, "11 + 22 + 33, and neither neighbour");
+
+    // And the neighbours land on their own days rather than nowhere.
+    const before = await statementForUser(acct.userId, { from: "2026-03-14", to: "2026-03-14" });
+    assert.equal(before.totalCount, 1, "23:59 belongs to the day it was made on");
+    const after = await statementForUser(acct.userId, { from: "2026-03-16", to: "2026-03-16" });
+    assert.equal(after.totalCount, 1, "00:01 belongs to the next day, not to a gap");
   } finally {
     await cleanup(acct.userId);
   }
