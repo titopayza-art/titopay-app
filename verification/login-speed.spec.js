@@ -27,7 +27,11 @@ const zlib = require("zlib");
 
 const ARTIFACTS = path.join(__dirname, "artifacts");
 fs.mkdirSync(ARTIFACTS, { recursive: true });
-const PWA = path.join(__dirname, "..", "pwa");
+// PWA_ROOT lets this run against an EXTRACTED DEPLOYMENT PACKAGE rather than
+// the repository, which is the only way to prove the zip a customer's server
+// will actually serve is complete. A package can pass every repo-based check
+// and still be missing a file nobody noticed was needed.
+const PWA = process.env.PWA_ROOT || path.join(__dirname, "..", "pwa");
 const PORT = 8153;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
