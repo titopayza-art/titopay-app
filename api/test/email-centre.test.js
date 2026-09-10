@@ -272,11 +272,39 @@ test("PWA offers authenticated password changes by SMS or free Email OTP", () =>
 });
 
 test("PWA notification clearing persists across server and transaction refreshes", () => {
+  // This asserted the exact line `localStorage.setItem(notificationClearedAtKey(),
+  // String(Date.now()))`, which pinned one spelling of the write rather than the
+  // property it protects - so it failed the moment the clear had to write more
+  // than one key, while the behaviour it exists to guard was intact. What
+  // matters is that a clear records a timestamp and that the timestamp is what
+  // suppresses re-derived notices.
   const app=fs.readFileSync(pwaFile("app.js"),"utf8");
   assert.match(app,/function notificationClearedAtKey\(\)/);
-  assert.match(app,/localStorage\.setItem\(notificationClearedAtKey\(\), String\(Date\.now\(\)\)\)/);
+  const clear = app.slice(app.indexOf("function clearNotifications()"),
+    app.indexOf("function clearNotifications()") + 900);
+  assert.match(clear,/notificationClearedAtKey\(\)/,
+    "clearing must record the marker the suppression check reads");
+  assert.match(clear,/String\(Date\.now\(\)\)/, "and it must be a timestamp");
   assert.match(app,/Array\.isArray\(stored\) \? stored : defaultInAppNotifications\(\)/);
   assert.match(app,/Date\.parse\(createdAt\) <= clearedAt/);
+
+  // THE INBOX IS KEYED BY THE PERSON, NOT BY THE PERSONAL/BUSINESS TOGGLE.
+  // Embedding state.accountType meant flipping that toggle sent the reader to a
+  // key nobody had written, and every cleared notice came back. Driven end to
+  // end in verification/notifications-stay-cleared.spec.js; pinned here so the
+  // account type cannot creep back into either key.
+  const storageKey = app.slice(app.indexOf("function notificationStorageKey()"),
+    app.indexOf("function accountScopedNotificationKeys"));
+  assert.ok(!/state\.accountType/.test(storageKey),
+    "the notification store key must not depend on the Personal/Business toggle");
+  const clearedKey = app.slice(app.indexOf("function notificationClearedAtKey()"),
+    app.indexOf("function notificationClearedAt()"));
+  assert.ok(!/state\.accountType/.test(clearedKey),
+    "the cleared marker key must not depend on the Personal/Business toggle");
+  // And the old keys are still read, so shipping this does not refill anybody.
+  assert.match(app,/accountScopedNotificationKeys\(IN_APP_NOTIFICATIONS_KEY\)/);
+  assert.match(app,/Math\.max\(\.\.\.candidates\)/,
+    "the latest clear wins wherever it was recorded");
 });
 
 test("health response includes non-breaking Email worker state", () => {

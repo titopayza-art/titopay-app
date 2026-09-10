@@ -1414,6 +1414,22 @@ async function boot() {
   });
   if (state.auth && state.auth.accessToken) {
     await Promise.all([loadAccount(), publicDataPromise]);
+    // THE APP MUST REPAINT ONCE IT KNOWS WHO IT IS.
+    //
+    // The only render() on this path lived inside publicDataPromise, which
+    // RACES loadAccount. Public data is five unauthenticated calls and
+    // loadAccount is eight authenticated ones, so public data usually wins -
+    // and it renders while state.user is still unset. render() sends that to
+    // authView(). Nothing repaints afterwards: the account poller deliberately
+    // avoids render() so it cannot wipe a form somebody is typing into.
+    //
+    // The result was a customer with a live session looking at a sign-in
+    // screen, signing in again, and it working - which is indistinguishable
+    // from "the app made me log in again" and was reported as exactly that.
+    // Reproduced in verification/notifications-stay-cleared.spec.js: the
+    // session restored, loadAccount completed and wrote its per-user keys, and
+    // the landing screen was still on screen thirty seconds later.
+    render();
     resetSessionTimers();
     startTitoPayAccountSync();
     connectTitoPayChatSocket();
@@ -26736,10 +26752,40 @@ function serviceIdentity(item = {}) {
     .trim()
     .toLowerCase();
 }
-function notificationStorageKey() {
+// THE INBOX BELONGS TO THE PERSON, NOT TO A SCREEN MODE.
+//
+// Both keys used to embed state.accountType, and accountType is NOT a property
+// of the account - the landing screen's Personal / Business toggle writes
+// straight to it, via switchLandingAccount(). Flip it and the app looks for the
+// cleared marker under a key nobody ever wrote, finds nothing, and re-derives a
+// notification for every one of the last hundred transactions. Notices a
+// customer had cleared came back dated a month earlier, which is exactly what
+// was reported. Reproduced, then fixed, in
+// verification/notifications-stay-cleared.spec.js.
+//
+// Keyed by identity alone now. The account-type keys are still READ, so nobody's
+// cleared inbox refills the day this ships, and a clear still WRITES them too,
+// so rolling back to the previous build does not undo it either.
+function notificationIdentity() {
   const user = state.user || {};
-  const identity = user.id || user.email || user.username || "guest";
-  return `${IN_APP_NOTIFICATIONS_KEY}:${state.accountType}:${identity}`;
+  return user.id || user.email || user.username || user.phone || "guest";
+}
+function notificationStorageKey() {
+  return `${IN_APP_NOTIFICATIONS_KEY}:${notificationIdentity()}`;
+}
+// The same key as it was written before this change, for both account types,
+// so migration never has to guess which one a person happened to be on.
+function accountScopedNotificationKeys(prefix) {
+  const identity = notificationIdentity();
+  return ["personal", "business"].map((kind) => `${prefix}:${kind}:${identity}`);
+}
+function readStoredTimestamp(key) {
+  try {
+    const value = Number(localStorage.getItem(key) || 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch (error) {
+    return 0;
+  }
 }
 // DELIBERATELY OUTSIDE the titopay_in_app_notifications_v1 prefix: signing
 // out wipes that whole prefix for privacy, and the cleared marker used to go
@@ -26747,21 +26793,24 @@ function notificationStorageKey() {
 // sign-in, re-delivered by the server feed. The marker is one timestamp with
 // nothing personal in it; it earns the right to survive the wipe.
 function notificationClearedAtKey() {
-  const user = state.user || {};
-  const identity = user.id || user.email || user.username || user.phone || "guest";
-  return `titopay_notices_cleared_v1:${state.accountType}:${identity}`;
+  return `titopay_notices_cleared_v1:${notificationIdentity()}`;
 }
 function notificationClearedAt() {
-  let value = Number(localStorage.getItem(notificationClearedAtKey()) || 0);
-  if (!value) {
-    // Migrate a marker written under the old wiped-at-sign-out key.
-    const legacy = Number(localStorage.getItem(`${notificationStorageKey()}:cleared-at`) || 0);
-    if (legacy) {
-      value = legacy;
-      try { localStorage.setItem(notificationClearedAtKey(), String(legacy)); } catch (error) {}
-    }
-  }
-  return Number.isFinite(value) ? value : 0;
+  // THE LATEST CLEAR WINS, WHEREVER IT WAS RECORDED. A marker under either
+  // account type still means this person emptied their inbox, and taking the
+  // maximum means a migration can only ever move the line forward.
+  const candidates = [
+    readStoredTimestamp(notificationClearedAtKey()),
+    ...accountScopedNotificationKeys("titopay_notices_cleared_v1").map(readStoredTimestamp),
+    // Older still: a marker written beside the store itself.
+    readStoredTimestamp(`${notificationStorageKey()}:cleared-at`),
+    ...accountScopedNotificationKeys(IN_APP_NOTIFICATIONS_KEY)
+      .map((key) => readStoredTimestamp(`${key}:cleared-at`)),
+  ].filter(Boolean);
+  const value = candidates.length ? Math.max(...candidates) : 0;
+  // Adopt it under the identity key so the next read is a single lookup.
+  if (value) { try { localStorage.setItem(notificationClearedAtKey(), String(value)); } catch (error) {} }
+  return value;
 }
 function defaultInAppNotifications() {
   return [
@@ -26781,9 +26830,30 @@ function loadInAppNotifications() {
     state.notifications = [];
     return;
   }
-  const stored = readJson(notificationStorageKey());
+  let stored = readJson(notificationStorageKey());
+  if (!Array.isArray(stored)) stored = adoptAccountScopedNotifications();
   state.notifications = Array.isArray(stored) ? stored : defaultInAppNotifications();
   persistInAppNotifications();
+}
+// One-time migration off the account-type-scoped store. An EMPTY array is a
+// real answer - it is what a cleared inbox looks like - so presence is tested
+// rather than length, or the day this ships every cleared inbox would fall back
+// to the welcome notice and look like it had reset itself.
+function adoptAccountScopedNotifications() {
+  const found = [];
+  let any = false;
+  for (const key of accountScopedNotificationKeys(IN_APP_NOTIFICATIONS_KEY)) {
+    const legacy = readJson(key);
+    if (!Array.isArray(legacy)) continue;
+    any = true;
+    for (const item of legacy) {
+      const id = String((item && item.id) || "");
+      if (!id || found.some((existing) => existing.id === id)) continue;
+      found.push(item);
+    }
+  }
+  if (!any) return null;
+  return found.sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
 }
 function persistInAppNotifications() {
   if (!state.user) return;
@@ -27208,7 +27278,16 @@ function markNotificationsRead() {
   render();
 }
 function clearNotifications() {
-  localStorage.setItem(notificationClearedAtKey(), String(Date.now()));
+  const now = String(Date.now());
+  // Written to the identity key AND to both account-type keys. The extra two
+  // writes cost nothing and mean a rollback to the previous build - which reads
+  // only the account-type keys - still sees a cleared inbox.
+  for (const key of [notificationClearedAtKey(), ...accountScopedNotificationKeys("titopay_notices_cleared_v1")]) {
+    try { localStorage.setItem(key, now); } catch (error) {}
+  }
+  for (const key of accountScopedNotificationKeys(IN_APP_NOTIFICATIONS_KEY)) {
+    try { localStorage.setItem(key, "[]"); } catch (error) {}
+  }
   state.notifications = [];
   persistInAppNotifications();
   // The server feed re-serves anything still unread there. Clearing means
