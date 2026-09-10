@@ -795,3 +795,17 @@ body:not(.modal-open):has(.dashboard-grid) .wallet-card{padding:30px 22px 28px}
 body:not(.modal-open):has(.dashboard-grid) .wallet-balance{margin:14px 0 18px;font-size:clamp(2.15rem,9.6vw,2.95rem)}
 body:not(.modal-open):has(.dashboard-grid) .wallet-actions button{min-height:58px}
 }
+
+/* Event cards: the poster carries nothing but the poster. The date badge, the
+   category pill and the status pill used to sit ON the artwork, over the logo
+   and the time/venue strip every poster puts there. The badge is gone (the
+   body prints the same date one line down); the other two moved into the body
+   beside the price. Appended, so these override the absolute positioning the
+   earlier rules still declare. */
+.event-card-meta{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 10px;margin:5px 0 0;min-width:0}
+.event-card-flags{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}
+.event-card-meta .event-card-price{margin:0}
+.event-category-pill,.event-status-pill{position:static;top:auto;right:auto;bottom:auto;left:auto;padding:3px 9px;font-size:0.68rem;max-width:100%;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none}
+.event-category-pill{background:var(--soft);color:var(--muted)}
+.event-status-pill{color:#ffffff}
+html[data-theme=night] .event-status-pill{color:#061a3d}

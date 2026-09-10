@@ -114,12 +114,17 @@ test("the card styles exist in BOTH stylesheets", () => {
   // There is no CSS build step, so a rule added to one file and not the other
   // ships an unstyled screen.
   for (const selector of [".event-search-input", ".event-chip", ".event-card", ".event-poster",
-    ".event-date-badge", ".event-category-pill", ".event-share-btn", ".event-hero"]) {
+    ".event-card-meta", ".event-card-flags", ".event-category-pill", ".event-share-btn", ".event-hero"]) {
     assert.ok(CSS.includes(selector), `styles.css has ${selector}`);
     assert.ok(MIN_CSS.includes(selector), `styles.min.css has ${selector}`);
   }
   // A long title must never push the price and the button off a small card.
   assert.match(CSS, /\.event-card-title[\s\S]{0,260}-webkit-line-clamp: 2/);
+  // The pills sit in the card body now, so the absolute positioning that put
+  // them on the artwork must be overridden in the SHIPPED stylesheet too -
+  // styles.min.css still carries the older rule earlier in the file.
+  assert.match(MIN_CSS, /\.event-category-pill,\.event-status-pill\{position:static/,
+    "the shipped stylesheet must un-pin the pills from the poster");
   // 16px minimum or iOS zooms the page when the search field takes focus.
   assert.match(CSS, /\.event-search-input[\s\S]{0,400}font-size: max\(16px/);
 });
@@ -128,6 +133,30 @@ test("the calendar icon is real, not the grid fallback", () => {
   // icon() silently falls back to a grid glyph for an unknown name, so a
   // missing icon shows the wrong picture rather than failing.
   assert.match(APP, /\n    calendar: `/);
+});
+
+test("NOTHING IS DRAWN ON TOP OF THE EVENT POSTER", () => {
+  // The defect this pins: a date badge sat over the poster's logo and a
+  // category pill over its time/venue strip, so the app hid the organiser's
+  // own artwork behind information it prints in the card body regardless.
+  // The poster element may contain the placeholder mark and nothing else, and
+  // the placeholder only renders when there is no poster to cover.
+  const row = APP.slice(APP.indexOf("function ticketingPublicEventRow"));
+  const body = row.slice(0, row.indexOf("\nfunction "));
+  const poster = body.slice(body.indexOf('<div class="event-poster'),
+    body.indexOf('<div class="event-card-body"'));
+  assert.ok(poster.length > 40 && poster.length < 400, "the poster block was located");
+  for (const overlay of ["event-date-badge", "event-category-pill", "event-status-pill"]) {
+    assert.ok(!poster.includes(overlay), `${overlay} must not be drawn over the poster`);
+  }
+  assert.match(poster, /event-poster-mark/, "the placeholder mark stays");
+
+  // And the two that are not duplicates did not simply vanish: both still
+  // render, in the card body, beside the price.
+  assert.match(body, /event-card-flags[\s\S]{0,500}event-status-pill/,
+    "sold out / N left moved into the body");
+  assert.match(body, /event-card-flags[\s\S]{0,500}event-category-pill/,
+    "the category moved into the body");
 });
 
 test("no em dash in the discovery copy", () => {

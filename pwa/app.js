@@ -19538,25 +19538,36 @@ function ticketingPublicEventRow(event = {}) {
     <article class="event-card${soldOut ? " is-sold-out" : ""}">
       <button class="event-card-open" type="button" data-action="ticketing-open-event:${esc(event.slug || "")}"
         aria-label="${esc(event.eventName || "TitoPay Event")}, ${esc(when)}, ${esc(where)}">
+        ${/* NOTHING IS DRAWN ON TOP OF THE POSTER.
+              An event poster is the organiser's artwork and it is designed
+              full-bleed: the logo sits top-left, the time/venue/date strip sits
+              bottom-left, the terms sit right. A date badge in one corner and a
+              category pill in the other covered exactly those, so the app was
+              hiding the event's own information behind facts it prints two
+              centimetres lower in the card body anyway.
+              The date badge is gone rather than moved, because the line below
+              it already reads "Fri, 20 November 2026 at 11:00", so it was a
+              duplicate wearing a chip. The category and the sold-out state are
+              NOT duplicates, so they move into the body rather than go. */""}
         <div class="event-poster${poster ? "" : " is-placeholder"}"${poster ? ` style="background-image:url('${esc(poster)}')"` : ""}>
           ${poster ? "" : `<span class="event-poster-mark" aria-hidden="true">${icon("ticket")}</span>`}
-          <span class="event-date-badge" aria-hidden="true">
-            <span>${esc(validDate ? date.toLocaleDateString("en-ZA", { month: "short" }).toUpperCase() : "TBC")}</span>
-            <strong>${esc(validDate ? String(date.getDate()) : "--")}</strong>
-          </span>
-          ${event.category ? `<span class="event-category-pill">${esc(event.category)}</span>` : ""}
-          ${soldOut ? `<span class="event-status-pill is-sold-out">Sold out</span>`
-            : scarce ? `<span class="event-status-pill is-scarce">${available} left</span>` : ""}
         </div>
         <div class="event-card-body">
           <h3 class="event-card-title">${esc(event.eventName || "TitoPay Event")}</h3>
           <p class="event-card-line">${icon("calendar")} ${esc(when)}${event.startTime ? ` · ${esc(event.startTime)}` : ""}</p>
           <p class="event-card-line">${icon("globe")} ${esc(where)}</p>
-          <p class="event-card-price">
-            ${event.registrationMode ? "Free registration"
-              : free ? "Free entry"
-              : prices.length ? `From <strong>${esc(money(lowestPrice))}</strong>`
-              : "Price to be confirmed"}
+          <p class="event-card-meta">
+            <span class="event-card-price">
+              ${event.registrationMode ? "Free registration"
+                : free ? "Free entry"
+                : prices.length ? `From <strong>${esc(money(lowestPrice))}</strong>`
+                : "Price to be confirmed"}
+            </span>
+            ${soldOut || scarce || event.category ? `<span class="event-card-flags">
+              ${soldOut ? `<span class="event-status-pill is-sold-out">Sold out</span>`
+                : scarce ? `<span class="event-status-pill is-scarce">${available} left</span>` : ""}
+              ${event.category ? `<span class="event-category-pill">${esc(event.category)}</span>` : ""}
+            </span>` : ""}
           </p>
         </div>
       </button>

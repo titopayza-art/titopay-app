@@ -14189,62 +14189,59 @@ img {
 .event-poster-mark { color: var(--blue-2); opacity: 0.55; }
 .event-poster-mark svg { width: 40px; height: 40px; }
 
-.event-date-badge {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  display: grid;
-  place-items: center;
-  gap: 0;
-  min-width: 52px;
-  padding: 7px 9px;
-  border-radius: 14px;
-  background: var(--glass);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  box-shadow: var(--shadow-soft);
+/* THE POSTER CARRIES NOTHING BUT THE POSTER.
+   A date badge used to sit top-left and a category pill bottom-left, over the
+   two places an event poster is always designed to use: the logo and the
+   time/venue strip. The date badge is gone — the card body states the date and
+   time one line below it — and the category and sold-out state moved into the
+   body, where they sit beside the price without covering anything.
+
+   .event-date-badge is deliberately not defined any more; nothing renders it. */
+
+.event-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 5px 0 0;
+  min-width: 0;
 }
 
-.event-date-badge span {
-  color: var(--blue);
-  font-size: 0.62rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.event-date-badge strong {
-  color: var(--navy);
-  font-size: 1.15rem;
-  font-weight: 800;
-  line-height: 1.1;
+.event-card-flags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
 }
 
 .event-category-pill,
 .event-status-pill {
-  position: absolute;
-  bottom: 12px;
-  padding: 5px 11px;
+  padding: 3px 9px;
   border-radius: 999px;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  max-width: calc(100% - 24px);
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.event-category-pill {
-  left: 12px;
-  background: rgba(6, 26, 61, 0.72);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-  color: #ffffff;
-}
+/* Quiet, because the category is context and not a call to action. --soft and
+   --muted are a legible pair in both themes, which a translucent dark pill was
+   not once it left the poster's own contrast. */
+.event-category-pill { background: var(--soft); color: var(--muted); }
 
-.event-status-pill { right: 12px; color: #ffffff; }
+.event-status-pill { color: #ffffff; }
 .event-status-pill.is-sold-out { background: var(--danger); }
 .event-status-pill.is-scarce { background: var(--warning); }
+
+/* In night mode --danger and --warning invert to light tints meant to be read
+   AS text, so white on them is unreadable. The literal, not var(--navy), which
+   inverts to near-white in exactly this theme. */
+html[data-theme="night"] .event-status-pill { color: #061a3d; }
 
 .event-card-body {
   display: grid;
