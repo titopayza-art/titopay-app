@@ -825,3 +825,12 @@ html[data-theme=night] .event-status-pill{color:#061a3d}
    label nobody can press. Quieter type on the eyebrow's own line instead.
    Appended, so it overrides the pill the earlier rule still declares. */
 .wallet-currency{display:inline;margin-left:8px;padding:0;border:0;border-radius:0;background:none;font-size:.64rem;font-weight:700;letter-spacing:.1em;color:rgba(255,255,255,.55);vertical-align:baseline}
+
+
+/* The trust strip is three facts, not three buttons. It was a filled, bordered,
+   20px-radius card carrying text nobody can press - the same false affordance
+   the wallet card's ZAR pill was. The facts stay; the container goes, and the
+   white cards on this page are now only the tiles, which ARE pressable. */
+.trust-strip{background:none;border:0;border-radius:0;box-shadow:none;gap:0 clamp(6px,2vw,14px);overflow:visible}
+.trust-item{background:none;min-height:0;padding:2px 4px;color:var(--muted);font-size:clamp(.7rem,1.9vw,.78rem);font-weight:700;letter-spacing:.01em}
+.trust-item svg{width:17px;height:17px;color:var(--blue-2)}

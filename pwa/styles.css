@@ -561,6 +561,12 @@ h3 {
   }
 }
 
+/* THE TRUST STRIP IS THREE FACTS, NOT THREE BUTTONS.
+   It was a filled, bordered, 20px-radius card carrying text nobody can press -
+   the same false affordance the wallet card's ZAR pill was, and it made a third
+   white band compete with the two rows of tiles that ARE pressable. The facts
+   stay and the container goes; see the override appended at the end of
+   styles.min.css, which is what ships. */
 .trust-strip,
 .stats-grid {
   display: grid;
