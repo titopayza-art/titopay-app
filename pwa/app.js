@@ -6326,14 +6326,25 @@ function authView() {
           <button type="button" role="tab" aria-selected="${!isBusiness}" class="${!isBusiness ? "active" : ""}" data-account="personal">Personal</button>
           <button type="button" role="tab" aria-selected="${isBusiness}" class="${isBusiness ? "active" : ""}" data-account="business">Business</button>
         </div>
+        ${/* ONE TAGLINE, NOT TWO. "Smart Payments. Simplified." sat directly
+              under a headline that already said the same thing in the specific
+              rather than the generic, so the page opened by making its point
+              twice and weakening it the second time. The strapline still lives
+              where a strapline belongs - the splash screen, the tip poster and
+              the email footer - and the landing now opens with one line. */""}
         <h1>${isBusiness ? "Accept payments. Grow your business." : "Send, pay and get paid."}</h1>
-        <p class="landing-tagline">Smart Payments. Simplified.</p>
       </section>
 
       <section class="trust-strip" aria-label="TitoPay trust features">
         ${trustItem("wallet", isBusiness ? "Business Wallet" : "One Wallet")}
         ${trustItem(isBusiness ? "sale" : "check-circle", isBusiness ? "Sales & Payouts" : "No Monthly Fees")}
-        ${trustItem("shield", "Secure Payments")}
+        ${/* A CLAIM THAT CAN BE CHECKED. "Secure Payments" was the only line on
+              this strip that could not be verified by anybody reading it, next
+              to two that can. Both replacements were confirmed in the code
+              before being written here: a wallet transfer returns
+              status "completed" in the same request (transaction-service.js),
+              and business sales are receipted (business-sales-service.js). */""}
+        ${trustItem("shield", isBusiness ? "Every Sale Receipted" : "Instant Transfers")}
       </section>
 
       <section class="service-grid preview-grid">
@@ -6348,15 +6359,15 @@ function authView() {
       <footer class="scan-card landing-cta-footer" aria-label="${isBusiness ? "Accept payment" : "Scan to pay"}">
         <span class="icon-bubble">${icon(isBusiness ? "qr" : "scan")}</span>
         <div class="landing-cta-copy">
+          ${/* EYEBROW, ONE LINE, BUTTON. The heading here read "Scan To Pay"
+                directly above a button reading "Scan to pay" - the same three
+                words twice, in a band whose eyebrow had already said QR. The
+                lead says what the button does not, so it stays.
+                The bullet list went with it. It was hidden on every phone
+                width by four separate rules and only ever rendered on tablet
+                and desktop, where it repeated the lead in three parts. */""}
           <p class="landing-cta-eyebrow">TitoPay QR</p>
-          <h3>${isBusiness ? "Accept Payment" : "Scan To Pay"}</h3>
           <p class="landing-cta-lead">${isBusiness ? "Take payment straight into your business wallet." : "Pay straight from your wallet, in seconds."}</p>
-          <ul class="landing-cta-points">
-            ${(isBusiness
-              ? ["One QR for every customer", "Money lands in your wallet", "Every sale receipted"]
-              : ["Scan any TitoPay QR", "See the amount before you pay", "Paid in seconds"]
-            ).map((point) => `<li>${icon("check-circle")}<span>${esc(point)}</span></li>`).join("")}
-          </ul>
         </div>
         <button class="btn primary landing-cta-btn" data-auth-tab="login" data-post-login="qr" aria-label="${isBusiness ? "Sign in to show your payment QR" : "Sign in to scan a TitoPay QR"}">${icon(isBusiness ? "qr" : "scan")} ${isBusiness ? "Show my QR" : "Scan to pay"}</button>
       </footer>
