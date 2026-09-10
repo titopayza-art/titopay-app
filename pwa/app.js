@@ -510,6 +510,10 @@ const ICON_PATHS = {
     // Opens something. The child card used arrow-left, which points back the
     // way you came - exactly the wrong direction for a row you tap into.
     "arrow-right": `<path d="m9 18 6-6-6-6"/><path d="M3 12h12"/>`,
+    // Leaves this surface for another one. arrow-right means "next in the same
+    // place"; this is the one that says "opens a different screen", which is
+    // what the wallet card's Limits control does.
+    "arrow-up-right": `<path d="M7 17 17 7"/><path d="M8 7h9v9"/>`,
     eye: `<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="3"/>`,
     "eye-off": `<path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.3A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a17.5 17.5 0 0 1-3.1 4.1"/><path d="M6.1 6.1A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4.2-.8"/>`,
     refresh: `<path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/>`,
@@ -1536,21 +1540,28 @@ function walletVerificationChip() {
     else if (c.tier === 1) { tone = "mid"; label = "Basic"; }
     else { tone = "warn"; label = "Verify"; }
   }
-  // NO PILL, NO DOT, NO ARROW.
+  // NO PILL AND NO DOT. AN ARROW, AND NOTHING UNDER THE WORD.
   //
   // The first version of this was a glass pill with a 1px border, an amber dot
   // with a glow halo, and an arrow inside a thing that was already a button —
   // four ornaments for one word, and the tint and the dot both saying the same
-  // thing. It read as a component pasted onto the card rather than part of it.
+  // thing. Stripping it back to bare type was right; the underline that came
+  // with it was not. On a saturated blue card a 1px rule at 28% white reads as
+  // a stray mark under the word rather than as a link, and it sat closer to the
+  // eyebrow's baseline than to anything it was meant to relate to.
   //
-  // It is set in the eyebrow's own type instead, at the other end of the
+  // The arrow does the same job better and is the app's own idiom for it: it
+  // points OUT of the card, which is exactly what this control does, and it is
+  // legible at a glance without competing with the balance beneath it.
+  //
+  // It is still set in the eyebrow's own type, at the other end of the
   // eyebrow's own line, so the header is one typographic row with two ends.
   // The STATE is carried by the word: "Verified" is a fact and sits back at
   // the eyebrow's weight; "Verify" is a verb and comes forward to full white.
   // That is the whole signal, and it needs no colour to carry it.
   return `
     <button class="wallet-verify${tone === "warn" ? " needs-action" : ""}" type="button" data-action="limits-verification"
-            aria-label="${esc(label)}. Open limits and verification.">${esc(label)}</button>`;
+            aria-label="${esc(label)}. Open limits and verification."><span>${esc(label)}</span>${icon("arrow-up-right")}</button>`;
 }
 async function loadComplianceStatus({ silent = true } = {}) {
   try {

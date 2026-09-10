@@ -13792,27 +13792,44 @@ img {
   text-transform: uppercase;
   text-align: right;
   white-space: nowrap;
+  /* AN ARROW, NOT AN UNDERLINE. A 1px rule at 28% white on a saturated blue
+     card reads as a stray mark under the word rather than as a link. The arrow
+     says the same thing louder and points the way the control goes. */
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+/* The word may shorten; the arrow never does. Without this the flex row would
+   shrink the icon before the label on a narrow phone, and a half-width arrow
+   looks like a rendering fault. */
+.wallet-verify > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-decoration: underline;
-  text-decoration-color: rgba(255, 255, 255, 0.28);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 4px;
-  cursor: pointer;
-  transition: color 160ms ease, text-decoration-color 160ms ease;
+}
+
+.wallet-verify svg {
+  flex: 0 0 auto;
+  /* Sized to the cap height of the label beside it, so the two share a line
+     rather than the icon sitting proud of it. */
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.4;
 }
 
 /* An action comes forward; a state stays back. This is the entire difference
    between "Verify" and "Verified" — no colour, no dot, no badge. */
 .wallet-verify.needs-action {
   color: #fff;
-  text-decoration-color: rgba(255, 255, 255, 0.6);
 }
 
 .wallet-verify:hover,
 .wallet-verify:focus-visible {
   color: #fff;
-  text-decoration-color: rgba(255, 255, 255, 0.8);
 }
 
 .wallet-verify:focus-visible {

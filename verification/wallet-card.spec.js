@@ -97,21 +97,36 @@ const s = await p.evaluate(() => {
   return {
     chipInHeader: !!(chip && chip.closest(".wallet-card-top")),
     chipTap: chip ? chip.getBoundingClientRect().height : 0,
-    // Slop check: the affordance must be TYPE, not a component. No child
-    // elements (so no dot and no arrow), no border, no fill.
-    noOrnament: !!chip && chip.children.length === 0
-      && getComputedStyle(chip).borderTopWidth === "0px"
-      && getComputedStyle(chip).backgroundImage === "none"
-      && getComputedStyle(chip).backgroundColor === "rgba(0, 0, 0, 0)",
-    ornament: chip ? `children=${chip.children.length} border=${getComputedStyle(chip).borderTopWidth} bg=${getComputedStyle(chip).backgroundColor}` : "missing",
+    // Slop check: the affordance is TYPE PLUS ONE ARROW, not a component.
+    //
+    // It used to require zero children, because the chip was bare type with an
+    // underline. The underline is gone - on a saturated blue card a 1px rule at
+    // 28% white read as a stray mark rather than a link - and an arrow says the
+    // same thing while pointing the way the control goes. So the budget is one
+    // label and one arrow: still no dot, no border, no fill, and crucially no
+    // underline, which is what this now guards against coming back.
+    //
+    // Both of these were declared twice in this object, so the first pair never
+    // ran. Consolidated while correcting them.
     oldStrip: !!document.querySelector(".wallet-verification"),
-    noOrnament: (() => { const v=document.querySelector(".wallet-verify"); if(!v) return false;
-      const cs=getComputedStyle(v);
-      return v.children.length===0 && cs.borderTopWidth==="0px" &&
-        (cs.backgroundImage==="none") && cs.backgroundColor==="rgba(0, 0, 0, 0)"; })(),
-    ornament: (() => { const v=document.querySelector(".wallet-verify"); if(!v) return "missing";
-      const cs=getComputedStyle(v);
-      return `children=${v.children.length} border=${cs.borderTopWidth} bg=${cs.backgroundColor}`; })(),
+    noOrnament: (() => {
+      const v = document.querySelector(".wallet-verify");
+      if (!v) return false;
+      const cs = getComputedStyle(v);
+      return v.children.length === 1 + v.querySelectorAll("svg").length
+        && v.querySelectorAll("svg").length === 1
+        && cs.textDecorationLine === "none"
+        && cs.borderTopWidth === "0px"
+        && cs.backgroundImage === "none"
+        && cs.backgroundColor === "rgba(0, 0, 0, 0)";
+    })(),
+    ornament: (() => {
+      const v = document.querySelector(".wallet-verify");
+      if (!v) return "missing";
+      const cs = getComputedStyle(v);
+      return `children=${v.children.length} svg=${v.querySelectorAll("svg").length} `
+        + `decoration=${cs.textDecorationLine} border=${cs.borderTopWidth} bg=${cs.backgroundColor}`;
+    })(),
     idCopyable: !!(id && id.tagName === "BUTTON" && id.dataset.copyValue),
     idTag: id ? id.tagName : "none",
     idText: id ? id.textContent.trim().replace(/\s+/g," ") : "",
@@ -125,7 +140,7 @@ const s = await p.evaluate(() => {
 });
 console.log("");
 ok("the verification affordance is in the card header", s.chipInHeader);
-ok("it carries no badge, dot or arrow", s.noOrnament, s.ornament);
+ok("it is one word and one arrow: no badge, no dot, no underline", s.noOrnament, s.ornament);
 ok("it is a real tap target", s.chipTap >= 30, `${Math.round(s.chipTap)}px tall`);
 ok("the old full-width strip is gone", !s.oldStrip);
 ok("the wallet ID is tap-to-copy", s.idCopyable, `${s.idTag||"?"} "${s.idText||""}" bal="${s.bal||""}"`);

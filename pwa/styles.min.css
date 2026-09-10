@@ -809,3 +809,13 @@ body:not(.modal-open):has(.dashboard-grid) .wallet-actions button{min-height:58p
 .event-category-pill{background:var(--soft);color:var(--muted)}
 .event-status-pill{color:#ffffff}
 html[data-theme=night] .event-status-pill{color:#061a3d}
+
+/* The wallet card's Limits control: an arrow instead of an underline. A 1px
+   rule at 28% white on a saturated blue card read as a stray mark under the
+   word rather than as a link. Appended, so it overrides the text-decoration
+   the earlier rule still declares. */
+.wallet-verify{display:inline-flex;align-items:center;gap:5px;text-decoration:none;transition:color 160ms ease}
+.wallet-verify>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.wallet-verify svg{flex:0 0 auto;width:13px;height:13px;stroke-width:2.4}
+.wallet-verify.needs-action{color:#fff;text-decoration:none}
+.wallet-verify:hover,.wallet-verify:focus-visible{color:#fff;text-decoration:none}
