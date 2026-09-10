@@ -109,6 +109,25 @@ const s = await p.evaluate(() => {
     // Both of these were declared twice in this object, so the first pair never
     // ran. Consolidated while correcting them.
     oldStrip: !!document.querySelector(".wallet-verification"),
+    // ZAR IS A FACT, NOT A CONTROL. It wore a filled pill with a 1px border and
+    // a radius - the costume the card's real buttons wear - for three letters
+    // nobody can press. On a header line that carries one genuine control at
+    // its other end, a second thing shaped like a button is a false affordance.
+    currencyIsType: (() => {
+      const c = document.querySelector(".wallet-currency");
+      if (!c) return false;
+      const cs = getComputedStyle(c);
+      return cs.borderTopWidth === "0px"
+        && cs.backgroundImage === "none"
+        && cs.backgroundColor === "rgba(0, 0, 0, 0)"
+        && parseFloat(cs.borderTopLeftRadius) === 0;
+    })(),
+    currency: (() => {
+      const c = document.querySelector(".wallet-currency");
+      if (!c) return "missing";
+      const cs = getComputedStyle(c);
+      return `border=${cs.borderTopWidth} bg=${cs.backgroundColor} radius=${cs.borderTopLeftRadius}`;
+    })(),
     noOrnament: (() => {
       const v = document.querySelector(".wallet-verify");
       if (!v) return false;
@@ -143,6 +162,7 @@ ok("the verification affordance is in the card header", s.chipInHeader);
 ok("it is one word and one arrow: no badge, no dot, no underline", s.noOrnament, s.ornament);
 ok("it is a real tap target", s.chipTap >= 30, `${Math.round(s.chipTap)}px tall`);
 ok("the old full-width strip is gone", !s.oldStrip);
+ok("ZAR is type, not a pill", s.currencyIsType, s.currency);
 ok("the wallet ID is tap-to-copy", s.idCopyable, `${s.idTag||"?"} "${s.idText||""}" bal="${s.bal||""}"`);
 ok("Top Up and Withdraw are untouched", s.actions === 2, String(s.actions));
 ok("the card has a gradient, not a flat fill", /gradient/.test(s.cardBg), s.cardBg);

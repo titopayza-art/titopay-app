@@ -13896,17 +13896,19 @@ img {
    every band just spends fewer pixels on air, so Quick services
    and the Transaction summary arrive sooner on small phones.
    ============================================================ */
+/* ZAR IS A FACT, NOT A CONTROL.
+   It was a filled pill with a 1px border and a radius - the same costume the
+   card's actual buttons wear - for a three-letter label nobody can press. On a
+   header that already carries one real control at its other end, a second
+   thing shaped like a button is a false affordance. It is set as quieter type
+   on the eyebrow's own line instead, and the drop in weight against the wallet
+   name is what separates the two rather than a container. */
 .wallet-currency {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  font-size: 0.62rem;
+  margin-left: 8px;
+  font-size: 0.64rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  vertical-align: 1px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.55);
 }
 
 @media (max-width: 480px) {

@@ -819,3 +819,9 @@ html[data-theme=night] .event-status-pill{color:#061a3d}
 .wallet-verify svg{flex:0 0 auto;width:13px;height:13px;stroke-width:2.4}
 .wallet-verify.needs-action{color:#fff;text-decoration:none}
 .wallet-verify:hover,.wallet-verify:focus-visible{color:#fff;text-decoration:none}
+
+/* ZAR is a fact, not a control. It wore a filled pill with a border and a
+   radius - the same costume the card's real buttons wear - for a three-letter
+   label nobody can press. Quieter type on the eyebrow's own line instead.
+   Appended, so it overrides the pill the earlier rule still declares. */
+.wallet-currency{display:inline;margin-left:8px;padding:0;border:0;border-radius:0;background:none;font-size:.64rem;font-weight:700;letter-spacing:.1em;color:rgba(255,255,255,.55);vertical-align:baseline}
