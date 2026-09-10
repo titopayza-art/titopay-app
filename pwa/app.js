@@ -6338,13 +6338,23 @@ function authView() {
       <section class="trust-strip" aria-label="TitoPay trust features">
         ${trustItem("wallet", isBusiness ? "Business Wallet" : "One Wallet")}
         ${trustItem(isBusiness ? "sale" : "check-circle", isBusiness ? "Sales & Payouts" : "No Monthly Fees")}
-        ${/* A CLAIM THAT CAN BE CHECKED. "Secure Payments" was the only line on
-              this strip that could not be verified by anybody reading it, next
-              to two that can. Both replacements were confirmed in the code
-              before being written here: a wallet transfer returns
-              status "completed" in the same request (transaction-service.js),
-              and business sales are receipted (business-sales-service.js). */""}
-        ${trustItem("shield", isBusiness ? "Every Sale Receipted" : "Instant Transfers")}
+        ${/* A CLAIM THAT CAN BE CHECKED, ON ONE LINE.
+              "Secure Payments" was the only line on this strip nobody reading it
+              could verify, next to two they can. Both replacements were
+              confirmed in the code first: a wallet transfer returns status
+              "completed" in the same request (transaction-service.js), and no
+              row in pricing_rules charges anything to open an account.
+
+              The business side read "Every Sale Receipted" and wrapped to two
+              lines beside two neighbours that did not, which is the whole reason
+              a three-cell strip looks untidy. Measured across 320/360/390/430:
+              only six candidates hold one line at every width, and of those,
+              "Paid Instantly" was rejected DELIBERATELY - a merchant would read
+              it as money reaching their bank, and there is no settlement rail.
+              A claim that is technically true about a wallet balance and false
+              about the thing the reader pictures is the same fault as the line
+              this strip already replaced once. */""}
+        ${trustItem("shield", isBusiness ? "Free to Open" : "Instant Transfers")}
       </section>
 
       <section class="service-grid preview-grid">
