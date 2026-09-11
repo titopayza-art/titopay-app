@@ -26106,16 +26106,19 @@ function visibleServices() {
     if (action === "enterprise-distribution" || id === "enterprise-distribution") {
       return state.accountType === "business" && Boolean(state.enterpriseDistribution?.eligibility?.eligible);
     }
-    // BOOK, FOR A PERSONAL ACCOUNT, ONLY ONCE THERE IS SOMETHING TO BROWSE.
-    // A business always sees it: it is their console and it works with no other
-    // business on the platform. A customer sees it only when at least one venue
-    // is actually published and bookable, because an empty discovery screen
-    // saying "nothing near you yet" is worse than no tile. It appears by itself
-    // the moment a real business publishes - nothing has to be redeployed.
-    if (action === "book" || id === "book") {
-      if (state.accountType === "business") return service[audienceKey];
-      return Boolean(state.bookDiscovery && state.bookDiscovery.available);
-    }
+    // BOOK IS VISIBLE ON THE SAME TERMS AS EVERY OTHER SERVICE.
+    //
+    // It used to be hidden from personal accounts until at least one venue was
+    // published, on the reasoning that an empty discovery screen is worse than
+    // no tile. That gate is removed at the operator's decision, and with it the
+    // chicken-and-egg it created: a customer could not discover Book until a
+    // business published, and a business had less reason to publish while no
+    // customer could see it.
+    //
+    // What the gate was protecting against is handled where it belongs - in the
+    // discovery screen's empty state, which now says what Book is and what has
+    // to happen for something to appear, rather than "check back soon".
+    // service_config still decides, so hiding it again is a console change.
     if (action === "business-ticketing-staff" || id === "business-ticketing-staff") {
       return service[audienceKey] && eventScannersTileVisible();
     }
@@ -26315,15 +26318,12 @@ function serviceById(id) {
   return undefined;
 }
 function servicesView() {
-  // A customer's Book tile depends on whether any venue is published, which
-  // only the server knows. Fetched once, lazily, and the screen re-renders when
-  // the answer arrives - so the tile appears by itself rather than needing a
-  // redeploy the day a business goes live. A failure means no tile, never a
-  // broken Services screen.
+  // Book's discovery summary - how many venues are published, and in which
+  // cities. It no longer decides whether the tile appears; it feeds the
+  // discovery screen. Fetched once, lazily, and a failure costs the city list
+  // and nothing else, never a broken Services screen.
   if (state.accountType !== "business" && !state.bookDiscovery) {
-    loadBookDiscovery().then((summary) => {
-      if (summary && summary.available && state.route === "services") render();
-    }).catch(() => {});
+    loadBookDiscovery().catch(() => {});
   }
   // The Rewards tile's "new" badge needs the server's unseen count. Fetched
   // once, lazily, and only the badge depends on it - a failure means no badge,
@@ -30519,8 +30519,12 @@ function renderBookDiscover() {
           </div>
         </button>`).join("")}
     </section>` : `<section class="empty-state">
-      <p><strong>Nothing here yet</strong></p>
-      <small>${store.category ? "Try another kind of business." : "Check back soon."}</small>
+      <span class="icon-bubble">${icon("store")}</span>
+      <p><strong>${store.category ? "Nothing in this category yet" : "No places listed yet"}</strong></p>
+      <small>${store.category
+        ? "Try another kind of business, or clear the filter to see everything available."
+        : "Businesses on TitoPay publish their own booking page. As soon as one does, it shows up here and you can book and pay in the app."}</small>
+      ${store.category ? `<button class="btn secondary" type="button" data-action="book-group:">${icon("x")} Clear filter</button>` : ""}
     </section>`}
   `);
 }
