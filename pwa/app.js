@@ -6338,23 +6338,24 @@ function authView() {
       <section class="trust-strip" aria-label="TitoPay trust features">
         ${trustItem("wallet", isBusiness ? "Business Wallet" : "One Wallet")}
         ${trustItem(isBusiness ? "sale" : "check-circle", isBusiness ? "Sales & Payouts" : "No Monthly Fees")}
-        ${/* A CLAIM THAT CAN BE CHECKED, ON ONE LINE.
-              "Secure Payments" was the only line on this strip nobody reading it
-              could verify, next to two they can. Both replacements were
-              confirmed in the code first: a wallet transfer returns status
-              "completed" in the same request (transaction-service.js), and no
-              row in pricing_rules charges anything to open an account.
+        ${/* THE THIRD CELL, AND THE HISTORY BEHIND IT.
+              Personal reads "Instant Transfers", which is checkable: a wallet
+              transfer returns status "completed" in the same request
+              (transaction-service.js).
 
-              The business side read "Every Sale Receipted" and wrapped to two
-              lines beside two neighbours that did not, which is the whole reason
-              a three-cell strip looks untidy. Measured across 320/360/390/430:
-              only six candidates hold one line at every width, and of those,
-              "Paid Instantly" was rejected DELIBERATELY - a merchant would read
-              it as money reaching their bank, and there is no settlement rail.
-              A claim that is technically true about a wallet balance and false
-              about the thing the reader pictures is the same fault as the line
-              this strip already replaced once. */""}
-        ${trustItem("shield", isBusiness ? "Free to Open" : "Instant Transfers")}
+              Business reads "Secure Payments" at the operator's decision. The
+              concern raised against it, recorded here rather than argued again:
+              it is the one line on this strip a reader cannot verify, beside two
+              they can, and on a platform where identity is not yet verified
+              against an authoritative source it is a promise rather than a fact.
+              That is the operator's call to make and it has been made.
+
+              It also wraps to two lines at 320, 360, 390 and 430 - measured -
+              while "Business Wallet" and "Sales & Payouts" hold one line from
+              390 up. If the ragged row comes up again, that is why; the
+              one-line candidates measured at the time were Sale Receipts, Free
+              to Open, No Setup Cost, Paid Instantly and QR Payments. */""}
+        ${trustItem("shield", isBusiness ? "Secure Payments" : "Instant Transfers")}
       </section>
 
       <section class="service-grid preview-grid">
