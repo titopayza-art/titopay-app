@@ -1,0 +1,261 @@
+openapi: 3.1.0
+info:
+  title: TitoPay Webhook Management API
+  version: "1.0"
+  description: >
+    Subscription management for TitoPay outbound payment webhooks. Deliveries
+    themselves are HTTPS POSTs to the subscribed endpoint, HMAC-SHA256 signed;
+    see WEBHOOKS.md for the signature recipe, retry ladder and event payloads.
+servers:
+  - url: https://api.titopay.co.za/v1
+security:
+  - bearerAuth: []
+paths:
+  /webhooks/events:
+    get:
+      summary: List the webhook event catalogue
+      responses:
+        "200":
+          description: Event types a subscription may filter on
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  events:
+                    type: array
+                    items: { type: string, example: payment.completed }
+  /webhooks/subscriptions:
+    get:
+      summary: List this merchant's subscriptions
+      responses:
+        "200":
+          description: Subscriptions, secrets masked to a fingerprint
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  subscriptions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Subscription" }
+    post:
+      summary: Create a subscription
+      description: The plaintext secret is returned once, in this response only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpointUrl]
+              properties:
+                endpointUrl: { type: string, format: uri, example: "https://pos.example.com/hooks/titopay" }
+                events:
+                  type: array
+                  items: { type: string }
+                  description: Empty or omitted subscribes to every event.
+                description: { type: string, maxLength: 200 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  subscription: { $ref: "#/components/schemas/Subscription" }
+                  secret: { type: string, example: "whsec_..." }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { description: "Duplicate endpoint for this merchant, or subscription limit reached" }
+  /webhooks/subscriptions/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Update endpoint URL, event filter, description, or pause/resume
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                endpointUrl: { type: string, format: uri }
+                events: { type: array, items: { type: string } }
+                description: { type: string }
+                status: { type: string, enum: [active, paused] }
+      responses:
+        "200":
+          description: Updated subscription
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  subscription: { $ref: "#/components/schemas/Subscription" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Delete a subscription and its delivery history
+      responses:
+        "200": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /webhooks/subscriptions/{id}/rotate-secret:
+    post:
+      summary: Rotate the signing secret
+      description: >
+        Returns the new plaintext secret once. The previous secret keeps
+        verifying for 24 hours; during the overlap every delivery also carries
+        X-TitoPay-Signature-Previous signed with the old secret.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Rotated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  subscription: { $ref: "#/components/schemas/Subscription" }
+                  secret: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /webhooks/subscriptions/{id}/deliveries:
+    get:
+      summary: List delivery attempts for a subscription
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, delivering, delivered, failed, dead] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200":
+          description: Deliveries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  deliveries:
+                    type: array
+                    items: { $ref: "#/components/schemas/Delivery" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /webhooks/subscriptions/{id}/deliveries/{deliveryId}/replay:
+    post:
+      summary: Re-queue a delivery for immediate re-send
+      description: Works on any state, including dead; the payload stays frozen.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: deliveryId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "202": { description: Re-queued }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /webhooks/subscriptions/{id}/test:
+    post:
+      summary: Send a signed test.ping to the endpoint now
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Synchronous result of the test delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  delivered: { type: boolean }
+                  statusCode: { type: integer, nullable: true }
+                  error: { type: string, nullable: true }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: The merchant's TitoPay access token.
+  responses:
+    BadRequest:
+      description: Validation failure
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Not found (or owned by a different merchant)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      properties:
+        ok: { type: boolean, example: false }
+        error: { type: string }
+        requestId: { type: string }
+    Subscription:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        endpointUrl: { type: string, format: uri }
+        events: { type: array, items: { type: string } }
+        description: { type: string }
+        status: { type: string, enum: [active, paused, disabled] }
+        consecutiveFailures: { type: integer }
+        secretFingerprint: { type: string, description: First 16 hex chars of SHA-256 of the secret }
+        secretRotationPendingUntil: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Delivery:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        eventId: { type: string, description: Envelope id, e.g. evt_... }
+        eventType: { type: string }
+        status: { type: string, enum: [pending, delivering, delivered, failed, dead] }
+        attempts: { type: integer }
+        attemptLog:
+          type: array
+          items:
+            type: object
+            properties:
+              attempt: { type: integer }
+              at: { type: string, format: date-time }
+              statusCode: { type: integer, nullable: true }
+              error: { type: string, nullable: true }
+        responseCode: { type: integer, nullable: true }
+        lastError: { type: string, nullable: true }
+        deliveredAt: { type: string, format: date-time, nullable: true }
+        nextRetryAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    Event:
+      type: object
+      description: The body POSTed to a subscribed endpoint.
+      properties:
+        id: { type: string, example: "evt_5f2c9b1e8d474a02a7c31c9ce4b1f3aa" }
+        type: { type: string, example: payment.completed }
+        apiVersion: { type: string, example: v1 }
+        createdAt: { type: string, format: date-time }
+        data:
+          type: object
+          properties:
+            paymentId: { type: string }
+            merchantId: { type: string }
+            merchantReference: { type: string, nullable: true }
+            amount: { type: number }
+            currency: { type: string, example: ZAR }
+            status: { type: string }
+            previousStatus: { type: string }
+            terminalId: { type: string, nullable: true }
+            provider: { type: string, nullable: true }
+            occurredAt: { type: string, format: date-time }
+            transactionReference: { type: string, nullable: true }
+            refund:
+              type: object
+              nullable: true
+              properties:
+                kind: { type: string, enum: [refund, reverse] }
+                amount: { type: number }
+                reference: { type: string, nullable: true }

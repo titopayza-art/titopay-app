@@ -1,0 +1,749 @@
+Only in api: PEACH_CHECKOUT_403_FIX.md
+Only in api: PEACH_FIX_DEPLOYMENT.md
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/PEACH_PAYMENTS_V2_IMPLEMENTATION.md api/PEACH_PAYMENTS_V2_IMPLEMENTATION.md
+--- api_pristine/PEACH_PAYMENTS_V2_IMPLEMENTATION.md	2026-08-04 15:46:01.000000000 +0000
++++ api/PEACH_PAYMENTS_V2_IMPLEMENTATION.md	2026-08-07 09:40:37.708585933 +0000
+@@ -1,5 +1,11 @@
+ # Peach Payments v2 (feature-flagged)
+ 
++> **Note.** This document describes the **Peach Payments API** top-up integration, which
++> authenticates with an `api-key` header and remains gated behind `PEACH_PAYMENTS_V2_ENABLED`.
++> Provider health checking has since moved to **Peach Checkout V2** OAuth authentication and is no
++> longer controlled by this flag — see `PEACH_CHECKOUT_403_FIX.md`. Step 4 of the checklist below
++> is superseded: Test Connection now reports `connected` only when Peach issues an access token.
++
+ This change is on branch `peach-payments-v2` and is not deployed automatically. The backup branch is `backup-before-peach-v2-20260804`.
+ 
+ ## Modified files
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/app.js api/src/app.js
+--- api_pristine/src/app.js	2026-08-04 07:17:30.000000000 +0000
++++ api/src/app.js	2026-08-07 10:16:29.896129700 +0000
+@@ -6,6 +6,7 @@
+ const routes = require("./routes");
+ const hrRoutes = require("./routes/hr.routes");
+ const providerWebhookRoutes = require("./routes/provider-webhook.routes");
++const paymentReturnRoutes = require("./routes/payment-return.routes");
+ const emailWebhookRoutes = require("./routes/email-webhook.routes");
+ const { requestIdMiddleware } = require("./middleware/request-id");
+ const { generalLimiter } = require("./middleware/rate-limits");
+@@ -121,6 +122,9 @@
+ // Mount it before the versioned route stack so it can never fall through to a
+ // router-level JWT middleware. Every other API route keeps its existing auth.
+ app.use("/v1/webhooks/provider", providerWebhookRoutes);
++// Peach Checkout POSTs the customer's browser here after payment. Public by
++// necessity — it is a redirect target, and it never decides a payment outcome.
++app.use("/v1/payments/topup/return", paymentReturnRoutes);
+ app.use("/v1/webhooks/email", emailWebhookRoutes);
+ 
+ // Mount HR before the main route stack so public HR auth/application endpoints
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/middleware/error-handler.js api/src/middleware/error-handler.js
+--- api_pristine/src/middleware/error-handler.js	2026-07-13 17:14:23.000000000 +0000
++++ api/src/middleware/error-handler.js	2026-08-07 10:18:19.564136219 +0000
+@@ -13,7 +13,14 @@
+     return {
+       status: error.statusCode,
+       message: technicalPublicMessage || error.message,
+-      details: error.details
++      details: error.details,
++      // AppError messages are authored deliberately for the customer and are
++      // already scrubbed above. Provider-state codes (502/503/504) must survive
++      // the generic 5xx replacement below, otherwise a precise explanation such
++      // as "Withdraw is not enabled for live processing yet. No wallet debit was
++      // made." reaches the user as "Unable to complete the request", which reads
++      // as a payment glitch and invites a retry.
++      clientSafe: !technicalPublicMessage && [502, 503, 504].includes(error.statusCode)
+     };
+   }
+   if (error?.type === "entity.parse.failed") {
+@@ -26,7 +33,7 @@
+ }
+ 
+ function errorHandler(error, req, res, _next) {
+-  const { status, message, details } = normalizeError(error);
++  const { status, message, details, clientSafe } = normalizeError(error);
+   console.error({
+     requestId: req.requestId,
+     status,
+@@ -34,11 +41,12 @@
+     message: error?.message || "Unexpected error",
+     stack: error?.stack
+   });
+-  const publicMessage = status >= 500 ? "Unable to complete the request. Please try again." : message;
++  const publicMessage = status >= 500 && !clientSafe ? "Unable to complete the request. Please try again." : message;
+   res.status(status).json({
+     ok: false,
+     error: publicMessage,
+     requestId: req.requestId,
++    // Never for 5xx: provider error details can carry a raw upstream body.
+     ...(status < 500 && details ? { details } : {})
+   });
+ }
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/middleware/security.js api/src/middleware/security.js
+--- api_pristine/src/middleware/security.js	2026-07-27 09:09:25.000000000 +0000
++++ api/src/middleware/security.js	2026-08-07 10:16:20.756129156 +0000
+@@ -41,7 +41,7 @@
+ 
+   const path = String(req.originalUrl || req.url || "").split("?")[0].toLowerCase();
+   if (
+-    path === "/v1/webhooks/provider"
++    (path === "/v1/webhooks/provider" || path === "/v1/payments/topup/return")
+     && contentType === "application/x-www-form-urlencoded"
+   ) {
+     next();
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/routes/admin.routes.js api/src/routes/admin.routes.js
+--- api_pristine/src/routes/admin.routes.js	2026-08-05 08:54:16.000000000 +0000
++++ api/src/routes/admin.routes.js	2026-08-07 09:37:21.152574249 +0000
+@@ -29,7 +29,7 @@
+ const { adminDisableBeneficiary, adminListBeneficiaries } = require("../services/beneficiary-service");
+ const { getEmailProviderStatus, sendSmtpTestEmail, deliverSms } = require("../services/notification-service");
+ const { queueEmail, queueRawEmail } = require("../services/email-centre-service");
+-const { testPeachConnection } = require("../services/peach-payments-service");
++const { testCheckoutAuthentication } = require("../services/peach-checkout-auth-service");
+ const { shouldSendCustomerEmail } = require("../services/customer-notification-preference-service");
+ const { ensureAuthenticationPreferenceSchema } = require("../services/authentication-preference-service");
+ const { getChatPresenceSnapshot } = require("../realtime/chat-hub");
+@@ -116,7 +116,10 @@
+     env: config.integrations.peachPayments,
+     fields: ["enabled", "environment", "baseUrl", "sandboxBaseUrl", "productionBaseUrl", "apiKey", "apiSecret", "clientId", "clientSecret", "username", "password", "merchantId", "entityId", "webhookSecret", "callbackUrl"],
+     secretKeys: ["apiKey", "apiSecret", "clientSecret", "password", "webhookSecret"],
+-    requiredFields: ["baseUrl", ["clientId", "apiKey"], ["clientSecret", "apiSecret"]]
++    // Peach Checkout (Embedded / Hosted Checkout V2) authenticates with the
++    // Client ID, Client Secret and Merchant ID. The authentication and checkout
++    // service URLs are fixed per environment, so no base URL is required.
++    requiredFields: ["clientId", "clientSecret", "merchantId"]
+   },
+   pos_provider: {
+     label: "Speedpoint / POS Provider",
+@@ -1060,8 +1063,7 @@
+ 
+ function providerAuthenticationType(providerKey, effective = {}) {
+   if (providerKey === "sms") return "bearer";
+-  if (providerKey === "peach_payments" && config.integrations.peachPayments.v2Enabled) return "api_key";
+-  if (providerKey === "peach_payments" && effective.clientId && effective.clientSecret) return "basic_client_credentials";
++  if (providerKey === "peach_payments") return "oauth_client_credentials";
+   if ((providerKey === "ott" || providerKey === "flash") && effective.username && effective.password) return "basic_username_password";
+   if (providerKey === "docfox" && effective.apiKey) return "bearer_api_key";
+   if (effective.apiKey) return "x-api-key";
+@@ -1091,9 +1093,6 @@
+   if (clientId) headers["x-client-id"] = clientId;
+   if (clientSecret) headers["x-client-secret"] = clientSecret;
+   if (providerKey === "docfox" && apiKey) headers.authorization = `Bearer ${apiKey}`;
+-  if (providerKey === "peach_payments" && clientId && clientSecret) {
+-    headers.authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
+-  }
+   if ((providerKey === "ott" || providerKey === "flash") && effective.username && effective.password) {
+     headers.authorization = `Basic ${Buffer.from(`${effective.username}:${effective.password}`).toString("base64")}`;
+   }
+@@ -1313,9 +1312,7 @@
+   const started = Date.now();
+   const testedAt = new Date().toISOString();
+   let connection = { ok: false, error: "Provider is disabled" };
+-  const missing = (providerKey === "peach_payments" && config.integrations.peachPayments.v2Enabled)
+-    ? []
+-    : missingProviderFieldsFromEffective(provider, effective);
++  const missing = missingProviderFieldsFromEffective(provider, effective);
+   const authenticationType = providerAuthenticationType(providerKey, effective);
+ 
+   console.info("[integration-test] configuration loaded", {
+@@ -1341,8 +1338,10 @@
+       connection = host ? await testSmtpProvider({ ...effective, baseUrl: host }) : { ok: false, error: "SMTP host is not configured" };
+     } else if (providerKey === "sms") {
+       connection = await testSimcloudSmsProvider(effective);
+-    } else if (providerKey === "peach_payments" && config.integrations.peachPayments.v2Enabled) {
+-      connection = await testPeachConnection(effective);
++    } else if (providerKey === "peach_payments") {
++      // Real Peach Checkout V2 authentication: only an issued access token
++      // counts as connected. Never a URL reachability probe.
++      connection = await testCheckoutAuthentication(effective);
+     } else if (providerKey === "pos_provider") {
+       connection = {
+         ok: true,
+@@ -1385,9 +1384,7 @@
+   const nextValue = {
+     ...stored,
+     label: provider.label,
+-    configured: (providerKey === "peach_payments" && config.integrations.peachPayments.v2Enabled)
+-      ? Boolean(connection.ok)
+-      : providerConfigured(provider, stored),
++    configured: providerConfigured(provider, stored),
+     health,
+     logs: [logEntry, ...(Array.isArray(stored.logs) ? stored.logs : [])].slice(0, 100)
+   };
+@@ -1400,7 +1397,12 @@
+       baseUrl: effective.baseUrl || "",
+       environment: effective.environment || "production",
+       senderId: providerKey === "sms" ? effective.senderId || "" : undefined,
+-      testNumber: providerKey === "sms" ? Boolean(effective.testNumber) : undefined
++      testNumber: providerKey === "sms" ? Boolean(effective.testNumber) : undefined,
++      // Presence only — credential values never leave the server.
++      clientId: providerKey === "peach_payments" ? Boolean(effective.clientId) : undefined,
++      clientSecret: providerKey === "peach_payments" ? Boolean(effective.clientSecret) : undefined,
++      merchantId: providerKey === "peach_payments" ? Boolean(effective.merchantId) : undefined,
++      integration: providerKey === "peach_payments" ? "checkout_v2" : undefined
+     }
+   };
+ }
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/routes/integrations.routes.js api/src/routes/integrations.routes.js
+--- api_pristine/src/routes/integrations.routes.js	2026-08-04 15:45:27.000000000 +0000
++++ api/src/routes/integrations.routes.js	2026-08-07 10:17:32.972133449 +0000
+@@ -7,6 +7,8 @@
+ const { AppError } = require("../lib/errors");
+ const { boundedText, requireEnum } = require("../lib/validation");
+ const { processPeachPaymentWebhook } = require("../services/peach-payments-service");
++const { settleTopupFromWebhook } = require("../services/peach-checkout-service");
++const { loadPeachConfig } = require("../services/peach-config-service");
+ 
+ const router = express.Router();
+ 
+@@ -60,17 +62,11 @@
+ }
+ 
+ async function loadPeachWebhookConfig() {
+-  const result = await pool.query(
+-    "SELECT value FROM platform_settings WHERE key = $1 LIMIT 1",
+-    ["integration_peach_payments"],
+-  );
+-  const saved = result.rows[0]?.value || {};
++  const effective = await loadPeachConfig();
+   return {
+-    secret: decryptSecret(saved?.secrets?.webhookSecretEncrypted)
+-      || config.integrations?.peachPayments?.webhookSecret
+-      || "",
+-    merchantId: String(saved.merchantId || config.integrations?.peachPayments?.merchantId || "").trim(),
+-    entityId: String(saved.entityId || config.integrations?.peachPayments?.entityId || "").trim(),
++    secret: effective.webhookSecret || "",
++    merchantId: effective.merchantId || "",
++    entityId: effective.entityId || "",
+   };
+ }
+ 
+@@ -187,19 +183,28 @@
+ // merchantTransactionId, result.code, paymentType) and does not include an
+ // entity ID in every event. Keep this additive so the existing webhook contract
+ // remains unchanged when PEACH_PAYMENTS_V2_ENABLED is false.
++// Peach Checkout webhook payloads carry amount, currency, checkoutId,
++// merchantTransactionId, result.code and merchant.name — and no entity ID.
++//
++// `merchant.name` is the merchant's display name, NOT the Checkout Merchant ID,
++// so it must never be compared against the configured Merchant ID: doing so
++// rejected every genuine Checkout notification with HTTP 400, which Peach then
++// retried for 30 days. Only an explicit merchantId field is worth comparing.
+ function validatePeachV2Payload(body, expected) {
+-  const merchantId = firstValue(body, ["merchantId", "merchant_id", "merchant.name", "merchant"]);
++  const merchantId = firstValue(body, ["merchantId", "merchant_id"]);
++  const merchantName = firstValue(body, ["merchant.name", "merchant"]);
+   const amountText = firstValue(body, ["amount", "amount.value", "payment.amount"]);
+   const currency = firstValue(body, ["currency", "amount.currency", "payment.currency"]).toUpperCase();
+   const transactionId = firstValue(body, [
+-    "paymentId", "payment_id", "id", "transactionId", "transaction_id", "merchantTransactionId", "merchant_transaction_id",
++    "merchantTransactionId", "merchant_transaction_id", "checkoutId", "checkout_id",
++    "paymentId", "payment_id", "id", "transactionId", "transaction_id",
+     "result.id", "payment.id", "payload.id", "payload.payment.id"
+   ]);
+   if (!amountText || !/^\d+(?:\.\d{1,2})?$/.test(amountText) || Number(amountText) <= 0) throw new AppError(400, "Amount is invalid");
+   if (!/^[A-Z]{3}$/.test(currency)) throw new AppError(400, "Currency is invalid");
+   if (!transactionId || transactionId.length > 200 || !/^[A-Za-z0-9._:/-]+$/.test(transactionId)) throw new AppError(400, "Transaction ID is invalid");
+   if (expected.merchantId && merchantId && !timingSafeEqualText(merchantId, expected.merchantId)) throw new AppError(400, "Merchant ID is invalid");
+-  return { merchantId, entityId: "", amount: amountText, currency, transactionId };
++  return { merchantId: merchantId || merchantName, entityId: "", amount: amountText, currency, transactionId };
+ }
+ 
+ function webhookIdempotencyKey(transactionId) {
+@@ -241,7 +246,13 @@
+ }
+ 
+ async function processPeachWebhookEventV2(key, event) {
+-  const result = await processPeachPaymentWebhook(event);
++  // Checkout top-ups settle first. The webhook body is only a trigger — the
++  // Checkout service re-reads the status from Peach before any wallet moves.
++  let result = await settleTopupFromWebhook(event.payload || {});
++  if (!result.matched) {
++    // Not a Checkout top-up: fall through to the legacy Payments API handler.
++    result = await processPeachPaymentWebhook(event);
++  }
+   await pool.query(
+     `UPDATE platform_settings
+         SET value = $2::JSONB, updated_at = NOW()
+@@ -272,7 +283,11 @@
+     }
+ 
+     const body = req.body && typeof req.body === "object" ? req.body : {};
+-    const useV2 = Boolean(config.integrations.peachPayments.v2Enabled);
++    // Peach Checkout V2 notifications carry no entity ID. The stricter legacy
++    // shape is still accepted whenever a delivery actually provides one, so an
++    // existing integration keeps working unchanged.
++    const hasLegacyEntityId = Boolean(firstValue(body, ["entityId", "entity_id", "entity.id", "authentication.entityId", "payload.entityId"]));
++    const useV2 = !hasLegacyEntityId;
+     const validated = useV2 ? validatePeachV2Payload(body, webhookConfig) : validatePeachPayload(body, webhookConfig);
+     const event = {
+       id: validated.transactionId,
+@@ -344,9 +359,11 @@
+   res.json({
+     peachPayments: {
+       provider: config.integrations.peachPayments.mode,
+-      configured: config.integrations.peachPayments.v2Enabled
+-        ? Boolean(config.integrations.peachPayments.apiKey && (config.integrations.peachPayments.baseUrl || config.integrations.peachPayments.productionBaseUrl || config.integrations.peachPayments.sandboxBaseUrl))
+-        : Boolean(config.integrations.peachPayments.baseUrl && config.integrations.peachPayments.clientId),
++      configured: Boolean(
++        config.integrations.peachPayments.clientId
++        && config.integrations.peachPayments.clientSecret
++        && config.integrations.peachPayments.merchantId
++      ),
+       supports: ["card_top_up", "card_verification", "payment_status", "refunds", "webhooks"]
+     },
+     docfox: {
+Only in api/src/routes: payment-return.routes.js
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/routes/payments.routes.js api/src/routes/payments.routes.js
+--- api_pristine/src/routes/payments.routes.js	2026-08-04 15:34:13.000000000 +0000
++++ api/src/routes/payments.routes.js	2026-08-07 10:16:00.116127930 +0000
+@@ -4,13 +4,17 @@
+ const { payQr } = require("../services/qr-service");
+ const { config } = require("../config/env");
+ const {
+-  createCardTopup,
+   getCardTopupStatus,
+   confirmCardTopup,
+   captureCardTopup,
+   cancelCardTopup,
+   refundCardTopup
+ } = require("../services/peach-payments-service");
++const {
++  createTopupCheckout,
++  getTopupStatus,
++  listRecentTopups
++} = require("../services/peach-checkout-service");
+ 
+ const router = express.Router();
+ 
+@@ -32,13 +36,13 @@
+   }
+ });
+ 
++// Card top-up runs on Peach Checkout V2. The response carries a redirectUrl the
++// PWA sends the customer to; the wallet is credited only after this server has
++// verified the checkout with Peach.
+ router.post("/topup", async (req, res, next) => {
+   try {
+     assertTransactionsAllowed(req);
+-    if (!config.integrations.peachPayments.v2Enabled) {
+-      throw new AppError(503, "Card top-up provider is not configured for production processing yet.");
+-    }
+-    const result = await createCardTopup(req.auth, {
++    const result = await createTopupCheckout(req.auth, {
+       ...req.body,
+       idempotencyKey: req.get("idempotency-key") || req.body?.idempotencyKey
+     });
+@@ -48,28 +52,44 @@
+   }
+ });
+ 
+-router.get("/topup/:paymentId", async (req, res, next) => {
++router.get("/topup", async (req, res, next) => {
++  try {
++    res.json({ ok: true, items: await listRecentTopups(req.auth, req.query.limit) });
++  } catch (error) { next(error); }
++});
++
++// Status polling stays available while a profile is locked so a customer can
++// always see how a payment they already made resolved.
++router.get("/topup/:reference", async (req, res, next) => {
++  try {
++    res.json({ ok: true, ...(await getTopupStatus(req.auth, req.params.reference)) });
++  } catch (error) { next(error); }
++});
++
++// Legacy Peach Payments API lifecycle actions. Unchanged, still behind
++// PEACH_PAYMENTS_V2_ENABLED, and not part of the Checkout top-up flow.
++router.get("/legacy-topup/:paymentId", async (req, res, next) => {
+   try {
+     assertTransactionsAllowed(req);
+-    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "Card top-up provider is not configured for production processing yet.");
++    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
+     res.json({ ok: true, ...(await getCardTopupStatus(req.auth, req.params.paymentId)) });
+   } catch (error) { next(error); }
+ });
+ 
+ for (const [path, action] of [["confirm", confirmCardTopup], ["capture", captureCardTopup], ["cancel", cancelCardTopup]]) {
+-  router.post(`/topup/:paymentId/${path}`, async (req, res, next) => {
++  router.post(`/legacy-topup/:paymentId/${path}`, async (req, res, next) => {
+     try {
+       assertTransactionsAllowed(req);
+-      if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "Card top-up provider is not configured for production processing yet.");
++      if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
+       res.json({ ok: true, ...(await action(req.auth, req.params.paymentId, req.body || {})) });
+     } catch (error) { next(error); }
+   });
+ }
+ 
+-router.post("/topup/:paymentId/refund", async (req, res, next) => {
++router.post("/legacy-topup/:paymentId/refund", async (req, res, next) => {
+   try {
+     assertTransactionsAllowed(req);
+-    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "Card top-up provider is not configured for production processing yet.");
++    if (!config.integrations.peachPayments.v2Enabled) throw new AppError(503, "This provider flow is not enabled.");
+     res.json({ ok: true, ...(await refundCardTopup(req.auth, req.params.paymentId, req.body || {})) });
+   } catch (error) { next(error); }
+ });
+Only in api/src/services: peach-checkout-auth-service.js
+Only in api/src/services: peach-checkout-service.js
+Only in api/src/services: peach-config-service.js
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/services/peach-payments-service.js api/src/services/peach-payments-service.js
+--- api_pristine/src/services/peach-payments-service.js	2026-08-04 16:00:33.000000000 +0000
++++ api/src/services/peach-payments-service.js	2026-08-07 10:18:23.212136436 +0000
+@@ -5,6 +5,7 @@
+ const { config } = require("../config/env");
+ const { pool } = require("../db/pool");
+ const { AppError } = require("../lib/errors");
++const { testCheckoutAuthentication } = require("./peach-checkout-auth-service");
+ const walletService = require("./wallet-service");
+ 
+ const DEFAULT_TIMEOUT_MS = 10000;
+@@ -83,7 +84,7 @@
+     if (error?.name === "AbortError") {
+       throw new AppError(504, "Peach Payments network timeout", { code: "NETWORK_TIMEOUT" });
+     }
+-    throw new AppError(502, `Peach Payments network error: ${error.message}`, { code: "NETWORK_ERROR" });
++    throw new AppError(502, "Peach Payments could not be reached", { code: "NETWORK_ERROR" });
+   } finally {
+     clearTimeout(timeout);
+   }
+@@ -95,30 +96,12 @@
+   return { payload, statusCode: response.status, environment, endpoint: url };
+ }
+ 
+-async function testPeachConnection(effective = {}) {
+-  try {
+-    const { environment, url } = baseUrlFor(effective);
+-    const result = await requestPeach(effective, "GET", "payments/list?limit=1");
+-    return {
+-      ok: true,
+-      status: "connected",
+-      connectionState: environment === "sandbox" ? "sandbox_reachable" : "production_reachable",
+-      environment,
+-      endpoint: url,
+-      authenticationType: "api_key",
+-      providerResponse: { method: "GET", path: "/payments/list", statusCode: result.statusCode }
+-    };
+-  } catch (error) {
+-    return {
+-      ok: false,
+-      status: "failed",
+-      error: error.message,
+-      errorCode: error.details?.code || "CONNECTION_FAILED",
+-      environment: String(effective.environment || "production").toLowerCase(),
+-      authenticationType: "api_key",
+-      providerResponse: error.details?.providerStatus ? { statusCode: error.details.providerStatus } : null
+-    };
+-  }
++// Provider health is measured against Peach Checkout (V2) authentication, which
++// is the integration the Admin Portal configures. It deliberately does not use
++// the `api-key` header of the Peach Payments API used by the top-up calls below
++// — the two products must never share an authentication method.
++function testPeachConnection(effective = {}) {
++  return testCheckoutAuthentication(effective);
+ }
+ 
+ function providerPaymentId() {
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/src/services/transaction-service.js api/src/services/transaction-service.js
+--- api_pristine/src/services/transaction-service.js	2026-08-05 10:59:19.000000000 +0000
++++ api/src/services/transaction-service.js	2026-08-07 10:19:52.804141761 +0000
+@@ -46,11 +46,17 @@
+   "stockvel_contribution"
+ ]);
+ 
+-const PROVIDER_DEPENDENT_SERVICES = new Set([
++// Card top-ups are a wallet CREDIT funded by Peach Checkout, not a wallet
++// debit, so they can never run through createTransaction. They have their own
++// lifecycle at /v1/payments/topup.
++const CARD_TOPUP_SERVICES = new Set([
+   "wallet_top_up",
+   "top_up",
+   "card_topups",
+-  "card_payments",
++  "card_payments"
++]);
++
++const PROVIDER_DEPENDENT_SERVICES = new Set([
+   "bank_transfer",
+   "bank_withdrawal",
+   "withdraw",
+@@ -60,6 +66,10 @@
+   "business_payout",
+   "merchant_payout",
+   "merchant_payouts",
++  // The service catalogue publishes the code "payouts"; without it here the
++  // block only happened via the catch-all, and a fee preview first wrote a
++  // zero-fee "payouts" pricing rule to the database.
++  "payouts",
+   "seller_payout",
+   "airtime",
+   "data",
+@@ -101,7 +111,18 @@
+   return `${label.charAt(0).toUpperCase()}${label.slice(1)} is not enabled for live processing yet. No wallet debit was made.`;
+ }
+ 
+-function assertLiveTransactionSupported(normalizedServiceCode, payload = {}) {
++// Checks that depend only on the service code. Run from the fee preview too, so
++// a customer is told a service is unavailable before they see a fee and press
++// Confirm — the previous behaviour previewed cleanly and only failed on Confirm,
++// which reads as a payment glitch rather than an unlaunched service.
++function assertServiceLaunched(normalizedServiceCode) {
++  if (CARD_TOPUP_SERVICES.has(normalizedServiceCode)) {
++    throw new AppError(
++      409,
++      "Card top-ups are completed through the secure card payment flow. No wallet debit was made.",
++      { code: "USE_CARD_TOPUP_FLOW", endpoint: "/v1/payments/topup" }
++    );
++  }
+   if (REQUEST_ONLY_SERVICES.has(normalizedServiceCode)) {
+     throw new AppError(409, "Payment requests create a request only. No wallet debit was made.");
+   }
+@@ -111,6 +132,10 @@
+   if (PROVIDER_DEPENDENT_SERVICES.has(normalizedServiceCode)) {
+     throw new AppError(503, providerPendingMessage(normalizedServiceCode));
+   }
++}
++
++function assertLiveTransactionSupported(normalizedServiceCode, payload = {}) {
++  assertServiceLaunched(normalizedServiceCode);
+   if (LIVE_QR_WALLET_SERVICES.has(normalizedServiceCode)) {
+     if (!payload.metadata?.qrId) {
+       throw new AppError(400, "QR payments must be started from a valid TitoPay QR code.");
+@@ -149,6 +174,7 @@
+   const normalizedServiceCode = normalizeServiceCode(serviceCode);
+   const amount = Number(payload.amount);
+   if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "amount must be greater than zero");
++  assertServiceLaunched(normalizedServiceCode);
+   const fee = await calculateFee(normalizedServiceCode, amount);
+   let recipientStatus = null;
+   const recipientChecks = recipientsForVerification(payload, normalizedServiceCode);
+Only in api/test: peach-checkout-topup.test.js
+diff -ru '--exclude=node_modules' '--exclude=dump-routes.js' api_pristine/test/peach-payments-v2.test.js api/test/peach-payments-v2.test.js
+--- api_pristine/test/peach-payments-v2.test.js	2026-08-04 15:40:22.000000000 +0000
++++ api/test/peach-payments-v2.test.js	2026-08-07 09:46:39.428607434 +0000
+@@ -18,33 +18,100 @@
+   return () => { global.fetch = original; };
+ }
+ 
+-test("Peach connection test authenticates against the sandbox API", async () => {
++test("Peach connection test authenticates against the Checkout sandbox auth service", async () => {
+   let request;
+   const restore = mockFetch(async (url, options) => {
+     request = { url, options };
+-    return new Response(JSON.stringify({ data: [] }), { status: 200, headers: { "content-type": "application/json" } });
++    return new Response(
++      JSON.stringify({ access_token: "sandbox-access-token", expires_in: "3600", token_type: "Bearer" }),
++      { status: 200, headers: { "content-type": "application/json" } }
++    );
+   });
+   try {
+     const result = await peach.testPeachConnection({
+-      ...config.integrations.peachPayments,
+       environment: "sandbox",
+-      apiKey: "sandbox-key",
+-      sandboxBaseUrl: "https://sandbox.example.test/api"
++      clientId: "sandbox-client-id",
++      clientSecret: "sandbox-client-secret",
++      merchantId: "sandbox-merchant-id"
+     });
+     assert.equal(result.ok, true);
+-    assert.equal(result.connectionState, "sandbox_reachable");
+-    assert.equal(request.options.headers["api-key"], "sandbox-key");
+-    assert.match(request.url, /sandbox\.example\.test\/api\/payments\/list/);
++    assert.equal(result.status, "connected");
++    assert.equal(result.environment, "sandbox");
++    assert.equal(result.integration, "checkout_v2");
++    assert.equal(result.authenticationType, "oauth_client_credentials");
++    assert.equal(result.providerResponse.accessTokenIssued, true);
++    assert.equal(result.providerResponse.expiresInSeconds, 3600);
++
++    assert.equal(request.url, "https://sandbox-dashboard.peachpayments.com/api/oauth/token");
++    assert.equal(request.options.method, "POST");
++    assert.equal(request.options.headers["content-type"], "application/json");
++    assert.deepEqual(JSON.parse(request.options.body), {
++      clientId: "sandbox-client-id",
++      clientSecret: "sandbox-client-secret",
++      merchantId: "sandbox-merchant-id"
++    });
+   } finally { restore(); }
+ });
+ 
+-test("Peach connection test reports authentication failure without claiming connected", async () => {
+-  const restore = mockFetch(async () => new Response(JSON.stringify({ message: "invalid api key" }), { status: 401 }));
++test("Peach connection test uses the live auth service for production", async () => {
++  let request;
++  const restore = mockFetch(async (url, options) => {
++    request = { url, options };
++    return new Response(JSON.stringify({ access_token: "live-token", expires_in: 600 }), { status: 200 });
++  });
+   try {
+-    const result = await peach.testPeachConnection({ ...config.integrations.peachPayments, environment: "production", apiKey: "bad-key", productionBaseUrl: "https://production.example.test/api" });
++    const result = await peach.testPeachConnection({
++      environment: "production",
++      clientId: "live-client-id",
++      clientSecret: "live-client-secret",
++      merchantId: "live-merchant-id"
++    });
++    assert.equal(result.ok, true);
++    assert.equal(request.url, "https://dashboard.peachpayments.com/api/oauth/token");
++  } finally { restore(); }
++});
++
++test("Peach rejects the HTTP 400 invalid-credential response as an authentication failure", async () => {
++  const restore = mockFetch(async () => new Response(
++    JSON.stringify({ message: "Invalid client ID or secret." }),
++    { status: 400, headers: { "content-type": "application/json" } }
++  ));
++  try {
++    const result = await peach.testPeachConnection({
++      environment: "sandbox",
++      clientId: "wrong",
++      clientSecret: "wrong",
++      merchantId: "wrong"
++    });
+     assert.equal(result.ok, false);
+-    assert.equal(result.errorCode, "AUTHENTICATION_FAILED");
+     assert.equal(result.status, "failed");
++    assert.equal(result.errorCode, "AUTHENTICATION_REJECTED");
++    assert.equal(result.providerResponse.statusCode, 400);
++  } finally { restore(); }
++});
++
++test("Peach reports a 403 as an authentication rejection, never as connected", async () => {
++  const restore = mockFetch(async () => new Response("Forbidden", { status: 403 }));
++  try {
++    const result = await peach.testPeachConnection({
++      environment: "sandbox",
++      clientId: "client",
++      clientSecret: "secret",
++      merchantId: "merchant"
++    });
++    assert.equal(result.ok, false);
++    assert.equal(result.errorCode, "AUTHENTICATION_REJECTED");
++  } finally { restore(); }
++});
++
++test("Peach reports a 5xx as provider unavailable", async () => {
++  const restore = mockFetch(async () => new Response("", { status: 503 }));
++  try {
++    const result = await peach.testPeachConnection({
++      environment: "sandbox", clientId: "a", clientSecret: "b", merchantId: "c"
++    });
++    assert.equal(result.ok, false);
++    assert.equal(result.errorCode, "PROVIDER_UNAVAILABLE");
+   } finally { restore(); }
+ });
+ 
+@@ -55,12 +122,92 @@
+     throw error;
+   });
+   try {
+-    const result = await peach.testPeachConnection({ ...config.integrations.peachPayments, apiKey: "key", productionBaseUrl: "https://production.example.test/api" });
++    const result = await peach.testPeachConnection({
++      environment: "sandbox", clientId: "a", clientSecret: "b", merchantId: "c"
++    });
+     assert.equal(result.ok, false);
+     assert.equal(result.errorCode, "NETWORK_TIMEOUT");
+   } finally { restore(); }
+ });
+ 
++test("Peach reports missing configuration without calling the provider", async () => {
++  let called = false;
++  const restore = mockFetch(async () => { called = true; return new Response("{}", { status: 200 }); });
++  try {
++    const result = await peach.testPeachConnection({ environment: "sandbox", clientId: "only-client-id" });
++    assert.equal(called, false);
++    assert.equal(result.ok, false);
++    assert.equal(result.errorCode, "INVALID_CONFIGURATION");
++    assert.deepEqual(result.providerResponse.missingFields, ["clientSecret", "merchantId"]);
++  } finally { restore(); }
++});
++
++test("A 200 response without an access token is not reported as connected", async () => {
++  const restore = mockFetch(async () => new Response(JSON.stringify({ token_type: "Bearer" }), { status: 200 }));
++  try {
++    const result = await peach.testPeachConnection({
++      environment: "sandbox", clientId: "a", clientSecret: "b", merchantId: "c"
++    });
++    assert.equal(result.ok, false);
++    assert.equal(result.errorCode, "AUTHENTICATION_FAILED");
++  } finally { restore(); }
++});
++
++test("No credential or token value is ever returned to the caller", async () => {
++  const restore = mockFetch(async () => new Response(
++    JSON.stringify({ message: "Invalid client ID or secret. supplied super-secret-value" }),
++    { status: 400 }
++  ));
++  try {
++    const result = await peach.testPeachConnection({
++      environment: "sandbox",
++      clientId: "client-id-value",
++      clientSecret: "super-secret-value",
++      merchantId: "merchant-id-value"
++    });
++    const serialized = JSON.stringify(result);
++    assert.doesNotMatch(serialized, /super-secret-value/);
++    assert.doesNotMatch(serialized, /client-id-value/);
++    assert.doesNotMatch(serialized, /merchant-id-value/);
++  } finally { restore(); }
++});
++
++test("Snake_case saved credentials resolve to the documented request body", async () => {
++  let request;
++  const restore = mockFetch(async (url, options) => {
++    request = { url, options };
++    return new Response(JSON.stringify({ access_token: "token" }), { status: 200 });
++  });
++  try {
++    const result = await peach.testPeachConnection({
++      environment: "sandbox",
++      client_id: "snake-client",
++      client_secret: "snake-secret",
++      merchant_id: "snake-merchant"
++    });
++    assert.equal(result.ok, true);
++    assert.deepEqual(JSON.parse(request.options.body), {
++      clientId: "snake-client",
++      clientSecret: "snake-secret",
++      merchantId: "snake-merchant"
++    });
++  } finally { restore(); }
++});
++
++test("Test Connection always calls Peach and never serves a cached token", async () => {
++  let calls = 0;
++  const restore = mockFetch(async () => {
++    calls += 1;
++    return new Response(JSON.stringify({ access_token: "token", expires_in: 3600 }), { status: 200 });
++  });
++  try {
++    const credentials = { environment: "sandbox", clientId: "a", clientSecret: "b", merchantId: "c" };
++    await peach.testPeachConnection(credentials);
++    await peach.testPeachConnection(credentials);
++    assert.equal(calls, 2);
++  } finally { restore(); }
++});
++
+ test("Peach status normalization covers the payment lifecycle", () => {
+   assert.equal(peach.normalizedStatus("pending"), "pending");
+   assert.equal(peach.normalizedStatus("succeeded"), "completed");
+@@ -68,3 +215,18 @@
+   assert.equal(peach.normalizedStatus("expired"), "expired");
+   assert.equal(peach.normalizedStatus("refunded"), "refunded");
+ });
++
++test("A failed test reports the endpoint that was actually called", async () => {
++  const restore = mockFetch(async () => new Response(JSON.stringify({ message: "Invalid client ID or secret." }), { status: 400 }));
++  try {
++    const result = await peach.testPeachConnection({
++      environment: "sandbox",
++      sandboxAuthUrl: "https://auth-override.example.test",
++      clientId: "a",
++      clientSecret: "b",
++      merchantId: "c"
++    });
++    assert.equal(result.ok, false);
++    assert.equal(result.providerResponse.endpoint, "https://auth-override.example.test/api/oauth/token");
++  } finally { restore(); }
++});

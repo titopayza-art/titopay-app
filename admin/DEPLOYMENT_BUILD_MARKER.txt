@@ -1,0 +1,83 @@
+TitoPay Admin build: admin-console-v105-20260826
+
+v99 (this build): the console can finally SEE activation and retention.
+
+  Marketing gains a page — Activation & Retention, second in the section,
+  at /marketing-sales/growth/. It reads GET /admin/marketing/growth, which
+  API build 110 already shipped and nothing had ever displayed: of everyone
+  who registered, how many were funded, how many transacted, how many came
+  back, how often, and how many were funded and never spent a cent.
+
+  It measures the PRODUCT, not a campaign. Every other page under Marketing
+  counts campaign-attributed users only; this one counts every registration,
+  however it arrived.
+
+  Read the page as it is written. The activation steps are STAGES, not a
+  narrowing funnel — a customer can transact without being funded and
+  without verifying — and cohorts too small to carry a percentage are
+  marked rather than hidden.
+
+  - REQUIRES api.zip build 110 or later. On an older API the page reports
+    the error rather than rendering an empty grid.
+  - Asset stamp moves to admin-console-v99 across every HTML file, so the
+    lazily-imported marketing module is actually re-fetched.
+  - No new endpoint, no schema change, and no other console page altered.
+
+
+v89 (this build): when a console page breaks, this console now tells you why.
+
+  THE PROBLEM IT SOLVES. The console answers "Unable to complete this admin
+  action" for every server-side failure, on purpose: an operator screen must
+  not print database errors to whoever is looking at it. That is right for the
+  console and useless for the person who has to fix it, and the tool that put
+  the detail back was a script you needed SSH to run. SSH is exactly what you
+  do not have when a page breaks at two in the morning.
+
+  DATABASE HEALTH IS NOW A DIAGNOSIS. It shows the same report that
+  `npm run db:diagnose` prints, from the same service in the API, so the two
+  can never drift apart:
+
+    - which tables each console page needs, and which are missing, with the
+      page named so a missing row says what it will break
+    - the queries the failing panels actually run, with the REAL Postgres
+      error and its code
+    - the save statements behind the buttons that say nothing useful, so
+      "Save Maintenance Mode did nothing" stops being a mystery
+    - the shape of platform_settings on THIS database: its columns and how
+      many foreign keys it has. Five files declare that table and they
+      disagree, and whichever ran first on a given database is the one that
+      exists, forever
+    - which provider supplies which capability, and which are not contracted
+
+  It only reads. The save probes are real writes, because a read that works
+  while a save fails is the whole shape of the problem, but every one runs
+  inside a transaction that is always rolled back. Running it changes nothing.
+
+  IT ALSO STOPPED LYING. Database Health used to check a hardcoded list of
+  fifteen tables, written when the platform was much smaller, against a schema
+  now past a hundred and seventy. It could report everything green while the
+  tables behind a broken page were missing. It now checks the same map the
+  diagnosis uses, so the list grows with the platform.
+
+  THE TOPBAR SAYS WHICH API BUILD YOU ARE TALKING TO. GET /health has reported
+  the build since it was added and nothing ever read it. The chip is quiet when
+  the API is current and red when it is behind what this console needs, with
+  both numbers and what to do about it.
+
+Carried from v88:
+  - The customer's Limits & Verification screen is operated from Compliance:
+    a matrix of the seven limit rows across the three levels, plus the five
+    sentences the customer reads around them.
+
+Upload notes:
+  - REQUIRES api.zip build 35 for the diagnosis. On an older API the page says
+    so and names `npm run db:diagnose` as the fallback, rather than rendering
+    an empty panel.
+  - Asset stamp moves to admin-console-v98 across all 66 HTML files.
+  - One new endpoint: GET /admin/diagnostics/console, super admin only,
+    because the report carries real table names and real database errors.
+  - Replace the whole admin directory as usual. Nothing under api/ or the
+    website bundle is touched.
+
+If a console page is blank or erroring after upload:
+  Open Database Health. That is now the answer, not the starting point.

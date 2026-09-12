@@ -1,0 +1,157 @@
+const express = require("express");
+const { pool } = require("../db/pool");
+const { getPlatformSetting } = require("../services/platform-settings-service");
+const { buildInfo } = require("../build-info");
+const { config } = require("../config/env");
+
+const router = express.Router();
+
+function apiHomeHtml(status) {
+  return `<!doctype html>
+<html lang="en-ZA">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="theme-color" content="#0057ff">
+    <title>Protected Service</title>
+    <style>
+      body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f8faff;color:#061a3d}
+      main{width:min(100% - 32px,520px);padding:28px;border:1px solid #dbe6f7;border-radius:28px;background:#fff;box-shadow:0 22px 60px rgba(6,26,61,.08);text-align:center}
+      h1{margin:0 0 8px;font-size:2rem}.status{color:#66748f}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Protected Service</h1>
+      <p class="status">Protected service. Use authenticated endpoints only.</p>
+    </main>
+  </body>
+</html>`;
+}
+
+router.get("/", async (req, res, next) => {
+  let status = { database: "unknown" };
+  try {
+    await pool.query("SELECT 1");
+    status = { database: "ok" };
+  } catch (error) {
+    status = { database: "error" };
+    if ((req.get("accept") || "").includes("text/html")) {
+      res.status(503).type("html").send(apiHomeHtml(status));
+      return;
+    }
+    next(error);
+    return;
+  }
+
+  if ((req.get("accept") || "").includes("text/html")) {
+    res.type("html").send(apiHomeHtml(status));
+    return;
+  }
+
+  res.status(404).json({ ok: false, error: "Not found" });
+});
+
+async function healthStatus(_req, res, next) {
+  try {
+    await pool.query("SELECT 1");
+    let emailWorker = { status: "not_migrated" };
+    const table = await pool.query("SELECT to_regclass('public.email_queue') AS name");
+    if (table.rows[0]?.name) {
+      const { rows } = await pool.query(`SELECT
+        COUNT(*) FILTER (WHERE status='queued')::int AS queued,
+        COUNT(*) FILTER (WHERE status='processing')::int AS processing,
+        COUNT(*) FILTER (WHERE status='processing' AND locked_at<NOW()-INTERVAL '15 minutes')::int AS stale,
+        COUNT(*) FILTER (WHERE status='dead_lettered')::int AS dead_lettered,
+        MAX(sent_at) AS last_sent_at
+        FROM email_queue`);
+      emailWorker = { status: Number(rows[0].stale) ? "stalled" : "ready", ...rows[0] };
+      // The worker's own build stamp, so an unrestarted worker running old
+      // code is visible here instead of surfacing as silently degraded mail
+      // (the first symptom was ticket emails missing their PDF attachment).
+      const heartbeat = await pool.query(
+        "SELECT value, updated_at FROM platform_settings WHERE key = 'email_worker_heartbeat' LIMIT 1"
+      ).catch(() => ({ rows: [] }));
+      if (heartbeat.rows[0]) {
+        emailWorker.build = heartbeat.rows[0].value?.build ?? null;
+        emailWorker.lastHeartbeatAt = heartbeat.rows[0].updated_at;
+      }
+    }
+    res.json({
+      status: "ok",
+      database: "ok",
+      // WHICH DEPLOYMENT IS THIS? Purely an identifier: "sandbox" or
+      // "production", from TITOPAY_ENV. It answers the one question an
+      // operator cannot otherwise answer from outside, and it is the same
+      // answer the startup log gives.
+      //
+      // Additive only. Every existing field keeps its name, its type and its
+      // position, so anything already reading this response is unaffected.
+      // No connection string, host, database name, key or secret is exposed:
+      // knowing an API is "production" tells an attacker nothing they could
+      // not infer from its hostname.
+      environment: String(process.env.TITOPAY_ENV || "").trim() || "undeclared",
+      // How many environment warnings this process started with. A number, not
+      // the warnings themselves: the detail is in the startup log, and this is
+      // enough for "is anything unstated here?" to be one request. Zero means
+      // fully declared.
+      environmentWarnings: (() => {
+        try { return require("../config/deployment-safety").inspectDeployment({ env: process.env, config }).warnings.length; }
+        catch { return null; }
+      })(),
+      // Configuration problems this process started with despite starting. A
+      // count, not the warnings themselves, for the same reason as above: the
+      // detail is in the startup log and in `node preflight.js`, and no part of
+      // a public health response should hint at which key is weak. Zero means
+      // the configuration is complete. Non-zero means the API is up and serving
+      // but something needs setting.
+      configWarnings: (() => {
+        try { return require("../config/env").startupWarnings.length; }
+        catch { return null; }
+      })(),
+      // Reported so that "is the deployed API current?" is one request rather
+      // than an investigation. See src/build-info.js.
+      ...buildInfo(),
+      emailWorker,
+      // Outbound webhook delivery, same contract as emailWorker: enough to see
+      // whether events are flowing and whether anything is stuck, never the
+      // endpoints or secrets themselves. Fail-soft - a deployment without the
+      // webhook tables reports not_migrated rather than failing health.
+      webhookWorker: await require("../services/webhook-service").workerStatus()
+        .catch(() => ({ status: "not_migrated" })),
+      // Settlement sweep + batch backlog, same fail-soft contract.
+      settlementWorker: await require("../services/settlement-service").workerStatus()
+        .catch(() => ({ status: "not_migrated" }))
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+router.get("/health", healthStatus);
+
+router.get("/maintenance/public", async (_req, res, next) => {
+  try {
+    const setting = await getPlatformSetting("maintenance_mode", {
+      pwa: { enabled: false, note: "", expectedBackAt: "" },
+      admin: { enabled: false, note: "", expectedBackAt: "" },
+      hr: { enabled: false, note: "", expectedBackAt: "" }
+    });
+    const value = setting.value || {};
+    res.json({
+      ok: true,
+      maintenance: {
+        pwa: value.pwa || { enabled: false, note: "", expectedBackAt: "" },
+        admin: value.admin || { enabled: false, note: "", expectedBackAt: "" },
+        hr: value.hr || { enabled: false, note: "", expectedBackAt: "" }
+      },
+      updatedAt: setting.updatedAt
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+module.exports = router;
+module.exports.healthStatus = healthStatus;

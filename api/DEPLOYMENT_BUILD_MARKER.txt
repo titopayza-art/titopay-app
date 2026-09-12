@@ -1,0 +1,382 @@
+TitoPay deployment build — 2026-08-16 UTC
+Branch: claude/peach-payments-403-fix-6sv7cy
+API build: 41   (GET /health reports this — check it after upload)
+PWA bundle: v416 (titopay-pwa-v416-event-poster)
+Admin console: admin-console-v89
+
+BUILD 41 — AN ORGANISER CAN FIX THE POSTER ON A SELLING EVENT
+
+   NEW: PUT /v1/ticketing/business/events/:id/poster
+
+   Approved events could not be edited in the app at all, so a wrong poster on
+   an event that was already selling could only be fixed by an admin. The
+   poster is now the one exception. Everything else on an approved event still
+   goes through the change request an admin reviews: the date, the venue, the
+   price and the refund terms are what a buyer decided on. The poster is the
+   shop window, it is what is most often wrong on the day, and an organiser who
+   cannot fix it has a broken event and no way to help themselves.
+
+   It reads and writes exactly ONE column. The event keeps its status, its
+   name, its date and its ticket types. Every replacement lands on that event's
+   audit trail with who did it and when. A cancelled or finished event refuses
+   with a reason a person can read, and another business gets a 404.
+
+   Proven in verification/event-poster-replace-live.js against a real approved
+   event selling paid tickets: 8 checks, including that the ordinary edit path
+   STILL refuses an approved event.
+
+
+BUILD 40 — EVENT TICKETS APPEARS FOR BUSINESS ACCOUNTS ON UPLOAD
+
+   NOTHING TO RUN BY HAND. Upload api.zip, restart, and the tile is there.
+
+   Build 39 corrected the shipped default, but that was not enough on its own:
+   ensureDefaultServices inserts with ON CONFLICT DO NOTHING, so a corrected
+   default never reaches a database that already has the row, and every live
+   installation has one. That is why this codebase already pushes such
+   corrections out through applyServiceCopyFixups, which is where the rename of
+   Ticketing Staff to Event Scanners lives. This goes there too.
+
+   It runs on the first catalogue read after the restart, ONCE, and records in
+   platform_settings that it has run. So an admin who afterwards hides Event
+   Tickets from businesses keeps that decision: it will not be turned back on
+   at the next boot. Correcting a default and overriding a choice are different
+   things, and only the first is done here.
+
+   It cannot take the catalogue down. The whole body is wrapped, because it
+   sits on the path of every service list read; a failure logs and moves on.
+
+   Verified against a database put back into exactly the state production is
+   in: before the deploy business_visible was false, after the first catalogue
+   fetch it was true and the marker was set, a second fetch changed nothing,
+   an admin hiding the tile stuck, and a further fetch left it hidden.
+
+
+BUILD 39 — BUSINESSES CAN BUY EVENT TICKETS
+
+   The Event Tickets tile was shown to personal accounts only. Buying a ticket
+   was never a personal-only act: a business books a stand at an expo, sends
+   staff to a conference, buys a table at a fundraiser. Every step behind the
+   tile already worked for a business; only the tile was hidden.
+
+   Proven before it was changed, in verification/business-buys-tickets-live.js:
+   a business account buys a real paid ticket, the money leaves the BUSINESS
+   wallet (R2000 to R1740, R260 charged), the organiser is credited R220,
+   TitoPay keeps R40, and both wallets still reconcile against their ledgers.
+   The 86-journey walk also now opens Event Tickets on the business account
+   with both wallets byte-for-byte unchanged.
+
+   SELLING tickets is a different service and is UNCHANGED: "Ticketing" stays
+   business only, and the organiser gates (merchant profile, registration
+   details, verification) are untouched.
+
+   Build 40 above is what carries this to a database that already has the
+   tickets row, which is every live installation. To turn the tile back OFF
+   afterwards, set business_visible = FALSE on the tickets row and it stays
+   off.
+
+
+BUILD 38 — THE SCHEMA CAN APPLY ON AN OLDER POSTGRESQL AGAIN
+
+   This is the one that matters, and it had been broken in production for
+   months without a single symptom until someone ran the schema by hand.
+
+   schema.sql attached two triggers with `FOR EACH ROW EXECUTE FUNCTION`.
+   That spelling requires PostgreSQL 11. On an older server it is a SYNTAX
+   error, and because the file runs as ONE statement a syntax error rolls the
+   entire file back: not one table is created, and the command reports the
+   error and exits.
+
+   The effect was silent and exact. Every table declared BEFORE that line
+   existed on the database. Every table declared AFTER it was missing. On the
+   production node that was compliance_config_versions, regulatory_report_events
+   and reconciliation_exceptions, which is why the Compliance Dashboard could
+   not load and Save Limits failed.
+
+   `EXECUTE PROCEDURE` is the older spelling. It is identical for triggers and
+   is still accepted by every PostgreSQL release to date, so the schema now
+   applies on old and new servers alike. Proven by dropping both triggers and
+   all three tables and re-running the repair: the triggers came back, the
+   tables came back, and the trigger still records an insert, still records a
+   status change, and still refuses to move a transaction out of `reversed`.
+
+   The file already carried a gen_random_uuid() shim for older servers, so
+   supporting them is a deliberate property of this schema. A test now fails
+   the build if EXECUTE FUNCTION reappears in any of the three schema files.
+
+
+BUILD 37 — THREE REPAIRS TO THE REPAIR TOOLS THEMSELVES
+
+   None of this changes how the platform behaves for a customer. All three are
+   faults in the tooling that an operator reads when something is wrong, and
+   all three were found on a live node.
+
+   1. THE COMMAND THE DIAGNOSIS RECOMMENDED WAS THE WRONG ONE.
+
+      When console pages were missing tables, the diagnosis said to run
+      `node src/db/init.js`. That applies the schema AND writes the shipped
+      pricing schedule over pricing_rules with ON CONFLICT DO UPDATE, forcing
+      enabled = TRUE and active = TRUE on every rule. On a live platform it
+      discards every fee an operator has set in the console. Measured:
+
+        before          airtime  fee 9.99, disabled
+        after init.js   airtime  fee 1.00, enabled     <- operator change gone
+        after repair    airtime  fee 9.99, disabled    <- untouched
+
+      NEW: `npm run db:repair-schema` (scripts/repair-schema.js). It applies
+      the same three schema files and never reads or writes pricing. init.js
+      is unchanged and is still the right command for a NEW database. The
+      diagnosis and the Database Health page now name the repair script.
+
+   2. THE DIAGNOSIS COUNTED FOREIGN KEYS ACROSS EVERY SCHEMA.
+
+      pg_class.relname is not schema-qualified, and the count had no namespace
+      join, so it summed every platform_settings in the database. A production
+      node reported "platform_settings foreign keys: 35" where the real answer
+      for the table the API writes to was 1. Nothing was wrong with the
+      database; the number was wrong. Now scoped to public, which is what the
+      columns line beside it always did.
+
+   NOTHING ELSE CHANGED. /health still answers appVersion "1.0", exactly as
+   build 36 does. That field is a placeholder that has never moved, and it was
+   briefly changed here to carry the build; that was a change to a live
+   response shape made because the field was asked about, which is not a
+   request to change it, and it has been put back.
+
+   NO SCHEMA CHANGE, no new environment variable, no dependency change. Upload
+   api.zip, restart, done.
+
+
+WHAT CHANGED
+
+   NOTE: build 36 carries NO API change. It moves only so the API and app build
+   numbers stay legible as a pair. Everything below arrived in builds 30 to 35.
+
+
+0. THE DIAGNOSIS NO LONGER NEEDS A SHELL.
+
+   NEW: GET /admin/diagnostics/console, super admin only. It returns exactly
+   what `npm run db:diagnose` prints, because both now read the same service
+   (src/services/console-diagnosis-service.js) and cannot drift apart:
+
+     - the tables each console page needs, and which are missing
+     - the queries the failing panels run, with the real Postgres error + code
+     - the save statements behind the buttons that report nothing useful
+     - the columns and foreign key count of platform_settings ON THIS DATABASE
+     - which provider supplies which capability
+
+   READ-ONLY. Every probe is a SELECT. The four save probes issue real writes,
+   because a read that works while a save fails is the whole shape of the
+   problem, but each runs inside a transaction that is ALWAYS rolled back. It
+   creates, alters and deletes nothing and is safe against production at any
+   time. A live harness proves no probe row survives.
+
+   SUPER ADMIN ONLY, deliberately: the report carries real table names and real
+   database errors, and that detail must never reach anyone else.
+
+   GET /admin/module-health stopped checking a hardcoded fifteen-table list
+   against a schema past a hundred and seventy. It now asks the same map, and
+   each table says which console page it stands behind. It also returns the
+   API build, so the console can show what it is talking to.
+
+   The script scripts/diagnose-admin-console.js is now only a printer for the
+   shared service. Same output, same exit codes, no logic of its own.
+
+0. THE LIMITS SCREEN IS NOW OPERATED FROM THE CONSOLE, and one real hole
+   closes on the way.
+
+   THE HOLE. platform_settings.compliance_tier_limits had NO validation, and
+   the limit engine reads any non-finite value as "no limit". So a typed
+   "25,000" or a stray letter did not fail: it REMOVED the limit and reported
+   success. That is the worst failure an editing screen can have, because the
+   operator sees a confirmation while the platform quietly opens up. Types and
+   ranges are now refused with a message that names the level and the rail.
+
+   Incoherence between rails is WARNED about, never blocked: narrowing one
+   rail in a hurry is legitimate and the engine already takes the narrowest of
+   everything that applies. The warnings come back on the save response.
+
+   THE WORDING. Five sentences on that screen were hard-coded in the API and
+   the app bundle: the lead, the small print, the note for a level with no
+   fixed limit, and the two call-to-action hints. They now live in
+   platform_settings under limits_screen_content, editable through the console
+   and audit-logged. The shipped defaults are the copy that is live today,
+   word for word, so nothing a customer reads changes until an admin edits it.
+
+   Three guarantees on that copy, all enforced server side:
+     - it never comes back blank; an emptied optional field serves its default
+     - it never fails hard on read; a database problem serves the defaults,
+       and the app carries its own copy so it renders with no network at all
+     - the two caveat sentences cannot be emptied, and no saved sentence may
+       claim a regulator sets or allows an amount, call it statutory or
+       required by law, use "cash threshold" for a wallet limit, or offer
+       "unlimited". The refusal names the sentence and the reason.
+       A denial is not a claim: "they are not statutory thresholds" passes,
+       "this is the statutory threshold" does not.
+
+   NEW ENDPOINTS: GET and PUT /admin/compliance/limits-content, both behind
+   the same "services" permission as the limits themselves.
+
+   NOTE FOR ANY CLIENT OF PUT /admin/compliance/limits: a partial save resets
+   every rail it does not mention to the shipped default. That is how the
+   merge has always worked and it is what makes a version restore clean. The
+   console form sends all three levels in full for exactly this reason.
+
+0. TERMINOLOGY. This build changes what the levels are CALLED and how the
+   payload describes them. It changes no limit, no fee and no rule, and the
+   customer app does not need re-uploading: every label below is served by
+   the API and rendered by the bundle already deployed.
+
+   The first level is "Limited Access", not "Unverified". Nothing in
+   TitoPay's approved compliance requirements confirms that a customer may
+   transact at that level without whatever customer due diligence applies to
+   them, and a product label announcing "unverified" reads as a claim that
+   one does. "Limited Access" says what the account MAY DO, which is what a
+   product level is for, and makes no statement about compliance either way.
+   (The readiness document records the tier labels as "engineering
+   placeholders, NOT policy", so nothing was overridden here. If compliance
+   later approves "Unverified" in writing, it is a one-line change.)
+
+   The top level no longer describes itself as "Full FICA verification".
+   FICA verification is a documentary review, not a generic technical
+   verification status, and "Fully Verified" is a TitoPay PRODUCT label, not
+   a regulatory classification. It also never implies enhanced due diligence:
+   EDD is a specific process that applies where it applies, on any level, and
+   most customers at the top level have not been through it. A test fails the
+   build if any level's description claims otherwise.
+
+   The disclaimer now denies statutory status of ANY kind rather than only
+   FICA: "These are TitoPay operational limits based on its risk management
+   and compliance framework. They are not statutory thresholds." A test scans
+   the compliance service, the app bundle and the compliance routes for
+   claims like "FICA limit", "SARB threshold", "required by law", "cash
+   threshold" and "approved by the regulator", and fails on any of them.
+   Cash-threshold reporting is a different regime and is never used to
+   describe an electronic wallet limit.
+
+   NEW IN THE STATUS PAYLOAD, additively: `accessLevel`, carrying
+   { key, label, position, of, monthlyTransactionLimit,
+   monthlyTransactionLimitNote }. The product ACCESS LEVEL is now a named
+   concept separate from the compliance axes it is derived from, and the
+   caveat travels with the number so a client that renders only the figure
+   cannot drop it. `tier` and `label` are unchanged, so no existing client
+   changes.
+
+1. LIMITS. THREE LEVELS, and the monthly figure is a TRANSACTION VOLUME
+   limit and nothing else.
+
+       Unverified       R25 000 cumulative volume a month   (was R5 000)
+       Basic verified   R200 000 cumulative volume a month  (was R25 000)
+       Fully verified   no fixed monthly transaction limit
+
+   Enhanced due diligence is NOT a fourth level and is not described as one:
+   it is a review that can open on any level, and the account keeps working
+   and keeps its level while it runs.
+
+   CORRECTION TO BUILD 31. That build scaled the per-payment, daily,
+   withdrawal and wallet-balance rails alongside the monthly figure, which
+   quietly asserted that a wallet allowed to MOVE R200 000 over a month may
+   also HOLD R200 000, and may move R80 000 of it in a single payment. Those
+   are four different questions with four different risks. All four rails are
+   back on their own values and their own reasoning, unchanged from where
+   they were before build 31 and unaffected by the monthly figure:
+
+                        per payment   per day   cash out (single/month)   max balance
+       Unverified          R2 500     R4 000      R1 000 / R3 000           R10 000
+       Basic verified     R10 000    R20 000     R10 000 / R30 000          R50 000
+       Fully verified        none      none         none / none                none
+
+   (The one exception: basic verified monthly withdrawal is R30 000 rather
+   than the R25 000 it was, because R25 000 was only ever that number by
+   coincidence with the old monthly figure, and carrying a coincidence
+   forward makes it look like a decision.)
+
+   A test now fails the build if any of those four rails is ever set to a
+   published monthly figure, or rises to within half of the month it sits
+   inside.
+
+   TIER 3 IS "NO FIXED MONTHLY LIMIT", NOT "NO CONTROLS". What is removed is
+   TitoPay's own standing monthly cap. What still applies at that level, and
+   is asserted in the test suite rather than only documented: risk banding
+   (the engine applies risk LAST, so a raised risk status gives that level
+   real ceilings on every rail), transaction monitoring, sanctions and
+   designation screening, enhanced due diligence, ongoing customer due
+   diligence, account status, product rules, and whatever the payment or
+   payout provider itself will accept.
+
+   READ THIS BEFORE YOU DEPLOY. This ladder is set deliberately ABOVE the
+   identity assurance the platform currently holds, and the config file says
+   so in full. Unverified means NOTHING is known about the customer, and
+   R25 000 of monthly volume now passes through such an account. Basic
+   verified proves only that someone entered a well-formed document number no
+   other account is using: no Home Affairs match, no document image, no
+   liveness check, and R200 000 of monthly volume now rests on that. What
+   carries the difference in the meantime is the four rails above plus risk,
+   monitoring and screening, until a verification provider is configured
+   behind KYC_PROVIDER.
+
+   One knock-on effect to review with compliance, console-editable and NOT
+   changed by me, because setting risk parameters without an approved
+   specification is not mine to do: edd.singleTransactionReview is R100 000,
+   above the R10 000 per-payment cap at basic verified, so the EDD value
+   trigger is only reachable at fully verified. (The velocity concern raised
+   against build 31 no longer applies: basic verified is back to R20 000 a
+   day, well under the R150 000 velocity mark.)
+
+   These are TitoPay operational limits under its RMCP, editable in the
+   console without a deploy, versioned and reversible. No figure is a
+   statutory threshold and the app never presents any of them as one.
+
+   No fee, no pricing rule and no transaction rule changed. The product caps
+   on the gift rail (R5 000 a gift) and the QR rail (R10 000 a scan) are
+   unchanged, and they still narrow every level.
+
+2. PROVIDERS ARE NOW REPLACEABLE. Core asks for a CAPABILITY and never for a
+   company: processPayment(), processPayout(), verifyIdentity(),
+   verifyBusiness(), purchaseAirtime(). Which supplier answers is one server
+   side environment variable per capability:
+
+       PAYMENT_PROVIDER=peach_checkout      (default, unchanged behaviour)
+       PAYOUT_PROVIDER=peach_payouts        (default, unchanged behaviour)
+       KYC_PROVIDER=internal                (default)
+       AML_PROVIDER=internal                (default)
+       VAS_PROVIDER=none                    (default)
+
+   Leave all of them UNSET and the API behaves exactly as build 29 did. The
+   variables exist so a supplier can be changed without a code change.
+
+   The console's routing page no longer names an identity verification vendor
+   as the default. It reads "Not configured", because none is contracted.
+
+3. A BUSINESS IS NO LONGER A PERSON. A business now has its own entity, its
+   own registration number where its type has one, and its own KYB status.
+   One verified person can hold several businesses without re-verifying
+   themselves once, and a sole proprietor or informal trader is never asked
+   for a registration number they do not have.
+
+MIGRATION
+
+   node scripts/apply-migrations.js
+   (or npm run db:apply-migrations, from the API directory)
+
+   New: 20260816_business_entity_verification. It is purely ADDITIVE — three
+   new tables and their indexes. It drops nothing, alters no existing column,
+   rewrites no row, and touches no user, wallet, transaction, merchant or
+   existing business account. The service also creates these tables on first
+   use, so the API works before the migration is applied.
+
+IF A CONSOLE PAGE OR A SAVE FAILS AFTER UPLOAD
+
+   cd into the API directory (the same place `npm start` runs from)
+   npm run db:diagnose
+
+   It now also prints which provider supplies which capability, so
+   "is the KYC provider live?" is one command instead of an investigation.
+
+NOTHING ELSE MOVED
+
+   No fee, no pricing rule, no wallet, no ledger, no authentication path, no
+   permission and no existing endpoint changed. Withdrawals, top-ups, QR
+   payments, ticketing, stokvels, TitoKids, merchant and staff flows all run
+   the same code they ran in build 29 — the payment and payout calls simply
+   arrive through the capability layer instead of by name.

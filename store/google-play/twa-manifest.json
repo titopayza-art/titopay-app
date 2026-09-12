@@ -1,0 +1,56 @@
+{
+  "packageId": "za.co.titopay.app",
+  "host": "app.titopay.co.za",
+  "name": "TitoPay",
+  "launcherName": "TitoPay",
+  "display": "standalone",
+  "themeColor": "#0a4dff",
+  "themeColorDark": "#0B1F3F",
+  "navigationColor": "#0a4dff",
+  "navigationColorDark": "#0B1F3F",
+  "navigationDividerColor": "#0a4dff",
+  "navigationDividerColorDark": "#0B1F3F",
+  "backgroundColor": "#f8faff",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://app.titopay.co.za/assets/icon-512.png",
+  "maskableIconUrl": "https://app.titopay.co.za/assets/maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./titopay-play.keystore",
+    "alias": "titopay"
+  },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [
+    {
+      "name": "QR Pay",
+      "shortName": "QR Pay",
+      "url": "/#services",
+      "chosenIconUrl": "https://app.titopay.co.za/assets/icon-192.png"
+    },
+    {
+      "name": "Wallet",
+      "shortName": "Wallet",
+      "url": "/#dashboard",
+      "chosenIconUrl": "https://app.titopay.co.za/assets/icon-192.png"
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://app.titopay.co.za/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://app.titopay.co.za/",
+  "minSdkVersion": 21,
+  "orientation": "portrait",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "appVersion": "1.0.0"
+}
