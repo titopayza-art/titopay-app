@@ -234,6 +234,11 @@ function shapeChild(row, extras = {}) {
     fullName: row.full_name,
     dateOfBirth: row.date_of_birth,
     relationship: row.relationship,
+    // Whoever added the child. A co-parent gets the same day-to-day reach, so
+    // the app cannot tell the two apart without being told - and the one action
+    // reserved to the owner, moving money back out to their own wallet, has to
+    // be hidden from a co-parent rather than offered and then refused.
+    isOwner: row.is_owner === undefined ? undefined : Boolean(row.is_owner),
     linked: Boolean(row.child_user_id),
     childUsername: row.child_username || "",
     status: row.status,
@@ -245,7 +250,8 @@ function shapeChild(row, extras = {}) {
 async function listChildren(parentUserId) {
   await ensureTitoKidsSchema();
   const { rows } = await pool.query(
-    `SELECT c.*, u.username AS child_username, w.available_balance
+    `SELECT c.*, u.username AS child_username, w.available_balance,
+            (c.parent_user_id = $1) AS is_owner
      FROM titokids_children c
      LEFT JOIN users u ON u.id = c.child_user_id
      JOIN wallets w ON w.id = c.wallet_id
@@ -329,7 +335,10 @@ async function addChild(parentUserId, payload = {}) {
         metadata: { childId, clientNotificationId: `titokids-linked-${childId}` }
       }).catch(() => {});
     }
-    return shapeChild({ ...rows[0], child_username: childUser?.username || "" }, { balance: 0, pendingRequests: 0 });
+    // is_owner is not a column, it is computed per reader - and the person who
+    // just added the child is by definition the owner.
+    return shapeChild({ ...rows[0], child_username: childUser?.username || "", is_owner: true },
+      { balance: 0, pendingRequests: 0 });
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -353,7 +362,7 @@ async function getChild(parentUserId, childId) {
     ).then((result) => result.rows)
   ]);
   return shapeChild(child, {
-    balance, limits, activity, spent, goals,
+    balance, limits, activity, spent, goals, isOwner: Boolean(child.is_owner),
     requests: requests.map((row) => ({
       id: row.id, amount: money(row.amount), category: row.category,
       categoryLabel: CATEGORY_LABELS[row.category] || row.category,
@@ -373,7 +382,7 @@ async function updateChild(parentUserId, childId, payload = {}) {
     // owner's decision alone.
     if (!child.is_owner) throw new AppError(403, "Only the parent who set up this TitoKids wallet can remove the child.");
     const balance = await walletBalance(child.wallet_id);
-    if (balance > 0) throw new AppError(409, `The child's wallet still holds R${balance.toFixed(2)}. Pay it out or move it back before removing.`);
+    if (balance > 0) throw new AppError(409, `The child's wallet still holds R${balance.toFixed(2)}. Move it back to your wallet or pay it out, then remove the child.`);
     status = "removed";
   }
   // Keyed on the child, not the caller: loadOwnChild above has already decided
@@ -388,7 +397,7 @@ async function updateChild(parentUserId, childId, payload = {}) {
     actorType: "customer", actorId: parentUserId, action: status === "removed" ? "titokids_child_removed" : "titokids_child_updated",
     entityType: "titokids_child", entityId: childId, metadata: {}
   }).catch(() => {});
-  return shapeChild(rows[0]);
+  return shapeChild({ ...rows[0], is_owner: child.is_owner });
 }
 
 // parent wallet -> child wallet, one transaction, conserving to the cent.
@@ -468,6 +477,118 @@ async function fundChild(parentUserId, childId, payload = {}, options = {}) {
   }
 }
 
+// CHILD WALLET -> THE OWNER'S OWN WALLET. The way back.
+//
+// Money could go into a child wallet and never come out except by paying a
+// third party. updateChild() refuses to remove a child while the balance is
+// non-zero and tells the parent to "pay it out or move it back" - and moving it
+// back was not a thing this service could do. The only escape was to notice
+// that payForChild accepts any TitoPay account and pay yourself, which is
+// undiscoverable and records the parent's own money as a payment out.
+//
+// OWNER ONLY, and only to the owner's own wallet. A co-parent may fund and may
+// spend on the child's behalf, because both leave the money with the child or
+// with a merchant. Pulling it into a personal wallet is different: it ends the
+// arrangement's money, and it must not be possible for anyone but the person
+// whose wallet it came from. Same rule updateChild() applies to removal.
+//
+// No platform limit check, deliberately: this returns the account holder's own
+// money to the account holder's own wallet. Nothing leaves their control, so
+// there is nothing for a send limit to be protecting.
+async function returnFromChild(parentUserId, childId, payload = {}) {
+  await ensureTitoKidsSchema();
+  const note = payload.note ? boundedText(payload.note, "Note", { min: 1, max: 200 }) : "";
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const child = await loadOwnChild(parentUserId, childId, { forUpdate: true, client });
+    if (!child.is_owner) {
+      throw new AppError(403, "Only the parent who set up this TitoKids wallet can move money back out of it.");
+    }
+    const { rows: childWallets } = await client.query(
+      "SELECT * FROM wallets WHERE id = $1 FOR UPDATE", [child.wallet_id]);
+    const held = money(childWallets[0].available_balance);
+    // "all" is the case that matters - a parent emptying the wallet so the
+    // child can be removed - and asking them to retype the balance to the cent
+    // is how an off-by-one cent leaves a child unremovable.
+    const amount = payload.all === true || payload.amount === undefined || payload.amount === null
+      ? held
+      : money(payload.amount);
+    if (!(amount > 0)) throw new AppError(400, "There is nothing in this wallet to move back.");
+    if (amount > held) {
+      throw new AppError(409, `The child's wallet holds R${held.toFixed(2)}. Move back that much or less.`);
+    }
+    const { rows: parentWallets } = await client.query(
+      `SELECT * FROM wallets WHERE user_id = $1 AND kind = 'personal' AND status = 'active'
+        ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
+      [parentUserId]
+    );
+    const parentWallet = parentWallets[0];
+    if (!parentWallet) throw new AppError(404, "Your TitoPay wallet is not available");
+
+    const transactionId = uuidv4();
+    const reference = `TKID-${Date.now().toString(36).toUpperCase()}`;
+    const meta = JSON.stringify({
+      titokids: true, childId, childName: child.full_name, purpose: "return", note
+    });
+    // Recorded as a CREDIT on the parent, which is what it is: their own money
+    // coming home. The debit leg on the child wallet carries the same
+    // reference, so the two halves reconcile the way funding's do.
+    await client.query(
+      `INSERT INTO transactions (id, user_id, wallet_id, service_code, amount, fee, total, status, direction, reference, metadata)
+       VALUES ($1,$2,$3,'wallet_transfer',$4,0,$4,'completed','credit',$5,$6::jsonb)`,
+      [transactionId, parentUserId, parentWallet.id, amount, reference, meta]
+    );
+    // The balance guard is on the UPDATE itself and its result is CHECKED. The
+    // row is already locked, so this cannot fire - which is exactly why it is
+    // here: if it ever does, the alternative is a credit leg with no debit
+    // behind it, and money invented out of a race is the one bug this codebase
+    // must never ship.
+    const debited = await client.query(
+      `UPDATE wallets SET available_balance = available_balance - $2, updated_at = NOW()
+        WHERE id = $1 AND available_balance >= $2`,
+      [child.wallet_id, amount]
+    );
+    if (debited.rowCount !== 1) throw new AppError(409, "The child's wallet balance changed. Try again.");
+    await client.query(
+      `INSERT INTO wallet_ledger (id, wallet_id, transaction_id, entry_type, amount, balance_after, reference, metadata)
+       VALUES ($1,$2,$3,'debit',$4,(SELECT available_balance FROM wallets WHERE id = $2),$5,$6::jsonb)`,
+      [uuidv4(), child.wallet_id, transactionId, amount, reference,
+       JSON.stringify({ titokids: true, purpose: "return", note })]
+    );
+    await client.query(
+      `UPDATE wallets SET available_balance = available_balance + $2, updated_at = NOW() WHERE id = $1`,
+      [parentWallet.id, amount]
+    );
+    await client.query(
+      `INSERT INTO wallet_ledger (id, wallet_id, transaction_id, entry_type, amount, balance_after, reference, metadata)
+       VALUES ($1,$2,$3,'credit',$4,(SELECT available_balance FROM wallets WHERE id = $2),$5,$6::jsonb)`,
+      [uuidv4(), parentWallet.id, transactionId, amount, reference,
+       JSON.stringify({ titokids: true, childId, purpose: "return", note })]
+    );
+    await client.query("COMMIT");
+    await writeAuditLog({
+      actorType: "customer", actorId: parentUserId, action: "titokids_child_returned",
+      entityType: "titokids_child", entityId: childId, metadata: { amount }
+    }).catch(() => {});
+    if (child.child_user_id) {
+      await createNotification({
+        user: { id: child.child_user_id, user_type: "customer" },
+        channel: "in_app", notificationType: "titokids_returned", provider: "in_app",
+        title: `R${amount.toFixed(2)} moved back`,
+        body: `${child.full_name}, money was moved from your TitoKids wallet back to your parent's wallet${note ? ` \u00b7 "${note}"` : ""}.`,
+        metadata: { childId, clientNotificationId: `titokids-return-${transactionId}` }
+      }).catch(() => {});
+    }
+    return { reference, amount, balance: await walletBalance(child.wallet_id) };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // child wallet -> a TitoPay recipient, category- and limit-checked. The
 // parent is the actor; an explicit override above a cap is allowed and
 // audited (the parent is the authority), but a switched-off category never
@@ -481,6 +602,28 @@ async function payForChild(parentUserId, childId, payload = {}) {
   const { resolveStaffUser } = require("./business-staff-service");
   const recipient = await resolveStaffUser(payload.identifier || payload.recipient);
   if (!recipient) throw new AppError(404, "No TitoPay account matches that recipient. Check the @username, email or cellphone.");
+
+  // THE PLATFORM'S LIMITS APPLY HERE, AND UNTIL NOW THEY DID NOT.
+  //
+  // This is the hop where money LEAVES the account holder's control: a child
+  // wallet is owned by the parent, so funding one moves nothing outside the
+  // household, but paying from one reaches a third party's wallet. Every other
+  // rail in the platform consults the limit engine before doing that -
+  // transfers, withdrawals, VAS purchases, payment requests, even the admin
+  // adjustment path - and TitoKids consulted it zero times.
+  //
+  // The effect was a two-hop channel around a customer's own limits: fund a
+  // child (no ceiling but the parent's balance), then pay anybody from the
+  // child wallet, with only TitoKids' own caps in the way - and those default
+  // to none and can be overridden with allowOverLimit.
+  //
+  // Charged to the PARENT, because the parent is the account holder whose
+  // money is leaving. The recipient's receive capacity is checked the same way
+  // an ordinary transfer checks it, so a child's payment cannot push somebody
+  // past a ceiling their own account would have refused.
+  const compliance = require("./compliance-service");
+  await compliance.assertCanSendAmount(parentUserId, amount, { serviceCode: "wallet_transfer" });
+  await compliance.assertCanReceiveAmount(recipient.id, amount, { serviceCode: "wallet_transfer" });
 
   const limits = await childLimits(childId);
   if (!limits.categories[category]) {
@@ -1019,6 +1162,7 @@ module.exports = {
   getChild,
   updateChild,
   fundChild,
+  returnFromChild,
   payForChild,
   childLimits,
   spentInWindows,

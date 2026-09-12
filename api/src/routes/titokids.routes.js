@@ -70,6 +70,12 @@ router.patch("/children/:id", run(async (req, res) => {
 router.post("/children/:id/fund", run(async (req, res) => {
   res.status(201).json({ ok: true, ...(await kids.fundChild(req.auth.userId, requireUuid(req.params.id, "Child ID"), req.body || {})) });
 }));
+// The way back out. fund moves money in, return moves it back to the account
+// holder's own wallet — without one, a balance left in a child wallet could
+// only ever be spent, and removing a child was impossible while it sat there.
+router.post("/children/:id/return", run(async (req, res) => {
+  res.status(201).json({ ok: true, ...(await kids.returnFromChild(req.auth.userId, requireUuid(req.params.id, "Child ID"), req.body || {})) });
+}));
 router.post("/children/:id/pay", run(async (req, res) => {
   res.status(201).json({ ok: true, ...(await kids.payForChild(req.auth.userId, requireUuid(req.params.id, "Child ID"), req.body || {})) });
 }));

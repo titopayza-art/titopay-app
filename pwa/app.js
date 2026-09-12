@@ -4128,6 +4128,7 @@ async function onSubmit(event) {
     if (form.dataset.form === "titokids-add") await submitTitoKidsAdd(data);
     if (form.dataset.form === "titokids-fund") await submitTitoKidsFund(data);
     if (form.dataset.form === "titokids-pay") await submitTitoKidsPay(data);
+    if (form.dataset.form === "titokids-return") await submitTitoKidsReturn(data);
     if (form.dataset.form === "titokids-limits") await submitTitoKidsLimits(data);
     if (form.dataset.form === "titokids-goal") await submitTitoKidsGoal(data);
     if (form.dataset.form === "titokids-request") await submitTitoKidsRequest(data);
@@ -5515,6 +5516,10 @@ async function handleAction(action, actionElement = null) {
   }
   if (String(action || "").startsWith("titokids-pay:")) {
     openTitoKidsPayModal(action.slice("titokids-pay:".length));
+    return;
+  }
+  if (String(action || "").startsWith("titokids-return:")) {
+    openTitoKidsReturnModal(action.slice("titokids-return:".length));
     return;
   }
   if (String(action || "").startsWith("staff-sell:")) {
@@ -17008,7 +17013,9 @@ async function refreshTitoKidsChild(childId) {
           <button class="btn primary" type="button" data-action="titokids-fund:${esc(child.id)}">${icon("wallet")} Add money</button>
           <button class="btn secondary" type="button" data-action="titokids-pay:${esc(child.id)}">${icon("send")} Pay for a need</button>
         </div>
-        <p class="field-hint" style="margin:8px 0 0">Add money moves money from your wallet to ${esc(child.fullName)}'s. Pay for a need pays a school, shop or person straight from ${esc(child.fullName)}'s wallet. No loose cash.</p>
+        ${child.isOwner && (child.balance || 0) > 0 ? `
+        <button class="btn ghost" type="button" data-action="titokids-return:${esc(child.id)}" style="width:100%;margin-top:8px">${icon("download")} Move money back to my wallet</button>` : ""}
+        <p class="field-hint" style="margin:8px 0 0">Add money moves money from your wallet to ${esc(child.fullName)}'s. Pay for a need pays a school, shop or person straight from ${esc(child.fullName)}'s wallet. No loose cash.${child.isOwner ? ` Money you put in is still yours — move it back whenever you need to.` : ""}</p>
       </section>
       <section class="tk-card" data-tk-managers></section>
       <section class="tk-card">
@@ -17219,6 +17226,44 @@ async function submitTitoKidsPay(data) {
   }
   showToast(`Paid ${money(result.amount)} to ${result.recipientName} · ${result.category ? (state.titoKids?.categories || {})[result.category] || result.category : ""}.`);
   await openTitoKidsChild(data.childId);
+}
+/* The way back out, and the reason it exists: a parent who wants to close a
+   TitoKids wallet has to empty it first, and until now the only way to empty
+   one was to pay somebody. The amount is PREFILLED WITH THE WHOLE BALANCE and
+   the server treats a blank box as "all of it", so nobody is left with three
+   cents they cannot shift and a child they cannot remove. */
+function openTitoKidsReturnModal(childId) {
+  const child = state.titoKidsChild || {};
+  const balance = Number(child.balance || 0);
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div><p class="eyebrow">TitoKids</p><h2>Move money back</h2><p class="lead">From ${esc(child.fullName || "the child")}'s wallet back to yours. ${esc(child.fullName || "The child")} keeps the wallet — only the balance moves.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="titokids-return">
+      <input type="hidden" name="childId" value="${esc(childId)}">
+      <div class="field">
+        <label>Amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" value="${balance > 0 ? balance.toFixed(2) : ""}" placeholder="${balance > 0 ? balance.toFixed(2) : "0.00"}"></div>
+        <p class="field-hint">The wallet holds ${esc(money(balance))}. Leave it as it is to move all of it back.</p>
+      </div>
+      <div class="field"><label>Note <span class="field-optional">optional</span></label><input name="note" maxlength="200" placeholder="e.g. Term over"></div>
+      <button class="btn primary" type="submit">${icon("wallet")} Move back to my wallet</button>
+    </form>
+  `);
+}
+async function submitTitoKidsReturn(data) {
+  const typed = String(data.amount || "").trim();
+  const result = await api(`/v1/tito-kids/children/${encodeURIComponent(data.childId)}/return`, {
+    method: "POST",
+    // An empty box means all of it. Sending `all` rather than a number the
+    // browser rounded keeps the emptying exact on the server's side of the
+    // wire, which is the side that decides whether the wallet reaches zero.
+    body: typed ? { amount: typed, note: data.note || undefined } : { all: true, note: data.note || undefined }
+  });
+  showToast(`${money(result.amount)} moved back to your wallet.`);
+  await Promise.all([openTitoKidsChild(data.childId), loadAccount()]);
 }
 async function submitTitoKidsLimits(data) {
   const categories = {};
@@ -28524,7 +28569,7 @@ const MODAL_STACK_ACTIONS = new Set([
 const MODAL_STACK_ACTION_PREFIXES = new Set([
   "ticketing-open-event", "ticket-email", "ticketing-request-change", "staff-sell",
   "ticketing-section",
-  "titokids-child", "titokids-fund", "titokids-pay"
+  "titokids-child", "titokids-fund", "titokids-pay", "titokids-return"
 ]);
 // Ticket tier names offered when setting up an event. Suggestions only — the
 // field stays free text, so organisers can name a tier anything. Complimentary
