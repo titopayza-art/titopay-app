@@ -17949,7 +17949,13 @@ function normalizeStockvelWithdrawal(raw) {
   if (raw == null) return null;
   const source = typeof raw === "object" ? raw : {};
   const amount = stockvelNumber(source, ["amount", "value", "requestedAmount", "requested_amount"]);
-  const requestedBy = stockvelText(source, ["requestedBy", "requested_by", "requesterName", "requester_name", "memberName", "member_name"]);
+  // `requester` FIRST, because that is what the server actually sends.
+  //
+  // The list had five spellings and not the one in use, so every withdrawal
+  // rendered with no name against it: an organiser saw an amount and a reason
+  // and had to guess whose savings were being asked for. The other spellings
+  // stay as fallbacks.
+  const requestedBy = stockvelText(source, ["requester", "requestedBy", "requested_by", "requesterName", "requester_name", "memberName", "member_name"]);
   if (amount == null && !requestedBy) return null;
   const approvals = stockvelNumber(source, ["approvals", "approvalCount", "approval_count", "approvedCount", "approved_count"]);
   const required = stockvelNumber(source, ["approvalsRequired", "approvals_required", "requiredApprovals", "required_approvals", "quorum"]);
@@ -17962,6 +17968,9 @@ function normalizeStockvelWithdrawal(raw) {
     approvals,
     approvalsRequired: required,
     requestedAt: stockvelText(source, ["requestedAt", "requested_at", "createdAt", "created_at"]),
+    requesterUserId: stockvelText(source, ["requesterUserId", "requester_user_id", "requestedByUserId", "requested_by"]),
+    decidedBy: stockvelText(source, ["decidedBy", "decided_by_name", "decided_by", "approvedByName"]),
+    decidedAt: stockvelText(source, ["decidedAt", "decided_at"]),
     approvedBy: stockvelList(source, ["approvedBy", "approved_by", "approvers"]).map((item) => stockvelText(typeof item === "object" ? item : { name: item }, ["name", "fullName", "username", "identifier"])).filter(Boolean)
   };
 }
@@ -18731,6 +18740,24 @@ function renderStockvelWithdrawals(group, store) {
       const has = item.approvals != null && item.approvalsRequired != null && item.approvalsRequired > 0;
       const percent = has ? Math.min(100, Math.round((item.approvals / item.approvalsRequired) * 100)) : 0;
       const remaining = has ? Math.max(0, item.approvalsRequired - item.approvals) : null;
+      // WHO MAY DECIDE THIS, AND WHETHER IT IS STILL OPEN.
+      //
+      // The buttons used to appear only for a status matching
+      // /pending|awaiting|open|voting/ and the server writes 'requested', so
+      // they never appeared at all: a member could ask the group for their
+      // savings and no organiser had any way to answer from inside the app.
+      // The regex was written against a quorum-voting model this server does
+      // not implement.
+      //
+      // Now it asks the two questions the server itself asks. Only an
+      // organiser may decide (requireManager), and nobody may decide their
+      // own request - so neither is offered a button that would come back
+      // 403. `canManage` comes from the group payload's can_manage, which the
+      // server has always sent.
+      const isOpen = /^(requested|pending|awaiting|open|voting)$/i.test(String(item.status || "").trim());
+      const mine = item.requesterUserId && state.user
+        && String(item.requesterUserId) === String(state.user.id);
+      const canDecide = isOpen && group.canManage && !mine && item.id;
       return `<article class="sv-withdrawal">
         <div class="sv-withdrawal-head">
           <strong>${esc(item.amount != null ? money(item.amount) : "Amount to confirm")}</strong>
@@ -18744,11 +18771,16 @@ function renderStockvelWithdrawals(group, store) {
             <div class="sv-progress" role="img" aria-label="${item.approvals} of ${item.approvalsRequired} approvals received"><span data-sv-width="${percent}"></span></div>
           </div>` : ""}
         ${item.approvedBy.length ? `<small>Approved by ${esc(item.approvedBy.join(", "))}</small>` : ""}
-        ${/pending|awaiting|open|voting/i.test(item.status || "") && item.id ? `
+        ${item.decidedBy ? `<small>${/declin/i.test(item.status || "") ? "Declined" : "Approved"} by ${esc(item.decidedBy)}${item.decidedAt ? ` · ${esc(stockvelDate(item.decidedAt))}` : ""}</small>` : ""}
+        ${/^approved$/i.test(String(item.status || "").trim()) ? `
+          <p class="field-hint">The group approved this. TitoPay holds no group pot, so the organiser holding the money sends it as an ordinary TitoPay transfer.</p>` : ""}
+        ${canDecide ? `
           <div class="sv-vote">
             <button class="btn primary" type="button" data-stockvel-withdrawal-approve="${esc(item.id)}">${icon("check-circle")} Approve</button>
             <button class="btn ghost" type="button" data-stockvel-withdrawal-decline="${esc(item.id)}">Decline</button>
           </div>` : ""}
+        ${isOpen && mine ? `<p class="field-hint">Waiting for an organiser to decide. You cannot approve your own request.</p>` : ""}
+        ${isOpen && !group.canManage && !mine ? `<p class="field-hint">Waiting for an organiser to decide.</p>` : ""}
       </article>`;
     }).join("")}</div>
     ${requestAction}`;
@@ -19100,7 +19132,7 @@ function openStockvelWithdrawalRequestModal(id) {
       <div>
         <p class="eyebrow">${esc(group.name)}</p>
         <h2>Request a withdrawal</h2>
-        <p class="lead">The group approves a withdrawal before any money leaves it.</p>
+        <p class="lead">An organiser approves the withdrawal on behalf of the group, then pays you.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -19118,7 +19150,15 @@ function openStockvelWithdrawalRequestModal(id) {
       <button class="btn primary" type="submit">${icon("withdraw")} Send request to the group</button>
     </form>
     <section class="integration-note" aria-label="How approval works">
-      <p>${icon("shield")} <span><strong>Nothing moves yet.</strong> This asks the group to approve; money only leaves once enough members agree.</span></p>
+      <!-- THE ONE PLACE THIS PRODUCT OVERPROMISED.
+           It said "money only leaves once enough members agree", which claims
+           a quorum vote and an automatic payout. There is neither: one
+           organiser decides, and TitoPay holds no group pot, so the organiser
+           holding the money pays by ordinary transfer. Everything else here is
+           scrupulous about custody - the statement screen says "TitoPay holds
+           no group pot" and the contribution confirmation names the person
+           holding it - which is exactly why this line stood out. -->
+      <p>${icon("shield")} <span><strong>Nothing moves yet.</strong> This records your request for the group. An organiser approves or declines it, and TitoPay never holds the group's money — the organiser holding it sends you the amount as an ordinary transfer.</span></p>
     </section>
   `);
 }
@@ -19150,7 +19190,12 @@ async function respondToStockvelWithdrawal(withdrawalId, approve) {
   if (!group) return;
   try {
     await api(`${STOCKVEL_PATH}/${encodeURIComponent(group.id)}/withdrawals/${encodeURIComponent(withdrawalId)}/${approve ? "approve" : "decline"}`, { method: "POST" });
-    showToast(approve ? "Approval recorded." : "You declined this withdrawal.");
+    // "Approval recorded" was accurate but stopped one beat too early: it
+    // never told the organiser that paying the member is now THEIR job. The
+    // approval moves nothing.
+    showToast(approve
+      ? "Approved. Now send them the money from your wallet — TitoPay does not hold the group's pot."
+      : "You declined this withdrawal.");
     await refreshStockvelDashboard(group.id);
   } catch (error) {
     const status = Number(error?.status || 0);

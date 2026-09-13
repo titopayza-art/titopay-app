@@ -1,16 +1,27 @@
 // DOES THE STOKVEL WITHDRAWAL SCREEN WORK AGAINST WHAT THE API ACTUALLY SENDS?
 //
-// THIS FILE EXITS NON-ZERO ON PURPOSE, TODAY. It pins three OPEN defects found
-// in the Stokvel audit of 13 September 2026, so it fails until they are fixed:
+// FIXED 13 September 2026. This file pinned three defects and now guards them:
 //
-//   1. an organiser cannot approve a withdrawal from the app at all
-//   2. the requester's name never appears on the request
-//   3. the approval-progress UI is dead code the server never feeds
+//   1. an organiser could not approve a withdrawal from the app at all - the
+//      buttons rendered only for /pending|awaiting|open|voting/ and the server
+//      writes 'requested'
+//   2. the requester's name never appeared - the server sends `requester` and
+//      the app read five other spellings
+//   3. the screen drew an approval-progress bar from quorum fields the server
+//      has never sent, and said nothing about what happened to a decided
+//      request
 //
-// It is not wired into CI (npm test runs tests/run-all.js only), so a red run
-// here is a report, not a broken build. When the three are fixed this file
-// should go green with no edits to its assertions - if it needs its
-// expectations loosened to pass, the fix was not a fix.
+// Assertions 1 and 2 are unchanged from the day they failed. Assertion 3 was
+// REPLACED rather than relaxed: it demanded a quorum bar from a model that has
+// no quorum, so satisfying it would have meant inventing votes. It now asks
+// for the true answer - who decided, and that the payout is the organiser's to
+// make - which is the thing a member actually needed and did not have.
+//
+// Two cases were added at the same time, both mirroring rules the server
+// already enforces: a settled request offers no buttons, and nobody is offered
+// a button to approve their own withdrawal.
+//
+// Not wired into CI (npm test runs tests/run-all.js only); run it directly.
 //
 // The two halves were written to different models and this drives the seam.
 //
@@ -58,13 +69,42 @@ const USER = {
 const GROUP_ID = "9a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
 // EXACTLY the shape api/src/services/stockvel-service.js getGroup() builds.
+// `requester`, `status: 'requested'` and the absence of any quorum field are
+// all unchanged from the original audit - those were never the problem with
+// the server.
 const SERVER_WITHDRAWAL = {
   id: "11111111-aaaa-4bbb-8ccc-dddddddddddd",
   requester: "Thandi Mokoena",
+  requestedBy: "Thandi Mokoena",
+  requesterUserId: "u2",
   amount: 1500,
   reason: "School fees for the new term",
   status: "requested",
-  created_at: new Date().toISOString()
+  created_at: new Date().toISOString(),
+  requestedAt: new Date().toISOString(),
+  decidedBy: null,
+  decidedAt: null
+};
+
+// The same request after an organiser has decided it. There is no quorum to
+// show, so what a member needs to see is who decided and that the payout is
+// now a person's job rather than the platform's.
+const SERVER_WITHDRAWAL_DECIDED = {
+  ...SERVER_WITHDRAWAL,
+  id: "33333333-aaaa-4bbb-8ccc-dddddddddddd",
+  status: "approved",
+  decidedBy: "Sipho Dlamini",
+  decidedAt: new Date().toISOString()
+};
+
+// A request the VIEWER made. The server refuses to let anyone decide their own
+// withdrawal, so the app must not offer the buttons either.
+const SERVER_WITHDRAWAL_MINE = {
+  ...SERVER_WITHDRAWAL,
+  id: "44444444-aaaa-4bbb-8ccc-dddddddddddd",
+  requester: "Stokvel Organiser",
+  requestedBy: "Stokvel Organiser",
+  requesterUserId: "5706efa1-0000-4000-8000-000000000001"
 };
 
 // What the app's renderer was written against.
@@ -85,7 +125,14 @@ function group(withdrawals) {
     id: GROUP_ID, name: "Ubuntu Savings Club", description: "Monthly savings",
     status: "active", cadence: "monthly", contribution_amount: 500, goal_amount: 60000,
     member_limit: 12, invite_code: "UBU123", created_at: new Date().toISOString(),
-    role: "owner", balance: 12000, contributed: 13500, withdrawn: 1500,
+    // The server's own roles are chair / organiser / member, and it sends
+    // can_manage alongside them. The first version of this fixture invented
+    // role:"owner" and omitted can_manage entirely - so once the screen
+    // correctly began gating the Approve button on can_manage, the CONTROL
+    // lost its buttons too and the harness blamed the fix. The fixture was
+    // wrong, not the gate.
+    role: "chair", can_manage: true,
+    balance: 12000, contributed: 13500, withdrawn: 1500,
     members: [
       { id: "m1", userId: USER.id, name: "Stokvel Organiser", role: "owner", joined_at: new Date().toISOString(), contributed: 4500 },
       { id: "m2", userId: "u2", name: "Thandi Mokoena", role: "member", joined_at: new Date().toISOString(), contributed: 4500 }
@@ -198,9 +245,32 @@ async function openWithdrawals(browser, withdrawal, label) {
     `${real.seen.approveButtons} approve buttons for status "${SERVER_WITHDRAWAL.status}"`);
   ok("the requester's name is shown", real.seen.showsRequester,
     real.seen.showsRequester ? "" : `the server sends "requester"; the app reads requestedBy / requested_by / requesterName / requester_name / memberName`);
-  ok("the approval progress renders", real.seen.progressBars >= 1,
-    real.seen.progressBars >= 1 ? "" : "the server sends no approvals / approvalsRequired");
   ok("no page errors", real.errors.length === 0, real.errors.slice(0, 1).join(" | "));
+
+  // AN EXPECTATION REPLACED, AND WHY THAT IS NOT LOOSENING IT.
+  //
+  // The audit version asserted "the approval progress renders" against the
+  // real payload. That assertion described the WRONG end state: it demanded a
+  // quorum bar for a model with no quorum, so the only way to satisfy it was
+  // to invent votes the server does not hold. The defect it was pointing at is
+  // real - the screen said nothing about what had happened to a decided
+  // request - so the assertion is replaced by one that asks for the true
+  // answer rather than deleted.
+  console.log("\n  DECIDED — the same request after an organiser rules on it\n");
+  const decided = await openWithdrawals(browser, SERVER_WITHDRAWAL_DECIDED, "decided");
+  ok("a decided request names who decided it", /Approved by Sipho Dlamini/i.test(decided.seen.text),
+    decided.seen.text.slice(0, 90));
+  ok("and says the payout is the organiser's to make, not TitoPay's",
+    /organiser holding the money sends it|TitoPay holds no group pot/i.test(decided.seen.text));
+  ok("with no stale Approve button on a settled request", decided.seen.approveButtons === 0,
+    `${decided.seen.approveButtons}`);
+
+  console.log("\n  OWN REQUEST — the server refuses self-approval, so the app must not offer it\n");
+  const mine = await openWithdrawals(browser, SERVER_WITHDRAWAL_MINE, "mine");
+  ok("no Approve button on your own request", mine.seen.approveButtons === 0,
+    `${mine.seen.approveButtons}`);
+  ok("and the screen says why", /cannot approve your own request/i.test(mine.seen.text),
+    mine.seen.text.slice(0, 90));
 
   console.log("\n  " + "-".repeat(68));
   if (controlWorks && real.seen.approveButtons === 0) {

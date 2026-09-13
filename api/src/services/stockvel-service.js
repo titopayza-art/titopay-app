@@ -278,8 +278,10 @@ async function getGroup(userId, groupId) {
   const contributions = await contributionRows(groupId);
   const totals = await groupBalance(groupId);
   const { rows: withdrawalRows } = await pool.query(
-    `SELECT w.*, u.full_name AS requester_name
-     FROM stockvel_withdrawals w JOIN users u ON u.id = w.requested_by
+    `SELECT w.*, u.full_name AS requester_name, d.full_name AS decided_by_name
+     FROM stockvel_withdrawals w
+     JOIN users u ON u.id = w.requested_by
+     LEFT JOIN users d ON d.id = w.decided_by
      WHERE w.group_id = $1 ORDER BY w.created_at DESC LIMIT 50`,
     [groupId]
   );
@@ -304,9 +306,25 @@ async function getGroup(userId, groupId) {
       id: row.id, member: row.full_name, username: row.username, amount: money(row.amount),
       status: "paid", reference: row.reference, created_at: row.created_at
     })),
+    // NAMED IN BOTH SPELLINGS, ON PURPOSE.
+    //
+    // This sent `requester` and the app reads requestedBy / requested_by /
+    // requesterName / requester_name / memberName - none of which is
+    // `requester` - so every withdrawal in the app showed an amount and a
+    // reason with no idea who had asked for the money. `requester` stays for
+    // any caller already reading it.
+    //
+    // decidedBy/decidedAt replace the approval-progress bar the app was
+    // drawing from quorum fields this server has never sent. There is no
+    // quorum here: one organiser decides, and it may not be the person who
+    // asked. So the screen can now say who decided instead of counting votes
+    // that do not exist.
     withdrawals: withdrawalRows.map((row) => ({
-      id: row.id, requester: row.requester_name, amount: money(row.amount), reason: row.reason,
-      status: row.status, created_at: row.created_at
+      id: row.id, requester: row.requester_name, requestedBy: row.requester_name,
+      requesterUserId: row.requested_by,
+      amount: money(row.amount), reason: row.reason,
+      status: row.status, created_at: row.created_at, requestedAt: row.created_at,
+      decidedBy: row.decided_by_name || null, decidedAt: row.decided_at || null
     })),
     meetings: meetingRows.map((row) => ({
       id: row.id, title: row.title, status: row.status, opened_at: row.opened_at, closed_at: row.closed_at, minutes: row.minutes
@@ -387,7 +405,80 @@ async function requestWithdrawal(userId, groupId, payload = {}) {
     "INSERT INTO stockvel_withdrawals (id, group_id, requested_by, amount, reason) VALUES ($1,$2,$3,$4,$5)",
     [id, groupId, userId, amount, reason]
   );
+  // SOMEBODY HAS TO BE TOLD.
+  //
+  // A request used to be written to the table and that was the end of it: no
+  // organiser was notified, and the app gave them no way to act on one either,
+  // so a member could ask the group for their savings and nothing anywhere
+  // would ever raise it with a human. Every organiser is told; the person who
+  // asked is not told about their own request.
+  await notifyOrganisers(groupId, userId, {
+    notificationType: "stockvel_withdrawal_requested",
+    title: (group, who) => `${who} asked to withdraw R${amount.toFixed(2)} from "${group.name}"`,
+    body: (group, who) => `${who} has requested R${amount.toFixed(2)}${reason ? ` for ${reason}` : ""}. Open Stokvel, choose ${group.name} and go to Withdrawals to approve or decline. Approving records the group's decision - the money is then paid out by the organiser holding it, with an ordinary TitoPay transfer.`,
+    metadata: { stockvelGroupId: String(groupId), withdrawalId: id, clientNotificationId: `stockvel-withdrawal-${id}` }
+  });
   return { id, status: "requested" };
+}
+
+async function notifyWithdrawalDecision(groupId, withdrawal, actorId, approve) {
+  const { rows } = await pool.query(
+    `SELECT g.name, u.full_name AS decider
+       FROM stockvel_groups g, users u
+      WHERE g.id = $1 AND u.id = $2`,
+    [groupId, actorId]
+  );
+  const group = rows[0];
+  if (!group) return;
+  const amount = money(withdrawal.amount);
+  const { createNotification } = require("./notification-service");
+  await createNotification({
+    user: { id: withdrawal.requested_by, user_type: "customer" },
+    channel: "in_app", notificationType: "stockvel_withdrawal_decided", provider: "in_app",
+    title: approve
+      ? `Your R${amount.toFixed(2)} withdrawal from "${group.name}" was approved`
+      : `Your R${amount.toFixed(2)} withdrawal from "${group.name}" was declined`,
+    body: approve
+      // Says what actually happens next, rather than implying TitoPay is
+      // sending the money.
+      ? `${group.decider} approved it for the group. TitoPay does not hold the group's money, so ${group.decider} now sends you the R${amount.toFixed(2)} as an ordinary TitoPay transfer. It will show in your Activity when it arrives.`
+      : `${group.decider} declined it on behalf of the group. Nothing has left the group. Speak to your organisers if you think this was a mistake.`,
+    metadata: { stockvelGroupId: String(groupId), withdrawalId: withdrawal.id,
+      clientNotificationId: `stockvel-withdrawal-decided-${withdrawal.id}` }
+  }).catch(() => {});
+}
+
+// Every organiser of a group except one person - normally whoever triggered
+// the thing being announced. Never throws: a notification that cannot be
+// delivered must not fail the money decision it is describing.
+async function notifyOrganisers(groupId, exceptUserId, { notificationType, title, body, metadata }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT sm.user_id, g.name
+         FROM stockvel_members sm
+         JOIN stockvel_groups g ON g.id = sm.group_id
+        WHERE sm.group_id = $1 AND sm.status = 'active' AND sm.role IN ('chair','organiser')`,
+      [groupId]
+    );
+    if (!rows.length) return;
+    const { rows: actorRows } = await pool.query(
+      "SELECT full_name, username FROM users WHERE id = $1", [exceptUserId]);
+    const who = actorRows[0]?.full_name || `@${actorRows[0]?.username || "A member"}`;
+    const group = { name: rows[0].name };
+    const { createNotification } = require("./notification-service");
+    for (const row of rows) {
+      if (row.user_id === exceptUserId) continue;
+      await createNotification({
+        user: { id: row.user_id, user_type: "customer" },
+        channel: "in_app", notificationType, provider: "in_app",
+        title: title(group, who),
+        body: body(group, who),
+        metadata: { ...metadata, clientNotificationId: `${metadata.clientNotificationId}-${row.user_id}` }
+      }).catch(() => {});
+    }
+  } catch (error) {
+    console.error("[stokvel] could not notify organisers", { groupId, message: error.message });
+  }
 }
 
 async function decideWithdrawal(actorId, groupId, withdrawalId, approve) {
@@ -421,6 +512,19 @@ async function decideWithdrawal(actorId, groupId, withdrawalId, approve) {
     );
     if (!updated[0]) throw new AppError(409, "That request was already decided");
     await client.query("COMMIT");
+    // THE PERSON WHOSE MONEY IT IS FINDS OUT.
+    //
+    // Committed first, and never able to fail the decision: the record of what
+    // the group decided is the thing that must be durable, and a notification
+    // that cannot be sent is not a reason to un-decide it.
+    //
+    // The wording is careful, because approval here does NOT move money. This
+    // service deliberately owns no payout rail - "TitoPay holds no group pot",
+    // as the statement screen says - so an approval is the group's recorded
+    // decision, and the organiser holding the funds then pays by ordinary
+    // transfer. Telling a member "approved" and leaving them to assume the
+    // money is on its way is how a savings group loses trust in the register.
+    await notifyWithdrawalDecision(groupId, withdrawal, actorId, approve).catch(() => {});
     return { status: approve ? "approved" : "declined" };
   } catch (error) {
     await client.query("ROLLBACK");

@@ -19,7 +19,11 @@ const DEFAULT_SERVICES = [
   ["data", "Data", "phone", "data", "Buy mobile data bundles.", "active", true, true, 100, "none"],
   ["electricity", "Electricity", "zap", "electricity", "Buy prepaid electricity tokens.", "active", true, true, 110, "none"],
   ["voucher", "Voucher", "tag", "voucher", "Purchase digital vouchers.", "active", true, true, 120, "none"],
-  ["stockvel", "Stockvel", "stockvel", "stockvel", "Create and manage community savings groups.", "active", true, false, 130, "new"],
+  // "Stokvel" is the South African spelling, and the one every screen behind
+  // this tile already uses. The service_code stays "stockvel" - it is an
+  // identifier written into rows, routes and the app's own action map, and
+  // renaming it would be a migration, not a spelling fix.
+  ["stockvel", "Stokvel", "stockvel", "stockvel", "Create and manage community savings groups.", "active", true, false, 130, "new"],
   ["tip", "Tip", "tip", "tip", "Generate tip QR codes and receive instant tips.", "active", true, true, 140, "new"],
   ["learn", "Learn", "learn", "learn", "Practical TitoPay financial education for personal and business users.", "active", true, true, 150, "none"],
   ["transactions", "Transactions", "list", "transactions", "Search, filter and export wallet transactions.", "active", true, true, 160, "none"],
@@ -283,6 +287,7 @@ async function applyServiceCopyFixups() {
   await openTicketsToBusinessOnce();
   await openBookToCustomersOnce();
   await openRewardsOnce();
+  await correctStokvelSpellingOnce();
   // Priced changes ride the same one-shot mechanism, for the same reason: the
   // approved schedule only reaches a database through db:init, which also
   // overwrites every fee an operator has set by hand.
@@ -356,6 +361,43 @@ async function openBookToCustomersOnce() {
     if (rowCount) console.info("[services] Book is now available to personal accounts");
   } catch (error) {
     console.error("[services] could not open Book to personal accounts", { message: error.message });
+  }
+}
+
+// THE TILE SPELLS IT THE WAY SOUTH AFRICA DOES.
+//
+// The seeded service_name was "Stockvel". Every screen behind the tile - the
+// group sheet, the statement, the contribution confirmation, the withdrawal
+// flow - says "Stokvel", which is the correct spelling and the one members
+// use. So the one word a customer read before tapping was the one word spelt
+// wrong, on a product named after something culturally specific.
+//
+// ON CONFLICT DO NOTHING means editing DEFAULT_SERVICES never reaches an
+// installed database, so the correction is pushed out here like the three
+// fixups above, with the same one-shot guard. The service_code is untouched:
+// "stockvel" is an identifier in rows, routes and the app's action map, and
+// renaming an identifier to fix a label would be a migration with nothing to
+// gain.
+//
+// Narrower than the others on purpose - it only rewrites the exact old string,
+// so an operator who has since renamed the tile themselves keeps their name.
+const STOKVEL_SPELLING_FIXUP_KEY = "service_fixup_stokvel_spelling";
+async function correctStokvelSpellingOnce() {
+  try {
+    const applied = await pool.query(
+      "SELECT 1 FROM platform_settings WHERE key = $1 LIMIT 1", [STOKVEL_SPELLING_FIXUP_KEY]);
+    if (applied.rows.length) return;
+    const { rowCount } = await pool.query(
+      `UPDATE service_config
+          SET service_name = 'Stokvel', updated_at = NOW()
+        WHERE service_code = 'stockvel' AND service_name = 'Stockvel'`);
+    await pool.query(
+      `INSERT INTO platform_settings (key, value)
+       VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING`,
+      [STOKVEL_SPELLING_FIXUP_KEY, JSON.stringify({ appliedAt: new Date().toISOString(), rowsChanged: rowCount })]);
+    if (rowCount) console.info("[services] the Stokvel tile is now spelt the way the rest of the product spells it");
+  } catch (error) {
+    console.error("[services] could not correct the Stokvel tile spelling", { message: error.message });
   }
 }
 

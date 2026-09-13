@@ -205,7 +205,7 @@
       "fee": 0,
       "commission": 0,
       "status": "active",
-      "personal_visible": false,
+      "personal_visible": true,
       "business_visible": false,
       "sort_order": 130,
       "feature_badge": "new"
