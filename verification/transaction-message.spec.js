@@ -183,6 +183,72 @@ const ok = (label, pass, detail) => {
   ok("THE SENDER'S MESSAGE IS SHOWN", /Happy birthday/.test(received.message || ""), received.message);
   ok("the sender is named", /Lerato Mokoena/.test(received.from || ""), received.from);
 
+  /* ------------------------------------------------- how the gift moves */
+  //
+  // Twelve occasions, three motion families. The check that matters is not
+  // that something animates - it is that the RIGHT temperament is chosen, and
+  // that a custom occasion (somebody's own words, whose mood cannot be
+  // guessed) gets no accent rather than a wrong one.
+  const motion = await page.evaluate(async (cases) => {
+    const out = {};
+    for (const [label, occasion] of cases) {
+      state.notifications = [{ id: "n-m", unread: true, title: "Gift", body: "",
+        createdAt: new Date().toISOString(),
+        metadata: { gift: true, senderName: "Lerato", occasion, message: "Enjoy", amount: 100 } }];
+      if (typeof closeModal === "function") closeModal();
+      await new Promise((r) => setTimeout(r, 120));
+      openReceivedGiftModal("n-m");
+      await new Promise((r) => setTimeout(r, 200));
+      const card = document.querySelector(".gift-receipt-card");
+      out[label] = card ? (card.getAttribute("data-gift-motion") || "") : "(no card)";
+    }
+    return out;
+  }, [["birthday", "Birthday"], ["thanks", "Thank You"], ["wedding", "Wedding"],
+    ["graduation", "Graduation"], ["custom", "My own words"]]);
+
+  console.log("\n  the motion chosen for each occasion");
+  ok("a birthday celebrates", motion.birthday === "celebration", motion.birthday);
+  ok("a graduation celebrates too", motion.graduation === "celebration", motion.graduation);
+  ok("a wedding is affection, not celebration", motion.wedding === "affection", motion.wedding);
+  ok("A THANK YOU DOES NOT GET CONFETTI", motion.thanks === "gratitude", motion.thanks);
+  ok("a custom occasion gets no guessed mood", motion.custom === "", motion.custom || "(none)");
+
+  /* ------------------------------------------ motion is a preference */
+  const reduced = await context.newPage();
+  await reduced.emulateMedia({ reducedMotion: "reduce" });
+  await reduced.addInitScript((user) => {
+    localStorage.setItem("titopay_candidate_auth_v1", JSON.stringify({
+      accessToken: "probe", refreshToken: "probe", user }));
+    localStorage.setItem("titopay_last_active_v1", String(Date.now()));
+  }, USER);
+  await reduced.goto(ORIGIN, { waitUntil: "load" });
+  await reduced.waitForTimeout(1800);
+  const stillness = await reduced.evaluate(async () => {
+    state.notifications = [{ id: "n-r", unread: true, title: "Gift", body: "",
+      createdAt: new Date().toISOString(),
+      metadata: { gift: true, senderName: "Lerato", occasion: "Birthday", message: "Enjoy", amount: 100 } }];
+    openReceivedGiftModal("n-r");
+    await new Promise((r) => setTimeout(r, 400));
+    const card = document.querySelector(".gift-receipt-card");
+    if (!card) return { present: false };
+    const child = card.firstElementChild;
+    return {
+      present: true,
+      cardAnimation: getComputedStyle(card).animationName,
+      childAnimation: child ? getComputedStyle(child).animationName : "none",
+      sheen: getComputedStyle(card, "::after").display,
+      // It must still be fully readable, not merely still.
+      visible: getComputedStyle(card).opacity === "1"
+    };
+  });
+  console.log("\n  with prefers-reduced-motion: reduce");
+  ok("the gift still opens", stillness.present);
+  ok("NOTHING ANIMATES", stillness.cardAnimation === "none" && stillness.childAnimation === "none",
+    `card ${stillness.cardAnimation}, contents ${stillness.childAnimation}`);
+  ok("the sweep is not drawn at all", stillness.sheen === "none", stillness.sheen);
+  ok("and it is fully visible, not stuck mid-fade", stillness.visible);
+  await reduced.close();
+
   ok("no page errors", errors.length === 0, errors.slice(0, 1).join(" | "));
 
   await page.screenshot({ path: path.join(__dirname, "artifacts", "transaction-message.png") })

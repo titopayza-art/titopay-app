@@ -812,8 +812,38 @@ async function createTransaction(actor, payload) {
           clientNotificationId: `gift-${txId}`
         }
       });
-      const { rows: recipientRows } = await pool.query("SELECT email, full_name FROM users WHERE id=$1", [recipientWallet.user_id]);
+      const { rows: recipientRows } = await pool.query("SELECT email, full_name, phone FROM users WHERE id=$1", [recipientWallet.user_id]);
       const giftRecipient = recipientRows[0];
+
+      // AND AN SMS, BECAUSE A GIFT THAT WAITS FOR SOMEBODY TO OPEN AN APP IS
+      // A GIFT THAT ARRIVES LATE.
+      //
+      // Email and an in-app notice both assume the person looks. A birthday
+      // gift is worth a buzz in the pocket on the day. The message is short on
+      // purpose: one SMS segment where it can be, so this stays cheap, and the
+      // written message is trimmed rather than allowed to spill into three.
+      //
+      // Wrapped in its own try/catch and awaited last. deliverSms THROWS when
+      // the provider is disabled or unconfigured - which is its normal state
+      // until an operator turns it on - and a gift must never fail, or even
+      // look like it failed, because an SMS gateway is down. The money has
+      // already moved by this point; nothing here may change that.
+      if (giftRecipient?.phone) {
+        try {
+          const smsMessage = giftMessage.length > 90 ? `${giftMessage.slice(0, 87)}...` : giftMessage;
+          await require("./notification-service").deliverSms({
+            to: giftRecipient.phone,
+            body: `${senderName} sent you a gift of ${amountLabel}${occasionLine} on TitoPay.`
+              + `${smsMessage ? ` "${smsMessage}"` : ""} The money is in your wallet.`,
+            metadata: { transactionId: txId, reference, kind: "gift_received" }
+          });
+        } catch (error) {
+          // Logged, never raised. An undelivered SMS is a missed nicety; the
+          // in-app notice and the email both still carry the whole gift.
+          console.warn("[transaction] gift sms not delivered", {
+            transactionId: txId, message: error.message });
+        }
+      }
       if (giftRecipient?.email) {
         const emailCentre = require("./email-centre-service");
         const escape = emailCentre.escapeHtml;

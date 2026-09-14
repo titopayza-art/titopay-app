@@ -860,3 +860,57 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
    Written at (0,7,0) so it wins on specificity rather than on file order,
    and scoped through .titopay-chat-thread-modal so no other modal moves. */
 .modal-backdrop:not(.auth-modal-backdrop)>.modal-card.titopay-chat-thread-modal:not(.fullscreen-modal):not(.chatbot-fullscreen-modal)>.titopay-chat-window{flex:1 1 auto;min-height:0;max-height:none}
+
+/* HOW A GIFT OPENS.
+   One shared reveal for every gift, then a single quiet accent per family of
+   occasions. The brief was explicit: not tacky. So there are no particles, no
+   emoji, no bouncing and no colour the app does not already use - each accent
+   is movement alone, runs ONCE, finishes inside a second, and is scoped to
+   .gift-receipt-card so nothing else in the app moves.
+   Twelve occasions share three families. Twelve bespoke animations would be
+   the over-produced thing this is avoiding, and a burst of confetti on a
+   "Thank You" would read as worse than no motion at all. */
+.gift-receipt-card{position:relative;overflow:hidden;animation:gift-settle 620ms cubic-bezier(.2,.7,.3,1) both}
+@keyframes gift-settle{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+/* The contents arrive just behind the card rather than with it, which is what
+   makes it read as opening instead of appearing. Small offsets, one pass. */
+.gift-receipt-card > *{animation:gift-content 520ms cubic-bezier(.2,.7,.3,1) both}
+.gift-receipt-card > :nth-child(1){animation-delay:90ms}
+.gift-receipt-card > :nth-child(2){animation-delay:150ms}
+.gift-receipt-card > :nth-child(3){animation-delay:210ms}
+.gift-receipt-card > :nth-child(4){animation-delay:270ms}
+.gift-receipt-card > :nth-child(5){animation-delay:330ms}
+@keyframes gift-content{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* CELEBRATION - birthday, graduation, congratulations, christmas, eid.
+   One pass of light across the card, the way light catches foil when it turns.
+   It crosses once and is gone; it does not loop, and it never repeats. */
+.gift-receipt-card[data-gift-motion="celebration"]::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(105deg,transparent 38%,rgba(255,255,255,.22) 50%,transparent 62%);
+  transform:translateX(-120%);animation:gift-sheen 1100ms cubic-bezier(.3,.6,.2,1) 260ms both}
+@keyframes gift-sheen{to{transform:translateX(120%)}}
+
+/* AFFECTION - wedding, anniversary, Valentine's, Mother's and Father's Day.
+   A single slow breath out from the icon, warmer and unhurried. One expansion
+   that fades as it goes, not a pulse that keeps beating. */
+.gift-receipt-card[data-gift-motion="affection"] .gift-receipt-icon{position:relative}
+.gift-receipt-card[data-gift-motion="affection"] .gift-receipt-icon::after{content:"";position:absolute;inset:-6px;border-radius:50%;
+  border:1px solid rgba(255,255,255,.34);animation:gift-breath 1400ms cubic-bezier(.25,.6,.3,1) 300ms both}
+@keyframes gift-breath{from{opacity:.75;transform:scale(.82)}to{opacity:0;transform:scale(1.5)}}
+
+/* GRATITUDE - thank you.
+   The card eases down a little further than it needs to and settles, like a
+   small bow. Nothing rises and nothing sparkles, which is the point. */
+.gift-receipt-card[data-gift-motion="gratitude"]{animation:gift-bow 820ms cubic-bezier(.2,.8,.3,1) both}
+@keyframes gift-bow{0%{opacity:0;transform:translateY(-6px) scale(.99)}55%{opacity:1;transform:translateY(4px)}100%{transform:none}}
+
+/* MOTION IS A PREFERENCE, NOT A FEATURE.
+   Somebody who has asked their phone to stop animating things has usually
+   asked for a reason - motion sickness, vestibular disorders, or simply
+   attention. They get the same gift, drawn immediately and completely. */
+@media (prefers-reduced-motion:reduce){
+  .gift-receipt-card,.gift-receipt-card > *,
+  .gift-receipt-card[data-gift-motion="gratitude"]{animation:none!important}
+  .gift-receipt-card[data-gift-motion="celebration"]::after,
+  .gift-receipt-card[data-gift-motion="affection"] .gift-receipt-icon::after{display:none}
+}

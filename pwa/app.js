@@ -8864,7 +8864,7 @@ function openTransactionDetailModal(key) {
           ? `Message from ${counterparty || "the sender"}`
           : `Your message${written.childName ? ` to ${written.childName}` : ""}`);
       return `
-    <section class="gift-receipt-card" role="note" aria-label="${written.kind === "gift" ? "Gift details" : "Message sent with this payment"}">
+    <section class="gift-receipt-card" data-gift-motion="${esc(written.kind === "gift" ? giftMotionFamily(written.occasion) : "")}" role="note" aria-label="${written.kind === "gift" ? "Gift details" : "Message sent with this payment"}">
       <span class="gift-receipt-icon">${icon(written.kind === "gift" ? "gift" : "chat")}</span>
       <p class="gift-receipt-title">${esc(heading)}</p>
       ${written.occasion ? `<span class="gift-receipt-occasion">${esc(written.occasion)}</span>` : ""}
@@ -13065,6 +13065,42 @@ function hideDuplicateAirtimeDataTiles(services = []) {
 //                a gift. Money to a child for school lunch carries a note too,
 //                and captioning that "You've received a gift" would be the app
 //                inventing a sentiment nobody expressed.
+// HOW A GIFT MOVES WHEN IT OPENS.
+//
+// There are twelve occasions. Twelve bespoke animations would be exactly the
+// tacky, over-produced thing worth avoiding - and a confetti burst on a
+// condolence-adjacent "Thank You" would be worse than no motion at all.
+//
+// So occasions are grouped into three families that share a temperament, and
+// each family gets ONE quiet accent expressed through movement alone: no
+// particles, no emoji, no colour the app does not already use. Every accent
+// runs once, under a second, and is silenced entirely by prefers-reduced-
+// motion. The restraint is the design.
+// Declared as a function, not a const: this file's convention is that only
+// function declarations - which hoist - may sit between sections, and
+// pwa-structure enforces it. The table lives next to the one thing that
+// reads it rather than being exiled to the configuration block.
+function giftMotionFamilies() {
+  return {
+    // A sweep of light across the card, once, like light catching foil.
+    celebration: ["birthday", "graduation", "congratulations", "christmas", "eid"],
+    // A single slow breath out from the icon. Warmer, unhurried.
+    affection: ["wedding", "anniversary", "valentine's day", "valentines day",
+      "mother's day", "mothers day", "father's day", "fathers day"],
+    // The card settles, like a small bow. Nothing rises, nothing sparkles.
+    gratitude: ["thank you", "thanks"]
+  };
+}
+function giftMotionFamily(occasion) {
+  const key = String(occasion || "").trim().toLowerCase();
+  if (!key) return "";
+  for (const [family, members] of Object.entries(giftMotionFamilies())) {
+    if (members.includes(key)) return family;
+  }
+  // A custom occasion is somebody's own words. Guessing a mood from them would
+  // get it wrong sooner or later, so it simply gets the shared reveal.
+  return "";
+}
 function transactionPersonalMessage(item = {}) {
   const code = String(item.service_code || item.serviceCode || "").toLowerCase().replace(/-/g, "_");
   const name = String(item.service_name || item.serviceName || "").toLowerCase();
@@ -27470,10 +27506,14 @@ function openReceivedGiftModal(noticeId) {
   const message = String(metadata.message || "").trim();
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Gift</p><h2>You've received a gift</h2></div>
+      <!-- The head names the thing, the card carries the moment - the same
+           split the sender's screen uses ("Send Gift" above "You sent a
+           gift"). Saying "You've received a gift" in both places read as a
+           stutter in the first preview. -->
+      <div><p class="eyebrow">Gift</p><h2>Gift received</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <section class="gift-receipt-card" role="note" aria-label="Gift received">
+    <section class="gift-receipt-card" data-gift-motion="${esc(giftMotionFamily(occasion))}" role="note" aria-label="Gift received">
       <span class="gift-receipt-icon">${icon("gift")}</span>
       <p class="gift-receipt-title">You've received a gift</p>
       ${occasion && occasion.toLowerCase() !== "custom"
