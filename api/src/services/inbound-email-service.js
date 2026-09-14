@@ -453,6 +453,30 @@ async function routeStoredEmail(id, { source = "unknown" } = {}) {
   }
 }
 
+// A MESSAGE WE DELIBERATELY DID NOT ACCEPT, WRITTEN DOWN ANYWAY.
+//
+// An adapter sometimes decides not to take a message at all - most often
+// because it is far too large to pull into memory. Rule 3 still applies: the
+// customer believes they have contacted support, so "too big, forget it" is
+// not an outcome. No ticket is created, because the content was never read and
+// inventing one would put a blank in front of an agent; instead the row lands
+// in the same failed queue an operator already watches, carrying enough to go
+// and look in the mailbox.
+async function recordUnprocessable({ messageId = null, fromEmail = null, subject = null,
+  reason = "unprocessable", note = "" } = {}) {
+  await ensureInboundEmailSchema();
+  const id = uuidv4();
+  const { rows } = await pool.query(
+    `INSERT INTO inbound_emails (id, message_id, raw, from_email, subject, status, failure_reason, processed_at)
+     VALUES ($1,$2,$3,$4,$5,'failed',$6,NOW())
+     ON CONFLICT (message_id) WHERE message_id IS NOT NULL DO NOTHING
+     RETURNING id`,
+    [id, messageId, String(note || reason).slice(0, MAX_BODY), fromEmail,
+      (subject || "").slice(0, MAX_SUBJECT) || null, String(reason).slice(0, 300)]
+  );
+  return { recorded: Boolean(rows[0]), id: rows[0]?.id || null, duplicate: !rows[0] };
+}
+
 // Anything that failed to route, for an operator to look at and reprocess.
 // The raw message is still there, which is the entire point of storing it
 // first.
@@ -471,6 +495,7 @@ module.exports = {
   ensureInboundEmailSchema,
   ingestInboundEmail,
   routeStoredEmail,
+  recordUnprocessable,
   listUnrouted,
   // Exported for tests and for whichever adapter is built next.
   parseMessage,

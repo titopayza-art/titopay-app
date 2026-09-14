@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v107";
+  return "admin-console-v108";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -6845,11 +6845,95 @@ async function renderEmailLogs(_me={},pageOverride=null) {
   document.querySelectorAll("[data-email-log-page]").forEach((button)=>button.addEventListener("click",()=>renderEmailLogs(_me,Number(button.dataset.emailLogPage))));
   document.querySelectorAll("[data-email-log-view]").forEach((button)=>button.addEventListener("click",async()=>{try{const data=await apiFetch(`/admin/email/logs/${button.dataset.emailLogView}`);window.alert(JSON.stringify(data.item,null,2));}catch(error){showToast(adminErrorMessage(error.message));}}));
 }
+// INBOUND MAIL, ON THE SAME PAGE AS OUTBOUND.
+//
+// Shown only to the platform owner, because the form holds a password to the
+// mailbox customers write to. The password field is never populated with the
+// stored value - it arrives masked and an empty box means "leave it alone",
+// which is what stops a save from overwriting a working credential with
+// bullet characters.
+async function renderInboundMailbox(me={}) {
+  const host=document.getElementById("inbound-mailbox-panel");
+  if(!host) return;
+  let s={};
+  try{const result=await apiFetch("/admin/email/inbound/settings");s=result.settings||{};}
+  catch(error){host.innerHTML=`<p class="table-card-note">Inbound mail settings could not be loaded. ${escapeHtml(adminErrorMessage(error.message))}</p>`;return;}
+  const health=s.lastError
+    ? `<p class="table-card-note" data-inbound-health><strong>Last poll failed</strong> ${escapeHtml(s.lastError)}${s.consecutiveFailures>1?` &mdash; ${s.consecutiveFailures} in a row.`:"."}</p>`
+    : (s.lastSuccessAt?`<p class="table-card-note" data-inbound-health>Last read the mailbox successfully on ${escapeHtml(formatDate(s.lastSuccessAt))}.</p>`:`<p class="table-card-note" data-inbound-health>The mailbox has not been read yet.</p>`);
+  host.innerHTML=`<section class="table-card"><h2>Inbound support mail</h2>
+    <p class="table-card-note">Mail arriving at your support address is collected over IMAP and opened as a support ticket with its own reference. A message read this way is marked <strong>unverified</strong>: an agent may answer it, but must not change an account, disclose a balance, or act on an instruction from it until the customer confirms in the app. A From header is a claim anyone can make.</p>
+    <form id="inbound-mailbox-form" class="form-grid">
+      <label>IMAP host<input name="host" placeholder="imap.titopay.co.za" value="${escapeHtml(s.host||"")}"></label>
+      <label>Port<input name="port" type="number" min="1" max="65535" value="${escapeHtml(s.port||993)}"></label>
+      <label>Username<input name="username" autocomplete="off" value="${escapeHtml(s.username||"")}"></label>
+      <label>Password<input name="password" type="password" autocomplete="new-password" placeholder="${s.hasPassword?"Saved - leave blank to keep":"Required"}"></label>
+      <label>Mailbox<input name="mailbox" value="${escapeHtml(s.mailbox||"INBOX")}"></label>
+      <label>Check every (seconds)<input name="pollSeconds" type="number" min="15" max="3600" value="${escapeHtml(s.pollSeconds||60)}"></label>
+      <label>Messages per check<input name="maxMessagesPerPoll" type="number" min="1" max="200" value="${escapeHtml(s.maxMessagesPerPoll||25)}"></label>
+      <label class="toggle-row"><input name="enabled" type="checkbox" ${s.enabled?"checked":""}>Collect support mail</label>
+      <p class="table-card-note field-full">The connection is always TLS on the mail server's secure port and the certificate is always verified; there is no setting to turn that off. Test the connection before switching collection on.</p>
+      <div class="form-actions field-full">
+        <button class="primary-btn" type="submit">Save inbound settings</button>
+        <button class="secondary-btn" type="button" data-inbound-test>Test connection</button>
+        <button class="secondary-btn" type="button" data-inbound-poll>Check for mail now</button>
+      </div>
+    </form>${health}
+    <div id="inbound-unrouted"></div></section>`;
+
+  document.getElementById("inbound-mailbox-form")?.addEventListener("submit",async(event)=>{
+    event.preventDefault();
+    const form=event.currentTarget,fd=new FormData(form),data=Object.fromEntries(fd);
+    data.enabled=fd.get("enabled")==="on";
+    for(const key of ["port","pollSeconds","maxMessagesPerPoll"])data[key]=Number(data[key]);
+    // An untouched password field is empty, and empty means keep the stored
+    // one. Sending "" would be read as a change to a blank password.
+    if(!String(data.password||"").trim())delete data.password;
+    try{await apiFetch("/admin/email/inbound/settings",{method:"PUT",body:JSON.stringify(data)});showToast("Inbound mail settings saved");await renderInboundMailbox(me);}
+    catch(error){showToast(adminErrorMessage(error.message));}
+  });
+  document.querySelector("[data-inbound-test]")?.addEventListener("click",async(event)=>{
+    const button=event.currentTarget;button.disabled=true;
+    try{const {result}=await apiFetch("/admin/email/inbound/test",{method:"POST",body:"{}"});
+      showToast(result.ok?`Connected. ${result.waiting} message(s) waiting in ${result.mailbox}.`:result.error);}
+    catch(error){showToast(adminErrorMessage(error.message));}
+    finally{button.disabled=false;}
+  });
+  document.querySelector("[data-inbound-poll]")?.addEventListener("click",async(event)=>{
+    const button=event.currentTarget;button.disabled=true;
+    try{const {result}=await apiFetch("/admin/email/inbound/poll",{method:"POST",body:"{}"});
+      showToast(result.error?result.error:`Collected ${result.ingested||0}, threaded ${result.duplicates||0}, skipped ${result.skipped||0}.`);
+      await renderInboundMailbox(me);}
+    catch(error){showToast(adminErrorMessage(error.message));}
+    finally{button.disabled=false;}
+  });
+  await renderInboundUnrouted(me);
+}
+// Messages that arrived but could not be turned into a ticket. The raw message
+// is still stored, so reprocessing after a fix costs nothing and the customer
+// never has to write again.
+async function renderInboundUnrouted(me={}) {
+  const host=document.getElementById("inbound-unrouted");
+  if(!host) return;
+  let items=[];
+  try{const result=await apiFetch("/admin/email/inbound/unrouted");items=result.items||[];}
+  catch(error){host.innerHTML="";return;}
+  if(!items.length){host.innerHTML='<p class="table-card-note">No inbound mail is waiting on a problem.</p>';return;}
+  host.innerHTML=`<h3>Needs attention (${items.length})</h3><div class="table-wrap"><table><thead><tr><th>Received</th><th>From</th><th>Subject</th><th>Problem</th><th></th></tr></thead><tbody>${items.map((item)=>`<tr><td>${escapeHtml(formatDate(item.received_at))}</td><td>${escapeHtml(item.from_email||"unknown")}</td><td>${escapeHtml(item.subject||"(no subject)")}</td><td>${escapeHtml(item.failure_reason||item.status)}</td><td><button class="secondary-btn" type="button" data-inbound-retry="${escapeHtml(item.id)}">Try again</button></td></tr>`).join("")}</tbody></table></div>`;
+  document.querySelectorAll("[data-inbound-retry]").forEach((button)=>button.addEventListener("click",async()=>{
+    button.disabled=true;
+    try{const {result}=await apiFetch(`/admin/email/inbound/unrouted/${button.dataset.inboundRetry}/reprocess`,{method:"POST",body:"{}"});
+      showToast(result.routed?"Turned into a ticket.":`Still stuck: ${result.reason||"unknown"}`);
+      await renderInboundUnrouted(me);}
+    catch(error){showToast(adminErrorMessage(error.message));button.disabled=false;}
+  }));
+}
 async function renderEmailSettings(me={}) {
   const result=await apiFetch("/admin/email/settings"),s=result.settings||{};
   const canEdit=hasEmailPermission(me,"EMAIL_SETTINGS_EDIT"),canTest=hasEmailPermission(me,"EMAIL_TEST_SEND"),canEditProvider=isPlatformOwnerRole(me.role);
   document.getElementById("page-content").innerHTML=`<section class="table-card"><form id="email-settings-form" class="form-grid"><label>Sender name<input name="senderName" required value="${escapeHtml(s.sender_name||"TitoPay")}" ${canEdit?"":"disabled"}></label><label>Sender email<input name="senderEmail" type="email" required value="${escapeHtml(s.sender_email||"")}" ${canEdit?"":"disabled"}></label><label>Reply-to email<input name="replyToEmail" type="email" required value="${escapeHtml(s.reply_to_email||"")}" ${canEdit?"":"disabled"}></label><label>Company name<input name="companyName" required value="${escapeHtml(s.company_name||"")}" ${canEdit?"":"disabled"}></label><label>Support email<input name="supportEmail" type="email" required value="${escapeHtml(s.support_email||"")}" ${canEdit?"":"disabled"}></label><label>Support URL<input name="supportUrl" type="url" required value="${escapeHtml(s.support_url||"")}" ${canEdit?"":"disabled"}></label><label>Website URL<input name="websiteUrl" type="url" required value="${escapeHtml(s.website_url||"")}" ${canEdit?"":"disabled"}></label><label>Tagline<input name="tagline" required value="${escapeHtml(s.tagline||"")}" ${canEdit?"":"disabled"}></label>${canEditProvider?`<label>Default provider<select name="defaultProvider">${["smtp","resend","postmark","brevo","mailgun","ses","sendgrid","api"].map((provider)=>`<option value="${provider}" ${s.default_provider===provider?"selected":""}>${provider.toUpperCase()}</option>`).join("")}</select></label>`:""}<label>Verification expiry (minutes)<input name="verificationTokenExpiryMinutes" type="number" min="5" max="10080" value="${escapeHtml(s.verification_token_expiry_minutes)}" ${canEdit?"":"disabled"}></label><label>Password reset expiry (minutes)<input name="passwordResetTokenExpiryMinutes" type="number" min="5" max="1440" value="${escapeHtml(s.password_reset_token_expiry_minutes)}" ${canEdit?"":"disabled"}></label><label>Maximum retries<input name="maximumRetryCount" type="number" min="1" max="20" value="${escapeHtml(s.maximum_retry_count)}" ${canEdit?"":"disabled"}></label><label>Daily sending limit<input name="dailySendingLimit" type="number" min="1" value="${escapeHtml(s.daily_sending_limit)}" ${canEdit?"":"disabled"}></label><label class="toggle-row"><input name="sendingEnabled" type="checkbox" ${s.sending_enabled?"checked":""} ${canEdit?"":"disabled"}>Email sending enabled</label><label class="toggle-row"><input name="supportReplyAddressing" type="checkbox" ${s.support_reply_addressing?"checked":""} ${canEdit?"":"disabled"}>Per-ticket support reply addresses</label><p class="table-card-note field-full">Per-ticket reply addresses send Customer Care replies with <code>Reply-To: support+TP123456.&lt;tag&gt;@your-reply-domain</code>, so a customer's reply says which ticket it belongs to. Only switch this on once you have sent a test message to <code>support+TEST.00000000@</code> your reply-to domain and confirmed it arrived &mdash; a mailbox that rejects plus-addressing will BOUNCE the reply instead of delivering it.</p><div class="form-actions field-full">${canEdit?'<button class="primary-btn" type="submit">Save settings</button>':""}${canEditProvider?'<button class="secondary-btn" type="button" data-email-provider-test>Test connection</button>':""}${canTest?'<button class="secondary-btn" type="button" data-email-test-send>Send test email</button>':""}</div></form><p class="table-card-note">Provider credentials remain in the existing Integration Centre and are never returned to this page.</p></section>`;
   document.getElementById("email-settings-form")?.addEventListener("submit",async(event)=>{event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form));data.sendingEnabled=new FormData(form).get("sendingEnabled")==="on";data.supportReplyAddressing=new FormData(form).get("supportReplyAddressing")==="on";for(const key of ["verificationTokenExpiryMinutes","passwordResetTokenExpiryMinutes","maximumRetryCount","dailySendingLimit"])data[key]=Number(data[key]);try{await apiFetch("/admin/email/settings",{method:"PUT",body:JSON.stringify(data)});if(canEditProvider&&data.defaultProvider!==s.default_provider)await apiFetch("/admin/email/provider",{method:"PUT",body:JSON.stringify({defaultProvider:data.defaultProvider})});showToast("Email settings saved");await renderEmailSettings(me);}catch(error){showToast(adminErrorMessage(error.message));}});
+  if(canEditProvider){document.getElementById("page-content").insertAdjacentHTML("beforeend",'<div id="inbound-mailbox-panel"></div>');await renderInboundMailbox(me);}
   document.querySelector("[data-email-provider-test]")?.addEventListener("click",async()=>{const to=window.prompt("Send the connection test to:");if(!to)return;try{await apiFetch("/admin/email/provider/test",{method:"POST",body:JSON.stringify({to})});showToast("Provider connection and send test succeeded");}catch(error){showToast(adminErrorMessage(error.message));}});
   document.querySelector("[data-email-test-send]")?.addEventListener("click",async()=>{const to=window.prompt("Send a queued test email to:");if(!to)return;try{await apiFetch("/admin/email/test",{method:"POST",body:JSON.stringify({to,templateKey:"welcome_email",variables:{firstName:"Test",accountType:"personal"}})});showToast("Test email queued");}catch(error){showToast(adminErrorMessage(error.message));}});
 }

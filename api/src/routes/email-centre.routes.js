@@ -25,6 +25,23 @@ router.put("/templates/:id", permission("TEMPLATE_EDIT"), async (req,res,next)=>
 router.delete("/templates/:id", permission("TEMPLATE_DELETE"), async (req,res,next)=>{try{await email.deleteTemplate(req.params.id,actor(req));res.status(204).end();}catch(error){next(error);}});
 router.post("/templates/:id/test", permission("TEST_SEND"), async (req,res,next)=>{try{const template=await email.getTemplate(req.params.id);const job=await email.queueEmail({recipient:req.body.to,templateKey:template.template_key,variables:req.body.variables||{},idempotencyKey:`admin-template-test:${req.auth.userId}:${Date.now()}`,metadata:{test:true,adminId:req.auth.userId}});if(job.skipped)throw new AppError(409,`Test email was not queued: ${job.reason}`);await writeAuditLog({actorType:"admin",actorId:req.auth.userId,action:"email_test_queued",entityType:"email_queue",entityId:job.id,metadata:{templateKey:template.template_key}});res.status(202).json({ok:true,job});}catch(error){next(error);}});
 
+// INBOUND MAIL: the mailbox support@titopay.co.za is read from.
+//
+// The credentials sit behind requireSuperAdmin, the same bar as the outbound
+// provider configuration, because they are a password to a mailbox that
+// receives customers' support requests. Reading the failed queue is a support
+// task rather than a credential one, so it only needs VIEW.
+const inbound = require("../services/inbound-mailbox-service");
+const inboundEmail = require("../services/inbound-email-service");
+router.get("/inbound/settings", requireSuperAdmin, permission("PROVIDER_EDIT"), async (_req,res,next)=>{try{res.json({ok:true,settings:await inbound.getMailboxSettings({masked:true})});}catch(error){next(error);}});
+router.put("/inbound/settings", requireSuperAdmin, permission("PROVIDER_EDIT"), async (req,res,next)=>{try{res.json({ok:true,settings:await inbound.updateMailboxSettings(req.body,actor(req))});}catch(error){next(error);}});
+router.post("/inbound/test", requireSuperAdmin, permission("PROVIDER_EDIT"), async (req,res,next)=>{try{const result=await inbound.testMailboxConnection();await writeAuditLog({actorType:"admin",actorId:req.auth.userId,action:"inbound_mailbox_tested",entityType:"inbound_mailbox_settings",metadata:{ok:result.ok}});res.json({ok:true,result});}catch(error){next(error);}});
+// "Run it now", so an operator who has just fixed something does not wait out
+// the interval. Returns the same summary the worker logs.
+router.post("/inbound/poll", requireSuperAdmin, permission("PROVIDER_EDIT"), async (req,res,next)=>{try{const result=await inbound.pollMailbox({force:true});await writeAuditLog({actorType:"admin",actorId:req.auth.userId,action:"inbound_mailbox_polled",entityType:"inbound_mailbox_settings",metadata:{ingested:result.ingested||0,failed:result.failed||0}});res.json({ok:true,result});}catch(error){next(error);}});
+router.get("/inbound/unrouted", permission("VIEW"), async (req,res,next)=>{try{res.json({ok:true,items:await inboundEmail.listUnrouted({limit:req.query.limit})});}catch(error){next(error);}});
+router.post("/inbound/unrouted/:id/reprocess", permission("QUEUE_MANAGE"), async (req,res,next)=>{try{const result=await inboundEmail.routeStoredEmail(req.params.id,{source:"admin"});await writeAuditLog({actorType:"admin",actorId:req.auth.userId,action:"inbound_email_reprocessed",entityType:"inbound_emails",entityId:req.params.id,metadata:{routed:Boolean(result.routed)}});res.json({ok:true,result});}catch(error){next(error);}});
+
 router.get("/queue", permission("VIEW"), async (req,res,next)=>{try{res.json({ok:true,...await email.listQueue({...req.query,allowedTemplates:templateScope(req)})});}catch(error){next(error);}});
 router.get("/queue/:id", permission("VIEW"), async (req,res,next)=>{try{res.json({ok:true,item:await email.queueDetail(req.params.id,templateScope(req))});}catch(error){next(error);}});
 router.post("/queue/:id/retry", permission("QUEUE_MANAGE"), async (req,res,next)=>{try{res.json({ok:true,item:await email.manageQueue(req.params.id,"retry",actor(req),templateScope(req))});}catch(error){next(error);}});
