@@ -99,6 +99,17 @@ router.get("/notifications", async (req, res, next) => {
             OR c.audience = u.account_type
             OR (c.audience = 'specific' AND c.target_user_id = u.id)
           )
+          -- CLEARED MEANS CLEARED HERE TOO, AND IT DID NOT.
+          --
+          -- The notifications query above has carried this filter since
+          -- clear-all was added. This one never did, and the two results are
+          -- concatenated into a single feed - so every announcement a customer
+          -- had ever been sent was re-served after every clear, for ever. A
+          -- person who cleared their inbox watched the same items reappear and
+          -- had no way to make them go away.
+          AND c.sent_at > COALESCE(
+            (SELECT cleared_at FROM notification_clears WHERE user_id = u.id),
+            'epoch'::TIMESTAMPTZ)
         ORDER BY c.sent_at DESC
         LIMIT 80`,
       [req.auth.userId]

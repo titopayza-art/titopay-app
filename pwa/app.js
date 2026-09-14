@@ -27413,13 +27413,26 @@ function clearNotifications() {
   }
   state.notifications = [];
   persistInAppNotifications();
-  // The server feed re-serves anything still unread there. Clearing means
-  // clearing: mark the lot read server-side too, best effort.
-  api("/v1/chat/notifications/read", { method: "POST", body: { ids: [] } }).catch(() => null);
   closeModal();
   openNotificationsModal();
   render();
-  showToast("Notification inbox cleared.");
+  // THE SERVER HALF IS THE HALF THAT LASTS, AND IT USED TO FAIL IN SILENCE.
+  //
+  // Clearing writes a durable marker server-side (an empty ids list means
+  // "clear everything"), and the feed then refuses to serve anything older.
+  // Without that marker the clear lives only in this browser's localStorage -
+  // so it survives until the storage is evicted, the app is reinstalled, or
+  // the customer signs in on another phone, and then all of it comes back.
+  //
+  // This was `.catch(() => null)` followed by an unconditional "cleared"
+  // toast: every one of those failures told the customer it had worked. The
+  // local clear still happens either way - that part is already done above -
+  // but the message now says which of the two actually did.
+  api("/v1/chat/notifications/read", { method: "POST", body: { ids: [] } })
+    .then(() => showToast("Notification inbox cleared."))
+    .catch(() => showToast(
+      "Cleared on this phone. TitoPay could not be reached to clear it everywhere, so these may come back — open Notifications again when you are back online.",
+      "error"));
 }
 // iOS only exposes the Notification API to a PWA that has been ADDED TO THE
 // HOME SCREEN (16.4+). In a normal Safari tab, window.Notification does not

@@ -73,6 +73,58 @@ test("PWA notification inbox includes and marks announcements read", () => {
   assert.match(chatRoutes, /ON CONFLICT \(campaign_id, user_id\) DO NOTHING/);
 });
 
+test("CLEARING THE INBOX CLEARS ANNOUNCEMENTS TOO", () => {
+  // Reported by a customer with a screenshot: "Notification inbox cleared",
+  // and the notices were still on the screen.
+  //
+  // The feed is TWO queries concatenated into one response. The notifications
+  // query has filtered on the clear marker since clear-all was added; the
+  // announcements query never did. So every announcement a person had ever
+  // been sent was re-served after every clear, for ever, and there was nothing
+  // they could do about it.
+  //
+  // Both halves are asserted together, because the defect was precisely that
+  // one of them was reviewed and the other was not.
+  const chatRoutes = source("src/routes/chat.routes.js");
+  const clears = chatRoutes.match(/cleared_at FROM notification_clears/g) || [];
+  assert.ok(clears.length >= 2,
+    `both queries in the feed must filter on the clear marker (found ${clears.length})`);
+  // The announcements branch specifically: its own timestamp column, not the
+  // notifications table's.
+  assert.match(chatRoutes,
+    /c\.sent_at > COALESCE\(\s*\(SELECT cleared_at FROM notification_clears WHERE user_id = u\.id\)/,
+    "the announcements query must compare its own sent_at against the clear marker");
+});
+
+test("clearing tells the server, so it outlives this phone's storage", () => {
+  // An empty ids list is the protocol for "clear everything": the route reads
+  // it and stamps notification_clears. Without that call the clear lives only
+  // in one browser's localStorage and comes back on the next device, after an
+  // eviction, or after a reinstall - which is exactly what was reported.
+  const chatRoutes = source("src/routes/chat.routes.js");
+  assert.match(chatRoutes, /if \(!ids\.length\) \{[\s\S]{0,200}markNotificationsCleared\(req\.auth\.userId\)/);
+
+  // And the app must not report success when that call failed. It used to
+  // swallow the error and say "Notification inbox cleared" regardless.
+  const app = fs.readFileSync(path.join(__dirname, "..", "..", "pwa", "app.js"), "utf8");
+  const clearFn = app.slice(app.indexOf("function clearNotifications()"),
+    app.indexOf("function clearNotifications()") + 1800);
+  // ASSERTED ON THE CALL, NOT ON THE ABSENCE OF A STRING.
+  //
+  // The first version of this checked that `.catch(() => null)` did not appear
+  // anywhere in the function - and failed, because the comment above the fix
+  // QUOTES the old code to explain what was wrong. A test that a comment can
+  // break is testing the prose, not the behaviour. So it now asserts what the
+  // call actually does: both outcomes are handled, and each says something
+  // different.
+  assert.match(clearFn, /api\("\/v1\/chat\/notifications\/read"[\s\S]{0,200}\.then\(\(\) => showToast\(/,
+    "a successful server clear reports success");
+  assert.match(clearFn, /\.catch\(\(\) => showToast\(/,
+    "a failed server clear is reported, not swallowed");
+  assert.match(clearFn, /could not be reached to clear it everywhere/,
+    "and it says what that means for the customer");
+});
+
 test("SMS marketing supports the same four audience modes with exact specific-user resolution", () => {
   const adminRoutes = source("src/routes/admin.routes.js");
 
