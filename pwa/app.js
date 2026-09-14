@@ -8831,7 +8831,18 @@ function openTransactionDetailModal(key) {
   const recipientDetail = txMeta.recipientName
     ? [txMeta.recipientName, txMeta.recipientUsername ? `@${txMeta.recipientUsername}` : "", txMeta.recipientContact || ""].filter(Boolean).join(" · ")
     : "";
-  const counterparty = recipientDetail || item.recipient || item.recipient_reference || item.recipient_name || item.recipientName ||
+  // MONEY THAT ARRIVED NAMES WHO SENT IT.
+  //
+  // Every field below describes a RECIPIENT, because until now Activity only
+  // held things this person sent. An arrival has no recipient field - the
+  // person reading it IS the recipient - so the gift card rendered without its
+  // "From ..." line and the whole point of a gift was missing from the one
+  // screen the receiver opens.
+  //
+  // fromName is set only on arrivals, so an outgoing row cannot pick it up by
+  // accident and be labelled with the wrong name.
+  const counterparty = recipientDetail || txMeta.fromName
+    || item.recipient || item.recipient_reference || item.recipient_name || item.recipientName ||
     item.sender || item.sender_name || item.senderName ||
     item.merchant || item.merchant_name || item.merchantName || "";
   const feeRaw = item.fee ?? item.fee_amount ?? item.feeAmount;

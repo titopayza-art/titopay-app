@@ -42,6 +42,14 @@ const TRANSACTIONS = [
     status: "completed", reference: "TKID-MU15FTT3", created_at: NOW,
     metadata: { titokids: true, childName: "Lesedi", purpose: "funding",
       note: "Happy birthday my girl, buy something nice." } },
+  // An ARRIVAL, shaped exactly as listTransactionsForUser now synthesises it
+  // from the wallet ledger: no recipient field, and the sender named in
+  // metadata.fromName.
+  { id: "t-incoming", service_code: "send_gift", service_name: "Send Gift",
+    direction: "credit", amount: "503.00", total: "503.00", fee: "0.00",
+    status: "completed", reference: "TX-GIFT-INCOMING", created_at: NOW,
+    metadata: { incoming: true, occasion: "Birthday", message: "Happy Birthday !",
+      note: null, customOccasion: null, fromName: "Lerato Mokoena" } },
   { id: "t-plain", service_code: "wallet_transfer", service_name: "Wallet Transfer",
     direction: "credit", amount: "120.00", total: "120.00", fee: "0.00",
     status: "completed", reference: "TX-PLAIN-0003", created_at: NOW, metadata: {} }
@@ -130,6 +138,22 @@ const ok = (label, pass, detail) => {
   ok("the child is named", /Lesedi/.test(kids.title || ""), kids.title);
   // The fix must not overclaim. This transfer is not the R3 gift service.
   ok("A NOTE IS NOT CALLED A GIFT", !/gift/i.test(kids.title || ""), kids.title);
+
+  /* ------------------ THE CARD THE RECEIVER OPENS FROM THEIR ACTIVITY */
+  //
+  // The receiver now has an Activity row for money that arrived. Opening it
+  // must give the same card the notification does - occasion, amount, the
+  // message, and WHO SENT IT. Every counterparty field on this screen
+  // describes a recipient, so an arrival had nobody's name on it until
+  // metadata.fromName was read.
+  const incoming = await openDetail("t-incoming");
+  console.log("\n  the receiver opens the gift from Activity");
+  ok("the gift card is shown", incoming.present);
+  ok("it says a gift was received", /received a gift/i.test(incoming.title || ""), incoming.title);
+  ok("the occasion is shown", /birthday/i.test(incoming.occasion || ""), incoming.occasion);
+  ok("the message is shown", /Happy Birthday/.test(incoming.message || ""), incoming.message);
+  ok("THE SENDER IS NAMED", /From Lerato Mokoena/.test(incoming.from || ""),
+    incoming.from || "(no from line - this is what was missing)");
 
   /* ------------------------------------ an ordinary transfer, unchanged */
   const plain = await openDetail("t-plain");
