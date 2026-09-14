@@ -8847,16 +8847,24 @@ function openTransactionDetailModal(key) {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${(() => {
-      const gift = transactionGiftDetails(item);
-      if (!gift) return "";
+      const written = transactionPersonalMessage(item);
+      if (!written) return "";
+      const received = direction === "credit";
+      // A gift says so. Anything else says only that a message came with the
+      // money, which is all that was actually claimed.
+      const heading = written.kind === "gift"
+        ? (received ? "You've received a gift" : "You sent a gift")
+        : (received
+          ? `Message from ${counterparty || "the sender"}`
+          : `Your message${written.childName ? ` to ${written.childName}` : ""}`);
       return `
-    <section class="gift-receipt-card" role="note" aria-label="Gift details">
-      <span class="gift-receipt-icon">${icon("gift")}</span>
-      <p class="gift-receipt-title">${direction === "credit" ? "You've received a gift" : "You sent a gift"}</p>
-      ${gift.occasion ? `<span class="gift-receipt-occasion">${esc(gift.occasion)}</span>` : ""}
+    <section class="gift-receipt-card" role="note" aria-label="${written.kind === "gift" ? "Gift details" : "Message sent with this payment"}">
+      <span class="gift-receipt-icon">${icon(written.kind === "gift" ? "gift" : "chat")}</span>
+      <p class="gift-receipt-title">${esc(heading)}</p>
+      ${written.occasion ? `<span class="gift-receipt-occasion">${esc(written.occasion)}</span>` : ""}
       <p class="gift-receipt-amount">${esc(money(amountValue))}</p>
-      ${gift.message ? `<p class="gift-receipt-message">“${esc(gift.message)}”</p>` : ""}
-      ${counterparty ? `<p class="gift-receipt-from">${direction === "credit" ? "From" : "To"} ${esc(counterparty)}</p>` : ""}
+      ${written.message ? `<p class="gift-receipt-message">“${esc(written.message)}”</p>` : ""}
+      ${counterparty && written.kind === "gift" ? `<p class="gift-receipt-from">${received ? "From" : "To"} ${esc(counterparty)}</p>` : ""}
     </section>`;
     })()}
     <section class="tx-detail-summary" aria-label="Transaction amount and status">
@@ -13030,17 +13038,48 @@ function hideDuplicateAirtimeDataTiles(services = []) {
     return !tokens.some((token) => token === "airtime" || token === "data" || token === "mobile-data");
   });
 }
-// A gift transaction carries its occasion and message in metadata; the
-// receiver (and sender) get a proper gift presentation in the detail view.
-// Only fields the payload actually carries are rendered.
-function transactionGiftDetails(item = {}) {
+// THE MESSAGE SOMEBODY WROTE, ACTUALLY SHOWN.
+//
+// Reported after a birthday transfer: R500 arrived as "Wallet Transfer",
+// "Money in", and nothing else - no trace of what was written with it. The
+// money was the smaller half of what was sent.
+//
+// The message was never lost. It was stored and never rendered. This view had
+// a properly designed gift card all along, and it was gated on the service
+// being send_gift, so every OTHER way of sending money with a note - TitoKids
+// funding writes service_code 'wallet_transfer' and keeps the note in metadata
+// - fell straight through it and drew the generic row instead.
+//
+// So the gate is now "did somebody write something", not "which product was
+// this". Two things follow, and the second matters as much as the first:
+//
+//   kind 'gift'  only for send_gift, the R3 service that is explicitly a gift.
+//   kind 'note'  everything else. It reuses the same card, because a message
+//                deserves the same presentation, but it must NEVER call itself
+//                a gift. Money to a child for school lunch carries a note too,
+//                and captioning that "You've received a gift" would be the app
+//                inventing a sentiment nobody expressed.
+function transactionPersonalMessage(item = {}) {
   const code = String(item.service_code || item.serviceCode || "").toLowerCase().replace(/-/g, "_");
   const name = String(item.service_name || item.serviceName || "").toLowerCase();
-  if (code !== "send_gift" && name !== "send gift") return null;
   const metadata = item.metadata || {};
-  const occasion = metadata.customOccasion || metadata.custom_occasion || metadata.occasion || item.occasion || "";
-  const message = metadata.message || item.gift_message || item.giftMessage || "";
-  return { occasion: String(occasion || "").trim(), message: String(message || "").trim() };
+  const isGift = code === "send_gift" || name === "send gift";
+  const occasion = String(metadata.customOccasion || metadata.custom_occasion
+    || metadata.occasion || item.occasion || "").trim();
+  // `note` is what TitoKids stores; `message` is what Send a Gift stores.
+  const message = String(metadata.message || metadata.note
+    || item.gift_message || item.giftMessage || "").trim();
+  // Nothing written and no occasion means there is nothing to show, and an
+  // empty card would be worse than the plain row it replaced.
+  if (!message && !occasion) return null;
+  return {
+    kind: isGift ? "gift" : "note",
+    occasion: isGift ? occasion : "",
+    message,
+    // TitoKids names the child on the parent's copy, which is the difference
+    // between "Your message" and "Your message to Lesedi".
+    childName: String(metadata.childName || metadata.child_name || "").trim()
+  };
 }
 // The signed-in customer's own cellphone number, when the profile carries one.
 // Nothing is guessed: an absent number simply means no self-purchase shortcut.

@@ -1,0 +1,147 @@
+// DOES THE MESSAGE SOMEBODY WROTE ACTUALLY APPEAR?
+//
+// Reported with a screenshot: R500 sent for a birthday arrived as "Wallet
+// Transfer", "Money in", and nothing else. The message was not lost - it was
+// stored in the transaction's metadata and never rendered, because the detail
+// view's gift card was gated on the service being send_gift, and TitoKids
+// writes service_code 'wallet_transfer' with the note in metadata.
+//
+// Three things are checked here, and the third is the one that stops this fix
+// from becoming its own bug: a note is not a gift. Money sent to a child for
+// school lunch carries a note too, and captioning that "You've received a
+// gift" would have the app inventing a sentiment nobody expressed.
+const { chromium } = require("playwright");
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+
+const PWA = process.env.PWA_ROOT || path.join(__dirname, "..", "pwa");
+const PORT = 8193;
+const ORIGIN = `http://127.0.0.1:${PORT}`;
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
+  ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
+  ".ico": "image/x-icon", ".webmanifest": "application/manifest+json" };
+
+const USER = {
+  id: "dd110000-2222-4333-8444-555555555555",
+  fullName: "Gift Probe", username: "giftprobe",
+  email: "gift@titopay.local", phone: "+27820000777",
+  accountType: "personal", account_type: "personal", status: "active"
+};
+
+const NOW = new Date().toISOString();
+// Shaped exactly as the API returns them - a real send_gift row, and a real
+// TitoKids funding row with the metadata titokids-service actually writes.
+const TRANSACTIONS = [
+  { id: "t-gift", service_code: "send_gift", service_name: "Send Gift",
+    direction: "credit", amount: "500.00", total: "500.00", fee: "0.00",
+    status: "completed", reference: "TX-GIFT-0001", created_at: NOW,
+    metadata: { occasion: "Birthday", message: "Happy birthday Lesedi! Enjoy your day." } },
+  { id: "t-kids", service_code: "wallet_transfer", service_name: "Wallet Transfer",
+    direction: "debit", amount: "500.00", total: "500.00", fee: "0.00",
+    status: "completed", reference: "TKID-MU15FTT3", created_at: NOW,
+    metadata: { titokids: true, childName: "Lesedi", purpose: "funding",
+      note: "Happy birthday my girl, buy something nice." } },
+  { id: "t-plain", service_code: "wallet_transfer", service_name: "Wallet Transfer",
+    direction: "credit", amount: "120.00", total: "120.00", fee: "0.00",
+    status: "completed", reference: "TX-PLAIN-0003", created_at: NOW, metadata: {} }
+];
+
+const server = http.createServer((req, res) => {
+  const clean = decodeURIComponent(new URL(req.url, ORIGIN).pathname);
+  let file = path.join(PWA, clean === "/" ? "index.html" : clean);
+  if (!file.startsWith(PWA) || !fs.existsSync(file)) { res.writeHead(404); return res.end("no"); }
+  if (fs.statSync(file).isDirectory()) file = path.join(file, "index.html");
+  res.writeHead(200, { "Content-Type": TYPES[path.extname(file)] || "application/octet-stream" });
+  fs.createReadStream(file).pipe(res);
+});
+
+let bad = 0;
+const ok = (label, pass, detail) => {
+  if (!pass) bad += 1;
+  console.log(`  ${pass ? "PASS" : "FAIL"}  ${label}${detail !== undefined && detail !== "" ? ": " + detail : ""}`);
+};
+
+(async () => {
+  await new Promise((r) => server.listen(PORT, "127.0.0.1", r));
+  const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium", args: ["--no-sandbox"] });
+  const context = await browser.newContext({ viewport: { width: 430, height: 932 }, deviceScaleFactor: 2 });
+
+  await context.route("https://api.titopay.co.za/**", async (route) => {
+    const p = new URL(route.request().url()).pathname.replace(/^\/v1/, "");
+    const json = (body) => route.fulfill({ status: 200, contentType: "application/json",
+      body: JSON.stringify({ ok: true, ...body }) });
+    if (p === "/auth/me") return json({ user: USER });
+    if (p === "/wallets") return json({ items: [{ id: "w1", kind: "personal", currency: "ZAR",
+      available_balance: "1000.00", reserved_balance: "0.00", wallet_number: "1234567890", status: "active" }] });
+    if (p === "/transactions") return json({ items: TRANSACTIONS });
+    if (p === "/chat/notifications") return json({ notifications: [] });
+    return json({ items: [] });
+  });
+
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e.message)));
+  await page.addInitScript((user) => {
+    localStorage.setItem("titopay_candidate_auth_v1", JSON.stringify({
+      accessToken: "probe", refreshToken: "probe", user }));
+    localStorage.setItem("titopay_last_active_v1", String(Date.now()));
+  }, USER);
+  await page.goto(ORIGIN, { waitUntil: "load" });
+  await page.waitForSelector("[data-app-topbar]", { timeout: 30000 }).catch(() => null);
+  await page.waitForTimeout(1800);
+
+  async function openDetail(id) {
+    // Close whatever is open first, through the app's own closeModal, so the
+    // body scroll lock is released rather than left pinned.
+    await page.evaluate(() => { if (typeof closeModal === "function") closeModal(); });
+    await page.waitForTimeout(250);
+    await page.evaluate((key) => {
+      if (typeof openTransactionDetailModal === "function") openTransactionDetailModal(key);
+    }, id);
+    await page.waitForTimeout(500);
+    return page.evaluate(() => {
+      const card = document.querySelector(".gift-receipt-card");
+      if (!card) return { present: false, bodyText: document.body.innerText };
+      return {
+        present: true,
+        title: card.querySelector(".gift-receipt-title")?.textContent.trim() || "",
+        occasion: card.querySelector(".gift-receipt-occasion")?.textContent.trim() || "",
+        message: card.querySelector(".gift-receipt-message")?.textContent.trim() || "",
+        from: card.querySelector(".gift-receipt-from")?.textContent.trim() || ""
+      };
+    });
+  }
+
+  /* -------------------------------------------------- a real Send a Gift */
+  const gift = await openDetail("t-gift");
+  console.log("\n  a received gift");
+  ok("the gift card is shown", gift.present);
+  ok("it says a gift was received", /received a gift/i.test(gift.title || ""), gift.title);
+  ok("the occasion is shown", /birthday/i.test(gift.occasion || ""), gift.occasion);
+  ok("THE MESSAGE IS SHOWN", /Happy birthday Lesedi/.test(gift.message || ""), gift.message);
+
+  /* ------------------------------- the reported case: a TitoKids transfer */
+  const kids = await openDetail("t-kids");
+  console.log("\n  the reported case: money to a child, with a note");
+  ok("a card is shown at all", kids.present,
+    "this is the bug that was reported - it used to render nothing");
+  ok("THE NOTE IS SHOWN", /buy something nice/.test(kids.message || ""), kids.message);
+  ok("the child is named", /Lesedi/.test(kids.title || ""), kids.title);
+  // The fix must not overclaim. This transfer is not the R3 gift service.
+  ok("A NOTE IS NOT CALLED A GIFT", !/gift/i.test(kids.title || ""), kids.title);
+
+  /* ------------------------------------ an ordinary transfer, unchanged */
+  const plain = await openDetail("t-plain");
+  console.log("\n  an ordinary transfer with nothing written");
+  ok("no empty card is drawn", !plain.present,
+    plain.present ? "an empty card is worse than the plain row it replaced" : "");
+
+  ok("no page errors", errors.length === 0, errors.slice(0, 1).join(" | "));
+
+  await page.screenshot({ path: path.join(__dirname, "artifacts", "transaction-message.png") })
+    .catch(() => null);
+  await browser.close(); server.close();
+  console.log(bad ? `\n${bad} check(s) failed` : "\nall checks passed");
+  process.exit(bad ? 1 : 0);
+})().catch((error) => { console.error(error); process.exit(1); });
