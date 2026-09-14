@@ -26924,7 +26924,30 @@ function handleService(id) {
   if (service.action === "payouts") return openPayoutModal(service);
   if (service.action === "refund") return openRefundModal(service);
   if (service.action === "statements") return openStatementsModal();
-  if (["invoice", "quote", "proforma-invoice"].includes(service.action)) return openInvoiceDocumentModal(service);
+  // A BUSINESS DOCUMENT IS NOT A PAYMENT, AND MUST NEVER FALL THROUGH TO ONE.
+  //
+  // This dispatcher matched on `action` alone. `action` is a column in
+  // service_config, and ensureDefaultServices only seeds it when the catalogue
+  // is SHORT - on an installed database it takes the early return, so a row
+  // whose action is stale or blank is never repaired. When that happens the
+  // match fails and the tile falls all the way through to openTransactionModal
+  // at the end of this function, which is the money form.
+  //
+  // Reported from the app: "Create a proforma invoice" opened Transaction
+  // Review, offering to deduct R602.50 and telling the issuer "The recipient
+  // receives R600.00" - the business paying the customer it meant to bill.
+  // The server refuses that code, so no money could move, but a screen that
+  // asks somebody to confirm paying their own customer is not acceptable
+  // whatever the server does with it.
+  //
+  // So the service CODE is matched as well. A code is the row's identity and
+  // cannot drift the way a descriptive column can, which makes this correct
+  // even against a database nobody has repaired.
+  const documentService = ["invoice", "quote", "proforma-invoice"];
+  if (documentService.includes(service.action)
+    || documentService.includes(String(service.serviceCode || service.service_code || ""))) {
+    return openInvoiceDocumentModal(service);
+  }
   if (service.type === "learn") return openLearnModal();
   if (service.type === "stockvel") return openStockvelModal();
   if (service.type === "tip") return openTipModal();

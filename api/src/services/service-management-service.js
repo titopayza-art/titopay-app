@@ -284,6 +284,28 @@ async function applyServiceCopyFixups() {
       WHERE service_code = 'business-ticketing-staff'
         AND service_name = 'Ticketing Staff'`
   );
+  // THE ROW THAT SENT A DOCUMENT INTO THE MONEY FORM.
+  //
+  // The customer app dispatches a tile on service_config.action. ensureDefault
+  // Services only writes that column when the catalogue is SHORT, so on an
+  // installed database a row whose action is blank or stale is never repaired -
+  // and a document service that fails the match falls through to the generic
+  // transaction form. Reported from the app: "Create a proforma invoice"
+  // opened Transaction Review offering to deduct R602.50 and pay R600 to the
+  // customer being billed. createTransaction refuses these codes, so no money
+  // could move, but the screen should never have been reachable.
+  //
+  // For these three the action IS the service code, so the repair is exact
+  // rather than a guess. It is guarded twice: only where the action does not
+  // already match, and only where it is blank or equal to the code's own
+  // legacy spellings - so an action an operator set deliberately is left alone.
+  await pool.query(
+    `UPDATE service_config
+        SET action = service_code, updated_at = NOW()
+      WHERE service_code IN ('invoice', 'quote', 'proforma-invoice')
+        AND COALESCE(action, '') <> service_code
+        AND COALESCE(action, '') IN ('', 'none', 'transaction', 'proforma', 'proforma_invoice')`
+  );
   await openTicketsToBusinessOnce();
   await openBookToCustomersOnce();
   await openRewardsOnce();
