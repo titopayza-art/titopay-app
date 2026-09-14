@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v108";
+  return "admin-console-v109";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {

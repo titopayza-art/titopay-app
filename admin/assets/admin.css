@@ -5703,11 +5703,26 @@ html[data-theme="dark"] .debug-payload {
   background: #060c17;
 }
 
-/* The logo artwork has a white background, so on a dark surface give it a
-   deliberate plate rather than letting it read as a stray white rectangle. */
-/* The wordmark is type, so the dark theme only has to recolour it. */
+/* THE NIGHT WORDMARK, ON THE TWO SURFACES THAT GO DARK.
+   The rule here used to set `color`, from when the wordmark was live type.
+   It became an <img> and the recolour quietly stopped doing anything, so on a
+   dark panel the light artwork still rendered: "Tito" is #0a1f44 navy on a
+   #0e1626 panel, which disappears and leaves a wordmark reading "Pay".
+   An <img> cannot be recoloured, and src cannot be set from CSS, so the
+   artwork itself is swapped. `content` on a replaced element is the only way
+   to do that without duplicating the markup on both screens or waiting for
+   JavaScript, and if a browser ever ignores it the page simply looks the way
+   it does today rather than breaking.
+   Both files are 480x118, so nothing reflows - the height rules still pin the
+   scale. Scoped to the dark theme only: on the light surfaces these screens
+   normally use, the navy artwork is the correct one. */
 html[data-theme="dark"] .auth-panel-mark {
-  color: #f2f6fc;
+  content: url("titopay-logo-night.png?v=admin-console-v109");
+}
+/* The blocked screen sits on .auth-card, which is var(--tp-surface) - white in
+   the light theme and #111a2b in the dark one, so it had the same fault. */
+html[data-theme="dark"] .auth-blocked-wordmark {
+  content: url("titopay-logo-night.png?v=admin-console-v109");
 }
 
 /* == 14  Print and motion preferences ===================================== */
