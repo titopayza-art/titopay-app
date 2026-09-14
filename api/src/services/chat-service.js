@@ -129,14 +129,61 @@ async function getThreadByIdOrClientId(actor, threadRef) {
   return rows[0] || null;
 }
 
-async function getOrCreateThread(actor, payload = {}) {
+// A CLOSED CONVERSATION WAS A ONE-WAY DOOR.
+//
+// chat_threads.status is one of active, blocked or archived, and every path
+// here refused anything that was not active. Only one thing on the whole
+// platform ever writes a non-active value: the admin console's "close
+// conversation" action, which sets 'archived'. Nothing, anywhere, ever set a
+// thread back to 'active'.
+//
+// So closing a conversation from the console permanently silenced it. The
+// customer kept the thread in their app, could still see the history, and
+// every message they sent from then on came back 403 and rendered as "failed"
+// with "This conversation is not available" - with no way for them, or for an
+// agent, to undo it. Reported from the app after a chat that had been working
+// that morning stopped accepting messages.
+//
+// The two statuses are not the same thing and must not be treated the same:
+//
+//   blocked   a real refusal. It stays refused, in every direction. Somebody
+//             being blocked must never be able to write their way back in.
+//   archived  housekeeping - "this is dealt with, take it off my list". A
+//             participant writing again is exactly the signal that it is not
+//             dealt with, so the thread reopens, which is precisely what
+//             support_tickets already does when a customer replies to a
+//             resolved ticket.
+//
+// Reopening happens on the SEND path only. Merely opening the conversation to
+// read it leaves an archived thread archived, so an agent's tidy-up is not
+// undone by the customer glancing at their own history.
+function threadIsBlocked(thread) {
+  return String(thread?.status) === "blocked";
+}
+
+async function reopenArchivedThread(thread) {
+  if (String(thread?.status) !== "archived") return thread;
+  const { rows } = await pool.query(
+    `UPDATE chat_threads
+        SET status = 'active',
+            metadata = COALESCE(metadata, '{}'::JSONB)
+              || jsonb_build_object('reopened_at', NOW(), 'reopened_by', 'participant_message'),
+            updated_at = NOW()
+      WHERE id = $1 AND status = 'archived'
+      RETURNING *`,
+    [thread.id]
+  );
+  return rows[0] || thread;
+}
+
+async function getOrCreateThread(actor, payload = {}, { reopen = false } = {}) {
   await requireVerifiedChatActor(actor);
   const mode = normalizeThreadMode(payload.mode);
   const clientThreadId = boundedText(payload.threadId || payload.clientThreadId || "", "Thread ID", { min: 0, max: 160 }) || null;
   const existing = await getThreadByIdOrClientId(actor, clientThreadId);
   if (existing) {
-    if (existing.status !== "active") throw new AppError(403, "This conversation is not available");
-    return existing;
+    if (threadIsBlocked(existing)) throw new AppError(403, "This conversation is not available");
+    return reopen ? await reopenArchivedThread(existing) : existing;
   }
 
   const participant = await resolveParticipant(actor, payload);
@@ -290,7 +337,9 @@ async function listThreadMessages(actor, payload = {}) {
     thread = await getOrCreateThread(actor, payload);
   }
   if (!thread) return [];
-  if (thread.status !== "active") throw new AppError(403, "This conversation is not available");
+  // Blocked stays refused. Archived is readable - the history is the
+  // customer's own, and refusing it is what made a closed chat look broken.
+  if (threadIsBlocked(thread)) throw new AppError(403, "This conversation is not available");
 
   await markThreadRead(actor, { threadId: thread.id });
 
@@ -321,7 +370,10 @@ async function openThread(actor, payload = {}) {
 
 async function createMessage(actor, payload = {}) {
   const body = boundedText(payload.message || payload.text || payload.body, "Message", { min: 1, max: 4000 });
-  const thread = await getOrCreateThread(actor, payload);
+  // The one place a thread reopens: somebody actually wrote something.
+  // Deliberately NOT done in resolveChatTarget, which serves typing dots and
+  // call signalling - those must not undo an agent's tidy-up on their own.
+  const thread = await getOrCreateThread(actor, payload, { reopen: true });
   const recipientId = thread.participant_a === actor.userId ? thread.participant_b : thread.participant_a;
   const clientMessageId = boundedText(
     payload.localMessageId || payload.clientMessageId || payload.messageId || "",
@@ -427,7 +479,9 @@ async function markThreadRead(actor, payload = {}) {
   await requireVerifiedChatActor(actor);
   const thread = await getThreadByIdOrClientId(actor, payload.threadId || payload.clientThreadId);
   if (!thread) return [];
-  if (thread.status !== "active") throw new AppError(403, "This conversation is not available");
+  // Blocked stays refused. Archived is readable - the history is the
+  // customer's own, and refusing it is what made a closed chat look broken.
+  if (threadIsBlocked(thread)) throw new AppError(403, "This conversation is not available");
   const { rows } = await pool.query(
     `UPDATE chat_messages
      SET status = 'read',
