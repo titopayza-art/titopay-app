@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v109";
+  return "admin-console-v110";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -6864,7 +6864,7 @@ async function renderInboundMailbox(me={}) {
   host.innerHTML=`<section class="table-card"><h2>Inbound support mail</h2>
     <p class="table-card-note">Mail arriving at your support address is collected over IMAP and opened as a support ticket with its own reference. A message read this way is marked <strong>unverified</strong>: an agent may answer it, but must not change an account, disclose a balance, or act on an instruction from it until the customer confirms in the app. A From header is a claim anyone can make.</p>
     <form id="inbound-mailbox-form" class="form-grid">
-      <label>IMAP host<input name="host" placeholder="imap.titopay.co.za" value="${escapeHtml(s.host||"")}"></label>
+      <label>IMAP host<input name="host" placeholder="imap.gmail.com" value="${escapeHtml(s.host||"")}"></label>
       <label>Port<input name="port" type="number" min="1" max="65535" value="${escapeHtml(s.port||993)}"></label>
       <label>Username<input name="username" autocomplete="off" value="${escapeHtml(s.username||"")}"></label>
       <label>Password<input name="password" type="password" autocomplete="new-password" placeholder="${s.hasPassword?"Saved - leave blank to keep":"Required"}"></label>
@@ -6872,7 +6872,7 @@ async function renderInboundMailbox(me={}) {
       <label>Check every (seconds)<input name="pollSeconds" type="number" min="15" max="3600" value="${escapeHtml(s.pollSeconds||60)}"></label>
       <label>Messages per check<input name="maxMessagesPerPoll" type="number" min="1" max="200" value="${escapeHtml(s.maxMessagesPerPoll||25)}"></label>
       <label class="toggle-row"><input name="enabled" type="checkbox" ${s.enabled?"checked":""}>Collect support mail</label>
-      <p class="table-card-note field-full">The connection is always TLS on the mail server's secure port and the certificate is always verified; there is no setting to turn that off. Test the connection before switching collection on.</p>
+      <p class="table-card-note field-full">This must be your mail provider's IMAP server, not a hostname on your own domain. If your domain's mail is on Google Workspace the host is <code>imap.gmail.com</code> on port 993, the username is the full address, and the password must be an <strong>App Password</strong> &mdash; an ordinary account password is rejected. IMAP also has to be switched on for that mailbox. Note that a group or alias address has no mailbox of its own and cannot be collected from; point this at a real mailbox that receives the mail. The connection is always TLS on the secure port and the certificate is always verified; there is no setting to turn that off. Test the connection before switching collection on.</p>
       <div class="form-actions field-full">
         <button class="primary-btn" type="submit">Save inbound settings</button>
         <button class="secondary-btn" type="button" data-inbound-test>Test connection</button>
