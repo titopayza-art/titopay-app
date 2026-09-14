@@ -69,6 +69,24 @@ router.post("/:id/invitations", run(async (req, res) => {
   res.status(201).json({ ok: true, inviteCode: group.invite_code, message: `Share the invite code ${group.invite_code}. Joining happens under Join with a code.` });
 }));
 
+// The group's terms. Publishing is an organiser's; responding is every
+// member's, and every amendment is a new version that has to be answered
+// again.
+router.get("/:id/terms", run(async (req, res) => {
+  res.json({ ok: true, ...(await svc.getTerms(req.auth.userId, requireUuid(req.params.id, "Group ID"))) });
+}));
+router.post("/:id/terms", run(async (req, res) => {
+  res.status(201).json({ ok: true, terms: await svc.publishTerms(req.auth.userId, requireUuid(req.params.id, "Group ID"), req.body || {}) });
+}));
+router.get("/:id/terms/:termsId", run(async (req, res) => {
+  res.json({ ok: true, terms: await svc.getTermsVersion(req.auth.userId,
+    requireUuid(req.params.id, "Group ID"), requireUuid(req.params.termsId, "Terms ID")) });
+}));
+router.post("/:id/terms/:termsId/respond", run(async (req, res) => {
+  res.status(201).json({ ok: true, ...(await svc.respondToTerms(req.auth.userId,
+    requireUuid(req.params.id, "Group ID"), requireUuid(req.params.termsId, "Terms ID"), req.body || {})) });
+}));
+
 // Contributions: a member's transfer to the group's treasurer on the normal
 // transaction rails, counted on the group register via its metadata.
 router.get("/:id/contributions/preview", run(async (req, res) => {

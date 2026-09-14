@@ -4125,6 +4125,8 @@ async function onSubmit(event) {
     if (form.dataset.form === "business-product") await submitBusinessProduct(data);
     if (form.dataset.form === "ticket-claim") await submitTicketClaim(data);
     if (form.dataset.form === "stockvel-chat") await submitStockvelChat(data);
+    if (form.dataset.form === "stockvel-terms-respond") await submitStockvelTermsResponse(data, event);
+    if (form.dataset.form === "stockvel-terms-publish") await submitStockvelTermsPublish(data);
     if (form.dataset.form === "titokids-add") await submitTitoKidsAdd(data);
     if (form.dataset.form === "titokids-fund") await submitTitoKidsFund(data);
     if (form.dataset.form === "titokids-pay") await submitTitoKidsPay(data);
@@ -4571,6 +4573,16 @@ async function onClick(event) {
   const stockvelClose = event.target.closest("[data-stockvel-close]");
   if (stockvelClose) {
     openStockvelCloseModal(stockvelClose.dataset.stockvelClose);
+    return;
+  }
+  const stockvelTermsPublish = event.target.closest("[data-stockvel-terms-publish]");
+  if (stockvelTermsPublish) {
+    openStockvelTermsPublishModal(stockvelTermsPublish.dataset.stockvelTermsPublish);
+    return;
+  }
+  const stockvelTermsVersion = event.target.closest("[data-stockvel-terms-version]");
+  if (stockvelTermsVersion) {
+    await openStockvelTermsVersion(stockvelTermsVersion.dataset.stockvelTermsVersion);
     return;
   }
   const stockvelPrint = event.target.closest("[data-stockvel-statement-print]");
@@ -18051,6 +18063,15 @@ async function loadStockvelDetail(id) {
   try {
     const payload = await api(`${STOCKVEL_PATH}/${encodeURIComponent(id)}`);
     const group = normalizeStockvelGroup(payload.stockvel || payload.group || payload.data || payload);
+    // Terms are their own endpoint, and a group that has none is the normal
+    // case rather than an error - so a failure here leaves `terms` null and the
+    // section says "none published yet" instead of taking the whole group
+    // sheet down with it.
+    if (group) {
+      group.terms = await api(`${STOCKVEL_PATH}/${encodeURIComponent(id)}/terms`)
+        .then((result) => (result && result.current !== undefined ? result : null))
+        .catch(() => null);
+    }
     store.detail = group;
     store.detailStatus = group ? "ready" : "empty";
   } catch (error) {
@@ -18540,6 +18561,7 @@ function renderStockvelSection() {
     contributions: renderStockvelContributions,
     activity: renderStockvelActivity,
     withdrawals: renderStockvelWithdrawals,
+    terms: renderStockvelTerms,
     settings: renderStockvelSettings
   };
   host.innerHTML = (renderers[store.section] || renderStockvelOverview)(group, store);
@@ -18784,6 +18806,204 @@ function renderStockvelWithdrawals(group, store) {
       </article>`;
     }).join("")}</div>
     ${requestAction}`;
+}
+/* THE GROUP'S OWN RULES.
+   Published by an organiser, answered by every member, and answered AGAIN on
+   every amendment - an acceptance of version 1 is not an acceptance of
+   version 2, which is the whole reason a version number exists here.
+   Everything on this screen is the members' own wording. TitoPay records it;
+   it does not write, check or enforce it, and the screen says so. */
+function stockvelTermsTally(tally) {
+  if (!tally) return "";
+  const bits = [
+    `${tally.accepted} accepted`,
+    `${tally.rejected} rejected`,
+    tally.commented ? `${tally.commented} commented` : "",
+    tally.pending ? `${tally.pending} yet to answer` : ""
+  ].filter(Boolean);
+  return `<p class="tk-sub">${esc(bits.join(" · "))} — of ${tally.memberCount} member${tally.memberCount === 1 ? "" : "s"}</p>`;
+}
+function stockvelTermsResponseRow(item) {
+  const chip = item.decision === "accepted" ? "settled" : item.decision === "rejected" ? "failed" : "";
+  const label = item.decision === "accepted" ? "Accepted" : item.decision === "rejected" ? "Rejected" : "Comment";
+  return `<article class="sv-withdrawal">
+    <div class="sv-withdrawal-head">
+      <strong>${esc(item.name || item.username || "Member")}</strong>
+      <span class="chip ${esc(chip)}">${esc(label)}</span>
+    </div>
+    ${item.comment ? `<p class="sv-withdrawal-reason">${esc(item.comment)}</p>` : ""}
+    ${item.respondedAt ? `<small>${esc(stockvelDate(item.respondedAt))}</small>` : ""}
+  </article>`;
+}
+function renderStockvelTerms(group, store) {
+  const terms = group.terms || null;
+  const canPublish = Boolean(group.canManage);
+  const publishButton = canPublish
+    ? `<div class="tx-detail-actions">
+        <button class="btn ${terms && terms.current ? "secondary" : "primary"}" type="button" data-stockvel-terms-publish="${esc(group.id)}">
+          ${icon("document-invoice")} ${terms && terms.current ? "Publish an amendment" : "Publish the group's terms"}
+        </button>
+      </div>`
+    : "";
+
+  if (!terms || !terms.current) {
+    return `<section class="sv-empty compact">
+        <strong>No terms published yet</strong>
+        <p>${canPublish
+          ? "Write down what the group has agreed — the monthly amount, the payout order, what happens when somebody misses a month — and publish it. Every member is asked to accept, reject or comment."
+          : "Your organisers have not published the group's terms yet. When they do, you will be asked to accept, reject or comment."}</p>
+      </section>${publishButton}`;
+  }
+
+  const mine = terms.myResponse;
+  const current = terms.current;
+  return `
+    <section class="tk-card">
+      <div class="sv-withdrawal-head">
+        <strong>${esc(current.title)}</strong>
+        <span class="chip">Version ${esc(current.version)}</span>
+      </div>
+      <small>Published by ${esc(current.publishedBy)}${current.publishedAt ? ` · ${esc(stockvelDate(current.publishedAt))}` : ""}</small>
+      ${current.changeNote ? `<p class="field-hint"><strong>What changed:</strong> ${esc(current.changeNote)}</p>` : ""}
+      ${stockvelTermsTally(terms.tally)}
+      <pre class="sv-terms-body">${esc(current.body)}</pre>
+      <p class="field-hint">These are your group's own terms, written by its members. TitoPay records them and who responded — it does not write, check or enforce them.</p>
+    </section>
+    <section class="tk-card">
+      ${mine ? `<p class="tk-sub"><strong style="color:var(--text)">Your response:</strong> ${
+        mine.decision === "accepted" ? "Accepted" : mine.decision === "rejected" ? "Rejected" : "Commented"
+      }${mine.comment ? ` — “${esc(mine.comment)}”` : ""}. You can change it while this version stands.</p>`
+        : `<p class="tk-sub"><strong style="color:var(--text)">You have not responded yet.</strong> Accept, reject, or leave a comment for the group.</p>`}
+      <form class="form-grid" data-form="stockvel-terms-respond" style="margin-top:8px">
+        <input type="hidden" name="stockvelId" value="${esc(group.id)}">
+        <input type="hidden" name="termsId" value="${esc(current.id)}">
+        <div class="field">
+          <label for="sv-terms-comment">Comment <span class="field-optional">optional</span></label>
+          <textarea id="sv-terms-comment" name="comment" maxlength="2000" placeholder="Anything the group should know">${esc(mine?.comment || "")}</textarea>
+        </div>
+        <div class="tx-detail-actions">
+          <button class="btn primary" type="submit" name="decision" value="accepted">${icon("check-circle")} Accept</button>
+          <button class="btn ghost" type="submit" name="decision" value="rejected">Reject</button>
+          <button class="btn secondary" type="submit" name="decision" value="">Comment only</button>
+        </div>
+      </form>
+    </section>
+    ${terms.responses && terms.responses.length ? `
+      <section class="tk-card">
+        <p class="tk-sub"><strong style="color:var(--text)">What the group said</strong></p>
+        <div class="sv-card-list">${terms.responses.map(stockvelTermsResponseRow).join("")}</div>
+      </section>` : ""}
+    ${terms.history && terms.history.length ? `
+      <section class="tk-card">
+        <p class="tk-sub"><strong style="color:var(--text)">Earlier versions</strong> · what you agreed to before is kept exactly as it was</p>
+        <div class="sv-card-list">${terms.history.map((item) => `
+          <button class="sv-withdrawal" type="button" style="width:100%;text-align:left" data-stockvel-terms-version="${esc(item.id)}">
+            <div class="sv-withdrawal-head">
+              <strong>Version ${esc(item.version)}</strong>
+              <span class="chip">${esc(stockvelDate(item.publishedAt))}</span>
+            </div>
+            ${item.changeNote ? `<p class="sv-withdrawal-reason">${esc(item.changeNote)}</p>` : ""}
+            <small>Published by ${esc(item.publishedBy)}</small>
+          </button>`).join("")}</div>
+      </section>` : ""}
+    ${publishButton}`;
+}
+/* WHICH BUTTON WAS PRESSED IS THE ANSWER.
+   Accept, Reject and Comment only are three submit buttons on one form, so the
+   decision travels as the submitter's value rather than as a separate control
+   a member could leave unset. `event.submitter` is what distinguishes them;
+   FormData alone would not, because a form with several submit buttons only
+   carries the one that was actually pressed - and only in browsers that
+   populate it, which is why the submitter is read directly. */
+async function submitStockvelTermsResponse(data, event) {
+  const decision = event?.submitter?.value !== undefined ? event.submitter.value : (data.decision || "");
+  const comment = String(data.comment || "").trim();
+  if (!decision && !comment) throw new Error("Accept, reject, or leave a comment.");
+  await api(`${STOCKVEL_PATH}/${encodeURIComponent(data.stockvelId)}/terms/${encodeURIComponent(data.termsId)}/respond`, {
+    method: "POST",
+    body: { decision: decision || null, comment: comment || undefined }
+  });
+  showToast(decision === "accepted" ? "You accepted the group's terms."
+    : decision === "rejected" ? "You rejected the group's terms. The organisers have been told."
+      : "Your comment was sent to the group.");
+  await refreshStockvelDashboard(data.stockvelId);
+}
+function openStockvelTermsPublishModal(groupId) {
+  const group = activeStockvelGroup() || {};
+  const existing = group.terms && group.terms.current ? group.terms.current : null;
+  openModal(`
+    <div class="modal-head">
+      <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+      <div>
+        <p class="eyebrow">${esc(group.name || "Stokvel")}</p>
+        <h2>${existing ? "Publish an amendment" : "Publish the group's terms"}</h2>
+        <p class="lead">${existing
+          ? `This becomes version ${Number(existing.version) + 1}. Every member is asked to accept, reject or comment again — an acceptance of version ${esc(existing.version)} does not carry over.`
+          : "Write down what the group has agreed. Every member is asked to accept, reject or comment."}</p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="stockvel-terms-publish">
+      <input type="hidden" name="stockvelId" value="${esc(groupId)}">
+      <div class="field">
+        <label for="sv-terms-title">Title</label>
+        <input id="sv-terms-title" name="title" maxlength="140" value="${esc(existing?.title || "Stokvel terms and conditions")}">
+      </div>
+      ${existing ? `
+      <div class="field">
+        <label for="sv-terms-change">What changed</label>
+        <input id="sv-terms-change" name="changeNote" maxlength="600" required placeholder="e.g. Monthly contribution raised from R500 to R750">
+        <p class="field-hint">Members read this first. "Please read all of it again" is how amendments get accepted unread.</p>
+      </div>` : ""}
+      <div class="field">
+        <label for="sv-terms-body">Terms</label>
+        <textarea id="sv-terms-body" name="body" rows="12" maxlength="20000" required placeholder="1. Every member contributes R500 by the 7th of each month.&#10;2. Payouts rotate in the order members joined.&#10;3. ...">${esc(existing?.body || "")}</textarea>
+      </div>
+      <button class="btn primary" type="submit">${icon("document-invoice")} Publish${existing ? ` version ${Number(existing.version) + 1}` : ""}</button>
+    </form>
+    <section class="integration-note" aria-label="Whose terms these are">
+      <p>${icon("shield")} <span><strong>These are your group's terms.</strong> TitoPay records what you publish and who responds. It does not write them, check them, or enforce them, and a member who rejects them keeps full access to their money.</span></p>
+    </section>
+  `);
+}
+async function submitStockvelTermsPublish(data) {
+  const result = await api(`${STOCKVEL_PATH}/${encodeURIComponent(data.stockvelId)}/terms`, {
+    method: "POST",
+    body: {
+      title: data.title || undefined,
+      body: data.body,
+      changeNote: data.changeNote || undefined
+    }
+  });
+  showToast(`Version ${result.terms?.version ?? ""} published. Every member has been asked to respond.`.replace("  ", " "));
+  closeModal();
+  await refreshStockvelDashboard(data.stockvelId);
+}
+async function openStockvelTermsVersion(termsId) {
+  const group = activeStockvelGroup();
+  if (!group) return;
+  try {
+    const result = await api(`${STOCKVEL_PATH}/${encodeURIComponent(group.id)}/terms/${encodeURIComponent(termsId)}`);
+    const terms = result.terms || {};
+    openModal(`
+      <div class="modal-head">
+        <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
+        <div>
+          <p class="eyebrow">${esc(group.name || "Stokvel")} · superseded</p>
+          <h2>Version ${esc(terms.version)}</h2>
+          <p class="lead">Published by ${esc(terms.publishedBy || "an organiser")}${terms.publishedAt ? ` · ${esc(stockvelDate(terms.publishedAt))}` : ""}. Kept exactly as it was, so what you agreed to then is still readable.</p>
+        </div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      ${terms.changeNote ? `<p class="field-hint"><strong>What changed:</strong> ${esc(terms.changeNote)}</p>` : ""}
+      <pre class="sv-terms-body">${esc(terms.body || "")}</pre>
+      ${(terms.responses || []).length ? `
+        <p class="tk-sub" style="margin-top:12px"><strong style="color:var(--text)">What the group said at the time</strong></p>
+        <div class="sv-card-list">${terms.responses.map(stockvelTermsResponseRow).join("")}</div>` : ""}
+    `);
+  } catch (error) {
+    showToast(friendlyFormError(error, "stockvel"), "error");
+  }
 }
 function renderStockvelSettings(group, store) {
   const sections = [
@@ -29649,6 +29869,10 @@ const STOCKVEL_SECTIONS = [
   { key: "contributions", label: "Contributions" },
   { key: "activity", label: "Activity" },
   { key: "withdrawals", label: "Withdrawals" },
+  // The group's own constitution: published by an organiser, answered by every
+  // member, and re-answered on every amendment. Sits before Settings because
+  // it is something members act on, not something they configure.
+  { key: "terms", label: "Terms" },
   { key: "settings", label: "Settings" }
 ];
 const STOCKVEL_ACTIVITY_FILTERS = [

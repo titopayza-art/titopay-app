@@ -834,3 +834,8 @@ html[data-theme=night] .event-status-pill{color:#061a3d}
 .trust-strip{background:none;border:0;border-radius:0;box-shadow:none;gap:0 clamp(6px,2vw,14px);overflow:visible}
 .trust-item{background:none;min-height:0;padding:2px 4px;color:var(--muted);font-size:clamp(.7rem,1.9vw,.78rem);font-weight:700;letter-spacing:.01em}
 .trust-item svg{width:17px;height:17px;color:var(--blue-2)}
+/* The group's own terms, shown as written. Preserved line breaks matter: a
+   constitution is a numbered list, and collapsing it into a paragraph makes it
+   unreadable. Wrapped, never horizontally scrolled. */
+.sv-terms-body{white-space:pre-wrap;word-break:break-word;font:inherit;margin:10px 0 0;padding:12px;border-radius:12px;background:var(--surface-2,rgba(11,31,63,.04));color:var(--text);max-height:420px;overflow-y:auto}
+html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}

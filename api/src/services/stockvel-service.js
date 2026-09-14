@@ -84,6 +84,54 @@ function ensureStockvelSchema() {
           minutes TEXT,
           status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed'))
         )`);
+      // THE GROUP'S OWN RULES, AND WHO HAS AGREED TO THEM.
+      //
+      // A stokvel runs on a constitution the members write: what everyone pays
+      // in, when, what happens if somebody misses a month, how a payout is
+      // decided. Until now that lived in a WhatsApp group and in people's
+      // memory, which is exactly where arguments about money come from.
+      //
+      // These are the MEMBERS' terms, never TitoPay's. TitoPay records what was
+      // published and who responded; it does not draft, vet, advise on or
+      // enforce any of it - the same line the rest of this service holds.
+      //
+      // EVERY AMENDMENT IS A NEW VERSION, and that is the point. Replacing the
+      // text in place would leave a set of acceptances attached to wording
+      // nobody can now read, which is worse than having no record at all.
+      // Versions are immutable once published; responses hang off the version
+      // they were given for.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS stockvel_terms (
+          id UUID PRIMARY KEY,
+          group_id UUID NOT NULL REFERENCES stockvel_groups(id) ON DELETE CASCADE,
+          version INTEGER NOT NULL,
+          title TEXT NOT NULL DEFAULT 'Stokvel terms and conditions',
+          body TEXT NOT NULL,
+          change_note TEXT NOT NULL DEFAULT '',
+          published_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+          published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (group_id, version)
+        )`);
+      // One response per member per version. A member may change their mind
+      // while that version is current - people do, after a meeting - so this
+      // is an upsert rather than an append, and the moment it changed is kept.
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS stockvel_terms_responses (
+          id UUID PRIMARY KEY,
+          terms_id UUID NOT NULL REFERENCES stockvel_terms(id) ON DELETE CASCADE,
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          decision TEXT CHECK (decision IN ('accepted','rejected')),
+          comment TEXT NOT NULL DEFAULT '',
+          responded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (terms_id, user_id),
+          -- A row with neither a decision nor a comment says nothing and
+          -- would count as "responded" in every tally.
+          CHECK (decision IS NOT NULL OR comment <> '')
+        )`);
+      await pool.query(
+        "CREATE INDEX IF NOT EXISTS idx_stockvel_terms_group ON stockvel_terms (group_id, version DESC)"
+      );
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -534,6 +582,247 @@ async function decideWithdrawal(actorId, groupId, withdrawalId, approve) {
   }
 }
 
+/* ---- The group's terms, and who has agreed to them -------------------- */
+
+// PUBLISHED BY AN ORGANISER, ANSWERED BY EVERYONE.
+//
+// The ask was "members publish terms and members accept, reject and comment".
+// Publishing is held to organisers, because terms bind the whole group and a
+// single member issuing rules for everyone else is not a stokvel - it is how
+// one. Answering is every member's, including the organisers', so nobody is
+// recorded as having agreed to something they never saw.
+//
+// Immutable once published. An amendment is a NEW VERSION, never an edit:
+// editing in place would leave a set of acceptances attached to wording that
+// no longer exists, which is worse than keeping no record.
+async function publishTerms(actorId, groupId, payload = {}) {
+  await requireManager(groupId, actorId);
+  const title = payload.title
+    ? boundedText(payload.title, "Title", { min: 2, max: 140 })
+    : "Stokvel terms and conditions";
+  const body = boundedText(payload.body, "Terms", { min: 20, max: 20000 });
+  // What changed, in the publisher's own words. Optional on the first version
+  // - there is nothing to compare it to - and worth asking for on every
+  // amendment, because "please read all 4000 words again" is how amendments
+  // get accepted unread.
+  const changeNote = payload.changeNote
+    ? boundedText(payload.changeNote, "What changed", { min: 2, max: 600 })
+    : "";
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Serialised per group so two organisers publishing at the same moment
+    // cannot both claim the same version number.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`stokvel-terms:${groupId}`]);
+    const { rows: latest } = await client.query(
+      "SELECT COALESCE(MAX(version), 0) AS version FROM stockvel_terms WHERE group_id = $1", [groupId]);
+    const version = Number(latest[0].version) + 1;
+    const id = uuidv4();
+    await client.query(
+      `INSERT INTO stockvel_terms (id, group_id, version, title, body, change_note, published_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, groupId, version, title, body, changeNote, actorId]
+    );
+    await client.query("COMMIT");
+    // Everybody is told, including the other organisers. Nobody is asked to
+    // agree to something they were never shown.
+    await notifyMembers(groupId, actorId, {
+      notificationType: "stockvel_terms_published",
+      title: (group) => version === 1
+        ? `"${group.name}" published its terms`
+        : `"${group.name}" amended its terms (version ${version})`,
+      body: (group, who) => `${who} published ${version === 1 ? "the group's terms and conditions" : `version ${version} of the group's terms`}.${changeNote ? ` What changed: ${changeNote}.` : ""} Open Stokvel, choose ${group.name} and go to Terms to read it and record whether you accept it. These are the group's own terms - TitoPay does not write or enforce them.`,
+      metadata: { stockvelGroupId: String(groupId), termsId: id, version,
+        clientNotificationId: `stockvel-terms-${id}` }
+    });
+    return { id, version, title, changeNote, publishedAt: new Date().toISOString() };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// ACCEPT, REJECT, OR JUST SAY SOMETHING.
+//
+// A decision is optional so a member can raise a point without being forced to
+// agree or refuse first - which is what people actually do when terms land and
+// they have a question. A comment is optional on a decision for the same
+// reason in reverse. One or the other must be present; a response that carries
+// neither would count as "responded" in every tally while saying nothing.
+//
+// ONLY THE CURRENT VERSION can be answered. Once an amendment is published the
+// previous version is history: its responses are kept exactly as they were, and
+// nobody can quietly accept superseded wording.
+//
+// Rejecting does NOT block anything - not contributing, not withdrawing,
+// nothing. TitoPay records what the group decided; it does not adjudicate a
+// private agreement between members, and a platform that froze somebody's
+// savings over a rules dispute would be doing exactly that.
+async function respondToTerms(userId, groupId, termsId, payload = {}) {
+  await requireMember(groupId, userId);
+  const decision = payload.decision === undefined || payload.decision === null || payload.decision === ""
+    ? null
+    : String(payload.decision).toLowerCase();
+  if (decision !== null && !["accepted", "rejected"].includes(decision)) {
+    throw new AppError(400, "A response is either accepted or rejected");
+  }
+  const comment = payload.comment ? boundedText(payload.comment, "Comment", { min: 1, max: 2000 }) : "";
+  if (!decision && !comment) {
+    throw new AppError(400, "Accept, reject, or leave a comment.");
+  }
+  const { rows } = await pool.query(
+    `SELECT t.*, (t.version = (SELECT MAX(version) FROM stockvel_terms WHERE group_id = t.group_id)) AS is_current
+       FROM stockvel_terms t WHERE t.id = $1 AND t.group_id = $2`,
+    [termsId, groupId]
+  );
+  const terms = rows[0];
+  if (!terms) throw new AppError(404, "Those terms were not found");
+  if (!terms.is_current) {
+    throw new AppError(409, `Version ${terms.version} has been replaced. Open the current version and respond to that.`);
+  }
+  await pool.query(
+    `INSERT INTO stockvel_terms_responses (id, terms_id, user_id, decision, comment)
+     VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (terms_id, user_id) DO UPDATE
+       SET decision = EXCLUDED.decision, comment = EXCLUDED.comment, updated_at = NOW()`,
+    [uuidv4(), termsId, userId, decision, comment]
+  );
+  // Required here rather than at the top: this service has never imported the
+  // audit writer, and adding a module-level require to a file that other
+  // services require back would be a new cycle for one log line.
+  await require("./audit-service").writeAuditLog({
+    actorType: "customer", actorId: userId, action: "stockvel_terms_response",
+    entityType: "stockvel_terms", entityId: termsId,
+    metadata: { groupId: String(groupId), version: terms.version, decision }
+  }).catch(() => {});
+  // The organisers are told, because a rejection or a question is the whole
+  // reason to publish terms rather than announce them.
+  await notifyOrganisers(groupId, userId, {
+    notificationType: "stockvel_terms_response",
+    title: (group, who) => decision === "rejected"
+      ? `${who} rejected the terms of "${group.name}"`
+      : decision === "accepted"
+        ? `${who} accepted the terms of "${group.name}"`
+        : `${who} commented on the terms of "${group.name}"`,
+    body: (group, who) => `${who} responded to version ${terms.version}.${comment ? ` "${comment}"` : ""} Open Terms in ${group.name} to see where the group stands.`,
+    metadata: { stockvelGroupId: String(groupId), termsId, version: terms.version,
+      clientNotificationId: `stockvel-terms-response-${termsId}-${userId}` }
+  });
+  return { termsId, version: terms.version, decision, comment };
+}
+
+// Everything a member needs to decide: the current wording, where the group
+// stands on it, what everybody said, and the amendments that came before.
+async function getTerms(userId, groupId) {
+  await requireMember(groupId, userId);
+  const { rows: versions } = await pool.query(
+    `SELECT t.*, u.full_name AS published_by_name
+       FROM stockvel_terms t JOIN users u ON u.id = t.published_by
+      WHERE t.group_id = $1 ORDER BY t.version DESC LIMIT 50`,
+    [groupId]
+  );
+  if (!versions.length) return { current: null, history: [], memberCount: 0 };
+  const current = versions[0];
+  const { rows: responses } = await pool.query(
+    `SELECT r.*, u.full_name AS name, u.username
+       FROM stockvel_terms_responses r JOIN users u ON u.id = r.user_id
+      WHERE r.terms_id = $1 ORDER BY r.updated_at DESC`,
+    [current.id]
+  );
+  const { rows: memberRows } = await pool.query(
+    "SELECT COUNT(*)::int AS count FROM stockvel_members WHERE group_id = $1 AND status = 'active'",
+    [groupId]
+  );
+  const memberCount = memberRows[0].count;
+  const accepted = responses.filter((row) => row.decision === "accepted").length;
+  const rejected = responses.filter((row) => row.decision === "rejected").length;
+  const mine = responses.find((row) => row.user_id === userId) || null;
+  return {
+    current: {
+      id: current.id, version: current.version, title: current.title, body: current.body,
+      changeNote: current.change_note, publishedBy: current.published_by_name,
+      publishedAt: current.published_at
+    },
+    // Counted against the membership, not against the responses, so "3 of 8"
+    // reads honestly instead of "3 of 3" when five people have said nothing.
+    tally: { accepted, rejected, commented: responses.filter((row) => !row.decision && row.comment).length,
+      responded: responses.length, memberCount, pending: Math.max(0, memberCount - responses.length) },
+    myResponse: mine ? { decision: mine.decision, comment: mine.comment, respondedAt: mine.updated_at } : null,
+    responses: responses.map((row) => ({
+      name: row.name, username: row.username, decision: row.decision,
+      comment: row.comment, respondedAt: row.updated_at
+    })),
+    history: versions.slice(1).map((row) => ({
+      id: row.id, version: row.version, title: row.title, changeNote: row.change_note,
+      publishedBy: row.published_by_name, publishedAt: row.published_at
+    }))
+  };
+}
+
+// One superseded version in full, so "what did I actually agree to in March"
+// has an answer.
+async function getTermsVersion(userId, groupId, termsId) {
+  await requireMember(groupId, userId);
+  const { rows } = await pool.query(
+    `SELECT t.*, u.full_name AS published_by_name
+       FROM stockvel_terms t JOIN users u ON u.id = t.published_by
+      WHERE t.id = $1 AND t.group_id = $2`,
+    [termsId, groupId]
+  );
+  const terms = rows[0];
+  if (!terms) throw new AppError(404, "Those terms were not found");
+  const { rows: responses } = await pool.query(
+    `SELECT r.decision, r.comment, r.updated_at, u.full_name AS name, u.username
+       FROM stockvel_terms_responses r JOIN users u ON u.id = r.user_id
+      WHERE r.terms_id = $1 ORDER BY r.updated_at DESC`,
+    [termsId]
+  );
+  return {
+    id: terms.id, version: terms.version, title: terms.title, body: terms.body,
+    changeNote: terms.change_note, publishedBy: terms.published_by_name,
+    publishedAt: terms.published_at,
+    responses: responses.map((row) => ({
+      name: row.name, username: row.username, decision: row.decision,
+      comment: row.comment, respondedAt: row.updated_at
+    }))
+  };
+}
+
+// Every active member except one person. Same shape as notifyOrganisers, and
+// never throws for the same reason: a notification that cannot be delivered
+// must not fail the thing it is describing.
+async function notifyMembers(groupId, exceptUserId, { notificationType, title, body, metadata }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT sm.user_id, g.name
+         FROM stockvel_members sm
+         JOIN stockvel_groups g ON g.id = sm.group_id
+        WHERE sm.group_id = $1 AND sm.status = 'active'`,
+      [groupId]
+    );
+    if (!rows.length) return;
+    const { rows: actorRows } = await pool.query(
+      "SELECT full_name, username FROM users WHERE id = $1", [exceptUserId]);
+    const who = actorRows[0]?.full_name || `@${actorRows[0]?.username || "A member"}`;
+    const group = { name: rows[0].name };
+    const { createNotification } = require("./notification-service");
+    for (const row of rows) {
+      if (row.user_id === exceptUserId) continue;
+      await createNotification({
+        user: { id: row.user_id, user_type: "customer" },
+        channel: "in_app", notificationType, provider: "in_app",
+        title: title(group, who),
+        body: body(group, who),
+        metadata: { ...metadata, clientNotificationId: `${metadata.clientNotificationId}-${row.user_id}` }
+      }).catch(() => {});
+    }
+  } catch (error) {
+    console.error("[stokvel] could not notify members", { groupId, message: error.message });
+  }
+}
+
 /* ---- Group chat and meeting minutes ---------------------------------- */
 
 async function listMessages(userId, groupId, { limit = 100 } = {}) {
@@ -842,6 +1131,10 @@ module.exports = {
   deleteGroup,
   requestWithdrawal,
   decideWithdrawal,
+  publishTerms,
+  respondToTerms,
+  getTerms,
+  getTermsVersion,
   listMessages,
   postMessage,
   markDecision,

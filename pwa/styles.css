@@ -16175,3 +16175,8 @@ button.is-busy.btn-primary::after {
     min-height: 58px;
   }
 }
+/* The group's own terms, shown as written. Preserved line breaks matter: a
+   constitution is a numbered list, and collapsing it into a paragraph makes it
+   unreadable. Wrapped, never horizontally scrolled. */
+.sv-terms-body{white-space:pre-wrap;word-break:break-word;font:inherit;margin:10px 0 0;padding:12px;border-radius:12px;background:var(--surface-2,rgba(11,31,63,.04));color:var(--text);max-height:420px;overflow-y:auto}
+html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
