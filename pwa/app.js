@@ -11216,8 +11216,12 @@ function loadEnterpriseCsvFile(file) {
   reader.onerror = () => showToast("Could not read that file.", "error");
   reader.readAsText(file);
 }
-function documentKindConfig(action) {
-  return DOCUMENT_KINDS[action] || DOCUMENT_KINDS.invoice;
+// The fallback is a parameter so a caller can ASK whether a key names a real
+// document kind - passing null - rather than being handed an invoice and
+// having no way to tell that it was a guess. Every existing caller keeps the
+// old behaviour by omitting it.
+function documentKindConfig(action, fallback = DOCUMENT_KINDS.invoice) {
+  return DOCUMENT_KINDS[action] || fallback;
 }
 function documentItemRow() {
   documentRowSequence += 1;
@@ -11373,7 +11377,20 @@ function openSavedBusinessDocument(id) {
   openBusinessDocumentSavedModal(record, { total: record.totals?.total || 0 });
 }
 function openInvoiceDocumentModal(service) {
-  const action = service.action || "invoice";
+  // WHICH DOCUMENT IS THIS, REALLY?
+  //
+  // `action` used to decide, with "invoice" as the fallback. A stale or blank
+  // action in service_config therefore did not just misroute the tile - once
+  // routing was fixed, it silently rendered a QUOTE AS AN INVOICE. That is not
+  // a cosmetic slip: a quote is an offer and carries "not a request for
+  // payment", while an invoice demands it. Handing a customer the wrong one
+  // misstates what they owe.
+  //
+  // The service code is the row's identity and cannot drift, so it decides
+  // first; `action` remains the fallback for any caller that passes one
+  // without a code.
+  const code = String(service.serviceCode || service.service_code || "");
+  const action = documentKindConfig(code, null) ? code : (service.action || "invoice");
   const config = documentKindConfig(action);
   const kind = config.kind;
   const businessName = businessProfileName();
