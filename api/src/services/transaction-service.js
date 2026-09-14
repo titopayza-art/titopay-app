@@ -934,17 +934,74 @@ const POSTED_LEDGER_LATERAL = `
     WHERE wl.transaction_id = t.id AND wl.wallet_id = t.wallet_id
   ) posted ON TRUE`;
 
+// MONEY THAT ARRIVED IS ACTIVITY TOO.
+//
+// A peer transfer writes ONE transactions row - the sender's debit - and a
+// wallet_ledger credit for the person receiving it. This list only ever read
+// transactions, so the receiver's Activity showed nothing at all: their
+// balance went up, the money-flow chart above the list counted it (that chart
+// already reads the ledger), and the list underneath stayed empty. Reported
+// after a gift was sent and the person it was sent to could not find it.
+//
+// The second half of this query is those arrivals. It is a READ, and
+// deliberately so: the alternative was manufacturing a transactions row for
+// the receiver, which would have put a money path at risk to solve a display
+// problem - the ledger credit is keyed to the SENDER's transaction id, and
+// reverseTransaction finds both legs by that id.
+//
+// Two things keep it honest:
+//
+//   NOTHING IS COUNTED TWICE. The join excludes any ledger entry whose
+//   transaction already belongs to this user, so a row a person owns is never
+//   also synthesised from its own posting.
+//
+//   THE SENDER'S METADATA IS NOT HANDED OVER. It carries idempotency keys, fee
+//   splits and whatever the sending flow put there. Only an explicit allowlist
+//   crosses - the occasion, the message and who it came from - which is what a
+//   received gift needs to render and nothing else.
 async function listTransactionsForUser(userId) {
   const { rows } = await pool.query(
-    `SELECT t.*, pr.service_name, (t.metadata->>'netAmount')::NUMERIC AS net_amount,
-            (posted.entry_count > 0) AS wallet_posted,
-            posted.entry_count AS ledger_entry_count,
-            posted.net_posted AS posted_amount
-     FROM transactions t
-     LEFT JOIN pricing_rules pr ON pr.service_code = t.service_code
-     ${POSTED_LEDGER_LATERAL}
-     WHERE t.user_id = $1
-     ORDER BY t.created_at DESC
+    `SELECT * FROM (
+       SELECT t.id, t.user_id, t.wallet_id, t.service_code, t.amount, t.fee, t.total,
+              t.status, t.direction, t.reference, t.recipient_reference, t.metadata,
+              t.created_at,
+              pr.service_name, (t.metadata->>'netAmount')::NUMERIC AS net_amount,
+              (posted.entry_count > 0) AS wallet_posted,
+              posted.entry_count AS ledger_entry_count,
+              posted.net_posted AS posted_amount
+       FROM transactions t
+       LEFT JOIN pricing_rules pr ON pr.service_code = t.service_code
+       ${POSTED_LEDGER_LATERAL}
+       WHERE t.user_id = $1
+
+       UNION ALL
+
+       -- Money somebody else sent to this wallet. A posted credit IS settled,
+       -- so it is reported as completed with the exact figure that landed.
+       SELECT wl.id, $1::UUID AS user_id, wl.wallet_id, src.service_code,
+              ABS(wl.amount) AS amount, 0::NUMERIC AS fee, ABS(wl.amount) AS total,
+              'completed' AS status, 'credit' AS direction, wl.reference,
+              NULL AS recipient_reference,
+              jsonb_build_object(
+                'incoming', TRUE,
+                'occasion', src.metadata->>'occasion',
+                'customOccasion', src.metadata->>'customOccasion',
+                'message', src.metadata->>'message',
+                'note', src.metadata->>'note',
+                'fromName', COALESCE(NULLIF(sender.full_name, ''), NULLIF('@' || sender.username, '@'))
+              ) AS metadata,
+              wl.created_at,
+              pr2.service_name, ABS(wl.amount) AS net_amount,
+              TRUE AS wallet_posted, 1 AS ledger_entry_count, ABS(wl.amount) AS posted_amount
+       FROM wallet_ledger wl
+       JOIN wallets w ON w.id = wl.wallet_id AND w.user_id = $1
+       JOIN transactions src ON src.id = wl.transaction_id
+       LEFT JOIN users sender ON sender.id = src.user_id
+       LEFT JOIN pricing_rules pr2 ON pr2.service_code = src.service_code
+       WHERE wl.entry_type = 'credit'
+         AND src.user_id <> $1
+     ) activity
+     ORDER BY created_at DESC
      LIMIT 100`,
     [userId]
   );
