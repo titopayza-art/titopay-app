@@ -11,6 +11,26 @@ const { AppError } = require("../lib/errors");
 const { boundedText } = require("../lib/validation");
 const { queueRawEmail } = require("./email-centre-service");
 const { shouldSendCustomerEmail } = require("./customer-notification-preference-service");
+const { config } = require("../config/env");
+const { supportReplyAddress } = require("../lib/support-verp");
+
+// The per-ticket reply address, or nothing at all.
+//
+// Returns undefined - not a throw, and not a broken address - whenever the
+// feature is off, the secret is missing, or the ticket has no reference. Every
+// one of those is a reason to send the email with the ordinary reply address,
+// never a reason to fail a customer's support reply. A support mail that does
+// not go out is a worse outcome than one a customer cannot thread.
+function buildSupportReplyTo(ticketRef) {
+  try {
+    const email = config.integrations.email;
+    if (!email.supportReplyAddressing) return undefined;
+    return supportReplyAddress(ticketRef, email.replyTo, email.supportReplySecret) || undefined;
+  } catch (error) {
+    console.error("[support] could not build a per-ticket reply address", { message: error.message });
+    return undefined;
+  }
+}
 
 let schemaReady = null;
 function ensureSupportReplySchema() {
@@ -154,6 +174,7 @@ async function notifyCustomerOfReply(ticket, reply) {
     if (!account?.email) return;
     if (!(await shouldSendCustomerEmail(ticket.user_id, "support"))) return;
     const reference = ticket.ticket_ref || ticket.id;
+    const supportReplyTo = buildSupportReplyTo(ticket.ticket_ref);
     const safeReply = emailSafe(reply.message);
     const safeOriginal = emailSafe(ticket.message).slice(0, 600);
     await queueRawEmail({
@@ -183,7 +204,27 @@ async function notifyCustomerOfReply(ticket, reply) {
       ].join("\n"),
       userId: ticket.user_id,
       idempotencyKey: `support-reply-email:${reply.id}`,
-      metadata: { ticketId: ticket.id, replyId: reply.id }
+      // TWO ADDITIONS, AND ONLY ONE OF THEM CHANGES WHAT THE CUSTOMER SEES.
+      //
+      // ticketRef is recorded unconditionally. email_queue already stores the
+      // provider's message id once a mail is sent, so this is the other half
+      // of the pair: it makes "which ticket was this email about" answerable
+      // from the queue. An inbound reply quotes that message id in its
+      // In-Reply-To header, so recording this now is what lets threading work
+      // properly later - and it costs nothing to start recording today.
+      //
+      // replyTo is the behaviour change, and it only appears when
+      // SUPPORT_REPLY_ADDRESSING is switched on. Off - the default - this is
+      // undefined, the global reply-to applies, and the mail is byte for byte
+      // what it was before. See config/env.js for why it ships off: a mail
+      // server that rejects plus-addressing would bounce the reply, which is
+      // worse than the silence it replaces.
+      metadata: {
+        ticketId: ticket.id,
+        replyId: reply.id,
+        ticketRef: ticket.ticket_ref || null,
+        ...(supportReplyTo ? { replyTo: supportReplyTo } : {})
+      }
     });
   } catch (error) {
     // The reply itself is saved and visible in the app; a mail hiccup must

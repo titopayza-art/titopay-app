@@ -254,6 +254,41 @@ const config = {
       fromAddress: process.env.EMAIL_FROM_ADDRESS || "no-reply@notify.titopay.co.za",
       fromName: process.env.EMAIL_FROM_NAME || "TitoPay",
       replyTo: process.env.EMAIL_REPLY_TO || "support@titopay.co.za",
+      // PER-TICKET REPLY ADDRESSES, OFF UNTIL THE MAILBOX IS KNOWN TO TAKE THEM.
+      //
+      // With this on, a Customer Care reply goes out with
+      // Reply-To: support+TP123456.<tag>@titopay.co.za so the customer's reply
+      // carries its own ticket number (see lib/support-verp.js). That is what
+      // makes an inbound reply routable instead of lost.
+      //
+      // It defaults to FALSE on purpose. Plus-addressing has to be accepted by
+      // whatever mail server holds the support mailbox, and if it is not, the
+      // reply BOUNCES - which is worse than today, where it is merely
+      // invisible. Turn it on only after sending a test message to
+      // support+TEST.00000000@titopay.co.za and confirming it arrives.
+      //
+      // The secret signs the ticket reference so nobody can post into a
+      // stranger's support thread by guessing a number. It falls back to the
+      // refresh secret so an installation that sets no new variable still gets
+      // a signed address rather than an unsigned one; set it explicitly if the
+      // refresh secret is ever rotated, or existing reply addresses stop
+      // matching.
+      // EXPLICIT OPT-IN, not booleanFromEnv.
+      //
+      // booleanFromEnv reads `process.env[name] ?? fallback`, and an empty
+      // string is not nullish - so SUPPORT_REPLY_ADDRESSING= on its own line
+      // in a .env file, the commonest way there is to write "I will fill this
+      // in later", evaluates to TRUE and switches the feature on. For most
+      // flags that is a shrug. For this one it silently changes the Reply-To
+      // on live customer email, and if the mailbox rejects plus-addressing
+      // every reply then bounces.
+      //
+      // The shared helper is left exactly as it is: dozens of settings read it
+      // and changing what it means would move all of them at once. This flag
+      // simply asks for a real yes.
+      supportReplyAddressing: ["true", "1", "yes", "on"]
+        .includes(String(process.env.SUPPORT_REPLY_ADDRESSING || "").trim().toLowerCase()),
+      supportReplySecret: process.env.SUPPORT_REPLY_SECRET || process.env.JWT_REFRESH_SECRET || "",
       smtpHost: process.env.SMTP_HOST || "",
       smtpPort: numberFromEnv("SMTP_PORT", 587),
       smtpSecure: booleanFromEnv("SMTP_SECURE", false),
