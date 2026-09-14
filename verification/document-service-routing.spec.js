@@ -128,6 +128,69 @@ const ok = (label, pass, detail) => {
   });
   ok("a correct action still opens the document screen", /Create an invoice/i.test(healthy), healthy);
 
+  /* ------------------- and when a refusal DOES reach the failure screen */
+  //
+  // Routing now keeps documents away from the money form, but other services
+  // the platform has not launched still answer 503 through other paths. That
+  // screen used to say "Please try again later" for a refusal that will never
+  // succeed by waiting, and send the customer to Activity to look for a
+  // transaction that was never submitted.
+  const failures = await page.evaluate(async () => {
+    const read = () => {
+      const card = document.querySelector(".modal-card");
+      return {
+        message: card?.querySelector(".failure-message")?.textContent.trim() || "",
+        guidance: card?.querySelector(".failure-guidance")?.textContent.trim() || "",
+        offersActivity: Boolean(card?.querySelector('[data-action="failure-view-activity"]'))
+      };
+    };
+    const out = {};
+    // Exactly what the API throws: AppError(503, providerPendingMessage(...)).
+    if (typeof closeModal === "function") closeModal();
+    await new Promise((r) => setTimeout(r, 150));
+    openTransactionFailureModal(null, { status: 503,
+      message: "Invoice is not enabled for live processing yet. No wallet debit was made." });
+    await new Promise((r) => setTimeout(r, 300));
+    out.refused = read();
+
+    // A GENUINE transient failure must keep the advice that stops double
+    // payment - removing it for everything would be a worse bug than the one
+    // being fixed.
+    closeModal();
+    await new Promise((r) => setTimeout(r, 150));
+    openTransactionFailureModal(null, { status: 408, timedOut: true, message: "timeout" });
+    await new Promise((r) => setTimeout(r, 300));
+    out.timedOut = read();
+
+    // And a real outage - a 503 WITHOUT the refusal wording - still gets
+    // "try again later", because for an outage that is the right advice.
+    closeModal();
+    await new Promise((r) => setTimeout(r, 150));
+    openTransactionFailureModal(null, { status: 503, message: "upstream temporarily unavailable" });
+    await new Promise((r) => setTimeout(r, 300));
+    out.outage = read();
+    return out;
+  });
+
+  console.log("\n  a service that is not switched on");
+  ok("THE REAL REASON IS SHOWN, NOT 'try again later'",
+    /not enabled for live processing/i.test(failures.refused.message),
+    failures.refused.message);
+  ok("it does not tell them to retry", !/try again later/i.test(failures.refused.message));
+  ok("it says this is not something to retry",
+    /not something to retry/i.test(failures.refused.guidance));
+  ok("IT DOES NOT SEND THEM HUNTING IN ACTIVITY", !failures.refused.offersActivity,
+    "nothing was submitted, so there is nothing there to find");
+
+  console.log("\n  and the advice that prevents double payment is untouched");
+  ok("a timeout still says check Activity first",
+    /Check Activity/i.test(failures.timedOut.guidance) || /Check Activity/i.test(failures.timedOut.message),
+    failures.timedOut.message);
+  ok("a timeout still offers Check Activity", failures.timedOut.offersActivity);
+  ok("a REAL outage still says try again later",
+    /try again later/i.test(failures.outage.message), failures.outage.message);
+  ok("a real outage still offers Check Activity", failures.outage.offersActivity);
+
   ok("no page errors", errors.length === 0, errors.slice(0, 1).join(" | "));
 
   await browser.close(); server.close();

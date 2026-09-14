@@ -9245,6 +9245,19 @@ function openTransactionEditModal(context) {
 // server logs and the Admin Portal, where an authorised operator can see them.
 function openTransactionFailureModal(message, error = null) {
   const safeMessage = error ? paymentErrorMessage(error) : String(message || PAYMENT_FALLBACK_MESSAGE);
+  // THE ADVICE HAS TO MATCH THE FAILURE.
+  //
+  // The guidance below exists for an AMBIGUOUS failure - a timeout, a dropped
+  // connection - where the payment may or may not have reached TitoPay, so
+  // "check Activity before trying again" is exactly right and stops somebody
+  // paying twice.
+  //
+  // It is wrong for a refusal. When the API says a service is not enabled,
+  // nothing was submitted, there is nothing to find in Activity, and sending
+  // somebody to look for it is a small false alarm on top of a dead end.
+  // Contacting support is the only useful next step, so it becomes the primary
+  // action and Check Activity is not offered at all.
+  const refused = error ? isPermanentServiceRefusal(error) : false;
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">Not confirmed</p><h2>Transaction not confirmed</h2></div>
@@ -9252,11 +9265,13 @@ function openTransactionFailureModal(message, error = null) {
     </div>
     <section class="failure-panel" aria-label="Transaction failure details">
       <p class="failure-message">${esc(safeMessage)}</p>
-      <p class="failure-guidance">Nothing was charged and your wallet is unchanged. Check Activity before trying again. If the transaction appears there, it was received by TitoPay and you should not submit it a second time.</p>
+      <p class="failure-guidance">${refused
+        ? "Nothing was charged and your wallet is unchanged. This is not something to retry - the service has not been switched on yet. Contact support if you need it."
+        : "Nothing was charged and your wallet is unchanged. Check Activity before trying again. If the transaction appears there, it was received by TitoPay and you should not submit it a second time."}</p>
     </section>
     <div class="tx-detail-actions">
-      <button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} Check Activity</button>
-      <button class="btn secondary" type="button" data-action="support">${icon("send")} Contact support</button>
+      ${refused ? "" : `<button class="btn primary" type="button" data-action="failure-view-activity">${icon("list")} Check Activity</button>`}
+      <button class="btn ${refused ? "primary" : "secondary"}" type="button" data-action="support">${icon("send")} Contact support</button>
       <button class="btn ghost" type="button" data-close>Close</button>
     </div>
   `);
@@ -9791,6 +9806,17 @@ function withdrawalDestinationRow(context) {
     </section>
   `;
 }
+// A service the platform has not launched, answered as 503 by the API.
+//
+// Matched on the sentence the API deliberately ends these refusals with
+// rather than on the service code, because the list of unlaunched services
+// lives on the server and a copy here would drift out of date - which is how
+// the tile catalogue and the transaction engine disagreed before.
+function isPermanentServiceRefusal(error) {
+  const message = String(error?.message || "");
+  return /No wallet debit was made/i.test(message)
+    && /not enabled for live processing/i.test(message);
+}
 // Recognised by shape rather than code, in the order they must be checked.
 function paymentErrorMessage(error) {
   const code = String(error?.details?.code || error?.code || "");
@@ -9811,6 +9837,23 @@ function paymentErrorMessage(error) {
   const serverMessage = String(error?.message || "").trim();
   if ([400, 402, 403, 404, 409].includes(status) && serverMessage.length > 12 && !/^https?:/i.test(serverMessage)) {
     return serverMessage;
+  }
+  // A REFUSAL THAT WILL NEVER SUCCEED IS NOT A 503 TO WAIT OUT.
+  //
+  // The API answers 503 when a service is not enabled for live processing - a
+  // permanent state, not a passing outage - and 503 is not in the 4xx list
+  // above, so the customer was told "Please try again later" for something
+  // that will never work by waiting. Reported after Invoice, Quote and
+  // Proforma each ended on that screen.
+  //
+  // The API's status stays exactly as it is: tests pin it and monitoring
+  // reads it. What changes is that its sentence is shown rather than
+  // swallowed. Recognised by the reassurance the API deliberately writes into
+  // these particular messages, so a genuine transient 503 - a provider
+  // outage, a proxy - still gets "try again later", which for those IS the
+  // right advice.
+  if (status === 503 && isPermanentServiceRefusal(error)) {
+    return String(error?.message || "").trim();
   }
   if (error?.timedOut || status === 408) {
     return "This is taking longer than usual. Check Activity before trying again. If it appears there, it went through.";
