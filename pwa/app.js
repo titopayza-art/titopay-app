@@ -9307,6 +9307,33 @@ async function confirmReviewedTransaction() {
       await startWithdrawal(context);
       return;
     }
+    // WRITING A DOCUMENT IS NOT A PAYMENT, SO IT DOES NOT NEED ONE TO SUCCEED.
+    //
+    // The invoice, quote and proforma form carries data-form="transaction",
+    // so it posted to /v1/transactions and only saved the document AFTER that
+    // returned. The service codes it sends - invoice, quote, proforma-invoice -
+    // are refused 503 by createTransaction ("not enabled for live processing"),
+    // so the post always failed and the document was NEVER SAVED. Creating a
+    // business document has not worked at all, which is what was behind every
+    // screenshot in this sequence.
+    //
+    // It also should not have worked that way. The tile says what the deal is:
+    // "Create proforma invoices. PDF download is R2.50." Writing the document
+    // is free; the R2.50 is charged when the PDF is produced, through
+    // business_document_pdf - a fee-only service that is live and correct
+    // (amount 0, fee 2.50, total 2.50). Nothing about writing a document
+    // should touch a wallet, and now nothing does.
+    //
+    // Placed after the funding branches above so their behaviour is untouched,
+    // and before the /v1/transactions post because the whole point is that
+    // there is no transaction.
+    if (data.documentAction) {
+      const businessDocument = buildBusinessDocumentDraft(data, null, context.preview);
+      saveBusinessDocumentDraft(businessDocument);
+      state.pendingTransactionReview = null;
+      openBusinessDocumentSavedModal(businessDocument, context.preview);
+      return;
+    }
     const metadata = Object.assign({}, data);
     delete metadata.serviceCode;
     delete metadata.amount;

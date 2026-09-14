@@ -38,9 +38,19 @@ const USER = {
 // un-repaired database actually carries, and the heading their real screen
 // shows. Nothing here is invented: the titles come from the document config.
 const CASES = [
-  { code: "invoice", brokenAction: "", heading: /Create an invoice/i },
-  { code: "quote", brokenAction: "none", heading: /Create a quote/i },
-  { code: "proforma-invoice", brokenAction: "proforma", heading: /Create a proforma invoice/i }
+  // An invoice deliberately carries NO disclaimer: it is a demand for payment
+  // and needs no "this is not X" caveat. The other two do, precisely because
+  // they could be mistaken for one. Asserting a disclaimer here was this
+  // harness being wrong, not the app.
+  { code: "invoice", brokenAction: "", heading: /Create an invoice/i,
+    prefix: "INV", kind: "Invoice", disclaimer: null },
+  { code: "quote", brokenAction: "none", heading: /Create a quote/i,
+    prefix: "QUO", kind: "Quote",
+    // The sentence that makes a quote an offer rather than a demand.
+    disclaimer: /not a request for payment/i },
+  { code: "proforma-invoice", brokenAction: "proforma", heading: /Create a proforma invoice/i,
+    prefix: "PRO", kind: "Proforma Invoice",
+    disclaimer: /not a tax invoice/i }
 ];
 
 const server = http.createServer((req, res) => {
@@ -127,6 +137,79 @@ const ok = (label, pass, detail) => {
     return document.querySelector(".modal-card h2")?.textContent.trim() || "(no modal)";
   });
   ok("a correct action still opens the document screen", /Create an invoice/i.test(healthy), healthy);
+
+  /* ------------------------ THE WHOLE JOURNEY: WRITE ONE AND SAVE IT */
+  //
+  // Routing only decides which screen opens. The form on that screen carried
+  // data-form="transaction", posted to /v1/transactions, and saved the
+  // document only AFTER that returned - and the codes it sends are refused
+  // 503, so the post always failed and the document was NEVER saved. Creating
+  // a business document had not worked at all.
+  //
+  // This fills each form and submits it, then checks what actually came out:
+  // the right kind, the right numbering series, and the disclaimer that makes
+  // a quote an offer rather than a demand for payment.
+  console.log("\n  writing a document end to end");
+  for (const testCase of CASES) {
+    const made = await page.evaluate(async ({ code }) => {
+      state.services = [{ id: code, serviceCode: code, action: "", label: code,
+        status: "active", type: "transaction", fee: 2.5 }];
+      state.businessDocuments = [];
+      if (typeof closeModal === "function") closeModal();
+      await new Promise((r) => setTimeout(r, 200));
+      handleService(code);
+      await new Promise((r) => setTimeout(r, 500));
+
+      const form = document.querySelector("[data-document-form]");
+      if (!form) return { error: "the document form did not open" };
+      const set = (name, value) => {
+        const field = form.querySelector(`[name="${name}"]`);
+        if (field) { field.value = value; field.dispatchEvent(new Event("input", { bubbles: true })); }
+      };
+      set("recipient", "Thuso Tshiloane");
+      set("customerEmail", "thuso@example.com");
+      set("customerAddress", "12 Main Road, Johannesburg");
+      set("amount", "600");
+      set("lineItems", "Consulting | 1 | 600");
+
+      // Submit the way a person does, through the app's own handler.
+      form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+      await new Promise((r) => setTimeout(r, 900));
+      // The review step, when the flow shows one.
+      const confirm = document.querySelector('[data-action="confirm-transaction-review"]');
+      if (confirm) { confirm.click(); await new Promise((r) => setTimeout(r, 1200)); }
+
+      const card = document.querySelector(".modal-card");
+      const saved = (state.businessDocuments || [])[0] || null;
+      return {
+        heading: card?.querySelector("h2")?.textContent.trim() || "(no modal)",
+        failed: /Transaction not confirmed/i.test(card?.textContent || ""),
+        savedCount: (state.businessDocuments || []).length,
+        number: saved?.number || "",
+        kind: saved?.kind || "",
+        disclaimer: saved?.disclaimer || "",
+        total: saved?.total ?? null
+      };
+    }, testCase);
+
+    const label = testCase.code;
+    ok(`${label}: the form submits without a failure screen`, !made.failed,
+      made.failed ? made.heading : "");
+    ok(`${label}: THE DOCUMENT IS ACTUALLY SAVED`, made.savedCount === 1,
+      `${made.savedCount} saved - this is what never worked`);
+    ok(`${label}: it uses its own numbering series`,
+      new RegExp(`^${testCase.prefix}-`).test(made.number || ""), made.number || "(none)");
+    ok(`${label}: it is saved as the right kind`,
+      new RegExp(testCase.kind, "i").test(made.kind || ""), made.kind || "(none)");
+    if (testCase.disclaimer) {
+      ok(`${label}: it carries its own disclaimer`,
+        testCase.disclaimer.test(made.disclaimer || ""),
+        (made.disclaimer || "(none)").slice(0, 80));
+    } else {
+      ok(`${label}: carries no disclaimer, which is correct for a demand for payment`,
+        !String(made.disclaimer || "").trim(), made.disclaimer || "(none)");
+    }
+  }
 
   /* ------------------- and when a refusal DOES reach the failure screen */
   //
