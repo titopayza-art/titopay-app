@@ -78,6 +78,20 @@ INSERT INTO email_settings (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING;
 ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS email_otp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS email_otp_events JSONB NOT NULL DEFAULT '{"login":false,"new_device":false,"new_browser":false,"change_password":false,"change_email":false,"wallet_unlock":true,"withdrawal":false,"high_value_payment":false,"business_approval":false,"merchant_payout":false,"api_key_generation":false,"recovery":false,"optional_mfa":false}'::JSONB;
 ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS wallet_unlock_email_otp_initialized BOOLEAN NOT NULL DEFAULT FALSE;
+-- PER-TICKET SUPPORT REPLY ADDRESSES, OWNED BY THE OPERATOR.
+--
+-- With this on, a Customer Care reply carries
+-- Reply-To: support+TP123456.<tag>@<the reply-to domain above>, so a customer's
+-- reply arrives knowing which ticket it belongs to. It ships FALSE because
+-- whether a mailbox accepts plus-addressing is a fact about somebody's hosting
+-- that this repository cannot know, and a mailbox that rejects it bounces the
+-- reply - worse than the silence it replaces.
+--
+-- It lives here rather than only in an environment variable because every
+-- other email setting on this table is edited by an admin in the Email Centre.
+-- A flag an operator cannot see or switch is a flag that gets turned on once,
+-- by a deploy, and then forgotten about when it starts bouncing mail.
+ALTER TABLE email_settings ADD COLUMN IF NOT EXISTS support_reply_addressing BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE email_settings
 SET email_otp_enabled = TRUE,
     email_otp_events = JSONB_SET(COALESCE(email_otp_events, '{}'::JSONB), '{wallet_unlock}', 'true'::JSONB, TRUE),

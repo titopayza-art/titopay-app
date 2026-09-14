@@ -265,6 +265,59 @@ test("the support reply email records which ticket it belongs to", () => {
   assert.match(source, /\.\.\.\(supportReplyTo \? \{ replyTo: supportReplyTo \} : \{\}\)/);
 });
 
+/* ------------------------------------- the operator owns the switch */
+
+test("AN ADMIN CAN SEE AND CHANGE THIS, NOT JUST A DEPLOY", async () => {
+  // It was shipped as an environment variable only. Every other email setting
+  // - the reply-to address itself, the support address, sending on or off - is
+  // edited by an admin in the Email Centre, so a flag nobody can see is a flag
+  // that gets switched on once by a deploy and then forgotten about when it
+  // starts bouncing mail.
+  const email = require("../src/services/email-centre-service");
+  const actor = { userId: null };
+  const before = await email.getSettings();
+  assert.ok("support_reply_addressing" in before, "the setting is stored, not only read from the environment");
+
+  try {
+    const on = await email.updateSettings({ supportReplyAddressing: true }, actor);
+    assert.equal(on.support_reply_addressing, true, "an admin can switch it on");
+    const off = await email.updateSettings({ supportReplyAddressing: false }, actor);
+    // The one that a checkbox gets wrong: an unchecked box submits NOTHING, so
+    // a naive `?? current` keeps the old value and the switch appears stuck on.
+    assert.equal(off.support_reply_addressing, false, "and off again");
+    // Omitting it entirely leaves it alone, so another page saving other
+    // fields cannot silently flip it.
+    const untouched = await email.updateSettings({ senderName: before.sender_name }, actor);
+    assert.equal(untouched.support_reply_addressing, false, "omitting the field changes nothing");
+  } finally {
+    await email.updateSettings({ supportReplyAddressing: before.support_reply_addressing }, actor);
+  }
+});
+
+test("it ships off, so no deployment changes a single outbound email", async () => {
+  const email = require("../src/services/email-centre-service");
+  const schema = fs.readFileSync(
+    path.join(__dirname, "..", "src", "db", "email-centre-schema.sql"), "utf8");
+  assert.match(schema,
+    /ADD COLUMN IF NOT EXISTS support_reply_addressing BOOLEAN NOT NULL DEFAULT FALSE/);
+  const settings = await email.getSettings();
+  assert.equal(settings.support_reply_addressing, false,
+    "the stored default must be off until an operator turns it on");
+});
+
+test("the admin page offers the toggle and warns what it costs to get wrong", () => {
+  const admin = fs.readFileSync(
+    path.join(__dirname, "..", "..", "admin", "assets", "admin.js"), "utf8");
+  assert.match(admin, /name="supportReplyAddressing" type="checkbox"/);
+  // An unchecked checkbox submits nothing, so the handler must send false
+  // explicitly or the switch can never be turned off from the console.
+  assert.match(admin, /data\.supportReplyAddressing=new FormData\(form\)\.get\("supportReplyAddressing"\)==="on"/);
+  // And the operator is told the failure mode BEFORE they flip it, because a
+  // mailbox that rejects plus-addressing bounces every customer reply.
+  assert.match(admin, /BOUNCE the reply/);
+  assert.match(admin, /support\+TEST\.00000000@/);
+});
+
 test("the send path already honours a per-email reply address", () => {
   // Nothing in the delivery code needed changing: email-centre-service has
   // taken job.metadata.replyTo since the HR desk needed its own address. This

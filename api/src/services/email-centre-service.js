@@ -479,6 +479,12 @@ async function updateSettings(values, actor, { allowProvider = false } = {}) {
     number("verificationResendCooldownSeconds","verification_resend_cooldown_seconds",15,3600), number("verificationResendWindowMinutes","verification_resend_window_minutes",5,1440),
     number("verificationMaxResends","verification_max_resends",1,50), number("maximumRetryCount","maximum_retry_count",1,20), number("dailySendingLimit","daily_sending_limit",1,10000000),
     number("workerConcurrency","worker_concurrency",1,50), provider, values.sendingEnabled ?? current.sending_enabled,
+    // Operator-owned, like every other setting on this form. Coerced to a
+    // real boolean: an unchecked HTML checkbox sends nothing at all, and
+    // `undefined ?? current` would then silently keep the old value rather
+    // than switching the feature off.
+    values.supportReplyAddressing === undefined
+      ? current.support_reply_addressing : Boolean(values.supportReplyAddressing),
     JSON.stringify(providerConfig), actor.userId
   ];
   const { rows } = await pool.query(
@@ -486,7 +492,7 @@ async function updateSettings(values, actor, { allowProvider = false } = {}) {
      support_email=$6,support_url=$7,website_url=$8,verification_token_expiry_minutes=$9,password_reset_token_expiry_minutes=$10,
      verification_resend_cooldown_seconds=$11,verification_resend_window_minutes=$12,verification_max_resends=$13,
      maximum_retry_count=$14,daily_sending_limit=$15,worker_concurrency=$16,default_provider=$17,sending_enabled=$18,
-     provider_config=$19::jsonb,updated_by=$20,updated_at=NOW() WHERE id=TRUE RETURNING *`, params
+     support_reply_addressing=$19,provider_config=$20::jsonb,updated_by=$21,updated_at=NOW() WHERE id=TRUE RETURNING *`, params
   );
   await writeAuditLog({ actorType:"admin", actorId:actor.userId, action:"email_settings_changed", entityType:"email_settings", metadata:{ fields:Object.keys(values), providerChanged:provider!==current.default_provider } });
   if(allowProvider)await writeAuditLog({actorType:"admin",actorId:actor.userId,action:provider!==current.default_provider?"email_provider_changed":"email_provider_credentials_updated",entityType:"email_settings",metadata:{provider,fields:Object.keys(values.providerConfig||{})}});

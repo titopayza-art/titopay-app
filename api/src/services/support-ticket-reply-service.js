@@ -9,7 +9,7 @@ const { v4: uuidv4 } = require("uuid");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { boundedText } = require("../lib/validation");
-const { queueRawEmail } = require("./email-centre-service");
+const { queueRawEmail, getSettings: getEmailSettings } = require("./email-centre-service");
 const { shouldSendCustomerEmail } = require("./customer-notification-preference-service");
 const { config } = require("../config/env");
 const { supportReplyAddress } = require("../lib/support-verp");
@@ -21,11 +21,25 @@ const { supportReplyAddress } = require("../lib/support-verp");
 // one of those is a reason to send the email with the ordinary reply address,
 // never a reason to fail a customer's support reply. A support mail that does
 // not go out is a worse outcome than one a customer cannot thread.
-function buildSupportReplyTo(ticketRef) {
+//
+// THE OPERATOR OWNS THE SWITCH, AND THE ADDRESS IT BUILDS ON.
+//
+// Both are read from the Email Centre settings an admin edits, not from the
+// environment: reply_to_email is already the field on that form, so building a
+// tagged address from a stale env var would produce a reply address on a
+// domain the operator had since changed. The environment variable survives as
+// an override for an installation that wants this on before anybody has opened
+// the console - it can force it ON, and the console can still switch it off.
+async function buildSupportReplyTo(ticketRef) {
   try {
+    const settings = await getEmailSettings().catch(() => null);
     const email = config.integrations.email;
-    if (!email.supportReplyAddressing) return undefined;
-    return supportReplyAddress(ticketRef, email.replyTo, email.supportReplySecret) || undefined;
+    const enabled = settings
+      ? Boolean(settings.support_reply_addressing) || email.supportReplyAddressing
+      : email.supportReplyAddressing;
+    if (!enabled) return undefined;
+    const base = (settings && settings.reply_to_email) || email.replyTo;
+    return supportReplyAddress(ticketRef, base, email.supportReplySecret) || undefined;
   } catch (error) {
     console.error("[support] could not build a per-ticket reply address", { message: error.message });
     return undefined;
@@ -174,7 +188,7 @@ async function notifyCustomerOfReply(ticket, reply) {
     if (!account?.email) return;
     if (!(await shouldSendCustomerEmail(ticket.user_id, "support"))) return;
     const reference = ticket.ticket_ref || ticket.id;
-    const supportReplyTo = buildSupportReplyTo(ticket.ticket_ref);
+    const supportReplyTo = await buildSupportReplyTo(ticket.ticket_ref);
     const safeReply = emailSafe(reply.message);
     const safeOriginal = emailSafe(ticket.message).slice(0, 600);
     await queueRawEmail({
