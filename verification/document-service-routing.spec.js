@@ -72,8 +72,12 @@ const ok = (label, pass, detail) => {
   await new Promise((r) => server.listen(PORT, "127.0.0.1", r));
   const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium", args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 430, height: 932 }, deviceScaleFactor: 2 });
+  const wireCalls = [];
   await context.route("https://api.titopay.co.za/**", async (route) => {
     const p = new URL(route.request().url()).pathname.replace(/^\/v1/, "");
+    // Every call the document flow makes is recorded. A document that prices
+    // itself through fee-preview is already wrong, whatever it does next.
+    if (route.request().method() === "POST") wireCalls.push(p);
     const json = (body) => route.fulfill({ status: 200, contentType: "application/json",
       body: JSON.stringify({ ok: true, ...body }) });
     if (p === "/auth/me") return json({ user: USER });
@@ -126,6 +130,11 @@ const ok = (label, pass, detail) => {
 
   // And a healthy row must still work, so the code match has not replaced the
   // action match with a new single point of failure.
+  ok("NO DOCUMENT PRICES ITSELF THROUGH THE PAYMENT ENGINE",
+    !wireCalls.some((c) => /fee-preview|^\/transactions$/.test(c)),
+    wireCalls.filter((c) => /fee-preview|^\/transactions$/.test(c)).join(", ")
+      || "no fee-preview, no wallet post");
+
   console.log("\n  and a healthy catalogue is unchanged");
   const healthy = await page.evaluate(async () => {
     state.services = [{ id: "invoice", serviceCode: "invoice", action: "invoice",
@@ -172,18 +181,30 @@ const ok = (label, pass, detail) => {
       set("amount", "600");
       set("lineItems", "Consulting | 1 | 600");
 
+      // THE SCREEN THAT SHOULD NEVER APPEAR. Watched for throughout the
+      // submit rather than checked at the end, because the review was shown
+      // and then replaced - by the time the flow settled it had gone, and a
+      // check at the end saw nothing wrong.
+      window.__sawReview = false;
+      const watcher = new MutationObserver(() => {
+        if (/Review before confirming/i.test(document.body.textContent || "")) window.__sawReview = true;
+      });
+      watcher.observe(document.body, { childList: true, subtree: true });
+
       // Submit the way a person does, through the app's own handler.
       form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
       await new Promise((r) => setTimeout(r, 900));
       // The review step, when the flow shows one.
       const confirm = document.querySelector('[data-action="confirm-transaction-review"]');
       if (confirm) { confirm.click(); await new Promise((r) => setTimeout(r, 1200)); }
+      watcher.disconnect();
 
       const card = document.querySelector(".modal-card");
       const saved = (state.businessDocuments || [])[0] || null;
       return {
         heading: card?.querySelector("h2")?.textContent.trim() || "(no modal)",
         failed: /Transaction not confirmed/i.test(card?.textContent || ""),
+        sawReview: window.__sawReview === true,
         savedCount: (state.businessDocuments || []).length,
         number: saved?.number || "",
         kind: saved?.kind || "",
@@ -195,6 +216,8 @@ const ok = (label, pass, detail) => {
     const label = testCase.code;
     ok(`${label}: the form submits without a failure screen`, !made.failed,
       made.failed ? made.heading : "");
+    ok(`${label}: IT NEVER SHOWS THE MONEY REVIEW`, !made.sawReview,
+      made.sawReview ? "asked to confirm paying the customer it means to bill" : "");
     ok(`${label}: THE DOCUMENT IS ACTUALLY SAVED`, made.savedCount === 1,
       `${made.savedCount} saved - this is what never worked`);
     ok(`${label}: it uses its own numbering series`,

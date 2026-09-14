@@ -8969,6 +8969,33 @@ function applyQuickAmount(button) {
   field.focus();
 }
 async function processTransaction(data) {
+  // A DOCUMENT NEVER ENTERS THE PAYMENT PIPELINE AT ALL.
+  //
+  // This branch was first written one step too late - at the Confirm button -
+  // which stopped the wallet post but left everything before it running. So
+  // writing an invoice still called /v1/transactions/fee-preview, still priced
+  // the invoice total as a transfer, and still opened TRANSACTION REVIEW
+  // saying "Total deducted R102.50" and "The recipient receives R100.00". The
+  // screen a person was asked to confirm described the business paying the
+  // customer it meant to bill, and it looked exactly as broken after the fix
+  // as before it, because only the last step had changed.
+  //
+  // So the exit is here, before anything: before the wallet-lock check, which
+  // has no business gating a document; before the amount check, since a
+  // document is priced by its line items; before the fee preview, which has
+  // nothing to price; and before the review, which has nothing to review.
+  // Writing the document is free. The R2.50 is charged when the PDF is
+  // produced, through business_document_pdf.
+  //
+  // The equivalent branch at Confirm stays as a backstop for any review
+  // context built elsewhere, but nothing should reach it any more.
+  if (data.documentAction) {
+    const businessDocument = buildBusinessDocumentDraft(data, null, null);
+    saveBusinessDocumentDraft(businessDocument);
+    state.pendingTransactionReview = null;
+    openBusinessDocumentSavedModal(businessDocument, null);
+    return;
+  }
   if (isWalletLocked()) throw new Error("Wallet locked. Unlock your wallet before making outgoing transactions.");
   const amount = parseAmount(data.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount.");
@@ -11686,7 +11713,12 @@ function openBusinessDocumentSavedModal(document, preview) {
       <div><span>Status</span><strong>${document.pdfFeePaid ? "PDF paid" : "PDF payment required"}</strong></div>
     </section>
     ${document.disclaimer ? `<p class="doc-disclaimer">${esc(document.disclaimer)}</p>` : ""}
-    <p class="field-hint">Transaction preview total: ${money(preview.total || preview.amount || document.totals.total)}. Sharing the document is free; only the PDF download carries the extraction fee.</p>
+    <!-- "Transaction preview total" described a payment that never existed:
+         writing a document creates no transaction, and there is no preview to
+         read a total from. It now states the DOCUMENT's own total, which is
+         the only figure here that means anything, and says plainly that
+         nothing has been charged. -->
+    <p class="field-hint">Document total: ${money(document.totals.total)}. Nothing has been charged. Sharing the document is free; only the PDF download carries the ${money(DOCUMENT_PDF_FEE)} extraction fee.</p>
     <div class="auth-actions">
       <button class="btn secondary" data-action="invoice-link">${icon("share")} Share document</button>
       <button class="btn primary" data-action="document-pdf">${icon("download")} Pay ${money(DOCUMENT_PDF_FEE)} + download PDF</button>
