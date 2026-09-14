@@ -4487,6 +4487,21 @@ async function onClick(event) {
     applyStatementPeriod(statementPeriod.dataset.statementPeriod);
     return;
   }
+  const documentEdit = event.target.closest("[data-document-edit]");
+  if (documentEdit) {
+    editDocumentDraft(documentEdit.dataset.documentEdit);
+    return;
+  }
+  const documentFinalise = event.target.closest("[data-document-finalise]");
+  if (documentFinalise) {
+    finaliseDocumentDraft(documentFinalise.dataset.documentFinalise);
+    return;
+  }
+  const documentDuplicate = event.target.closest("[data-document-duplicate]");
+  if (documentDuplicate) {
+    duplicateDocumentAsDraft(documentDuplicate.dataset.documentDuplicate);
+    return;
+  }
   const documentOpen = event.target.closest("[data-document-open]");
   if (documentOpen) {
     openSavedBusinessDocument(documentOpen.dataset.documentOpen);
@@ -6090,6 +6105,9 @@ async function handleAction(action, actionElement = null) {
   }
   if (action === "doc-add-item") {
     addDocumentItemRow();
+  }
+  if (action === "doc-save-draft") {
+    saveDocumentDraftFromForm();
   }
   if (action === "split-add-participant") {
     addBillSplitParticipant();
@@ -8990,8 +9008,14 @@ async function processTransaction(data) {
   // The equivalent branch at Confirm stays as a backstop for any review
   // context built elsewhere, but nothing should reach it any more.
   if (data.documentAction) {
-    const businessDocument = buildBusinessDocumentDraft(data, null, null);
+    // Submitting the form IS finalising. When a draft was open it keeps its
+    // identity, so finalising replaces it rather than leaving the draft behind
+    // beside its own finished copy.
+    const editing = editingDocumentDraft();
+    const businessDocument = buildBusinessDocumentDraft(data, null, null,
+      { status: "final", existing: editing });
     saveBusinessDocumentDraft(businessDocument);
+    state.editingDocumentDraftId = null;
     state.pendingTransactionReview = null;
     openBusinessDocumentSavedModal(businessDocument, null);
     return;
@@ -11397,9 +11421,13 @@ function syncDocumentTotals() {
   removeButtons.forEach((button) => { button.disabled = removeButtons.length < 2; });
 
   const submit = form.querySelector('button[type="submit"]');
+  const saveDraft = document.querySelector('[data-action="doc-save-draft"]');
   const warning = document.querySelector("[data-doc-warning]");
   const valid = usable.length > 0;
   if (submit) submit.disabled = !valid;
+  // The draft button follows the same rule: a draft with no priced line is not
+  // a draft of anything.
+  if (saveDraft) saveDraft.disabled = !valid;
   if (warning) warning.hidden = valid;
 
   const issue = form.querySelector("[data-doc-issue]")?.value || "";
@@ -11460,11 +11488,13 @@ function openBusinessDocumentHistory() {
           <article class="settings-row">
             <span class="icon-bubble">${icon(record.action === "quote" ? "quote" : record.action === "proforma-invoice" ? "document-invoice" : "invoice")}</span>
             <div>
-              <strong>${esc(record.number || record.kind)}</strong>
+              <strong>${esc(record.number || record.kind)}${record.status === "draft" ? ' <span class="chip mini">Draft</span>' : ""}</strong>
               <small>${esc(record.customerName || "Customer")} · ${esc(money(record.totals?.total || 0))}</small>
               <small>${esc(record.kind)} · ${esc(friendlyDate(record.issueDate))}${record.dueDate ? ` · ${esc(record.dateLabel || "Due")} ${esc(friendlyDate(record.dueDate))}` : ""}</small>
             </div>
-            <button class="btn secondary mini" type="button" data-document-open="${esc(record.id)}">Open</button>
+            ${record.status === "draft"
+              ? `<button class="btn secondary mini" type="button" data-document-edit="${esc(record.id)}">Edit</button>`
+              : `<button class="btn secondary mini" type="button" data-document-open="${esc(record.id)}">Open</button>`}
           </article>
         `).join("")}
       </section>
@@ -11487,7 +11517,10 @@ function openSavedBusinessDocument(id) {
   state.activeBusinessDocumentId = record.id;
   openBusinessDocumentSavedModal(record, { total: record.totals?.total || 0 });
 }
-function openInvoiceDocumentModal(service) {
+function openInvoiceDocumentModal(service, prefill = null) {
+  // Opening the tile fresh ends any edit that was in progress. Without this a
+  // new invoice would silently overwrite the last draft that was open.
+  if (!prefill) state.editingDocumentDraftId = null;
   // WHICH DOCUMENT IS THIS, REALLY?
   //
   // `action` used to decide, with "invoice" as the fallback. A stale or blank
@@ -11617,13 +11650,63 @@ function openInvoiceDocumentModal(service) {
 
       ${config.disclaimer ? `<p class="doc-disclaimer">${esc(config.disclaimer)}</p>` : ""}
 
-      <button class="btn primary" type="submit" disabled>${icon("list")} Save ${esc(kind)}</button>
+      <!-- TWO WAYS OUT, AND THEY MEAN DIFFERENT THINGS.
+           Save draft keeps the document editable and unnumbered. Finalise
+           assigns the number and closes it. A document that can still change
+           after it has been issued is not a document, so finalising is
+           deliberately the separate, primary act. -->
+      <div class="auth-actions doc-actions">
+        <button class="btn secondary" type="button" data-action="doc-save-draft" disabled>${icon("list")} Save draft</button>
+        <button class="btn primary" type="submit" disabled>${icon("check-circle")} Finalise ${esc(kind)}</button>
+      </div>
     </form>
     ${(state.businessDocuments || []).length ? `
       <button class="btn ghost" type="button" data-action="business-documents">${icon("list")} Saved documents (${(state.businessDocuments || []).length})</button>
     ` : ""}
   `);
+  // RESTORING A DRAFT.
+  //
+  // Done after the modal is on screen, because the item rows are created by
+  // the same code that creates them for a new document - there is no second
+  // rendering path to keep in step. Every field the form collects is restored,
+  // including the dates and the line rows, so what reopens is what was saved.
+  if (prefill) restoreDocumentForm(prefill);
   syncDocumentTotals();
+}
+function restoreDocumentForm(record) {
+  const form = window.document.querySelector("[data-document-form]");
+  if (!form) return;
+  const set = (name, value) => {
+    const field = form.querySelector(`[name="${name}"]`);
+    if (field && value !== undefined && value !== null) field.value = value;
+  };
+  set("recipient", record.customerName === "Customer" ? "" : record.customerName);
+  set("customerEmail", record.customerEmail || "");
+  set("customerAddress", record.customerAddress === "Address not supplied" ? "" : record.customerAddress);
+  set("businessAddress", record.businessAddress || "");
+  set("note", record.notes || "");
+  set("vat", record.totals?.vatIncluded ? "Include VAT 15%" : "No VAT");
+  const issue = form.querySelector("[data-doc-issue]");
+  if (issue && record.issueDate) issue.value = record.issueDate;
+  const due = form.querySelector("[data-doc-due]");
+  if (due && record.dueDate) due.value = record.dueDate;
+
+  // The saved line items, rebuilt one row per item. The first row already
+  // exists, so rows are added only for the rest.
+  const host = form.querySelector("[data-doc-items]");
+  const items = Array.isArray(record.items) && record.items.length ? record.items : [];
+  if (host && items.length) {
+    host.innerHTML = items.map(() => documentItemRow()).join("");
+    [...host.querySelectorAll("[data-doc-item]")].forEach((row, index) => {
+      const item = items[index] || {};
+      const desc = row.querySelector("[data-doc-desc]");
+      const qty = row.querySelector("[data-doc-qty]");
+      const unit = row.querySelector("[data-doc-unit]");
+      if (desc) desc.value = item.description || "";
+      if (qty) qty.value = String(item.quantity ?? 1);
+      if (unit) unit.value = item.unit ? String(item.unit) : "";
+    });
+  }
 }
 function documentTimestamp(date = new Date()) {
   const day = date.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }).replace(/,/g, "");
@@ -11642,7 +11725,11 @@ function documentPrefix(action) {
 }
 function nextBusinessDocumentNumber(action) {
   const prefix = documentPrefix(action);
-  const count = state.businessDocuments.filter((item) => item.prefix === prefix).length + 1;
+  // Drafts are excluded deliberately. A draft holds no number, so counting one
+  // would reserve a place in the series that nothing ever fills - and a
+  // numbered document series with gaps is the first thing an auditor queries.
+  const count = state.businessDocuments
+    .filter((item) => item.prefix === prefix && item.status !== "draft").length + 1;
   return `${prefix}-${new Date().getFullYear()}-${leftPad(String(count), 4, "0")}`;
 }
 function parseDocumentLineItems(lineItems, fallbackAmount) {
@@ -11668,7 +11755,19 @@ function documentTotals(items, vatMode, fallbackAmount) {
   const vat = vatIncluded ? subtotal * 0.15 : 0;
   return { subtotal, vat, total: subtotal + vat, vatIncluded };
 }
-function buildBusinessDocumentDraft(data, transaction, preview) {
+// DRAFT OR FINAL, AND THE NUMBER IS THE DIFFERENCE.
+//
+// A draft is a document still being written. It carries no number, because a
+// document number is a promise about a sequence: if drafts consumed numbers,
+// abandoning one would leave a hole in the series, and an invoice book with
+// gaps in it is the first thing an auditor asks about. The number is assigned
+// once, at the moment of finalising, and never before.
+//
+// `existing` keeps a draft's identity across edits so saving it again replaces
+// it rather than leaving a second copy behind.
+function buildBusinessDocumentDraft(data, transaction, preview, options = {}) {
+  const status = options.status === "draft" ? "draft" : "final";
+  const existing = options.existing || null;
   const action = data.documentAction || "invoice";
   const config = documentKindConfig(action);
   const items = parseDocumentLineItems(data.lineItems, data.amount);
@@ -11681,8 +11780,11 @@ function buildBusinessDocumentDraft(data, transaction, preview) {
     dueDate: meta.dueDate || "",
     dateLabel: meta.dateLabel || config.dateLabel,
     disclaimer: meta.disclaimer || config.disclaimer || "",
-    id: transaction && (transaction.id || transaction.transactionId) || `doc-${Date.now()}`,
-    number: nextBusinessDocumentNumber(action),
+    id: existing?.id || (transaction && (transaction.id || transaction.transactionId)) || `doc-${Date.now()}`,
+    status,
+    // No number until it is final. A draft shows its kind instead.
+    number: status === "draft" ? "" : (existing?.number || nextBusinessDocumentNumber(action)),
+    finalisedAt: status === "final" ? new Date().toISOString() : "",
     prefix: documentPrefix(action),
     kind: data.documentKind || documentKindLabel(action),
     action,
@@ -11697,11 +11799,78 @@ function buildBusinessDocumentDraft(data, transaction, preview) {
     items,
     totals,
     notes: data.note || "",
-    createdAt: new Date().toISOString(),
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     reference: transaction && (transaction.reference || transaction.id) || preview && preview.reference || "",
     pdfFeePaid: false,
     pdfFeeReference: ""
   };
+}
+// SAVE WHAT IS ON SCREEN, WITHOUT FINISHING IT.
+//
+// Reads the form exactly as the submit path does - through syncDocumentTotals,
+// which is the single place the item rows are converted back into the hidden
+// lineItems and amount fields - so a draft and a finalised document are built
+// from identical input. Anything else would let the two drift, and a draft
+// that finalises into something different is worse than no draft at all.
+function saveDocumentDraftFromForm() {
+  const form = window.document.querySelector("[data-document-form]");
+  if (!form) return;
+  syncDocumentTotals();
+  const data = Object.fromEntries(new FormData(form));
+  const existing = editingDocumentDraft();
+  const draft = buildBusinessDocumentDraft(data, null, null, { status: "draft", existing });
+  saveBusinessDocumentDraft(draft);
+  showToast(existing ? "Draft updated." : "Draft saved.");
+  openBusinessDocumentSavedModal(draft, null);
+}
+// The draft currently open for editing, if any. Held on state rather than in
+// the DOM so it survives the form being re-rendered.
+function editingDocumentDraft() {
+  const id = state.editingDocumentDraftId;
+  if (!id) return null;
+  return (state.businessDocuments || []).find((item) => item.id === id) || null;
+}
+// FINALISING IS THE ONE-WAY STEP.
+//
+// It assigns the number, stamps the time, and from then on the document is
+// read-only - a formal document that can still be edited after it has been
+// sent is not a formal document. Someone who needs to change a finalised
+// document starts a new draft from it, which leaves the original intact and
+// the series honest.
+function finaliseDocumentDraft(id) {
+  const draft = (state.businessDocuments || []).find((item) => item.id === id);
+  if (!draft) return showToast("That draft is no longer available.", "error");
+  if (draft.status !== "draft") return openBusinessDocumentSavedModal(draft, null);
+  const finalised = Object.assign({}, draft, {
+    status: "final",
+    number: draft.number || nextBusinessDocumentNumber(draft.action),
+    finalisedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+  saveBusinessDocumentDraft(finalised);
+  state.editingDocumentDraftId = null;
+  showToast(`${finalised.kind} ${finalised.number} finalised.`);
+  openBusinessDocumentSavedModal(finalised, null);
+}
+// Reopens a draft in the form it was written in, with every field restored.
+function editDocumentDraft(id) {
+  const draft = (state.businessDocuments || []).find((item) => item.id === id);
+  if (!draft) return showToast("That draft is no longer available.", "error");
+  if (draft.status !== "draft") {
+    return showToast("A finalised document cannot be edited. Duplicate it to start a new draft.", "error");
+  }
+  state.editingDocumentDraftId = draft.id;
+  openInvoiceDocumentModal({ action: draft.action, serviceCode: draft.serviceCode || draft.action }, draft);
+}
+// A finalised document copied back into a new, unnumbered draft. The original
+// keeps its number and its place in the series; the copy is a fresh start.
+function duplicateDocumentAsDraft(id) {
+  const source = (state.businessDocuments || []).find((item) => item.id === id);
+  if (!source) return showToast("That document is no longer available.", "error");
+  state.editingDocumentDraftId = null;
+  openInvoiceDocumentModal({ action: source.action, serviceCode: source.serviceCode || source.action }, source);
+  showToast("Copied into a new draft. It has no number until you finalise it.");
 }
 function saveBusinessDocumentDraft(document) {
   const existing = state.businessDocuments.filter((item) => item.id !== document.id);
@@ -11713,9 +11882,16 @@ function currentBusinessDocument() {
   return state.businessDocuments.find((item) => item.id === state.activeBusinessDocumentId) || state.businessDocuments[0] || null;
 }
 function openBusinessDocumentSavedModal(document, preview) {
+  // A DRAFT IS NOT A DOCUMENT YET, AND MUST NOT LOOK LIKE ONE.
+  //
+  // It has no number, it cannot be shared, and its PDF cannot be bought -
+  // paying to extract something still being written would be a charge for
+  // nothing, and a shared draft is a quotation somebody can hold you to. The
+  // only things offered are the two that make sense: keep editing, or finish.
+  const isDraft = document.status === "draft";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">${esc(document.kind)}</p><h2>${esc(document.number)} saved</h2><p class="lead">The shareable link is free. PDF download is released after the ${money(DOCUMENT_PDF_FEE)} extraction fee is paid.</p></div>
+      <div><p class="eyebrow">${esc(document.kind)}${isDraft ? " &middot; Draft" : ""}</p><h2>${isDraft ? "Draft saved" : `${esc(document.number)} saved`}</h2><p class="lead">${isDraft ? "Nothing has been charged and no number has been used. It becomes a numbered document only when you finalise it." : `The shareable link is free. PDF download is released after the ${money(DOCUMENT_PDF_FEE)} extraction fee is paid.`}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="document-fee-card">
@@ -11723,8 +11899,8 @@ function openBusinessDocumentSavedModal(document, preview) {
       <div><span>Issued</span><strong>${esc(friendlyDate(document.issueDate))}</strong></div>
       ${document.dueDate ? `<div><span>${esc(document.dateLabel || "Due date")}</span><strong>${esc(friendlyDate(document.dueDate))}</strong></div>` : ""}
       <div><span>Document total</span><strong>${money(document.totals.total)}</strong></div>
-      <div><span>PDF extraction fee</span><strong>${money(DOCUMENT_PDF_FEE)}</strong></div>
-      <div><span>Status</span><strong>${document.pdfFeePaid ? "PDF paid" : "PDF payment required"}</strong></div>
+      ${isDraft ? "" : `<div><span>PDF extraction fee</span><strong>${money(DOCUMENT_PDF_FEE)}</strong></div>`}
+      <div><span>Status</span><strong>${isDraft ? "Draft &middot; not numbered" : (document.pdfFeePaid ? "PDF paid" : "PDF payment required")}</strong></div>
     </section>
     ${document.disclaimer ? `<p class="doc-disclaimer">${esc(document.disclaimer)}</p>` : ""}
     <!-- "Transaction preview total" described a payment that never existed:
@@ -11732,17 +11908,31 @@ function openBusinessDocumentSavedModal(document, preview) {
          read a total from. It now states the DOCUMENT's own total, which is
          the only figure here that means anything, and says plainly that
          nothing has been charged. -->
-    <p class="field-hint">Document total: ${money(document.totals.total)}. Nothing has been charged. Sharing the document is free; only the PDF download carries the ${money(DOCUMENT_PDF_FEE)} extraction fee.</p>
+    <p class="field-hint">Document total: ${money(document.totals.total)}. Nothing has been charged.${isDraft ? " A draft cannot be shared or downloaded - finalise it first." : ` Sharing the document is free; only the PDF download carries the ${money(DOCUMENT_PDF_FEE)} extraction fee.`}</p>
     <div class="auth-actions">
-      <button class="btn secondary" data-action="invoice-link">${icon("share")} Share document</button>
-      <button class="btn primary" data-action="document-pdf">${icon("download")} Pay ${money(DOCUMENT_PDF_FEE)} + download PDF</button>
+      ${isDraft ? `
+        <button class="btn secondary" type="button" data-document-edit="${esc(document.id)}">${icon("list")} Keep editing</button>
+        <button class="btn primary" type="button" data-document-finalise="${esc(document.id)}">${icon("check-circle")} Finalise ${esc(document.kind)}</button>
+      ` : `
+        <button class="btn secondary" data-action="invoice-link">${icon("share")} Share document</button>
+        <button class="btn primary" data-action="document-pdf">${icon("download")} Pay ${money(DOCUMENT_PDF_FEE)} + download PDF</button>
+      `}
     </div>
+    ${isDraft ? "" : `<button class="btn ghost" type="button" data-document-duplicate="${esc(document.id)}">${icon("plus")} Duplicate as a new draft</button>`}
   `);
 }
 async function requestBusinessDocumentPdf() {
   const document = currentBusinessDocument();
   if (!document) {
     showToast("Save the invoice, quote or proforma before downloading a PDF.", "error");
+    return;
+  }
+  // A draft has no number and is still being written. Charging to extract one
+  // would be a charge for nothing, and the file would look like a real
+  // document while saying nothing binding. The draft screen offers no PDF
+  // button at all; this is the guard behind it.
+  if (document.status === "draft") {
+    showToast("Finalise this document before downloading a PDF. A draft has no document number yet.", "error");
     return;
   }
   if (document.pdfFeePaid) {
@@ -12938,6 +13128,15 @@ function businessDocumentPdf(document) {
   const ROW_H = 22;
   const MAX_ROWS = 10;
 
+  // A DRAFT THAT ESCAPES SAYS SO, LOUDLY.
+  //
+  // Nothing should reach here with a draft - the draft screen offers no PDF
+  // button and requestBusinessDocumentPdf refuses one. But a file is a thing
+  // that gets forwarded, and an unfinished document that looks finished is how
+  // somebody ends up holding a business to a price it never agreed. So if one
+  // ever does get here, the page says DRAFT across it and carries no number.
+  const isDraftDocument = document.status === "draft";
+
   /* ------------------------------------------------- header band */
   fill(0, 720, 595, 92, "0.03 0.08 0.22");
   fill(0, 716, 595, 4, "0.00 0.34 1.00");
@@ -12948,7 +13147,7 @@ function businessDocumentPdf(document) {
   businessAddressLines.slice(0, 1).forEach((lineValue) => text(52, 740, lineValue, 8, "F1", "0.84 0.89 0.98"));
   if (businessRegistrationLine) text(52, 727, businessRegistrationLine, 7.6, "F1", "0.84 0.89 0.98");
   rightText(545, 775, String(document.kind || "Invoice").toUpperCase(), 14, "F2", "1 1 1");
-  rightText(545, 758, documentNoLine, 10, "F2", "0.90 0.94 1.00");
+  rightText(545, 758, isDraftDocument ? "DRAFT - NOT ISSUED" : documentNoLine, 10, "F2", "0.90 0.94 1.00");
   rightText(545, 744, `Issued ${documentTimestamp(issued)}`, 8.5, "F1", "0.90 0.94 1.00");
   if (document.dueDate) {
     rightText(545, 731, `${document.dateLabel || "Due"} ${friendlyDate(document.dueDate)}`, 8, "F1", "0.90 0.94 1.00");
@@ -12980,6 +13179,13 @@ function businessDocumentPdf(document) {
   const issuedLabel = document.issueDate ? friendlyDate(document.issueDate) : documentTimestamp(issued);
   const dueLabel = document.dueDate ? `${document.dateLabel || "Due"}: ${friendlyDate(document.dueDate)}` : "";
   rightText(532, 556, dueLabel ? `Issued ${issuedLabel} | ${dueLabel}` : `Issued ${issuedLabel}`, 8.2, "F1", "0.42 0.46 0.55");
+
+  if (isDraftDocument) {
+    fill(52, 300, 491, 40, "0.97 0.94 0.94");
+    stroke(52, 300, 491, 40, "0.86 0.70 0.70");
+    text(66, 322, "DRAFT - this document has not been issued and carries no number.", 11, "F2", "0.62 0.20 0.20");
+    text(66, 308, "It is not a request for payment and nobody is bound by it.", 8.5, "F1", "0.62 0.20 0.20");
+  }
 
   /* ------------------------------------------------------- items */
   text(52, 518, "ITEMS", 10, "F2", "0.12 0.32 0.62");

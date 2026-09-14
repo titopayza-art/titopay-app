@@ -234,6 +234,109 @@ const ok = (label, pass, detail) => {
     }
   }
 
+  /* ------------------------------------------- drafts, and the numbering */
+  //
+  // The rule worth defending is the numbering. A document number is a promise
+  // about a sequence, so a draft must not consume one: abandoning a draft that
+  // had taken INV-2026-0002 would leave a hole, and a numbered series with
+  // gaps is the first thing an auditor queries.
+  console.log("\n  saving a draft, editing it, then finalising");
+  const drafts = await page.evaluate(async () => {
+    const out = {};
+    const fill = (values) => {
+      const form = document.querySelector("[data-document-form]");
+      for (const [name, value] of Object.entries(values)) {
+        const field = form.querySelector(`[name="${name}"]`);
+        if (field) { field.value = value; field.dispatchEvent(new Event("input", { bubbles: true })); }
+      }
+      const row = form.querySelector("[data-doc-item]");
+      row.querySelector("[data-doc-desc]").value = values.__desc;
+      row.querySelector("[data-doc-qty]").value = "1";
+      row.querySelector("[data-doc-unit]").value = values.__unit;
+      row.querySelector("[data-doc-unit]").dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const openFresh = async () => {
+      state.services = [{ id: "invoice", serviceCode: "invoice", action: "invoice",
+        label: "Invoice", status: "active", type: "transaction", fee: 2.5 }];
+      if (typeof closeModal === "function") closeModal();
+      await new Promise((r) => setTimeout(r, 150));
+      handleService("invoice");
+      await new Promise((r) => setTimeout(r, 400));
+    };
+
+    state.businessDocuments = [];
+    state.editingDocumentDraftId = null;
+
+    // 1. A first document, finalised straight away, takes INV-...0001.
+    await openFresh();
+    fill({ recipient: "First Customer", __desc: "Setup", __unit: "100" });
+    document.querySelector("[data-document-form]").requestSubmit();
+    await new Promise((r) => setTimeout(r, 900));
+    out.firstNumber = (state.businessDocuments[0] || {}).number;
+
+    // 2. A draft. It must take NO number.
+    await openFresh();
+    fill({ recipient: "Draft Customer", __desc: "Consulting", __unit: "250" });
+    document.querySelector('[data-action="doc-save-draft"]').click();
+    await new Promise((r) => setTimeout(r, 600));
+    const draft = state.businessDocuments.find((d) => d.customerName === "Draft Customer");
+    out.draftStatus = draft?.status;
+    out.draftNumber = draft?.number;
+    out.draftShowsNoPdf = !document.querySelector('[data-action="document-pdf"]');
+    out.draftOffersFinalise = Boolean(document.querySelector("[data-document-finalise]"));
+
+    // 3. Editing it reopens the form with what was written.
+    editDocumentDraft(draft.id);
+    await new Promise((r) => setTimeout(r, 500));
+    const form = document.querySelector("[data-document-form]");
+    out.editRestoredCustomer = form?.querySelector('[name="recipient"]')?.value;
+    out.editRestoredDesc = form?.querySelector("[data-doc-desc]")?.value;
+    out.editRestoredUnit = form?.querySelector("[data-doc-unit]")?.value;
+
+    // 4. Saving it again must UPDATE the draft, not make a second one.
+    document.querySelector('[data-action="doc-save-draft"]').click();
+    await new Promise((r) => setTimeout(r, 600));
+    out.countAfterResave = state.businessDocuments.length;
+
+    // 5. A second finalised document must take 0002 - the draft took nothing.
+    await openFresh();
+    fill({ recipient: "Second Customer", __desc: "Support", __unit: "400" });
+    document.querySelector("[data-document-form]").requestSubmit();
+    await new Promise((r) => setTimeout(r, 900));
+    out.secondNumber = state.businessDocuments.find((d) => d.customerName === "Second Customer")?.number;
+
+    // 6. Finalising the draft gives it the next number and locks it.
+    const stillDraft = state.businessDocuments.find((d) => d.customerName === "Draft Customer");
+    finaliseDocumentDraft(stillDraft.id);
+    await new Promise((r) => setTimeout(r, 600));
+    const finalised = state.businessDocuments.find((d) => d.customerName === "Draft Customer");
+    out.finalisedNumber = finalised?.number;
+    out.finalisedStatus = finalised?.status;
+    out.totalRecords = state.businessDocuments.length;
+    out.finalOffersPdf = Boolean(document.querySelector('[data-action="document-pdf"]'));
+    return out;
+  });
+
+  ok("a finalised document takes the first number", drafts.firstNumber === "INV-2026-0001",
+    drafts.firstNumber);
+  ok("A DRAFT TAKES NO NUMBER AT ALL", drafts.draftStatus === "draft" && !drafts.draftNumber,
+    `status ${drafts.draftStatus}, number ${JSON.stringify(drafts.draftNumber)}`);
+  ok("a draft offers no PDF to buy", drafts.draftShowsNoPdf);
+  ok("a draft offers finalising instead", drafts.draftOffersFinalise);
+  ok("editing restores what was written", drafts.editRestoredCustomer === "Draft Customer"
+    && drafts.editRestoredDesc === "Consulting" && drafts.editRestoredUnit === "250",
+    `${drafts.editRestoredCustomer} / ${drafts.editRestoredDesc} / ${drafts.editRestoredUnit}`);
+  ok("saving a draft again updates it rather than duplicating",
+    drafts.countAfterResave === 2, `${drafts.countAfterResave} records`);
+  ok("THE NEXT FINALISED DOCUMENT IS 0002, NOT 0003 - the draft reserved nothing",
+    drafts.secondNumber === "INV-2026-0002", drafts.secondNumber);
+  ok("finalising the draft numbers it and locks it",
+    drafts.finalisedNumber === "INV-2026-0003" && drafts.finalisedStatus === "final",
+    `${drafts.finalisedNumber} / ${drafts.finalisedStatus}`);
+  ok("finalising replaces the draft rather than leaving both",
+    drafts.totalRecords === 3, `${drafts.totalRecords} records`);
+  ok("a finalised document offers its PDF", drafts.finalOffersPdf);
+
   /* ------------------- and when a refusal DOES reach the failure screen */
   //
   // Routing now keeps documents away from the money form, but other services
