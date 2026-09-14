@@ -84,4 +84,82 @@ test("THE MONEY WAS NEVER AT RISK: a document code is refused a wallet debit", a
   }
 });
 
+// THE LAST STEP OF THE DOCUMENT JOURNEY: PAYING FOR THE PDF.
+//
+// Reported from the app after everything else was fixed: the document saved,
+// the PDF screen opened correctly, and the charge came back "Business document
+// pdf is not enabled for live processing yet."
+//
+// assertLiveTransactionSupported refuses anything it does not recognise. Every
+// refusal above it says "this endpoint is the wrong door" - a card top-up, a
+// payout and a VAS purchase each owe something on the other side that
+// createTransaction cannot do. A fee-only service is the opposite: TitoPay
+// sells it itself, the debit IS the fee, and nothing is owed to anyone else.
+// It simply had no case in that gate, while the rest of the file - including
+// feePreview - had been written to support it.
+
+test("the PDF fee can actually be charged", async () => {
+  const tx = require("../src/services/transaction-service");
+  const id = uuidv4();
+  const walletId = uuidv4();
+  const stamp = String(Date.now()).slice(-6);
+  await pool.query(
+    `INSERT INTO users (id, full_name, username, email, phone, account_type, status, fica_status, password_hash)
+     VALUES ($1,'PDF Fee Probe',$2,$3,$4,'business','active','verified','x')`,
+    [id, `pdffee_${stamp}`, `pdffee_${stamp}@test.local`, `+2782${stamp}5`]);
+  await pool.query(
+    `INSERT INTO wallets (id, user_id, kind, currency, wallet_number, status, available_balance)
+     VALUES ($1,$2,'personal','ZAR',$3,'active',1000)`,
+    [walletId, id, `${stamp}55`]);
+  const actor = { userId: id, userType: "customer", ipAddress: "127.0.0.1", userAgent: "test" };
+
+  const before = Number((await pool.query(
+    "SELECT available_balance FROM wallets WHERE id = $1", [walletId])).rows[0].available_balance);
+  const result = await tx.createTransaction(actor, { serviceCode: "business_document_pdf", amount: 0 });
+  const after = Number((await pool.query(
+    "SELECT available_balance FROM wallets WHERE id = $1", [walletId])).rows[0].available_balance);
+
+  assert.equal(Number(result.amount), 0, "a fee-only service has no principal");
+  assert.equal(Number(result.fee), 2.5);
+  assert.equal(Number(result.total), 2.5, "the total IS the fee");
+  assert.equal(Number((before - after).toFixed(2)), 2.5, "the wallet moves by the fee and nothing more");
+
+  // Balanced: the customer's debit and revenue's credit are the same figure.
+  const { rows: ledger } = await pool.query(
+    "SELECT entry_type, amount FROM wallet_ledger WHERE transaction_id = $1 ORDER BY entry_type",
+    [result.transactionId]);
+  assert.equal(ledger.length, 2, "one debit, one credit");
+  assert.equal(ledger.find((r) => r.entry_type === "debit").amount, "2.50");
+  assert.equal(ledger.find((r) => r.entry_type === "credit").amount, "2.50");
+});
+
+test("a client cannot name its own price for a fee-only service", async () => {
+  // The document total is not a principal. An amount sent by the app is
+  // discarded before pricing, so nobody can be charged their invoice total
+  // for a PDF - which is the shape of the bug this whole sequence began with.
+  const tx = require("../src/services/transaction-service");
+  const id = uuidv4();
+  const walletId = uuidv4();
+  const stamp = String(Date.now()).slice(-6);
+  await pool.query(
+    `INSERT INTO users (id, full_name, username, email, phone, account_type, status, fica_status, password_hash)
+     VALUES ($1,'PDF Price Probe',$2,$3,$4,'business','active','verified','x')`,
+    [id, `pdfprice_${stamp}`, `pdfprice_${stamp}@test.local`, `+2782${stamp}6`]);
+  await pool.query(
+    `INSERT INTO wallets (id, user_id, kind, currency, wallet_number, status, available_balance)
+     VALUES ($1,$2,'personal','ZAR',$3,'active',1000)`,
+    [walletId, id, `${stamp}66`]);
+  const actor = { userId: id, userType: "customer", ipAddress: "127.0.0.1", userAgent: "test" };
+
+  const before = Number((await pool.query(
+    "SELECT available_balance FROM wallets WHERE id = $1", [walletId])).rows[0].available_balance);
+  const result = await tx.createTransaction(actor,
+    { serviceCode: "business_document_pdf", amount: 9999 });
+  const after = Number((await pool.query(
+    "SELECT available_balance FROM wallets WHERE id = $1", [walletId])).rows[0].available_balance);
+
+  assert.equal(Number(result.total), 2.5, "the schedule decides the price, not the caller");
+  assert.equal(Number((before - after).toFixed(2)), 2.5);
+});
+
 test.after(async () => { await pool.end().catch(() => null); });

@@ -280,6 +280,28 @@ async function assertLiveTransactionSupported(normalizedServiceCode, payload = {
     if (!payload.recipient) throw new AppError(400, "Recipient is required.");
     return;
   }
+  // A FEE-ONLY SERVICE IS COMPLETE HERE, SO IT IS ALLOWED HERE.
+  //
+  // Every refusal above says "this endpoint is the wrong door" - a card
+  // top-up, a payout and a VAS purchase each debit the wallet AND owe
+  // something on the other side that createTransaction cannot do, so letting
+  // them through would take money with nothing to deliver.
+  //
+  // A fee-only service is the opposite. TitoPay sells it itself, the thing
+  // delivered is a PDF this platform generates, and there is no principal and
+  // no recipient: the debit IS the fee, credited to revenue, balanced. Nothing
+  // is owed to anyone else, so there is nothing a second system has to do.
+  //
+  // It was missing, and the effect was the whole business-document flow ending
+  // on "Business document pdf is not enabled for live processing yet" - the
+  // final step of a journey the rest of this file had been written to support,
+  // including the long comment above FEE_ONLY_SERVICES describing exactly this
+  // shape, and feePreview which already prices it correctly (amount 0, fee
+  // 2.50, total 2.50). Only the gate had no case for it.
+  //
+  // assertServiceLaunched still runs first, above, so an operator disabling
+  // the service still refuses it.
+  if (FEE_ONLY_SERVICES.has(normalizedServiceCode)) return;
   throw new AppError(503, providerPendingMessage(normalizedServiceCode));
 }
 
