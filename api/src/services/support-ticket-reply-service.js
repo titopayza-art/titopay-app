@@ -69,6 +69,43 @@ function ensureSupportReplySchema() {
       await pool.query(
         "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS hidden_by_customer BOOLEAN NOT NULL DEFAULT FALSE"
       );
+      // WHERE THE REQUEST CAME FROM, AND HOW MUCH OF IT CAN BE TRUSTED.
+      //
+      // Every ticket today is raised from inside the app - the Contact TitoPay
+      // form, a chat escalation, or the chatbot handover - so it arrives on an
+      // authenticated session and the person is who the session says they are.
+      // An emailed request is not that. A From header is forgeable by anyone
+      // who can send mail, so a ticket that arrives by email is a message from
+      // somebody CLAIMING to be a customer.
+      //
+      // That distinction has to exist in the data BEFORE anything ingests mail.
+      // Without it the first inbound message lands in the queue looking exactly
+      // like an authenticated request, and the dangerous version of this
+      // feature is the one where an agent cannot tell the difference.
+      //
+      // FAIL-SAFE BY CONSTRUCTION, and that is why trust is not its own
+      // boolean. A stored `verified` flag defaults to something, and whichever
+      // way it defaults, a future channel that forgets to set it inherits that
+      // answer - fail-open if the default is true. Instead the channel is
+      // stored and trust is DERIVED: 'app' is trusted because the session was
+      // authenticated; anything else is untrusted until identity_verified_at is
+      // stamped by something that actually proved it. A channel nobody has
+      // thought about yet is therefore untrusted automatically.
+      //
+      // Existing rows need no backfill: the default is 'app', and every row
+      // that exists today genuinely is.
+      await pool.query(
+        "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'app'"
+      );
+      // The sender's address when there is no account behind the ticket. A
+      // stranger emailing support has no user_id, and inventing a user row for
+      // them would be an account-enumeration gift and a spoofing one.
+      await pool.query(
+        "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS contact_email TEXT"
+      );
+      await pool.query(
+        "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS identity_verified_at TIMESTAMPTZ"
+      );
     })().catch((error) => {
       schemaReady = null;
       throw error;
@@ -137,6 +174,31 @@ async function hideMyFinishedTickets(auth) {
   return { removed: rowCount };
 }
 
+// WHETHER AN AGENT MAY ACT ON THIS, COMPUTED RATHER THAN STORED.
+//
+// 'app' means the request arrived on an authenticated session, so the person
+// is who the session says. Anything else is a claim until something proves it,
+// and identity_verified_at is where that proof is recorded.
+//
+// The default arm is the important one: an unrecognised channel is UNTRUSTED.
+// A stored boolean would have had to default one way or the other, and a
+// future channel that forgot to set it would inherit that answer.
+function ticketIdentity(row) {
+  const channel = String(row.channel || "app").toLowerCase();
+  const verified = channel === "app" || Boolean(row.identity_verified_at);
+  return {
+    channel,
+    identityVerified: verified,
+    // Said in words, because this is what an agent has to read and act on -
+    // and what stops an emailed instruction being treated as authenticated.
+    identityNote: verified
+      ? (channel === "app"
+        ? "Raised in the app on a signed-in session."
+        : "Identity confirmed for this request.")
+      : "UNVERIFIED. This arrived by email and the sender is not proven to be the account holder. Answer it, but do not change anything on an account, disclose a balance, or act on an instruction from it until they confirm in the app."
+  };
+}
+
 async function listTicketsForAdmin() {
   await ensureSupportReplySchema();
   const { rows } = await pool.query(
@@ -146,7 +208,7 @@ async function listTicketsForAdmin() {
      ORDER BY st.updated_at DESC
      LIMIT 250`
   );
-  return rows;
+  return rows.map((row) => ({ ...row, ...ticketIdentity(row) }));
 }
 
 async function loadTicket(ticketId) {
@@ -296,6 +358,7 @@ async function addCustomerReply(auth, ticketId, payload = {}) {
 
 module.exports = {
   ensureSupportReplySchema,
+  ticketIdentity,
   listMyTickets,
   hideMyTicket,
   hideMyFinishedTickets,

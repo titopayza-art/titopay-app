@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v106";
+  return "admin-console-v107";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -3470,6 +3470,14 @@ async function renderSupport() {
   const closuresPending = closures.filter((row) => row.status === "pending").length;
 
   PAGE_EXPORTS.supportTicketThreads = Object.fromEntries(tickets.map((row) => [row.id, Array.isArray(row.replies) ? row.replies : []]));
+  // Carried alongside the thread so the reply prompt can warn without a second
+  // request. identityVerified is computed on the server (channel 'app', or an
+  // explicit identity_verified_at), never trusted from the row's own claim.
+  PAGE_EXPORTS.supportTicketIdentity = Object.fromEntries(tickets.map((row) => [row.id, {
+    channel: row.channel || "app",
+    identityVerified: row.identityVerified !== false,
+    identityNote: row.identityNote || ""
+  }]));
   PAGE_EXPORTS.support = tickets.concat(conversations.map((row) => ({
     type: "chat",
     id: row.id,
@@ -3512,7 +3520,25 @@ async function renderSupport() {
 
     tickets: () => renderRows(tickets, [
       { label: "Request", render: (row) => `<strong>${escapeHtml(row.subject)}</strong><br><small>${escapeHtml(row.category || "-")} · ${escapeHtml(new Date(row.created_at || Date.now()).toLocaleDateString("en-ZA"))}</small>` },
-      { label: "Customer", render: (row) => `${escapeHtml(row.full_name || "-")}<br><small>${escapeHtml(row.username || "-")}</small>` },
+      // WHERE IT CAME FROM, AND WHETHER THE SENDER IS PROVEN.
+      //
+      // An in-app request arrived on an authenticated session. An emailed one
+      // is a message from somebody CLAIMING to be the account holder, because
+      // a From header is forgeable by anyone who can send mail. An agent who
+      // cannot see that difference is an agent who can be talked into acting
+      // on a forged instruction, so it is shown on the row itself rather than
+      // only inside the ticket.
+      { label: "Customer", render: (row) => {
+        const who = row.full_name
+          ? `${escapeHtml(row.full_name)}<br><small>${escapeHtml(row.username || "-")}</small>`
+          // No account behind it: an email from a stranger has no user row, and
+          // inventing one would be an account-enumeration gift.
+          : `<small>${escapeHtml(row.contact_email || "No TitoPay account")}</small>`;
+        const channel = String(row.channel || "app").toLowerCase();
+        if (channel === "app") return who;
+        const verified = row.identityVerified === true;
+        return `${who}<br><span class="chip ${verified ? "" : "warn"}">${escapeHtml(channel)}${verified ? "" : " · unverified"}</span>`;
+      } },
       { label: "Details", render: (row) => {
         const replies = Array.isArray(row.replies) ? row.replies : [];
         const last = replies[replies.length - 1];
@@ -8702,7 +8728,16 @@ document.addEventListener("click", async (event) => {
     const history = thread.length
       ? `\n\nConversation so far:\n${thread.map((reply) => `${reply.authorType === "admin" ? (reply.authorLabel || "Customer Care") : "Customer"}: ${String(reply.message || "").slice(0, 200)}`).join("\n")}`
       : "";
-    const message = window.prompt(`Reply to the customer. They will see it in the app and receive it by email.${history}`, "");
+    // THE WARNING BELONGS WHERE THE AGENT ACTS, not only on the row they
+    // scrolled past. An emailed request is a message from somebody CLAIMING to
+    // be the account holder, and the moment that matters is the moment a reply
+    // is being written - which is where an agent could be talked into
+    // disclosing a balance or acting on an instruction.
+    const identity = (PAGE_EXPORTS.supportTicketIdentity || {})[supportReply.dataset.supportReply];
+    const caution = identity && identity.identityVerified === false
+      ? `\n\n!! ${identity.identityNote}\n`
+      : "";
+    const message = window.prompt(`Reply to the customer. They will see it in the app and receive it by email.${caution}${history}`, "");
     if (message && message.trim().length >= 2) {
       try {
         await apiFetch(`/admin/support/tickets/${supportReply.dataset.supportReply}/reply`, {

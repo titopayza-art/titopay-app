@@ -1,5 +1,5 @@
 TitoPay Admin
-Build: admin-console-v106
+Build: admin-console-v107
 Date: 2026-09-09
 
 v105 - The Integration Readiness table fits its card.
