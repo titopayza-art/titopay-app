@@ -11189,6 +11189,20 @@ function splitEvenly(total, people) {
   const remainder = cents - base * people;
   return new Array(people).fill(0).map((_, index) => (base + (index < remainder ? 1 : 0)) / 100);
 }
+// The company's registration and VAT numbers as one line, for the top of a
+// formal document. A function declaration because app.js only allows hoisted
+// declarations between sections, and it returns "" rather than a placeholder:
+// a document printing "VAT number: not supplied" is worse than one that simply
+// does not mention VAT.
+function businessProfileRegistration() {
+  const user = state.user || {};
+  const registration = String(user.registrationNumber || user.registration_number || "").trim();
+  const vat = String(user.vatNumber || user.vat_number || "").trim();
+  const parts = [];
+  if (registration) parts.push(`Reg. ${registration}`);
+  if (vat) parts.push(`VAT ${vat}`);
+  return parts.join("   ");
+}
 function businessProfileContact() {
   const user = state.user || {};
   return user.businessEmail || user.business_email || user.email || user.phone || user.mobile || "@titopay";
@@ -12869,6 +12883,11 @@ function businessDocumentPdf(document) {
   const customerAddressLines = splitStatementText(customerAddress, 42, 2);
   const businessContactLine = compactStatementReference(document.businessContact || "TitoPay merchant", 42);
   const customerEmailLine = compactStatementReference(document.customerEmail || "No email supplied", 42);
+  // A registration or VAT number turns a printout into a document a
+  // bookkeeper can file. Read from the business profile, and empty when the
+  // business has not supplied one - an invented number on a tax document
+  // would be far worse than a missing line.
+  const businessRegistrationLine = businessProfileRegistration();
   const documentNoLine = compactStatementReference(document.number || "Document", 26);
   const documentRefLine = compactStatementReference(document.reference || document.number || "Pending", 28);
   const items = Array.isArray(document.items) && document.items.length
@@ -12880,83 +12899,151 @@ function businessDocumentPdf(document) {
   const stroke = (x, y, w, h, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x} ${y} ${w} ${h} re S Q`);
   const line = (x1, y1, x2, y2, color = "0.88 0.91 0.96", width = 1) => commands.push(`q ${color} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S Q`);
   const text = (x, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => commands.push(`BT /${font} ${size} Tf ${color} rg ${x} ${y} Td (${pdfEscape(value)}) Tj ET`);
-  const rightText = (rightX, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => {
-    const width = String(value || "").length * size * 0.5;
-    text(rightX - width, y, value, size, font, color);
+  // MEASURED, NOT COUNTED. Every character was assumed to be half an em, so a
+  // money string - mostly digits at 0.556 with a space at 0.278 - came out the
+  // wrong width and the AMOUNT column never quite lined up under its own
+  // heading. These are Helvetica's real advance widths, the font this PDF
+  // embeds. Deliberately local to this document: the statement and receipt
+  // generators share the older helper, and their layouts are not in question.
+  const charWidth = (ch) => {
+    if (/[0-9]/.test(ch)) return 0.556;
+    if (ch === " ") return 0.278;
+    if (/[.,:;'`]/.test(ch)) return 0.278;
+    if (/[A-Z]/.test(ch)) return 0.694;
+    if (/[ilj]/.test(ch)) return 0.235;
+    if (/[frt]/.test(ch)) return 0.315;
+    if (/[mw]/.test(ch)) return 0.833;
+    return 0.54;
   };
+  const textWidth = (value, size) => [...String(value || "")].reduce((sum, ch) => sum + charWidth(ch), 0) * size;
+  const rightText = (rightX, y, value, size = 10, font = "F1", color = "0.06 0.10 0.20") => {
+    text(rightX - textWidth(value, size), y, value, size, font, color);
+  };
+  // THE PAGE, LAID OUT TOP TO BOTTOM WITH NAMED BANDS.
+  //
+  // Reported with a photograph of a real invoice: "Subtotal R 100.00" printed
+  // ON TOP OF the single item row. The totals were positioned by taking the
+  // cursor left below the last row and then drawing UPWARD from it -
+  // totalsTop + 34 - which with one item landed at y 474, exactly the first
+  // row. The more items there were the further apart they drifted, so it read
+  // as correct on a long document and collided on a short one.
+  //
+  // Totals now descend from below the last row, like everything else on the
+  // page, and the bands below them are fixed so the two can never meet. The
+  // page is A4: 595 x 842, y increases upward.
+  const FOOT_RULE = 78;
+  const DISCLAIMER_Y = 100;
+  const NOTES_Y = 160;
+  const TOTALS_FLOOR = 196;        // the lowest the Total line may ever sit
+  const ROW_H = 22;
+  const MAX_ROWS = 10;
+
+  /* ------------------------------------------------- header band */
   fill(0, 720, 595, 92, "0.03 0.08 0.22");
   fill(0, 716, 595, 4, "0.00 0.34 1.00");
-  text(52, 774, document.businessName || "TitoPay Business", 19, "F2", "1 1 1");
-  text(52, 756, businessContactLine, 8.8, "F1", "0.84 0.89 0.98");
-  businessAddressLines.slice(0, 1).forEach((lineValue) => text(52, 742, lineValue, 8, "F1", "0.84 0.89 0.98"));
-  text(52, 728, "Powered by TitoPay. Smart Payments. Simplified.", 7.4, "F1", "0.84 0.89 0.98");
+  text(52, 772, document.businessName || "TitoPay Business", 19, "F2", "1 1 1");
+  text(52, 754, businessContactLine, 8.8, "F1", "0.84 0.89 0.98");
+  // The company's own details and nothing else. A line of platform marketing
+  // on somebody's tax document is not company information.
+  businessAddressLines.slice(0, 1).forEach((lineValue) => text(52, 740, lineValue, 8, "F1", "0.84 0.89 0.98"));
+  if (businessRegistrationLine) text(52, 727, businessRegistrationLine, 7.6, "F1", "0.84 0.89 0.98");
   rightText(545, 775, String(document.kind || "Invoice").toUpperCase(), 14, "F2", "1 1 1");
   rightText(545, 758, documentNoLine, 10, "F2", "0.90 0.94 1.00");
   rightText(545, 744, `Issued ${documentTimestamp(issued)}`, 8.5, "F1", "0.90 0.94 1.00");
-  if (paidAt) rightText(545, 731, `PDF paid ${paidAt.toLocaleDateString("en-ZA")}`, 8, "F1", "0.90 0.94 1.00");
+  if (document.dueDate) {
+    rightText(545, 731, `${document.dateLabel || "Due"} ${friendlyDate(document.dueDate)}`, 8, "F1", "0.90 0.94 1.00");
+  }
 
+  /* ------------------------------------------- from / bill to band */
   text(52, 670, "FROM", 10, "F2", "0.12 0.32 0.62");
   text(308, 670, "BILL TO", 10, "F2", "0.12 0.32 0.62");
-  fill(52, 595, 235, 62, "0.99 0.99 1.00");
-  stroke(52, 595, 235, 62);
-  fill(308, 595, 235, 62, "0.99 0.99 1.00");
-  stroke(308, 595, 235, 62);
-  text(66, 632, document.businessName || "TitoPay Business", 11, "F2");
-  text(66, 616, businessContactLine, 8.5, "F1", "0.42 0.46 0.55");
-  businessAddressLines.forEach((lineValue, index) => text(66, 602 - index * 10, lineValue, 7.6, "F1", "0.42 0.46 0.55"));
-  text(322, 632, document.customerName || "Customer", 11, "F2");
-  text(322, 616, customerEmailLine, 8.5, "F1", "0.42 0.46 0.55");
-  customerAddressLines.forEach((lineValue, index) => text(322, 602 - index * 10, lineValue, 7.6, "F1", "0.42 0.46 0.55"));
+  fill(52, 582, 235, 75, "0.99 0.99 1.00");
+  stroke(52, 582, 235, 75);
+  fill(308, 582, 235, 75, "0.99 0.99 1.00");
+  stroke(308, 582, 235, 75);
+  text(66, 636, document.businessName || "TitoPay Business", 11, "F2");
+  text(66, 621, businessContactLine, 8.5, "F1", "0.42 0.46 0.55");
+  businessAddressLines.forEach((lineValue, index) => text(66, 607 - index * 10, lineValue, 7.6, "F1", "0.42 0.46 0.55"));
+  // A registration or VAT number is what makes this a document a customer's
+  // bookkeeper can file. Printed only when the business has actually given
+  // one - an invented or blank field on a tax document is worse than none.
+  if (businessRegistrationLine) text(66, 588, businessRegistrationLine, 7.6, "F2", "0.30 0.35 0.45");
+  text(322, 636, document.customerName || "Customer", 11, "F2");
+  text(322, 621, customerEmailLine, 8.5, "F1", "0.42 0.46 0.55");
+  customerAddressLines.forEach((lineValue, index) => text(322, 607 - index * 10, lineValue, 7.6, "F1", "0.42 0.46 0.55"));
 
-  fill(52, 560, 491, 22, "0.94 0.97 1.00");
-  stroke(52, 560, 491, 22, "0.82 0.88 0.98");
-  text(64, 568, `Document no: ${documentNoLine}`, 8.5, "F2", "0.04 0.11 0.27");
-  text(250, 568, `Reference: ${documentRefLine}`, 8.2, "F1", "0.42 0.46 0.55");
+  /* -------------------------------------------- document meta bar */
+  fill(52, 548, 491, 22, "0.94 0.97 1.00");
+  stroke(52, 548, 491, 22, "0.82 0.88 0.98");
+  text(64, 556, `Document no: ${documentNoLine}`, 8.5, "F2", "0.04 0.11 0.27");
+  text(250, 556, `Reference: ${documentRefLine}`, 8.2, "F1", "0.42 0.46 0.55");
   const issuedLabel = document.issueDate ? friendlyDate(document.issueDate) : documentTimestamp(issued);
   const dueLabel = document.dueDate ? `${document.dateLabel || "Due"}: ${friendlyDate(document.dueDate)}` : "";
-  rightText(532, 568, dueLabel ? `Issued ${issuedLabel} | ${dueLabel}` : `Issued ${issuedLabel}`, 8.2, "F1", "0.42 0.46 0.55");
+  rightText(532, 556, dueLabel ? `Issued ${issuedLabel} | ${dueLabel}` : `Issued ${issuedLabel}`, 8.2, "F1", "0.42 0.46 0.55");
 
-  text(52, 528, "ITEMS", 10, "F2", "0.12 0.32 0.62");
-  fill(52, 498, 491, 22, "0.03 0.08 0.22");
-  text(64, 506, "DESCRIPTION", 9, "F2", "1 1 1");
-  rightText(368, 506, "QTY", 9, "F2", "1 1 1");
-  rightText(448, 506, "UNIT", 9, "F2", "1 1 1");
-  rightText(532, 506, "AMOUNT", 9, "F2", "1 1 1");
-  let y = 474;
-  items.slice(0, 10).forEach((item, index) => {
-    if (index % 2 === 0) fill(52, y - 4, 491, 24, "0.98 0.985 0.995");
-    text(64, y + 5, compactStatementReference(item.description, 44), 9, "F2");
-    rightText(368, y + 5, String(item.quantity), 8.5, "F1");
-    rightText(448, y + 5, statementMoney(item.unit), 8.5, "F1");
-    rightText(532, y + 5, statementMoney(item.total), 9, "F2");
-    y -= 26;
+  /* ------------------------------------------------------- items */
+  text(52, 518, "ITEMS", 10, "F2", "0.12 0.32 0.62");
+  fill(52, 488, 491, 22, "0.03 0.08 0.22");
+  text(64, 496, "DESCRIPTION", 9, "F2", "1 1 1");
+  rightText(368, 496, "QTY", 9, "F2", "1 1 1");
+  rightText(448, 496, "UNIT", 9, "F2", "1 1 1");
+  rightText(532, 496, "AMOUNT", 9, "F2", "1 1 1");
+
+  // One page. Rather than let an eleventh row run off the bottom or silently
+  // vanish, the overflow is stated on the page - a document that quietly drops
+  // line items is a document that causes a dispute.
+  const shown = items.length > MAX_ROWS ? items.slice(0, MAX_ROWS - 1) : items.slice(0, MAX_ROWS);
+  const hidden = items.length - shown.length;
+  let y = 466;
+  shown.forEach((item, index) => {
+    if (index % 2 === 0) fill(52, y - 6, 491, ROW_H, "0.98 0.985 0.995");
+    text(64, y, compactStatementReference(item.description, 44), 9, "F2");
+    rightText(368, y, String(item.quantity), 8.5, "F1");
+    rightText(448, y, statementMoney(item.unit), 8.5, "F1");
+    rightText(532, y, statementMoney(item.total), 9, "F2");
+    y -= ROW_H;
   });
+  if (hidden > 0) {
+    text(64, y, `+ ${hidden} further item${hidden === 1 ? "" : "s"} - see the full document in the TitoPay app`,
+      8, "F1", "0.42 0.46 0.55");
+    y -= ROW_H;
+  }
 
-  const totalsTop = Math.max(y - 8, 230);
-  line(360, totalsTop + 52, 543, totalsTop + 52);
-  text(372, totalsTop + 34, "Subtotal", 9, "F1", "0.42 0.46 0.55");
-  rightText(532, totalsTop + 34, statementMoney(totals.subtotal), 9, "F2");
-  text(372, totalsTop + 16, totals.vatIncluded ? "VAT 15%" : "VAT", 9, "F1", "0.42 0.46 0.55");
-  rightText(532, totalsTop + 16, statementMoney(totals.vat), 9, "F2");
-  line(360, totalsTop + 4, 543, totalsTop + 4);
-  text(372, totalsTop - 16, "Total", 12, "F2", "0.00 0.34 1.00");
-  rightText(532, totalsTop - 16, statementMoney(totals.total), 12, "F2", "0.00 0.34 1.00");
+  /* ------------------------------------------------------ totals */
+  // Drawn DOWNWARD from just under the last row, with a floor so a full page
+  // of items can never push the total into the notes below it.
+  const totalsTop = Math.max(y + 10, TOTALS_FLOOR + 68);
+  line(360, totalsTop, 543, totalsTop);
+  text(372, totalsTop - 20, "Subtotal", 9, "F1", "0.42 0.46 0.55");
+  rightText(532, totalsTop - 20, statementMoney(totals.subtotal), 9, "F2");
+  text(372, totalsTop - 36, totals.vatIncluded ? "VAT 15%" : "VAT", 9, "F1", "0.42 0.46 0.55");
+  rightText(532, totalsTop - 36, statementMoney(totals.vat), 9, "F2");
+  line(360, totalsTop - 48, 543, totalsTop - 48);
+  text(372, totalsTop - 68, "Total", 12, "F2", "0.00 0.34 1.00");
+  rightText(532, totalsTop - 68, statementMoney(totals.total), 12, "F2", "0.00 0.34 1.00");
 
-  text(52, 190, "NOTES", 10, "F2", "0.12 0.32 0.62");
-  splitStatementText(document.notes || "Thank you for your business.", 72, 2).forEach((lineValue, index) => text(52, 174 - index * 11, lineValue, 8.5, "F1", "0.42 0.46 0.55"));
+  /* ------------------------------------------- notes and terms */
+  text(52, NOTES_Y, "NOTES", 10, "F2", "0.12 0.32 0.62");
+  splitStatementText(document.notes || "Thank you for your business.", 72, 2)
+    .forEach((lineValue, index) => text(52, NOTES_Y - 16 - index * 11, lineValue, 8.5, "F1", "0.42 0.46 0.55"));
   // A quote that does not say it is an offer, or a proforma that does not say
   // it is not a tax invoice, is the kind of document that causes a dispute.
   if (document.disclaimer) {
-    fill(52, 138, 491, 24, "0.96 0.97 1.00");
-    stroke(52, 138, 491, 24, "0.86 0.90 0.98");
-    splitStatementText(document.disclaimer, 92, 1).forEach((lineValue) => text(62, 146, lineValue, 7.6, "F2", "0.12 0.32 0.62"));
+    fill(52, DISCLAIMER_Y, 491, 24, "0.96 0.97 1.00");
+    stroke(52, DISCLAIMER_Y, 491, 24, "0.86 0.90 0.98");
+    splitStatementText(document.disclaimer, 92, 1)
+      .forEach((lineValue) => text(62, DISCLAIMER_Y + 8, lineValue, 7.6, "F2", "0.12 0.32 0.62"));
   }
-  text(52, 126, "PDF EXTRACTION", 10, "F2", "0.12 0.32 0.62");
-  text(52, 110, `Fee paid: ${document.pdfFeePaid ? "Yes" : "No"} | Fee: ${statementMoney(DOCUMENT_PDF_FEE)} | Ref: ${compactStatementReference(document.pdfFeeReference || "Pending", 30)}`, 8, "F1", "0.42 0.46 0.55");
 
-  line(52, 78, 543, 78);
-  text(52, 48, "Smart Payments. Simplified.", 7, "F1", "0.42 0.46 0.55");
-  rightText(543, 34, "Page 1 of 1", 7, "F1", "0.42 0.46 0.55");
+  /* ------------------------------------------------------ footer */
+  // What TitoPay charged the ISSUER to extract this PDF is a private matter
+  // between them and TitoPay. It was printed here, on the document handed to
+  // the customer, alongside a transaction reference - so was the platform's
+  // own tagline. Neither belongs on somebody's formal document, and both are
+  // gone.
+  line(52, FOOT_RULE, 543, FOOT_RULE);
+  text(52, 56, document.businessName || "", 7.4, "F1", "0.42 0.46 0.55");
+  rightText(543, 56, "Page 1 of 1", 7, "F1", "0.42 0.46 0.55");
 
   return makePdf(commands);
 }
