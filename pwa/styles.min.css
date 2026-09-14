@@ -839,3 +839,24 @@ html[data-theme=night] .event-status-pill{color:#061a3d}
    unreadable. Wrapped, never horizontally scrolled. */
 .sv-terms-body{white-space:pre-wrap;word-break:break-word;font:inherit;margin:10px 0 0;padding:12px;border-radius:12px;background:var(--surface-2,rgba(11,31,63,.04));color:var(--text);max-height:420px;overflow-y:auto}
 html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
+/* THE CHAT THREAD FILLS THE PHONE.
+   The sheet already spans the viewport - on a phone .modal-card is
+   height:100dvh - but its contents stopped less than two thirds of the way
+   down and the rest was white, the taller the phone the bigger the hole.
+   The cause is a pair of rules that govern every ordinary modal:
+     .modal-backdrop:not(.auth-modal-backdrop)
+       > .modal-card:not(.fullscreen-modal):not(.chatbot-fullscreen-modal)
+     ... {display:flex;flex-direction:column}
+     ... > * {flex:0 0 auto}
+   Both are specificity (0,5,0). They beat .modal-card.titopay-chat-thread-modal
+   (0,2,0), so the grid that modal asks for never applied, and they pin every
+   child to its content height, so nothing absorbs the leftover space and it
+   all collects at the bottom.
+   The fix is one child, not a new layout: the conversation is the only thing
+   that should take the slack, so it alone opts out of flex:0 0 auto. The
+   header, typing line, composer and back button stay content-sized, which is
+   correct. min-height:0 is what lets a flex child shrink below its content
+   and scroll instead of pushing the composer off the screen.
+   Written at (0,7,0) so it wins on specificity rather than on file order,
+   and scoped through .titopay-chat-thread-modal so no other modal moves. */
+.modal-backdrop:not(.auth-modal-backdrop)>.modal-card.titopay-chat-thread-modal:not(.fullscreen-modal):not(.chatbot-fullscreen-modal)>.titopay-chat-window{flex:1 1 auto;min-height:0;max-height:none}

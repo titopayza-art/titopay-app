@@ -24668,7 +24668,18 @@ function openTitoPayChatThread(threadId) {
   if (card) card.classList.add("titopay-chat-thread-modal");
   applyChatBlueBackground();
   const windowEl = document.querySelector(".titopay-chat-window");
-  if (windowEl) windowEl.scrollTop = windowEl.scrollHeight;
+  if (windowEl) {
+    windowEl.scrollTop = windowEl.scrollHeight;
+    // ARM THE REPAINT GUARD ON THE FIRST PAINT.
+    //
+    // repaintChatThread skips the DOM entirely when the conversation on screen
+    // already matches - that comparison is what stops a poll replacing
+    // identical nodes, killing scroll momentum and dropping a text selection.
+    // But the signature was only ever written BY a repaint, so it was unset
+    // when the thread opened and the very first poll always replaced the list.
+    // That is one guaranteed flicker a second or two after opening every chat.
+    windowEl.dataset.chatSignature = chatThreadSignature(thread);
+  }
   restoreChatDraft(threadId);
   sendTitoPaySocketEvent("chat:read", { payload: titoPayChatSignalPayload(thread) });
   // Refresh the messages in place. Reopening the whole modal here rebuilt the
@@ -24703,6 +24714,12 @@ function clearChatDraft(threadId) {
 }
 // Repaints the message list only. The composer, its draft, the header and the
 // scroll position are left exactly as the user left them.
+// What "the conversation on screen is already correct" means: the same
+// messages, in the same order, with the same delivery status. One definition,
+// used both when a thread is opened and when a poll considers repainting it.
+function chatThreadSignature(thread) {
+  return (thread.messages || []).map((message) => `${message.id}:${message.status || ""}`).join("|");
+}
 function repaintChatThread(threadId) {
   const windowEl = document.querySelector(".titopay-chat-window");
   if (!windowEl) return;
@@ -24712,7 +24729,11 @@ function repaintChatThread(threadId) {
   // A signature of ids and statuses. If the conversation on screen already
   // matches, do not touch the DOM at all -- replacing identical nodes is what
   // stopped scroll momentum dead and dropped text selections.
-  const signature = thread.messages.map((message) => `${message.id}:${message.status || ""}`).join("|");
+  //
+  // Computed by a shared helper so the value stamped when the thread OPENS is
+  // built the same way as the one compared here. Two copies of this expression
+  // that drifted apart would make the guard silently useless.
+  const signature = chatThreadSignature(thread);
   if (windowEl.dataset.chatSignature === signature) return;
   // Only follow the conversation down if the user was already reading the end
   // of it. Yanking someone back from older messages is its own bug.
