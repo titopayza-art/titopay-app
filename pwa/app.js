@@ -4731,6 +4731,12 @@ async function onClick(event) {
     else openTitoPayChatModal();
     return;
   }
+  const notificationGift = event.target.closest("[data-notification-gift]");
+  if (notificationGift) {
+    markNotificationReadById(notificationGift.dataset.noticeId);
+    openReceivedGiftModal(notificationGift.dataset.notificationGift);
+    return;
+  }
   const notificationTx = event.target.closest("[data-notification-tx]");
   if (notificationTx) {
     markNotificationReadById(notificationTx.dataset.noticeId);
@@ -27417,6 +27423,11 @@ function notificationActionAttributes(item = {}) {
   const metadata = item.metadata || {};
   const idAttr = `data-notice-id="${esc(item.id || "")}"`;
   if (metadata.receiptId) return `${idAttr} data-notification-receipt="${esc(metadata.receiptId)}" role="button" tabindex="0"`;
+  // A received gift opens the gift, not the activity list. It is checked
+  // before the transaction branch below because the notification also carries
+  // the sender's transaction id - which the receiver does not own and cannot
+  // open, so that branch would land them on an empty screen.
+  if (metadata.gift) return `${idAttr} data-notification-gift="${esc(item.id || "")}" role="button" tabindex="0"`;
   const ticketRef = metadata.ticketRef || metadata.ticketId;
   if (ticketRef) return `${idAttr} data-notification-support="${esc(ticketRef)}" role="button" tabindex="0"`;
   if (metadata.txId || metadata.txReference) return `${idAttr} data-notification-tx="${esc(metadata.txId || metadata.txReference)}" role="button" tabindex="0"`;
@@ -27435,6 +27446,50 @@ function notificationActionAttributes(item = {}) {
   return "";
 }
 // A tapped notification is a read notification, whatever it opened.
+// THE RECEIVER'S HALF OF A GIFT.
+//
+// The sender sees a gift card because they own the transaction row that
+// carries the occasion and the message. The receiver owns no row at all - a
+// peer transfer writes one debit row for the sender and a wallet_ledger credit
+// for the receiver - so for them the gift existed only as a line of
+// notification text, while the person who sent it got the card. That is the
+// wrong way round: the gift is for the receiver.
+//
+// So the notification carries the gift, and opening it opens this. Deliberately
+// the SAME card as the sender's, down to the class names, because parity is the
+// point: what the sender composed is what the receiver should open.
+function openReceivedGiftModal(noticeId) {
+  const item = (state.notifications || []).find((notice) => notice.id === noticeId);
+  const metadata = item?.metadata || {};
+  // The amount is on the notification, but a gift whose amount somehow did not
+  // travel still opens - showing the message without a figure is far better
+  // than refusing to open the thing somebody sent.
+  const amountValue = Number(metadata.amount);
+  const sender = String(metadata.senderName || "").trim();
+  const occasion = String(metadata.occasion || "").trim();
+  const message = String(metadata.message || "").trim();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Gift</p><h2>You've received a gift</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="gift-receipt-card" role="note" aria-label="Gift received">
+      <span class="gift-receipt-icon">${icon("gift")}</span>
+      <p class="gift-receipt-title">You've received a gift</p>
+      ${occasion && occasion.toLowerCase() !== "custom"
+        ? `<span class="gift-receipt-occasion">${esc(occasion)}</span>` : ""}
+      ${Number.isFinite(amountValue) && amountValue > 0
+        ? `<p class="gift-receipt-amount">${esc(money(amountValue))}</p>` : ""}
+      ${message ? `<p class="gift-receipt-message">“${esc(message)}”</p>` : ""}
+      ${sender ? `<p class="gift-receipt-from">From ${esc(sender)}</p>` : ""}
+    </section>
+    <p class="field-hint">The money is already in your TitoPay wallet.</p>
+    <div class="auth-actions">
+      <button class="btn secondary" type="button" data-action="notifications">${icon("bell")} Back</button>
+      <button class="btn primary" type="button" data-close>${icon("check-circle")} Done</button>
+    </div>
+  `);
+}
 function markNotificationReadById(noticeId) {
   if (!noticeId) return;
   let changed = false;

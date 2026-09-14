@@ -787,7 +787,30 @@ async function createTransaction(actor, payload) {
         channel: "in_app", notificationType: "gift_received", provider: "in_app",
         title: `${senderName} sent you a gift of ${amountLabel}`,
         body: `${senderName} sent you ${amountLabel}${occasionLine}.${giftMessage ? ` Their message: "${giftMessage}"` : ""} The money is in your wallet now.`,
-        metadata: { transactionId: txId, reference, occasion: occasion || null, clientNotificationId: `gift-${txId}` }
+        // EVERYTHING THE RECEIVER'S GIFT CARD NEEDS, ON THE NOTIFICATION.
+        //
+        // The sender gets a proper gift card because they own a transactions
+        // row carrying the occasion and message. The receiver owns no such row
+        // - a peer transfer writes one debit row for the sender and a
+        // wallet_ledger credit for the receiver, nothing more - so there was
+        // nothing for them to open, and the gift only ever existed for them as
+        // a line of notification text.
+        //
+        // Rather than manufacture a transactions row for them (the ledger
+        // credit is keyed to the SENDER's transaction id, and reversal finds
+        // both legs by that id, so moving or duplicating it would put a money
+        // path at risk for a presentation problem), the notification carries
+        // the gift itself. The receiver's card is rendered from these fields.
+        metadata: {
+          transactionId: txId,
+          reference,
+          occasion: occasion || null,
+          gift: true,
+          senderName,
+          message: giftMessage || null,
+          amount: netAmount,
+          clientNotificationId: `gift-${txId}`
+        }
       });
       const { rows: recipientRows } = await pool.query("SELECT email, full_name FROM users WHERE id=$1", [recipientWallet.user_id]);
       const giftRecipient = recipientRows[0];

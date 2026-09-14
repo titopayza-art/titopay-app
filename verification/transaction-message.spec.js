@@ -137,6 +137,52 @@ const ok = (label, pass, detail) => {
   ok("no empty card is drawn", !plain.present,
     plain.present ? "an empty card is worse than the plain row it replaced" : "");
 
+  /* ------------------------------ THE RECEIVER'S HALF, WHICH DID NOT EXIST */
+  //
+  // The sender owns the transaction row, so they got the card. The receiver
+  // owns no row at all, so the gift reached them as a line of notification
+  // text while the person who SENT it got the nice screen - the wrong way
+  // round, since the gift is for the receiver. The notification now carries
+  // the gift and opens it.
+  const received = await page.evaluate(async () => {
+    // Seeded exactly as transaction-service writes it for gift_received.
+    const notice = {
+      id: "n-gift-1", unread: true, title: "Lerato Mokoena sent you a gift of R500.00",
+      body: "The money is in your wallet now.", createdAt: new Date().toISOString(),
+      metadata: { gift: true, senderName: "Lerato Mokoena", occasion: "Birthday",
+        message: "Happy birthday! Enjoy your day.", amount: 500,
+        transactionId: "t-gift", reference: "TX-GIFT-0001" }
+    };
+    state.notifications = [notice, ...(state.notifications || [])];
+    if (typeof closeModal === "function") closeModal();
+    await new Promise((r) => setTimeout(r, 200));
+    openReceivedGiftModal("n-gift-1");
+    await new Promise((r) => setTimeout(r, 400));
+    const card = document.querySelector(".gift-receipt-card");
+    // The notification must also be tappable in the first place.
+    const attrs = typeof notificationActionAttributes === "function"
+      ? notificationActionAttributes(notice) : "";
+    return {
+      present: Boolean(card),
+      tappable: /data-notification-gift/.test(attrs),
+      title: card?.querySelector(".gift-receipt-title")?.textContent.trim() || "",
+      occasion: card?.querySelector(".gift-receipt-occasion")?.textContent.trim() || "",
+      amount: card?.querySelector(".gift-receipt-amount")?.textContent.trim() || "",
+      message: card?.querySelector(".gift-receipt-message")?.textContent.trim() || "",
+      from: card?.querySelector(".gift-receipt-from")?.textContent.trim() || "",
+      markedRead: (state.notifications || []).find((n) => n.id === "n-gift-1")?.unread === true
+    };
+  });
+  console.log("\n  the receiver opens their gift");
+  ok("the gift notification is tappable", received.tappable,
+    "it used to fall through to the sender's transaction, which the receiver cannot open");
+  ok("THE RECEIVER GETS A GIFT CARD", received.present);
+  ok("it says a gift was received", /received a gift/i.test(received.title || ""), received.title);
+  ok("the occasion is shown", /birthday/i.test(received.occasion || ""), received.occasion);
+  ok("the amount is shown", /500/.test(received.amount || ""), received.amount);
+  ok("THE SENDER'S MESSAGE IS SHOWN", /Happy birthday/.test(received.message || ""), received.message);
+  ok("the sender is named", /Lerato Mokoena/.test(received.from || ""), received.from);
+
   ok("no page errors", errors.length === 0, errors.slice(0, 1).join(" | "));
 
   await page.screenshot({ path: path.join(__dirname, "artifacts", "transaction-message.png") })
