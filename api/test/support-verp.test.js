@@ -46,7 +46,7 @@ const BASE = "support@titopay.co.za";
 test("an address built for a ticket parses back to that ticket", () => {
   const address = supportReplyAddress("TP123456", BASE, SECRET);
   assert.match(address, /^support\+TP123456\.[0-9a-f]{8}@titopay\.co\.za$/);
-  assert.deepEqual(parseSupportReplyAddress(address, SECRET), { ticketRef: "TP123456" });
+  assert.deepEqual(parseSupportReplyAddress(address, SECRET, BASE), { ticketRef: "TP123456" });
 });
 
 test("the same ticket always gets the same address, so a thread stays one thread", () => {
@@ -62,7 +62,7 @@ test("different tickets get different signatures", () => {
 
 test("a lower-cased address still parses, because mail servers fold case", () => {
   const address = supportReplyAddress("TP654321", BASE, SECRET);
-  assert.deepEqual(parseSupportReplyAddress(address.toLowerCase(), SECRET), { ticketRef: "TP654321" });
+  assert.deepEqual(parseSupportReplyAddress(address.toLowerCase(), SECRET, BASE), { ticketRef: "TP654321" });
 });
 
 /* ------------------------------------------------ a guess must not land */
@@ -71,36 +71,122 @@ test("A FORGED SIGNATURE IS REFUSED", () => {
   // The whole reason the reference is signed. TP000001..TP999999 is a small
   // space and a support thread can carry a customer's personal details, so an
   // address somebody made up must not reach one.
-  assert.equal(parseSupportReplyAddress("support+TP123456.deadbeef@titopay.co.za", SECRET), null);
-  assert.equal(parseSupportReplyAddress("support+TP123456.0@titopay.co.za", SECRET), null);
-  assert.equal(parseSupportReplyAddress("support+TP123456.@titopay.co.za", SECRET), null);
-  assert.equal(parseSupportReplyAddress("support+TP123456@titopay.co.za", SECRET), null);
+  assert.equal(parseSupportReplyAddress("support+TP123456.deadbeef@titopay.co.za", SECRET, BASE), null);
+  assert.equal(parseSupportReplyAddress("support+TP123456.0@titopay.co.za", SECRET, BASE), null);
+  assert.equal(parseSupportReplyAddress("support+TP123456.@titopay.co.za", SECRET, BASE), null);
+  assert.equal(parseSupportReplyAddress("support+TP123456@titopay.co.za", SECRET, BASE), null);
 });
 
 test("a signature from a different secret is refused", () => {
   const address = supportReplyAddress("TP123456", BASE, SECRET);
-  assert.equal(parseSupportReplyAddress(address, "a-different-secret-entirely"), null);
+  assert.equal(parseSupportReplyAddress(address, "a-different-secret-entirely", BASE), null);
 });
 
 test("a signature lifted from another ticket is refused", () => {
   const other = supportReplyAddress("TP999999", BASE, SECRET);
   const stolenTag = other.split(".")[1].split("@")[0];
-  assert.equal(parseSupportReplyAddress(`support+TP123456.${stolenTag}@titopay.co.za`, SECRET), null);
+  assert.equal(parseSupportReplyAddress(`support+TP123456.${stolenTag}@titopay.co.za`, SECRET, BASE), null);
 });
 
 test("the plain support address carries no ticket, so it is NOT attached to one", () => {
   // This is what makes a genuinely new email become a new request rather than
   // being silently appended to whatever ticket the parser fell back on.
-  assert.equal(parseSupportReplyAddress(BASE, SECRET), null);
-  assert.equal(parseSupportReplyAddress("support+@titopay.co.za", SECRET), null);
-  assert.equal(parseSupportReplyAddress("", SECRET), null);
-  assert.equal(parseSupportReplyAddress(null, SECRET), null);
+  assert.equal(parseSupportReplyAddress(BASE, SECRET, BASE), null);
+  assert.equal(parseSupportReplyAddress("support+@titopay.co.za", SECRET, BASE), null);
+  assert.equal(parseSupportReplyAddress("", SECRET, BASE), null);
+  assert.equal(parseSupportReplyAddress(null, SECRET, BASE), null);
 });
 
 test("a malformed reference is refused even when correctly signed for itself", () => {
   for (const bad of ["TP12345", "TP1234567", "T123456", "tp123456!", "../../etc"]) {
     assert.equal(supportReplyAddress(bad, BASE, SECRET), null, `${bad} must not build an address`);
   }
+});
+
+/* ------------------------------- the address has to be OURS, not merely
+                                    well-formed and correctly signed        */
+
+test("A LOOKALIKE DOMAIN IS REFUSED", () => {
+  // FOUND BY ATTACKING THE PARSER, NOT BY READING IT.
+  //
+  // The first version checked the tag and never checked the domain, so
+  // support+TP123456.<valid tag>@titopay.co.za.evil.com routed straight to
+  // ticket TP123456. The HMAC was never broken - the address simply did not
+  // have to be ours.
+  //
+  // It matters because the caller scans To, Cc AND Delivered-To, and all three
+  // are written by whoever sent the message. Anyone who had ever received one
+  // legitimate reply address could put a lookalike in Cc on mail sent anywhere
+  // and have it filed into that customer's support thread.
+  const tag = signTicketRef("TP123456", SECRET);
+  for (const forged of [
+    `support+TP123456.${tag}@titopay.co.za.evil.com`,
+    `support+TP123456.${tag}@titopay-co-za.com`,
+    `support+TP123456.${tag}@evil.com`,
+    `support+TP123456.${tag}@evil.com@titopay.co.za`
+  ]) {
+    assert.equal(parseSupportReplyAddress(forged, SECRET, BASE), null, `${forged} must not route`);
+  }
+});
+
+test("a different mailbox on the right domain is refused", () => {
+  // billing+TP123456.tag@titopay.co.za is not the support desk. Accepting it
+  // would let any forwarding rule anywhere on the domain inject into a thread.
+  const tag = signTicketRef("TP123456", SECRET);
+  assert.equal(parseSupportReplyAddress(`billing+TP123456.${tag}@titopay.co.za`, SECRET, BASE), null);
+});
+
+test("with no configured support address, nothing routes", () => {
+  // An address that cannot be checked against anything must not be trusted.
+  const address = supportReplyAddress("TP123456", BASE, SECRET);
+  assert.equal(parseSupportReplyAddress(address, SECRET, ""), null);
+  assert.equal(parseSupportReplyAddress(address, SECRET, undefined), null);
+});
+
+test("a real mail header parses: display name, angle brackets, folded case", () => {
+  // Headers do not contain bare addresses. This worked by accident before;
+  // now it is deliberate, and pinned.
+  const tag = signTicketRef("TP123456", SECRET);
+  for (const header of [
+    `"TitoPay Care" <support+TP123456.${tag}@titopay.co.za>`,
+    `<support+TP123456.${tag}@titopay.co.za>`,
+    `support+TP123456.${tag}@TITOPAY.CO.ZA`,
+    `  support+TP123456.${tag}@titopay.co.za  `
+  ]) {
+    assert.deepEqual(parseSupportReplyAddress(header, SECRET, BASE), { ticketRef: "TP123456" },
+      `${header} should parse`);
+  }
+});
+
+test("header injection and control characters are refused", () => {
+  // A CR or LF inside an address is where header injection starts.
+  const tag = signTicketRef("TP123456", SECRET);
+  for (const nasty of [
+    `support+TP123456.${tag}@titopay.co.za\r\nBcc: evil@example.com`,
+    `support+TP123456.${tag}@titopay.co.za\nBcc: evil@example.com`,
+    `support+TP123456.${tag} @titopay.co.za`,
+    `support+TP123456.${tag}\t@titopay.co.za`
+  ]) {
+    assert.equal(parseSupportReplyAddress(nasty, SECRET, BASE), null);
+  }
+});
+
+test("an absurdly long address is refused rather than processed", () => {
+  const tag = signTicketRef("TP123456", SECRET);
+  const huge = `support+${"A".repeat(200000)}.${tag}@titopay.co.za`;
+  const started = process.hrtime.bigint();
+  assert.equal(parseSupportReplyAddress(huge, SECRET, BASE), null);
+  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(ms < 50, `refusing an oversized address took ${ms.toFixed(1)}ms`);
+});
+
+test("a message carrying thousands of recipients is bounded", () => {
+  // An inbound message's Cc list is attacker-controlled and can be enormous.
+  const flood = Array.from({ length: 20000 }, (_, i) => `filler${i}@example.com`);
+  const started = process.hrtime.bigint();
+  assert.equal(findTicketRefInRecipients(flood, SECRET, BASE), null);
+  const ms = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(ms < 50, `scanning a flooded recipient list took ${ms.toFixed(1)}ms`);
 });
 
 /* ------------------------------------ it must never break a support email */
@@ -119,7 +205,7 @@ test("a base address that already carries a tag does not stack a second one", ()
   // which routes somewhere nobody intended.
   const address = supportReplyAddress("TP123456", "support+desk@titopay.co.za", SECRET);
   assert.equal(address, `support+TP123456.${signTicketRef("TP123456", SECRET)}@titopay.co.za`);
-  assert.deepEqual(parseSupportReplyAddress(address, SECRET), { ticketRef: "TP123456" });
+  assert.deepEqual(parseSupportReplyAddress(address, SECRET, BASE), { ticketRef: "TP123456" });
 });
 
 /* ------------------------------------------------- what ingest will read */
@@ -129,12 +215,12 @@ test("the ticket is found across To, Cc and Delivered-To", () => {
   // which is exactly the case subject-line matching gets wrong.
   const address = supportReplyAddress("TP246810", BASE, SECRET);
   assert.deepEqual(
-    findTicketRefInRecipients(["someone@example.com", address, "cc@example.com"], SECRET),
+    findTicketRefInRecipients(["someone@example.com", address, "cc@example.com"], SECRET, BASE),
     { ticketRef: "TP246810" }
   );
-  assert.equal(findTicketRefInRecipients(["someone@example.com"], SECRET), null);
-  assert.equal(findTicketRefInRecipients([], SECRET), null);
-  assert.equal(findTicketRefInRecipients(null, SECRET), null);
+  assert.equal(findTicketRefInRecipients(["someone@example.com"], SECRET, BASE), null);
+  assert.equal(findTicketRefInRecipients([], SECRET, BASE), null);
+  assert.equal(findTicketRefInRecipients(null, SECRET, BASE), null);
 });
 
 /* --------------------------------------------- the shipped configuration */

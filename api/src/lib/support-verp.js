@@ -82,21 +82,62 @@ function supportReplyAddress(ticketRef, baseAddress, secret) {
   return `${parts.local}+${ref}.${signTicketRef(ref, secret)}@${parts.domain}`;
 }
 
+// Mail headers do not contain bare addresses. They contain things like
+//   "TitoPay Care" <support+TP123456.9f2c1ab4@titopay.co.za>
+// so the address is lifted out of the angle brackets DELIBERATELY rather than
+// by luck. Anything carrying a control character, whitespace inside the
+// address, or an absurd length is refused outright: a header line is
+// attacker-controlled, and a CR or LF inside one is how header injection
+// starts.
+const MAX_ADDRESS_LENGTH = 320; // RFC 5321: 64-octet local part + 255 domain.
+
+function extractAddress(raw) {
+  const value = String(raw || "").trim();
+  if (!value || value.length > MAX_ADDRESS_LENGTH) return "";
+  const opened = value.lastIndexOf("<");
+  const closed = value.lastIndexOf(">");
+  const inner = opened >= 0 && closed > opened ? value.slice(opened + 1, closed).trim() : value;
+  // No spaces, no tabs, no CR/LF, no control characters, exactly one @.
+  if (!inner || /[\s\u0000-\u001F\u007F]/.test(inner)) return "";
+  if (inner.split("@").length !== 2) return "";
+  return inner;
+}
+
 // The inverse, for the ingest layer: which ticket is this address about?
 //
+// THE DOMAIN IS CHECKED, AND THE FIRST VERSION OF THIS DID NOT CHECK IT.
+//
+// Without that check, support+TP123456.<valid tag>@titopay.co.za.evil.com
+// parsed happily and routed to ticket TP123456. That matters because the
+// caller scans To, Cc AND Delivered-To, and every one of those is written by
+// whoever sent the mail. So anybody who had ever received one legitimate reply
+// address could drop a lookalike into Cc on a message sent anywhere and have
+// it filed into that customer's support thread. The HMAC was never broken -
+// the address simply did not have to be ours.
+//
 // Returns null for anything that does not carry a well-formed, correctly
-// signed reference - including plain support@titopay.co.za, which is how mail
-// that is NOT a reply to one of our emails falls through to being treated as a
-// new request rather than being silently attached to ticket "SUPPORT".
-function parseSupportReplyAddress(address, secret) {
-  const parts = splitAddress(String(address || "").trim().toLowerCase());
-  if (!parts || !secret) return null;
-  const value = String(address).trim();
-  const at = value.lastIndexOf("@");
-  if (at <= 0) return null;
-  const local = value.slice(0, at);
+// signed reference on the RIGHT DOMAIN - including plain
+// support@titopay.co.za, which is how mail that is NOT a reply to one of our
+// emails falls through to being treated as a new request rather than being
+// silently attached to ticket "SUPPORT".
+function parseSupportReplyAddress(address, secret, baseAddress) {
+  if (!secret) return null;
+  const expectedDomain = splitAddress(baseAddress);
+  // No configured support address means nothing can be verified as ours, and
+  // an unverifiable address must not route.
+  if (!expectedDomain) return null;
+  const clean = extractAddress(address);
+  if (!clean) return null;
+  const at = clean.lastIndexOf("@");
+  const local = clean.slice(0, at);
+  const domain = clean.slice(at + 1);
+  if (domain.toLowerCase() !== expectedDomain.domain.toLowerCase()) return null;
   const plus = local.indexOf("+");
   if (plus < 0) return null;
+  // The mailbox before the tag has to be ours too: nobody+TP123456.tag@ours
+  // is a different mailbox, and treating it as the support desk would let a
+  // forwarding rule anywhere on the domain inject into a thread.
+  if (local.slice(0, plus).toLowerCase() !== expectedDomain.local.toLowerCase()) return null;
   const tagged = local.slice(plus + 1);
   const dot = tagged.lastIndexOf(".");
   if (dot <= 0) return null;
@@ -115,9 +156,16 @@ function parseSupportReplyAddress(address, secret) {
 // Every address an inbound message might have been delivered to - To, Cc and
 // Delivered-To all matter, because a forwarded thread often keeps the original
 // recipient in Cc rather than To.
-function findTicketRefInRecipients(addresses, secret) {
-  for (const address of [].concat(addresses || [])) {
-    const match = parseSupportReplyAddress(address, secret);
+//
+// All three are attacker-controlled, which is exactly why the domain check
+// above exists. Capped, so a message carrying ten thousand Cc addresses costs
+// ten thousand cheap string checks and not an open-ended loop.
+const MAX_RECIPIENTS_SCANNED = 100;
+
+function findTicketRefInRecipients(addresses, secret, baseAddress) {
+  const list = [].concat(addresses || []).slice(0, MAX_RECIPIENTS_SCANNED);
+  for (const address of list) {
+    const match = parseSupportReplyAddress(address, secret, baseAddress);
     if (match) return match;
   }
   return null;
