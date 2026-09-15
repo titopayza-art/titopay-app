@@ -4087,6 +4087,11 @@ async function onSubmit(event) {
     if (form.dataset.form === "reset") await requestReset(data);
     if (form.dataset.form === "reset-confirm") await confirmReset(data);
     if (form.dataset.form === "otp") await verifyOtp(data);
+    if (form.dataset.form === "titopro-search") await submitTitoProSearch(data);
+    if (form.dataset.form === "titopro-request") await submitTitoProRequest(data);
+    if (form.dataset.form === "titopro-quote") await submitTitoProQuote(data);
+    if (form.dataset.form === "titopro-done") await submitTitoProDone(data);
+    if (form.dataset.form === "titopro-listing") await submitTitoProListing(form, data);
     if (form.dataset.form === "stockvel-join") await submitStockvelJoin(data);
     if (form.dataset.form === "stockvel-create") await submitStockvelCreate(form, data);
     if (form.dataset.form === "basic-verify") await submitBasicVerify(form, data);
@@ -5507,6 +5512,25 @@ async function handleAction(action, actionElement = null) {
     else window.location.assign("/");
     return;
   }
+  if (action === "titopro-open") { await openTitoProModal(); return; }
+  if (action.startsWith("titopro-profession:")) {
+    const store = titoProState();
+    store.profession = action.split(":")[1] || "";
+    store.results = []; store.searched = false;
+    renderTitoProBrowse(await titoProCatalogue()); return;
+  }
+  if (action.startsWith("titopro-pro:")) { await openTitoProProfessional(action.split(":")[1]); return; }
+  if (action === "titopro-jobs") { await openTitoProJobs(); return; }
+  if (action.startsWith("titopro-jobs-role:")) { await openTitoProJobs(action.split(":")[1]); return; }
+  if (action.startsWith("titopro-job:")) { await openTitoProJob(action.split(":")[1]); return; }
+  if (action.startsWith("titopro-step:")) {
+    const [, jobId, step] = action.split(":");
+    await runTitoProStep(jobId, step); return;
+  }
+  if (action === "titopro-listing") { await openTitoProListing(); return; }
+  if (action === "titopro-publish") { await publishTitoProListing(); return; }
+  if (action === "titopro-pause") { await pauseTitoProListing(); return; }
+  if (action === "titopro-back") { renderTitoProBrowse(await titoProCatalogue()); return; }
   if (action === "book-open") { await openBookModal(); return; }
   if (action === "book-discover") { await openBookDiscover(); return; }
   if (action.startsWith("book-group:")) {
@@ -27431,6 +27455,10 @@ function handleService(id) {
   if (service.type === "enterpriseDistribution" || service.action === "enterprise-distribution") return openEnterpriseDistributionDashboard();
   if (service.type === "businessSales" || service.action === "business-sales") return openBusinessSalesModal();
   if (service.type === "titoKids" || service.action === "tito-kids") return openTitoKidsModal();
+  if (service.type === "titopro" || service.action === "titopro") {
+    state.currentModalAction = "titopro-open";
+    return openTitoProModal();
+  }
   if (service.type === "book" || service.action === "book") {
     if (state.accountType === "business") {
       state.currentModalAction = "book-open";
@@ -31842,4 +31870,590 @@ async function submitBookConfirm(data) {
         : `<button class="btn secondary" type="button" data-action="book-discover">${icon("arrow-left")} Back to Book</button>`}
     </div>
   `);
+}
+
+/* ==========================================================================
+   TITOPRO — HIRING A PROFESSIONAL.
+
+   Plumbers, painters, cleaners, bookkeepers. The customer half and the
+   professional half of the same product, both against /v1/titopro.
+
+   Two things shape every screen here. The first is that only some of this
+   work is a calendar booking: a painter has no slot to hold and a bookkeeper
+   has no calendar at all, so the API tells us the SHAPE and the screen uses
+   its word - Job, Visit, Project or Brief - rather than saying "booking" at
+   somebody who is hiring a designer.
+
+   The second is that a listing is gated. A professional writes their profile
+   freely and goes live only once FICA verification, and for in-home work a
+   background check, are on file. The screens show what is outstanding and
+   what to go and do, because "you cannot publish" with no reason is the
+   worst version of this.
+   ========================================================================== */
+
+function titoProState() {
+  if (!state.titoPro) {
+    state.titoPro = { catalogue: null, profession: "", city: "", results: [], jobs: [], role: "customer" };
+  }
+  return state.titoPro;
+}
+
+// The catalogue is fetched once per session and reused. It carries the four
+// shapes, every profession and - the part the screens need most - which
+// background checks each one will require, so a professional is told before
+// they fill the form in rather than when they press publish.
+async function titoProCatalogue() {
+  const store = titoProState();
+  if (store.catalogue) return store.catalogue;
+  store.catalogue = await api("/v1/titopro/professions").catch(() => ({ professions: [], shapes: [] }));
+  return store.catalogue;
+}
+
+function titoProGroups(catalogue) {
+  const groups = [];
+  for (const item of catalogue.professions || []) {
+    let group = groups.find((entry) => entry.label === item.group);
+    if (!group) { group = { label: item.group, items: [] }; groups.push(group); }
+    group.items.push(item);
+  }
+  return groups;
+}
+
+function titoProShapeIcon(shape) {
+  return { callout: "maintenance", recurring: "refresh", project: "home", remote: "globe" }[shape] || "user";
+}
+
+// The app already has one way of writing an amount, and money on two screens
+// that disagree about the decimal separator reads as two different products.
+function titoProMoney(value) {
+  return money(Number(value || 0));
+}
+
+async function openTitoProModal() {
+  const store = titoProState();
+  store.profession = "";
+  await openTitoProBrowse();
+}
+
+/* ---------------------------------------------------------------- browse */
+
+async function openTitoProBrowse() {
+  const store = titoProState();
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay</p><h2>TitoPro</h2>
+        <p class="lead">Hire a verified professional and pay through your wallet.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list"><article class="activity-item"><div><p>Loading…</p></div></article></section>
+  `);
+  const catalogue = await titoProCatalogue();
+  renderTitoProBrowse(catalogue);
+}
+
+function renderTitoProBrowse(catalogue) {
+  const store = titoProState();
+  const chosen = (catalogue.professions || []).find((item) => item.key === store.profession);
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay</p><h2>TitoPro</h2>
+        <p class="lead">${chosen ? esc(chosen.hint) : "Hire a verified professional and pay through your wallet."}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    ${chosen ? "" : titoProGroups(catalogue).map((group) => `
+      <section class="tp-group">
+        <p class="tp-group-title">${esc(group.label)}</p>
+        <div class="tp-list">
+          ${group.items.map((item) => `
+            <button class="tp-pro-row" type="button" data-action="titopro-profession:${esc(item.key)}">
+              <span class="tp-ico">${icon(titoProShapeIcon(item.shape))}</span>
+              <span class="tp-pro-main">
+                <span class="tp-pro-name">${esc(item.label)}</span>
+                <span class="tp-pro-sub">${esc(item.hint)}</span>
+              </span>
+              ${item.requiredChecks.length ? `<span class="tp-flag">Vetted</span>` : ""}
+            </button>
+          `).join("")}
+        </div>
+      </section>
+    `).join("")}
+
+    ${chosen ? `
+      <form class="form-grid" data-form="titopro-search">
+        <div class="field">
+          <label>Where are you?</label>
+          <input name="city" aria-label="City or town" placeholder="Soweto" value="${esc(store.city)}" autocomplete="address-level2">
+          <small class="field-hint">Leave it empty to see every ${esc(chosen.label.toLowerCase())} on TitoPro.</small>
+        </div>
+        <button class="btn primary" type="submit">${icon("search")} Find a ${esc(chosen.label.toLowerCase())}</button>
+        <button class="btn ghost" type="button" data-action="titopro-profession:">${icon("arrow-left")} All services</button>
+      </form>
+      ${renderTitoProResults(chosen)}
+    ` : `
+      <div class="action-row tp-actions">
+        <button class="btn secondary" type="button" data-action="titopro-jobs">${icon("list")} My jobs</button>
+        <button class="btn ghost" type="button" data-action="titopro-listing">${icon("staff-badge")} Offer my services</button>
+      </div>
+    `}
+  `);
+}
+
+function renderTitoProResults(chosen) {
+  const store = titoProState();
+  if (!store.searched) return "";
+  if (!store.results.length) {
+    return `<section class="tp-empty">${icon("search")}
+      <p><strong>Nobody yet.</strong></p>
+      <p>No ${esc(chosen.label.toLowerCase())} is listed${store.city ? ` in ${esc(store.city)}` : ""} on TitoPro. Try a wider area, or check back soon.</p>
+    </section>`;
+  }
+  return `
+    <section class="tp-list">
+      ${store.results.map((pro) => `
+        <button class="tp-pro-row" type="button" data-action="titopro-pro:${esc(pro.userId)}">
+          <span class="tp-ico">${icon("user")}</span>
+          <span class="tp-pro-main">
+            <span class="tp-pro-name">${esc(pro.name || "TitoPay professional")}</span>
+            <span class="tp-pro-sub">${esc((pro.professionLabels || []).join(" · "))}</span>
+            <span class="tp-pro-sub">${esc([pro.suburb, pro.city].filter(Boolean).join(", "))}</span>
+          </span>
+          <span class="tp-verified">${icon("check-circle")} Verified</span>
+        </button>
+      `).join("")}
+    </section>
+    <p class="tp-note">Every professional here has passed FICA verification. The ones who work inside your home have passed a background check as well.</p>
+  `;
+}
+
+async function submitTitoProSearch(data) {
+  const store = titoProState();
+  store.city = String(data.city || "").trim();
+  const query = new URLSearchParams();
+  if (store.profession) query.set("profession", store.profession);
+  if (store.city) query.set("city", store.city);
+  const result = await api(`/v1/titopro/search?${query.toString()}`).catch(() => ({ professionals: [] }));
+  store.results = result.professionals || [];
+  store.searched = true;
+  renderTitoProBrowse(await titoProCatalogue());
+}
+
+/* ------------------------------------------------------- one professional */
+
+async function openTitoProProfessional(userId) {
+  const store = titoProState();
+  const pro = (store.results || []).find((item) => item.userId === userId);
+  if (!pro) { showToast("That professional is no longer listed.", "error"); return; }
+  const catalogue = await titoProCatalogue();
+  const offered = (pro.professions || []).map((key) =>
+    (catalogue.professions || []).find((item) => item.key === key)).filter(Boolean);
+  const primary = offered[0] || {};
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPro</p><h2>${esc(pro.name || "Professional")}</h2>
+        <p class="lead">${esc((pro.professionLabels || []).join(" · "))}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="tp-card">
+      <p class="tp-verified-line">${icon("check-circle")} FICA verified by TitoPay</p>
+      ${pro.headline ? `<p class="tp-headline">${esc(pro.headline)}</p>` : ""}
+      <p class="tp-pro-sub">${esc([pro.suburb, pro.city].filter(Boolean).join(", "))}${pro.serviceRadiusKm ? ` · works within ${esc(String(pro.serviceRadiusKm))} km` : ""}</p>
+    </section>
+
+    <form class="form-grid" data-form="titopro-request">
+      <input type="hidden" name="professionalUserId" value="${esc(pro.userId)}">
+      <div class="field">
+        <label>What do you need done?</label>
+        <select name="profession" aria-label="Service">
+          ${offered.map((item) => `<option value="${esc(item.key)}">${esc(item.label)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>Give it a short title</label>
+        <input name="title" aria-label="Job title" maxlength="160" placeholder="Blocked kitchen drain" required>
+      </div>
+      <div class="field">
+        <label>Describe the job</label>
+        <textarea name="description" aria-label="Description" rows="4" maxlength="4000" placeholder="What is wrong, how long it has been like that, anything they should bring."></textarea>
+      </div>
+      <div class="field">
+        <label>Your suburb</label>
+        <input name="suburb" aria-label="Suburb" maxlength="120" placeholder="Pimville" value="${esc(state.user?.suburb || "")}">
+        <small class="field-hint">Your full address is shared once you accept a quote, not before.</small>
+      </div>
+      <button class="btn primary" type="submit">${icon("send")} Send request</button>
+      <button class="btn ghost" type="button" data-action="titopro-back">${icon("arrow-left")} Back</button>
+      ${primary.requiredChecks && primary.requiredChecks.length ? `
+        <p class="tp-note">${icon("shield")} This work requires a background check, which TitoPay has already confirmed for this professional.</p>` : ""}
+    </form>
+  `);
+}
+
+async function submitTitoProRequest(data) {
+  const result = await api("/v1/titopro/jobs", { method: "POST", body: {
+    profession: data.profession,
+    professionalUserId: data.professionalUserId,
+    title: data.title,
+    description: data.description,
+    suburb: data.suburb,
+    city: titoProState().city
+  } });
+  showToast("Request sent. You will be told when a price comes back.");
+  await openTitoProJob(result.job.id);
+}
+
+/* ------------------------------------------------------------------ jobs */
+
+async function openTitoProJobs(role) {
+  const store = titoProState();
+  if (role) store.role = role;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPro</p><h2>My jobs</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list"><article class="activity-item"><div><p>Loading…</p></div></article></section>
+  `);
+  const result = await api(`/v1/titopro/jobs?role=${store.role}`).catch(() => ({ jobs: [] }));
+  store.jobs = result.jobs || [];
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPro</p><h2>My jobs</h2>
+        <p class="lead">${store.role === "professional" ? "Work people have asked you for." : "Work you have asked for."}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <div class="tp-toggle">
+      <button class="${store.role === "customer" ? "is-on" : ""}" type="button" data-action="titopro-jobs-role:customer">Hiring</button>
+      <button class="${store.role === "professional" ? "is-on" : ""}" type="button" data-action="titopro-jobs-role:professional">Working</button>
+    </div>
+    ${store.jobs.length ? `
+      <section class="tp-list">
+        ${store.jobs.map((job) => `
+          <button class="tp-pro-row" type="button" data-action="titopro-job:${esc(job.id)}">
+            <span class="tp-ico">${icon(titoProShapeIcon(job.shape))}</span>
+            <span class="tp-pro-main">
+              <span class="tp-pro-name">${esc(job.title)}</span>
+              <span class="tp-pro-sub">${esc(job.professionLabel)} · ${esc(job.reference)}</span>
+            </span>
+            <span class="tp-status is-${esc(job.status)}">${esc(titoProStatusLabel(job.status))}</span>
+          </button>
+        `).join("")}
+      </section>
+    ` : `<section class="tp-empty">${icon("list")}<p><strong>Nothing here yet.</strong></p>
+      <p>${store.role === "professional" ? "Job requests will appear here once your listing is live." : "Find a professional and your jobs will appear here."}</p></section>`}
+    <div class="action-row tp-actions">
+      <button class="btn ghost" type="button" data-action="titopro-open">${icon("arrow-left")} Back to TitoPro</button>
+    </div>
+  `);
+}
+
+// The customer's word for where a job has got to. Deliberately not the raw
+// status: "work_done" is what the engine calls it, not what a person says.
+function titoProStatusLabel(status) {
+  return {
+    requested: "Waiting for a price", quoted: "Price offered", re_quoted: "Price changed",
+    accepted: "Agreed", scheduled: "Booked", in_progress: "In progress",
+    work_done: "Needs your sign-off", confirmed: "Done", declined: "Declined",
+    cancelled: "Cancelled", expired: "Expired", disputed: "Being sorted out"
+  }[status] || String(status || "").replace(/_/g, " ");
+}
+
+async function openTitoProJob(jobId) {
+  openModal(`
+    <div class="modal-head"><div><p class="eyebrow">TitoPro</p><h2>Job</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>
+    <section class="activity-list"><article class="activity-item"><div><p>Loading…</p></div></article></section>
+  `);
+  let job;
+  try {
+    job = (await api(`/v1/titopro/jobs/${jobId}`)).job;
+  } catch (error) {
+    showToast(error.message || "That job could not be opened.", "error");
+    return;
+  }
+  const store = titoProState();
+  const mine = store.role === "professional";
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">${esc(job.reference)}</p><h2>${esc(job.title)}</h2>
+        <p class="lead">${esc(job.professionLabel)} · ${esc(job.shapeLabel)}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    <section class="tp-card">
+      <p class="tp-status-line"><span class="tp-status is-${esc(job.status)}">${esc(titoProStatusLabel(job.status))}</span></p>
+      ${job.description ? `<p class="tp-headline">${esc(job.description)}</p>` : ""}
+      ${job.quotedAmount !== null ? `
+        <dl class="tp-money">
+          <div><dt>${mine ? "You quoted" : "Price"}</dt><dd>${titoProMoney(job.quotedAmount)}</dd></div>
+          ${mine
+            ? `<div><dt>TitoPay fee</dt><dd>− ${titoProMoney(job.professionalFee)}</dd></div>
+               <div class="tp-total"><dt>You receive</dt><dd>${titoProMoney(job.quotedAmount - job.professionalFee)}</dd></div>`
+            : `<div><dt>TitoPay service fee</dt><dd>${titoProMoney(job.customerFee)}</dd></div>
+               <div class="tp-total"><dt>You pay</dt><dd>${titoProMoney(job.quotedAmount + job.customerFee)}</dd></div>`}
+        </dl>` : `<p class="tp-pro-sub">No price yet.</p>`}
+      ${job.certificateReference ? `<p class="tp-verified-line">${icon("check-circle")} Certificate ${esc(job.certificateReference)}</p>` : ""}
+    </section>
+
+    ${titoProJobActions(job, mine)}
+
+    <div class="action-row tp-actions">
+      <button class="btn ghost" type="button" data-action="titopro-jobs">${icon("arrow-left")} All my jobs</button>
+    </div>
+  `);
+}
+
+// WHICH BUTTONS EXIST IS DECIDED BY THE ENGINE'S RULES, NOT GUESSED HERE.
+//
+// The API refuses an illegal step whatever the screen offers, so this is
+// about not offering somebody a button that will fail - a customer must not
+// see "Send quote" and a professional must not see "Accept".
+function titoProJobActions(job, mine) {
+  const rows = [];
+  if (mine) {
+    if (["requested", "quoted"].includes(job.status)) {
+      rows.push(titoProQuoteForm(job, "quote", "Send quote"));
+    }
+    if (job.status === "in_progress") rows.push(titoProQuoteForm(job, "requote", "Re-quote this job"));
+    if (job.status === "accepted" && job.usesDiary) rows.push(titoProButton(job, "schedule", "Book a time", "primary"));
+    if (["accepted", "scheduled"].includes(job.status)) rows.push(titoProButton(job, "start", "Start work", "primary"));
+    if (job.status === "in_progress") rows.push(titoProDoneForm(job));
+  } else {
+    if (["quoted", "re_quoted"].includes(job.status)) {
+      rows.push(titoProButton(job, "accept", `Accept ${titoProMoney(job.quotedAmount + job.customerFee)}`, "primary"));
+      rows.push(titoProButton(job, "decline", "Decline", "ghost"));
+    }
+    if (job.status === "work_done") {
+      rows.push(titoProButton(job, "confirm", "Yes, the work is done", "primary"));
+      rows.push(titoProButton(job, "dispute", "Something's wrong", "ghost"));
+    }
+  }
+  if (!["confirmed", "declined", "cancelled", "expired"].includes(job.status)) {
+    rows.push(titoProButton(job, "cancel", "Cancel this job", "ghost"));
+  }
+  return rows.length ? `<section class="tp-steps">${rows.join("")}</section>` : "";
+}
+
+function titoProButton(job, step, label, tone) {
+  return `<button class="btn ${tone}" type="button" data-action="titopro-step:${esc(job.id)}:${esc(step)}">${esc(label)}</button>`;
+}
+
+function titoProQuoteForm(job, step, label) {
+  return `
+    <form class="form-grid tp-inline" data-form="titopro-quote">
+      <input type="hidden" name="jobId" value="${esc(job.id)}">
+      <input type="hidden" name="step" value="${esc(step)}">
+      <div class="field">
+        <label>What will this cost?</label>
+        <input name="amount" aria-label="Amount in rand" inputmode="decimal" placeholder="850" required>
+        <small class="field-hint">TitoPay charges you R20 plus 1,5% of this when the job is agreed.</small>
+      </div>
+      ${step === "requote" ? `
+        <div class="field">
+          <label>Why has it changed?</label>
+          <input name="reason" aria-label="Reason" maxlength="500" placeholder="Cracked pipe under the slab" required>
+          <small class="field-hint">The job stops until the customer accepts the new price.</small>
+        </div>` : ""}
+      <button class="btn primary" type="submit">${icon("send")} ${esc(label)}</button>
+    </form>`;
+}
+
+function titoProDoneForm(job) {
+  return `
+    <form class="form-grid tp-inline" data-form="titopro-done">
+      <input type="hidden" name="jobId" value="${esc(job.id)}">
+      ${job.certificateRequired ? `
+        <div class="field">
+          <label>Certificate of Compliance number</label>
+          <input name="certificateReference" aria-label="Certificate number" maxlength="120" required>
+          <small class="field-hint">This job cannot be closed without it. Your customer will be asked for it years from now when they sell.</small>
+        </div>` : ""}
+      <button class="btn primary" type="submit">${icon("check-circle")} Mark the job done</button>
+    </form>`;
+}
+
+async function submitTitoProQuote(data) {
+  // parseAmount, not a hand-rolled strip: a professional in South Africa types
+  // "1 250,50" and the comma is the decimal point. Removing it silently turned
+  // that quote into R125 050.
+  const amount = parseAmount(data.amount);
+  if (!Number.isFinite(amount) || amount <= 0) { showToast("Enter what the job will cost.", "error"); return; }
+  await api(`/v1/titopro/jobs/${data.jobId}/${data.step === "requote" ? "requote" : "quote"}`,
+    { method: "POST", body: { amount, reason: data.reason } });
+  showToast(data.step === "requote" ? "New price sent. The job waits for the customer." : "Quote sent.");
+  await openTitoProJob(data.jobId);
+}
+
+async function submitTitoProDone(data) {
+  await api(`/v1/titopro/jobs/${data.jobId}/done`, { method: "POST", body: {
+    certificateReference: data.certificateReference } });
+  showToast("Marked done. The customer signs off next.");
+  await openTitoProJob(data.jobId);
+}
+
+async function runTitoProStep(jobId, step) {
+  const body = {};
+  // The app asks in its own voice. A browser prompt is a different typeface on
+  // a different surface and reads like the page has been hijacked, which is
+  // the last thing somebody about to dispute a payment should feel.
+  if (step === "dispute") {
+    const reason = await askForValue({
+      title: "What went wrong?",
+      body: "This freezes the job for both of you until it is sorted out. Nothing further can be marked done.",
+      label: "Tell us what happened", confirmLabel: "Raise a problem"
+    });
+    if (reason === null || reason.trim().length < 3) return;
+    body.reason = reason.trim();
+  }
+  if (step === "cancel" || step === "decline") {
+    const confirmed = await askToConfirm(step === "cancel"
+      ? { title: "Cancel this job?", body: "The other person is told. Nothing has been charged.", confirmLabel: "Cancel the job" }
+      : { title: "Decline this quote?", body: "The professional is told. You can still ask somebody else.", confirmLabel: "Decline" });
+    if (!confirmed) return;
+  }
+  if (step === "schedule") {
+    showToast("Choose a time from your TitoPay Book diary.");
+  }
+  try {
+    await api(`/v1/titopro/jobs/${jobId}/${step}`, { method: "POST", body });
+    await openTitoProJob(jobId);
+  } catch (error) {
+    showToast(error.message || "That step could not be completed.", "error");
+  }
+}
+
+/* -------------------------------------------------------------- listing */
+
+async function openTitoProListing() {
+  openModal(`
+    <div class="modal-head"><div><p class="eyebrow">TitoPro</p><h2>Offer my services</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>
+    <section class="activity-list"><article class="activity-item"><div><p>Loading…</p></div></article></section>
+  `);
+  const [catalogue, mine] = await Promise.all([
+    titoProCatalogue(),
+    api("/v1/titopro/me/listing").catch(() => ({ profile: null, eligibility: { blockers: [] } }))
+  ]);
+  const profile = mine.profile || {};
+  const eligibility = mine.eligibility || { blockers: [] };
+  const chosen = new Set(profile.professions || []);
+
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPro</p><h2>Offer my services</h2>
+        <p class="lead">${profile.status === "published"
+          ? "Your listing is live. Customers near you can find and book you."
+          : "Write your listing now. Going live is the part that waits."}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    ${profile.status === "published"
+      ? `<section class="tp-banner is-live">${icon("check-circle")}<div><strong>You are on TitoPro</strong>
+          <p>Pause your listing any time — bookings you already have are not affected.</p></div></section>`
+      : eligibility.blockers.length
+        ? `<section class="tp-banner is-blocked">${icon("shield")}<div><strong>Not live yet</strong>
+            ${eligibility.blockers.map((line) => `<p>${esc(line)}</p>`).join("")}</div></section>`
+        : ""}
+
+    ${profile.status === "suspended" && profile.unpublishedReason
+      ? `<section class="tp-banner is-blocked">${icon("ban")}<div><strong>Your listing was taken down</strong>
+          <p>${esc(profile.unpublishedReason)}</p></div></section>` : ""}
+
+    <form class="form-grid" data-form="titopro-listing">
+      <div class="field">
+        <label>What do you do?</label>
+        <div class="tp-picks">
+          ${(catalogue.professions || []).map((item) => `
+            <label class="tp-pick${chosen.has(item.key) ? " is-on" : ""}">
+              <input type="checkbox" name="professions" value="${esc(item.key)}"${chosen.has(item.key) ? " checked" : ""}>
+              <span>${esc(item.label)}</span>
+              ${item.requiredChecks.length ? `<em title="Needs a background check">${icon("shield")}</em>` : ""}
+            </label>`).join("")}
+        </div>
+        <small class="field-hint">Up to six. A shield means TitoPay needs a background check before that work can go live.</small>
+      </div>
+      <div class="field">
+        <label>One line about your work</label>
+        <input name="headline" aria-label="Headline" maxlength="120" placeholder="Drains and geysers, Soweto" value="${esc(profile.headline || "")}">
+      </div>
+      <div class="field">
+        <label>About you</label>
+        <textarea name="bio" aria-label="About you" rows="4" maxlength="2000" placeholder="How long you have been doing this, what you are known for.">${esc(profile.bio || "")}</textarea>
+      </div>
+      <div class="field">
+        <label>Suburb</label>
+        <input name="suburb" aria-label="Suburb" maxlength="120" value="${esc(profile.suburb || "")}">
+      </div>
+      <div class="field">
+        <label>City or town</label>
+        <input name="city" aria-label="City" maxlength="120" value="${esc(profile.city || "")}">
+      </div>
+      <div class="field">
+        <label>How far will you travel?</label>
+        <input name="serviceRadiusKm" aria-label="Service radius in km" inputmode="numeric" value="${esc(String(profile.serviceRadiusKm || 20))}">
+        <small class="field-hint">In kilometres, up to 200.</small>
+      </div>
+      <button class="btn primary" type="submit">${icon("check-circle")} Save my listing</button>
+    </form>
+
+    ${titoProVettingPanel(profile)}
+
+    <div class="action-row tp-actions">
+      ${profile.status === "published"
+        ? `<button class="btn secondary" type="button" data-action="titopro-pause">${icon("eye-off")} Pause my listing</button>`
+        : `<button class="btn ${eligibility.eligible ? "primary" : "secondary"}" type="button" data-action="titopro-publish">${icon("upload")} Go live</button>`}
+      <button class="btn ghost" type="button" data-action="titopro-open">${icon("arrow-left")} Back to TitoPro</button>
+    </div>
+  `);
+}
+
+// WHAT IS OUTSTANDING, AND WHAT TO GO AND DO ABOUT IT.
+//
+// A professional refused a listing with no explanation has no way forward.
+// The checks are shown with their own state so somebody can see that their
+// police clearance is on file and their references are not.
+function titoProVettingPanel(profile) {
+  const outstanding = profile.outstandingChecks || [];
+  if (!outstanding.length && !(profile.enhancedVettingProfessions || []).length) return "";
+  return `
+    <section class="tp-card tp-vetting">
+      <p class="tp-group-title">Background checks</p>
+      <p class="tp-pro-sub">Work inside somebody's home needs more than an identity check. TitoPay arranges these — contact support to start.</p>
+      ${outstanding.length
+        ? outstanding.map((label) => `<p class="tp-check is-missing">${icon("ban")} ${esc(label)} — not on file</p>`).join("")
+        : `<p class="tp-check is-done">${icon("check-circle")} All checks on file</p>`}
+    </section>`;
+}
+
+async function submitTitoProListing(form, data) {
+  const professions = Array.from(form.querySelectorAll('input[name="professions"]:checked')).map((input) => input.value);
+  if (!professions.length) { showToast("Choose at least one service.", "error"); return; }
+  await api("/v1/titopro/me/listing", { method: "PUT", body: {
+    professions,
+    headline: data.headline,
+    bio: data.bio,
+    suburb: data.suburb,
+    city: data.city,
+    serviceRadiusKm: Number(data.serviceRadiusKm) || 20
+  } });
+  showToast("Listing saved.");
+  await openTitoProListing();
+}
+
+async function publishTitoProListing() {
+  try {
+    await api("/v1/titopro/me/listing/publish", { method: "POST" });
+    showToast("You are live on TitoPro.");
+  } catch (error) {
+    // The API answers with exactly what is outstanding, which is more useful
+    // than anything this screen could compose.
+    showToast(error.message || "Your listing could not go live yet.", "error");
+  }
+  await openTitoProListing();
+}
+
+async function pauseTitoProListing() {
+  await api("/v1/titopro/me/listing/pause", { method: "POST" }).catch(() => null);
+  showToast("Your listing is paused.");
+  await openTitoProListing();
 }

@@ -48,6 +48,10 @@ const DEFAULT_SERVICES = [
   // it. Customers reach a venue through discovery and the shared link instead.
   ["book", "Book", "calendar", "book", "Book a table, an appointment or a service, and take bookings for your own business.", "active", true, true, 305, "new"],
   ["business-ticketing-staff", "Event Scanners", "contacts", "business-ticketing-staff", "The people who scan tickets at your door. Add them, and they scan from their own phone.", "active", false, true, 301, "new"],
+  // TitoPro. Personal AND business: a salon owner needs an electrician just as
+  // much as a household does, and a professional listing is raised from either
+  // kind of account.
+  ["titopro", "TitoPro", "maintenance", "titopro", "Hire a verified plumber, painter, cleaner or bookkeeper, and pay through your wallet.", "active", true, true, 306, "new"],
   ["shop-marketplace", "Shop Marketplace", "store", "shop-marketplace", "Marketplace services for local brands and digital products.", "disabled", false, false, 310, "none"],
   ["rewards", "Rewards", "sparkles", "rewards", "Offers, promotions and coupon codes published by TitoPay.", "active", true, true, 320, "new"],
   ["business-rewards", "Business Rewards", "sparkles", "business-rewards", "Business rewards programme.", "disabled", false, false, 330, "none"],
@@ -308,6 +312,7 @@ async function applyServiceCopyFixups() {
   );
   await openTicketsToBusinessOnce();
   await openBookToCustomersOnce();
+  await addTitoProTileOnce();
   await openRewardsOnce();
   await correctStokvelSpellingOnce();
   // Priced changes ride the same one-shot mechanism, for the same reason: the
@@ -371,6 +376,41 @@ async function openTicketsToBusinessOnce() {
 // must not switch it back on. It corrects a default once; it does not override
 // a choice. It never throws, because it sits on the path of every catalogue read.
 const BOOK_PERSONAL_FIXUP_KEY = "service_fixup_book_personal_visible";
+// THE TITOPRO TILE, ON A CATALOGUE THAT ALREADY HAS ROWS.
+//
+// The seed only writes when the catalogue is SHORT, and its insert is ON
+// CONFLICT DO NOTHING, so adding a row to DEFAULT_SERVICES reaches a fresh
+// installation and nothing else. Without this, TitoPro would be complete,
+// routed, tested - and have no tile on any existing database, which is the
+// same as not existing.
+//
+// Runs once and records that it has, so an admin who afterwards disables the
+// tile or rewrites its copy keeps their decision.
+const TITOPRO_TILE_FIXUP_KEY = "services_titopro_tile_2026_09";
+async function addTitoProTileOnce() {
+  try {
+    const applied = await pool.query(
+      "SELECT 1 FROM platform_settings WHERE key = $1 LIMIT 1", [TITOPRO_TILE_FIXUP_KEY]);
+    if (applied.rows.length) return;
+    const row = DEFAULT_SERVICES.find((item) => item[0] === "titopro");
+    if (!row) return;
+    const { rowCount } = await pool.query(
+      `INSERT INTO service_config
+        (id, service_code, service_name, icon, action, description, fee, sort_order,
+         status, personal_visible, business_visible, display_order, badge)
+       VALUES ($1,$2,$3,$4,$5,$6,0,0,$7,$8,$9,$10,$11)
+       ON CONFLICT (service_code) DO NOTHING`,
+      [randomUUID(), ...row.slice(0, 5), ...row.slice(5)]);
+    await pool.query(
+      `INSERT INTO platform_settings (key, value)
+       VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING`,
+      [TITOPRO_TILE_FIXUP_KEY, JSON.stringify({ appliedAt: new Date().toISOString(), rowsChanged: rowCount })]);
+    if (rowCount) console.info("[services] TitoPro tile added");
+  } catch (error) {
+    console.error("[services] could not add the TitoPro tile", { message: error.message });
+  }
+}
+
 async function openBookToCustomersOnce() {
   try {
     const applied = await pool.query(
