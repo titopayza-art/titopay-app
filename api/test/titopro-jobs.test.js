@@ -2,7 +2,7 @@
 
 // TITOPRO: THE JOB RECORD.
 //
-// A plumber, a painter, a cleaner, a day nanny and a bookkeeper are all hired
+// A plumber, a painter, a cleaner and a bookkeeper are all hired
 // through TitoPro, and only the first of those is a calendar booking. What is
 // defended here is the reasoning that follows from that:
 //
@@ -50,7 +50,7 @@ async function makeListedProfessional(profession) {
   await profiles.saveProfile(actor, {
     professions: [profession], headline: "Available in Soweto", suburb: "Pimville", city: "Soweto"
   });
-  // An enhanced profession - a cleaner, a day nanny, a tutor, a locksmith -
+  // An enhanced profession - a cleaner, a tutor, a locksmith -
   // also needs background checks cleared before it can be listed, on top of
   // FICA. See titopro-vetting.test.js for why, and for the gate itself.
   const admin = await makeComplianceAdmin();
@@ -355,10 +355,10 @@ test("every profession declares a shape the database will accept", () => {
 
 test("WORK WITH CHILDREN AND KEYS IS FLAGGED FOR ENHANCED VETTING", () => {
   // Identity checks are enough for somebody who fixes a geyser and leaves. A
-  // day nanny is alone with a child and a cleaner holds the keys to an empty
+  // tutor sits alone with a child and a cleaner holds the keys to an empty
   // house. Listing them on the same checks would be a decision about a child's
   // safety taken without noticing one was being made.
-  for (const key of ["day_nanny", "cleaner", "tutor", "locksmith"]) {
+  for (const key of ["cleaner", "tutor", "locksmith"]) {
     assert.equal(reference.requiresEnhancedVetting(key), true, `${key} needs more than identity`);
   }
   for (const key of ["plumber", "electrician", "painter", "bookkeeper"]) {
@@ -368,7 +368,7 @@ test("WORK WITH CHILDREN AND KEYS IS FLAGGED FOR ENHANCED VETTING", () => {
 
 test("the professions the product promised are all there", () => {
   for (const key of ["plumber", "electrician", "painter", "garden_service", "cleaner",
-    "carpenter", "appliance_technician", "handyman", "day_nanny"]) {
+    "carpenter", "appliance_technician", "handyman"]) {
     assert.equal(reference.isProfession(key), true, `${key} is listed`);
   }
   // Freelance work is present as the actual professions people hire, rather

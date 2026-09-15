@@ -7,9 +7,9 @@
 // identified and still be unsuitable to be alone with a child or to hold the
 // keys to an empty house.
 //
-// So a profession marked `enhanced` in the TitoPro catalogue - a day nanny, a
-// cleaner, a tutor, a locksmith - needs cleared checks on file before it can
-// be listed, on top of the FICA verification every professional needs.
+// So a profession marked `enhanced` in the TitoPro catalogue - a cleaner, a
+// tutor, a locksmith - needs cleared checks on file before it can be listed,
+// on top of the FICA verification every professional needs.
 //
 // THIS FILE IS THE MECHANISM, NOT THE POLICY. It records that a check was
 // cleared, by whom, against what evidence, and until when; it refuses a
@@ -59,7 +59,7 @@ async function ensureVettingSchema() {
       )
     `);
     // One live record per person per check type. A second would make "is this
-    // nanny cleared" a question with two answers.
+    // cleaner cleared" a question with two answers.
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_titopro_vetting_current
       ON titopro_vetting_checks (user_id, check_type)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_titopro_vetting_expiring

@@ -3,7 +3,7 @@
 // TITOPRO: THE VOCABULARY.
 //
 // TitoPro is where somebody hires a professional - a plumber, a painter, a
-// cleaner, a day nanny, a freelancer - and pays for the work through TitoPay.
+// cleaner, a freelancer - and pays for the work through TitoPay.
 //
 // THE ONE IDEA THIS FILE EXISTS FOR IS SHAPE.
 //
@@ -20,8 +20,8 @@
 //   callout    One visit, measured in hours, finished the same day. This is a
 //              slot, and it runs on the existing booking engine unchanged.
 //
-//   recurring  The same visit on a repeat - a cleaner every Tuesday, a nanny
-//              five mornings a week. Each visit IS a slot, so the engine still
+//   recurring  The same visit on a repeat - a cleaner every Tuesday, a garden
+//              service every fortnight. Each visit IS a slot, so the engine still
 //              works; what is new is the series that generates them and the
 //              agreement that spans it.
 //
@@ -79,10 +79,10 @@ const SHAPE_COPY = Object.freeze({
 // "standard" is identity: the person is who they say they are, which is FICA
 // and what TitoPay already does for every account.
 //
-// "enhanced" is for work that puts someone alone with a child or alone in an
-// empty house with the keys. Identity is not sufficient there, and a
-// marketplace that lists a day nanny beside a plumber on the same checks has
-// made a decision about children's safety without noticing it was making one.
+// "enhanced" is for work that puts someone alone in an empty house with the
+// keys, or alone with somebody's child. Identity is not sufficient there, and
+// a marketplace that lists a cleaner beside a plumber on the same checks has
+// made a decision about a stranger's home without noticing it was making one.
 // The flag exists so that decision is explicit and visible in the catalogue;
 // what enhanced vetting REQUIRES - police clearance, references, how often it
 // is renewed - is a policy question for the business, not a constant here.
@@ -170,9 +170,16 @@ const PROFESSIONS = Object.freeze([
   { key: "pool_service", label: "Pool service", group: "Home care", shape: "recurring", bookCategory: null,
     vetting: "standard", certificate: "none",
     hint: "Weekly cleaning, chemicals, pumps and filters" },
-  { key: "day_nanny", label: "Day nanny", group: "Home care", shape: "recurring", bookCategory: null,
-    vetting: "enhanced", certificate: "none",
-    hint: "Daytime childcare in your home, by the day or the week" },
+  // DAY NANNY WAS HERE AND WAS WITHDRAWN.
+  //
+  // Childcare is not a harder version of cleaning, it is a different
+  // undertaking: a marketplace that introduces somebody to a child carries a
+  // duty that a police clearance and two references do not discharge, and it
+  // carries it every day the arrangement continues rather than for the hours
+  // of one job. TitoPro is not set up for that and should not pretend to be.
+  //
+  // Left as a note rather than deleted silently so the next person to think
+  // "we should add nannies" finds the reasoning instead of the idea.
 
   // -- Professional. No address and no calendar. ----------------------------
   { key: "bookkeeper", label: "Bookkeeper", group: "Professional", shape: "remote", bookCategory: null,

@@ -126,10 +126,10 @@ async function listingEligibility(userId, professions = null) {
   if (String(user.status || "").toLowerCase() !== "active") {
     blockers.push("Your TitoPay account is not active, so your listing cannot go live.");
   }
-  // FICA IS IDENTITY, NOT A BACKGROUND CHECK. A day nanny, a cleaner, a tutor
-  // and a locksmith need cleared checks on file as well, because being
-  // correctly identified says nothing about being suitable to be alone with a
-  // child or to hold the keys to an empty house.
+  // FICA IS IDENTITY, NOT A BACKGROUND CHECK. A cleaner, a tutor and a
+  // locksmith need cleared checks on file as well, because being correctly
+  // identified says nothing about being suitable to hold the keys to an empty
+  // house or to sit alone with somebody's child.
   let vetting = { satisfied: true, missing: [], missingLabels: [], required: [] };
   if (Array.isArray(professions) && professions.length) {
     vetting = await require("./titopro-vetting-service").vettingShortfall(userId, professions);
@@ -198,6 +198,23 @@ async function publishProfile(actor) {
   if (!profile.professions.length) {
     throw new AppError(400, "Choose at least one service before you go live.");
   }
+  // WITHDRAWING A PROFESSION MUST FAIL CLOSED.
+  //
+  // professions is a TEXT[] with no foreign key, so a listing saved before a
+  // profession was withdrawn still carries that key. requiredChecksFor returns
+  // an EMPTY list for a key it does not recognise - which means, without this,
+  // withdrawing an enhanced profession would turn every stored listing
+  // offering it into one that publishes with no background checks at all. The
+  // removal would create the exact hole the vetting exists to close.
+  //
+  // Checked here rather than only for the profession withdrawn today, so the
+  // next withdrawal is safe without anybody remembering this.
+  const withdrawn = profile.professions.filter((key) => !reference.isProfession(key));
+  if (withdrawn.length) {
+    throw new AppError(409,
+      `TitoPay no longer lists ${withdrawn.join(", ").replace(/_/g, " ")}. Remove it from your services to go live.`,
+      { code: "profession_withdrawn", withdrawn });
+  }
   if (!profile.city && !profile.suburb) {
     throw new AppError(400, "Add the area you work in before you go live.");
   }
@@ -259,8 +276,16 @@ async function enforceVerificationStillHolds(userId, { reason = "" } = {}) {
   // The professions are passed so an EXPIRED background check counts as a
   // lapse exactly as a withdrawn FICA verification does. A clearance that ran
   // out is not a smaller problem than one that was never obtained.
-  const eligibility = await listingEligibility(userId, profileRow[0]?.professions || []);
-  if (eligibility.eligible) return { changed: false };
+  const professions = profileRow[0]?.professions || [];
+  const eligibility = await listingEligibility(userId, professions);
+  // A live listing offering a profession that has since been withdrawn comes
+  // down too. Its vetting requirements no longer resolve, so leaving it up
+  // would be advertising work TitoPay has decided not to carry.
+  const withdrawn = professions.filter((key) => !reference.isProfession(key));
+  if (eligibility.eligible && !withdrawn.length) return { changed: false };
+  if (withdrawn.length) {
+    eligibility.blockers.push(`TitoPay no longer lists ${withdrawn.join(", ").replace(/_/g, " ")}.`);
+  }
 
   const { rows } = await pool.query(
     `UPDATE titopro_profiles

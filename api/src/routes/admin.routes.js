@@ -2424,8 +2424,8 @@ router.get("/global-search", requireSuperAdmin, async (_req, res, next) => {
 
 // ENHANCED VETTING FOR TITOPRO.
 //
-// FICA is identity. These are the background checks a day nanny, a cleaner, a
-// tutor or a locksmith needs on top of it before their listing may go live.
+// FICA is identity. These are the background checks a cleaner, a tutor or a
+// locksmith needs on top of it before their listing may go live.
 // A professional cannot clear themselves; only a compliance officer records
 // that they looked at something.
 router.post("/titopro/vetting/:userId", requireAdminPermission("compliance"), async (req, res, next) => {

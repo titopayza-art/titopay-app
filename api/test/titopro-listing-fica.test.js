@@ -271,11 +271,11 @@ test("an unknown profession cannot be listed", async () => {
 });
 
 test("the listing says which of its services need more than an identity check", async () => {
-  // A plumber is identity. A day nanny is alone with a child, and the listing
-  // surfaces that so the requirement cannot be forgotten at review time.
+  // A plumber is identity. A cleaner holds the keys to an empty house, and the
+  // listing surfaces that so the requirement cannot be forgotten at review time.
   const pro = await makeUser({ fica: "approved" });
-  const saved = await profiles.saveProfile(pro, { ...DRAFT, professions: ["plumber", "day_nanny", "cleaner"] });
-  assert.deepEqual(saved.enhancedVettingProfessions.sort(), ["cleaner", "day_nanny"]);
+  const saved = await profiles.saveProfile(pro, { ...DRAFT, professions: ["plumber", "tutor", "cleaner"] });
+  assert.deepEqual(saved.enhancedVettingProfessions.sort(), ["cleaner", "tutor"]);
 });
 
 test("pausing is the professional's own choice and needs no verification", async () => {

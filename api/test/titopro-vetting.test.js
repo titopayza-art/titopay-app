@@ -4,8 +4,8 @@
 //
 // Somebody can be perfectly identified and still be unsuitable to be alone
 // with a child or to hold the keys to an empty house. So the professions
-// marked `enhanced` in the TitoPro catalogue - a day nanny, a cleaner, a
-// tutor, a locksmith - need cleared checks on file before they may be listed,
+// marked `enhanced` in the TitoPro catalogue - a cleaner, a tutor, a
+// locksmith - need cleared checks on file before they may be listed,
 // on top of the FICA verification every professional needs.
 //
 // What is defended here:
@@ -72,9 +72,9 @@ test.before(async () => {
   await profiles.ensureProfileSchema();
 });
 
-test("A DAY NANNY CANNOT BE LISTED ON FICA ALONE", async () => {
+test("A CLEANER CANNOT BE LISTED ON FICA ALONE", async () => {
   const pro = await makeUser({ fica: "approved" });
-  await profiles.saveProfile(pro, listingFor(["day_nanny"]));
+  await profiles.saveProfile(pro, listingFor(["cleaner"]));
   await assert.rejects(() => profiles.publishProfile(pro), (error) => {
     assert.equal(error.statusCode, 403);
     assert.equal(error.details?.code, "vetting_required", "refused for vetting, not for FICA");
@@ -96,8 +96,8 @@ test("A PLUMBER IS NOT HELD TO CHECKS A PLUMBER DOES NOT NEED", async () => {
 test("CLEARED CHECKS LET THE LISTING GO LIVE", async () => {
   const admin = await makeAdmin();
   const pro = await makeUser({ fica: "approved" });
-  await profiles.saveProfile(pro, listingFor(["day_nanny"]));
-  await clearAll(admin, pro.userId, ["day_nanny"]);
+  await profiles.saveProfile(pro, listingFor(["cleaner"]));
+  await clearAll(admin, pro.userId, ["cleaner"]);
 
   const published = await profiles.publishProfile(pro);
   assert.equal(published.status, "published");
@@ -122,9 +122,9 @@ test("HALF THE CHECKS IS NOT ENOUGH, and the professional is told which half", a
 
 test("ONE ENHANCED SERVICE GATES THE WHOLE LISTING", async () => {
   // Otherwise somebody lists as a plumber, goes live, then quietly adds day
-  // nanny to a listing that is already published.
+  // cleaner to a listing that is already published.
   const pro = await makeUser({ fica: "approved" });
-  await profiles.saveProfile(pro, listingFor(["plumber", "handyman", "day_nanny"]));
+  await profiles.saveProfile(pro, listingFor(["plumber", "handyman", "cleaner"]));
   await assert.rejects(() => profiles.publishProfile(pro), /Police clearance/);
 });
 
@@ -183,8 +183,8 @@ test("AN EXPIRED CLEARANCE STOPS COUNTING THE MOMENT IT LAPSES", async () => {
 test("AN EXPIRED CLEARANCE TAKES A LIVE LISTING DOWN", async () => {
   const admin = await makeAdmin();
   const pro = await makeUser({ fica: "approved" });
-  await profiles.saveProfile(pro, listingFor(["day_nanny"]));
-  await clearAll(admin, pro.userId, ["day_nanny"]);
+  await profiles.saveProfile(pro, listingFor(["cleaner"]));
+  await clearAll(admin, pro.userId, ["cleaner"]);
   await profiles.publishProfile(pro);
 
   await pool.query(
@@ -193,7 +193,7 @@ test("AN EXPIRED CLEARANCE TAKES A LIVE LISTING DOWN", async () => {
 
   assert.equal(result.changed, true, "a clearance that ran out is not a smaller problem than one never obtained");
   assert.equal(result.profile.status, "suspended");
-  assert.equal((await profiles.searchProfessionals({ profession: "day_nanny" }))
+  assert.equal((await profiles.searchProfessionals({ profession: "cleaner" }))
     .some((item) => item.userId === pro.userId), false);
 });
 
@@ -311,6 +311,48 @@ test("every enhanced profession names checks that exist", () => {
       assert.ok(reference.vettingCheck(check), `${item.key} names unknown check "${check}"`);
     }
   }
+});
+
+test("DAY NANNIES ARE WITHDRAWN, AND WITHDRAWING FAILS CLOSED", async () => {
+  // Childcare is not a harder version of cleaning. It was removed - and the
+  // removal itself is the interesting part: professions is a TEXT[] with no
+  // foreign key, and requiredChecksFor returns an EMPTY list for a key it does
+  // not recognise. So a listing saved before the withdrawal, still carrying
+  // that key, would have published with NO background checks at all. The
+  // removal would have opened exactly the hole the vetting closes.
+  assert.equal(reference.isProfession("day_nanny"), false, "no longer offered");
+  assert.deepEqual(reference.requiredChecksFor("day_nanny"), [],
+    "and an unknown key requires nothing, which is why the guard below exists");
+
+  const pro = await makeUser({ fica: "approved" });
+  await profiles.saveProfile(pro, listingFor(["plumber"]));
+  // Written straight to the column, exactly as a listing saved before the
+  // withdrawal would already read.
+  await pool.query(
+    "UPDATE titopro_profiles SET professions = ARRAY['plumber','day_nanny'] WHERE user_id = $1",
+    [pro.userId]);
+
+  await assert.rejects(() => profiles.publishProfile(pro), (error) => {
+    assert.equal(error.statusCode, 409);
+    assert.equal(error.details?.code, "profession_withdrawn");
+    assert.deepEqual(error.details?.withdrawn, ["day_nanny"]);
+    assert.match(error.message, /no longer lists day nanny/i);
+    return true;
+  });
+});
+
+test("A LIVE LISTING OFFERING A WITHDRAWN PROFESSION COMES DOWN", async () => {
+  const pro = await makeUser({ fica: "approved" });
+  await profiles.saveProfile(pro, listingFor(["plumber"]));
+  await profiles.publishProfile(pro);
+  // The withdrawal happens after somebody is already live.
+  await pool.query(
+    "UPDATE titopro_profiles SET professions = ARRAY['plumber','day_nanny'] WHERE user_id = $1",
+    [pro.userId]);
+
+  const result = await profiles.enforceVerificationStillHolds(pro.userId);
+  assert.equal(result.changed, true, "leaving it up would advertise work TitoPay decided not to carry");
+  assert.equal(result.profile.status, "suspended");
 });
 
 test("the schema heals itself if the table is missing", async () => {
