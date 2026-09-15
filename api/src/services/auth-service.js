@@ -356,7 +356,32 @@ async function issueSessionAndDisplaceOthers({ user, scope, deviceName, platform
     await queueLoginNotice(user, tokens.accessToken, { ...payload, deviceName });
     return tokens;
   }
-  if (deviceId) await rememberDevice(user, deviceId, { deviceName, platform, userAgent }).catch(() => null);
+  // A FAILED ENROLMENT IS LOUD, because a silent one would switch the rule off.
+  //
+  // It deliberately does not fail the sign-in: refusing a customer entry
+  // because a bookkeeping row would not write is a self-inflicted outage. But
+  // if enrolment never succeeds, the account never has a device on file, the
+  // new-device gate never engages, and every screen still looks correct. That
+  // is the one failure here nobody would notice, so it is logged as an error
+  // rather than swallowed.
+  if (deviceId) {
+    await rememberDevice(user, deviceId, {
+      // The Security Centre lists these rows to the customer. Without this it
+      // would show them raw user-agent strings, because that is what the app
+      // sends as deviceName. friendlyDeviceName writes for a SENTENCE - "a
+      // login from your iPhone" - so the article is dropped here, where the
+      // text is a label in a list rather than part of a sentence.
+      deviceName: deviceLabelFromAgent(deviceName),
+      platform,
+      userAgent
+    }).catch((error) => {
+      console.error("[single-session] DEVICE ENROLMENT FAILED - the new-device gate will not engage for this account", {
+        userType: user.user_type,
+        userId: user.id,
+        message: error.message
+      });
+    });
+  }
   const displaced = await revokeOtherSessions(user, { keepSessionId: tokens.sessionId, deviceId }).catch((error) => {
     // A failure here must not hand back a session while the old ones stay
     // live. Fail the sign-in instead: the customer retries, and the account
@@ -1037,6 +1062,17 @@ function friendlyDeviceName(raw) {
     : "";
   const article = device.startsWith("a") || device.startsWith("an") ? device : `your ${device}`;
   return browser ? `${article} (${browser})` : article;
+}
+
+// The same translation, shaped for a list rather than a sentence: "your
+// iPhone" becomes "iPhone", "a web browser" becomes "Web browser".
+function deviceLabelFromAgent(raw) {
+  const friendly = friendlyDeviceName(raw).replace(/^(your|an|a)\s+/i, "");
+  if (!friendly) return "TitoPay device";
+  // Capitalise a plain word ("web browser"), never a name that carries its own
+  // casing. Blind capitalisation turns iPhone into IPhone, which is a brand
+  // name spelled wrong on a customer's own security screen.
+  return /^[a-z][a-z]/.test(friendly) ? friendly.charAt(0).toUpperCase() + friendly.slice(1) : friendly;
 }
 
 async function queueLoginNotice(user,accessToken,payload={}) {

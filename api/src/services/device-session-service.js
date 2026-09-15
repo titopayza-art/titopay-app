@@ -90,8 +90,38 @@ async function ensureDeviceSessionSchema() {
     // instead of reporting itself as an intruder.
     await pool.query("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS device_fingerprint TEXT");
     await pool.query("CREATE INDEX IF NOT EXISTS idx_sessions_device ON sessions (user_type, user_id, device_fingerprint)");
-    // trusted_devices already carried a unique index for customers only. Staff
-    // devices need the same one or rememberDevice would insert duplicates.
+    // trusted_devices and its customer index live in schema.sql, and schema.sql
+    // is NOT applied at boot - the repo convention is that each service ensures
+    // what it needs. Nothing ensured this table, so it was a silent dependency:
+    // an installation whose database predates it would have every enrolment
+    // fail, and because a failed enrolment cannot fail a sign-in, the whole
+    // rule would be off while the sign-in screen looked perfectly normal.
+    // (It does exist in production - trustCurrentDevice has used this same
+    // ON CONFLICT clause for some time - but relying on that is not the same
+    // as guaranteeing it.)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS trusted_devices (
+        id UUID PRIMARY KEY,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        admin_user_id UUID REFERENCES admin_users(id) ON DELETE CASCADE,
+        device_fingerprint TEXT NOT NULL,
+        device_label TEXT NOT NULL DEFAULT 'Trusted device',
+        user_agent TEXT,
+        ip_address INET,
+        metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+        trusted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen_at TIMESTAMPTZ,
+        revoked_at TIMESTAMPTZ,
+        CHECK (user_id IS NOT NULL OR admin_user_id IS NOT NULL)
+      )
+    `);
+    // Both ON CONFLICT targets. The customer one is the index rememberDevice
+    // and the Security Centre's trustCurrentDevice both infer against; the
+    // admin one is new, because staff devices had no unique index at all and
+    // would have accumulated a duplicate row per sign-in.
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_trusted_devices_user_fingerprint
+      ON trusted_devices (user_id, device_fingerprint)
+      WHERE user_id IS NOT NULL`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_trusted_devices_admin_fingerprint
       ON trusted_devices (admin_user_id, device_fingerprint)
       WHERE admin_user_id IS NOT NULL`);
@@ -105,6 +135,26 @@ async function ensureDeviceSessionSchema() {
   return schemaReady;
 }
 
+// THIS TABLE HAS TWO WRITERS, AND THEY MUST NOT READ EACH OTHER'S ROWS.
+//
+// The Security Centre's "trust this device" has always written here too, with
+// a fingerprint of `${userAgent}:${ipAddress}` when the client sends none.
+// That value is guessable and forgeable - two customers on the same handset
+// model behind the same mobile carrier NAT can produce the same string - so
+// treating it as proof of which installation is signing in would be a security
+// downgrade, not a convenience.
+//
+// It also breaks the enrolment exemption in the other direction: an account
+// that once pressed "trust this device" would count as having a device on
+// file, and its owner would be challenged on their next ordinary sign-in
+// rather than enrolled quietly.
+//
+// So rows written by the sign-in path carry a marker, and both reads below
+// require it. The Security Centre keeps its own rows and its own list; neither
+// feature can be manipulated through the other.
+const ENROLMENT_SOURCE = "login_enrolment";
+const ENROLLED_BY_LOGIN = `(metadata->>'source') = '${ENROLMENT_SOURCE}'`;
+
 async function isKnownDevice(user, deviceId) {
   if (!deviceId) return false;
   await ensureDeviceSessionSchema();
@@ -112,19 +162,22 @@ async function isKnownDevice(user, deviceId) {
   const { rowCount } = await pool.query(
     `SELECT 1 FROM trusted_devices
       WHERE ${column} = $1 AND device_fingerprint = $2 AND revoked_at IS NULL
+        AND ${ENROLLED_BY_LOGIN}
       LIMIT 1`,
     [user.id, deviceIdHash(deviceId)]
   );
   return rowCount > 0;
 }
 
-// Whether this account has EVER recorded a device. Drives the enrolment
-// exemption described at the top of this file, and nothing else.
+// Whether this account has EVER signed in from a recorded device. Drives the
+// enrolment exemption described at the top of this file, and nothing else.
 async function accountHasEnrolledDevice(user) {
   await ensureDeviceSessionSchema();
   const column = deviceColumn(user.user_type);
   const { rowCount } = await pool.query(
-    `SELECT 1 FROM trusted_devices WHERE ${column} = $1 AND revoked_at IS NULL LIMIT 1`,
+    `SELECT 1 FROM trusted_devices
+      WHERE ${column} = $1 AND revoked_at IS NULL AND ${ENROLLED_BY_LOGIN}
+      LIMIT 1`,
     [user.id]
   );
   return rowCount > 0;
@@ -148,7 +201,7 @@ async function rememberDevice(user, deviceId, meta = {}) {
       hash,
       label,
       String(meta.userAgent || "").slice(0, 400),
-      JSON.stringify({ platform: meta.platform || null })
+      JSON.stringify({ source: ENROLMENT_SOURCE, platform: meta.platform || null })
     ]
   );
   return rows[0]?.id || null;
@@ -210,7 +263,14 @@ async function sessionErrorFor(sessionId, fallbackMessage) {
   return new AppError(401, fallbackMessage);
 }
 
+// Tests only: forget that the schema was already ensured, so a test can drop a
+// table and prove the guard rebuilds it. Nothing in the running API calls this.
+function resetDeviceSessionSchemaCache() {
+  schemaReady = null;
+}
+
 module.exports = {
+  resetDeviceSessionSchemaCache,
   DISPLACED_CODE,
   DISPLACED_MESSAGE,
   DISPLACED_REASON,

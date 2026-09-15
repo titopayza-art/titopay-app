@@ -290,6 +290,75 @@ test("THE RAW DEVICE ID IS NEVER STORED - only a hash of it", async () => {
   assert.equal(sessionRows[0].device_fingerprint, sha256(phone));
 });
 
+test("THE SECURITY CENTRE'S OWN TRUSTED DEVICES CANNOT AUTHORISE A SIGN-IN", async () => {
+  // trusted_devices has two writers. The Security Centre's "trust this device"
+  // stores a fingerprint of `${userAgent}:${ipAddress}` when the client sends
+  // none - guessable, and shared by two customers on the same handset behind
+  // the same carrier NAT. If the sign-in gate honoured those rows, forging one
+  // string would make an attacker's device look familiar forever.
+  const user = await makeCustomer();
+  await signIn(user, { deviceId: deviceId() });
+  const forged = "node-test:127.0.0.1";
+  await pool.query(
+    `INSERT INTO trusted_devices (id, user_id, device_fingerprint, device_label, metadata)
+     VALUES ($1,$2,$3,'Current device','{}'::JSONB)`,
+    [uuidv4(), user.id, forged]);
+
+  assert.equal(await devices.isKnownDevice(user, forged), false,
+    "a Security Centre row is not a login credential");
+  const { result } = await challengeFrom(() => signIn(user, { deviceId: forged }));
+  assert.equal(result.otp_required, true, "and a sign-in quoting it is still challenged");
+});
+
+test("pressing 'trust this device' does not cost the account its first-device exemption", async () => {
+  // The same separation in the other direction. An account whose only row came
+  // from the Security Centre has never SIGNED IN from a recorded device, so its
+  // first sign-in must still enrol quietly rather than demand a code.
+  const user = await makeCustomer();
+  await pool.query(
+    `INSERT INTO trusted_devices (id, user_id, device_fingerprint, device_label, metadata)
+     VALUES ($1,$2,$3,'Current device','{}'::JSONB)`,
+    [uuidv4(), user.id, "some-browser:41.0.0.1"]);
+
+  assert.equal(await devices.accountHasEnrolledDevice(user), false);
+  const first = await signIn(user, { deviceId: deviceId() });
+  assert.ok(first.accessToken, "enrolled, not challenged");
+});
+
+test("the Security Centre still shows a readable device name, not a user-agent string", async () => {
+  // These rows are listed back to the customer. The app sends navigator
+  // .userAgent as deviceName, so without translation the Security Centre would
+  // show "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit".
+  const user = await makeCustomer();
+  await signIn(user, {
+    deviceId: deviceId(),
+    deviceName: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15"
+  });
+  const { rows } = await pool.query(
+    "SELECT device_label FROM trusted_devices WHERE user_id = $1", [user.id]);
+  assert.equal(rows[0].device_label, "iPhone", "a person would say this");
+  assert.ok(!/Mozilla|AppleWebKit/.test(rows[0].device_label), "and never the raw agent string");
+});
+
+test("A DATABASE MISSING THE TABLE HEALS ITSELF RATHER THAN DISABLING THE RULE", async () => {
+  // trusted_devices lives in schema.sql, and schema.sql is not applied at boot.
+  // If nothing ensured it, an enrolment would fail, and because a failed
+  // enrolment must not fail a sign-in, the gate would be silently off while
+  // every screen looked correct. That is the one failure nobody would notice.
+  await pool.query("DROP TABLE IF EXISTS trusted_devices CASCADE");
+  devices.resetDeviceSessionSchemaCache();
+  const user = await makeCustomer();
+  const phone = deviceId();
+  const first = await signIn(user, { deviceId: phone });
+  assert.ok(first.accessToken);
+  assert.equal(await devices.isKnownDevice(user, phone), true, "the enrolment survived the missing table");
+  const { rows } = await pool.query(
+    "SELECT indexname FROM pg_indexes WHERE tablename = 'trusted_devices' ORDER BY indexname");
+  const names = rows.map((row) => row.indexname);
+  assert.ok(names.includes("idx_trusted_devices_user_fingerprint"), names.join(","));
+  assert.ok(names.includes("idx_trusted_devices_admin_fingerprint"), names.join(","));
+});
+
 test("the kill switch restores the previous behaviour without a deploy", async () => {
   // The failure this has to survive is an administrator who cannot sign in to
   // reach a console toggle, so the switch is an environment variable.
