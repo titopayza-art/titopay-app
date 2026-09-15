@@ -2,6 +2,7 @@ const { pool } = require("../db/pool");
 const { config } = require("../config/env");
 const { verifyAccessToken } = require("../lib/jwt");
 const { AppError } = require("../lib/errors");
+const { sessionErrorFor } = require("../services/device-session-service");
 
 function isHrPublicPath(req, suffix) {
   const path = String(req.originalUrl || req.url || "").split("?")[0].replace(/\/+$/, "");
@@ -81,7 +82,10 @@ async function requireAuth(req, res, next) {
       [decoded.sid, decoded.jti]
     );
     const session = sessionResult.rows[0];
-    if (!session) throw new AppError(401, "Session not found");
+    // A device signed out by a sign-in elsewhere learns that here, on its very
+    // next request, rather than being told its session merely expired. The
+    // extra lookup runs only when the session is already gone.
+    if (!session) throw await sessionErrorFor(decoded.sid, "Session not found");
     if (decoded.sub !== session.user_id || decoded.typ !== session.user_type) {
       throw new AppError(401, "Invalid session");
     }

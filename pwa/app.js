@@ -47,6 +47,24 @@ const API_BASE = "https://api.titopay.co.za";
 const AUTH_KEY = "titopay_candidate_auth_v1";
 const SESSION_KEY = "titopay_candidate_session_v1";
 const PROFILE_PHOTO_PREFIX = "titopay_profile_photo_v1";
+// WHICH INSTALLATION THIS IS.
+//
+// A random value written once and kept for the life of the installation. It is
+// NOT a credential and not a fingerprint of the handset: knowing one lets
+// nobody in, because the password - and, on an installation the account has
+// never seen, a code sent to the customer's phone and mailbox - are still
+// required. It only answers "has this installation signed in to this account
+// before", which is what decides whether a sign-in is challenged.
+//
+// It deliberately survives sign-out, so signing back in on your own phone is
+// not treated as a new device. Clearing browser data or reinstalling does
+// create a new one, and that sign-in is challenged - which is correct: as far
+// as TitoPay can tell, that is a device it has never seen.
+const DEVICE_KEY = "titopay_device_v1";
+// The sentence the API sends when this device was signed out by a sign-in
+// somewhere else. Matched on the code, never the wording.
+const DISPLACED_SESSION_CODE = "session_displaced";
+const DISPLACED_SESSION_KEY = "titopay_session_displaced_v1";
 
 // How an Event Tag's status reads to the attendee. A lookup table, kept here
 // with the rest of the configuration because every top-level const in this
@@ -6271,6 +6289,56 @@ function isFocusRestorationTarget(element) {
    7. SIGN IN, REGISTRATION AND OTP
    ========================================================================== */
 
+// Created on first use and never regenerated. Storage that refuses to write -
+// private mode, a full quota - yields an empty id rather than throwing: the
+// sign-in then proceeds and is simply challenged as an unrecognised device,
+// which is the safe direction for this to fail in.
+function titopayDeviceId() {
+  try {
+    const existing = localStorage.getItem(DEVICE_KEY);
+    if (existing && /^[A-Za-z0-9_-]{16,128}$/.test(existing)) return existing;
+    const bytes = new Uint8Array(24);
+    (window.crypto || window.msCrypto).getRandomValues(bytes);
+    const id = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    localStorage.setItem(DEVICE_KEY, id);
+    return id;
+  } catch (error) {
+    return "";
+  }
+}
+// Remembered across the reload that follows a forced sign-out, so the login
+// screen can say why the customer is looking at it.
+function rememberDisplacedSession(message) {
+  try { localStorage.setItem(DISPLACED_SESSION_KEY, String(message || "")); } catch (error) {}
+}
+function takeDisplacedSessionNotice() {
+  try {
+    const value = localStorage.getItem(DISPLACED_SESSION_KEY);
+    if (value) localStorage.removeItem(DISPLACED_SESSION_KEY);
+    return value || "";
+  } catch (error) {
+    return "";
+  }
+}
+function isDisplacedSessionError(error) {
+  return Boolean(error?.displacedSession) || String(error?.details?.code || "") === DISPLACED_SESSION_CODE;
+}
+// The same shape as an idle timeout, because to the person holding the phone
+// it is the same event with a different cause: the app stops, the screen
+// returns to sign-in, and the reason is on it.
+function forceDisplacedSignOut(message) {
+  try {
+    closeModal();
+    sessionStorage.removeItem("titopay_support_conversation_id");
+    sessionStorage.removeItem("titopay_support_conversation_status");
+    location.hash = "";
+    render();
+    showToast(message, "error");
+  } catch (error) {
+    // Never let a rendering problem swallow the sign-out itself - the token is
+    // already cleared by the caller, so the account is safe either way.
+  }
+}
 function saveAuth(auth) {
   state.auth = auth;
   localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
@@ -6428,8 +6496,14 @@ function authView() {
   `;
 }
 function loginForm() {
+  // A customer signed out by a sign-in elsewhere reaches this screen, often
+  // after a reload that would have swallowed a toast. The reason is shown on
+  // the form itself, once, and cleared when it is read - so it is here when it
+  // matters and gone the next time they sign in normally.
+  const displaced = takeDisplacedSessionNotice();
   return `
     <form class="form-grid" data-form="login">
+      ${displaced ? `<p class="signin-alert" role="alert">${icon("shield")} ${esc(displaced)}</p>` : ""}
       <div class="field">
         <label>Email, username or cellphone</label>
         <input name="identifier" aria-label="Email, username or cellphone" autocomplete="username" placeholder="@username, cellphone or email" required>
@@ -6561,11 +6635,21 @@ async function login(data) {
   const result = await api("/v1/auth/login", {
     method: "POST",
     auth: false,
-    body: Object.assign({}, data, { deviceName: navigator.userAgent.slice(0, 80), platform: "web" })
+    body: Object.assign({}, data, {
+      deviceName: navigator.userAgent.slice(0, 80),
+      platform: "web",
+      deviceId: titopayDeviceId()
+    })
   });
   if (result.otpRequired) {
     if (!replaceAuthPanel(otpForm(result))) openAuthModal("login");
-    showToast("OTP verification required");
+    // A new-device code is not the same event as an ordinary login code, and
+    // saying so is the point: the customer is told a code went to BOTH their
+    // phone and their email, which is also how somebody whose password has
+    // been stolen finds out it is being used.
+    showToast(result.newDevice
+      ? "New device. We sent a code to your cellphone and your email."
+      : "OTP verification required");
     return;
   }
   saveAuth(result);
@@ -7338,10 +7422,31 @@ async function refreshCustomerSession() {
       payload = { error: text || "Unexpected API response" };
     }
     if (!response.ok || payload.ok === false) {
+      // SIGNED OUT BY A SIGN-IN SOMEWHERE ELSE IS NOT AN EXPIRY.
+      //
+      // Both arrive here as a refresh that will not renew, and before this they
+      // read identically to the customer: "your session has expired". One of
+      // them means a code was approved on another device minutes ago, which is
+      // exactly what somebody whose password has been stolen needs to be told.
+      const displaced = String(payload.details?.code || "") === DISPLACED_SESSION_CODE;
+      const message = displaced
+        ? "Your TitoPay account was logged in on another device. If this was not you, reset your password and contact TitoPay support."
+        : "Your TitoPay session has expired. Please sign in again.";
+      if (displaced) rememberDisplacedSession(message);
       clearAuth();
-      const error = new Error("Your TitoPay session has expired. Please sign in again.");
+      // STEP FOUR: BACK TO THE LOGIN SCREEN, NOW.
+      //
+      // Clearing the stored token is not the same as leaving the screen. A
+      // phone left open on the dashboard keeps showing a balance and a Send
+      // button until something re-renders, and every one of those taps would
+      // fail one at a time. The displaced device is put back on the sign-in
+      // screen in the same breath as being signed out, the way an idle timeout
+      // already does it.
+      if (displaced) forceDisplacedSignOut(message);
+      const error = new Error(message);
       error.status = response.status;
-      error.details = payload;
+      error.details = payload.details || payload;
+      error.displacedSession = displaced;
       error.requestId = payload.requestId || null;
       throw error;
     }

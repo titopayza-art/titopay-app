@@ -1,6 +1,32 @@
 TitoPay Admin
-Build: admin-console-v111
+Build: admin-console-v112
 Date: 2026-09-15
+
+v112 - One active session per account, and a code before a new device gets one.
+
+  - The claim that each account may hold only one authenticated device
+    session was not true. Every session revocation in the platform fired
+    somewhere other than sign-in, so an account could hold unlimited live
+    sessions on unlimited devices, each good for seven days. It is true now.
+  - Signing in on a device the account has never used requires a one-time
+    code, sent to the cellphone AND the mailbox together. No session of any
+    kind exists until that code is proven.
+  - Proving it signs every other session on the account out. The displaced
+    device is told why - "Your TitoPay account was logged in on another
+    device" - and is put back on the sign-in screen with the reason on it,
+    instead of being left holding a console that no longer works.
+  - Staff are covered by the same rule. Admin accounts have no cellphone
+    number on file, so a staff code is an email until one is added; the new
+    admin_users.phone column is there for that.
+  - The first device on an account enrols without a code, because on the day
+    this ships every device in existence is unrecognised. The rule engages
+    from the second device onward, per account.
+  - An account the code cannot reach is refused and sent to support rather
+    than waved through, so suppressing delivery is not a way past the code.
+  - SINGLE_SESSION=off on the API process restores the previous behaviour
+    without a deploy. It is an environment variable and not a console toggle
+    on purpose: the failure it has to survive is an administrator who cannot
+    sign in to reach the console.
 
 v111 - A provider slot can be renamed. It cannot be repointed.
 

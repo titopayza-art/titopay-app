@@ -21,6 +21,18 @@ const {
   passwordChangeOptions: loadPasswordChangeOptions,
   requestEmailPasswordChangeOtp
 } = require("./password-change-otp-service");
+const {
+  DISPLACED_MESSAGE,
+  accountHasEnrolledDevice,
+  deviceIdHash,
+  ensureDeviceSessionSchema,
+  enforcementEnabled,
+  isKnownDevice,
+  normalizeDeviceId,
+  rememberDevice,
+  revokeOtherSessions,
+  sessionErrorFor
+} = require("./device-session-service");
 
 const ADMIN_ROLE_PERMISSIONS = {
   owner: ["*"],
@@ -299,8 +311,9 @@ async function getAccountById(userType, id) {
   return rows[0] ? normalizeCustomer(rows[0]) : null;
 }
 
-async function issueTokens({ user, scope, deviceName, platform, userAgent, ipAddress }) {
+async function issueTokens({ user, scope, deviceName, platform, userAgent, ipAddress, deviceId = "" }) {
   await ensureAuthRuntimeSchema();
+  await ensureDeviceSessionSchema();
   const sessionId = uuidv4();
   const accessJti = uuidv4();
   const refreshToken = signRefreshToken({ sub: user.id, sid: sessionId, typ: user.user_type, scope });
@@ -314,22 +327,119 @@ async function issueTokens({ user, scope, deviceName, platform, userAgent, ipAdd
   });
   await pool.query(
     `INSERT INTO sessions
-      (id, user_type, user_id, scope, refresh_token_hash, access_jti, device_name, platform, user_agent, ip_address, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW() + ($11 || ' seconds')::interval)`,
-    [sessionId, user.user_type, user.id, scope, sha256(refreshToken), accessJti, deviceName, platform, userAgent, ipAddress, 7 * 24 * 60 * 60]
+      (id, user_type, user_id, scope, refresh_token_hash, access_jti, device_name, platform, user_agent, ip_address, device_fingerprint, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW() + ($12 || ' seconds')::interval)`,
+    [sessionId, user.user_type, user.id, scope, sha256(refreshToken), accessJti, deviceName, platform, userAgent, ipAddress,
+      deviceId ? deviceIdHash(deviceId) : null, 7 * 24 * 60 * 60]
   );
   return {
     accessToken,
     refreshToken,
     tokenType: "Bearer",
+    sessionId,
     user: sanitizeUser(user)
   };
 }
 
+// EVERY PATH THAT ISSUES A SESSION GOES THROUGH HERE.
+//
+// Issuing the session and displacing the others are one act, not two: a
+// sign-in that created the new session and then failed to revoke the old ones
+// would leave an account with two live sessions and nobody aware of it. So
+// login, OTP verification and the admin password-only path all call this, and
+// none of them call issueTokens directly for a fresh sign-in. (refreshTokens
+// is the deliberate exception - rotating a refresh token is the SAME device
+// continuing, not a new sign-in, and must never displace anything.)
+async function issueSessionAndDisplaceOthers({ user, scope, deviceName, platform, userAgent, ipAddress, deviceId = "", payload = {} }) {
+  const tokens = await issueTokens({ user, scope, deviceName, platform, userAgent, ipAddress, deviceId });
+  if (!enforcementEnabled()) {
+    await queueLoginNotice(user, tokens.accessToken, { ...payload, deviceName });
+    return tokens;
+  }
+  if (deviceId) await rememberDevice(user, deviceId, { deviceName, platform, userAgent }).catch(() => null);
+  const displaced = await revokeOtherSessions(user, { keepSessionId: tokens.sessionId, deviceId }).catch((error) => {
+    // A failure here must not hand back a session while the old ones stay
+    // live. Fail the sign-in instead: the customer retries, and the account
+    // is never left in the state this rule exists to prevent.
+    console.error("[single-session] revoke failed, sign-in refused", { userType: user.user_type, userId: user.id, message: error.message });
+    throw new AppError(503, "TitoPay could not complete sign-in securely. Please try again.");
+  });
+  await queueLoginNotice(user, tokens.accessToken, { ...payload, deviceName });
+  if (displaced.length) {
+    await notifyDisplacedDevice(user, { deviceName, count: displaced.length }).catch(() => null);
+  }
+  return tokens;
+}
+
+// The account is told its other device was signed out, on the channels it
+// already uses for security notices. This is a notification, not the
+// enforcement: the old device is already revoked by the time this runs, and a
+// delivery failure here can never leave it signed in.
+async function notifyDisplacedDevice(user, { deviceName, count }) {
+  const device = friendlyDeviceName(deviceName);
+  const body = `${DISPLACED_MESSAGE} The new sign-in was from ${device}. ${count === 1 ? "Your other device has" : `Your other ${count} devices have`} been signed out. If this was not you, reset your password immediately and contact TitoPay support.`;
+  const notificationId = await createNotification({
+    user,
+    channel: "in_app",
+    notificationType: "security_alert",
+    title: "Signed in on another device",
+    body,
+    provider: "titopay",
+    metadata: { category: "security", route: "profile", device, displacedSessions: count }
+  });
+  if (notificationId) await markNotification(notificationId, "sent", null, { deliveredInApp: true });
+  if (!user.email) return;
+  const names = String(user.full_name || "").trim().split(/\s+/);
+  await queueEmail({
+    recipient: user.email,
+    templateKey: "new_device_login",
+    userId: user.user_type === "customer" ? user.id : null,
+    variables: { firstName: names[0] || "there", fullName: user.full_name, email: user.email },
+    idempotencyKey: `device-displaced:${user.id}:${Date.now()}`,
+    metadata: { device, newDevice: true, displacedSessions: count }
+  });
+}
+
+// A NEW-DEVICE CODE GOES TO BOTH CHANNELS. EVERY OTHER PURPOSE IS UNCHANGED.
+//
+// This function used to override whatever the caller asked for: customers got
+// SMS, admins got email, full stop. That is still exactly what happens for
+// every existing purpose, because changing the delivery of a wallet unlock or
+// a password reset was not asked for and would be a silent change to flows
+// that work.
+//
+// new_device_login is different by design. It is the one challenge standing
+// between somebody with a stolen password and a live wallet, so it goes to
+// the cellphone AND the mailbox: an attacker who controls one channel still
+// has to control the other, and a customer whose SIM is swapped still gets
+// the warning by email.
+const DUAL_CHANNEL_OTP_PURPOSES = new Set(["new_device_login"]);
+
+function otpDeliveryChannels(user, purpose) {
+  if (!DUAL_CHANNEL_OTP_PURPOSES.has(purpose)) {
+    return user.user_type === "admin" ? ["email"] : ["sms"];
+  }
+  // Only channels the account can actually receive on. Staff have no phone
+  // number today, so an admin new-device code is an email until one is added.
+  const channels = [];
+  if (user.phone) channels.push("sms");
+  if (user.email) channels.push("email");
+  return channels;
+}
+
 async function createOtpChallenge({ user, purpose, channels, ipAddress, userAgent, metadata = {} }) {
   await ensureAuthRuntimeSchema();
-  const deliveryChannels = user.user_type === "admin" ? ["email"] : ["sms"];
-  if (user.user_type !== "admin" && !user.phone) {
+  const deliveryChannels = otpDeliveryChannels(user, purpose);
+  if (DUAL_CHANNEL_OTP_PURPOSES.has(purpose)) {
+    // No channel means no way to prove the device. The sign-in is refused
+    // rather than waved through - an attacker who can suppress delivery must
+    // not be able to turn the OTP requirement off by breaking it.
+    if (!deliveryChannels.length) {
+      throw new AppError(403, "TitoPay cannot send a verification code to this account. Contact support to sign in on a new device.", {
+        code: "otp_undeliverable"
+      });
+    }
+  } else if (user.user_type !== "admin" && !user.phone) {
     throw new AppError(400, "A verified cellphone number is required for TitoPay OTP.");
   }
   const code = sixDigitOtp();
@@ -382,7 +492,12 @@ async function createOtpChallenge({ user, purpose, channels, ipAddress, userAgen
 // The only two challenge purposes that may be redeemed for a full login session.
 // Everything else in otp_codes — wallet unlock, password change, step-up
 // verification — authorises its own narrow action and is verified elsewhere.
-const LOGIN_OTP_PURPOSES = ["login", "admin_login"];
+// new_device_login joins them because it IS a sign-in challenge: it is created
+// by login() in place of a session and is redeemed for one. It is the only
+// member of this list that also enrols a device, and the device it enrols is
+// read from the challenge row rather than from the request, so the code can
+// only ever admit the installation that asked for it.
+const LOGIN_OTP_PURPOSES = ["login", "admin_login", "new_device_login"];
 
 async function getLatestOtpChallengeId({ userType, userId, purpose }) {
   await ensureAuthRuntimeSchema();
@@ -876,15 +991,16 @@ async function issueAdminPasswordOnlySession({ user, payload, meta, scope, polic
     success: true,
     metadata: { scope, otpBypassed: true, authenticationMode: "password_only", policySource }
   });
-  const tokens=await issueTokens({
+  const tokens=await issueSessionAndDisplaceOthers({
     user,
     scope,
     deviceName: payload.deviceName || "Admin Browser",
     platform: payload.platform || "web",
     userAgent: meta.userAgent,
-    ipAddress: meta.ipAddress
+    ipAddress: meta.ipAddress,
+    deviceId: normalizeDeviceId(payload),
+    payload
   });
-  await queueLoginNotice(user,tokens.accessToken,payload);
   return {
     auth_mode: "PASSWORD_ONLY",
     otp_required: false,
@@ -994,6 +1110,52 @@ async function login(payload, meta) {
   }
   assertActive(user);
   await clearFailedLogin(user.id, meta.ipAddress);
+
+  // THE NEW-DEVICE GATE. Runs after the password is proven and before any
+  // session exists, so a failure here leaves the account exactly as it was.
+  //
+  // It comes BEFORE the existing OTP modes on purpose: an account that already
+  // requires a login code gets one code for both reasons, not two challenges
+  // in a row. The purpose recorded is new_device_login, which is the stricter
+  // of the two - it reaches SMS and email rather than one channel.
+  const deviceId = normalizeDeviceId(payload);
+  if (enforcementEnabled()) {
+    const known = await isKnownDevice(user, deviceId);
+    // An account with no device on file is enrolling its first one. See the
+    // header of device-session-service.js for why that is not a hole.
+    const enrolling = !(await accountHasEnrolledDevice(user));
+    if (!known && !enrolling) {
+      const challenge = await createOtpChallenge({
+        user,
+        purpose: "new_device_login",
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
+        metadata: {
+          scope,
+          deviceId,
+          deviceName: payload.deviceName || null,
+          platform: payload.platform || "web"
+        }
+      });
+      await safeSecurityLog({
+        actorType: user.user_type,
+        actorId: user.id,
+        eventType: "new_device_otp_required",
+        severity: "warning",
+        ipAddress: meta.ipAddress,
+        userAgent: meta.userAgent,
+        success: true,
+        metadata: { scope, hasDeviceId: Boolean(deviceId) }
+      });
+      return {
+        auth_mode: "NEW_DEVICE_OTP",
+        otp_required: true,
+        newDevice: true,
+        ...challenge
+      };
+    }
+  }
+
   const adminPolicy = scope === "admin" ? await getAdminAuthenticationPolicy() : null;
   const adminAuthenticationRequiresOtp = scope === "admin" &&
     Boolean(adminPolicy?.otpRequired) &&
@@ -1049,16 +1211,16 @@ async function login(payload, meta) {
     success: true,
     metadata: { scope }
   });
-  const tokens=await issueTokens({
+  return issueSessionAndDisplaceOthers({
     user,
     scope,
     deviceName: payload.deviceName || "Web Browser",
     platform: payload.platform || "web",
     userAgent: meta.userAgent,
-    ipAddress: meta.ipAddress
+    ipAddress: meta.ipAddress,
+    deviceId,
+    payload
   });
-  await queueLoginNotice(user,tokens.accessToken,payload);
-  return tokens;
 }
 
 async function verifyEmailOtpLogin(payload, meta) {
@@ -1069,7 +1231,9 @@ async function verifyEmailOtpLogin(payload, meta) {
   assertActive(user);
   const scope = challenge.user_type === "admin" ? "admin" : "customer";
   await safeAuditLog({actorType:challenge.user_type,actorId:challenge.user_id,action:"login_success",entityType:"session",ipAddress:meta.ipAddress,userAgent:meta.userAgent,metadata:{scope,authenticationMode:"email_otp"}});
-  const deviceName=payload.deviceName||(scope==="admin"?"Admin Browser":"Web Browser"),tokens=await issueTokens({user,scope,deviceName,platform:payload.platform||"web",userAgent:meta.userAgent,ipAddress:meta.ipAddress});await queueLoginNotice(user,tokens.accessToken,{...payload,deviceName});return {auth_mode:"EMAIL_OTP",otp_required:false,authenticationMode:"email_otp",...tokens};
+  const deviceName=payload.deviceName||(scope==="admin"?"Admin Browser":"Web Browser");
+  const tokens=await issueSessionAndDisplaceOthers({user,scope,deviceName,platform:payload.platform||"web",userAgent:meta.userAgent,ipAddress:meta.ipAddress,deviceId:normalizeDeviceId(payload),payload});
+  return {auth_mode:"EMAIL_OTP",otp_required:false,authenticationMode:"email_otp",...tokens};
 }
 
 async function getPasswordChangeOptions(userId, userType = "customer") {
@@ -1364,13 +1528,22 @@ async function verifyOtpLogin(payload, meta) {
     success: true,
     metadata: { purpose: row.purpose }
   });
-  return issueTokens({
+  // The device id comes from the challenge, never from this request. A code
+  // sent to the account's own phone and mailbox authorises the device that
+  // asked for it; letting the redeeming request name a different one would
+  // hand an attacker a way to enrol their own installation with a code the
+  // victim read out.
+  const challengeMetadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const scope = payload.scope || (row.user_type === "admin" ? "admin" : "customer");
+  return issueSessionAndDisplaceOthers({
     user,
-    scope: payload.scope || (row.user_type === "admin" ? "admin" : "customer"),
-    deviceName: payload.deviceName || "Admin Browser",
-    platform: payload.platform || "web",
+    scope,
+    deviceName: challengeMetadata.deviceName || payload.deviceName || (scope === "admin" ? "Admin Browser" : "Web Browser"),
+    platform: challengeMetadata.platform || payload.platform || "web",
     userAgent: meta.userAgent,
-    ipAddress: meta.ipAddress
+    ipAddress: meta.ipAddress,
+    deviceId: normalizeDeviceId({ deviceId: challengeMetadata.deviceId }),
+    payload
   });
 }
 
@@ -1392,20 +1565,37 @@ async function refreshTokens(payload, meta) {
     [decoded.sid, sha256(payload.refreshToken)]
   );
   const row = rows[0];
-  if (!row) throw new AppError(401, "Refresh session not found");
+  // A DISPLACED DEVICE IS TOLD WHY, NOT JUST THAT.
+  //
+  // This is the moment the old phone finds out. It is holding a revoked
+  // session, so the refresh finds no row - and before this, every one of those
+  // ended as an indistinguishable "Refresh session not found", which the app
+  // renders as an ordinary expiry. The reason is read from the revoked row on
+  // the failure path only, so the successful refresh costs nothing extra.
+  if (!row) throw await sessionErrorFor(decoded.sid, "Refresh session not found");
   await pool.query(
     "UPDATE sessions SET revoked_at = NOW(), revoked_reason = 'refresh_rotated' WHERE id = $1",
     [decoded.sid]
   );
   const user = await getAccountById(row.user_type, row.user_id);
   if (!user) throw new AppError(404, "Account not found");
+  // Rotation is the SAME device continuing, so it carries the session's own
+  // device id forward and displaces nothing. Routing this through
+  // issueSessionAndDisplaceOthers would make a device sign itself out every
+  // time its access token aged out.
   return issueTokens({
     user,
     scope: row.scope,
     deviceName: row.device_name || "Refreshed Session",
     platform: row.platform || "web",
     userAgent: meta.userAgent || row.user_agent,
-    ipAddress: meta.ipAddress || row.ip_address
+    ipAddress: meta.ipAddress || row.ip_address,
+    deviceId: ""
+  }).then(async (tokens) => {
+    if (row.device_fingerprint) {
+      await pool.query("UPDATE sessions SET device_fingerprint = $2 WHERE id = $1", [tokens.sessionId, row.device_fingerprint]);
+    }
+    return tokens;
   });
 }
 

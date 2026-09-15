@@ -914,3 +914,12 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
   .gift-receipt-card[data-gift-motion="celebration"]::after,
   .gift-receipt-card[data-gift-motion="affection"] .gift-receipt-icon::after{display:none}
 }
+
+/* == Signed out by a sign-in on another device ============================
+   The reason a customer is looking at the login screen, on the login screen.
+   A toast cannot do this job: the forced sign-out often coincides with a
+   reload, and a toast does not survive one. Uses the danger token so it reads
+   as a security notice rather than a form hint, and it is defined in both
+   themes because --danger is redefined for the dark surface. */
+.signin-alert{display:flex;gap:8px;align-items:flex-start;margin:0 0 14px;padding:12px 14px;border:1px solid var(--danger);border-radius:12px;background:color-mix(in srgb,var(--danger) 10%,transparent);color:var(--danger);font-size:0.85rem;line-height:1.45;font-weight:600}
+.signin-alert svg{flex:0 0 auto;width:18px;height:18px;margin-top:1px}

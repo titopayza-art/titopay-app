@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v111";
+  return "admin-console-v112";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -373,6 +373,32 @@ function normalizeAdminSession(payload = {}) {
     tokenType: payload.tokenType || payload.token_type || "Bearer",
   };
 }
+// WHICH BROWSER THIS IS.
+//
+// The same idea as the app's device id, and for the same reason: an account
+// gets one active session, and a sign-in from a browser the account has never
+// used has to pass a code before it displaces the one that is working. The
+// value is random, kept for the life of this browser profile, and is not a
+// credential - it decides whether a sign-in is CHALLENGED, never whether it is
+// allowed. Storage that refuses to write yields an empty id, which is treated
+// as an unrecognised browser: the safe direction to fail in.
+function adminDeviceStorageKey() {
+  return "titopay_admin_device_v1";
+}
+function adminDeviceId() {
+  const ADMIN_DEVICE_KEY = adminDeviceStorageKey();
+  try {
+    const existing = localStorage.getItem(ADMIN_DEVICE_KEY);
+    if (existing && /^[A-Za-z0-9_-]{16,128}$/.test(existing)) return existing;
+    const bytes = new Uint8Array(24);
+    window.crypto.getRandomValues(bytes);
+    const id = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    localStorage.setItem(ADMIN_DEVICE_KEY, id);
+    return id;
+  } catch (error) {
+    return "";
+  }
+}
 function adminLoginPayload(data = {}) {
   const identifier = String(data.identifier || data.email || data.username || "").trim();
   const payload = {
@@ -380,6 +406,9 @@ function adminLoginPayload(data = {}) {
     identifier,
     emailOrUsername: identifier,
     usernameOrEmail: identifier,
+    deviceId: adminDeviceId(),
+    deviceName: "Admin Console",
+    platform: "web",
   };
   if (identifier.includes("@")) {
     payload.email = identifier.toLowerCase();
@@ -569,18 +598,31 @@ function bindSignInControls() {
 
   document.getElementById("identifier")?.focus();
 }
-function beginAdminEmailOtp(initialChallenge) {
+// THE SAME PROVEN CODE SCREEN, FOR EITHER REASON A CODE IS ASKED FOR.
+//
+// Two different challenges land staff here now. The long-standing one is the
+// Admin Authentication Mode's email code. The new one is a sign-in from a
+// browser this account has never used, which goes to the staff mailbox AND, if
+// a number is on file, the staff cellphone - and which, once proven, signs
+// every other session on the account out.
+//
+// They differ only in which endpoint redeems the code and whether a resend
+// exists, so they share one screen rather than growing a second one that would
+// drift out of step with it.
+function beginAdminEmailOtp(initialChallenge, options = {}) {
+  const verifyPath = options.verifyPath || "/auth/email-otp/verify";
+  const canResend = options.canResend !== false;
   const card=document.getElementById("reset-card");
   if(!card)return;
   let challenge={...initialChallenge};
   card.hidden=false;
-  card.innerHTML=`<form id="admin-email-otp-form" class="form-grid"><div class="field"><label for="admin-email-otp">Email verification code</label><input id="admin-email-otp" name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" required aria-describedby="admin-email-otp-hint"><p class="field-hint" id="admin-email-otp-hint">Sent to ${escapeHtml(challenge.maskedDestination||"your email")}. <span id="admin-email-otp-countdown"></span> <span id="admin-email-otp-attempts"></span></p></div><button class="primary-btn" type="submit">Verify and sign in</button><button class="secondary-btn" type="button" id="admin-email-otp-resend">Resend code</button></form>`;
+  card.innerHTML=`<form id="admin-email-otp-form" class="form-grid"><div class="field"><label for="admin-email-otp">${escapeHtml(options.codeLabel||"Email verification code")}</label><input id="admin-email-otp" name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,8}" maxlength="8" required aria-describedby="admin-email-otp-hint"><p class="field-hint" id="admin-email-otp-hint">${escapeHtml(options.sentCopy||`Sent to ${challenge.maskedDestination||"your email"}.`)} <span id="admin-email-otp-countdown"></span> <span id="admin-email-otp-attempts"></span></p></div><button class="primary-btn" type="submit">Verify and sign in</button>${canResend?`<button class="secondary-btn" type="button" id="admin-email-otp-resend">Resend code</button>`:`<p class="field-hint">Need another code? Sign in again to have one sent.</p>`}</form>`;
   let started=Date.now(),duration=Number(challenge.expiresInSeconds||300)*1000;
   const countdown=document.getElementById("admin-email-otp-countdown"),attempts=document.getElementById("admin-email-otp-attempts"),resend=document.getElementById("admin-email-otp-resend");
   const update=()=>{const elapsed=Date.now()-started,left=Math.max(0,Math.ceil((duration-elapsed)/1000)),cooldown=Math.max(0,Math.ceil((Number(challenge.resendCooldownSeconds||60)*1000-elapsed)/1000));if(countdown)countdown.textContent=left?`Expires in ${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}.`:"Code expired.";if(attempts)attempts.textContent=`${Number(challenge.remainingAttempts??5)} attempts remaining.`;if(resend){resend.disabled=cooldown>0;resend.textContent=cooldown?`Resend in ${cooldown}s`:"Resend code";}};
   const timer=setInterval(update,1000);update();
   document.getElementById("admin-email-otp")?.focus();
-  document.getElementById("admin-email-otp-form")?.addEventListener("submit",async(event)=>{event.preventDefault();const otp=new FormData(event.currentTarget).get("otp");setLoginStatus("Verifying email code...","pending");try{const result=await apiFetch("/auth/email-otp/verify",{method:"POST",body:JSON.stringify({challengeId:challenge.challengeId,otp,deviceName:"Admin Browser",platform:"web"})});const session=normalizeAdminSession(result);if(!hasAdminSession(session))throw new Error("Verification could not complete sign in");clearInterval(timer);setAuth(session);startIdleGuard();setLoginStatus("Verified. Opening the console...","success");location.href="/dashboard/";}catch(error){if(error.payload?.details?.remainingAttempts!==undefined)challenge.remainingAttempts=error.payload.details.remainingAttempts;update();setLoginStatus(adminErrorMessage(error.message),"error");document.getElementById("admin-email-otp")?.select();}});
+  document.getElementById("admin-email-otp-form")?.addEventListener("submit",async(event)=>{event.preventDefault();const otp=new FormData(event.currentTarget).get("otp");setLoginStatus("Verifying email code...","pending");try{const result=await apiFetch(verifyPath,{method:"POST",body:JSON.stringify({challengeId:challenge.challengeId,otp,scope:"admin",deviceName:"Admin Console",platform:"web"})});const session=normalizeAdminSession(result);if(!hasAdminSession(session))throw new Error("Verification could not complete sign in");clearInterval(timer);setAuth(session);startIdleGuard();setLoginStatus("Verified. Opening the console...","success");location.href="/dashboard/";}catch(error){if(error.payload?.details?.remainingAttempts!==undefined)challenge.remainingAttempts=error.payload.details.remainingAttempts;update();setLoginStatus(adminErrorMessage(error.message),"error");document.getElementById("admin-email-otp")?.select();}});
   resend?.addEventListener("click",async()=>{resend.disabled=true;try{const result=await apiFetch("/auth/email-otp/resend",{method:"POST",body:JSON.stringify({challengeId:challenge.challengeId,deviceName:"Admin Browser"})});challenge={...challenge,...result};started=Date.now();duration=Number(challenge.expiresInSeconds||300)*1000;update();setLoginStatus("A new verification code has been queued.","success");}catch(error){setLoginStatus(adminErrorMessage(error.message),"error");update();}});
 }
 async function bootLogin() {
@@ -627,6 +669,23 @@ async function bootLogin() {
           method: "POST",
           body: JSON.stringify({ ...data, scope: "admin" }),
         });
+      }
+      // A BROWSER THIS ACCOUNT HAS NEVER USED IS CHALLENGED FIRST.
+      //
+      // Checked before the email-OTP mode because it is the stricter of the
+      // two and issues no session of any kind until the code is proven. It
+      // carries no authenticationMode, so without this branch it would fall
+      // through to "sign in failed" and a member of staff would be told their
+      // password was wrong when it was not.
+      if (result.otpRequired && result.newDevice && result.challengeId) {
+        beginAdminEmailOtp(result, {
+          verifyPath: "/auth/verify-otp",
+          canResend: false,
+          codeLabel: "New device verification code",
+          sentCopy: `New browser or device detected. A code was sent to ${result.maskedDestination || "your registered contact details"}. Signing in here will sign out your other session.`,
+        });
+        setLoginPending(false);
+        return;
       }
       if (result.otpRequired && result.authenticationMode === "email_otp" && result.challengeId) {
         beginAdminEmailOtp(result);
@@ -725,6 +784,25 @@ async function apiFetch(path, options = {}) {
       setAuth(merged);
       startIdleGuard();
       return apiFetch(path, options);
+    }
+    // SIGNED OUT BY A SIGN-IN SOMEWHERE ELSE IS NOT AN EXPIRY.
+    //
+    // Both arrive as a refresh that will not renew, and before this they were
+    // reported identically. One of them means somebody proved a code against
+    // this account minutes ago, which is a security event a member of staff
+    // has to be told about rather than a session quietly ageing out.
+    let displacedMessage = "";
+    try {
+      const body = await refreshed.clone().json();
+      if (String(body?.details?.code || "") === "session_displaced") {
+        displacedMessage = "Your TitoPay admin account was signed in on another device or browser. If this was not you, change your password and tell the Super Admin now.";
+      }
+    } catch {}
+    if (displacedMessage) {
+      logoutToLogin(displacedMessage);
+      const displacedError = new Error(displacedMessage);
+      displacedError.status = 401;
+      throw displacedError;
     }
     if (invalidateOnAuthFailure) clearAuth();
     const apiError = new Error("Session expired");

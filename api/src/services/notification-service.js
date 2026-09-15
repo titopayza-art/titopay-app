@@ -383,8 +383,23 @@ async function sendOtpNotification({ user, code, purpose, channels }) {
   const body = `Your TitoPay verification code is ${code}. It expires in ${Math.ceil(config.otpTtlSeconds / 60)} minutes. Never share this code.`;
   const metadata = { purpose };
   const attempts = [];
-  const deliveryChannels = user.user_type === "admin" ? ["email"] : ["sms"];
-  if (user.user_type !== "admin" && !user.phone) {
+  // THE CALLER'S CHANNELS ARE HONOURED WHEN IT NAMES MORE THAN ONE.
+  //
+  // This used to discard the argument and recompute - customers SMS, admins
+  // email - which meant a caller could not ask for both even when the code
+  // being sent was the only thing standing between a stolen password and a
+  // wallet. A single-channel request still resolves exactly as before, so
+  // every existing purpose is untouched; only a deliberate multi-channel
+  // request (new-device verification) reaches both.
+  const requested = Array.isArray(channels) ? channels.filter((value) => ["sms", "email"].includes(value)) : [];
+  const defaultChannels = user.user_type === "admin" ? ["email"] : ["sms"];
+  // A caller that named channels gets those channels. Every existing caller
+  // passes exactly what this function would have computed, so their behaviour
+  // is unchanged; only a caller that deliberately asks for something else -
+  // new-device verification asking for both - sees a difference.
+  const deliveryChannels = requested.length ? requested : defaultChannels;
+  const usingDefaults = !requested.length;
+  if (usingDefaults && user.user_type !== "admin" && !user.phone) {
     throw new AppError(400, "A verified cellphone number is required for TitoPay OTP.");
   }
 
