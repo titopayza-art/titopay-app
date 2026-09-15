@@ -129,6 +129,25 @@ const APPROVED_PRICING_SCHEDULE = [
   ["seller_payout", "Seller Payout", 0, 0, 1.5],
   ["marketplace_refund_processing", "Marketplace Refund Processing", 1],
 
+  // -- TITOPRO ---------------------------------------------------------------
+  // Charged per job BOOKED, never to be listed. A professional with an empty
+  // week pays nothing, which is what makes it worth signing up before there is
+  // any demand on the platform.
+  //
+  // The customer pays a flat R5 whatever the job. The professional pays R20
+  // plus 1.5% of the job value, so the platform's share grows with the work
+  // rather than resting entirely on small callouts. calculateFee computes
+  // flat + (amount x percentage / 100), so [20, 0, 1.5] is exactly that.
+  //
+  // WHAT THIS COSTS A SMALL JOB, stated because it is the number that decides
+  // whether a plumber uses TitoPro or takes cash: on a R350 callout the
+  // professional pays R25.25, which is 7,2% of the job. On R850 it is R32.75
+  // (3,9%) and on a R5 000 project R95.00 (1,9%). The percentage falls as the
+  // job grows, which is the intended shape, but the floor is felt hardest by
+  // exactly the tradespeople a marketplace needs first.
+  ["titopro_customer_fee", "TitoPro Service Fee", 5],
+  ["titopro_professional_fee", "TitoPro Professional Fee", 20, 0, 1.5],
+
   // -- RECORDS AND DOCUMENTS ------------------------------------------------
   ["statement_pdf", "Statement PDF", 0.50],
   ["statements", "Statements", 0.50],
@@ -570,6 +589,66 @@ async function applyApprovedScheduleFixupOnce() {
   }
 }
 
+// THE TITOPRO FEES, PUSHED TO A DATABASE THAT ALREADY HAS ROWS.
+//
+// Adding a code to APPROVED_PRICING_SCHEDULE changes nothing on a running
+// installation - that list is reached only by db:init, and getPricingRule
+// falls back to whatever the database already holds. Without this, TitoPro
+// would charge a customer R0.00 in production while every test passed, which
+// is the quietest possible way for a fee to be wrong.
+//
+// A NEW KEY, as the note on the approved-schedule fixup requires, and NOT a
+// re-run of that one: this writes only the two titopro_ rows. Re-applying the
+// whole schedule to add two fees would silently revert every rate an operator
+// has tuned since it last ran.
+const TITOPRO_PRICING_FIXUP_KEY = "pricing_titopro_2026_09";
+const TITOPRO_FEE_CODES = ["titopro_customer_fee", "titopro_professional_fee"];
+
+async function applyTitoProPricingOnce() {
+  try {
+    await ensurePricingSchema();
+    const applied = await pool.query(
+      "SELECT 1 FROM platform_settings WHERE key = $1 LIMIT 1",
+      [TITOPRO_PRICING_FIXUP_KEY]
+    );
+    if (applied.rows.length) return { skipped: true };
+
+    let written = 0;
+    for (const code of TITOPRO_FEE_CODES) {
+      const rule = APPROVED_PRICING_SCHEDULE.find((item) => item.serviceCode === code);
+      if (!rule) continue;
+      // Derived exactly as the other two fixups derive them, so a rule written
+      // by any of the three paths cannot disagree about the same fee.
+      const feeType = rule.percentageFee > 0 ? "PERCENTAGE" : rule.flatFee > 0 ? "FIXED" : "FREE";
+      const feeValue = rule.percentageFee > 0 ? rule.percentageFee : rule.flatFee;
+      // DO NOTHING, not DO UPDATE. If an operator has already set a TitoPro
+      // rate by hand before this first runs, theirs is the deliberate figure
+      // and this one is the default arriving late.
+      const { rowCount } = await pool.query(
+        `INSERT INTO pricing_rules
+          (id, service_code, service_name, fee_type, fee_value, flat_fee, percentage_fee,
+           minimum_fee, maximum_fee, vat_percentage, enabled, active, effective_date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,TRUE,TRUE,CURRENT_DATE)
+         ON CONFLICT (service_code) DO NOTHING`,
+        [uuidv4(), rule.serviceCode, rule.serviceName, feeType, feeValue,
+          rule.flatFee, rule.percentageFee, rule.minimumFee, rule.maximumFee]
+      );
+      written += rowCount;
+    }
+
+    await pool.query(
+      "INSERT INTO platform_settings (key, value) VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING",
+      [TITOPRO_PRICING_FIXUP_KEY,
+        JSON.stringify({ appliedAt: new Date().toISOString(), rulesWritten: written })]
+    );
+    console.info("[pricing] TitoPro fees applied", { rulesWritten: written });
+    return { skipped: false, rulesWritten: written };
+  } catch (error) {
+    console.error("[pricing] could not apply the TitoPro fees", { message: error.message });
+    return { skipped: false, error: error.message };
+  }
+}
+
 async function calculateFee(serviceCode, amount) {
   const normalizedServiceCode = normalizeServiceCode(serviceCode);
   const rule = await getPricingRule(serviceCode);
@@ -675,6 +754,7 @@ module.exports = {
   APPROVED_PRICING_SCHEDULE,
   applyQrPricingFixupOnce,
   applyApprovedScheduleFixupOnce,
+  applyTitoProPricingOnce,
   APPROVED_SCHEDULE_FIXUP_KEY,
   roundMoney,
   normalizeServiceCode,

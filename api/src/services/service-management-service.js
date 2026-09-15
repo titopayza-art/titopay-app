@@ -318,6 +318,10 @@ async function applyServiceCopyFixups() {
   // rules; the schedule is the later, authoritative figure, so it must be the
   // one that lands last on a database where neither has run yet.
   await require("./pricing-service").applyApprovedScheduleFixupOnce();
+  // TitoPro's two fees ride their own key and write only their own rows, so
+  // they reach a live database without re-applying the whole schedule over
+  // rates an operator has since tuned by hand.
+  await require("./pricing-service").applyTitoProPricingOnce();
 }
 
 // Event Tickets was seeded business_visible = FALSE, which hid the tile from
