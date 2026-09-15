@@ -329,6 +329,83 @@ function webhookSettingKey() {
   return "integration_webhook_events";
 }
 
+// WHAT A PROVIDER SLOT IS CALLED, AS OPPOSED TO WHAT IT IS.
+//
+// The key of an integration - docfox, ott, flash - is not a name, it is the
+// adapter: which endpoints are called, how the request is authenticated, which
+// webhook consumer reads the callback. That belongs to code and must never be
+// editable from a console.
+//
+// The LABEL is a different thing entirely. It is what an operator reads on a
+// screen, and the day TitoPay contracts a different KYC house or a different
+// VAS aggregator, the old vendor's name sitting on the row is simply wrong. So
+// the label is overridable and the key is not.
+//
+// The overrides live in their own platform_settings row rather than inside each
+// provider's record on purpose: renaming a row then never opens, rewrites or
+// risks the record that holds that provider's credentials.
+function integrationDisplayNameSettingKey() {
+  return "integration_provider_display_names";
+}
+
+async function getIntegrationDisplayNames() {
+  const { rows } = await pool.query(
+    "SELECT value FROM platform_settings WHERE key = $1 LIMIT 1",
+    [integrationDisplayNameSettingKey()]
+  );
+  const stored = rows[0]?.value;
+  if (!stored || typeof stored !== "object") return {};
+  const names = {};
+  // Only keys that are real provider slots today survive the read, so a stale
+  // row left behind by a removed provider can never reintroduce it.
+  for (const key of Object.keys(INTEGRATION_PROVIDERS)) {
+    const name = typeof stored[key] === "string" ? stored[key].trim() : "";
+    if (name) names[key] = name;
+  }
+  return names;
+}
+
+function integrationLabelFor(key, displayNames = {}) {
+  return displayNames[key] || INTEGRATION_PROVIDERS[key]?.label || key;
+}
+
+async function saveIntegrationDisplayName(providerKey, submitted, adminId) {
+  const current = await getIntegrationDisplayNames();
+  const requested = typeof submitted === "string" ? submitted.trim() : "";
+  const next = { ...current };
+  // A blank name is a reset, not an error: it puts the catalogue's own label
+  // back rather than leaving the row with no name at all.
+  if (!requested) delete next[providerKey];
+  else {
+    const name = boundedText(requested, "Provider name", { min: 2, max: 60 });
+    // A provider name is a plain display string and is rendered on several
+    // screens. The console escapes it, but a value that can never carry markup
+    // or a control character cannot be mis-rendered by a surface that forgets.
+    const unsafe = name.split("").some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127 || character === "<" || character === ">";
+    });
+    if (unsafe) {
+      throw new AppError(400, "Provider name must not contain markup or control characters");
+    }
+    next[providerKey] = name;
+  }
+  await pool.query(
+    `INSERT INTO platform_settings (key, value, updated_by, updated_at)
+     VALUES ($1, $2::JSONB, $3, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+    [integrationDisplayNameSettingKey(), JSON.stringify(next), adminId]
+  );
+  return {
+    key: providerKey,
+    label: integrationLabelFor(providerKey, next),
+    displayName: next[providerKey] || "",
+    defaultLabel: INTEGRATION_PROVIDERS[providerKey].label,
+    previousLabel: integrationLabelFor(providerKey, current)
+  };
+}
+
 function providerRoutingSettingKey() {
   return "provider_routing";
 }
@@ -480,7 +557,7 @@ function envConfigured(provider) {
   });
 }
 
-function publicIntegrationState(key, stored = {}) {
+function publicIntegrationState(key, stored = {}, displayNames = {}) {
   stored = stored && typeof stored === "object" ? stored : {};
   const provider = INTEGRATION_PROVIDERS[key];
   const env = provider.env || {};
@@ -494,7 +571,11 @@ function publicIntegrationState(key, stored = {}) {
   const environment = stored.environment || stored.mode || env.mode || env.provider || "production";
   return {
     key,
-    label: provider.label,
+    label: integrationLabelFor(key, displayNames),
+    // The catalogue's own name travels alongside the override so the console
+    // can show what the slot is as well as what it has been called.
+    defaultLabel: provider.label,
+    displayName: displayNames[key] || "",
     description: provider.description,
     category: provider.category,
     mode: stored.enabled === false ? "disabled" : environment,
@@ -764,7 +845,10 @@ function publicPwaCustomerReview(review = {}) {
 }
 
 async function getProviderRouting() {
-  const stored = await getPlatformSettingValue(providerRoutingSettingKey(), {});
+  const [stored, displayNames] = await Promise.all([
+    getPlatformSettingValue(providerRoutingSettingKey(), {}),
+    getIntegrationDisplayNames()
+  ]);
   const mapping = stored.mapping || {};
   return {
     services: PROVIDER_ROUTING_SERVICES.map((service) => ({
@@ -777,7 +861,7 @@ async function getProviderRouting() {
       { key: NOT_ROUTED, label: "Not configured" },
       ...Object.entries(INTEGRATION_PROVIDERS)
         .filter(([, provider]) => provider.routingEligible !== false)
-        .map(([key, provider]) => ({ key, label: provider.label }))
+        .map(([key]) => ({ key, label: integrationLabelFor(key, displayNames) }))
     ],
     updatedAt: stored.updatedAt || null
   };
@@ -961,8 +1045,9 @@ async function acknowledgeCompanyDocument(documentId, actor) {
 }
 
 async function listIntegrationConfigs() {
+  const displayNames = await getIntegrationDisplayNames();
   const items = await Promise.all(
-    Object.keys(INTEGRATION_PROVIDERS).map(async (key) => publicIntegrationState(key, await getStoredIntegration(key)))
+    Object.keys(INTEGRATION_PROVIDERS).map(async (key) => publicIntegrationState(key, await getStoredIntegration(key), displayNames))
   );
   return items;
 }
@@ -1024,7 +1109,7 @@ async function saveIntegrationConfig({ providerKey, body, adminId }) {
      RETURNING value, updated_at`,
     [platformSettingKey(providerKey), JSON.stringify(value), adminId]
   );
-  return publicIntegrationState(providerKey, { ...rows[0].value, updatedAt: rows[0].updated_at });
+  return publicIntegrationState(providerKey, { ...rows[0].value, updatedAt: rows[0].updated_at }, await getIntegrationDisplayNames());
 }
 
 async function disableIntegrationConfig(providerKey, adminId) {
@@ -1044,7 +1129,7 @@ async function disableIntegrationConfig(providerKey, adminId) {
     }
   };
   const stored = await writeIntegrationStoredValue(providerKey, nextValue, adminId);
-  return publicIntegrationState(providerKey, stored);
+  return publicIntegrationState(providerKey, stored, await getIntegrationDisplayNames());
 }
 
 async function rotateIntegrationCredentials(providerKey, body = {}, adminId) {
@@ -1079,7 +1164,7 @@ async function rotateIntegrationCredentials(providerKey, body = {}, adminId) {
   nextValue.configured = providerConfigured(provider, nextValue);
   const stored = await writeIntegrationStoredValue(providerKey, nextValue, adminId);
   return {
-    provider: publicIntegrationState(providerKey, stored),
+    provider: publicIntegrationState(providerKey, stored, await getIntegrationDisplayNames()),
     rotatedSecrets: rotatedCount
   };
 }
@@ -1571,6 +1656,7 @@ async function testProviderConnection(providerKey, adminId) {
 }
 
 async function listIntegrationLogs() {
+  const displayNames = await getIntegrationDisplayNames();
   const configs = await Promise.all(
     Object.keys(INTEGRATION_PROVIDERS).map(async (key) => ({ key, stored: await getStoredIntegration(key) }))
   );
@@ -1578,7 +1664,7 @@ async function listIntegrationLogs() {
     .flatMap(({ key, stored }) => (stored?.logs || []).map((item) => ({
       ...item,
       provider: key,
-      label: INTEGRATION_PROVIDERS[key].label
+      label: integrationLabelFor(key, displayNames)
     })))
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
     .slice(0, 250);
@@ -3087,7 +3173,10 @@ router.get("/integrations/config", requireSuperAdmin, async (_req, res, next) =>
 router.get("/integrations/config/:provider", requireSuperAdmin, async (req, res, next) => {
   try {
     const providerKey = requireEnum(req.params.provider, Object.keys(INTEGRATION_PROVIDERS), "Integration provider");
-    res.json({ ok: true, provider: publicIntegrationState(providerKey, await getStoredIntegration(providerKey)) });
+    res.json({
+      ok: true,
+      provider: publicIntegrationState(providerKey, await getStoredIntegration(providerKey), await getIntegrationDisplayNames())
+    });
   } catch (error) {
     next(error);
   }
@@ -3326,6 +3415,38 @@ router.post("/integrations/:provider/disable", requireSuperAdmin, async (req, re
       metadata: { provider: providerKey }
     });
     res.json({ ok: true, provider });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// RENAME THE SLOT'S LABEL - never the slot.
+//
+// requireEnum pins :provider to a key that already exists, so this route can
+// only ever relabel a slot the code already knows how to talk to. It writes
+// one platform_settings row that holds nothing but names, touches no
+// credential and no health record, and changes nothing about which endpoints
+// are called or how they are authenticated.
+router.put("/integrations/:provider/name", requireSuperAdmin, async (req, res, next) => {
+  try {
+    const providerKey = requireEnum(req.params.provider, Object.keys(INTEGRATION_PROVIDERS), "Integration provider");
+    const result = await saveIntegrationDisplayName(providerKey, req.body?.displayName ?? req.body?.label, req.auth.userId);
+    await writeAuditLog({
+      actorType: req.auth.userType,
+      actorId: req.auth.userId,
+      action: "integration_display_name_updated",
+      entityType: "platform_settings",
+      entityId: req.auth.userId,
+      ipAddress: req.auth.ipAddress,
+      userAgent: req.auth.userAgent,
+      metadata: {
+        provider: providerKey,
+        previousLabel: result.previousLabel,
+        label: result.label,
+        reset: !result.displayName
+      }
+    });
+    res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }

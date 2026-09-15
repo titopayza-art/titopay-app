@@ -1,6 +1,24 @@
 TitoPay Admin
-Build: admin-console-v110
-Date: 2026-09-09
+Build: admin-console-v111
+Date: 2026-09-15
+
+v111 - A provider slot can be renamed. It cannot be repointed.
+
+  - The Integration Health table named the companies TitoPay was built
+    against - Peach, DocFox, OTT, Flash - and those names were hard-coded.
+    Contract a different KYC house or a different VAS aggregator and the row
+    reads the wrong company's name.
+  - Super Admin can now set the displayed name of any provider slot, from
+    that provider's own page. The name flows to the Integration Health
+    table, the routing list, the connection logs and the page heading.
+    Leaving the field empty restores the built-in name. Every rename is
+    written to the audit log.
+  - The slot's KEY is deliberately not editable. It selects the adapter -
+    which endpoints are called, how the request is authenticated, which
+    webhook consumer reads the callback - so renaming changes what an
+    operator reads and nothing about what the API does. The form says so.
+  - The provider name in the Integration Health table is now a link to that
+    provider's page, so a wrong name is one click from being corrected.
 
 v105 - The Integration Readiness table fits its card.
 

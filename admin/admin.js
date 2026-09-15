@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v110";
+  return "admin-console-v111";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -4061,7 +4061,10 @@ function renderIntegrationHealthDashboard(providers) {
       ["Failed", failed],
     ])}
     ${tableCard("Integration Health", renderRows(providers, [
-      { label: "Provider", render: (row) => `<strong>${escapeHtml(row.label)}</strong><br><small>${escapeHtml(row.category || "provider")}</small>` },
+      // The name links to the provider's own page, which is where the
+      // credentials and the slot's displayed name are edited. Without it an
+      // operator reading a wrong vendor name here has nowhere obvious to go.
+      { label: "Provider", render: (row) => `<a href="/integrations/${escapeHtml(providerSlug(row.peachGroup || row.key))}/"><strong>${escapeHtml(row.label)}</strong></a><br><small>${escapeHtml(row.category || "provider")}</small>` },
       { label: "Status", render: (row) => `<span class="chip ${integrationStatusClass(row.health?.status)}">${escapeHtml(integrationStatusLabel(row.health?.status || "not_tested"))}</span>` },
       { label: "Environment", render: (row) => escapeHtml(row.environment || row.mode || "production") },
       { label: "Response", render: (row) => row.health?.responseTimeMs === null || row.health?.responseTimeMs === undefined ? "-" : `${escapeHtml(row.health.responseTimeMs)}ms` },
@@ -4283,7 +4286,63 @@ function integrationCapabilityCards(provider, providerKey, isSuperAdmin, heading
     `)}
   `;
 }
+// WHAT THE ROW IS CALLED, WHICH IS NOT WHAT IT IS.
+//
+// A slot's key decides which endpoints TitoPay calls and how it authenticates.
+// Its name is only what an operator reads. The day a different KYC house or a
+// different VAS aggregator is contracted, the label has to be able to follow —
+// so this form exists, and the copy is explicit that it renames the row and
+// nothing else, because an operator who believes otherwise would point a live
+// rail at the wrong company.
+function integrationNameForm(provider, providerKey, isSuperAdmin) {
+  const current = provider.displayName || "";
+  const fallback = provider.defaultLabel || providerDisplayName(providerKey);
+  return `
+    <form class="form-grid integration-name-form" data-provider="${escapeHtml(providerKey)}">
+      <label>
+        <span>Displayed name for the ${escapeHtml(fallback)} slot</span>
+        <input type="text" name="displayName" maxlength="60" value="${escapeHtml(current)}"
+          placeholder="${escapeHtml(fallback)}" ${isSuperAdmin ? "" : "disabled"}>
+      </label>
+      <p class="secret-note">
+        This changes the name shown on the Integration Health table, the routing
+        list and this page. It does not change which company the API talks to:
+        the endpoints, the credentials and the authentication method belong to
+        the <code>${escapeHtml(providerKey)}</code> slot and are set in code.
+        Renaming a slot before a new supplier is integrated would leave the row
+        reading one company's name while calling another's API.
+        Leave it empty to go back to <strong>${escapeHtml(fallback)}</strong>.
+      </p>
+      ${isSuperAdmin ? `<div class="action-row"><button class="primary-btn" type="submit">Save Name</button></div>` : ""}
+    </form>
+  `;
+}
+function integrationNamePanel(capabilities, isSuperAdmin) {
+  return tableCard("Provider Name", capabilities
+    .map(({ provider, key }) => integrationNameForm(provider, key, isSuperAdmin))
+    .join(""), "Only Super Admin may rename a provider. Every rename is written to the audit log.", "Display only");
+}
+function bindIntegrationNameForms(me) {
+  document.querySelectorAll(".integration-name-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const targetKey = event.currentTarget.dataset.provider;
+      const displayName = String(new FormData(event.currentTarget).get("displayName") || "").trim();
+      try {
+        const result = await apiFetch(`/admin/integrations/${targetKey}/name`, {
+          method: "PUT",
+          body: JSON.stringify({ displayName }),
+        });
+        showToast(displayName ? `Provider renamed to ${result.label}` : `Provider name reset to ${result.label}`);
+        await renderIntegrationProvider(me);
+      } catch (error) {
+        showToast(adminErrorMessage(error.message));
+      }
+    });
+  });
+}
 function bindIntegrationForms(me) {
+  bindIntegrationNameForms(me);
   // Every capability form on the page gets its own handler and PUTs to its own
   // provider key, so saving one capability cannot overwrite the other's stored
   // credentials.
@@ -4346,7 +4405,7 @@ async function renderIntegrationProvider(me = {}) {
 
   document.getElementById("page-content").innerHTML = `
     <section class="panel integration-intro">
-      <h3>${escapeHtml(companion ? "Peach Payments" : (provider.label || providerDisplayName(providerKey)))}</h3>
+      <h3>${escapeHtml(provider.label || providerDisplayName(providerKey))}</h3>
       <p>${escapeHtml(provider.description || "Provider configuration")}</p>
       ${companion ? capabilityStatusStrip(capabilities) : ""}
       <div class="action-row">
@@ -4369,6 +4428,10 @@ async function renderIntegrationProvider(me = {}) {
         ${integrationCapabilityCards(companion, companionKey, isSuperAdmin, companion.capabilityLabel || "Payout / Withdrawal")}
       </section>
     ` : ""}
+    ${integrationNamePanel([
+      { provider, key: providerKey },
+      ...(companion ? [{ provider: companion, key: companionKey }] : []),
+    ], isSuperAdmin)}
     ${tableCard("Services Powered by This Provider", renderRows(poweredServices, [
       { label: "Service", key: "label" },
       { label: "Provider", render: () => escapeHtml(provider.label || providerDisplayName(providerKey)) },

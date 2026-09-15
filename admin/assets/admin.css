@@ -5717,12 +5717,12 @@ html[data-theme="dark"] .debug-payload {
    scale. Scoped to the dark theme only: on the light surfaces these screens
    normally use, the navy artwork is the correct one. */
 html[data-theme="dark"] .auth-panel-mark {
-  content: url("titopay-logo-night.png?v=admin-console-v110");
+  content: url("titopay-logo-night.png?v=admin-console-v111");
 }
 /* The blocked screen sits on .auth-card, which is var(--tp-surface) - white in
    the light theme and #111a2b in the dark one, so it had the same fault. */
 html[data-theme="dark"] .auth-blocked-wordmark {
-  content: url("titopay-logo-night.png?v=admin-console-v110");
+  content: url("titopay-logo-night.png?v=admin-console-v111");
 }
 
 /* == 14  Print and motion preferences ===================================== */
