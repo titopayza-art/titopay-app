@@ -29,6 +29,7 @@ const hrRoutes = require("./hr.routes");
 const ticketingRoutes = require("./ticketing.routes");
 const businessSalesRoutes = require("./business-sales.routes");
 const businessProductsRoutes = require("./business-products.routes");
+const titoproRoutes = require("./titopro.routes");
 const businessStaffRoutes = require("./business-staff.routes");
 const businessVerificationRoutes = require("./business-verification.routes");
 const stockvelRoutes = require("./stockvel.routes");
@@ -149,6 +150,7 @@ function mountVersionedRoutes(prefix) {
   router.use(`${prefix}/ticketing`, ticketingRoutes);
   router.use(`${prefix}/business/sales`, businessSalesRoutes);
   router.use(`${prefix}/business/products`, businessProductsRoutes);
+  router.use(`${prefix}/titopro`, titoproRoutes);
   router.use(`${prefix}/business/verification`, businessVerificationRoutes);
   router.use(`${prefix}/business/staff`, businessStaffRoutes.ownerRouter);
   router.use(`${prefix}/staff-workspace`, businessStaffRoutes.staffRouter);
