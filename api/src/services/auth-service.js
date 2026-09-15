@@ -444,8 +444,10 @@ function otpDeliveryChannels(user, purpose) {
   if (!DUAL_CHANNEL_OTP_PURPOSES.has(purpose)) {
     return user.user_type === "admin" ? ["email"] : ["sms"];
   }
-  // Only channels the account can actually receive on. Staff have no phone
-  // number today, so an admin new-device code is an email until one is added.
+  // Only channels the account can actually receive on. A customer has both, so
+  // a customer's code goes to both. Staff have no phone field at all, so a
+  // staff code is an email - which is what staff asked for, and is pinned by
+  // test rather than left to depend on the shape of admin_users.
   const channels = [];
   if (user.phone) channels.push("sms");
   if (user.email) channels.push("email");

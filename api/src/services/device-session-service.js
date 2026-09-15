@@ -125,9 +125,19 @@ async function ensureDeviceSessionSchema() {
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_trusted_devices_admin_fingerprint
       ON trusted_devices (admin_user_id, device_fingerprint)
       WHERE admin_user_id IS NOT NULL`);
-    // Staff have no phone column, so an admin OTP can only reach email today.
-    // The column exists so a number can be recorded; nothing requires one.
-    await pool.query("ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS phone TEXT");
+    // NO PHONE COLUMN ON admin_users, DELIBERATELY.
+    //
+    // An earlier version of this added one so staff could receive the code by
+    // SMS as customers do. Staff do not want it and the staff mailbox is the
+    // channel they rely on, so the column is not created: an unused column on
+    // an authentication table invites somebody later to assume it holds a
+    // verified number.
+    //
+    // Nothing needs to change for this to work. otpDeliveryChannels asks which
+    // channels an account can actually receive on, and admin_users has no
+    // phone field, so `user.phone` is undefined and the code goes to email
+    // alone. See the admin tests in single-device-session.test.js, which pin
+    // that as intended behaviour rather than an accident of the schema.
   })().catch((error) => {
     schemaReady = null;
     throw error;

@@ -359,6 +359,112 @@ test("A DATABASE MISSING THE TABLE HEALS ITSELF RATHER THAN DISABLING THE RULE",
   assert.ok(names.includes("idx_trusted_devices_admin_fingerprint"), names.join(","));
 });
 
+// ---------------------------------------------------------------------------
+// STAFF. The rule covers the admin console too, and staff take the code by
+// email alone - they have no cellphone on file and do not want one. That is a
+// decision, so it is pinned here rather than left to depend on whether
+// admin_users happens to have a phone column.
+// ---------------------------------------------------------------------------
+
+async function makeAdmin() {
+  const id = uuidv4();
+  sequence += 1;
+  const tag = `${String(Date.now()).slice(-6)}${sequence}`;
+  await pool.query(
+    `INSERT INTO admin_users (id, full_name, username, email, role, password_hash, status)
+     VALUES ($1,'Staff Tester',$2,$3,'super_admin',$4,'active')`,
+    [id, `staff_${tag}`, `staff_${tag}@titopay.test`, await hashPassword(PASSWORD)]);
+  // Password-only, so the new-device gate is the only challenge in play and a
+  // change to the Admin Authentication Mode cannot make this test flap.
+  await pool.query(
+    `INSERT INTO platform_settings (key, value) VALUES ('admin_authentication', $1::JSONB)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [JSON.stringify({ mode: "password_only", otpRequired: false })]);
+  return { id, username: `staff_${tag}`, user_type: "admin" };
+}
+
+function signInAdmin(admin, extra = {}) {
+  return auth.login({ identifier: admin.username, password: PASSWORD, scope: "admin", ...extra }, META);
+}
+
+test("A STAFF CODE GOES TO EMAIL ALONE - no SMS, and no error for the want of one", async () => {
+  const admin = await makeAdmin();
+  await signInAdmin(admin, { deviceId: deviceId() });
+  const { result, sent } = await challengeFrom(() => signInAdmin(admin, { deviceId: deviceId() }));
+  assert.equal(result.otp_required, true, "a browser this staff account has never used is challenged");
+  assert.deepEqual(sent.map((item) => item.channel), ["email"],
+    "staff take the code by email; asking for SMS they cannot receive would refuse the sign-in");
+  assert.equal(sent.length, 1);
+});
+
+test("the schema guard adds NO phone column to the staff table", async () => {
+  // An earlier version of this work added one so staff could take the code by
+  // SMS. Staff do not want it, so the guard must not put an unused column on
+  // an authentication table - somebody later assumes such a column holds a
+  // verified number. Asserted by dropping it and re-running the guard, so the
+  // result does not depend on what a given database happens to have already.
+  await pool.query("ALTER TABLE admin_users DROP COLUMN IF EXISTS phone");
+  devices.resetDeviceSessionSchemaCache();
+  await devices.ensureDeviceSessionSchema();
+  const { rows } = await pool.query(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'admin_users' AND column_name = 'phone'`);
+  assert.equal(rows.length, 0, "the guard did not recreate it");
+
+  // And staff sign-in is unaffected by its absence: the code still goes out.
+  const admin = await makeAdmin();
+  await signInAdmin(admin, { deviceId: deviceId() });
+  const { result, sent } = await challengeFrom(() => signInAdmin(admin, { deviceId: deviceId() }));
+  assert.equal(result.otp_required, true, "challenged, not refused for want of a number");
+  assert.deepEqual(sent.map((item) => item.channel), ["email"]);
+});
+
+test("STAFF GET ONE ACTIVE CONSOLE SESSION, THE SAME AS CUSTOMERS", async () => {
+  const admin = await makeAdmin();
+  const laptop = deviceId();
+  const first = await signInAdmin(admin, { deviceId: laptop, deviceName: "Admin Console" });
+  assert.ok(first.accessToken);
+
+  const { sent } = await challengeFrom(() => signInAdmin(admin, { deviceId: deviceId() }));
+  const challenge = await pool.query(
+    "SELECT * FROM otp_codes WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1", [admin.id]);
+  assert.equal(challenge.rows[0].purpose, "new_device_login");
+  assert.equal(challenge.rows[0].user_type, "admin");
+
+  const verified = await auth.verifyOtpLogin(
+    { challengeId: challenge.rows[0].id, otp: sent[0].code, scope: "admin" }, META);
+  assert.ok(verified.accessToken, "the second browser is in");
+
+  const { rows: live } = await pool.query(
+    "SELECT id FROM sessions WHERE user_id = $1 AND user_type = 'admin' AND revoked_at IS NULL", [admin.id]);
+  assert.equal(live.length, 1, "and the first one is gone");
+});
+
+test("a staff browser that has signed in before is not challenged again", async () => {
+  const admin = await makeAdmin();
+  const browser = deviceId();
+  await signInAdmin(admin, { deviceId: browser });
+  const again = await signInAdmin(admin, { deviceId: browser });
+  assert.ok(again.accessToken, "straight in");
+  // The admin password-only path answers with an explicit otp_required:false
+  // rather than omitting it, which is what the console reads.
+  assert.equal(again.otp_required, false);
+  assert.equal(again.auth_mode, "PASSWORD_ONLY");
+});
+
+test("a staff device and a customer device with the SAME id stay separate", async () => {
+  // trusted_devices keys staff on admin_user_id and customers on user_id. A
+  // shared handset - a member of staff who also holds a TitoPay wallet - must
+  // not have one enrolment stand in for the other.
+  const admin = await makeAdmin();
+  const customer = await makeCustomer();
+  const shared = deviceId();
+  await signInAdmin(admin, { deviceId: shared });
+  assert.equal(await devices.isKnownDevice(admin, shared), true);
+  assert.equal(await devices.isKnownDevice(customer, shared), false,
+    "the staff enrolment does not admit the wallet");
+});
+
 test("the kill switch restores the previous behaviour without a deploy", async () => {
   // The failure this has to survive is an administrator who cannot sign in to
   // reach a console toggle, so the switch is an environment variable.

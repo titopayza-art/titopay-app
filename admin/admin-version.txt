@@ -9,15 +9,16 @@ v112 - One active session per account, and a code before a new device gets one.
     somewhere other than sign-in, so an account could hold unlimited live
     sessions on unlimited devices, each good for seven days. It is true now.
   - Signing in on a device the account has never used requires a one-time
-    code, sent to the cellphone AND the mailbox together. No session of any
-    kind exists until that code is proven.
+    code. A customer's goes to their cellphone AND their mailbox together,
+    so controlling one channel is not enough. No session of any kind exists
+    until that code is proven.
   - Proving it signs every other session on the account out. The displaced
     device is told why - "Your TitoPay account was logged in on another
     device" - and is put back on the sign-in screen with the reason on it,
     instead of being left holding a console that no longer works.
-  - Staff are covered by the same rule. Admin accounts have no cellphone
-    number on file, so a staff code is an email until one is added; the new
-    admin_users.phone column is there for that.
+  - Staff are covered by the same rule, and take their code by email alone -
+    no cellphone number is held for staff and none is needed. Nothing is
+    added to admin_users for this.
   - The first device on an account enrols without a code, because on the day
     this ships every device in existence is unrecognised. The rule engages
     from the second device onward, per account.
