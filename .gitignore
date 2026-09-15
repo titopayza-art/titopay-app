@@ -1,3 +1,39 @@
 node_modules/
 tests/artifacts/
 *.zip
+# Python bytecode. verification/ carries one .py script, and running it —
+# or merely syntax-checking it with py_compile — drops a __pycache__ beside
+# it. Build output, never source.
+__pycache__/
+*.pyc
+
+# SECRETS
+#
+# Nothing matching these has ever been committed — checked, not assumed. This is
+# what keeps that true. The API loads its configuration through dotenv, so the
+# working file on any machine that runs it is a .env holding the live database
+# URL, the JWT signing secrets and the Peach Payments credentials. One `git add
+# -A` from a directory containing it and those are on GitHub, and rotating them
+# afterwards means a production outage while every one is replaced.
+#
+# .env.example is deliberately exempt: a checked-in template of the NAMES with
+# no values is how somebody knows what to set.
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Private keys, whatever they end up being called.
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Screenshot output written by the verification harnesses at the repo root.
+pwa-journeys-*.png
+pwa-money-screens.png
+*.zip.sha256
+
+# Verification harness output. Screenshots from a Playwright run are build
+# artifacts, not source; three were committed to the repo root before this rule.
+verification/artifacts/

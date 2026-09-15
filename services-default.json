@@ -120,11 +120,11 @@
       "description": "Buy airtime and mobile data bundles.",
       "fee": 0,
       "commission": 0,
-      "status": "active",
+      "status": "coming_soon",
       "personal_visible": true,
       "business_visible": true,
       "sort_order": 90,
-      "feature_badge": "none"
+      "feature_badge": "soon"
     },
     {
       "service_code": "airtime",
@@ -134,11 +134,11 @@
       "description": "Buy airtime for South African networks.",
       "fee": 0,
       "commission": 0,
-      "status": "active",
+      "status": "coming_soon",
       "personal_visible": false,
       "business_visible": false,
       "sort_order": 90,
-      "feature_badge": "none"
+      "feature_badge": "soon"
     },
     {
       "service_code": "data",
@@ -148,11 +148,11 @@
       "description": "Buy mobile data bundles.",
       "fee": 0,
       "commission": 0,
-      "status": "active",
+      "status": "coming_soon",
       "personal_visible": false,
       "business_visible": false,
       "sort_order": 100,
-      "feature_badge": "none"
+      "feature_badge": "soon"
     },
     {
       "service_code": "electricity",
@@ -162,11 +162,11 @@
       "description": "Buy prepaid electricity tokens.",
       "fee": 0,
       "commission": 0,
-      "status": "active",
+      "status": "coming_soon",
       "personal_visible": true,
       "business_visible": true,
       "sort_order": 110,
-      "feature_badge": "none"
+      "feature_badge": "soon"
     },
     {
       "service_code": "voucher",
@@ -176,11 +176,11 @@
       "description": "Purchase digital vouchers.",
       "fee": 0,
       "commission": 0,
-      "status": "active",
+      "status": "coming_soon",
       "personal_visible": true,
       "business_visible": true,
       "sort_order": 120,
-      "feature_badge": "none"
+      "feature_badge": "soon"
     },
     {
       "service_code": "pay-bills",
@@ -190,11 +190,11 @@
       "description": "Pay DStv, municipal, water, rates, utilities and supported bills.",
       "fee": 0,
       "commission": 0,
-      "status": "active",
+      "status": "coming_soon",
       "personal_visible": true,
       "business_visible": true,
       "sort_order": 125,
-      "feature_badge": "none"
+      "feature_badge": "soon"
     },
     {
       "service_code": "stockvel",
@@ -394,10 +394,10 @@
     },
     {
       "service_code": "business-ticketing-staff",
-      "service_name": "Ticketing Staff",
+      "service_name": "Event Scanners",
       "service_icon": "contacts",
       "action": "business-ticketing-staff",
-      "description": "Assign verified TitoPay users to support approved events.",
+      "description": "The people who scan tickets at your door. Add them, and they scan from their own phone.",
       "fee": 0,
       "commission": 0,
       "status": "active",
@@ -439,14 +439,14 @@
       "service_name": "Rewards",
       "service_icon": "sparkles",
       "action": "rewards",
-      "description": "Personal rewards programme.",
+      "description": "Offers, promotions and coupon codes published by TitoPay.",
       "fee": 0,
       "commission": 0,
-      "status": "disabled",
-      "personal_visible": false,
-      "business_visible": false,
+      "status": "active",
+      "personal_visible": true,
+      "business_visible": true,
       "sort_order": 320,
-      "feature_badge": "none"
+      "feature_badge": "new"
     },
     {
       "service_code": "business-rewards",
