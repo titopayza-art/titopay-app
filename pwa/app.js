@@ -5513,6 +5513,11 @@ async function handleAction(action, actionElement = null) {
     return;
   }
   if (action === "titopro-open") { await openTitoProModal(); return; }
+  if (action === "titopro-hire") {
+    const store = titoProState();
+    store.profession = ""; store.results = []; store.searched = false;
+    renderTitoProBrowse(await titoProCatalogue()); return;
+  }
   if (action.startsWith("titopro-profession:")) {
     const store = titoProState();
     store.profession = action.split(":")[1] || "";
@@ -31929,10 +31934,94 @@ function titoProMoney(value) {
   return money(Number(value || 0));
 }
 
+// THREE STATES, AND THE SCREEN IS WHICHEVER ONE IS TRUE.
+//
+// The same shape as TitoPay Book, for the same reason. A plumber opening
+// TitoPro wants their work; somebody with a blocked drain wants a plumber.
+// Landing both on the same grid of other people's listings serves neither.
+//
+//   no listing  -> find somebody, with a plain route to offering your own
+//   draft       -> what is still missing before you can go live
+//   live        -> your jobs
+//
+// Every state keeps a way to the other two. A professional with a full diary
+// still has a geyser of their own, and the day they need an electrician the
+// product must not make them feel they are in the wrong place.
 async function openTitoProModal() {
   const store = titoProState();
   store.profession = "";
-  await openTitoProBrowse();
+  store.results = [];
+  store.searched = false;
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPay</p><h2>TitoPro</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list"><article class="activity-item"><div><p>Loading…</p></div></article></section>
+  `);
+  const [catalogue, mine] = await Promise.all([
+    titoProCatalogue(),
+    api("/v1/titopro/me/listing").catch(() => ({ profile: null }))
+  ]);
+  const profile = mine.profile || null;
+  store.listingStatus = profile ? profile.status : "none";
+
+  if (profile && ["published", "paused"].includes(profile.status)) {
+    await openTitoProWork(profile);
+    return;
+  }
+  if (profile && ["draft", "suspended"].includes(profile.status)) {
+    await openTitoProListing();
+    return;
+  }
+  renderTitoProBrowse(catalogue);
+}
+
+// THE LIVE PROFESSIONAL'S HOME. Their work first, because that is what they
+// opened the app for, with the listing's own state above it so a paused or
+// suspended listing is never a silent reason for an empty inbox.
+async function openTitoProWork(profile) {
+  const store = titoProState();
+  store.role = "professional";
+  const result = await api("/v1/titopro/jobs?role=professional").catch(() => ({ jobs: [] }));
+  store.jobs = result.jobs || [];
+  const open = store.jobs.filter((job) => !["confirmed", "declined", "cancelled", "expired"].includes(job.status));
+
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPro</p><h2>Your work</h2>
+        <p class="lead">${esc((profile.professionLabels || []).join(" · ") || "Your TitoPro listing")}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    ${profile.status === "paused"
+      ? `<section class="tp-banner is-blocked">${icon("eye-off")}<div><strong>Your listing is paused</strong>
+          <p>Nobody can find you until you go live again. Jobs you already have are not affected.</p></div></section>`
+      : `<section class="tp-banner is-live">${icon("check-circle")}<div><strong>You are live on TitoPro</strong>
+          <p>${esc([profile.suburb, profile.city].filter(Boolean).join(", ") || "Your area")} · within ${esc(String(profile.serviceRadiusKm || 20))} km</p></div></section>`}
+
+    ${open.length ? `
+      <p class="tp-group-title">${open.length === 1 ? "One job needs you" : `${open.length} jobs need you`}</p>
+      <section class="tp-list">
+        ${open.map((job) => `
+          <button class="tp-pro-row" type="button" data-action="titopro-job:${esc(job.id)}">
+            <span class="tp-ico">${icon(titoProShapeIcon(job.shape))}</span>
+            <span class="tp-pro-main">
+              <span class="tp-pro-name">${esc(job.title)}</span>
+              <span class="tp-pro-sub">${esc(job.professionLabel)} · ${esc(job.reference)}</span>
+            </span>
+            <span class="tp-status is-${esc(job.status)}">${esc(titoProStatusLabel(job.status))}</span>
+          </button>`).join("")}
+      </section>
+    ` : `<section class="tp-empty">${icon("list")}<p><strong>No open jobs.</strong></p>
+        <p>${profile.status === "paused" ? "Go live again and requests will come here." : "Requests from customers near you will appear here."}</p></section>`}
+
+    <div class="action-row tp-actions">
+      <button class="btn secondary" type="button" data-action="titopro-jobs-role:professional">${icon("list")} All my jobs</button>
+      <button class="btn ghost" type="button" data-action="titopro-listing">${icon("staff-badge")} My listing</button>
+      <button class="btn ghost" type="button" data-action="titopro-hire">${icon("search")} Hire somebody</button>
+    </div>
+  `);
 }
 
 /* ---------------------------------------------------------------- browse */
@@ -31991,9 +32080,13 @@ function renderTitoProBrowse(catalogue) {
       </form>
       ${renderTitoProResults(chosen)}
     ` : `
+      <section class="tp-offer">
+        <p class="tp-group-title">Do this for a living?</p>
+        <p class="tp-pro-sub">List your services on TitoPro and customers near you can find and book you. You pay nothing to be listed — only when a job is agreed.</p>
+        <button class="btn secondary" type="button" data-action="titopro-listing">${icon("staff-badge")} Offer my services</button>
+      </section>
       <div class="action-row tp-actions">
-        <button class="btn secondary" type="button" data-action="titopro-jobs">${icon("list")} My jobs</button>
-        <button class="btn ghost" type="button" data-action="titopro-listing">${icon("staff-badge")} Offer my services</button>
+        <button class="btn ghost" type="button" data-action="titopro-jobs">${icon("list")} My jobs</button>
       </div>
     `}
   `);
@@ -32143,6 +32236,7 @@ async function openTitoProJobs(role) {
       <p>${store.role === "professional" ? "Job requests will appear here once your listing is live." : "Find a professional and your jobs will appear here."}</p></section>`}
     <div class="action-row tp-actions">
       <button class="btn ghost" type="button" data-action="titopro-open">${icon("arrow-left")} Back to TitoPro</button>
+      <button class="btn ghost" type="button" data-action="titopro-hire">${icon("search")} Hire somebody</button>
     </div>
   `);
 }
@@ -32402,7 +32496,7 @@ async function openTitoProListing() {
       ${profile.status === "published"
         ? `<button class="btn secondary" type="button" data-action="titopro-pause">${icon("eye-off")} Pause my listing</button>`
         : `<button class="btn ${eligibility.eligible ? "primary" : "secondary"}" type="button" data-action="titopro-publish">${icon("upload")} Go live</button>`}
-      <button class="btn ghost" type="button" data-action="titopro-open">${icon("arrow-left")} Back to TitoPro</button>
+      <button class="btn ghost" type="button" data-action="titopro-hire">${icon("search")} Hire somebody</button>
     </div>
   `);
 }

@@ -105,7 +105,9 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
     await s.page.waitForSelector(".tp-pro-row", { timeout: 10000 });
 
     const browse = await s.page.evaluate(() => ({
-      groups: [...document.querySelectorAll(".tp-group-title")].map((el) => el.textContent.trim()),
+      // Scoped to the profession groups. .tp-group-title is also used by the
+      // "Do this for a living?" panel, which is not a profession group.
+      groups: [...document.querySelectorAll(".tp-group > .tp-group-title")].map((el) => el.textContent.trim()),
       rows: [...document.querySelectorAll(".tp-pro-row")].map((el) => el.textContent.replace(/\s+/g, " ").trim()),
       flagged: [...document.querySelectorAll(".tp-pro-row")].filter((el) => el.querySelector(".tp-flag"))
         .map((el) => el.querySelector(".tp-pro-name").textContent.trim())
@@ -196,6 +198,76 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
     check("each missing check is listed on its own", blocked.missing.length === 2, blocked.missing.join(" · "));
     check("the picker marks which work needs a check", blocked.shields === 1 && blocked.picks === 5,
       `${blocked.shields} shield of ${blocked.picks} services`);
+    await s.context.close();
+
+    // ---- 5b. THREE STATES, AND THE SCREEN IS WHICHEVER ONE IS TRUE -------
+    // The same shape as Book. A plumber opening TitoPro wants their work;
+    // somebody with a blocked drain wants a plumber. Landing both on the same
+    // grid of other people's listings serves neither.
+    const LIVE = { status: "published", professions: ["plumber"], professionLabels: ["Plumber"],
+      suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25, outstandingChecks: [], enhancedVettingProfessions: [] };
+
+    // No listing -> find somebody, with a plain route to offering your own.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE, "/v1/titopro/me/listing": { ok: true, profile: null } });
+    await s.page.evaluate(() => window.openTitoProModal());
+    await s.page.waitForSelector(".tp-pro-row", { timeout: 10000 });
+    const noListing = await s.page.evaluate(() => ({
+      heading: document.querySelector(".modal-head h2")?.textContent.trim(),
+      offersListing: Boolean(document.querySelector('[data-action="titopro-listing"]')),
+      offerCopy: document.querySelector(".tp-offer")?.textContent.replace(/\s+/g, " ").trim() || ""
+    }));
+    check("NO LISTING · lands on finding somebody", noListing.heading === "TitoPro", noListing.heading);
+    check("NO LISTING · and offers a route to listing", noListing.offersListing);
+    check("NO LISTING · which says listing itself is free",
+      /pay nothing to be listed/.test(noListing.offerCopy), noListing.offerCopy.slice(0, 70));
+    await s.context.close();
+
+    // A DRAFT -> what is still missing, not a grid of competitors.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/v1/titopro/me/listing": { ok: true, profile: { ...LIVE, status: "draft" },
+        eligibility: { eligible: false, ficaVerified: false, blockers: ["Complete your FICA verification before you can be listed."] } } });
+    await s.page.evaluate(() => window.openTitoProModal());
+    await s.page.waitForSelector(".tp-banner", { timeout: 10000 });
+    const draft = await s.page.evaluate(() => ({
+      heading: document.querySelector(".modal-head h2")?.textContent.trim(),
+      banner: document.querySelector(".tp-banner")?.textContent.replace(/\s+/g, " ").trim() || ""
+    }));
+    check("DRAFT · lands on finishing the listing", draft.heading === "Offer my services", draft.heading);
+    check("DRAFT · and says what is missing", /FICA verification/.test(draft.banner), draft.banner.slice(0, 60));
+    await s.context.close();
+
+    // LIVE -> their work, with the jobs that need them first.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/v1/titopro/me/listing": { ok: true, profile: LIVE, eligibility: { eligible: true, ficaVerified: true, blockers: [] } },
+      "/v1/titopro/jobs": { ok: true, jobs: [
+        { ...JOB, status: "requested", title: "Blocked kitchen drain" },
+        { ...JOB, id: "22222222-2222-4222-8222-222222222222", status: "confirmed", title: "Tap replaced" }
+      ] } });
+    await s.page.evaluate(() => window.openTitoProModal());
+    await s.page.waitForSelector(".tp-banner.is-live", { timeout: 10000 });
+    const live = await s.page.evaluate(() => ({
+      heading: document.querySelector(".modal-head h2")?.textContent.trim(),
+      count: document.querySelector(".tp-group-title")?.textContent.trim() || "",
+      rows: [...document.querySelectorAll(".tp-list .tp-pro-row")].map((el) => el.querySelector(".tp-pro-name").textContent.trim()),
+      canHire: Boolean(document.querySelector('[data-action="titopro-hire"]'))
+    }));
+    check("LIVE · lands on their own work, not a grid of competitors", live.heading === "Your work", live.heading);
+    check("LIVE · only the jobs that still need them are on the front screen",
+      live.rows.length === 1 && live.rows[0] === "Blocked kitchen drain", live.rows.join(" · "));
+    check("LIVE · counted in words a person would use", live.count === "One job needs you", live.count);
+    check("A LIVE PROFESSIONAL CAN STILL HIRE SOMEBODY", live.canHire === true,
+      "their own geyser bursts too");
+    await s.context.close();
+
+    // A PAUSED listing says so, rather than leaving an empty inbox unexplained.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/v1/titopro/me/listing": { ok: true, profile: { ...LIVE, status: "paused" }, eligibility: { eligible: true, blockers: [] } },
+      "/v1/titopro/jobs": { ok: true, jobs: [] } });
+    await s.page.evaluate(() => window.openTitoProModal());
+    await s.page.waitForSelector(".tp-banner", { timeout: 10000 });
+    const paused = await s.page.evaluate(() => document.querySelector(".tp-banner")?.textContent.replace(/\s+/g, " ").trim() || "");
+    check("PAUSED · an empty inbox is explained, not left a mystery",
+      /paused/i.test(paused) && /Nobody can find you/.test(paused), paused.slice(0, 70));
     await s.context.close();
 
     // ---- 6. Narrow phone -------------------------------------------------

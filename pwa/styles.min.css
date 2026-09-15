@@ -1005,3 +1005,7 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
   .tp-ico{width:34px;height:34px}
   .tp-flag,.tp-verified,.tp-status{font-size:0.63rem;padding:3px 7px}
 }
+
+.tp-offer{border:1px dashed var(--line);border-radius:14px;padding:14px;margin-top:18px}
+.tp-offer .tp-group-title{margin-bottom:4px}
+.tp-offer .btn{margin-top:10px;width:100%}
