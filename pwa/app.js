@@ -31924,6 +31924,27 @@ function titoProGroups(catalogue) {
   return groups;
 }
 
+// A GLYPH PER PROFESSION, NOT PER SHAPE.
+//
+// This keyed on the shape at first, which put the same wrench on five rows of
+// Home repairs. The shape is a fact about scheduling that the person scanning
+// the list does not care about; what they are looking for is the electrician.
+// Falls back to the shape's glyph for anything the icon set has no better
+// answer for, so a profession added later still renders.
+function titoProIcon(profession, shape) {
+  const byProfession = {
+    electrician: "electricity", locksmith: "lock", tiler: "grid", paving: "grid",
+    cleaner: "refresh", pool_service: "refresh", garden_service: "star",
+    bookkeeper: "statement", designer: "scissors", it_support: "signal",
+    tutor: "learn", virtual_assistant: "contacts",
+    painter: "tag", carpenter: "maintenance", appliance_technician: "signal"
+  };
+  return byProfession[profession]
+    || { callout: "maintenance", recurring: "refresh", project: "home", remote: "globe" }[shape]
+    || "user";
+}
+// Kept for the job rows, where the shape IS the useful thing: a Project and a
+// Job look different on a list of work in progress.
 function titoProShapeIcon(shape) {
   return { callout: "maintenance", recurring: "refresh", project: "home", remote: "globe" }[shape] || "user";
 }
@@ -32008,7 +32029,7 @@ async function openTitoProWork(profile) {
             <span class="tp-ico">${icon(titoProShapeIcon(job.shape))}</span>
             <span class="tp-pro-main">
               <span class="tp-pro-name">${esc(job.title)}</span>
-              <span class="tp-pro-sub">${esc(job.professionLabel)} · ${esc(job.reference)}</span>
+              <span class="tp-pro-sub">${esc(job.professionLabel)} · <span class="tp-ref">${esc(job.reference)}</span></span>
             </span>
             <span class="tp-status is-${esc(job.status)}">${esc(titoProStatusLabel(job.status))}</span>
           </button>`).join("")}
@@ -32056,7 +32077,7 @@ function renderTitoProBrowse(catalogue) {
         <div class="tp-list">
           ${group.items.map((item) => `
             <button class="tp-pro-row" type="button" data-action="titopro-profession:${esc(item.key)}">
-              <span class="tp-ico">${icon(titoProShapeIcon(item.shape))}</span>
+              <span class="tp-ico">${icon(titoProIcon(item.key, item.shape))}</span>
               <span class="tp-pro-main">
                 <span class="tp-pro-name">${esc(item.label)}</span>
                 <span class="tp-pro-sub">${esc(item.hint)}</span>
@@ -32226,7 +32247,7 @@ async function openTitoProJobs(role) {
             <span class="tp-ico">${icon(titoProShapeIcon(job.shape))}</span>
             <span class="tp-pro-main">
               <span class="tp-pro-name">${esc(job.title)}</span>
-              <span class="tp-pro-sub">${esc(job.professionLabel)} · ${esc(job.reference)}</span>
+              <span class="tp-pro-sub">${esc(job.professionLabel)} · <span class="tp-ref">${esc(job.reference)}</span></span>
             </span>
             <span class="tp-status is-${esc(job.status)}">${esc(titoProStatusLabel(job.status))}</span>
           </button>
@@ -32245,10 +32266,13 @@ async function openTitoProJobs(role) {
 // status: "work_done" is what the engine calls it, not what a person says.
 function titoProStatusLabel(status) {
   return {
-    requested: "Waiting for a price", quoted: "Price offered", re_quoted: "Price changed",
+    // Short on purpose. These sit in a pill beside the job title on a phone,
+    // and a long one squeezed the title until "Blocked kitchen drain" wrapped
+    // onto two lines and the reference broke in half.
+    requested: "Needs a price", quoted: "Price offered", re_quoted: "Price changed",
     accepted: "Agreed", scheduled: "Booked", in_progress: "In progress",
-    work_done: "Needs your sign-off", confirmed: "Done", declined: "Declined",
-    cancelled: "Cancelled", expired: "Expired", disputed: "Being sorted out"
+    work_done: "Needs sign-off", confirmed: "Done", declined: "Declined",
+    cancelled: "Cancelled", expired: "Expired", disputed: "Disputed"
   }[status] || String(status || "").replace(/_/g, " ");
 }
 

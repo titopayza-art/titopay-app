@@ -1009,3 +1009,15 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
 .tp-offer{border:1px dashed var(--line);border-radius:14px;padding:14px;margin-top:18px}
 .tp-offer .tp-group-title{margin-bottom:4px}
 .tp-offer .btn{margin-top:10px;width:100%}
+
+/* A job reference is read out over a phone, so it must not break in half.
+   overflow-wrap:anywhere on the sub line is right for an address and wrong
+   for TP-J-K7M2QRXP, which was rendering as "TP-J-" then "K7M2QRXP". */
+.tp-pro-sub .tp-ref{white-space:nowrap}
+/* And the status pill gives the title room rather than taking it: on a narrow
+   phone it drops to its own line instead of squeezing the job's name. */
+@media (max-width:400px){
+  .tp-pro-row{flex-wrap:wrap}
+  .tp-pro-main{flex:1 1 100%}
+  .tp-pro-row .tp-status{margin-left:48px}
+}
