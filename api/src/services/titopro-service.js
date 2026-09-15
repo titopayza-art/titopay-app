@@ -188,6 +188,16 @@ async function createJob(actor, payload = {}) {
   if (professionalUserId && professionalUserId === actor.userId) {
     throw new AppError(400, "You cannot hire yourself");
   }
+  // THE BACK DOOR, CLOSED.
+  //
+  // Listing requires FICA verification. Without this check that requirement
+  // would guard only the browse screen: a job posted straight at a user id
+  // would reach somebody who never verified, or whose listing was taken down
+  // this morning, and the money path would follow it. The professional named
+  // on a job must be live on TitoPro at the moment the job is raised.
+  if (professionalUserId) {
+    await require("./titopro-profile-service").requirePublishedProfessional(professionalUserId);
+  }
 
   const id = crypto.randomUUID();
   const { rows } = await pool.query(

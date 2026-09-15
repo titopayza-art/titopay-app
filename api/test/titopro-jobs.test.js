@@ -25,6 +25,7 @@ const { v4: uuidv4 } = require("uuid");
 const { pool } = require("../src/db/pool");
 const pro = require("../src/services/titopro-service");
 const reference = require("../src/config/titopro-reference");
+const profiles = require("../src/services/titopro-profile-service");
 const pricing = require("../src/services/pricing-service");
 
 let sequence = 0;
@@ -39,16 +40,30 @@ async function makeUser(label) {
   return { userId: id, ipAddress: "127.0.0.1", userAgent: "node-test" };
 }
 
+// A job can only be sent to somebody who is LISTED, and listing requires FICA
+// verification - see titopro-listing-fica.test.js. So a professional in these
+// tests is a published one; a bare user id would now be refused, which is the
+// gate doing its job rather than a fixture problem.
+async function makeListedProfessional(profession) {
+  const actor = await makeUser("Sipho");
+  await profiles.saveProfile(actor, {
+    professions: [profession], headline: "Available in Soweto", suburb: "Pimville", city: "Soweto"
+  });
+  await profiles.publishProfile(actor);
+  return actor;
+}
+
 // The fees have to exist in the database for calculateFee to read them; on a
 // fresh test database the one-shot has never run.
 test.before(async () => {
   await pro.ensureTitoProSchema();
+  await profiles.ensureProfileSchema();
   await pricing.applyTitoProPricingOnce();
 });
 
 async function jobFor(profession = "plumber") {
   const customer = await makeUser("Thandi");
-  const professional = await makeUser("Sipho");
+  const professional = await makeListedProfessional(profession);
   const job = await pro.createJob(customer, {
     profession,
     professionalUserId: professional.userId,

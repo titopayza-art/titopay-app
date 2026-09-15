@@ -149,6 +149,13 @@ async function restrictAccount(admin, userId, payload = {}) {
       [userId]);
     await client.query("COMMIT");
 
+    // A restricted professional must come off TitoPro. Being FICA verified is
+    // not the same as being in good standing, and a listing that survives a
+    // fraud restriction keeps sending that person work.
+    await require("./titopro-profile-service")
+      .enforceVerificationStillHolds(userId, { reason: "This account is restricted." })
+      .catch(() => null);
+
     await Promise.all([
       writeAuditLog({
         actorType: "admin", actorId: admin.userId,

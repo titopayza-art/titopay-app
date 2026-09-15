@@ -3054,6 +3054,12 @@ router.post("/compliance/reviews/:id/status", requireAdminPermission("compliance
         "UPDATE users SET fica_status = $2, updated_at = NOW() WHERE id = $1",
         [rows[0].user_id, decided]
       );
+      // A TitoPro listing published against a verification that has just been
+      // rejected is TitoPay advertising somebody it no longer vouches for.
+      // Does nothing to a listing still entitled to be up.
+      await require("../services/titopro-profile-service")
+        .enforceVerificationStillHolds(rows[0].user_id, { reason: "FICA verification was not approved." })
+        .catch(() => null);
     }
 
     await writeAuditLog({
