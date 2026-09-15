@@ -13,6 +13,7 @@ const { requireSuperAdmin } = require("../middleware/super-admin");
 const { authLimiter } = require("../middleware/rate-limits");
 const { AppError } = require("../lib/errors");
 const { boundedText, requireEnum, requireUuid } = require("../lib/validation");
+const accountRestrictions = require("../services/account-restriction-service");
 const { hashPassword } = require("../lib/passwords");
 const { isMissingDbObjectError, logDbCompatibilityWarning, safeQuery } = require("../lib/db-safe");
 const {
@@ -2420,6 +2421,54 @@ router.get("/global-search", requireSuperAdmin, async (_req, res, next) => {
   }
 });
 
+// RESTRICT AN ACCOUNT, WITH THE REASON RECORDED.
+//
+// The route below this one can suspend an account without saying why, which
+// is how every suspension worked until now. For anything a regulator may ask
+// about later - an AML review, a suspected fraud, a sanctions match - use
+// this: it refuses without a category and a written reason, keeps the reason
+// where only compliance can read it, and never deletes anything.
+router.post("/users/:id/restrict", requireAdminPermission("profile_lock"), async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.id, "User ID");
+    const restriction = await accountRestrictions.restrictAccount(req.auth, userId, req.body || {});
+    await refreshCapabilityActivation().catch(() => {});
+    res.json({ ok: true, restriction });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/users/:id/lift-restriction", requireAdminPermission("profile_lock"), async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.id, "User ID");
+    res.json({ ok: true, restriction: await accountRestrictions.liftRestriction(req.auth, userId, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The history of an account's restrictions, including the internal reasons.
+// Behind the same permission as applying one.
+router.get("/users/:id/restrictions", requireAdminPermission("profile_lock"), async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.id, "User ID");
+    res.json({ ok: true, restrictions: await accountRestrictions.restrictionHistory(userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The compliance queue: every restriction in force, oldest first.
+router.get("/account-restrictions", requireAdminPermission("profile_lock"), async (req, res, next) => {
+  try {
+    const category = req.query.category ? String(req.query.category) : null;
+    res.json({ ok: true, restrictions: await accountRestrictions.openRestrictions({ category }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/users/:id/:action", requireAdminPermission("profile_lock"), async (req, res, next) => {
   try {
     const userId = requireUuid(req.params.id, "User ID");
@@ -2439,6 +2488,18 @@ router.post("/users/:id/:action", requireAdminPermission("profile_lock"), async 
       [userId]
     );
     if (!rows[0]) return res.status(404).json({ ok: false, error: "User not found" });
+    // A suspension made here states no reason, because this route never asked
+    // for one and the console still posts it with an empty body. It is
+    // recorded under the `unspecified` category so it lands in the compliance
+    // queue rather than being invisible; re-activating closes it again. Best
+    // effort - the action itself must stand even if the paperwork will not
+    // write, because an account left unrestricted is the worse outcome.
+    if (req.params.action === "suspend") {
+      await accountRestrictions.recordUnspecifiedRestriction(req.auth, userId, "suspended").catch(() => null);
+    } else if (req.params.action === "activate") {
+      await accountRestrictions.liftAnyOpenRestriction(req.auth, userId,
+        "Re-activated from the admin user list.").catch(() => null);
+    }
     await writeAuditLog({
       actorType: req.auth.userType,
       actorId: req.auth.userId,
