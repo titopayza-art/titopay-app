@@ -103,7 +103,11 @@ function resetProfileSchemaCache() {
 //
 // Returns the reasons it is refused rather than a bare false, because a
 // professional who cannot publish has to be told what to go and do.
-async function listingEligibility(userId) {
+// `professions` is optional: without it this answers only the account-level
+// questions, which is what a profile screen needs before any service is
+// chosen. With it, the background checks those particular services require are
+// included - see titopro-vetting-service.js.
+async function listingEligibility(userId, professions = null) {
   const { rows } = await pool.query(
     `SELECT id, status, fica_status, basic_verified_at, full_name
        FROM users WHERE id = $1 LIMIT 1`, [userId]);
@@ -122,7 +126,18 @@ async function listingEligibility(userId) {
   if (String(user.status || "").toLowerCase() !== "active") {
     blockers.push("Your TitoPay account is not active, so your listing cannot go live.");
   }
-  return { eligible: blockers.length === 0, ficaVerified, blockers, fullName: user.full_name };
+  // FICA IS IDENTITY, NOT A BACKGROUND CHECK. A day nanny, a cleaner, a tutor
+  // and a locksmith need cleared checks on file as well, because being
+  // correctly identified says nothing about being suitable to be alone with a
+  // child or to hold the keys to an empty house.
+  let vetting = { satisfied: true, missing: [], missingLabels: [], required: [] };
+  if (Array.isArray(professions) && professions.length) {
+    vetting = await require("./titopro-vetting-service").vettingShortfall(userId, professions);
+    if (!vetting.satisfied) {
+      blockers.push(`Before you can offer this work TitoPay needs: ${vetting.missingLabels.join(" and ")}. Contact TitoPay support to start the checks.`);
+    }
+  }
+  return { eligible: blockers.length === 0, ficaVerified, blockers, vetting, fullName: user.full_name };
 }
 
 /* -------------------------------------------------------------- the draft */
@@ -170,7 +185,7 @@ async function saveProfile(actor, payload = {}) {
       payload.province ? boundedText(payload.province, "Province", { min: 0, max: 120 }) : null,
       Math.round(radius)]
   );
-  return present(rows[0], await listingEligibility(actor.userId));
+  return present(rows[0], await listingEligibility(actor.userId, rows[0].professions));
 }
 
 /* ------------------------------------------------------------ publishing */
@@ -187,12 +202,12 @@ async function publishProfile(actor) {
     throw new AppError(400, "Add the area you work in before you go live.");
   }
 
-  const eligibility = await listingEligibility(actor.userId);
+  const eligibility = await listingEligibility(actor.userId, profile.professions);
   if (!eligibility.eligible) {
     // 403 rather than 400: nothing is wrong with the request, the account is
     // not permitted to do it yet.
     throw new AppError(403, eligibility.blockers[0], {
-      code: "fica_required",
+      code: eligibility.ficaVerified ? "vetting_required" : "fica_required",
       blockers: eligibility.blockers,
       ficaVerified: eligibility.ficaVerified
     });
@@ -239,7 +254,12 @@ async function enforceVerificationStillHolds(userId, { reason = "" } = {}) {
     "SELECT id, status FROM titopro_profiles WHERE user_id = $1 LIMIT 1", [userId]);
   if (!current[0] || current[0].status !== "published") return { changed: false };
 
-  const eligibility = await listingEligibility(userId);
+  const { rows: profileRow } = await pool.query(
+    "SELECT professions FROM titopro_profiles WHERE user_id = $1 LIMIT 1", [userId]);
+  // The professions are passed so an EXPIRED background check counts as a
+  // lapse exactly as a withdrawn FICA verification does. A clearance that ran
+  // out is not a smaller problem than one that was never obtained.
+  const eligibility = await listingEligibility(userId, profileRow[0]?.professions || []);
   if (eligibility.eligible) return { changed: false };
 
   const { rows } = await pool.query(
@@ -273,7 +293,7 @@ async function requirePublishedProfessional(userId) {
 async function getMyProfile(actor) {
   await ensureProfileSchema();
   const { rows } = await pool.query("SELECT * FROM titopro_profiles WHERE user_id = $1 LIMIT 1", [actor.userId]);
-  const eligibility = await listingEligibility(actor.userId);
+  const eligibility = await listingEligibility(actor.userId, rows[0]?.professions || []);
   if (!rows[0]) return { profile: null, eligibility };
   return { profile: present(rows[0], eligibility), eligibility };
 }
@@ -339,6 +359,8 @@ function present(row, eligibility = null) {
     ...(eligibility ? {
       canPublish: eligibility.eligible,
       ficaVerified: eligibility.ficaVerified,
+      vettingSatisfied: eligibility.vetting ? eligibility.vetting.satisfied : true,
+      outstandingChecks: eligibility.vetting ? eligibility.vetting.missingLabels || [] : [],
       blockers: eligibility.blockers
     } : {})
   };

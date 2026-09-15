@@ -14,6 +14,7 @@ const { authLimiter } = require("../middleware/rate-limits");
 const { AppError } = require("../lib/errors");
 const { boundedText, requireEnum, requireUuid } = require("../lib/validation");
 const accountRestrictions = require("../services/account-restriction-service");
+const titoproVetting = require("../services/titopro-vetting-service");
 const { hashPassword } = require("../lib/passwords");
 const { isMissingDbObjectError, logDbCompatibilityWarning, safeQuery } = require("../lib/db-safe");
 const {
@@ -2416,6 +2417,50 @@ router.get("/global-search", requireSuperAdmin, async (_req, res, next) => {
         transactions: "/v1/admin/transactions"
       }
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ENHANCED VETTING FOR TITOPRO.
+//
+// FICA is identity. These are the background checks a day nanny, a cleaner, a
+// tutor or a locksmith needs on top of it before their listing may go live.
+// A professional cannot clear themselves; only a compliance officer records
+// that they looked at something.
+router.post("/titopro/vetting/:userId", requireAdminPermission("compliance"), async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.userId, "User ID");
+    res.json({ ok: true, check: await titoproVetting.recordCheck(req.auth, userId, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/titopro/vetting/:userId", requireAdminPermission("compliance"), async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.userId, "User ID");
+    res.json({ ok: true, checks: await titoproVetting.checksForUser(userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// The queue of checks somebody started and nobody has decided.
+router.get("/titopro/vetting", requireAdminPermission("compliance"), async (_req, res, next) => {
+  try {
+    res.json({ ok: true, pending: await titoproVetting.pendingChecks() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Clearances running out, so a professional can be asked for a new
+// certificate BEFORE their listing drops rather than after.
+router.get("/titopro/vetting-expiring", requireAdminPermission("compliance"), async (req, res, next) => {
+  try {
+    const withinDays = Number(req.query.withinDays || 30);
+    res.json({ ok: true, expiring: await titoproVetting.expiringSoon({ withinDays }) });
   } catch (error) {
     next(error);
   }

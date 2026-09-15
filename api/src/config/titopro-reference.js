@@ -88,6 +88,46 @@ const SHAPE_COPY = Object.freeze({
 // is renewed - is a policy question for the business, not a constant here.
 const VETTING = Object.freeze(["standard", "enhanced"]);
 
+// WHAT "ENHANCED" ACTUALLY REQUIRES.
+//
+// FICA answers "is this person who they say they are". It is an identity
+// check and it is NOT a background check - somebody can be perfectly
+// identified and still be unsuitable to be alone with a child.
+//
+// THE PERIODS BELOW ARE DEFAULTS, NOT LAW. How long a clearance stays good
+// for is a policy decision for the business and its compliance advisers; a
+// SAPS certificate has no statutory shelf life and employers commonly treat
+// one as current for somewhere between six months and two years. They sit in
+// configuration so changing them is a deploy rather than a migration, and so
+// the figure being used is visible rather than buried in a validation branch.
+const VETTING_CHECKS = Object.freeze([
+  { key: "police_clearance", label: "Police clearance", validDays: 365,
+    says: "A SAPS Police Clearance Certificate, dated within the last year." },
+  { key: "reference_check", label: "References", validDays: 730,
+    says: "Two contactable references from previous work of the same kind." }
+]);
+
+const VETTING_CHECK_KEYS = Object.freeze(VETTING_CHECKS.map((item) => item.key));
+
+// Applied to every profession marked `enhanced`. If one of them ever needs a
+// different set - a tutor working with matric pupils, say, against a cleaner
+// with a set of keys - give that profession its own requiredChecks array and
+// requiredChecksFor will use it instead.
+const ENHANCED_VETTING_CHECKS = Object.freeze(["police_clearance", "reference_check"]);
+
+function vettingCheck(key) {
+  return VETTING_CHECKS.find((item) => item.key === key) || null;
+}
+
+// The checks a person must have cleared before this profession may be listed.
+// An empty list means identity alone is enough, which is the case for every
+// profession that does not put somebody alone with a child or a set of keys.
+function requiredChecksFor(professionKey) {
+  const item = PROFESSIONS.find((entry) => entry.key === professionKey);
+  if (!item || item.vetting !== "enhanced") return [];
+  return Array.isArray(item.requiredChecks) ? item.requiredChecks : ENHANCED_VETTING_CHECKS;
+}
+
 const PROFESSIONS = Object.freeze([
   // -- Home repairs. One visit, a few hours, finished the same day. ---------
   { key: "plumber", label: "Plumber", group: "Home repairs", shape: "callout", bookCategory: "plumber",
@@ -233,6 +273,11 @@ function requiresEnhancedVetting(key) {
 }
 
 module.exports = {
+  ENHANCED_VETTING_CHECKS,
+  VETTING_CHECKS,
+  VETTING_CHECK_KEYS,
+  requiredChecksFor,
+  vettingCheck,
   SHAPES,
   SHAPE_COPY,
   VETTING,

@@ -26,6 +26,7 @@ const { pool } = require("../src/db/pool");
 const pro = require("../src/services/titopro-service");
 const reference = require("../src/config/titopro-reference");
 const profiles = require("../src/services/titopro-profile-service");
+const vetting = require("../src/services/titopro-vetting-service");
 const pricing = require("../src/services/pricing-service");
 
 let sequence = 0;
@@ -49,8 +50,30 @@ async function makeListedProfessional(profession) {
   await profiles.saveProfile(actor, {
     professions: [profession], headline: "Available in Soweto", suburb: "Pimville", city: "Soweto"
   });
+  // An enhanced profession - a cleaner, a day nanny, a tutor, a locksmith -
+  // also needs background checks cleared before it can be listed, on top of
+  // FICA. See titopro-vetting.test.js for why, and for the gate itself.
+  const admin = await makeComplianceAdmin();
+  for (const check of reference.requiredChecksFor(profession)) {
+    await vetting.recordCheck(admin, actor.userId, {
+      checkType: check, status: "cleared",
+      evidenceReference: `REF-${check}-TEST`,
+      note: "Cleared for the purposes of this fixture."
+    });
+  }
   await profiles.publishProfile(actor);
   return actor;
+}
+
+async function makeComplianceAdmin() {
+  const id = uuidv4();
+  sequence += 1;
+  const tag = `${String(Date.now()).slice(-6)}${sequence}`;
+  await pool.query(
+    `INSERT INTO admin_users (id, full_name, username, email, role, password_hash, status)
+     VALUES ($1,'Compliance',$2,$3,'super_admin','x','active')`,
+    [id, `jadm_${tag}`, `jadm_${tag}@titopay.test`]);
+  return { userId: id, userType: "admin", ipAddress: "127.0.0.1", userAgent: "node-test" };
 }
 
 // The fees have to exist in the database for calculateFee to read them; on a
@@ -58,6 +81,7 @@ async function makeListedProfessional(profession) {
 test.before(async () => {
   await pro.ensureTitoProSchema();
   await profiles.ensureProfileSchema();
+  await vetting.ensureVettingSchema();
   await pricing.applyTitoProPricingOnce();
 });
 
