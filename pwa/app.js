@@ -541,6 +541,10 @@ const ICON_PATHS = {
     "bulk-distribution": `<path d="M4 6h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M14 14h6v6h-6z"/><path d="M10 9h4"/><path d="M10 11l4 6"/><path d="M14 7l-4 2"/>`,
     store: `<path d="M4 10h16l-1-6H5z"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/>`,
     maintenance: `<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>`,
+    // Book's Car group used to borrow the wrench. Once trades have their own
+    // group the two sat side by side in the same grid wearing the same glyph,
+    // which reads as a rendering fault rather than two categories.
+    car: `<path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/>`,
     menu: `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
     "more-horizontal": `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>`,
     x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
@@ -31506,18 +31510,37 @@ async function openBookDiscover() {
   renderBookDiscover();
 }
 
-// The seven groups from the reference config rather than twenty one categories:
-// eight pills wrapped into four ragged lines and "Car wash" broke in half.
+// The groups from the reference config rather than its twenty five categories:
+// as individual pills they wrapped into ragged lines and "Car wash" broke in
+// half. .bk-grid is TWO COLUMNS, so the count decides the layout - see the
+// wide-tile rule in renderBookDiscover, which is why every label here is short
+// enough to sit on one line in half a phone width. .bk-tile sets
+// white-space:nowrap, so a label that does not fit does not wrap, it overflows.
 const BOOK_GROUPS = [
   ["Eat and drink", "store", ["restaurant", "cafe", "bakery"]],
   ["Beauty", "scissors", ["salon", "barber", "spa", "beauty_studio"]],
   ["Health", "health", ["doctor", "dentist", "clinic"]],
-  ["Car", "maintenance", ["car_wash", "auto_detailing", "auto_service"]],
+  ["Trades", "maintenance", ["plumber", "electrician", "appliance_repair", "handyman"]],
+  ["Car", "car", ["car_wash", "auto_detailing", "auto_service"]],
   ["Fitness", "heart", ["gym", "fitness_studio", "personal_training"]],
   ["Stay", "home", ["hotel", "guesthouse"]],
   ["Things to do", "star", ["experience", "studio"]]
 ];
 
+// THE LAST TILE IS ONLY WIDE WHEN IT WOULD OTHERWISE SIT ALONE.
+//
+// .bk-grid is two columns. With an ODD number of groups the final tile has no
+// partner, so it spans both and the grid ends on a clean edge. That rule used
+// to be written as "always widen the last one", which was correct only for as
+// long as the count stayed at seven: adding an eighth group made the count
+// even, and widening the last tile then stranded the SEVENTH alone in its own
+// row - re-creating the ragged wrap the group list exists to avoid.
+//
+// Keyed on the parity rather than the number, so it stays right whether the
+// next change adds a group or removes one.
+function bookTileIsWide(index) {
+  return index === BOOK_GROUPS.length - 1 && BOOK_GROUPS.length % 2 === 1;
+}
 function renderBookDiscover() {
   const store = bookCustomerState();
   const venues = store.venues || [];
@@ -31530,7 +31553,7 @@ function renderBookDiscover() {
 
     <section class="bk-grid" aria-label="Browse">
       ${BOOK_GROUPS.map(([label, glyph, keys], index) => `
-        <button class="bk-tile${store.category && keys.includes(store.category) ? " is-on" : ""}${index === BOOK_GROUPS.length - 1 ? " bk-tile-wide" : ""}"
+        <button class="bk-tile${store.category && keys.includes(store.category) ? " is-on" : ""}${bookTileIsWide(index) ? " bk-tile-wide" : ""}"
           type="button" data-action="book-group:${esc(keys[0])}">
           ${icon(glyph)}<span>${esc(label)}</span>
         </button>`).join("")}

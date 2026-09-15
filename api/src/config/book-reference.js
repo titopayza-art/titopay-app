@@ -32,6 +32,22 @@ const CATEGORIES = Object.freeze([
   { key: "auto_detailing", label: "Detailing", group: "Automotive", resourceWord: "Bay", bookingWord: "Booking", hint: "Detailing and paint correction" },
   { key: "auto_service", label: "Auto service", group: "Automotive", resourceWord: "Bay", bookingWord: "Booking", hint: "Mechanic, tyres, panel beating" },
 
+  // TRADES. The resource is a PERSON WITH A VAN rather than a room or a chair,
+  // and what is booked is a JOB rather than an appointment - a customer with a
+  // burst geyser is not making an appointment, they are getting somebody out.
+  //
+  // WHY THESE FOUR AND NOT PAINTERS, TILERS OR BUILDERS. The engine books a
+  // span, and book_services_duration_check caps a span at 1440 minutes. Every
+  // trade here is callout-shaped: someone arrives, works for an hour or four,
+  // and leaves the same day. A painter on a three-day job or a builder on a
+  // three-week one is not a slot, and forcing one into this model would have
+  // the diary lying about availability from the first booking. Those trades
+  // need a project model, which is a different piece of work.
+  { key: "plumber", label: "Plumber", group: "Trades", resourceWord: "Plumber", bookingWord: "Job", hint: "Burst pipes, geysers, blocked drains, leaking taps" },
+  { key: "electrician", label: "Electrician", group: "Trades", resourceWord: "Electrician", bookingWord: "Job", hint: "Faults, DB boards, plugs and lights, certificates of compliance" },
+  { key: "appliance_repair", label: "Appliance repair", group: "Trades", resourceWord: "Technician", bookingWord: "Job", hint: "Fridges, washing machines, stoves and ovens" },
+  { key: "handyman", label: "Handyman", group: "Trades", resourceWord: "Handyman", bookingWord: "Job", hint: "Small repairs, mounting, assembly, odd jobs" },
+
   { key: "salon", label: "Hair salon", group: "Beauty", resourceWord: "Stylist", bookingWord: "Appointment", hint: "Hair, braiding, treatments" },
   { key: "barber", label: "Barber", group: "Beauty", resourceWord: "Chair", bookingWord: "Appointment", hint: "Cuts, shaves, grooming" },
   { key: "spa", label: "Spa", group: "Beauty", resourceWord: "Therapist", bookingWord: "Appointment", hint: "Massage, treatments, wellness" },

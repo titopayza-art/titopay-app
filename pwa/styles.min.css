@@ -923,3 +923,17 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
    themes because --danger is redefined for the dark surface. */
 .signin-alert{display:flex;gap:8px;align-items:flex-start;margin:0 0 14px;padding:12px 14px;border:1px solid var(--danger);border-radius:12px;background:color-mix(in srgb,var(--danger) 10%,transparent);color:var(--danger);font-size:0.85rem;line-height:1.45;font-weight:600}
 .signin-alert svg{flex:0 0 auto;width:18px;height:18px;margin-top:1px}
+
+/* == Book browse tiles on a narrow phone ==================================
+   .bk-tile sets white-space:nowrap, so a label wider than half the screen
+   does not wrap - it spills past the tile. At 360px, the width of a Galaxy
+   A-series and plenty of other Android handsets here, "Eat and drink"
+   overflowed by 15px and "Things to do" by 6px. Measured, not guessed:
+   verification/book-trades-grid.spec.js renders the real grid at 360, 390,
+   414 and 768 and fails on any overflow.
+   Tightening the box rather than shortening the words - the labels are the
+   product's own vocabulary, and "To do" reads worse than "Things to do". */
+@media (max-width: 380px){
+  .bk-tile{padding:0 9px;gap:7px;font-size:0.9rem;letter-spacing:-0.01em}
+  .bk-tile svg{width:19px;height:19px;flex:0 0 auto}
+}
