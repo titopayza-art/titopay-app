@@ -15,6 +15,8 @@ const { AppError } = require("../lib/errors");
 const { boundedText, requireEnum, requireUuid } = require("../lib/validation");
 const accountRestrictions = require("../services/account-restriction-service");
 const titoproVetting = require("../services/titopro-vetting-service");
+const titoproProfiles = require("../services/titopro-profile-service");
+const titoproReputation = require("../services/titopro-reputation-service");
 const { hashPassword } = require("../lib/passwords");
 const { isMissingDbObjectError, logDbCompatibilityWarning, safeQuery } = require("../lib/db-safe");
 const {
@@ -2461,6 +2463,84 @@ router.get("/titopro/vetting-expiring", requireAdminPermission("compliance"), as
   try {
     const withinDays = Number(req.query.withinDays || 30);
     res.json({ ok: true, expiring: await titoproVetting.expiringSoon({ withinDays }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* -------------------------------------------------- TitoPro moderation */
+
+// THE REPORTS QUEUE.
+//
+// Dangerous first, then oldest first. Each row carries whether the reporter
+// ever actually hired this professional and how many reports have ever been
+// raised against them, because one complaint and a pattern of them are
+// different things and the queue should not make an operator go and look.
+//
+// NOTHING IN HERE SUSPENDS ANYBODY ON ITS OWN. A report is an accusation; a
+// listing that comes down on an accusation alone is a listing any competitor
+// can take down with an account and ten minutes. Every action below is a named
+// person's decision with their id against it.
+router.get("/titopro/reports", requireAdminPermission("titopro_moderation"), async (req, res, next) => {
+  try {
+    const status = req.query.status ? String(req.query.status) : "open";
+    res.json({ ok: true, reports: await titoproReputation.reportQueue({ status }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/titopro/reports/:id/resolve", requireAdminPermission("titopro_moderation"), async (req, res, next) => {
+  try {
+    const reportId = requireUuid(req.params.id, "Report ID");
+    res.json({ ok: true, report: await titoproReputation.resolveReport(req.auth, reportId, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Every listing currently under an operator action, so a suspension is
+// something somebody can find again rather than something that happened once.
+router.get("/titopro/listings", requireAdminPermission("titopro_moderation"), async (req, res, next) => {
+  try {
+    const state = req.query.state ? String(req.query.state) : "actioned";
+    res.json({ ok: true, listings: await titoproProfiles.moderationListings({ state }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// One listing with everything needed to decide about it: the professional's
+// contact details, their vetting, their score and every report ever raised.
+router.get("/titopro/listings/:userId", requireAdminPermission("titopro_moderation"), async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.userId, "User ID");
+    res.json({ ok: true, ...(await titoproProfiles.listingForAdmin(userId)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// APPROVE, SUSPEND OR REMOVE. A reason is required for all three - approving
+// is as much a decision as removing - and approving hands the listing back to
+// the professional rather than putting it live, so nothing on this route can
+// put an unverified person in front of customers.
+router.post("/titopro/listings/:userId/moderate", requireAdminPermission("titopro_moderation"), async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.userId, "User ID");
+    res.json({ ok: true, ...(await titoproProfiles.moderateListing(req.auth, userId, req.body || {})) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// One rating: hide words TitoPay will not publish, withdraw a rating found to
+// be fraudulent, or put either back. No delete, and the star survives a hidden
+// comment.
+router.post("/titopro/ratings/:id/moderate", requireAdminPermission("titopro_moderation"), async (req, res, next) => {
+  try {
+    const ratingId = requireUuid(req.params.id, "Rating ID");
+    res.json({ ok: true, rating: await titoproReputation.moderateRating(req.auth, ratingId, req.body || {}) });
   } catch (error) {
     next(error);
   }

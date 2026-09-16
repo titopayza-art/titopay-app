@@ -21,7 +21,7 @@
  *    6. Data table engine                   20 functions
  *    7. Dashboard                           10 functions
  *    8. Global search                       12 functions
- *    9. Operations — money and accounts     17 functions
+ *    9. Operations — money and accounts     23 functions
  *   10. Support and chat monitoring         16 functions
  *   11. Integration centre                  17 functions
  *   12. Platform administration             14 functions
@@ -61,7 +61,7 @@ const ADMIN_ASSET_VERSION = (() => {
     const stamped = new URL(document.currentScript?.src || "", location.href).searchParams.get("v");
     if (stamped) return stamped;
   } catch {}
-  return "admin-console-v112";
+  return "admin-console-v113";
 })();
 const ADMIN_ASSET_URL = (() => {
   try {
@@ -140,6 +140,7 @@ const NAV_GROUPS = [
     ["/chatbot-escalations/", "chatbot-escalations", "Chatbot Escalations"],
     ["/company-documents/", "company-documents", "Company Documents"],
     ["/compliance/", "compliance", "Compliance"],
+    ["/titopro/", "titopro-moderation", "TitoPro Moderation"],
     ["/revenue/", "revenue", "Revenue"],
     ["/security/", "security", "Security"],
     ["/system-logs/", "system-logs", "System Logs"],
@@ -223,6 +224,7 @@ const NAV_ICON_PATHS = {
   "chatbot-escalations": "M5 5h14v10H9l-4 4V5Zm4 4h6m-6 3h4",
   "company-documents": "M6 3h7l5 5v13H6V3Zm7 0v5h5M9 13h6M9 17h6",
   compliance: "M12 3 5 6v5.5c0 4.2 2.9 8.1 7 9.5 4.1-1.4 7-5.3 7-9.5V6l-7-3Zm-2.6 8.8 2 2 4-4",
+  "titopro-moderation": "M4 21V4m0 .5h11l-1.6 3.6L16 12H4m5 5.5 1.6 3.2 3.5.5-2.6 2.4",
   revenue: "M4 18 9.5 12l3.5 3.5L20 8m0 0h-4.5M20 8v4.5",
   security: "M6 10V7.5a6 6 0 0 1 12 0V10m-13 0h14v10H5V10Zm7 4v2",
   "system-logs": "M6 3h12v18H6V3Zm3 4h6M9 11h6M9 15h4",
@@ -1250,6 +1252,10 @@ function renderSidebar(page, me) {
       "chatbot-escalations": "support",
       "company-documents": "__company_docs__",
       compliance: "compliance",
+      // Matches requireAdminPermission("titopro_moderation") on every
+      // TitoPro moderation route, so the rail never offers a page the
+      // request would be refused from.
+      "titopro-moderation": "titopro_moderation",
       revenue: "revenue",
       security: "security",
       "system-logs": "security",
@@ -3464,6 +3470,175 @@ function renderQrPreview(asset) {
       </div>
     </div>
   `);
+}
+
+/* TITOPRO MODERATION.
+
+   A report is an ACCUSATION, not a finding. The most tempting automation in a
+   marketplace is "three reports and you are gone", and it hands every
+   competitor a delete button — so nothing on this page happens on its own.
+   The queue orders the dangerous complaints first and every action below is a
+   named operator's decision, recorded with their id against it.
+
+   Approving is not publishing. Clearing an action hands the listing back to
+   the professional, who must still satisfy FICA, vetting and account standing
+   to put it live. Nothing here can put a listing in front of customers that
+   would not have been allowed there anyway, so the worst mis-click on this
+   page is an undo, not an exposure. */
+
+async function renderTitoProModeration() {
+  const quiet = (path) => apiFetch(path).catch(() => null);
+  const [queue, listings] = await Promise.all([
+    quiet("/admin/titopro/reports?status=open"),
+    quiet("/admin/titopro/listings?state=actioned"),
+  ]);
+  const needsApi = `<div class="empty"><strong>This panel could not load</strong><small>The API did not answer for this section. Run <code>node scripts/diagnose-admin-console.js</code> in the API directory to see the reason.</small></div>`;
+  const reports = (queue && queue.reports) || [];
+  const actioned = (listings && listings.listings) || [];
+  PAGE_EXPORTS["titopro-moderation"] = reports;
+
+  document.getElementById("page-content").innerHTML = `
+    ${renderMetrics([
+      ["Open reports", reports.length],
+      ["Urgent", reports.filter((row) => row.urgent).length],
+      ["From real customers", reports.filter((row) => row.hadJob).length],
+      ["Suspended listings", actioned.filter((row) => row.adminAction === "suspended").length],
+      ["Removed listings", actioned.filter((row) => row.adminAction === "removed").length],
+    ])}
+    ${tableCard("Reports waiting", queue ? titoProReportTable(reports) : needsApi,
+      "Urgent first, then oldest first — a report about somebody being threatened does not wait behind a fortnight of \"he was late\". \"Customer\" means this reporter really did hire this professional through TitoPay.")}
+    ${tableCard("Listings under an action", listings ? titoProListingTable(actioned) : needsApi,
+      "A suspension can be lifted; a removal is final. Neither deletes anything — the listing, its jobs and every report stay on file.")}
+    <div id="titopro-listing-host"></div>
+  `;
+}
+
+function titoProReportTable(reports) {
+  return renderRows(reports, [
+    { label: "Reported", render: (row) => `<strong>${escapeHtml(row.categoryLabel || "-")}</strong>${row.urgent ? ' <span class="chip red">Urgent</span>' : ""}<br><small>${escapeHtml(row.reference || "")} · ${escapeHtml(String(row.createdAt || "").slice(0, 16).replace("T", " "))}</small>` },
+    { label: "Professional", render: (row) => `<strong>${escapeHtml(row.professionalName || "-")}</strong><br><small>${escapeHtml(row.listingAdminAction ? `${row.listingAdminAction} by TitoPay` : row.listingStatus || "-")} · ${escapeHtml(String(row.reportsAgainstTotal || 0))} report(s) ever</small>` },
+    { label: "Reported by", render: (row) => `${escapeHtml(row.reporterName || "-")}<br><small>${row.hadJob ? "Customer of theirs" : "No job with them"}</small>` },
+    { label: "What they said", render: (row) => `<small>${escapeHtml(String(row.detail || "").slice(0, 220))}</small>` },
+    { label: "Status", render: (row) => `<span class="chip ${row.status === "open" ? "orange" : "blue"}">${escapeHtml(row.status)}</span>` },
+  ], (row) => `
+    <button data-titopro-open="${escapeHtml(row.professionalUserId)}">Open listing</button>
+    ${row.status === "open" ? `<button data-titopro-report="${escapeHtml(row.id)}" data-titopro-report-status="reviewing">Start review</button>` : ""}
+    <button data-titopro-report="${escapeHtml(row.id)}" data-titopro-report-status="dismissed">Dismiss</button>
+  `);
+}
+
+function titoProListingTable(listings) {
+  return renderRows(listings, [
+    { label: "Professional", render: (row) => `<strong>${escapeHtml(row.name || "-")}</strong><br><small>${escapeHtml((row.professionLabels || []).join(", ") || "-")}</small>` },
+    { label: "State", render: (row) => `<span class="chip ${row.adminAction === "removed" ? "red" : "orange"}">${escapeHtml(row.statusLabel || "-")}</span>` },
+    { label: "Reason", render: (row) => `<small>${escapeHtml(String(row.adminReason || "").slice(0, 200))}</small>` },
+    { label: "By", render: (row) => `${escapeHtml(row.adminActionedBy || "-")}<br><small>${escapeHtml(String(row.adminActionedAt || "").slice(0, 16).replace("T", " "))}</small>` },
+    { label: "Open reports", render: (row) => String(row.openReports ?? 0) },
+  ], (row) => `
+    <button data-titopro-open="${escapeHtml(row.userId)}">Open listing</button>
+    ${row.adminAction ? `<button data-titopro-moderate="approve" data-titopro-user="${escapeHtml(row.userId)}">Approve</button>` : ""}
+  `);
+}
+
+/* ONE LISTING, WITH EVERYTHING NEEDED TO DECIDE ABOUT IT ON THE SAME SCREEN:
+   who they are, what TitoPay has checked, what they score, and every report
+   ever raised — including the ones already closed, because one complaint and a
+   pattern of them are different things. */
+async function openTitoProListingPanel(userId) {
+  const host = document.getElementById("titopro-listing-host");
+  if (!host) return;
+  host.innerHTML = `<section class="table-card"><p class="table-card-note">Loading listing…</p></section>`;
+  let detail;
+  try {
+    detail = await apiFetch(`/admin/titopro/listings/${userId}`);
+  } catch (error) {
+    host.innerHTML = `<section class="table-card"><p class="table-card-note">${escapeHtml(adminErrorMessage(error.message))}</p></section>`;
+    return;
+  }
+  const listing = detail.listing || {};
+  const contact = detail.contact || {};
+  const rating = detail.rating || {};
+  // .table-card, not .card: `card` and `card-head` are not styled anywhere in
+  // admin.css, so a panel built on them renders as unstyled text in the middle
+  // of a console where everything else sits in a bordered card.
+  host.innerHTML = `
+    <section class="table-card">
+      <div class="table-card-header">
+        <div>
+          <h3>${escapeHtml(listing.name || "Listing")}</h3>
+          <p>${escapeHtml((listing.professionLabels || []).join(", ") || "-")} · ${escapeHtml([listing.suburb, listing.city].filter(Boolean).join(", ") || "-")}</p>
+        </div>
+        <button class="secondary-btn" data-titopro-close>Close</button>
+      </div>
+      ${renderMetrics([
+        ["State", listing.statusLabel || "-"],
+        ["Rating", rating.count ? `${rating.average} (${rating.count})` : "None yet"],
+        ["Email", contact.email || "-"],
+        ["Phone", contact.phone || "-"],
+      ])}
+      ${listing.adminReason ? `<p class="table-card-note"><strong>Current reason:</strong> ${escapeHtml(listing.adminReason)}</p>` : ""}
+      <div class="action-row">
+        ${listing.adminAction ? `<button class="primary-btn" data-titopro-moderate="approve" data-titopro-user="${escapeHtml(userId)}">Approve — hand it back</button>` : ""}
+        ${listing.adminAction === "removed" ? "" : `<button class="secondary-btn" data-titopro-moderate="suspend" data-titopro-user="${escapeHtml(userId)}">Suspend</button>`}
+        <button class="secondary-btn" data-titopro-moderate="remove" data-titopro-user="${escapeHtml(userId)}">Remove</button>
+      </div>
+      <p class="table-card-note">Approving hands the listing back to the professional — it does not put it live. They still have to satisfy FICA, vetting and account standing to publish it again.</p>
+      ${tableCard("Background checks", renderRows(detail.vetting || [], [
+        { label: "Check", render: (row) => escapeHtml(row.label || row.checkType || "-") },
+        { label: "Status", render: (row) => `<span class="chip ${row.status === "cleared" ? "green" : row.status === "failed" ? "red" : "orange"}">${escapeHtml(row.status || "-")}</span>` },
+        { label: "Expires", render: (row) => escapeHtml(String(row.expiresAt || "-").slice(0, 10)) },
+      ]), "FICA is identity. These are the checks a cleaner, a tutor or a locksmith needs on top of it.")}
+      ${tableCard("Every report ever raised", renderRows(detail.reports || [], [
+        { label: "Reported", render: (row) => `<strong>${escapeHtml(row.categoryLabel || "-")}</strong>${row.urgent ? ' <span class="chip red">Urgent</span>' : ""}<br><small>${escapeHtml(row.reference || "")} · ${escapeHtml(String(row.createdAt || "").slice(0, 16).replace("T", " "))}</small>` },
+        { label: "By", render: (row) => `${escapeHtml(row.reporterName || "-")}<br><small>${row.hadJob ? "Customer of theirs" : "No job with them"}</small>` },
+        { label: "What they said", render: (row) => `<small>${escapeHtml(String(row.detail || ""))}</small>` },
+        { label: "Status", render: (row) => `<span class="chip ${row.status === "open" ? "orange" : row.status === "actioned" ? "red" : "blue"}">${escapeHtml(row.status)}</span><br><small>${escapeHtml(String(row.resolutionNote || "").slice(0, 120))}</small>` },
+      ]), "Closed reports are kept. One complaint and a pattern of them are different things, and only this view shows the difference.")}
+    </section>`;
+  host.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/* TAKING A LISTING DOWN, OR HANDING IT BACK. The reason is compulsory for all
+   three — approving is as much a decision as removing, and a queue where rows
+   can be cleared without a word is a queue nobody can audit afterwards. */
+async function titoProModerateListing(userId, action) {
+  const wording = {
+    approve: ["Approve this listing", "Why is this being cleared? The note goes on the record."],
+    suspend: ["Suspend this listing", "Why is this being suspended? The note goes on the record and is NOT shown to the professional."],
+    remove: ["Remove this listing", "Why is this being removed? A removal is final and the note goes on the record."],
+  }[action];
+  const reason = window.prompt(`${wording[0]}\n\n${wording[1]}`);
+  if (!reason || reason.trim().length < 3) return;
+  if (action === "remove" && !window.confirm("Remove this listing for good? The professional cannot put it back themselves.")) return;
+  try {
+    const result = await apiFetch(`/admin/titopro/listings/${userId}/moderate`, {
+      method: "POST", body: JSON.stringify({ action, reason: reason.trim() }),
+    });
+    showToast(result.reportsClosed
+      ? `Listing ${action}d. ${result.reportsClosed} report(s) closed with this decision.`
+      : `Listing ${action}d.`);
+    await renderTitoProModeration();
+  } catch (error) {
+    showToast(adminErrorMessage(error.message));
+  }
+}
+
+async function titoProResolveReport(reportId, status) {
+  // "reviewing" is somebody picking the report up, so it needs no finding yet.
+  // Dismissing one does: "we looked and there was nothing in it" IS a finding.
+  const note = status === "reviewing"
+    ? "Picked up for review."
+    : window.prompt("What did you decide? The note becomes part of the record:");
+  if (!note || note.trim().length < 3) return;
+  try {
+    await apiFetch(`/admin/titopro/reports/${reportId}/resolve`, {
+      method: "POST", body: JSON.stringify({ status, note: note.trim() }),
+    });
+    showToast(status === "reviewing" ? "Report picked up" : "Report dismissed");
+    await renderTitoProModeration();
+  } catch (error) {
+    showToast(adminErrorMessage(error.message));
+  }
 }
 
 /* ==========================================================================
@@ -7540,6 +7715,7 @@ function adminPageDescriptors() {
     "enterprise-distribution": ["Enterprise Distribution", "Approve organisations, monitor licences, validation batches and enterprise distribution readiness."],
     support: ["Support Desk", "Track support requests and customer assistance queues."],
     compliance: ["Compliance Dashboard", "Monitor FICA, KYC and verification workflows."],
+    "titopro-moderation": ["TitoPro Moderation", "Read what customers reported about a professional, and approve, suspend or remove a listing. No report takes a listing down by itself - every action here is a named person's decision."],
     "company-documents": ["Company Documents", "Manage controlled policies, contracts, compliance documents and staff acknowledgements."],
     revenue: ["Revenue Dashboard", "Review fee income and the TitoPay revenue wallet."],
     security: ["Security Dashboard", "Configure staff sign-in, email OTP and messaging for the platform."],
@@ -7619,6 +7795,7 @@ function adminPageLoaders() {
     support: renderSupport,
     "company-documents": renderCompanyDocuments,
     compliance: renderCompliance,
+    "titopro-moderation": renderTitoProModeration,
     revenue: renderRevenue,
     security: renderSecurity,
     audit: renderAudit,
@@ -9287,6 +9464,26 @@ document.addEventListener("click", async (event) => {
     } catch (error) {
       showToast(adminErrorMessage(error.message));
     }
+  }
+  // TitoPro moderation. Nothing here is automatic: a report is an accusation,
+  // and every listing that comes down does so because a named person decided
+  // it, with a reason that is kept.
+  const titoProOpen = event.target.closest("[data-titopro-open]");
+  if (titoProOpen) {
+    await openTitoProListingPanel(titoProOpen.dataset.titoproOpen);
+  }
+  const titoProClose = event.target.closest("[data-titopro-close]");
+  if (titoProClose) {
+    const host = document.getElementById("titopro-listing-host");
+    if (host) host.innerHTML = "";
+  }
+  const titoProModerate = event.target.closest("[data-titopro-moderate]");
+  if (titoProModerate) {
+    await titoProModerateListing(titoProModerate.dataset.titoproUser, titoProModerate.dataset.titoproModerate);
+  }
+  const titoProReport = event.target.closest("[data-titopro-report]");
+  if (titoProReport) {
+    await titoProResolveReport(titoProReport.dataset.titoproReport, titoProReport.dataset.titoproReportStatus);
   }
   // Money integrity and compliance case actions. Every resolving move asks
   // for the note that becomes part of the audit record.

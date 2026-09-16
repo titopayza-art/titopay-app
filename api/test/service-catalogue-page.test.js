@@ -200,11 +200,21 @@ test("no role's access was changed to make this page work", () => {
   // exists, never by widening a role. These are the shipped defaults as they
   // stood before the Service Catalogue, pinned so a future convenience edit
   // has to be deliberate.
+  //
+  // ONE GRANT HAS BEEN ADDED SINCE, DELIBERATELY, AND IS RECORDED HERE RATHER
+  // THAN SLIPPED PAST THIS GUARD. "titopro_moderation" gates the TitoPro
+  // reports queue and the power to suspend or remove somebody's listing. It is
+  // a NEW permission rather than a reuse on purpose: taking a professional's
+  // livelihood off a marketplace is not the same power as reviewing their FICA
+  // documents ("compliance") or answering their support ticket ("support"), and
+  // folding it into either would hand that power to everyone who already holds
+  // the other. It sits with support and compliance because those are the two
+  // desks a complaint actually reaches. Nothing else about either role moved.
   const { getAdminRolePermissions } = require("../src/services/auth-service");
   const before = {
     customer_support: ["dashboard", "users", "wallets", "support", "transactions", "profile_lock",
-      "ticketing", "event_tags", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
-    compliance: ["dashboard", "compliance", "users", "merchants", "ticketing", "event_tags",
+      "ticketing", "event_tags", "titopro_moderation", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
+    compliance: ["dashboard", "compliance", "users", "merchants", "ticketing", "event_tags", "titopro_moderation",
       "enterprise_distribution", "audit", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
     engineering: ["engineering", "security", "audit", "dashboard", "transactions", "services",
       "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_QUEUE_MANAGE", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
@@ -216,6 +226,13 @@ test("no role's access was changed to make this page work", () => {
   for (const role of ["customer_support", "compliance", "finance", "marketing", "senior_marketing", "coo"]) {
     assert.ok(!getAdminRolePermissions(role).includes("services"),
       `${role} must not have been granted "services"`);
+  }
+  // Nor did the TitoPro takedown power spread past the two desks above. A role
+  // that plans campaigns or reconciles payouts has no business deciding who is
+  // allowed to trade on TitoPro.
+  for (const role of ["finance", "marketing", "senior_marketing", "coo", "engineering"]) {
+    assert.ok(!getAdminRolePermissions(role).includes("titopro_moderation"),
+      `${role} must not be able to take a TitoPro listing down`);
   }
 });
 

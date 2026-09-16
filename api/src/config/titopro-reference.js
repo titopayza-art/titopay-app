@@ -231,6 +231,96 @@ const TERMINAL_JOB_STATUSES = Object.freeze(["confirmed", "declined", "cancelled
 // treat as taken.
 const COMMITTED_JOB_STATUSES = Object.freeze(["accepted", "scheduled", "in_progress", "work_done"]);
 
+/* ------------------------------------------------------- rating and reports */
+
+// WHAT A STAR RATING IS ALLOWED TO MEAN HERE.
+//
+// One rating per JOB, by the customer who paid for it, only once the job is
+// confirmed. Every other arrangement is worse: a rating per profile invites
+// somebody who never hired anybody to leave one, a rating that can be rewritten
+// invites a professional to trade a discount for a better score, and a rating
+// before confirmation is a score for work nobody has agreed is finished.
+const RATING_MIN = 1;
+const RATING_MAX = 5;
+
+// The word next to the number, so a screen does not have to invent one and two
+// screens cannot invent different ones.
+const RATING_WORDS = Object.freeze({
+  1: "Poor",
+  2: "Not good",
+  3: "Fine",
+  4: "Good",
+  5: "Excellent"
+});
+
+function ratingWord(stars) {
+  return RATING_WORDS[Number(stars)] || "";
+}
+
+// WHY A CUSTOMER IS REPORTING A LISTING.
+//
+// Written in the words a customer would use, not ours, because the person
+// choosing one of these has just had a bad experience and will not translate.
+//
+// `urgent` decides what an operator is shown first. It does NOT suspend
+// anything by itself: a report is an accusation, and a listing that comes down
+// on an accusation alone is a listing any competitor can take down. Every
+// suspension on TitoPro is a decision a named person made.
+const REPORT_CATEGORIES = Object.freeze([
+  { key: "off_platform_payment", label: "Asked me to pay outside TitoPay", urgent: true,
+    says: "They wanted cash or an EFT instead of paying through the app." },
+  { key: "impersonation", label: "Not who they say they are", urgent: true,
+    says: "The person who arrived was not the person on the listing." },
+  { key: "unsafe", label: "Unsafe or dangerous", urgent: true,
+    says: "The work or their behaviour put someone at risk." },
+  { key: "harassment", label: "Threatening or abusive", urgent: true,
+    says: "They were abusive, threatening or would not leave." },
+  { key: "no_show", label: "Did not arrive", urgent: false,
+    says: "They accepted the job and never came." },
+  { key: "poor_work", label: "Work was not done properly", urgent: false,
+    says: "The work was left unfinished or badly done." },
+  { key: "overcharged", label: "Charged more than quoted", urgent: false,
+    says: "The final price did not match what was agreed." },
+  { key: "not_qualified", label: "Not qualified for the work", urgent: false,
+    says: "No certificate, or clearly not trained for what they took on." },
+  { key: "other", label: "Something else", urgent: false,
+    says: "Tell us what happened." }
+]);
+
+const REPORT_CATEGORY_KEYS = Object.freeze(REPORT_CATEGORIES.map((item) => item.key));
+
+function reportCategory(key) {
+  return REPORT_CATEGORIES.find((item) => item.key === key) || null;
+}
+
+function isReportCategory(key) {
+  return REPORT_CATEGORY_KEYS.includes(String(key || ""));
+}
+
+function isUrgentReport(key) {
+  return Boolean(reportCategory(key)?.urgent);
+}
+
+// Where a report can get to. `reviewing` exists so two operators do not work
+// the same report at once, and `dismissed` exists because most reports are not
+// takedowns and closing one has to be a recorded decision rather than a row
+// quietly left open forever.
+const REPORT_STATUSES = Object.freeze(["open", "reviewing", "actioned", "dismissed"]);
+
+// WHAT AN OPERATOR CAN DO TO A LISTING.
+//
+// `approved` is the absence of an action rather than a state of its own - it
+// clears whatever was applied and hands the listing back to the professional,
+// who still has to satisfy FICA and vetting to put it live again. Approving
+// does NOT publish somebody; nothing an operator does here can put a listing in
+// front of customers that would not have been allowed there anyway.
+//
+// `removed` is not a delete. The listing stops being findable and stays on
+// file, because the reports, the jobs and the reasoning behind a takedown are
+// exactly what gets asked for months later.
+const LISTING_ADMIN_ACTIONS = Object.freeze(["approve", "suspend", "remove"]);
+const LISTING_ADMIN_STATES = Object.freeze(["suspended", "removed"]);
+
 /* ---------------------------------------------------------------- the fees */
 
 // Named here so a screen and the pricing engine cannot quote different codes.
@@ -280,6 +370,18 @@ function requiresEnhancedVetting(key) {
 }
 
 module.exports = {
+  RATING_MIN,
+  RATING_MAX,
+  RATING_WORDS,
+  ratingWord,
+  REPORT_CATEGORIES,
+  REPORT_CATEGORY_KEYS,
+  REPORT_STATUSES,
+  LISTING_ADMIN_ACTIONS,
+  LISTING_ADMIN_STATES,
+  reportCategory,
+  isReportCategory,
+  isUrgentReport,
   ENHANCED_VETTING_CHECKS,
   VETTING_CHECKS,
   VETTING_CHECK_KEYS,

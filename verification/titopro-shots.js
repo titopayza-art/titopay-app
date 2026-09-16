@@ -64,14 +64,44 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
 const PROS = [
   { userId: "aaaa1111-1111-4111-8111-111111111111", name: "Sipho Ndlovu", professions: ["plumber", "handyman"],
     professionLabels: ["Plumber", "Handyman"], headline: "Drains and geysers, 15 years on the tools",
-    suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25, ficaVerified: true },
+    suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25, ficaVerified: true,
+    rating: 4.8, ratingCount: 24 },
   { userId: "bbbb2222-2222-4222-8222-222222222222", name: "Lerato Mokoena", professions: ["plumber"],
     professionLabels: ["Plumber"], headline: "Emergency call-outs, seven days a week",
-    suburb: "Diepkloof", city: "Soweto", serviceRadiusKm: 20, ficaVerified: true },
+    suburb: "Diepkloof", city: "Soweto", serviceRadiusKm: 20, ficaVerified: true,
+    rating: 4.3, ratingCount: 7 },
+  // Nobody has rated Themba yet. The row must read "New on TitoPro" rather
+  // than nought out of five, or he never gets a first job.
   { userId: "cccc3333-3333-4333-8333-333333333333", name: "Themba Dlamini", professions: ["plumber", "appliance_technician"],
     professionLabels: ["Plumber", "Appliance technician"], headline: "Geysers, pumps and washing machines",
-    suburb: "Orlando East", city: "Soweto", serviceRadiusKm: 30, ficaVerified: true }
+    suburb: "Orlando East", city: "Soweto", serviceRadiusKm: 30, ficaVerified: true,
+    rating: null, ratingCount: 0 }
 ];
+
+// One professional's page, as a customer deciding whether to hire them sees it.
+const PRO_PAGE = { ok: true, professional: {
+  userId: "aaaa1111-1111-4111-8111-111111111111", name: "Sipho Ndlovu",
+  professions: ["plumber", "handyman"], professionLabels: ["Plumber", "Handyman"],
+  headline: "Drains and geysers, 15 years on the tools",
+  bio: "Fifteen years on the tools in Soweto. Geysers, blocked drains and burst pipes, same day where I can.",
+  suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25, ficaVerified: true,
+  rating: 4.8, ratingCount: 24,
+  reviews: [
+    { id: "r1", stars: 5, by: "Thandi", profession: "Plumber", comment: "On time, fixed the geyser and cleaned up after himself.", commentHidden: false },
+    { id: "r2", stars: 5, by: "Bongani", profession: "Plumber", comment: "Came out on a Sunday for a burst pipe. Fair price.", commentHidden: false },
+    { id: "r3", stars: 4, by: "Nomsa", profession: "Handyman", comment: "Good work, arrived an hour later than we agreed.", commentHidden: false }
+  ] } };
+
+const REPORT_REASONS = { ok: true, reasons: [
+  { key: "off_platform_payment", label: "Asked me to pay outside TitoPay", says: "They wanted cash or an EFT instead of paying through the app." },
+  { key: "impersonation", label: "Not who they say they are", says: "The person who arrived was not the person on the listing." },
+  { key: "unsafe", label: "Unsafe or dangerous", says: "The work or their behaviour put someone at risk." },
+  { key: "harassment", label: "Threatening or abusive", says: "They were abusive, threatening or would not leave." },
+  { key: "no_show", label: "Did not arrive", says: "They accepted the job and never came." },
+  { key: "poor_work", label: "Work was not done properly", says: "The work was left unfinished or badly done." },
+  { key: "overcharged", label: "Charged more than quoted", says: "The final price did not match what was agreed." },
+  { key: "not_qualified", label: "Not qualified for the work", says: "No certificate, or clearly not trained for what they took on." },
+  { key: "other", label: "Something else", says: "Tell us what happened." } ] };
 
 const JOB = {
   id: "11111111-1111-4111-8111-111111111111", reference: "TP-J-K7M2QRXP", status: "quoted",
@@ -202,6 +232,46 @@ async function shoot(browser, name, title, routes, run) {
       async (page) => {
         await page.evaluate(() => window.openTitoProModal());
         await page.waitForSelector(".tp-banner.is-live", { timeout: 10000 });
+      });
+
+    await shoot(browser, "9-professional", "One professional, and what customers said",
+      { "/titopro/professions": CATALOGUE, "/professionals/": PRO_PAGE },
+      async (page) => {
+        await page.evaluate((id) => window.openTitoProProfessional(id), PRO_PAGE.professional.userId);
+        await page.waitForSelector(".tp-reviews", { timeout: 10000 });
+      });
+
+    await shoot(browser, "10-rate", "Rating the job, once, after it is finished",
+      { "/titopro/professions": CATALOGUE },
+      async (page) => {
+        await page.evaluate((job) => window.openTitoProRate(job.id), JOB);
+        await page.waitForSelector(".tp-rate-row", { timeout: 10000 });
+        // Four of five, so the picker is photographed part-filled rather than
+        // full - which is the state that shows the control actually works.
+        // The LABEL is clicked, not the input: the input is visually hidden
+        // and a finger has never touched one, so clicking it would test
+        // something nobody does.
+        await page.click('.tp-rate-pick:nth-child(4)');
+      });
+
+    await shoot(browser, "11-report", "Reporting a listing, in the customer's own words",
+      { "/titopro/professions": CATALOGUE, "/my-report": { ok: true, report: null }, "/report-reasons": REPORT_REASONS },
+      async (page) => {
+        await page.evaluate((id) => window.openTitoProReport(id), PRO_PAGE.professional.userId);
+        await page.waitForSelector('form[data-form="titopro-report"]', { timeout: 10000 });
+      });
+
+    await shoot(browser, "12-suspended", "A listing TitoPay took down, explained to the professional",
+      { "/titopro/professions": CATALOGUE,
+        "/titopro/me/listing": { ok: true,
+          profile: { status: "suspended", adminAction: "suspended", professions: ["plumber"], professionLabels: ["Plumber"],
+            headline: "Drains and geysers", suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25,
+            outstandingChecks: [], enhancedVettingProfessions: [],
+            unpublishedReason: "TitoPay has suspended this listing. Contact support." },
+          eligibility: { eligible: true, ficaVerified: true, blockers: [] } } },
+      async (page) => {
+        await page.evaluate(() => window.openTitoProListing());
+        await page.waitForSelector(".tp-banner.is-blocked", { timeout: 10000 });
       });
 
   } finally {

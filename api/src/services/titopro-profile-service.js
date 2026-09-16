@@ -66,6 +66,15 @@ async function ensureProfileSchema() {
         fica_verified_at TIMESTAMPTZ,
         published_at TIMESTAMPTZ,
         unpublished_reason TEXT,
+        -- AN ADMIN DECISION THE PROFESSIONAL CANNOT UNDO.
+        -- Without this, a takedown was undoable by the person taken down:
+        -- publishProfile checked FICA, vetting and account standing, all of
+        -- which still pass for somebody suspended for bad work, so pressing
+        -- "Go live" put them straight back in front of customers.
+        admin_action TEXT,
+        admin_reason TEXT,
+        admin_actioned_by UUID REFERENCES admin_users(id) ON DELETE SET NULL,
+        admin_actioned_at TIMESTAMPTZ,
         metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -77,9 +86,37 @@ async function ensureProfileSchema() {
         -- published against. The database refuses the combination rather than
         -- trusting every future code path to remember.
         CONSTRAINT titopro_profiles_published_is_verified
-          CHECK (status <> 'published' OR fica_verified_at IS NOT NULL)
+          CHECK (status <> 'published' OR fica_verified_at IS NOT NULL),
+        CONSTRAINT titopro_profiles_admin_action_check
+          CHECK (admin_action IS NULL OR admin_action IN ('suspended','removed')),
+        -- A listing under an admin action can never read as published. The
+        -- database refuses the combination rather than trusting every path.
+        CONSTRAINT titopro_profiles_admin_action_not_live
+          CHECK (admin_action IS NULL OR status <> 'published')
       )
     `);
+    for (const column of ["admin_action TEXT", "admin_reason TEXT",
+      "admin_actioned_by UUID", "admin_actioned_at TIMESTAMPTZ"]) {
+      await pool.query(`ALTER TABLE titopro_profiles ADD COLUMN IF NOT EXISTS ${column}`);
+    }
+    // THE CONSTRAINTS HAVE TO BE ADDED SEPARATELY, and this is the trap that
+    // makes them worth spelling out. CREATE TABLE IF NOT EXISTS does NOTHING
+    // to a table that already exists, so a database installed before these
+    // columns would get them from the loop above and never get the rules that
+    // make them mean anything - a takedown that could read as published, and
+    // an admin_action nobody constrained. ADD CONSTRAINT has no IF NOT EXISTS
+    // in PostgreSQL 16, so each one is tried and a duplicate is the expected
+    // outcome on every run after the first.
+    for (const [name, check] of [
+      ["titopro_profiles_admin_action_check", "admin_action IS NULL OR admin_action IN ('suspended','removed')"],
+      ["titopro_profiles_admin_action_not_live", "admin_action IS NULL OR status <> 'published'"]
+    ]) {
+      await pool.query(`ALTER TABLE titopro_profiles ADD CONSTRAINT ${name} CHECK (${check})`)
+        .catch((error) => {
+          // 42710 duplicate_object: already there, which is the normal case.
+          if (error?.code !== "42710") throw error;
+        });
+    }
     await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS uq_titopro_profiles_user ON titopro_profiles (user_id)");
     // Discovery: who is live, where. Mirrors idx_book_venues_discovery.
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_titopro_profiles_discovery
@@ -219,6 +256,17 @@ async function publishProfile(actor) {
     throw new AppError(400, "Add the area you work in before you go live.");
   }
 
+  // AN ADMIN TAKEDOWN IS NOT SOMETHING THE PROFESSIONAL CAN LIFT.
+  // Checked before eligibility because a suspension for bad work leaves FICA,
+  // vetting and account standing all perfectly intact - so every other gate
+  // here would wave them straight back through.
+  if (profile.admin_action) {
+    throw new AppError(403, profile.admin_action === "removed"
+      ? "This listing has been removed by TitoPay. Contact support."
+      : "This listing is suspended by TitoPay. Contact support.",
+      { code: `listing_${profile.admin_action}`, reason: profile.admin_reason || "" });
+  }
+
   const eligibility = await listingEligibility(actor.userId, profile.professions);
   if (!eligibility.eligible) {
     // 403 rather than 400: nothing is wrong with the request, the account is
@@ -300,6 +348,177 @@ async function enforceVerificationStillHolds(userId, { reason = "" } = {}) {
   return { changed: true, profile: present(rows[0], eligibility) };
 }
 
+/* ------------------------------------------------------- the operator's hand */
+
+// APPROVE, SUSPEND, REMOVE - AND WHAT EACH OF THEM ACTUALLY DOES.
+//
+// SUSPEND takes the listing off TitoPro and lets it come back. REMOVE takes it
+// off and does not. Neither deletes anything: the profile row, the reports and
+// the jobs all stay exactly where they are, because a takedown is the thing
+// somebody asks about six months later and "we deleted it" is not an answer.
+//
+// APPROVE IS NOT PUBLISH. Clearing an action hands the listing back to the
+// professional, who must still satisfy FICA, vetting and account standing to
+// put it in front of customers. Nothing an operator does here can make a
+// listing live that would not have been allowed to be live anyway - so a
+// mis-click on this screen cannot put an unverified person in front of
+// customers, which is the only mistake on it that would matter.
+//
+// WHY THE OPERATOR'S REASON DOES NOT REACH THE PROFESSIONAL. The reason is
+// written for TitoPay and routinely names the customer who complained. Handing
+// it to the person being suspended hands them the name of the person who
+// reported them, and on a marketplace whose professionals have been inside the
+// customer's house that is a safety question rather than a privacy one. The
+// professional is told plainly that TitoPay suspended the listing and given
+// support as the way to hear why - the same shape account restrictions use.
+async function moderateListing(admin, userId, payload = {}) {
+  await ensureProfileSchema();
+  if (!admin?.userId) throw new AppError(401, "Authentication required");
+  const action = String(payload.action || "").trim().toLowerCase();
+  if (!reference.LISTING_ADMIN_ACTIONS.includes(action)) {
+    throw new AppError(400, "Choose approve, suspend or remove");
+  }
+  // Required for all three. Approving is as much a decision as removing, and a
+  // queue where rows can be cleared without a word is a queue nobody can audit.
+  const reason = boundedText(payload.reason, "Reason", { min: 3, max: 2000 });
+
+  const { rows: existing } = await pool.query(
+    "SELECT * FROM titopro_profiles WHERE user_id = $1 LIMIT 1", [userId]);
+  if (!existing[0]) throw new AppError(404, "That listing was not found on TitoPro.");
+
+  let rows;
+  if (action === "approve") {
+    // A live listing stays live: approving is not a reason to knock somebody
+    // offline. Anything else lands on 'paused', which is the one state that
+    // means "not in front of customers, and yours to publish again".
+    rows = (await pool.query(
+      `UPDATE titopro_profiles
+          SET admin_action = NULL, admin_reason = NULL,
+              admin_actioned_by = $2, admin_actioned_at = NOW(),
+              status = CASE WHEN status = 'published' THEN status ELSE 'paused' END,
+              unpublished_reason = NULL, updated_at = NOW()
+        WHERE user_id = $1 RETURNING *`, [userId, admin.userId])).rows;
+  } else {
+    const state = action === "remove" ? "removed" : "suspended";
+    rows = (await pool.query(
+      `UPDATE titopro_profiles
+          SET admin_action = $3, admin_reason = $4,
+              admin_actioned_by = $2, admin_actioned_at = NOW(),
+              status = 'suspended',
+              unpublished_reason = $5, updated_at = NOW()
+        WHERE user_id = $1 RETURNING *`,
+      [userId, admin.userId, state, reason, ADMIN_ACTION_NOTICE[state]])).rows;
+  }
+
+  // The reports that prompted this are closed with the decision against them,
+  // so the queue says what happened rather than being tidied by hand.
+  const reputation = require("./titopro-reputation-service");
+  const reportsClosed = await reputation.closeOpenReportsFor(admin, userId, {
+    outcome: action,
+    note: reason,
+    status: action === "approve" ? "dismissed" : "actioned"
+  }).catch(() => 0);
+
+  await writeAuditLog({
+    actorType: "admin", actorId: admin.userId,
+    action: `titopro_listing_${action}`, entityType: "titopro_profile", entityId: rows[0].id,
+    ipAddress: admin.ipAddress, userAgent: admin.userAgent,
+    metadata: { userId, reason, reportsClosed }
+  }).catch(() => null);
+  return { profile: presentForAdmin(rows[0]), reportsClosed };
+}
+
+// What a suspended or removed professional is told. Fixed sentences chosen by
+// state, never the operator's words - see moderateListing.
+const ADMIN_ACTION_NOTICE = Object.freeze({
+  suspended: "TitoPay has suspended this listing. Contact support.",
+  removed: "TitoPay has removed this listing. Contact support."
+});
+
+// The listings an operator needs to see: everything under an action, plus
+// anything that has been reported and not yet decided.
+async function moderationListings({ state = "actioned", limit = 100 } = {}) {
+  await ensureProfileSchema();
+  await require("./titopro-reputation-service").ensureReputationSchema();
+  const where = state === "all"
+    ? "TRUE"
+    : "p.admin_action IS NOT NULL";
+  const { rows } = await pool.query(
+    `SELECT p.*, u.full_name,
+            (SELECT COUNT(*)::int FROM titopro_reports r
+              WHERE r.professional_user_id = p.user_id AND r.status IN ('open','reviewing')) AS open_reports,
+            a.email AS actioned_by_email
+       FROM titopro_profiles p
+       JOIN users u ON u.id = p.user_id
+       LEFT JOIN admin_users a ON a.id = p.admin_actioned_by
+      WHERE ${where}
+      ORDER BY p.admin_actioned_at DESC NULLS LAST, p.updated_at DESC
+      LIMIT $1`, [Math.max(1, Math.min(300, Number(limit) || 100))]);
+  return rows.map((row) => presentForAdmin(row));
+}
+
+// One listing, everything an operator needs to decide about it: who they are,
+// what state the listing is in, what has been said about them and by whom.
+async function listingForAdmin(userId) {
+  await ensureProfileSchema();
+  const reputation = require("./titopro-reputation-service");
+  const { rows } = await pool.query(
+    `SELECT p.*, u.full_name, u.email, u.phone, a.email AS actioned_by_email
+       FROM titopro_profiles p
+       JOIN users u ON u.id = p.user_id
+       LEFT JOIN admin_users a ON a.id = p.admin_actioned_by
+      WHERE p.user_id = $1 LIMIT 1`, [userId]);
+  if (!rows[0]) throw new AppError(404, "That listing was not found on TitoPro.");
+  const [reports, summary, vetting] = await Promise.all([
+    reputation.reportsForProfessional(userId),
+    reputation.ratingSummary(userId),
+    require("./titopro-vetting-service").checksForUser(userId).catch(() => [])
+  ]);
+  return {
+    listing: presentForAdmin(rows[0]),
+    contact: { fullName: rows[0].full_name, email: rows[0].email, phone: rows[0].phone },
+    reports,
+    rating: summary,
+    vetting
+  };
+}
+
+// Built by hand like present(), and separately from it, so a field meant for
+// an operator cannot reach a customer screen by being added in one place.
+function presentForAdmin(row) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.full_name || null,
+    status: row.status,
+    adminAction: row.admin_action || null,
+    // The one line a screen should show. 'suspended' on its own does not say
+    // whether TitoPay did it or a verification lapsed, and those read very
+    // differently to the person looking at the queue.
+    statusLabel: row.admin_action
+      ? (row.admin_action === "removed" ? "Removed by TitoPay" : "Suspended by TitoPay")
+      : LISTING_STATUS_LABELS[row.status] || row.status,
+    adminReason: row.admin_reason || "",
+    adminActionedAt: row.admin_actioned_at,
+    adminActionedBy: row.actioned_by_email || null,
+    professions: row.professions,
+    professionLabels: (row.professions || []).map((key) => reference.profession(key)?.label || key),
+    headline: row.headline,
+    suburb: row.suburb,
+    city: row.city,
+    publishedAt: row.published_at,
+    unpublishedReason: row.unpublished_reason || "",
+    openReports: typeof row.open_reports === "number" ? row.open_reports : undefined
+  };
+}
+
+const LISTING_STATUS_LABELS = Object.freeze({
+  draft: "Draft",
+  published: "Live",
+  paused: "Paused by the professional",
+  suspended: "Off TitoPro"
+});
+
 /* -------------------------------------------------------------- read paths */
 
 // A published listing is the only kind a customer can find or hire. This is
@@ -313,6 +532,37 @@ async function requirePublishedProfessional(userId) {
     throw new AppError(409, "That professional is not currently listed on TitoPro.", { code: "not_listed" });
   }
   return rows[0];
+}
+
+// ONE PROFESSIONAL'S PAGE, as a customer deciding whether to hire them sees
+// it. Published listings only - requirePublishedProfessional is the same gate
+// that stops a job being raised against a listing that is not live, so a page
+// cannot exist for somebody the job could not be sent to.
+async function publicProfile(userId) {
+  const row = await requirePublishedProfessional(userId);
+  const reputation = require("./titopro-reputation-service");
+  const [user, rating, reviews] = await Promise.all([
+    pool.query("SELECT full_name FROM users WHERE id = $1 LIMIT 1", [userId]),
+    reputation.ratingSummary(userId),
+    reputation.ratingsForProfessional(userId, { limit: 20 })
+  ]);
+  return {
+    userId: row.user_id,
+    name: user.rows[0]?.full_name || "",
+    professions: row.professions,
+    professionLabels: row.professions.map((key) => reference.profession(key)?.label || key),
+    enhancedVettingProfessions: row.professions.filter((key) => reference.requiresEnhancedVetting(key)),
+    headline: row.headline,
+    bio: row.bio,
+    suburb: row.suburb,
+    city: row.city,
+    serviceRadiusKm: row.service_radius_km,
+    publishedAt: row.published_at,
+    ficaVerified: true,
+    rating: rating.average,
+    ratingCount: rating.count,
+    reviews
+  };
 }
 
 async function getMyProfile(actor) {
@@ -339,6 +589,15 @@ async function searchProfessionals({ profession = null, city = null, limit = 50 
       WHERE ${where.join(" AND ")}
       ORDER BY p.published_at DESC NULLS LAST
       LIMIT $${params.length}`, params);
+
+  // THE SCORE IS FETCHED FOR THE WHOLE PAGE IN ONE QUERY, not joined into the
+  // one above and not stored on the profile row. A join here would tie
+  // discovery to the ratings table existing; a stored average is a number that
+  // goes quietly wrong the first time a rating is withdrawn.
+  const summaries = await require("./titopro-reputation-service")
+    .ratingSummaries(rows.map((row) => row.user_id))
+    .catch(() => new Map());
+
   return rows.map((row) => ({
     userId: row.user_id,
     name: row.full_name,
@@ -348,6 +607,11 @@ async function searchProfessionals({ profession = null, city = null, limit = 50 
     suburb: row.suburb,
     city: row.city,
     serviceRadiusKm: row.service_radius_km,
+    // NULL rather than 0 for somebody nobody has rated yet. A new professional
+    // showing "0.0" reads as terrible rather than as new, and that difference
+    // decides whether anyone ever gives them a first job.
+    rating: summaries.get(row.user_id)?.average ?? null,
+    ratingCount: summaries.get(row.user_id)?.count || 0,
     // Every listing a customer can see is verified by construction, and saying
     // so is most of what makes somebody comfortable hiring a stranger.
     ficaVerified: true
@@ -381,6 +645,10 @@ function present(row, eligibility = null) {
     publishedAt: row.published_at,
     ficaVerifiedAt: row.fica_verified_at,
     unpublishedReason: row.unpublished_reason || "",
+    // THE PROFESSIONAL IS TOLD THAT TITOPAY ACTED, AND NOT WHY.
+    // The operator's reason names the customer who complained; see
+    // moderateListing for why that does not travel to this surface.
+    adminAction: row.admin_action || null,
     ...(eligibility ? {
       canPublish: eligibility.eligible,
       ficaVerified: eligibility.ficaVerified,
@@ -398,7 +666,11 @@ module.exports = {
   ensureProfileSchema,
   getMyProfile,
   listingEligibility,
+  listingForAdmin,
+  moderateListing,
+  moderationListings,
   pauseProfile,
+  publicProfile,
   publishProfile,
   requirePublishedProfessional,
   resetProfileSchemaCache,

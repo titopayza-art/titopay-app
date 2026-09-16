@@ -24,6 +24,7 @@ const reference = require("../config/titopro-reference");
 const profiles = require("../services/titopro-profile-service");
 const vetting = require("../services/titopro-vetting-service");
 const jobs = require("../services/titopro-service");
+const reputation = require("../services/titopro-reputation-service");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -117,6 +118,51 @@ router.get("/search", async (req, res, next) => {
   }
 });
 
+// One professional's page: who they are, what they do, and what the customers
+// who actually paid them said afterwards.
+router.get("/professionals/:userId", async (req, res, next) => {
+  try {
+    res.json({ ok: true, professional: await profiles.publicProfile(requireUuid(req.params.userId, "Professional ID")) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* -------------------------------------------------------------- reporting */
+
+// The reasons a customer can pick from, served rather than hard-coded in the
+// app, so the list the customer sees and the list the API accepts cannot drift.
+router.get("/report-reasons", (_req, res) => {
+  res.json({
+    ok: true,
+    reasons: reference.REPORT_CATEGORIES.map((item) => ({
+      key: item.key, label: item.label, says: item.says
+    }))
+  });
+});
+
+// REPORTING A LISTING. Open to any signed-in user, not only to somebody who
+// hired them - see titopro-reputation-service for why that matters.
+router.post("/professionals/:userId/report", async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.userId, "Professional ID");
+    res.status(201).json({ ok: true, report: await reputation.reportListing(req.auth, userId, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Whether this customer has already reported this listing, so the app can say
+// so instead of offering the form a second time.
+router.get("/professionals/:userId/my-report", async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.userId, "Professional ID");
+    res.json({ ok: true, report: await reputation.myReportFor(req.auth, userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 /* ----------------------------------------------------------------- jobs */
 
 router.post("/jobs", async (req, res, next) => {
@@ -150,6 +196,30 @@ router.get("/quote-preview", async (req, res, next) => {
 router.get("/jobs/:id", async (req, res, next) => {
   try {
     res.json({ ok: true, job: await jobs.getJob(req.auth, requireUuid(req.params.id, "Job ID")) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* --------------------------------------------------------------- ratings */
+
+// DECLARED BEFORE THE /jobs/:id/:step ROUTE BELOW, because Express matches in
+// order and that one would otherwise swallow "rate" and answer "Unknown step".
+// Rating is not a step in the job's state machine - the job is already
+// finished - so it does not belong in that map either.
+router.post("/jobs/:id/rate", async (req, res, next) => {
+  try {
+    const jobId = requireUuid(req.params.id, "Job ID");
+    res.status(201).json({ ok: true, rating: await reputation.rateJob(req.auth, jobId, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/jobs/:id/rating", async (req, res, next) => {
+  try {
+    const jobId = requireUuid(req.params.id, "Job ID");
+    res.json({ ok: true, rating: await reputation.ratingForJob(req.auth, jobId) });
   } catch (error) {
     next(error);
   }

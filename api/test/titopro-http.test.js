@@ -261,3 +261,114 @@ test("the fee preview answers before anybody commits", async () => {
   assert.equal(payload.fees.customerPays, 355);
   assert.equal(payload.fees.professionalReceives, 324.75);
 });
+
+/* ------------------------------------------------ ratings and reporting */
+
+test("RATING IS A ROUTE OF ITS OWN, NOT A STEP THE JOB ENGINE SWALLOWS", async () => {
+  const customer = await signedIn({ fica: "approved" });
+  const pro = await signedIn({ fica: "approved" });
+  await call(pro, "/me/listing", { method: "PUT", body: LISTING });
+  await call(pro, "/me/listing/publish", { method: "POST" });
+  const jobId = (await call(customer, "/jobs", { method: "POST", body: {
+    profession: "plumber", professionalUserId: pro.userId, title: "Blocked drain" } })).payload.job.id;
+
+  // THE TRAP THIS DEFENDS. /jobs/:id/:step sits below this route and answers
+  // "Unknown step" for anything not in its map. If /jobs/:id/rate were
+  // declared after it, every rating in the product would 404 - and the app's
+  // .catch would show "that rating could not be sent" with nothing to explain
+  // it. Route order is the whole mechanism, so it is asserted rather than
+  // trusted to survive the next edit to this file.
+  const tooEarly = await call(customer, `/jobs/${jobId}/rate`, { method: "POST", body: { stars: 5 } });
+  assert.equal(tooEarly.status, 409, "reached the rating route, not the step router");
+  assert.equal(tooEarly.payload.details?.code, "job_not_confirmed");
+
+  await call(pro, `/jobs/${jobId}/quote`, { method: "POST", body: { amount: 850 } });
+  await call(customer, `/jobs/${jobId}/accept`, { method: "POST" });
+  await call(pro, `/jobs/${jobId}/start`, { method: "POST" });
+  await call(pro, `/jobs/${jobId}/done`, { method: "POST" });
+  await call(customer, `/jobs/${jobId}/confirm`, { method: "POST" });
+
+  const rated = await call(customer, `/jobs/${jobId}/rate`, { method: "POST", body: {
+    stars: 5, comment: "On time and cleaned up after himself." } });
+  assert.equal(rated.status, 201);
+  assert.equal(rated.payload.rating.stars, 5);
+
+  // The customer's own rating comes back, so the app shows "you rated this"
+  // rather than offering the form a second time.
+  const readBack = await call(customer, `/jobs/${jobId}/rating`);
+  assert.equal(readBack.payload.rating.stars, 5);
+
+  // And it is on the professional's page, with a first name and no surname.
+  const page = await call(customer, `/professionals/${pro.userId}`);
+  assert.equal(page.status, 200);
+  assert.equal(page.payload.professional.rating, 5);
+  assert.equal(page.payload.professional.ratingCount, 1);
+  assert.equal(page.payload.professional.reviews[0].by, "Sipho");
+  assert.equal(page.payload.professional.reviews[0].comment, "On time and cleaned up after himself.");
+
+  // The professional cannot rate their own job through the route either.
+  const selfRating = await call(pro, `/jobs/${jobId}/rate`, { method: "POST", body: { stars: 5 } });
+  assert.equal(selfRating.status, 403);
+});
+
+test("A PROFESSIONAL'S PAGE ONLY EXISTS WHILE THEY ARE LISTED", async () => {
+  const customer = await signedIn({ fica: "approved" });
+  const pro = await signedIn({ fica: "approved" });
+  await call(pro, "/me/listing", { method: "PUT", body: LISTING });
+  await call(pro, "/me/listing/publish", { method: "POST" });
+  assert.equal((await call(customer, `/professionals/${pro.userId}`)).status, 200);
+
+  await call(pro, "/me/listing/pause", { method: "POST" });
+  const gone = await call(customer, `/professionals/${pro.userId}`);
+  assert.equal(gone.status, 409);
+  assert.equal(gone.payload.details?.code, "not_listed");
+});
+
+test("REPORTING A LISTING, FROM THE LIST THE API ITSELF SERVES", async () => {
+  const customer = await signedIn({ fica: "approved" });
+  const pro = await signedIn({ fica: "approved" });
+  await call(pro, "/me/listing", { method: "PUT", body: LISTING });
+  await call(pro, "/me/listing/publish", { method: "POST" });
+
+  // The app builds its picker from this, so a reason on the screen and a
+  // reason the API accepts cannot drift apart.
+  const reasons = await call(customer, "/report-reasons");
+  assert.equal(reasons.status, 200);
+  assert.deepEqual(reasons.payload.reasons.map((item) => item.key), reference.REPORT_CATEGORY_KEYS);
+
+  const before = await call(customer, `/professionals/${pro.userId}/my-report`);
+  assert.equal(before.payload.report, null);
+
+  const sent = await call(customer, `/professionals/${pro.userId}/report`, { method: "POST", body: {
+    category: "off_platform_payment", detail: "He asked me to EFT him instead of paying in the app." } });
+  assert.equal(sent.status, 201);
+  assert.match(sent.payload.report.reference, /^TP-R-[A-HJ-NP-Z2-9]{8}$/);
+  assert.equal(sent.payload.report.urgent, true);
+
+  const after = await call(customer, `/professionals/${pro.userId}/my-report`);
+  assert.equal(after.payload.report.reference, sent.payload.report.reference);
+
+  // NOTHING HAPPENED TO THE LISTING. A report is an accusation; a listing that
+  // comes down on one is a listing any competitor can take down.
+  assert.equal((await call(customer, `/professionals/${pro.userId}`)).status, 200);
+
+  // And a second report while the first is open is refused rather than queued.
+  const again = await call(customer, `/professionals/${pro.userId}/report`, { method: "POST", body: {
+    category: "no_show", detail: "And he has still not come back." } });
+  assert.equal(again.status, 409);
+  assert.equal(again.payload.details?.code, "report_already_open");
+});
+
+test("THE NEW DOORS ARE SHUT TO ANYBODY WITHOUT A TOKEN TOO", async () => {
+  const id = uuidv4();
+  for (const [path, method] of [
+    ["/report-reasons", "GET"],
+    [`/professionals/${id}`, "GET"],
+    [`/professionals/${id}/report`, "POST"],
+    [`/professionals/${id}/my-report`, "GET"],
+    [`/jobs/${id}/rate`, "POST"],
+    [`/jobs/${id}/rating`, "GET"]
+  ]) {
+    assert.equal((await call(null, path, { method })).status, 401, `${method} ${path}`);
+  }
+});

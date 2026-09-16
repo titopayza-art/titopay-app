@@ -1021,3 +1021,47 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
   .tp-pro-main{flex:1 1 100%}
   .tp-pro-row .tp-status{margin-left:48px}
 }
+
+/* ------------------------------------------- TitoPro ratings and reporting */
+/* Five stars, drawn as five stars. A row of them is an impression; "4,3" on
+   its own is a figure, and an impression is what somebody deciding whether to
+   let a stranger into their house is actually forming. */
+.tp-stars{display:inline-flex;align-items:center;gap:1px}
+.tp-star{display:inline-flex;color:var(--line)}
+.tp-star svg{width:14px;height:14px;fill:currentColor;stroke:none}
+.tp-star.is-on{color:#E5A500}
+.tp-score{display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--muted);margin-top:2px}
+.tp-score strong{font-size:0.82rem;color:var(--ink,#0B1F3F);font-weight:700}
+.tp-score.is-new{gap:4px;font-weight:600}
+.tp-score.is-new svg{width:13px;height:13px}
+.tp-reviews{margin-top:14px}
+.tp-review{padding:10px 0;border-top:1px solid var(--line)}
+.tp-review:first-of-type{border-top:0;padding-top:2px}
+.tp-review-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:0.82rem;font-weight:600;margin:0}
+.tp-review-head small{font-weight:500;color:var(--muted)}
+.tp-review-body{font-size:0.85rem;line-height:1.5;margin:5px 0 0}
+/* The rating picker. Radio inputs rather than buttons that set a variable, so
+   it works with a keyboard and a screen reader without anything extra. */
+.tp-rate-row{display:flex;gap:6px}
+.tp-rate-pick{position:relative;display:inline-flex;cursor:pointer;padding:4px}
+.tp-rate-pick input{position:absolute;opacity:0;pointer-events:none}
+.tp-rate-pick .tp-star{color:var(--line)}
+.tp-rate-pick .tp-star svg{width:32px;height:32px}
+.tp-rate-pick:has(input:focus-visible) .tp-star{outline:2px solid var(--brand,#0B1F3F);outline-offset:2px;border-radius:4px}
+/* Every star up to and including the chosen one lights up. :has plus the
+   sibling combinator does it in CSS, so nothing has to be re-rendered when
+   somebody changes their mind. */
+.tp-rate-row:has(.tp-rate-pick:nth-child(1) input:checked) .tp-rate-pick:nth-child(-n+1) .tp-star,
+.tp-rate-row:has(.tp-rate-pick:nth-child(2) input:checked) .tp-rate-pick:nth-child(-n+2) .tp-star,
+.tp-rate-row:has(.tp-rate-pick:nth-child(3) input:checked) .tp-rate-pick:nth-child(-n+3) .tp-star,
+.tp-rate-row:has(.tp-rate-pick:nth-child(4) input:checked) .tp-rate-pick:nth-child(-n+4) .tp-star,
+.tp-rate-row:has(.tp-rate-pick:nth-child(5) input:checked) .tp-rate-pick:nth-child(-n+5) .tp-star{color:#E5A500}
+.tp-rated{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:0.84rem;color:var(--muted);margin:0}
+/* Reporting is a last resort, not a call to action. It is findable and it is
+   quiet, so nobody reaches for it by accident. */
+.btn.tp-report{color:#8F2E2E}
+.btn.tp-report svg{width:15px;height:15px}
+@media (max-width:380px){
+  .tp-rate-pick .tp-star svg{width:28px;height:28px}
+  .tp-rate-pick{padding:3px}
+}

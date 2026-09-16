@@ -486,6 +486,12 @@ function present(row, fees = null) {
     id: row.id,
     reference: row.reference,
     status: row.status,
+    // The professional on the job. Both people on a job already know who the
+    // other one is - the customer picked them - and the screen needs it to
+    // offer "report this professional" from the job rather than making
+    // somebody go and find the listing again. The CUSTOMER's id is not here:
+    // no screen needs it, and the professional has no button that takes one.
+    professionalUserId: row.professional_user_id,
     profession: row.profession,
     professionLabel: info?.label || row.profession,
     shape: row.shape,

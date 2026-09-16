@@ -52,8 +52,17 @@ const ADMIN_ROLE_PERMISSIONS = {
   // reporting and has no reason to disable someone's wristband. Widening it
   // later needs no code change: admin_role_permission_overrides already covers
   // it, like every other permission.
-  customer_support: ["dashboard", "users", "wallets", "support", "transactions", "profile_lock", "ticketing", "event_tags", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
-  compliance: ["dashboard", "compliance", "users", "merchants", "ticketing", "event_tags", "enterprise_distribution", "audit", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
+  // "titopro_moderation" gates the TitoPro reports queue: reading what a
+  // customer said about a professional, and suspending or removing a listing.
+  // It sits with support and compliance because those are the two desks a
+  // complaint actually reaches — support fields "he never arrived", compliance
+  // fields "he asked me to pay him cash". It is deliberately NOT bundled into
+  // "compliance": taking somebody's livelihood off a marketplace is a
+  // different power from reviewing their FICA documents, and an owner who
+  // wants to split the two later can, because admin_role_permission_overrides
+  // covers every permission here without a code change.
+  customer_support: ["dashboard", "users", "wallets", "support", "transactions", "profile_lock", "ticketing", "event_tags", "titopro_moderation", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
+  compliance: ["dashboard", "compliance", "users", "merchants", "ticketing", "event_tags", "titopro_moderation", "enterprise_distribution", "audit", "EMAIL_VIEW", "EMAIL_LOG_VIEW", "EMAIL_OTP_VIEW", "EMAIL_OTP_LOGS"],
   finance: ["dashboard", "wallets", "transactions", "revenue", "payouts", "ticketing", "event_tags", "enterprise_distribution", "EMAIL_VIEW", "EMAIL_LOG_VIEW",
     // Finance owns what a promotion costs, so it can issue and stop one, and
     // read the ROI reporting — but has no reason to edit campaigns or the CRM.

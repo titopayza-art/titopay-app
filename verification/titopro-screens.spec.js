@@ -270,6 +270,172 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
       /paused/i.test(paused) && /Nobody can find you/.test(paused), paused.slice(0, 70));
     await s.context.close();
 
+    // ---- 5c. RATING A FINISHED JOB, AND REPORTING A LISTING --------------
+    // The three things a customer does AFTER the work: score it, read what
+    // other people scored, and tell TitoPay when it went wrong.
+    const CONFIRMED = { ...JOB, status: "confirmed", professionalUserId: "33333333-3333-4333-8333-333333333333" };
+
+    // A finished job offers the rating, once.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/rating": { ok: true, rating: null },
+      "/v1/titopro/jobs/": { ok: true, job: CONFIRMED } });
+    await s.page.evaluate((job) => { window.titoProState().role = "customer"; return window.openTitoProJob(job.id); }, CONFIRMED);
+    await s.page.waitForSelector(".tp-steps", { timeout: 10000 });
+    const finished = await s.page.evaluate(() => ({
+      buttons: [...document.querySelectorAll(".tp-steps .btn")].map((b) => b.textContent.trim()),
+      canRate: Boolean(document.querySelector('[data-action^="titopro-rate:"]')),
+      canReport: Boolean(document.querySelector('[data-action^="titopro-report:"]')),
+      canCancel: Boolean(document.querySelector('[data-action$=":cancel"]'))
+    }));
+    check("a finished job offers the rating", finished.canRate === true, finished.buttons.join(" · "));
+    check("and a route to report the professional", finished.canReport === true);
+    check("a finished job cannot be cancelled", finished.canCancel === false);
+    await s.context.close();
+
+    // Once rated, the button is gone and the score is shown instead.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/rating": { ok: true, rating: { id: "r1", stars: 4, word: "Good", comment: "Good job." } },
+      "/v1/titopro/jobs/": { ok: true, job: CONFIRMED } });
+    await s.page.evaluate((job) => { window.titoProState().role = "customer"; return window.openTitoProJob(job.id); }, CONFIRMED);
+    await s.page.waitForSelector(".tp-rated", { timeout: 10000 });
+    const rated = await s.page.evaluate(() => ({
+      copy: document.querySelector(".tp-rated")?.textContent.replace(/\s+/g, " ").trim() || "",
+      lit: document.querySelectorAll(".tp-rated .tp-star.is-on").length,
+      dim: document.querySelectorAll(".tp-rated .tp-star:not(.is-on)").length,
+      stillOffered: Boolean(document.querySelector('[data-action^="titopro-rate:"]'))
+    }));
+    check("A RATED JOB IS NOT OFFERED THE FORM AGAIN", rated.stillOffered === false, rated.copy);
+    check("four stars are drawn as four lit and one dim", rated.lit === 4 && rated.dim === 1,
+      `${rated.lit} lit, ${rated.dim} dim`);
+
+    // The form itself: five choices, and it says the rating is final.
+    await s.page.evaluate((job) => window.openTitoProRate(job.id), CONFIRMED);
+    await s.page.waitForSelector(".tp-rate-row", { timeout: 10000 });
+    const form = await s.page.evaluate(() => ({
+      choices: [...document.querySelectorAll('.tp-rate-pick input[name="stars"]')].map((i) => i.value),
+      labelled: [...document.querySelectorAll('.tp-rate-pick input')].every((i) => i.getAttribute("aria-label")),
+      lead: document.querySelector(".modal-head .lead")?.textContent.replace(/\s+/g, " ").trim() || "",
+      hint: document.querySelector('form[data-form="titopro-rate"] .field-hint')?.textContent.trim() || ""
+    }));
+    check("the rating picker offers exactly one to five",
+      form.choices.join(",") === "1,2,3,4,5", form.choices.join(","));
+    check("every star is reachable with a screen reader", form.labelled === true);
+    check("AND THE CUSTOMER IS TOLD IT CANNOT BE CHANGED",
+      /cannot be changed/i.test(form.lead), form.lead.slice(0, 70));
+    check("and that their first name goes with the words",
+      /first name/i.test(form.hint), form.hint.slice(0, 70));
+    await s.context.close();
+
+    // A professional's page: the score, and what customers actually wrote.
+    const PRO_PAGE = { ok: true, professional: {
+      userId: "33333333-3333-4333-8333-333333333333", name: "Sipho Ndlovu",
+      professions: ["plumber"], professionLabels: ["Plumber"], headline: "Drains and geysers",
+      suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25, ficaVerified: true,
+      rating: 4.3, ratingCount: 3,
+      reviews: [
+        { id: "r1", stars: 5, by: "Thandi", profession: "Plumber", comment: "On time, cleaned up after himself.", commentHidden: false },
+        { id: "r2", stars: 4, by: "Lerato", profession: "Plumber", comment: null, commentHidden: true }
+      ] } };
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE, "/professionals/": PRO_PAGE });
+    await s.page.evaluate((id) => window.openTitoProProfessional(id), PRO_PAGE.professional.userId);
+    await s.page.waitForSelector(".tp-reviews", { timeout: 10000 });
+    const page = await s.page.evaluate(() => ({
+      score: document.querySelector(".tp-card .tp-score")?.textContent.replace(/\s+/g, " ").trim() || "",
+      reviews: [...document.querySelectorAll(".tp-review")].map((el) => el.textContent.replace(/\s+/g, " ").trim()),
+      bodies: [...document.querySelectorAll(".tp-review-body")].length,
+      canReport: Boolean(document.querySelector('[data-action^="titopro-report:"]')),
+      note: document.querySelector(".tp-reviews .tp-note")?.textContent.replace(/\s+/g, " ").trim() || ""
+    }));
+    check("the score is shown in South African decimals", /4,3/.test(page.score), page.score);
+    check("with how many ratings it is built on", /3 ratings/.test(page.score), page.score);
+    check("every review is on the page", page.reviews.length === 2, `${page.reviews.length} reviews`);
+    check("A HIDDEN COMMENT LOSES ITS WORDS AND KEEPS ITS STAR",
+      page.bodies === 1 && page.reviews[1].includes("Lerato"), `${page.bodies} comment(s) of 2 reviews`);
+    check("only paid, finished jobs can be rated, and the page says so",
+      /only once/i.test(page.note), page.note.slice(0, 80));
+    check("the listing can be reported from the page", page.canReport === true);
+    await s.context.close();
+
+    // A NEW PROFESSIONAL IS NOT A BAD ONE. Five empty stars read as nought out
+    // of five, and nobody ever gives that person a first job.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/professionals/": { ok: true, professional: { ...PRO_PAGE.professional, rating: null, ratingCount: 0, reviews: [] } } });
+    await s.page.evaluate((id) => window.openTitoProProfessional(id), PRO_PAGE.professional.userId);
+    await s.page.waitForSelector(".tp-score", { timeout: 10000 });
+    const fresh = await s.page.evaluate(() => ({
+      score: document.querySelector(".tp-score")?.textContent.replace(/\s+/g, " ").trim() || "",
+      stars: document.querySelectorAll(".tp-card .tp-star").length,
+      reviews: document.querySelectorAll(".tp-review").length
+    }));
+    check("AN UNRATED PROFESSIONAL READS AS NEW, NOT AS NOUGHT",
+      /New on TitoPro/.test(fresh.score) && fresh.stars === 0, `"${fresh.score}", ${fresh.stars} stars drawn`);
+    check("and shows no empty review list", fresh.reviews === 0);
+    await s.context.close();
+
+    // Reporting: the reasons come from the API, never from a second copy here.
+    const REASONS = { ok: true, reasons: [
+      { key: "off_platform_payment", label: "Asked me to pay outside TitoPay", says: "They wanted cash or an EFT." },
+      { key: "no_show", label: "Did not arrive", says: "They accepted the job and never came." },
+      { key: "other", label: "Something else", says: "Tell us what happened." } ] };
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/my-report": { ok: true, report: null }, "/report-reasons": REASONS });
+    await s.page.evaluate((id) => window.openTitoProReport(id), PRO_PAGE.professional.userId);
+    await s.page.waitForSelector('form[data-form="titopro-report"]', { timeout: 10000 });
+    const report = await s.page.evaluate(() => ({
+      options: [...document.querySelectorAll('select[name="category"] option')].map((o) => o.value),
+      required: Boolean(document.querySelector('[name="detail"]')?.required),
+      hint: document.querySelector('form[data-form="titopro-report"] .field-hint')?.textContent.replace(/\s+/g, " ").trim() || "",
+      note: document.querySelector('form[data-form="titopro-report"] .tp-note')?.textContent.replace(/\s+/g, " ").trim() || ""
+    }));
+    check("the reasons are exactly the ones the API serves",
+      report.options.join(",") === "off_platform_payment,no_show,other", report.options.join(","));
+    check("a report cannot be sent with no words", report.required === true);
+    check("THE REPORTER IS TOLD THEY ARE NOT IDENTIFIED TO THE PROFESSIONAL",
+      /never shown what you wrote or who reported them/i.test(report.hint), report.hint.slice(0, 80));
+    check("and that a report is not an emergency service",
+      /10111/.test(report.note), report.note.slice(0, 80));
+    await s.context.close();
+
+    // Reporting the same listing twice is answered, not silently refused.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/my-report": { ok: true, report: { id: "x", reference: "TP-R-ABCD2345", categoryLabel: "Did not arrive", status: "open" } },
+      "/report-reasons": REASONS });
+    await s.page.evaluate((id) => window.openTitoProReport(id), PRO_PAGE.professional.userId);
+    await s.page.waitForSelector(".tp-banner", { timeout: 10000 });
+    const already = await s.page.evaluate(() => ({
+      banner: document.querySelector(".tp-banner")?.textContent.replace(/\s+/g, " ").trim() || "",
+      formOffered: Boolean(document.querySelector('form[data-form="titopro-report"]'))
+    }));
+    check("A SECOND REPORT IS NOT OFFERED A FORM THAT WOULD BE REFUSED",
+      already.formOffered === false, already.banner.slice(0, 60));
+    check("and the first report is shown not to have been lost",
+      /TP-R-ABCD2345/.test(already.banner) && /looking at it/i.test(already.banner), already.banner.slice(0, 90));
+    await s.context.close();
+
+    // ---- 5d. A LISTING TITOPAY TOOK DOWN --------------------------------
+    // The professional is told plainly, and is not offered a "Go live" button
+    // that can only ever say no.
+    for (const [action, wording] of [["suspended", /suspended your listing/i], ["removed", /removed your listing/i]]) {
+      s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+        "/v1/titopro/me/listing": { ok: true,
+          profile: { status: "suspended", adminAction: action, professions: ["plumber"], serviceRadiusKm: 20,
+            outstandingChecks: [], enhancedVettingProfessions: [],
+            unpublishedReason: `TitoPay has ${action} this listing. Contact support.` },
+          eligibility: { eligible: true, ficaVerified: true, blockers: [] } } });
+      await s.page.evaluate(() => window.openTitoProListing());
+      await s.page.waitForSelector(".tp-banner.is-blocked", { timeout: 10000 });
+      const takedown = await s.page.evaluate(() => ({
+        banner: document.querySelector(".tp-banner")?.textContent.replace(/\s+/g, " ").trim() || "",
+        goLive: Boolean(document.querySelector('[data-action="titopro-publish"]'))
+      }));
+      check(`${action.toUpperCase()} · the professional is told TitoPay did it`,
+        wording.test(takedown.banner), takedown.banner.slice(0, 70));
+      check(`${action.toUpperCase()} · NO GO-LIVE BUTTON THAT CAN ONLY SAY NO`, takedown.goLive === false);
+      check(`${action.toUpperCase()} · and support is the route, not a retry`,
+        /support/i.test(takedown.banner), takedown.banner.slice(0, 90));
+      await s.context.close();
+    }
+
     // ---- 6. Narrow phone -------------------------------------------------
     for (const width of [360, 414]) {
       s = await openApp(browser, width, { "/v1/titopro/professions": CATALOGUE });

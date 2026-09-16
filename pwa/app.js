@@ -548,7 +548,8 @@ const ICON_PATHS = {
     menu: `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
     "more-horizontal": `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>`,
     x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
-    ban: `<circle cx="12" cy="12" r="9"/><path d="m5.9 5.9 12.2 12.2"/>`
+    ban: `<circle cx="12" cy="12" r="9"/><path d="m5.9 5.9 12.2 12.2"/>`,
+    flag: `<path d="M5 21V4"/><path d="M5 4.5h11l-1.6 3.6L16 12H5"/>`
 };
 const navItems = [
   ["dashboard", "Home", "home"],
@@ -4092,6 +4093,8 @@ async function onSubmit(event) {
     if (form.dataset.form === "titopro-quote") await submitTitoProQuote(data);
     if (form.dataset.form === "titopro-done") await submitTitoProDone(data);
     if (form.dataset.form === "titopro-listing") await submitTitoProListing(form, data);
+    if (form.dataset.form === "titopro-rate") await submitTitoProRate(data);
+    if (form.dataset.form === "titopro-report") await submitTitoProReport(data);
     if (form.dataset.form === "stockvel-join") await submitStockvelJoin(data);
     if (form.dataset.form === "stockvel-create") await submitStockvelCreate(form, data);
     if (form.dataset.form === "basic-verify") await submitBasicVerify(form, data);
@@ -5531,6 +5534,14 @@ async function handleAction(action, actionElement = null) {
   if (action.startsWith("titopro-step:")) {
     const [, jobId, step] = action.split(":");
     await runTitoProStep(jobId, step); return;
+  }
+  if (action.startsWith("titopro-rate:")) { await openTitoProRate(action.split(":")[1]); return; }
+  if (action.startsWith("titopro-report:")) {
+    // "titopro-report:<professional>" from a listing, or with a job id after it
+    // when the report is raised from the job it went wrong on.
+    const parts = action.split(":");
+    await openTitoProReport(parts[1], parts[2] || null);
+    return;
   }
   if (action === "titopro-listing") { await openTitoProListing(); return; }
   if (action === "titopro-publish") { await publishTitoProListing(); return; }
@@ -32131,6 +32142,7 @@ function renderTitoProResults(chosen) {
             <span class="tp-pro-name">${esc(pro.name || "TitoPay professional")}</span>
             <span class="tp-pro-sub">${esc((pro.professionLabels || []).join(" · "))}</span>
             <span class="tp-pro-sub">${esc([pro.suburb, pro.city].filter(Boolean).join(", "))}</span>
+            ${titoProScoreLine(pro)}
           </span>
           <span class="tp-verified">${icon("check-circle")} Verified</span>
         </button>
@@ -32156,7 +32168,15 @@ async function submitTitoProSearch(data) {
 
 async function openTitoProProfessional(userId) {
   const store = titoProState();
-  const pro = (store.results || []).find((item) => item.userId === userId);
+  const cached = (store.results || []).find((item) => item.userId === userId);
+  // FETCHED RATHER THAN READ OFF THE SEARCH ROW. The search row carries a name
+  // and a score; the page needs the reviews behind that score, and fetching it
+  // is also what makes this screen survive being opened from anywhere other
+  // than a search this session happens to have run. The cached row is the
+  // fallback so a dropped connection shows the listing rather than nothing.
+  const fetched = await api(`/v1/titopro/professionals/${encodeURIComponent(userId)}`)
+    .then((result) => result.professional).catch(() => null);
+  const pro = fetched || cached;
   if (!pro) { showToast("That professional is no longer listed.", "error"); return; }
   const catalogue = await titoProCatalogue();
   const offered = (pro.professions || []).map((key) =>
@@ -32170,9 +32190,13 @@ async function openTitoProProfessional(userId) {
     </div>
     <section class="tp-card">
       <p class="tp-verified-line">${icon("check-circle")} FICA verified by TitoPay</p>
+      ${titoProScoreLine(pro)}
       ${pro.headline ? `<p class="tp-headline">${esc(pro.headline)}</p>` : ""}
+      ${pro.bio ? `<p class="tp-pro-sub">${esc(pro.bio)}</p>` : ""}
       <p class="tp-pro-sub">${esc([pro.suburb, pro.city].filter(Boolean).join(", "))}${pro.serviceRadiusKm ? ` · works within ${esc(String(pro.serviceRadiusKm))} km` : ""}</p>
     </section>
+
+    ${titoProReviews(pro)}
 
     <form class="form-grid" data-form="titopro-request">
       <input type="hidden" name="professionalUserId" value="${esc(pro.userId)}">
@@ -32200,6 +32224,10 @@ async function openTitoProProfessional(userId) {
       ${primary.requiredChecks && primary.requiredChecks.length ? `
         <p class="tp-note">${icon("shield")} This work requires a background check, which TitoPay has already confirmed for this professional.</p>` : ""}
     </form>
+
+    <div class="action-row tp-actions">
+      <button class="btn ghost tp-report" type="button" data-action="titopro-report:${esc(pro.userId)}">${icon("flag")} Report this listing</button>
+    </div>
   `);
 }
 
@@ -32289,6 +32317,13 @@ async function openTitoProJob(jobId) {
     showToast(error.message || "That job could not be opened.", "error");
     return;
   }
+  // Asked for only once the job is finished, which is the only state a rating
+  // can exist in. A fetch on every job screen would be a round trip that could
+  // never return anything.
+  if (job.status === "confirmed") {
+    job.myRating = await api(`/v1/titopro/jobs/${jobId}/rating`)
+      .then((result) => result.rating).catch(() => null);
+  }
   const store = titoProState();
   const mine = store.role === "professional";
   openModal(`
@@ -32336,6 +32371,12 @@ function titoProJobActions(job, mine) {
     if (job.status === "accepted" && job.usesDiary) rows.push(titoProButton(job, "schedule", "Book a time", "primary"));
     if (["accepted", "scheduled"].includes(job.status)) rows.push(titoProButton(job, "start", "Start work", "primary"));
     if (job.status === "in_progress") rows.push(titoProDoneForm(job));
+    // The professional sees what they were given. They cannot change it, and
+    // there is no reply - a right of reply on a review is a second thing to
+    // moderate and TitoPay is not set up to do that yet.
+    if (job.status === "confirmed" && job.myRating) {
+      rows.push(`<p class="tp-rated">${titoProStars(job.myRating.stars)}<span>Your customer rated this job ${esc(String(job.myRating.stars))} out of 5.</span></p>`);
+    }
   } else {
     if (["quoted", "re_quoted"].includes(job.status)) {
       rows.push(titoProButton(job, "accept", `Accept ${titoProMoney(job.quotedAmount + job.customerFee)}`, "primary"));
@@ -32345,9 +32386,23 @@ function titoProJobActions(job, mine) {
       rows.push(titoProButton(job, "confirm", "Yes, the work is done", "primary"));
       rows.push(titoProButton(job, "dispute", "Something's wrong", "ghost"));
     }
+    // THE ONE PLACE A RATING CAN BE LEFT, and it only exists once the customer
+    // has said the work is finished. The API refuses a rating before that
+    // anyway; this is about not offering a button that would be turned down.
+    if (job.status === "confirmed") {
+      rows.push(job.myRating
+        ? `<p class="tp-rated">${titoProStars(job.myRating.stars)}<span>You rated this ${esc(String(job.myRating.stars))} out of 5.</span></p>`
+        : `<button class="btn primary" type="button" data-action="titopro-rate:${esc(job.id)}">${icon("star")} Rate this professional</button>`);
+    }
   }
   if (!["confirmed", "declined", "cancelled", "expired"].includes(job.status)) {
     rows.push(titoProButton(job, "cancel", "Cancel this job", "ghost"));
+  }
+  // REPORTING IS AVAILABLE FROM THE JOB, not only from the listing. By the time
+  // somebody has been let down they are looking at the job, not searching for
+  // the person who did it to them.
+  if (!mine && job.professionalUserId) {
+    rows.push(`<button class="btn ghost tp-report" type="button" data-action="titopro-report:${esc(job.professionalUserId)}:${esc(job.id)}">${icon("flag")} Report this professional</button>`);
   }
   return rows.length ? `<section class="tp-steps">${rows.join("")}</section>` : "";
 }
@@ -32434,6 +32489,11 @@ async function runTitoProStep(jobId, step) {
   }
   try {
     await api(`/v1/titopro/jobs/${jobId}/${step}`, { method: "POST", body });
+    // SIGNING OFF IS THE MOMENT TO ASK. A rating requested a week later is a
+    // notification somebody dismisses; asked while they are still standing in
+    // the room that was just fixed, it gets answered. The job screen is still
+    // one tap away behind "Not now", so nobody is trapped here.
+    if (step === "confirm") { await openTitoProRate(jobId); return; }
     await openTitoProJob(jobId);
   } catch (error) {
     showToast(error.message || "That step could not be completed.", "error");
@@ -32459,9 +32519,14 @@ async function openTitoProListing() {
   openModal(`
     <div class="modal-head">
       <div><p class="eyebrow">TitoPro</p><h2>Offer my services</h2>
-        <p class="lead">${profile.status === "published"
-          ? "Your listing is live. Customers near you can find and book you."
-          : "Write your listing now. Going live is the part that waits."}</p></div>
+        <p class="lead">${profile.adminAction
+          // "Going live is the part that waits" is true of a draft and a lie to
+          // somebody TitoPay has taken down - the banner below says one thing
+          // and the lead would have said the opposite.
+          ? "TitoPay has taken this listing down. Support is the way back, not this screen."
+          : profile.status === "published"
+            ? "Your listing is live. Customers near you can find and book you."
+            : "Write your listing now. Going live is the part that waits."}</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
 
@@ -32473,9 +32538,15 @@ async function openTitoProListing() {
             ${eligibility.blockers.map((line) => `<p>${esc(line)}</p>`).join("")}</div></section>`
         : ""}
 
-    ${profile.status === "suspended" && profile.unpublishedReason
-      ? `<section class="tp-banner is-blocked">${icon("ban")}<div><strong>Your listing was taken down</strong>
-          <p>${esc(profile.unpublishedReason)}</p></div></section>` : ""}
+    ${profile.adminAction
+      ? `<section class="tp-banner is-blocked">${icon("ban")}<div>
+          <strong>${profile.adminAction === "removed" ? "TitoPay removed your listing" : "TitoPay suspended your listing"}</strong>
+          <p>${profile.adminAction === "removed"
+            ? "This listing cannot go live again. Contact TitoPay support to talk about it."
+            : "You cannot put it back yourself. Contact TitoPay support and somebody will go through it with you."}</p></div></section>`
+      : profile.status === "suspended" && profile.unpublishedReason
+        ? `<section class="tp-banner is-blocked">${icon("ban")}<div><strong>Your listing was taken down</strong>
+            <p>${esc(profile.unpublishedReason)}</p></div></section>` : ""}
 
     <form class="form-grid" data-form="titopro-listing">
       <div class="field">
@@ -32519,7 +32590,12 @@ async function openTitoProListing() {
     <div class="action-row tp-actions">
       ${profile.status === "published"
         ? `<button class="btn secondary" type="button" data-action="titopro-pause">${icon("eye-off")} Pause my listing</button>`
-        : `<button class="btn ${eligibility.eligible ? "primary" : "secondary"}" type="button" data-action="titopro-publish">${icon("upload")} Go live</button>`}
+        : profile.adminAction
+          // No "Go live" button at all under an admin action. The API refuses
+          // it whatever this screen offers, and offering a button that only
+          // ever says no is worse than not offering it.
+          ? ""
+          : `<button class="btn ${eligibility.eligible ? "primary" : "secondary"}" type="button" data-action="titopro-publish">${icon("upload")} Go live</button>`}
       <button class="btn ghost" type="button" data-action="titopro-hire">${icon("search")} Hire somebody</button>
     </div>
   `);
@@ -32574,4 +32650,178 @@ async function pauseTitoProListing() {
   await api("/v1/titopro/me/listing/pause", { method: "POST" }).catch(() => null);
   showToast("Your listing is paused.");
   await openTitoProListing();
+}
+
+/* ------------------------------------------------- ratings and reporting */
+
+// FIVE STARS, DRAWN AS FIVE STARS.
+//
+// Filled and empty rather than a number on its own, because "4,3" is a figure
+// and a row of stars is an impression - and an impression is what somebody
+// deciding whether to let a stranger into their house is actually forming.
+function titoProStars(stars, max) {
+  const filled = Math.round(Number(stars) || 0);
+  const total = Number(max) || 5;
+  let out = "";
+  for (let i = 1; i <= total; i += 1) {
+    out += `<span class="tp-star${i <= filled ? " is-on" : ""}" aria-hidden="true">${icon("star")}</span>`;
+  }
+  return `<span class="tp-stars">${out}</span>`;
+}
+
+// A NEW PROFESSIONAL IS NOT A BAD ONE.
+//
+// The API sends null rather than 0 for somebody nobody has rated yet, and this
+// says "New on TitoPro" rather than drawing five empty stars. Five empty stars
+// reads as nought out of five, and nobody ever gives that person a first job.
+function titoProScoreLine(pro) {
+  if (!pro || pro.rating === null || pro.rating === undefined) {
+    return `<span class="tp-score is-new">${icon("star")} New on TitoPro</span>`;
+  }
+  const count = Number(pro.ratingCount) || 0;
+  return `<span class="tp-score">${titoProStars(pro.rating)}
+    <strong>${esc(String(pro.rating).replace(".", ","))}</strong>
+    <small>${esc(String(count))} ${count === 1 ? "rating" : "ratings"}</small></span>`;
+}
+
+function titoProReviews(pro) {
+  const reviews = (pro && pro.reviews) || [];
+  if (!reviews.length) return "";
+  return `
+    <section class="tp-card tp-reviews">
+      <p class="tp-group-title">What customers said</p>
+      ${reviews.map((review) => `
+        <article class="tp-review">
+          <p class="tp-review-head">${titoProStars(review.stars)}
+            <span>${esc(review.by || "A TitoPay customer")}</span>
+            ${review.profession ? `<small>${esc(review.profession)}</small>` : ""}</p>
+          ${review.comment ? `<p class="tp-review-body">${esc(review.comment)}</p>` : ""}
+        </article>`).join("")}
+      <p class="tp-note">Only customers who paid for a finished job through TitoPay can leave a rating, and only once.</p>
+    </section>`;
+}
+
+// RATING A FINISHED JOB.
+//
+// Radio buttons rather than a row of buttons that set a variable: the choice
+// is then part of the form, it works with a keyboard and a screen reader
+// without anything extra, and nothing has to be remembered between renders.
+async function openTitoProRate(jobId) {
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPro</p><h2>How did it go?</h2>
+        <p class="lead">Your rating helps the next person decide. It cannot be changed once you send it.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <form class="form-grid" data-form="titopro-rate">
+      <input type="hidden" name="jobId" value="${esc(jobId)}">
+      <div class="field">
+        <label>Out of 5</label>
+        <div class="tp-rate-row" role="radiogroup" aria-label="Rating out of 5">
+          ${[1, 2, 3, 4, 5].map((value) => `
+            <label class="tp-rate-pick">
+              <input type="radio" name="stars" value="${value}" aria-label="${value} out of 5"${value === 5 ? " checked" : ""}>
+              <span class="tp-star">${icon("star")}</span>
+            </label>`).join("")}
+        </div>
+      </div>
+      <div class="field">
+        <label>Anything to add?</label>
+        <textarea name="comment" aria-label="Your review" rows="3" maxlength="1000"
+          placeholder="On time, cleaned up afterwards, would have them back."></textarea>
+        <small class="field-hint">Shown on their listing with your first name. Leave it empty to rate without saying anything.</small>
+      </div>
+      <button class="btn primary" type="submit">${icon("star")} Send my rating</button>
+      <button class="btn ghost" type="button" data-action="titopro-job:${esc(jobId)}">${icon("arrow-left")} Not now</button>
+    </form>
+  `);
+}
+
+async function submitTitoProRate(data) {
+  const stars = Number(data.stars);
+  if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+    showToast("Choose between 1 and 5 stars.", "error");
+    return;
+  }
+  try {
+    await api(`/v1/titopro/jobs/${data.jobId}/rate`, { method: "POST", body: {
+      stars, comment: data.comment } });
+    showToast("Thank you. Your rating is on their listing.");
+  } catch (error) {
+    showToast(error.message || "That rating could not be sent.", "error");
+  }
+  await openTitoProJob(data.jobId);
+}
+
+// REPORTING A LISTING.
+//
+// The reasons are fetched rather than written into this screen, so the list
+// somebody picks from and the list the API accepts cannot drift apart - which
+// they would the first time one was added on one side only.
+async function openTitoProReport(userId, jobId) {
+  openModal(`
+    <div class="modal-head"><div><p class="eyebrow">TitoPro</p><h2>Report this listing</h2></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>
+    <section class="activity-list"><article class="activity-item"><div><p>Loading…</p></div></article></section>
+  `);
+  const [reasons, existing] = await Promise.all([
+    api("/v1/titopro/report-reasons").then((result) => result.reasons || []).catch(() => []),
+    api(`/v1/titopro/professionals/${encodeURIComponent(userId)}/my-report`)
+      .then((result) => result.report).catch(() => null)
+  ]);
+  // Somebody who has already reported this person is told so rather than being
+  // shown a form that will be refused. The first report was not lost, which is
+  // the thing they actually want to know.
+  const open = existing && ["open", "reviewing"].includes(existing.status);
+
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">TitoPro</p><h2>Report this listing</h2>
+        <p class="lead">${open
+          ? "You have already reported this listing."
+          : "TitoPay reads every report. The professional is never told who reported them."}</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+
+    ${open ? `
+      <section class="tp-banner is-blocked">${icon("flag")}<div>
+        <strong>Reference ${esc(existing.reference)}</strong>
+        <p>You reported this listing for "${esc(existing.categoryLabel)}". TitoPay is looking at it — you will not need to report it again.</p>
+        <p>If something has changed or you are in danger, contact TitoPay support.</p></div></section>
+      <div class="action-row tp-actions">
+        <button class="btn ghost" type="button" data-close>${icon("arrow-left")} Close</button>
+      </div>` : `
+      <form class="form-grid" data-form="titopro-report">
+        <input type="hidden" name="professionalUserId" value="${esc(userId)}">
+        ${jobId ? `<input type="hidden" name="jobId" value="${esc(jobId)}">` : ""}
+        <div class="field">
+          <label>What happened?</label>
+          <select name="category" aria-label="Reason for reporting">
+            ${reasons.map((item) => `<option value="${esc(item.key)}">${esc(item.label)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field">
+          <label>Tell us more</label>
+          <textarea name="detail" aria-label="What happened" rows="4" maxlength="2000" required
+            placeholder="When it happened and what they did. Anything you can tell us helps."></textarea>
+          <small class="field-hint">This goes to TitoPay only. The professional is never shown what you wrote or who reported them.</small>
+        </div>
+        <button class="btn primary" type="submit">${icon("flag")} Send this report</button>
+        <button class="btn ghost" type="button" data-close>Cancel</button>
+        <p class="tp-note">${icon("shield")} If you are in danger, call 10111 first. A report here reaches TitoPay, not the police.</p>
+      </form>`}
+  `);
+}
+
+async function submitTitoProReport(data) {
+  const detail = String(data.detail || "").trim();
+  if (detail.length < 5) { showToast("Tell us a little about what happened.", "error"); return; }
+  try {
+    const result = await api(`/v1/titopro/professionals/${encodeURIComponent(data.professionalUserId)}/report`,
+      { method: "POST", body: { category: data.category, detail, jobId: data.jobId || null } });
+    showToast(`Report ${result.report.reference} sent. TitoPay will look at it.`);
+    closeModal();
+  } catch (error) {
+    showToast(error.message || "That report could not be sent.", "error");
+  }
 }
