@@ -32195,7 +32195,7 @@ function renderTitoProResults(chosen) {
         </button>
       `).join("")}
     </section>
-    <p class="tp-note">Every professional here has passed FICA verification. The ones who work inside your home have passed a background check as well.</p>
+    <p class="tp-note">Every professional here is FICA verified, and the ones who work inside your home have a background check on file. A check is not a guarantee — satisfy yourself about who you are hiring before you go ahead.</p>
   `;
 }
 
@@ -32250,6 +32250,8 @@ async function openTitoProProfessional(userId) {
         ${icon("chat")} Message ${esc(pro.name || "them")}</button>
     </section>
 
+    ${titoProVettingAdvisory(pro, catalogue)}
+
     ${(pro.photos || []).length ? `
       <section class="tp-card tp-gallery-card">
         <p class="tp-group-title">Their work</p>
@@ -32289,10 +32291,14 @@ async function openTitoProProfessional(userId) {
         <input name="suburb" aria-label="Suburb" maxlength="120" placeholder="Pimville" value="${esc(state.user?.suburb || "")}">
         <small class="field-hint">Your full address is shared once you accept a quote, not before.</small>
       </div>
+      <!-- ABOVE THE BUTTON, NOT BELOW IT. A term limiting TitoPay's
+           responsibility is only drawn to a customer's attention if they meet
+           it before they commit; underneath "Send request" it is something
+           they read after the decision, which is worth nothing to them and
+           little to TitoPay. -->
+      ${titoProVettingAdvisory(pro, catalogue, { compact: true })}
       <button class="btn primary" type="submit">${icon("send")} Send request</button>
       <button class="btn ghost" type="button" data-action="titopro-back">${icon("arrow-left")} Back</button>
-      ${primary.requiredChecks && primary.requiredChecks.length ? `
-        <p class="tp-note tp-hint-icon">${icon("shield")}<span>This work requires a background check, which TitoPay has already confirmed for this professional.</span></p>` : ""}
     </form>
 
     <div class="action-row tp-actions">
@@ -32958,6 +32964,43 @@ function titoProScoreLine(pro) {
   return `<span class="tp-score">${titoProStars(pro.rating)}
     <strong>${esc(String(pro.rating).replace(".", ","))}</strong>
     <small>${esc(String(count))} ${count === 1 ? "rating" : "ratings"}</small></span>`;
+}
+
+// THE VETTING ADVISORY, RENDERED FROM THE API'S WORDING AND NOT THE APP'S.
+//
+// Shown only where it is true: a professional who offers work requiring a
+// background check. Put on every listing it would become wallpaper, and the
+// one place it has to be read is the one place it would stop being.
+//
+// It appears TWICE on purpose, and neither is redundant. On the professional's
+// page it is context, while somebody is deciding. Above "Send request" it is
+// the last thing read before they commit - which is also where a term limiting
+// TitoPay's responsibility has to be for a customer to be said to have had it
+// drawn to their attention.
+function titoProVettingAdvisory(pro, catalogue, { compact = false } = {}) {
+  const needsChecks = (pro?.enhancedVettingProfessions || []).length > 0;
+  const advisory = catalogue?.vettingAdvisory;
+  if (!needsChecks || !advisory) return "";
+  if (compact) {
+    return `
+      <section class="tp-advisory is-compact">
+        <p class="tp-advisory-title">${icon("shield")} ${esc(advisory.title)}</p>
+        <p>${esc(advisory.limits[0])}</p>
+        <p>${esc(advisory.liability)}</p>
+        <p class="tp-advisory-decision">${esc(advisory.decision)}</p>
+      </section>`;
+  }
+  return `
+    <section class="tp-advisory">
+      <p class="tp-advisory-title">${icon("shield")} ${esc(advisory.title)}</p>
+      <p class="tp-advisory-checked">${esc(advisory.checked)}</p>
+      ${(advisory.limits || []).map((line) => `<p>${esc(line)}</p>`).join("")}
+      <ul class="tp-advisory-steps">
+        ${(advisory.steps || []).map((step) => `<li>${esc(step)}</li>`).join("")}
+      </ul>
+      <p class="tp-advisory-liability">${esc(advisory.liability)}</p>
+      <p class="tp-advisory-decision">${esc(advisory.decision)}</p>
+    </section>`;
 }
 
 function titoProReviews(pro) {

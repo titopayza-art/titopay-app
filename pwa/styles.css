@@ -16403,6 +16403,28 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
   .tp-pro-row .tp-status{margin-left:48px}
 }
 
+/* -------------------------------------------- TitoPro vetting advisory */
+/* Amber, not red. Red is an error - something has gone wrong and the customer
+   must stop. This is a caution they have to READ and then act on, and a screen
+   that shouts the same colour at a blocked listing and at safety advice
+   teaches people to skip both. */
+.tp-advisory{margin:14px 0;padding:14px 15px;border:1px solid rgba(180,120,10,0.32);border-radius:14px;background:rgba(229,165,0,0.07);color:#6B4A05;font-size:0.84rem;line-height:1.5}
+.tp-advisory p{margin:0 0 8px}
+.tp-advisory p:last-child{margin-bottom:0}
+/* flex-start, not center: the title wraps to two lines on a narrow phone and
+   a centred icon then floats between them instead of marking the heading. */
+.tp-advisory-title{display:flex;align-items:flex-start;gap:7px;font-size:0.92rem;font-weight:700;color:#5A3D04}
+.tp-advisory-title svg{flex:0 0 auto;width:17px;height:17px;margin-top:2px}
+.tp-advisory-checked{font-weight:600}
+.tp-advisory-steps{margin:0 0 10px;padding-left:18px}
+.tp-advisory-steps li{margin-bottom:5px}
+.tp-advisory-steps li:last-child{margin-bottom:0}
+/* The limitation is set apart rather than run into the advice above it: a term
+   that limits TitoPay's responsibility has to be findable, not buried in a
+   paragraph somebody skims. */
+.tp-advisory-liability{padding-top:9px;border-top:1px solid rgba(180,120,10,0.26);font-size:0.8rem}
+.tp-advisory-decision{font-weight:700}
+.tp-advisory.is-compact{margin-top:4px}
 /* ---------------------------------------- TitoPro photos, terms and chat */
 .tp-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;margin-bottom:10px}
 .tp-photo{position:relative;margin:0;aspect-ratio:1;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:#fbfdff}

@@ -59,7 +59,8 @@ const PROFESSIONS = [
   { key: "tutor", label: "Tutor", group: "Professional", shape: "remote", hint: "School subjects, matric and tertiary", usesDiary: false,
     requiredChecks: [{ key: "police_clearance", label: "Police clearance", says: "A SAPS Police Clearance Certificate." }] }
 ];
-const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
+const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS,
+  vettingAdvisory: require("../api/src/config/titopro-reference").VETTING_ADVISORY };
 
 const PROS = [
   { userId: "aaaa1111-1111-4111-8111-111111111111", name: "Sipho Ndlovu", professions: ["plumber", "handyman"],
@@ -298,6 +299,18 @@ async function shoot(browser, name, title, routes, run) {
       async (page) => {
         await page.evaluate(() => window.openTitoProListing());
         await page.waitForSelector(".tp-photo-grid", { timeout: 10000 });
+      });
+
+    await shoot(browser, "14-vetting-advisory", "What a background check does not tell you",
+      { "/titopro/professions": CATALOGUE,
+        "/professionals/": { ok: true, professional: { ...PRO_PAGE.professional,
+          name: "Nomsa's Home Care", verifiedName: "Nomsa Zulu",
+          professions: ["cleaner"], professionLabels: ["Cleaner"],
+          enhancedVettingProfessions: ["cleaner"],
+          headline: "Homes and offices, Soweto", photos: [], terms: "", reviews: [] } } },
+      async (page) => {
+        await page.evaluate((id) => window.openTitoProProfessional(id), PRO_PAGE.professional.userId);
+        await page.waitForSelector(".tp-advisory", { timeout: 10000 });
       });
 
   } finally {

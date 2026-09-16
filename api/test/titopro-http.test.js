@@ -526,3 +526,35 @@ test("A CUSTOMER CAN MESSAGE A LISTED PROFESSIONAL BEFORE ANY JOB EXISTS", async
   assert.equal(gone.status, 409);
   assert.equal(gone.payload.details?.code, "not_listed");
 });
+
+test("THE VETTING ADVISORY IS SERVED BY THE API, SO ONE WORDING REACHES EVERY SURFACE", async () => {
+  const actor = await signedIn();
+  const { payload } = await call(actor, "/professions");
+  const advisory = payload.vettingAdvisory;
+  assert.ok(advisory, "the app renders this rather than carrying its own copy");
+
+  // What TitoPay checked, and what it does not establish. Both halves, because
+  // the assurance without the limit is the thing that misleads.
+  assert.match(advisory.checked, /confirmed this professional's identity/i);
+  assert.ok(advisory.limits.some((line) => /not a guarantee of conduct, competence or safety/i.test(line)));
+  assert.ok(advisory.limits.some((line) => /does not cover anyone else/i.test(line)),
+    "a check covers one person, not whoever arrives with them");
+
+  // "Do your own due diligence" is advice nobody can act on. These are things
+  // a person can actually do at a front door.
+  assert.ok(advisory.steps.length >= 4, `${advisory.steps.length} steps`);
+  assert.ok(advisory.steps.some((step) => /Ask for ID at the door/i.test(step)));
+
+  // THE LIMITATION, AND ITS SHAPE.
+  assert.match(advisory.liability, /does not employ them/i);
+  assert.match(advisory.liability, /not responsible for loss, damage or injury/i);
+  // Scoped, not absolute. A blanket exclusion of any loss whatsoever is the
+  // term most likely to be struck out under the Consumer Protection Act, which
+  // would leave TitoPay with nothing rather than with a narrower clause that
+  // holds. This pins the hedge so a later edit cannot quietly remove it.
+  assert.match(advisory.liability, /to the extent the law allows/i);
+  for (const absolute of [/any loss whatsoever/i, /under no circumstances/i, /in no event/i, /all liability is excluded/i]) {
+    assert.ok(!absolute.test(advisory.liability),
+      `the limitation must not be written as an absolute exclusion: ${absolute}`);
+  }
+});

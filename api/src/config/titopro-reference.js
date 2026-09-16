@@ -109,6 +109,57 @@ const VETTING_CHECKS = Object.freeze([
 
 const VETTING_CHECK_KEYS = Object.freeze(VETTING_CHECKS.map((item) => item.key));
 
+// WHAT A CLEARED CHECK DOES AND DOES NOT TELL A CUSTOMER.
+//
+// This is the most important paragraph TitoPro puts in front of anybody, and
+// it exists because of a tension the product creates on its own: TitoPay says
+// it has confirmed a police clearance, and a customer reasonably reads that as
+// "TitoPay says this person is safe". It does not say that, and cannot.
+//
+// So the copy is written to do four things in order, and the order matters:
+//
+//   1. state plainly what TitoPay actually checked, so the assurance is real
+//      rather than vague;
+//   2. state what that check does NOT establish - a certificate records what
+//      was on file the day it was issued, says nothing about conduct since,
+//      and covers one person rather than whoever arrives with them;
+//   3. give the customer something to DO, in specific terms, because "do your
+//      own due diligence" is advice nobody can act on;
+//   4. state the limit of TitoPay's responsibility.
+//
+// ON THAT LAST POINT, DELIBERATELY NOT ABSOLUTE. Under the Consumer Protection
+// Act a term that excludes liability must be in plain language and brought to
+// the consumer's attention BEFORE they commit, and a blanket exclusion of "any
+// loss whatsoever" is the kind of term a court is most willing to strike out -
+// which would leave TitoPay with no protection at all rather than with a
+// narrower one that holds. "To the extent the law allows" is what keeps this
+// enforceable, and the block is rendered before a job is sent rather than
+// buried in a terms page. THIS WORDING SHOULD BE SIGNED OFF BY TITOPAY'S
+// LEGAL ADVISER BEFORE LAUNCH; it is written to be defensible, not to be a
+// substitute for that review.
+//
+// Held here rather than in the app so there is one wording, and so changing it
+// is a single edit that reaches every surface at once.
+const VETTING_ADVISORY = Object.freeze({
+  title: "Before you let anyone into your home",
+  checked: "TitoPay has confirmed this professional's identity and holds the background checks this work requires on file.",
+  limits: [
+    "A clearance certificate records what was on file on the day it was issued. It is not a guarantee of conduct, competence or safety.",
+    "It covers this professional. It does not cover anyone else who arrives with them, or anyone they subcontract the work to."
+  ],
+  steps: [
+    "Ask for ID at the door and check the name against this listing.",
+    "Ask who else will be on site, and satisfy yourself about them too.",
+    "Ask for references from recent work of the same kind, and phone them.",
+    "Agree the price and exactly what is included through TitoPay, before the work starts.",
+    "Do not leave anyone alone with your children, your keys or your documents."
+  ],
+  liability: "TitoPay introduces you to this professional and carries the payment for the job. The work itself is an agreement between you and them: TitoPay does not employ them, does not supervise the work and does not guarantee it. To the extent the law allows, TitoPay is not responsible for loss, damage or injury arising from the work or from the conduct of anyone who carries it out.",
+  // Said last and on its own, because it is the sentence that turns the
+  // paragraph above from a disclaimer into a decision the customer is making.
+  decision: "Satisfy yourself about who you are hiring before you go ahead."
+});
+
 // Applied to every profession marked `enhanced`. If one of them ever needs a
 // different set - a tutor working with matric pupils, say, against a cleaner
 // with a set of keys - give that profession its own requiredChecks array and
@@ -430,6 +481,7 @@ function requiresEnhancedVetting(key) {
 }
 
 module.exports = {
+  VETTING_ADVISORY,
   WITHDRAWN_WORK,
   otherServiceIsAllowed,
   requiresOwnDescription,

@@ -40,6 +40,10 @@ router.get("/professions", (_req, res) => {
   res.json({
     ok: true,
     shapes: reference.SHAPES.map((key) => ({ key, ...reference.SHAPE_COPY[key] })),
+    // What a customer is told before they let somebody into their house.
+    // Served rather than written into the app, so the wording legal signs off
+    // is the wording every surface shows.
+    vettingAdvisory: reference.VETTING_ADVISORY,
     professions: reference.PROFESSIONS.map((item) => ({
       key: item.key,
       label: item.label,

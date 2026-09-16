@@ -100,7 +100,7 @@ async function openApp(browser, width, routes) {
   return { context, page, errors };
 }
 
-const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
+const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS, vettingAdvisory: reference.VETTING_ADVISORY };
 
 (async () => {
   console.log("\n=============================================================");
@@ -539,6 +539,66 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
     for (const key of ["graphic_designer", "web_developer", "other"]) {
       check(`the picker offers ${key.replace(/_/g, " ")}`, offered.includes(key), offered.join(", ").slice(0, 80));
     }
+    await s.context.close();
+
+    // ---- 5g. WHAT A BACKGROUND CHECK DOES NOT TELL YOU -------------------
+    //
+    // TitoPay says it has confirmed a police clearance, and a customer
+    // reasonably reads that as "TitoPay says this person is safe". It does not
+    // say that and cannot, so the advisory has to appear where the decision is
+    // being made - and the term limiting TitoPay's responsibility has to be in
+    // front of the customer BEFORE they send the job, not after.
+    const VETTED_PRO = { ok: true, professional: { ...PRO_PAGE.professional,
+      professions: ["cleaner"], professionLabels: ["Cleaner"],
+      enhancedVettingProfessions: ["cleaner"] } };
+
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE, "/professionals/": VETTED_PRO });
+    await s.page.evaluate((id) => window.openTitoProProfessional(id), VETTED_PRO.professional.userId);
+    await s.page.waitForSelector(".tp-advisory", { timeout: 10000 });
+    const advisory = await s.page.evaluate(() => {
+      const blocks = [...document.querySelectorAll(".tp-advisory")];
+      const full = blocks.find((el) => !el.classList.contains("is-compact"));
+      const compact = blocks.find((el) => el.classList.contains("is-compact"));
+      const form = document.querySelector('form[data-form="titopro-request"]');
+      const submit = form?.querySelector('button[type="submit"]');
+      return {
+        count: blocks.length,
+        title: full?.querySelector(".tp-advisory-title")?.textContent.trim() || "",
+        steps: [...(full?.querySelectorAll(".tp-advisory-steps li") || [])].map((el) => el.textContent.trim()),
+        liability: full?.querySelector(".tp-advisory-liability")?.textContent.trim() || "",
+        compactLiability: compact?.querySelector("p:nth-child(3)")?.textContent.trim() || "",
+        insideForm: Boolean(compact && form && form.contains(compact)),
+        // Before the button, not after it: the position is the whole point.
+        beforeSubmit: Boolean(compact && submit &&
+          (compact.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING))
+      };
+    });
+    check("a vetted professional's page carries the advisory",
+      advisory.count === 2, `${advisory.count} blocks`);
+    check("it is headed for the moment it matters", /Before you let anyone into your home/.test(advisory.title), advisory.title);
+    check("IT GIVES THE CUSTOMER SOMETHING TO DO, not just a warning",
+      advisory.steps.length >= 4 && advisory.steps.some((step) => /Ask for ID at the door/.test(step)),
+      `${advisory.steps.length} steps`);
+    check("it says what TitoPay is not responsible for",
+      /not responsible for loss, damage or injury/i.test(advisory.liability), advisory.liability.slice(0, 80));
+    check("NOT AS AN ABSOLUTE EXCLUSION - a blanket one is the kind a court strikes out",
+      /to the extent the law allows/i.test(advisory.liability) && !/any loss whatsoever/i.test(advisory.liability),
+      advisory.liability.slice(-90));
+    check("AND IT IS INSIDE THE REQUEST FORM, ABOVE SEND REQUEST",
+      advisory.insideForm && advisory.beforeSubmit,
+      `inForm=${advisory.insideForm} beforeSubmit=${advisory.beforeSubmit}`);
+    check("with the limitation repeated at the point of commitment",
+      /not responsible for loss/i.test(advisory.compactLiability), advisory.compactLiability.slice(0, 60));
+    await s.context.close();
+
+    // AND NOT WHERE IT WOULD BE WALLPAPER. A plumber needs no background check;
+    // an advisory on every listing is one nobody reads on the listings where it
+    // actually matters.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE, "/professionals/": PRO_PAGE });
+    await s.page.evaluate((id) => window.openTitoProProfessional(id), PRO_PAGE.professional.userId);
+    await s.page.waitForSelector('form[data-form="titopro-request"]', { timeout: 10000 });
+    const unvetted = await s.page.evaluate(() => document.querySelectorAll(".tp-advisory").length);
+    check("A PROFESSION THAT NEEDS NO CHECK SHOWS NO ADVISORY", unvetted === 0, `${unvetted} blocks`);
     await s.context.close();
 
     // ---- 5e. NOTHING RUNS OFF THE SIDE OF ANY SCREEN --------------------
