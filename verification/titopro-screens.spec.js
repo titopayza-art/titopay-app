@@ -436,6 +436,57 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
       await s.context.close();
     }
 
+    // ---- 5e. NOTHING RUNS OFF THE SIDE OF ANY SCREEN --------------------
+    //
+    // The original check only measured the BROWSE screen, and the bug was on
+    // the listing one: the hidden checkbox inside each profession pill was
+    // absolutely positioned with no positioned ancestor, so `.field input`
+    // gave it width:100% and min-height:58px against the MODAL. Each pill grew
+    // an invisible 345x58 box running hundreds of pixels past the right edge.
+    // Nothing looked wrong until a pill was tapped: iOS focuses the checkbox
+    // and scrolls sideways to reveal it, leaving the customer on a blank white
+    // column with the form off the left of the screen.
+    //
+    // So every TitoPro screen is measured now, and the measurement is of EVERY
+    // element, visible or not - a box with opacity:0 scrolls a phone exactly as
+    // far as a box you can see.
+    const SCREENS = [
+      ["listing", ".tp-picks", (page) => page.evaluate(() => window.openTitoProListing())],
+      ["professional", ".tp-card", (page) => page.evaluate((id) => window.openTitoProProfessional(id), PRO_PAGE.professional.userId)],
+      ["rate", ".tp-rate-row", (page) => page.evaluate((job) => window.openTitoProRate(job.id), CONFIRMED)],
+      ["report", 'form[data-form="titopro-report"]', (page) => page.evaluate((id) => window.openTitoProReport(id), PRO_PAGE.professional.userId)],
+      ["job", ".tp-steps", (page) => page.evaluate((job) => window.openTitoProJob(job.id), CONFIRMED)]
+    ];
+    for (const width of [360, 390]) {
+      for (const [name, ready, open] of SCREENS) {
+        s = await openApp(browser, width, { "/v1/titopro/professions": CATALOGUE,
+          "/my-report": { ok: true, report: null }, "/report-reasons": REASONS,
+          "/professionals/": PRO_PAGE, "/rating": { ok: true, rating: null },
+          "/v1/titopro/jobs/": { ok: true, job: CONFIRMED },
+          "/v1/titopro/me/listing": { ok: true,
+            profile: { status: "draft", professions: ["cleaner"], serviceRadiusKm: 20,
+              outstandingChecks: ["Police clearance", "References"], enhancedVettingProfessions: ["cleaner"] },
+            eligibility: { eligible: false, ficaVerified: true, blockers: ["Before you can offer this work TitoPay needs: Police clearance and References."] } } });
+        await open(s.page);
+        await s.page.waitForSelector(ready, { timeout: 10000 });
+        const fit = await s.page.evaluate((w) => {
+          const doc = document.documentElement;
+          const past = [];
+          for (const el of document.querySelectorAll("body *")) {
+            const r = el.getBoundingClientRect();
+            if (!r.width && !r.height) continue;
+            if (r.right > w + 1) past.push(`${el.tagName.toLowerCase()}.${String(el.className || "").slice(0, 24)}@${Math.round(r.right)}`);
+          }
+          return { past: past.slice(0, 4), bodyScroll: doc.scrollWidth - doc.clientWidth };
+        }, width);
+        check(`${width}px · ${name} · no box reaches past the right edge`,
+          fit.past.length === 0, fit.past.join(", "));
+        check(`${width}px · ${name} · the page does not scroll sideways`,
+          fit.bodyScroll <= 1, `${fit.bodyScroll}px`);
+        await s.context.close();
+      }
+    }
+
     // ---- 6. Narrow phone -------------------------------------------------
     for (const width of [360, 414]) {
       s = await openApp(browser, width, { "/v1/titopro/professions": CATALOGUE });

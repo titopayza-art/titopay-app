@@ -5034,6 +5034,27 @@ function onInput(event) {
   }
 }
 function onChange(event) {
+  // THE TITOPRO SERVICE PICKER, COUNTED AS IT IS TICKED.
+  //
+  // The limit is six and the API refuses a seventh, so without this a
+  // professional fills the form in, presses save, and is told then. The pill
+  // is un-ticked and the reason said in the one place they are looking.
+  const professionPick = event.target.closest('form[data-form="titopro-listing"] input[name="professions"]');
+  if (professionPick) {
+    const form = professionPick.closest("form");
+    const picked = form.querySelectorAll('input[name="professions"]:checked');
+    if (picked.length > 6) {
+      professionPick.checked = false;
+      showToast("Up to six services. Take one off to add another.", "error");
+    }
+    for (const input of form.querySelectorAll('input[name="professions"]')) {
+      input.closest(".tp-pick")?.classList.toggle("is-on", input.checked);
+    }
+    const counter = form.querySelector("[data-titopro-count]");
+    if (counter) counter.textContent = titoProChosenCount(
+      form.querySelectorAll('input[name="professions"]:checked').length);
+    return;
+  }
   // A QR ID typed or pasted by hand gets the same treatment as a scanned one:
   // if the code carries a price, the price is filled in and locked.
   const typedQrId = event.target.closest('form[data-form="qr-pay"] input[name="qrId"]');
@@ -31930,6 +31951,15 @@ async function titoProCatalogue() {
   return store.catalogue;
 }
 
+// "Nothing chosen yet" rather than "0 chosen": a professional opening this
+// screen for the first time has not failed at anything, and a zero beside a
+// limit reads like a score.
+function titoProChosenCount(count) {
+  const total = Number(count) || 0;
+  if (!total) return "Nothing chosen yet.";
+  return total === 1 ? "1 chosen." : `${total} chosen.`;
+}
+
 function titoProGroups(catalogue) {
   const groups = [];
   for (const item of catalogue.professions || []) {
@@ -32227,7 +32257,7 @@ async function openTitoProProfessional(userId) {
       <button class="btn primary" type="submit">${icon("send")} Send request</button>
       <button class="btn ghost" type="button" data-action="titopro-back">${icon("arrow-left")} Back</button>
       ${primary.requiredChecks && primary.requiredChecks.length ? `
-        <p class="tp-note">${icon("shield")} This work requires a background check, which TitoPay has already confirmed for this professional.</p>` : ""}
+        <p class="tp-note tp-hint-icon">${icon("shield")}<span>This work requires a background check, which TitoPay has already confirmed for this professional.</span></p>` : ""}
     </form>
 
     <div class="action-row tp-actions">
@@ -32556,15 +32586,31 @@ async function openTitoProListing() {
     <form class="form-grid" data-form="titopro-listing">
       <div class="field">
         <label>What do you do?</label>
-        <div class="tp-picks">
-          ${(catalogue.professions || []).map((item) => `
-            <label class="tp-pick${chosen.has(item.key) ? " is-on" : ""}">
-              <input type="checkbox" name="professions" value="${esc(item.key)}"${chosen.has(item.key) ? " checked" : ""}>
-              <span>${esc(item.label)}</span>
-              ${item.requiredChecks.length ? `<em title="Needs a background check">${icon("shield")}</em>` : ""}
-            </label>`).join("")}
-        </div>
-        <small class="field-hint">Up to six. A shield means TitoPay needs a background check before that work can go live.</small>
+        <!-- THE RULE COMES BEFORE THE CHOICES, NOT AFTER THEM. It sat under
+             the picker, so a professional learnt the limit only after reading
+             seventeen options - and still had no idea how many they had
+             ticked. The count is live; see onChange. -->
+        <p class="tp-pick-rule">Choose up to six.
+          <span data-titopro-count>${esc(titoProChosenCount(chosen.size))}</span></p>
+        <!-- GROUPED THE WAY THE CATALOGUE IS GROUPED. Seventeen pills in one
+             undifferentiated wall is a list you have to read; the same pills
+             under the four headings the browse screen already uses are a page
+             you can scan, and a plumber finds "Home repairs" without reading
+             the other twelve. The headings come from the API, so a profession
+             added later files itself. -->
+        ${titoProGroups(catalogue).map((group) => `
+          <div class="tp-pick-group">
+            <p class="tp-pick-group-title">${esc(group.label)}</p>
+            <div class="tp-picks">
+              ${group.items.map((item) => `
+                <label class="tp-pick${chosen.has(item.key) ? " is-on" : ""}">
+                  <input type="checkbox" name="professions" value="${esc(item.key)}"${chosen.has(item.key) ? " checked" : ""}>
+                  <span>${esc(item.label)}</span>
+                  ${item.requiredChecks.length ? `<em title="TitoPay needs a background check for this work">${icon("shield")}</em>` : ""}
+                </label>`).join("")}
+            </div>
+          </div>`).join("")}
+        <small class="field-hint tp-hint-icon">${icon("shield")}<span>A shield means TitoPay needs a background check before that work can go live.</span></small>
       </div>
       <div class="field">
         <label>One line about your work</label>
@@ -32813,7 +32859,7 @@ async function openTitoProReport(userId, jobId) {
         </div>
         <button class="btn primary" type="submit">${icon("flag")} Send this report</button>
         <button class="btn ghost" type="button" data-close>Cancel</button>
-        <p class="tp-note">${icon("shield")} If you are in danger, call 10111 first. A report here reaches TitoPay, not the police.</p>
+        <p class="tp-note tp-hint-icon">${icon("shield")}<span>If you are in danger, call 10111 first. A report here reaches TitoPay, not the police.</span></p>
       </form>`}
   `);
 }

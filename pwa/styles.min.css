@@ -989,10 +989,52 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
 .tp-banner p{margin:2px 0 0}
 .tp-banner.is-live{background:rgba(46,125,91,0.1);border:1px solid rgba(46,125,91,0.4);color:#22684A}
 .tp-banner.is-blocked{background:rgba(178,58,58,0.08);border:1px solid rgba(178,58,58,0.35);color:#8F2E2E}
+/* THE PILLS ARE CONTENT, NOT FIELD LABELS.
+   Each one is a <label> inside a .field, so it was inheriting the form-label
+   treatment meant for "WHAT DO YOU DO?" above it: 11.5px, uppercase,
+   letter-spaced. Seventeen professions rendered as seventeen shouting
+   micro-caps chips in one wall - the markup said "Plumber" and the screen said
+   "PLUMBER". These are the names of trades a person is looking for, so they
+   are set as words. */
+/* An icon in front of a sentence is a ROW, not a first character. Left inline
+   the text wrapped underneath the shield and the second line started under it,
+   which reads as a broken bullet. */
+.tp-hint-icon{display:flex;align-items:flex-start;gap:7px}
+.tp-hint-icon svg{flex:0 0 auto;width:15px;height:15px;margin-top:2px}
+.tp-hint-icon span{flex:1 1 auto;min-width:0}
+.tp-pick-rule{margin:0 0 10px;color:var(--muted);font-size:0.82rem;line-height:1.45}
+.tp-pick-rule span{color:var(--navy);font-weight:600}
+.tp-pick-group{margin-bottom:12px}
+.tp-pick-group:last-of-type{margin-bottom:4px}
+.tp-pick-group-title{margin:0 0 7px;color:var(--muted);font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase}
 .tp-picks{display:flex;flex-wrap:wrap;gap:7px}
-.tp-pick{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--line);border-radius:999px;font-size:0.83rem;cursor:pointer}
-.tp-pick input{position:absolute;opacity:0;pointer-events:none}
-.tp-pick.is-on,.tp-pick:has(input:checked){background:var(--brand,#0B1F3F);border-color:var(--brand,#0B1F3F);color:#fff}
+/* THE HIDDEN CHECKBOX IS PINNED TO ITS OWN PILL, and this is not a tidy-up.
+   These pills sit inside a .field, where `.field input` sets width:100% and
+   min-height:58px for real form controls. The checkbox was absolutely
+   positioned with NO positioned ancestor, so it took those dimensions against
+   the MODAL - a 345px wide, 58px tall invisible box starting at its pill and
+   running hundreds of pixels past the right edge of the phone. Nothing looked
+   wrong until somebody tapped a pill: iOS focuses the checkbox, scrolls
+   sideways to bring that invisible box into view, and leaves the customer
+   staring at a blank white column with the form off the left of the screen.
+   position:relative on the pill plus inset:0 confines it exactly to the pill,
+   and the min-height/padding resets stop .field's rules reaching it at all. */
+.tp-pick{position:relative;display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border:1px solid var(--line);border-radius:999px;font-size:0.86rem;font-weight:500;letter-spacing:normal;text-transform:none;color:var(--navy);background:#fbfdff;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.tp-pick input{position:absolute;inset:0;width:100%;height:100%;min-width:0;min-height:0;margin:0;padding:0;opacity:0;pointer-events:none}
+.tp-pick.is-on,.tp-pick:has(input:checked){background:var(--brand,#0B1F3F);border-color:var(--brand,#0B1F3F);color:#fff;font-weight:600}
+/* A pill is operated with a finger and with a keyboard. Without this the
+   focus ring lands on an invisible checkbox and nothing appears to happen. */
+.tp-pick:has(input:focus-visible){outline:2px solid var(--blue,#0a4dff);outline-offset:2px}
+/* AND THE OVERRIDE THAT MAKES THE LINE ABOVE STICK.
+   `@media (max-width:519px) { .modal-card .field label }` sets every label in
+   a modal field to 0.72rem uppercase micro-caps. That is right for a real
+   field label - "WHAT DO YOU DO?", "SUBURB" - and wrong for these, which are
+   labels only because a label is what wraps a checkbox. At (0,2,1) it outranks
+   a bare .tp-pick, so the plain rule above lost on every phone and only on a
+   phone. Matched here at (0,3,1), scoped to this one class, so nothing else in
+   the modal moves. */
+.modal-card .field label.tp-pick{color:var(--navy);font-size:0.86rem;font-weight:500;letter-spacing:normal;text-transform:none}
+.modal-card .field label.tp-pick.is-on,.modal-card .field label.tp-pick:has(input:checked){color:#fff;font-weight:600}
 .tp-pick em{display:inline-flex}
 .tp-pick em svg{width:13px;height:13px}
 .tp-vetting{margin-top:14px}
@@ -1044,7 +1086,8 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
    it works with a keyboard and a screen reader without anything extra. */
 .tp-rate-row{display:flex;gap:6px}
 .tp-rate-pick{position:relative;display:inline-flex;cursor:pointer;padding:4px}
-.tp-rate-pick input{position:absolute;opacity:0;pointer-events:none}
+/* Same clamp, same reason - see .tp-pick above. */
+.tp-rate-pick input{position:absolute;inset:0;width:100%;height:100%;min-width:0;min-height:0;margin:0;padding:0;opacity:0;pointer-events:none}
 .tp-rate-pick .tp-star{color:var(--line)}
 .tp-rate-pick .tp-star svg{width:32px;height:32px}
 .tp-rate-pick:has(input:focus-visible) .tp-star{outline:2px solid var(--brand,#0B1F3F);outline-offset:2px;border-radius:4px}
