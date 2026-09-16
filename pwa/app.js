@@ -26976,7 +26976,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 }
 async function loadDefaultServices() {
   if (!defaultServicesPromise) {
-    defaultServicesPromise = fetch("./services-default.json?v=270")
+    defaultServicesPromise = fetch("./services-default.json?v=559")
       .then((response) => {
         if (!response.ok) throw new Error("Default service catalogue unavailable");
         return response.json();
@@ -29516,7 +29516,12 @@ const DEVICE_NOTICE_TYPES = new Set([
 const SERVICE_GROUPS = [
   { key: "send", label: "Send & pay", members: ["send-money", "qr-pay", "payment-request", "bill-split", "send-gift"] },
   { key: "money", label: "Money in & out", members: ["top-up", "receive-money", "withdraw", "payouts", "tip", "refund"] },
-  { key: "buy", label: "Buy", members: ["airtime", "data", "airtime-data", "electricity", "voucher", "pay-bills", "tickets"] },
+  // TitoPro sits here, beside Event Tickets and Book, because hiring a plumber
+  // is a thing a customer BUYS. Left out of every group it fell through to
+  // "More" - the catch-all at the very bottom of the screen, under a heading
+  // that tells a customer nothing - which is where a brand-new service goes to
+  // be not found. The catch-all is a safety net, not a home.
+  { key: "buy", label: "Buy", members: ["airtime", "data", "airtime-data", "electricity", "voucher", "pay-bills", "tickets", "titopro"] },
   { key: "plan", label: "Plan & save", members: ["stockvel", "tito-kids", "learn"] },
   { key: "business", label: "Run your business", members: ["invoice", "quote", "proforma-invoice", "business-sales", "enterprise-distribution", "ticketing", "business-ticketing-staff", "book"] },
   { key: "more", label: "More", members: null }

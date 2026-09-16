@@ -108,7 +108,7 @@
       "commission": 0,
       "status": "active",
       "personal_visible": true,
-      "business_visible": true,
+      "business_visible": false,
       "sort_order": 80,
       "feature_badge": "none"
     },
@@ -262,7 +262,7 @@
       "commission": 0,
       "status": "active",
       "personal_visible": true,
-      "business_visible": true,
+      "business_visible": false,
       "sort_order": 170,
       "feature_badge": "none"
     },
@@ -404,6 +404,20 @@
       "personal_visible": true,
       "business_visible": true,
       "sort_order": 305,
+      "feature_badge": "new"
+    },
+    {
+      "service_code": "titopro",
+      "service_name": "TitoPro",
+      "service_icon": "maintenance",
+      "action": "titopro",
+      "description": "Hire a verified plumber, painter, cleaner or bookkeeper, and pay through your wallet.",
+      "fee": 0,
+      "commission": 0,
+      "status": "active",
+      "personal_visible": true,
+      "business_visible": true,
+      "sort_order": 306,
       "feature_badge": "new"
     },
     {

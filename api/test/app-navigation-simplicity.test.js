@@ -163,6 +163,88 @@ test("grouping the Services screen loses nothing and buries nothing", () => {
     "every service must be pushed into a bucket");
   assert.match(functionBody("serviceGroupOf"), /return "more";/,
     "an unmapped service falls through to More rather than disappearing");
+
+  // THE CATCH-ALL IS A SAFETY NET, NOT A HOME.
+  //
+  // "More" is the last heading on the screen and it tells a customer nothing,
+  // so a service that lands there is a service nobody finds. TitoPro shipped
+  // into it: complete, routed, tested, and filed at the bottom of the page
+  // under a heading with no meaning. Every service TitoPay actually promotes
+  // must have a named home.
+  const named = new Set(members);
+  for (const service of ["titopro", "tickets", "stockvel", "send-money", "top-up"]) {
+    assert.ok(named.has(service) || service === "book",
+      `"${service}" is in no group, so it renders under More at the bottom of the screen`);
+  }
+  // Book is the documented exception: it is two products wearing one tile and
+  // is routed by account type in serviceGroupOf rather than by this map.
+  assert.match(functionBody("serviceGroupOf"), /keys\.includes\("book"\)/,
+    "Book earns its way out of the map by being routed explicitly");
+});
+
+// THE FALLBACK CATALOGUE IS WHAT THE APP SHOWS WHEN THE API CANNOT BE REACHED.
+//
+// It is a real file the app fetches, not a comment: pwa/services-default.json.
+// A service added to the API's DEFAULT_SERVICES and forgotten here is missing
+// from the Services screen for every customer on a bad connection, and from
+// the first paint for everybody else. TitoPro shipped that way.
+//
+// One direction only. The app file legitimately carries entries the API does
+// not (refund, business-staff, enterprise-distribution and the combined
+// airtime-data tile), so this asks that nothing the API ships is absent here,
+// not that the two lists are identical.
+test("the app's fallback catalogue carries every service the API ships", () => {
+  const source = fs.readFileSync(
+    path.join(REPO, "api", "src", "services", "service-management-service.js"), "utf8");
+  const block = source.slice(source.indexOf("const DEFAULT_SERVICES = ["));
+  const rows = block.slice(0, block.indexOf("\n];")).split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('["'))
+    .map((line) => JSON.parse(line.replace(/,$/, "")));
+  assert.ok(rows.length > 30, `expected the service catalogue, parsed ${rows.length} rows`);
+
+  const fallback = JSON.parse(fs.readFileSync(path.join(REPO, "pwa", "services-default.json"), "utf8"));
+  const shipped = new Set(fallback.items.map((item) => item.service_code));
+
+  // FICA is the one deliberate absence, and the app proves it: visibleServices
+  // filters the tile out entirely because verification is reached from Profile
+  // & Security, and a second door to it would be a duplicate route.
+  assert.match(functionBody("visibleServices"), /\["fica"\]\.includes\(action\)/,
+    "fica is excluded from the grid on purpose, so it is excluded from this check on purpose");
+
+  const missing = rows
+    .filter((row) => row[5] === "active" && row[0] !== "fica")
+    .map((row) => row[0])
+    .filter((code) => !shipped.has(code));
+  assert.deepEqual(missing, [],
+    `these active services are in the API catalogue and missing from pwa/services-default.json: ${missing.join(", ")}`);
+
+  // AND THE TWO FIELDS THAT CANNOT LEGITIMATELY DIFFER.
+  //
+  // `action` is what the tile dispatches on, so a fallback that disagrees
+  // opens the wrong screen. `sort_order` is where the tile lands, so a
+  // fallback that disagrees moves it on the first paint and then moves it
+  // again when the API answers.
+  //
+  // Status, visibility and name are deliberately NOT compared, because the
+  // fallback is allowed to be - and in three places is - more honest than the
+  // raw seed:
+  //   * airtime, data, electricity and voucher read "coming soon" here while
+  //     DEFAULT_SERVICES still says "active". That is correct: the capability
+  //     gate downgrades them on every API read because no supplier adapter can
+  //     send a purchase, and the fallback states the same conclusion directly
+  //     rather than promising a tile it would take back;
+  //   * airtime and data are hidden individually because the app ships one
+  //     combined "Airtime & Data" tile;
+  //   * tickets is "Event Tickets" here, which is the rename normalizeService
+  //     applies to the API's answer too.
+  for (const row of rows) {
+    const [code, , , action, , , , , order] = row;
+    const tile = fallback.items.find((item) => item.service_code === code);
+    if (!tile) continue;
+    assert.equal(tile.action, action, `${code}: the fallback dispatches on a different action`);
+    assert.equal(tile.sort_order, order, `${code}: the fallback would put this tile somewhere else`);
+  }
 });
 
 test("the app asks in its own voice — no browser prompts left", () => {

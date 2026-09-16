@@ -169,10 +169,31 @@ test("the headline wallet and money-movement fees match the approved schedule", 
 test("every active service in the app catalogue resolves to a schedule rule", () => {
   const catalogue = require("../../pwa/services-default.json").items;
   const known = new Set(APPROVED_PRICING_SCHEDULE.map((r) => r.serviceCode));
+
+  // A TILE WHOSE MONEY MOVES UNDER A DIFFERENT NAME IS STILL PRICED.
+  //
+  // Almost every service charges under its own code, so the tile name and the
+  // pricing rule are the same string and this check is a lookup. TitoPro is
+  // the exception and deliberately so: the tile itself costs nothing to open,
+  // and the fee is charged per JOB against two codes of its own - one for each
+  // side of the job, because the customer and the professional are charged
+  // differently. Mapping it here rather than inventing a "titopro" rule keeps
+  // the guard honest: a zero-rated rule under the tile's own name would read
+  // as "TitoPro is free" to anybody who came looking.
+  const PRICED_UNDER = {
+    titopro: ["titopro_customer_fee", "titopro_professional_fee"]
+  };
+  for (const [tile, codes] of Object.entries(PRICED_UNDER)) {
+    for (const code of codes) {
+      assert.ok(known.has(code),
+        `${tile} is exempted from the lookup below because it charges under "${code}" - and that rule does not exist`);
+    }
+  }
+
   const unpriced = catalogue
     .filter((s) => s.status === "active")
     .map((s) => normalizeServiceCode(s.service_code))
-    .filter((c) => !known.has(c));
+    .filter((c) => !known.has(c) && !PRICED_UNDER[c]);
   assert.deepEqual(unpriced, [],
     `these live services match no pricing rule and would be charged nothing: ${unpriced.join(", ")}`);
 });
