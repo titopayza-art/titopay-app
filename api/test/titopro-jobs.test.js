@@ -48,7 +48,7 @@ async function makeUser(label) {
 async function makeListedProfessional(profession) {
   const actor = await makeUser("Sipho");
   await profiles.saveProfile(actor, {
-    professions: [profession], headline: "Available in Soweto", suburb: "Pimville", city: "Soweto"
+    professions: [profession], tradingName: "Sipho's Plumbing", headline: "Available in Soweto", suburb: "Pimville", city: "Soweto"
   });
   // An enhanced profession - a cleaner, a tutor, a locksmith -
   // also needs background checks cleared before it can be listed, on top of

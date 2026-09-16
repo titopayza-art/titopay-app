@@ -191,13 +191,73 @@ const PROFESSIONS = Object.freeze([
   { key: "it_support", label: "IT support", group: "Professional", shape: "remote", bookCategory: null,
     vetting: "standard", certificate: "none",
     hint: "Computers, networks, websites and email" },
+  { key: "graphic_designer", label: "Graphic designer", group: "Professional", shape: "remote", bookCategory: null,
+    vetting: "standard", certificate: "none",
+    hint: "Logos, packaging, adverts, brand and print artwork" },
+  { key: "web_developer", label: "Web developer", group: "Professional", shape: "remote", bookCategory: null,
+    vetting: "standard", certificate: "none",
+    hint: "Websites, online shops, hosting and domains" },
   { key: "tutor", label: "Tutor", group: "Professional", shape: "remote", bookCategory: null,
     vetting: "enhanced", certificate: "none",
     hint: "School subjects, matric and tertiary" },
   { key: "virtual_assistant", label: "Virtual assistant", group: "Professional", shape: "remote", bookCategory: null,
     vetting: "standard", certificate: "none",
-    hint: "Admin, diary, email and customer follow-up" }
+    hint: "Admin, diary, email and customer follow-up" },
+
+  // "OTHER" IS A DOOR, AND A DOOR NEEDS A LOCK.
+  //
+  // It is the right thing to offer: the list above cannot name every trade in
+  // South Africa, and a welder or a signwriter should not be turned away
+  // because nobody thought of them. But an unnamed service is one nobody can
+  // categorise, price or vet, so it carries two conditions that no other
+  // profession does:
+  //
+  //   1. it is the only profession that REQUIRES the professional to say what
+  //      the work actually is - see otherServiceIsAllowed and
+  //      titopro-profile-service, which refuse to publish without it;
+  //   2. what they write is checked against the work TitoPay has decided not
+  //      to carry. Childcare was withdrawn deliberately (see the note above
+  //      where day_nanny used to be) and "Other" is exactly how it would come
+  //      back - as a free-text listing with no checks at all, which is worse
+  //      than the tile that was removed.
+  //
+  // `remote` because the shape cannot be known in advance, and remote is the
+  // only shape that promises the customer nothing about a diary slot.
+  { key: "other", label: "Other", group: "Professional", shape: "remote", bookCategory: null,
+    vetting: "standard", certificate: "none",
+    hint: "Something else — tell customers what you do" }
 ]);
+
+// WORK TITOPAY HAS DECIDED NOT TO CARRY, matched against what somebody writes
+// in the "Other" box.
+//
+// This is not a content filter and does not try to be clever. It is a short,
+// specific list of the one category that was withdrawn on purpose, in the
+// words a person would actually use, so that the decision survives the
+// existence of a free-text field. Anything it catches is refused with the
+// reason said out loud rather than silently dropped.
+const WITHDRAWN_WORK = Object.freeze([
+  { match: /\b(nanny|nannies|au ?pair|child ?min[dp]er|babysit\w*|baby ?sit\w*|creche|cr[eè]che|day ?care|daycare|child ?care|childcare)\b/i,
+    says: "TitoPay does not carry childcare. Introducing somebody to a child is a duty a police clearance does not discharge, and TitoPro is not set up for it." }
+]);
+
+// What a professional wrote in the "Other" box, weighed against that list.
+// Returns { allowed, says } so the caller can refuse with the reason rather
+// than with a generic rejection.
+function otherServiceIsAllowed(description) {
+  const text = String(description || "");
+  for (const entry of WITHDRAWN_WORK) {
+    if (entry.match.test(text)) return { allowed: false, says: entry.says };
+  }
+  return { allowed: true, says: "" };
+}
+
+// Whether this profession makes the free-text description compulsory. Asked
+// as a question rather than compared to a string, so a second open-ended
+// profession later needs no new branch at any call site.
+function requiresOwnDescription(key) {
+  return String(key || "") === "other";
+}
 
 /* ------------------------------------------------------------ job statuses */
 
@@ -370,6 +430,9 @@ function requiresEnhancedVetting(key) {
 }
 
 module.exports = {
+  WITHDRAWN_WORK,
+  otherServiceIsAllowed,
+  requiresOwnDescription,
   RATING_MIN,
   RATING_MAX,
   RATING_WORDS,

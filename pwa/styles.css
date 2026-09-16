@@ -16403,6 +16403,22 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
   .tp-pro-row .tp-status{margin-left:48px}
 }
 
+/* ---------------------------------------- TitoPro photos, terms and chat */
+.tp-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;margin-bottom:10px}
+.tp-photo{position:relative;margin:0;aspect-ratio:1;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:#fbfdff}
+.tp-photo img{width:100%;height:100%;object-fit:cover;display:block}
+/* The remove control sits ON the photo, so it is where a thumb already is. */
+.tp-photo-remove{position:absolute;top:4px;right:4px;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;border-radius:999px;background:rgba(11,31,63,0.72);color:#fff;cursor:pointer}
+.tp-photo-remove svg{width:14px;height:14px}
+.tp-photo-empty{grid-column:1/-1;margin:0;padding:14px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);font-size:0.82rem;line-height:1.45}
+/* A <label> wrapping a hidden file input is the control; it must not inherit
+   the form-label treatment the way the profession pills did. */
+.modal-card .field label.tp-photo-add,.tp-photo-add{display:inline-flex;align-items:center;justify-content:center;gap:7px;width:100%;text-transform:none;letter-spacing:normal;font-size:0.9rem}
+.tp-gallery-card .tp-group-title{margin-bottom:10px}
+.tp-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.tp-gallery img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:12px;border:1px solid var(--line);display:block}
+.tp-terms{margin:0;font-size:0.86rem;line-height:1.55;white-space:pre-wrap}
+.tp-message{width:100%;margin-top:12px}
 /* ------------------------------------------- TitoPro ratings and reporting */
 /* Five stars, drawn as five stars. A row of them is an impression; "4,3" on
    its own is a figure, and an impression is what somebody deciding whether to

@@ -59,7 +59,7 @@ async function makeAdmin() {
 }
 
 const DRAFT = {
-  professions: ["plumber"], headline: "Drains and geysers, Soweto",
+  professions: ["plumber"], tradingName: "Sipho's Plumbing", headline: "Drains and geysers, Soweto",
   bio: "Fifteen years on the tools.", suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25
 };
 
@@ -236,8 +236,19 @@ test("EVERY LISTING A CUSTOMER CAN SEE IS VERIFIED, BY CONSTRUCTION", async () =
   const mine = found.find((item) => item.userId === pro.userId);
   assert.ok(mine, "published listings are discoverable");
   assert.equal(mine.ficaVerified, true);
-  assert.equal(mine.name, "Sipho Ndlovu");
+  // THE NAME ON THE LIST IS THE NAME THEY TRADE UNDER, not the FICA one. A
+  // customer recognises "Sipho's Plumbing"; the verified legal name behind it
+  // is what TitoPay checked, and it is shown on the professional's own page
+  // rather than in a list of search results.
+  assert.equal(mine.name, "Sipho's Plumbing");
+  const page = await profiles.publicProfile(pro.userId);
+  assert.equal(page.name, "Sipho's Plumbing");
+  assert.equal(page.verifiedName, "Sipho Ndlovu", "and the checked identity travels with it");
   assert.deepEqual(mine.professionLabels, ["Plumber"]);
+  // The gallery is NOT on the search surface: six base64 photos per row would
+  // be megabytes of payload to read a list of names.
+  assert.equal(mine.photos, undefined);
+  assert.equal(mine.photoCount, 0);
   // Drafts are visible to nobody.
   const drafter = await makeUser({ fica: "pending" });
   await profiles.saveProfile(drafter, { ...DRAFT, city: "Soweto" });

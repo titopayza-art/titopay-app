@@ -49,16 +49,29 @@ function serve() {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
 }
 
-// The API, answering exactly as the real one does.
-const PROFESSIONS = [
-  { key: "plumber", label: "Plumber", group: "Home repairs", shape: "callout", hint: "Burst pipes, geysers, blocked drains", usesDiary: true, requiredChecks: [] },
-  { key: "electrician", label: "Electrician", group: "Home repairs", shape: "callout", hint: "Faults, DB boards, certificates of compliance", usesDiary: true, requiredChecks: [] },
-  { key: "painter", label: "Painter", group: "Home improvement", shape: "project", hint: "Interior and exterior painting", usesDiary: false, requiredChecks: [] },
-  { key: "cleaner", label: "Cleaner", group: "Home care", shape: "recurring", hint: "Home and office cleaning", usesDiary: true,
-    requiredChecks: [{ key: "police_clearance", label: "Police clearance", says: "A SAPS Police Clearance Certificate." },
-      { key: "reference_check", label: "References", says: "Two contactable references." }] },
-  { key: "bookkeeper", label: "Bookkeeper", group: "Professional", shape: "remote", hint: "Books, VAT and SARS submissions", usesDiary: false, requiredChecks: [] }
-];
+// THE CATALOGUE, BUILT FROM THE API'S OWN CONFIG RATHER THAN TYPED AGAIN.
+//
+// This was a hand-written list of five professions, which meant the harness
+// could pass while the picker was missing a profession the platform actually
+// offers - the fixture was the thing being tested. It is now derived from
+// config/titopro-reference.js and shaped exactly as GET /titopro/professions
+// shapes it, so a profession added there appears here on the next run and one
+// removed there cannot linger.
+const reference = require("../api/src/config/titopro-reference");
+const PROFESSIONS = reference.PROFESSIONS.map((item) => ({
+  key: item.key,
+  label: item.label,
+  group: item.group,
+  shape: item.shape,
+  hint: item.hint,
+  usesDiary: reference.usesBookingDiary(item.key),
+  requiredChecks: reference.requiredChecksFor(item.key).map((check) => ({
+    key: check,
+    label: reference.vettingCheck(check).label,
+    says: reference.vettingCheck(check).says
+  }))
+}));
+
 
 const JOB = {
   id: "11111111-1111-4111-8111-111111111111", reference: "TP-J-K7M2QRXP", status: "quoted",
@@ -115,8 +128,15 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
     check("every profession the API publishes is on the grid", browse.rows.length === PROFESSIONS.length, `${browse.rows.length} rows`);
     check("they are grouped the way the API groups them",
       browse.groups.join("|") === "Home repairs|Home improvement|Home care|Professional", browse.groups.join(" · "));
+    // Derived, not listed: the browse grid must flag exactly the professions
+    // the reference marks as needing enhanced vetting - no more, and crucially
+    // no fewer, since a missing shield is a customer told nothing about who is
+    // coming into their house.
+    const ENHANCED = reference.PROFESSIONS.filter((item) => reference.requiresEnhancedVetting(item.key))
+      .map((item) => item.label).sort();
     check("VETTED work is flagged before the form is opened",
-      browse.flagged.length === 1 && browse.flagged[0] === "Cleaner", browse.flagged.join(", "));
+      browse.flagged.slice().sort().join("|") === ENHANCED.join("|"),
+      `flagged ${browse.flagged.join(", ")} / expected ${ENHANCED.join(", ")}`);
     check("no page errors", s.errors.length === 0, s.errors.join(" | "));
     await s.context.close();
 
@@ -196,7 +216,9 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
       /Police clearance and References/.test(blocked.banner), blocked.banner.slice(0, 80));
     check("and it reads as blocked, not as an error", blocked.blockedClass.includes("is-blocked"));
     check("each missing check is listed on its own", blocked.missing.length === 2, blocked.missing.join(" · "));
-    check("the picker marks which work needs a check", blocked.shields === 1 && blocked.picks === 5,
+    check("the picker marks which work needs a check",
+      blocked.shields === reference.PROFESSIONS.filter((item) => reference.requiresEnhancedVetting(item.key)).length
+        && blocked.picks === reference.PROFESSIONS.length,
       `${blocked.shields} shield of ${blocked.picks} services`);
     await s.context.close();
 
@@ -435,6 +457,89 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS };
         /support/i.test(takedown.banner), takedown.banner.slice(0, 90));
       await s.context.close();
     }
+
+    // ---- 5f. THE LISTING CARRIES A NAME, PHOTOS, TERMS AND A WAY TO TALK -
+    const PHOTO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    const FULL_PAGE = { ok: true, professional: { ...PRO_PAGE.professional,
+      verifiedName: "Sipho Ndlovu", name: "Sipho's Plumbing",
+      terms: "Call-out fee R250, payable whether or not the job goes ahead.",
+      photos: [PHOTO, PHOTO, PHOTO] } };
+
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE, "/professionals/": FULL_PAGE });
+    await s.page.evaluate((id) => window.openTitoProProfessional(id), FULL_PAGE.professional.userId);
+    await s.page.waitForSelector(".tp-gallery", { timeout: 10000 });
+    const proPage = await s.page.evaluate(() => ({
+      heading: document.querySelector(".modal-head h2")?.textContent.trim() || "",
+      verified: document.querySelector(".tp-verified-line")?.textContent.replace(/\s+/g, " ").trim() || "",
+      photos: document.querySelectorAll(".tp-gallery img").length,
+      terms: document.querySelector(".tp-terms")?.textContent.trim() || "",
+      termsNote: [...document.querySelectorAll(".tp-note")].map((el) => el.textContent.trim()).join(" | "),
+      canMessage: Boolean(document.querySelector('[data-action^="titopro-chat-pro:"]'))
+    }));
+    check("the page is headed by the name they trade under",
+      proPage.heading === "Sipho's Plumbing", proPage.heading);
+    check("AND THE IDENTITY TITOPAY ACTUALLY CHECKED IS SHOWN BESIDE IT",
+      /Sipho Ndlovu/.test(proPage.verified), proPage.verified);
+    check("their photos are on the page", proPage.photos === 3, `${proPage.photos} photos`);
+    check("so are their terms", /Call-out fee R250/.test(proPage.terms), proPage.terms.slice(0, 50));
+    check("SAID TO BE THEIRS, NOT TITOPAY'S",
+      /not TitoPay's/.test(proPage.termsNote), proPage.termsNote.slice(0, 70));
+    check("and a customer can message them before raising a job", proPage.canMessage === true);
+    await s.context.close();
+
+    // The listing form: the new fields, and the Other box appearing only when
+    // Other is actually chosen.
+    const DRAFT_LISTING = (professions, extra = {}) => ({ ok: true,
+      profile: { status: "draft", professions, professionLabels: [], serviceRadiusKm: 20,
+        tradingName: "Sipho's Plumbing", outstandingChecks: [], enhancedVettingProfessions: [],
+        photos: [PHOTO], terms: "Deposit of 50% on projects over R5 000.", ...extra },
+      eligibility: { eligible: true, ficaVerified: true, blockers: [] } });
+
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/v1/titopro/me/listing": DRAFT_LISTING(["plumber"]) });
+    await s.page.evaluate(() => window.openTitoProListing());
+    await s.page.waitForSelector(".tp-photo-grid", { timeout: 10000 });
+    const listingForm = await s.page.evaluate(() => ({
+      tradingName: document.querySelector('[name="tradingName"]')?.value || "",
+      required: Boolean(document.querySelector('[name="tradingName"]')?.required),
+      terms: document.querySelector('[name="terms"]')?.value || "",
+      photos: document.querySelectorAll(".tp-photo img").length,
+      canRemove: Boolean(document.querySelector('[data-action^="titopro-photo-remove:"]')),
+      canAdd: Boolean(document.querySelector("[data-titopro-photo-input]")),
+      otherBox: Boolean(document.querySelector('[name="otherService"]'))
+    }));
+    check("the listing form asks for a name, and insists on one",
+      listingForm.tradingName === "Sipho's Plumbing" && listingForm.required === true, listingForm.tradingName);
+    check("it carries the saved photos, each removable",
+      listingForm.photos === 1 && listingForm.canRemove && listingForm.canAdd, `${listingForm.photos} photo(s)`);
+    check("and the professional's own terms", /50%/.test(listingForm.terms), listingForm.terms.slice(0, 40));
+    check("NO \"OTHER\" BOX WHEN OTHER IS NOT CHOSEN", listingForm.otherBox === false);
+    await s.context.close();
+
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/v1/titopro/me/listing": DRAFT_LISTING(["other"], { otherService: "Welding, gates and burglar bars" }) });
+    await s.page.evaluate(() => window.openTitoProListing());
+    await s.page.waitForSelector('[name="otherService"]', { timeout: 10000 });
+    const other = await s.page.evaluate(() => ({
+      value: document.querySelector('[name="otherService"]')?.value || "",
+      hint: document.querySelector('[name="otherService"]')?.closest(".field")?.querySelector(".field-hint")?.textContent.trim() || ""
+    }));
+    check("CHOOSING OTHER ASKS WHAT THE WORK IS", /Welding/.test(other.value), other.value);
+    check("and says the listing cannot go live without it",
+      /cannot go live/i.test(other.hint), other.hint.slice(0, 70));
+    await s.context.close();
+
+    // The three professions the picker must now offer.
+    s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+      "/v1/titopro/me/listing": DRAFT_LISTING(["plumber"]) });
+    await s.page.evaluate(() => window.openTitoProListing());
+    await s.page.waitForSelector(".tp-picks", { timeout: 10000 });
+    const offered = await s.page.evaluate(() =>
+      [...document.querySelectorAll('.tp-pick input[name="professions"]')].map((input) => input.value));
+    for (const key of ["graphic_designer", "web_developer", "other"]) {
+      check(`the picker offers ${key.replace(/_/g, " ")}`, offered.includes(key), offered.join(", ").slice(0, 80));
+    }
+    await s.context.close();
 
     // ---- 5e. NOTHING RUNS OFF THE SIDE OF ANY SCREEN --------------------
     //

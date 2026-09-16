@@ -407,6 +407,16 @@ async function cancelJob(actor, jobId, payload = {}) {
   return present(rows[0]);
 }
 
+// WHO THE OTHER SIDE OF THIS JOB IS, so a conversation can be opened with
+// them. Returns an id and nothing else, and only to somebody who is already on
+// the job - which is what lets the customer's user id stay OFF the job payload
+// while chat still works. A job nobody has taken yet returns null.
+async function chatCounterpart(actor, jobId) {
+  const job = await requireJob(jobId);
+  requireParty(actor, job);
+  return actor.userId === job.customer_user_id ? job.professional_user_id : job.customer_user_id;
+}
+
 // The conversation where the price was agreed, kept with the job it belongs to.
 async function attachChatThread(actor, jobId, threadId) {
   const job = await requireJob(jobId);
@@ -527,6 +537,7 @@ module.exports = {
   attachChatThread,
   canTransition,
   cancelJob,
+  chatCounterpart,
   confirmJob,
   createJob,
   declineQuote,

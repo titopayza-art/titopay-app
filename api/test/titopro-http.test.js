@@ -86,7 +86,7 @@ function call(actor, path, { method = "GET", body } = {}) {
 }
 
 const LISTING = {
-  professions: ["plumber"], headline: "Drains and geysers, Soweto",
+  professions: ["plumber"], tradingName: "Sipho's Plumbing", headline: "Drains and geysers, Soweto",
   suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25
 };
 
@@ -371,4 +371,158 @@ test("THE NEW DOORS ARE SHUT TO ANYBODY WITHOUT A TOKEN TOO", async () => {
   ]) {
     assert.equal((await call(null, path, { method })).status, 401, `${method} ${path}`);
   }
+});
+
+/* ---------------------------------------------- listing details and chat */
+
+test("A LISTING CARRIES A TRADING NAME, PHOTOS AND THE PROFESSIONAL'S TERMS", async () => {
+  const pro = await signedIn({ fica: "approved" });
+  // A one-pixel PNG. Real enough to pass the same validation PUT /auth/me/photo
+  // uses, small enough to keep the test honest about shape rather than size.
+  const photo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+  const saved = await call(pro, "/me/listing", { method: "PUT", body: {
+    ...LISTING,
+    tradingName: "Sipho's Plumbing",
+    terms: "Call-out fee R250, payable whether or not the job goes ahead. Geysers carry a 12 month guarantee.",
+    photos: [photo, photo] } });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.payload.profile.tradingName, "Sipho's Plumbing");
+  assert.equal(saved.payload.profile.photos.length, 2);
+  assert.match(saved.payload.profile.terms, /Call-out fee R250/);
+
+  await call(pro, "/me/listing/publish", { method: "POST" });
+  const customer = await signedIn({ fica: "approved" });
+  const page = await call(customer, `/professionals/${pro.userId}`);
+  assert.equal(page.payload.professional.name, "Sipho's Plumbing", "the name they trade under leads");
+  assert.equal(page.payload.professional.verifiedName, "Sipho Ndlovu", "the checked identity backs it up");
+  assert.equal(page.payload.professional.photos.length, 2);
+  assert.match(page.payload.professional.terms, /12 month guarantee/,
+    "terms are read BEFORE a job is raised, not discovered after the work");
+
+  // AND THE GALLERY IS NOT ON THE SEARCH SURFACE. Six base64 photos per row
+  // across fifty results is megabytes to read a list of names.
+  const found = await call(customer, "/search?profession=plumber&city=Soweto");
+  const row = found.payload.professionals.find((item) => item.userId === pro.userId);
+  assert.equal(row.photos, undefined);
+  assert.equal(row.photoCount, 2, "the count travels so a row can say how many there are");
+});
+
+test("A LISTING WITH NO NAME DOES NOT GO LIVE", async () => {
+  const pro = await signedIn({ fica: "approved" });
+  const { tradingName, ...noName } = LISTING;
+  await call(pro, "/me/listing", { method: "PUT", body: noName });
+  const refused = await call(pro, "/me/listing/publish", { method: "POST" });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.payload.details?.code, "trading_name_required");
+
+  await call(pro, "/me/listing", { method: "PUT", body: { ...noName, tradingName: "Sipho's Plumbing" } });
+  assert.equal((await call(pro, "/me/listing/publish", { method: "POST" })).status, 200);
+});
+
+test("ONLY REAL IMAGES, AND NOT TOO MANY", async () => {
+  const pro = await signedIn({ fica: "approved" });
+  const photo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+  // An <img src> that accepts SVG accepts a script, and these render on a page
+  // any customer can open. The allowlist is a whitelist for that reason.
+  const svg = await call(pro, "/me/listing", { method: "PUT", body: {
+    ...LISTING, photos: ["data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="] } });
+  assert.equal(svg.status, 400);
+  assert.equal(svg.payload.details?.code, "photo_type");
+
+  const notAnImage = await call(pro, "/me/listing", { method: "PUT", body: {
+    ...LISTING, photos: ["https://example.invalid/photo.png"] } });
+  assert.equal(notAnImage.status, 400);
+
+  const tooMany = await call(pro, "/me/listing", { method: "PUT", body: {
+    ...LISTING, photos: new Array(7).fill(photo) } });
+  assert.equal(tooMany.status, 400);
+  assert.equal(tooMany.payload.details?.code, "too_many_photos");
+});
+
+test('"OTHER" MUST SAY WHAT IT IS, AND CANNOT REOPEN WORK TITOPAY WITHDREW', async () => {
+  const pro = await signedIn({ fica: "approved" });
+  const OTHER = { ...LISTING, professions: ["other"] };
+
+  // Childcare was withdrawn deliberately. "Other" is exactly how it would come
+  // back - as free text with no checks at all, which is worse than the tile
+  // that was removed.
+  for (const attempt of ["Nanny for toddlers", "au pair, live in", "Daycare in my home"]) {
+    const refused = await call(pro, "/me/listing", { method: "PUT", body: { ...OTHER, otherService: attempt } });
+    assert.equal(refused.status, 422, attempt);
+    assert.equal(refused.payload.details?.code, "work_not_carried");
+    assert.match(refused.payload.error, /does not carry childcare/i);
+  }
+
+  // Saved with nothing said, it is a listing offering an unnamed service.
+  await call(pro, "/me/listing", { method: "PUT", body: OTHER });
+  const noDescription = await call(pro, "/me/listing/publish", { method: "POST" });
+  assert.equal(noDescription.status, 400);
+  assert.equal(noDescription.payload.details?.code, "other_service_required");
+
+  // A welder is exactly who this exists for.
+  await call(pro, "/me/listing", { method: "PUT", body: { ...OTHER, otherService: "Welding, gates and burglar bars" } });
+  assert.equal((await call(pro, "/me/listing/publish", { method: "POST" })).status, 200);
+});
+
+test("THE THREE NEW PROFESSIONS ARE IN THE CATALOGUE THE APP BUILDS ITS PICKER FROM", async () => {
+  const actor = await signedIn();
+  const { payload } = await call(actor, "/professions");
+  const byKey = Object.fromEntries(payload.professions.map((item) => [item.key, item]));
+  for (const key of ["graphic_designer", "web_developer", "other"]) {
+    assert.ok(byKey[key], `${key} must be offered`);
+    assert.equal(byKey[key].group, "Professional");
+    assert.equal(byKey[key].usesDiary, false, "remote work takes no diary slot");
+  }
+  assert.equal(byKey.other.label, "Other");
+});
+
+test("EITHER SIDE OF A JOB CAN OPEN A CONVERSATION, AND IT IS KEPT WITH THE JOB", async () => {
+  const customer = await signedIn({ fica: "approved" });
+  const pro = await signedIn({ fica: "approved" });
+  await call(pro, "/me/listing", { method: "PUT", body: LISTING });
+  await call(pro, "/me/listing/publish", { method: "POST" });
+  const jobId = (await call(customer, "/jobs", { method: "POST", body: {
+    profession: "plumber", professionalUserId: pro.userId, title: "Blocked kitchen drain" } })).payload.job.id;
+
+  const opened = await call(customer, `/jobs/${jobId}/chat`, { method: "POST" });
+  assert.equal(opened.status, 200);
+  const threadId = opened.payload.thread.id || opened.payload.thread.threadId;
+  assert.ok(threadId, "a thread id comes back");
+
+  // THE ID REALLY LANDS ON THE JOB. The route logs rather than throws if this
+  // fails, so without this assertion a column type mismatch would be invisible.
+  const { rows } = await pool.query("SELECT chat_thread_id FROM titopro_jobs WHERE id = $1", [jobId]);
+  assert.equal(rows[0].chat_thread_id, threadId,
+    "the conversation where the price was agreed has to be findable from the job");
+
+  // The professional opening it from their side reaches the SAME thread, not a
+  // second one - two inboxes for one job is the failure this guards.
+  const fromPro = await call(pro, `/jobs/${jobId}/chat`, { method: "POST" });
+  assert.equal(fromPro.payload.thread.id || fromPro.payload.thread.threadId, threadId);
+
+  // A stranger cannot open a conversation about somebody else's job.
+  const stranger = await signedIn({ fica: "approved" });
+  assert.equal((await call(stranger, `/jobs/${jobId}/chat`, { method: "POST" })).status, 404);
+});
+
+test("A CUSTOMER CAN MESSAGE A LISTED PROFESSIONAL BEFORE ANY JOB EXISTS", async () => {
+  const customer = await signedIn({ fica: "approved" });
+  const pro = await signedIn({ fica: "approved" });
+  await call(pro, "/me/listing", { method: "PUT", body: LISTING });
+  await call(pro, "/me/listing/publish", { method: "POST" });
+
+  // Which is the point: a price for painting a house is negotiated before
+  // anybody commits to it.
+  const opened = await call(customer, `/professionals/${pro.userId}/chat`, { method: "POST" });
+  assert.equal(opened.status, 200);
+  assert.ok(opened.payload.thread.id || opened.payload.thread.threadId);
+
+  // But the endpoint is not a directory for messaging any user id somebody
+  // types: the person has to actually be listed.
+  await call(pro, "/me/listing/pause", { method: "POST" });
+  const gone = await call(customer, `/professionals/${pro.userId}/chat`, { method: "POST" });
+  assert.equal(gone.status, 409);
+  assert.equal(gone.payload.details?.code, "not_listed");
 });

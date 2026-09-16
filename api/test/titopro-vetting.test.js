@@ -53,7 +53,7 @@ async function makeAdmin() {
 }
 
 const listingFor = (professions) => ({
-  professions, headline: "Available in Soweto", suburb: "Pimville", city: "Soweto"
+  professions, tradingName: "Sipho's Plumbing", headline: "Available in Soweto", suburb: "Pimville", city: "Soweto"
 });
 
 // Clear every check an enhanced profession needs.

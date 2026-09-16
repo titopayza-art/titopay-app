@@ -98,7 +98,7 @@ function call(actor, path, { method = "GET", body } = {}) {
 }
 
 const LISTING = {
-  professions: ["plumber"], headline: "Drains and geysers, Soweto",
+  professions: ["plumber"], tradingName: "Sipho's Plumbing", headline: "Drains and geysers, Soweto",
   suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25
 };
 

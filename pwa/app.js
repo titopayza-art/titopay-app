@@ -5034,6 +5034,8 @@ function onInput(event) {
   }
 }
 function onChange(event) {
+  const titoProPhoto = event.target.closest("[data-titopro-photo-input]");
+  if (titoProPhoto) { addTitoProPhoto(titoProPhoto); return; }
   // THE TITOPRO SERVICE PICKER, COUNTED AS IT IS TICKED.
   //
   // The limit is six and the API refuses a seventh, so without this a
@@ -5557,6 +5559,16 @@ async function handleAction(action, actionElement = null) {
     await runTitoProStep(jobId, step); return;
   }
   if (action.startsWith("titopro-rate:")) { await openTitoProRate(action.split(":")[1]); return; }
+  if (action.startsWith("titopro-photo-remove:")) { removeTitoProPhoto(action.split(":")[1]); return; }
+  if (action.startsWith("titopro-chat-pro:")) {
+    await openTitoProChat(`/v1/titopro/professionals/${encodeURIComponent(action.split(":")[1])}/chat`,
+      { onFail: "That professional is not available to message right now." });
+    return;
+  }
+  if (action.startsWith("titopro-chat-job:")) {
+    await openTitoProChat(`/v1/titopro/jobs/${encodeURIComponent(action.split(":")[1])}/chat`);
+    return;
+  }
   if (action.startsWith("titopro-report:")) {
     // "titopro-report:<professional>" from a listing, or with a job id after it
     // when the report is raised from the job it went wrong on.
@@ -32224,12 +32236,35 @@ async function openTitoProProfessional(userId) {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="tp-card">
-      <p class="tp-verified-line">${icon("check-circle")} FICA verified by TitoPay</p>
+      <p class="tp-verified-line">${icon("check-circle")} FICA verified by TitoPay${
+        // The name TitoPay actually checked, beside the one they trade under.
+        // A customer hiring "Sipho's Plumbing" is entitled to know whose
+        // identity was verified behind it.
+        pro.verifiedName && pro.verifiedName !== pro.name ? ` · ${esc(pro.verifiedName)}` : ""}</p>
       ${titoProScoreLine(pro)}
       ${pro.headline ? `<p class="tp-headline">${esc(pro.headline)}</p>` : ""}
+      ${pro.otherService ? `<p class="tp-pro-sub">${esc(pro.otherService)}</p>` : ""}
       ${pro.bio ? `<p class="tp-pro-sub">${esc(pro.bio)}</p>` : ""}
       <p class="tp-pro-sub">${esc([pro.suburb, pro.city].filter(Boolean).join(", "))}${pro.serviceRadiusKm ? ` · works within ${esc(String(pro.serviceRadiusKm))} km` : ""}</p>
+      <button class="btn secondary tp-message" type="button" data-action="titopro-chat-pro:${esc(pro.userId)}">
+        ${icon("chat")} Message ${esc(pro.name || "them")}</button>
     </section>
+
+    ${(pro.photos || []).length ? `
+      <section class="tp-card tp-gallery-card">
+        <p class="tp-group-title">Their work</p>
+        <div class="tp-gallery">
+          ${(pro.photos || []).map((photo, index) => `
+            <img src="${esc(photo)}" alt="${esc(pro.name || "Their")} work, photo ${index + 1}" loading="lazy">`).join("")}
+        </div>
+      </section>` : ""}
+
+    ${pro.terms ? `
+      <section class="tp-card">
+        <p class="tp-group-title">Their terms</p>
+        <p class="tp-terms">${esc(pro.terms)}</p>
+        <p class="tp-note">These are this professional's own terms, not TitoPay's. Read them before you send the job.</p>
+      </section>` : ""}
 
     ${titoProReviews(pro)}
 
@@ -32433,6 +32468,12 @@ function titoProJobActions(job, mine) {
   if (!["confirmed", "declined", "cancelled", "expired"].includes(job.status)) {
     rows.push(titoProButton(job, "cancel", "Cancel this job", "ghost"));
   }
+  // THE CONVERSATION, FROM THE JOB IT IS ABOUT. Offered to both sides and at
+  // every stage: a price is negotiated before the work, and questions do not
+  // stop once it has started.
+  if (job.professionalUserId) {
+    rows.push(`<button class="btn secondary" type="button" data-action="titopro-chat-job:${esc(job.id)}">${icon("chat")} Message ${mine ? "the customer" : "the professional"}</button>`);
+  }
   // REPORTING IS AVAILABLE FROM THE JOB, not only from the listing. By the time
   // somebody has been let down they are looking at the job, not searching for
   // the person who did it to them.
@@ -32537,6 +32578,122 @@ async function runTitoProStep(jobId, step) {
 
 /* -------------------------------------------------------------- listing */
 
+/* --------------------------------------------------- photos on a listing */
+
+// THE PHOTOS ARE HELD IN STATE WHILE THE FORM IS OPEN, not read back off the
+// DOM at save time. An <img src> cannot be read back as a data URL without a
+// canvas round trip, and the form is re-rendered on every add and remove, so
+// the list has to survive that.
+function titoProPhotos() {
+  const store = titoProState();
+  if (!Array.isArray(store.photos)) store.photos = [];
+  return store.photos;
+}
+
+function titoProPhotoTiles() {
+  const photos = titoProPhotos();
+  if (!photos.length) {
+    return `<p class="tp-photo-empty">No photos yet. A finished job is what a customer is really choosing between.</p>`;
+  }
+  return photos.map((photo, index) => `
+    <figure class="tp-photo">
+      <img src="${esc(photo)}" alt="Your work, photo ${index + 1}">
+      <button class="tp-photo-remove" type="button" data-action="titopro-photo-remove:${index}"
+        aria-label="Remove photo ${index + 1}">${icon("x")}</button>
+    </figure>`).join("");
+}
+
+// RESIZED ON THE PHONE, BEFORE IT IS SENT.
+//
+// A modern handset takes a 4MB photograph and the API caps a listing image at
+// 600KB, so without this every upload from a real phone would be refused - and
+// on a South African mobile connection it would be refused after spending the
+// customer's data to get there. 1400px on the long edge is enough for a
+// full-width phone image at 3x, and JPEG at 0.82 lands comfortably inside the
+// cap for a photograph of a wall or a geyser.
+async function titoProResizePhoto(file) {
+  const dataUrl = await readFileAsDataUrl(file);
+  const image = await new Promise((resolve, reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error("That image could not be read."));
+    element.src = dataUrl;
+  });
+  const longest = Math.max(image.width, image.height) || 1;
+  const scale = Math.min(1, 1400 / longest);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+  // Stepped down rather than sent hopefully: a detailed photograph can still
+  // exceed the cap at 0.82, and being refused by the server is a worse answer
+  // than one more pass here.
+  for (const quality of [0.82, 0.7, 0.58]) {
+    const out = canvas.toDataURL("image/jpeg", quality);
+    if (out.length * 0.75 <= 600 * 1024) return out;
+  }
+  throw new Error("That photo is too detailed to send. Try another one.");
+}
+
+async function addTitoProPhoto(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  input.value = "";
+  const photos = titoProPhotos();
+  if (photos.length >= 6) { showToast("Up to six photos. Remove one to add another.", "error"); return; }
+  try {
+    photos.push(await titoProResizePhoto(file));
+  } catch (error) {
+    showToast(error.message || "That photo could not be added.", "error");
+    return;
+  }
+  // Only the grid is redrawn. Re-rendering the whole screen would throw away
+  // everything typed into the form to add a picture to it.
+  const grid = document.querySelector("[data-titopro-photos]");
+  if (grid) grid.innerHTML = titoProPhotoTiles();
+}
+
+function removeTitoProPhoto(index) {
+  const photos = titoProPhotos();
+  const at = Number(index);
+  if (!Number.isInteger(at) || at < 0 || at >= photos.length) return;
+  photos.splice(at, 1);
+  const grid = document.querySelector("[data-titopro-photos]");
+  if (grid) grid.innerHTML = titoProPhotoTiles();
+}
+
+/* ------------------------------------------------------------------ chat */
+
+// TITOPRO TALKS ON TITOPAY CHAT, NOT ON A SECOND ONE.
+//
+// The API opens the thread - it is the side that knows whether this person is
+// still listed, and it writes the thread id onto the job so the conversation
+// where a price was agreed can be found from the job months later. Everything
+// after that is the chat the app already has: the same inbox, the same
+// delivery ticks, the same block and mute.
+async function openTitoProChat(endpoint, { onFail = "That conversation could not be opened." } = {}) {
+  let thread;
+  try {
+    thread = (await api(endpoint, { method: "POST" })).thread;
+  } catch (error) {
+    showToast(error.message || onFail, "error");
+    return;
+  }
+  const serverId = thread?.id || thread?.threadId;
+  if (!serverId) { showToast(onFail, "error"); return; }
+  mergeTitoPayChatThreadsFromApi([thread]);
+  const local = titoPayChatThreads()
+    .find((item) => item.apiThreadId === serverId || item.id === serverId);
+  if (!local) {
+    // The thread exists on the server either way, so the inbox is the honest
+    // place to send somebody rather than a dead end.
+    showToast("Opening your chats.");
+    openTitoPayChatModal();
+    return;
+  }
+  openTitoPayChatThread(local.id);
+}
+
 async function openTitoProListing() {
   openModal(`
     <div class="modal-head"><div><p class="eyebrow">TitoPro</p><h2>Offer my services</h2></div>
@@ -32550,6 +32707,10 @@ async function openTitoProListing() {
   const profile = mine.profile || {};
   const eligibility = mine.eligibility || { blockers: [] };
   const chosen = new Set(profile.professions || []);
+  // Seeded from what is saved every time the form opens, so the grid shows the
+  // listing as it stands rather than whatever was left in state by a previous
+  // visit to this screen.
+  titoProState().photos = Array.isArray(profile.photos) ? [...profile.photos] : [];
 
   openModal(`
     <div class="modal-head">
@@ -32612,6 +32773,19 @@ async function openTitoProListing() {
           </div>`).join("")}
         <small class="field-hint tp-hint-icon">${icon("shield")}<span>A shield means TitoPay needs a background check before that work can go live.</span></small>
       </div>
+      ${(profile.professions || []).includes("other") || chosen.has("other") ? `
+        <div class="field">
+          <label>What is the work?</label>
+          <input name="otherService" aria-label="What your work is" maxlength="160"
+            placeholder="Welding, gates and burglar bars" value="${esc(profile.otherService || "")}">
+          <small class="field-hint">You chose Other, so tell customers what you actually do. Your listing cannot go live without it.</small>
+        </div>` : ""}
+      <div class="field">
+        <label>Your name or business name</label>
+        <input name="tradingName" aria-label="Your name or business name" maxlength="120"
+          placeholder="Sipho's Plumbing" value="${esc(profile.tradingName || "")}" required>
+        <small class="field-hint">What customers see and call you. Your verified name is checked by TitoPay and shown on your page as well.</small>
+      </div>
       <div class="field">
         <label>One line about your work</label>
         <input name="headline" aria-label="Headline" maxlength="120" placeholder="Drains and geysers, Soweto" value="${esc(profile.headline || "")}">
@@ -32632,6 +32806,37 @@ async function openTitoProListing() {
         <label>How far will you travel?</label>
         <input name="serviceRadiusKm" aria-label="Service radius in km" inputmode="numeric" value="${esc(String(profile.serviceRadiusKm || 20))}">
         <small class="field-hint">In kilometres, up to 200.</small>
+      </div>
+      <!-- PHOTOGRAPHS OF THE WORK. A customer choosing between three painters
+           is choosing on evidence, and a finished wall is the evidence. -->
+      <div class="field">
+        <label>Photos of your work</label>
+        <div class="tp-photo-grid" data-titopro-photos>${titoProPhotoTiles()}</div>
+        <label class="btn secondary tp-photo-add">
+          ${icon("plus")} Add a photo
+          <input type="file" accept="image/png,image/jpeg,image/webp" data-titopro-photo-input hidden>
+        </label>
+        <small class="field-hint">Up to six. They are resized on your phone before they are sent, so this works on a slow connection.</small>
+      </div>
+      <!-- THE PROFESSIONAL'S OWN TERMS, read before a job is raised rather
+           than discovered after the work is done.
+
+           The placeholder says "payment up front" rather than the obvious
+           trade word for it, deliberately. regulatory-red-lines.test.js bans
+           that word from customer-visible copy: TitoPay is a payments platform
+           and must never read as a place that holds money in the banking
+           sense. A professional may still use it in their OWN terms - that is
+           their sentence about their trade, not TitoPay's about itself - and
+           the guard scans this file, not what they type into it.
+
+           This comment avoids the word too. The guard strips JavaScript
+           comments before scanning and cannot strip an HTML one inside a
+           template literal, so a note explaining the rule would break it. -->
+      <div class="field">
+        <label>Your terms</label>
+        <textarea name="terms" aria-label="Your terms and conditions" rows="4" maxlength="4000"
+          placeholder="Call-out fee, payment up front, guarantee, what you do not do.">${esc(profile.terms || "")}</textarea>
+        <small class="field-hint">Shown on your page before anybody sends you a job, so there are no surprises afterwards.</small>
       </div>
       <button class="btn primary" type="submit">${icon("check-circle")} Save my listing</button>
     </form>
@@ -32673,14 +32878,34 @@ function titoProVettingPanel(profile) {
 async function submitTitoProListing(form, data) {
   const professions = Array.from(form.querySelectorAll('input[name="professions"]:checked')).map((input) => input.value);
   if (!professions.length) { showToast("Choose at least one service.", "error"); return; }
-  await api("/v1/titopro/me/listing", { method: "PUT", body: {
-    professions,
-    headline: data.headline,
-    bio: data.bio,
-    suburb: data.suburb,
-    city: data.city,
-    serviceRadiusKm: Number(data.serviceRadiusKm) || 20
-  } });
+  if (!String(data.tradingName || "").trim()) {
+    showToast("Add your name or your business name.", "error");
+    return;
+  }
+  if (professions.includes("other") && !String(data.otherService || "").trim()) {
+    showToast("You chose Other. Say what the work is.", "error");
+    return;
+  }
+  try {
+    await api("/v1/titopro/me/listing", { method: "PUT", body: {
+      professions,
+      tradingName: data.tradingName,
+      otherService: data.otherService,
+      headline: data.headline,
+      bio: data.bio,
+      terms: data.terms,
+      photos: titoProPhotos(),
+      suburb: data.suburb,
+      city: data.city,
+      serviceRadiusKm: Number(data.serviceRadiusKm) || 20
+    } });
+  } catch (error) {
+    // The API answers with exactly what is wrong - a photo that is not an
+    // image, work TitoPay does not carry - which is more useful than anything
+    // this screen could compose.
+    showToast(error.message || "Your listing could not be saved.", "error");
+    return;
+  }
   showToast("Listing saved.");
   await openTitoProListing();
 }

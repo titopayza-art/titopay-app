@@ -60,7 +60,7 @@ async function makeAdmin() {
 async function makeListedProfessional(profession = "plumber") {
   const actor = await makeUser("Sipho");
   await profiles.saveProfile(actor, {
-    professions: [profession], headline: "Available in Soweto", suburb: "Pimville", city: "Soweto"
+    professions: [profession], tradingName: "Sipho's Plumbing", headline: "Available in Soweto", suburb: "Pimville", city: "Soweto"
   });
   const admin = await makeAdmin();
   for (const check of reference.requiredChecksFor(profession)) {

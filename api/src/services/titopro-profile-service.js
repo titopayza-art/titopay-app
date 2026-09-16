@@ -59,6 +59,24 @@ async function ensureProfileSchema() {
         city TEXT,
         province TEXT,
         service_radius_km INTEGER NOT NULL DEFAULT 20,
+        -- WHO THE CUSTOMER IS HIRING, IN THE NAME THEY TRADE UNDER.
+        -- The account's own full_name is a FICA-verified legal name and is not
+        -- always the name on the bakkie. A customer comparing three plumbers
+        -- needs the name they will be told over the phone, so this is asked
+        -- for rather than assumed - and required before a listing goes live.
+        trading_name TEXT,
+        -- The professional's own terms: call-out charges, deposits, guarantee,
+        -- what they do not do. Shown on their page before a job is raised, so
+        -- a customer agrees to them rather than discovering them afterwards.
+        terms TEXT,
+        -- Photographs of their work. Stored as validated data URLs, the same
+        -- shape PUT /auth/me/photo already uses for a profile picture, so this
+        -- needs no storage service that does not exist yet. Deliberately NOT
+        -- returned by search - see searchProfessionals.
+        photos TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+        -- What "Other" actually is, in the professional's own words. Required
+        -- when they pick it; see config/titopro-reference.js.
+        other_service TEXT,
         status TEXT NOT NULL DEFAULT 'draft',
         -- WHAT WAS TRUE WHEN THIS WENT LIVE. Kept so a listing can be shown to
         -- have been published against a verified identity even after that
@@ -96,7 +114,9 @@ async function ensureProfileSchema() {
       )
     `);
     for (const column of ["admin_action TEXT", "admin_reason TEXT",
-      "admin_actioned_by UUID", "admin_actioned_at TIMESTAMPTZ"]) {
+      "admin_actioned_by UUID", "admin_actioned_at TIMESTAMPTZ",
+      "trading_name TEXT", "terms TEXT", "other_service TEXT",
+      "photos TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]"]) {
       await pool.query(`ALTER TABLE titopro_profiles ADD COLUMN IF NOT EXISTS ${column}`);
     }
     // THE CONSTRAINTS HAVE TO BE ADDED SEPARATELY, and this is the trap that
@@ -177,6 +197,37 @@ async function listingEligibility(userId, professions = null) {
   return { eligible: blockers.length === 0, ficaVerified, blockers, vetting, fullName: user.full_name };
 }
 
+/* ------------------------------------------------------------- the photos */
+
+// A PHOTOGRAPH OF THEIR WORK, VALIDATED THE WAY THE PLATFORM ALREADY DOES IT.
+//
+// PUT /auth/me/photo accepts a base64 data URL, checks the media type against
+// a fixed allowlist and caps the size. That is TitoPay's storage answer today
+// - there is no object store behind any of this - so a listing gallery uses
+// the same one rather than inventing a second. The allowlist is a WHITELIST on
+// purpose: an <img src> that accepts "data:image/svg+xml" accepts a script,
+// and these are rendered on a page any customer can open.
+const PHOTO_PATTERN = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/;
+const MAX_PHOTOS = 6;
+const MAX_PHOTO_BYTES = 600 * 1024;
+
+function normalisePhotos(value) {
+  const list = Array.isArray(value) ? value : [];
+  if (list.length > MAX_PHOTOS) {
+    throw new AppError(400, `Up to ${MAX_PHOTOS} photos. Take one off to add another.`, { code: "too_many_photos" });
+  }
+  return list.map((entry, index) => {
+    const photo = String(entry || "").trim();
+    if (!PHOTO_PATTERN.test(photo)) {
+      throw new AppError(400, `Photo ${index + 1} is not a PNG, JPEG or WebP image.`, { code: "photo_type" });
+    }
+    if (Buffer.byteLength(photo, "utf8") > MAX_PHOTO_BYTES) {
+      throw new AppError(413, `Photo ${index + 1} is too large. Choose a smaller one.`, { code: "photo_size" });
+    }
+    return photo;
+  });
+}
+
 /* -------------------------------------------------------------- the draft */
 
 // Drafting needs no verification. Somebody should be able to write their
@@ -200,10 +251,28 @@ async function saveProfile(actor, payload = {}) {
     throw new AppError(400, "Service area must be between 1 and 200 km");
   }
 
+  // WHAT "OTHER" ACTUALLY IS, refused at the draft rather than at publish.
+  // A professional who types childcare here should be told immediately, in the
+  // box they typed it into - not after they have filled the whole form in and
+  // pressed Go live.
+  const wantsOther = professions.some((key) => reference.requiresOwnDescription(key));
+  const otherService = payload.otherService
+    ? boundedText(payload.otherService, "What your work is", { min: 0, max: 160 })
+    : "";
+  if (otherService) {
+    const verdict = reference.otherServiceIsAllowed(otherService);
+    if (!verdict.allowed) {
+      throw new AppError(422, verdict.says, { code: "work_not_carried" });
+    }
+  }
+
+  const photos = normalisePhotos(payload.photos);
+
   const { rows } = await pool.query(
     `INSERT INTO titopro_profiles
-      (id, user_id, professions, headline, bio, suburb, city, province, service_radius_km)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      (id, user_id, professions, headline, bio, suburb, city, province, service_radius_km,
+       trading_name, terms, other_service, photos)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      ON CONFLICT (user_id) DO UPDATE SET
        professions = EXCLUDED.professions,
        headline = EXCLUDED.headline,
@@ -212,6 +281,10 @@ async function saveProfile(actor, payload = {}) {
        city = EXCLUDED.city,
        province = EXCLUDED.province,
        service_radius_km = EXCLUDED.service_radius_km,
+       trading_name = EXCLUDED.trading_name,
+       terms = EXCLUDED.terms,
+       other_service = EXCLUDED.other_service,
+       photos = EXCLUDED.photos,
        updated_at = NOW()
      RETURNING *`,
     [crypto.randomUUID(), actor.userId, professions,
@@ -220,7 +293,13 @@ async function saveProfile(actor, payload = {}) {
       payload.suburb ? boundedText(payload.suburb, "Suburb", { min: 0, max: 120 }) : null,
       payload.city ? boundedText(payload.city, "City", { min: 0, max: 120 }) : null,
       payload.province ? boundedText(payload.province, "Province", { min: 0, max: 120 }) : null,
-      Math.round(radius)]
+      Math.round(radius),
+      payload.tradingName ? boundedText(payload.tradingName, "Your name or business name", { min: 0, max: 120 }) : null,
+      payload.terms ? boundedText(payload.terms, "Your terms", { min: 0, max: 4000 }) : null,
+      // Kept only while "Other" is one of the chosen services, so removing it
+      // does not leave an orphaned description on the record.
+      wantsOther ? (otherService || null) : null,
+      photos]
   );
   return present(rows[0], await listingEligibility(actor.userId, rows[0].professions));
 }
@@ -254,6 +333,31 @@ async function publishProfile(actor) {
   }
   if (!profile.city && !profile.suburb) {
     throw new AppError(400, "Add the area you work in before you go live.");
+  }
+  // A CUSTOMER HAS TO KNOW WHO THEY ARE HIRING.
+  // The account's full_name is a FICA-verified legal name and is not always
+  // the name on the bakkie, so the trading name is asked for rather than
+  // inferred - and a listing with no name at all is not put in front of
+  // anybody.
+  if (!String(profile.trading_name || "").trim()) {
+    throw new AppError(400, "Add your name or your business name before you go live.",
+      { code: "trading_name_required" });
+  }
+  // "OTHER" MUST SAY WHAT IT IS. A listing offering an unnamed service is one
+  // no customer can judge and nobody can vet.
+  if (profile.professions.some((key) => reference.requiresOwnDescription(key))) {
+    const described = String(profile.other_service || "").trim();
+    if (!described) {
+      throw new AppError(400, "You chose Other. Say what the work is before you go live.",
+        { code: "other_service_required" });
+    }
+    // Checked again here, not only on save: the withdrawn list is policy and
+    // can grow, and a listing saved before an entry was added must not stay
+    // publishable because it slipped through on the day it was written.
+    const verdict = reference.otherServiceIsAllowed(described);
+    if (!verdict.allowed) {
+      throw new AppError(422, verdict.says, { code: "work_not_carried" });
+    }
   }
 
   // AN ADMIN TAKEDOWN IS NOT SOMETHING THE PROFESSIONAL CAN LIFT.
@@ -548,12 +652,22 @@ async function publicProfile(userId) {
   ]);
   return {
     userId: row.user_id,
-    name: user.rows[0]?.full_name || "",
+    // THE TRADING NAME LEADS, THE VERIFIED NAME BACKS IT UP. A customer
+    // recognises "Sipho's Plumbing"; what makes them comfortable is that
+    // TitoPay has checked a legal identity behind it. Both are shown, and the
+    // legal one is never silently replaced by the one the professional typed.
+    name: row.trading_name || user.rows[0]?.full_name || "",
+    verifiedName: user.rows[0]?.full_name || "",
     professions: row.professions,
     professionLabels: row.professions.map((key) => reference.profession(key)?.label || key),
     enhancedVettingProfessions: row.professions.filter((key) => reference.requiresEnhancedVetting(key)),
     headline: row.headline,
     bio: row.bio,
+    // The professional's own terms, shown BEFORE a job is raised rather than
+    // discovered after the work is done.
+    terms: row.terms || "",
+    otherService: row.other_service || "",
+    photos: Array.isArray(row.photos) ? row.photos : [],
     suburb: row.suburb,
     city: row.city,
     serviceRadiusKm: row.service_radius_km,
@@ -582,8 +696,17 @@ async function searchProfessionals({ profession = null, city = null, limit = 50 
   if (profession) { params.push(profession); where.push(`$${params.length} = ANY(p.professions)`); }
   if (city) { params.push(city); where.push(`LOWER(p.city) = LOWER($${params.length})`); }
   params.push(Math.max(1, Math.min(200, Number(limit) || 50)));
+  // THE COLUMNS THIS SURFACE NEEDS, NAMED - not p.*.
+  //
+  // p.* now drags the whole photo gallery out of the database for every row,
+  // megabytes of base64 per professional, only for the mapping below to throw
+  // it away. cardinality(p.photos) gets the one fact the list actually shows -
+  // how many there are - without reading a single byte of the images.
   const { rows } = await pool.query(
-    `SELECT p.*, u.full_name
+    `SELECT p.user_id, p.professions, p.headline, p.suburb, p.city,
+            p.service_radius_km, p.trading_name,
+            cardinality(p.photos) AS photo_count,
+            u.full_name
        FROM titopro_profiles p
        JOIN users u ON u.id = p.user_id
       WHERE ${where.join(" AND ")}
@@ -600,7 +723,14 @@ async function searchProfessionals({ profession = null, city = null, limit = 50 
 
   return rows.map((row) => ({
     userId: row.user_id,
-    name: row.full_name,
+    name: row.trading_name || row.full_name,
+    // NO PHOTO DATA ON THIS SURFACE, deliberately. The gallery is stored as
+    // base64 data URLs, so six of them is a few megabytes on ONE professional;
+    // fifty search results would be a payload nobody on a South African mobile
+    // connection should be asked to download to read a list of names. The
+    // count travels instead, so a row can say "6 photos", and the images
+    // themselves load on the one profile a customer actually opens.
+    photoCount: Number(row.photo_count) || 0,
     professions: row.professions,
     professionLabels: row.professions.map((key) => reference.profession(key)?.label || key),
     headline: row.headline,
@@ -636,8 +766,12 @@ function present(row, eligibility = null) {
     // Which of the chosen services need more than an identity check before a
     // customer lets this person into their home or near their child.
     enhancedVettingProfessions: row.professions.filter((key) => reference.requiresEnhancedVetting(key)),
+    tradingName: row.trading_name || "",
     headline: row.headline,
     bio: row.bio,
+    terms: row.terms || "",
+    otherService: row.other_service || "",
+    photos: Array.isArray(row.photos) ? row.photos : [],
     suburb: row.suburb,
     city: row.city,
     province: row.province,

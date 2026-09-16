@@ -79,6 +79,14 @@ const PROS = [
 ];
 
 // One professional's page, as a customer deciding whether to hire them sees it.
+const PHOTO_SWATCH = (hex) => {
+  // A flat colour tile stands in for a photograph: the shot is of the LAYOUT,
+  // and a real photo would only make it harder to see whether the grid is
+  // right. 1x1 PNGs, upscaled by the CSS exactly as a real image would be.
+  const png = { "1": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" };
+  return `data:image/png;base64,${png["1"]}`;
+};
+
 const PRO_PAGE = { ok: true, professional: {
   userId: "aaaa1111-1111-4111-8111-111111111111", name: "Sipho Ndlovu",
   professions: ["plumber", "handyman"], professionLabels: ["Plumber", "Handyman"],
@@ -86,6 +94,9 @@ const PRO_PAGE = { ok: true, professional: {
   bio: "Fifteen years on the tools in Soweto. Geysers, blocked drains and burst pipes, same day where I can.",
   suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25, ficaVerified: true,
   rating: 4.8, ratingCount: 24,
+  verifiedName: "Sipho Ndlovu",
+  terms: "Call-out fee R250, payable whether or not the job goes ahead.\nGeysers carry a 12 month guarantee on labour.\n50% deposit on any job over R5 000.",
+  photos: [PHOTO_SWATCH("a"), PHOTO_SWATCH("b"), PHOTO_SWATCH("c")],
   reviews: [
     { id: "r1", stars: 5, by: "Thandi", profession: "Plumber", comment: "On time, fixed the geyser and cleaned up after himself.", commentHidden: false },
     { id: "r2", stars: 5, by: "Bongani", profession: "Plumber", comment: "Came out on a Sunday for a burst pipe. Fair price.", commentHidden: false },
@@ -272,6 +283,21 @@ async function shoot(browser, name, title, routes, run) {
       async (page) => {
         await page.evaluate(() => window.openTitoProListing());
         await page.waitForSelector(".tp-banner.is-blocked", { timeout: 10000 });
+      });
+
+    await shoot(browser, "13-listing-form", "The listing form: name, photos and terms",
+      { "/titopro/professions": CATALOGUE,
+        "/titopro/me/listing": { ok: true,
+          profile: { status: "draft", professions: ["plumber", "handyman"], professionLabels: ["Plumber", "Handyman"],
+            tradingName: "Sipho's Plumbing", headline: "Drains and geysers, 15 years on the tools",
+            bio: "Fifteen years on the tools in Soweto.", suburb: "Pimville", city: "Soweto", serviceRadiusKm: 25,
+            photos: [PHOTO_SWATCH("a"), PHOTO_SWATCH("b")],
+            terms: "Call-out fee R250. 50% deposit on any job over R5 000.",
+            outstandingChecks: [], enhancedVettingProfessions: [] },
+          eligibility: { eligible: true, ficaVerified: true, blockers: [] } } },
+      async (page) => {
+        await page.evaluate(() => window.openTitoProListing());
+        await page.waitForSelector(".tp-photo-grid", { timeout: 10000 });
       });
 
   } finally {

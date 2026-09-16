@@ -25,6 +25,8 @@ const profiles = require("../services/titopro-profile-service");
 const vetting = require("../services/titopro-vetting-service");
 const jobs = require("../services/titopro-service");
 const reputation = require("../services/titopro-reputation-service");
+const chat = require("../services/chat-service");
+const { AppError } = require("../lib/errors");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -123,6 +125,67 @@ router.get("/search", async (req, res, next) => {
 router.get("/professionals/:userId", async (req, res, next) => {
   try {
     res.json({ ok: true, professional: await profiles.publicProfile(requireUuid(req.params.userId, "Professional ID")) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ------------------------------------------------------------------ chat */
+
+// TALKING TO THE OTHER SIDE, ON THE CHAT TITOPAY ALREADY HAS.
+//
+// A price for painting a house is negotiated, not listed, so TitoPro needs a
+// conversation. It does NOT need a second messaging system: TitoPay Chat
+// already carries threads, delivery state, read receipts, muting, blocking and
+// a moderation trail, and a parallel one would be a second thing to secure, a
+// second place a customer looks for the same message, and a second inbox to
+// keep in sync. This opens a thread on that system and hands back its id.
+//
+// The chat service does its own checks - both sides verified, no thread with
+// yourself, blocked threads refused - so this adds only the TitoPro question:
+// is this person actually listed? Without that, the endpoint would be a
+// directory for messaging any user id somebody cared to type.
+router.post("/professionals/:userId/chat", async (req, res, next) => {
+  try {
+    const userId = requireUuid(req.params.userId, "Professional ID");
+    const listing = await profiles.requirePublishedProfessional(userId);
+    const thread = await chat.openThread(req.auth, {
+      recipientId: userId,
+      title: listing.trading_name || undefined
+    });
+    res.json({ ok: true, thread });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// THE CONVERSATION ABOUT A JOB, KEPT WITH THE JOB.
+//
+// Either side may open it, and the thread id is written onto the job record,
+// so the messages where a price was agreed can be found from the job months
+// later rather than living in an inbox nobody thinks to search. Both parties
+// are checked by the job service; a listing that has since been taken down
+// does NOT close the conversation, because a customer mid-job still has to be
+// able to reach the person in their house.
+router.post("/jobs/:id/chat", async (req, res, next) => {
+  try {
+    const jobId = requireUuid(req.params.id, "Job ID");
+    const job = await jobs.getJob(req.auth, jobId);
+    const otherSide = await jobs.chatCounterpart(req.auth, jobId);
+    if (!otherSide) {
+      throw new AppError(409, "No professional has taken this job yet, so there is nobody to message.");
+    }
+    const thread = await chat.openThread(req.auth, { recipientId: otherSide, title: job.title });
+    // Recorded on the job, not just returned. Best effort on purpose: a thread
+    // that opens and a job record that does not learn about it is still a
+    // working conversation, and failing the request would take that away too.
+    // LOGGED rather than swallowed, because a catch that says nothing is how a
+    // column type mismatch survives for months - the test asserts the id
+    // really lands, so this only ever fires for something unforeseen.
+    await jobs.attachChatThread(req.auth, jobId, thread.id || thread.threadId)
+      .catch((error) => console.error("[titopro] chat thread not attached to job",
+        { jobId, message: error.message }));
+    res.json({ ok: true, thread });
   } catch (error) {
     next(error);
   }
