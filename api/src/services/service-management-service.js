@@ -394,13 +394,38 @@ async function addTitoProTileOnce() {
     if (applied.rows.length) return;
     const row = DEFAULT_SERVICES.find((item) => item[0] === "titopro");
     if (!row) return;
+    // THE COLUMN NAMES ARE service_icon, sort_order AND feature_badge.
+    //
+    // This was written as icon / display_order / badge - three columns that do
+    // not exist on this table - so the INSERT threw on every single run and
+    // the catch below turned that into a log line on every catalogue read.
+    //
+    // WHAT IT DID NOT DO IS HIDE TITOPRO, and the difference is worth stating
+    // because it is the reason this was invisible for a while. The seed's
+    // "catalogue is short" test counts the DEFAULT_SERVICES codes PRESENT, so
+    // a database missing only this one has 37 of 38, reads as short, and the
+    // seed inserts the tile correctly on its way past. This repair is the belt
+    // to that seed's braces - and a broken belt is only discovered the day the
+    // braces are needed.
+    //
+    // Spelt out against schema.sql rather than from memory, and
+    // api/test/service-titopro-tile.test.js now drives this function directly,
+    // so a wrong column name fails a test rather than being absorbed.
+    //
+    // The values are named rather than sliced out of the DEFAULT_SERVICES
+    // tuple as well: the slice silently put sort_order in the wrong column and
+    // pinned it to 0, which would have put TitoPro above Top Up instead of
+    // beside Book.
+    const [serviceCode, serviceName, serviceIcon, action, description,
+      status, personalVisible, businessVisible, sortOrder, featureBadge] = row;
     const { rowCount } = await pool.query(
       `INSERT INTO service_config
-        (id, service_code, service_name, icon, action, description, fee, sort_order,
-         status, personal_visible, business_visible, display_order, badge)
+        (id, service_code, service_name, service_icon, action, description,
+         fee, commission, status, personal_visible, business_visible, sort_order, feature_badge)
        VALUES ($1,$2,$3,$4,$5,$6,0,0,$7,$8,$9,$10,$11)
        ON CONFLICT (service_code) DO NOTHING`,
-      [randomUUID(), ...row.slice(0, 5), ...row.slice(5)]);
+      [randomUUID(), serviceCode, serviceName, serviceIcon, action, description,
+        status, personalVisible, businessVisible, sortOrder, featureBadge]);
     await pool.query(
       `INSERT INTO platform_settings (key, value)
        VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING`,
@@ -644,4 +669,9 @@ module.exports = {
   ensureDefaultServices,
   listServices,
   updateService,
+  // Exported for one test and for one reason: through ensureDefaultServices
+  // the seed reaches the same row first, so a repair that threw still looked
+  // like it worked. The only way to prove this one does its own job is to call
+  // it on its own. Nothing in the running API calls it from here.
+  addTitoProTileOnce,
 };
