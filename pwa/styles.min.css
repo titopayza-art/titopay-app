@@ -946,6 +946,27 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
 .tp-group{margin-bottom:18px}
 .tp-group-title{font-size:0.78rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
 .tp-list{display:flex;flex-direction:column;gap:8px}
+/* ============================ TitoPro design tokens ======================
+   THE BUG THIS FIXES, AND WHY IT ONLY SHOWED UP AT NIGHT.
+
+   Every TitoPro rule below was written against a token vocabulary this
+   stylesheet does not have: --surface-2, --brand, --ink and --ok are defined
+   NOWHERE. Each reference therefore fell through to its hardcoded fallback -
+   var(--surface-2, #f1f4f8) is always #f1f4f8 - and a hardcoded light literal
+   does not invert. In daylight nobody noticed, because the fallbacks happen to
+   match the light palette. In night mode the profession icons became nine
+   near-white squares punched through a dark navy page.
+
+   Night mode here is done entirely by redefining variables under
+   html[data-theme=night]. So the fix is not a pile of night overrides: it is
+   to make these four names REAL and point them at the palette that already
+   inverts. One definition, and all 144 rules below become theme-aware. */
+:root{
+  --surface-2: var(--soft-blue);
+  --brand: var(--blue);
+  --ink: var(--text);
+  --ok: var(--success);
+}
 .tp-pro-row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--card,#fff);color:var(--ink);cursor:pointer}
 .tp-pro-row:hover{border-color:var(--brand,#0B1F3F)}
 .tp-ico{flex:0 0 auto;display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--surface-2,#f1f4f8)}
@@ -954,7 +975,7 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
 .tp-pro-name{font-weight:600;font-size:0.94rem;line-height:1.25}
 .tp-pro-sub{font-size:0.79rem;color:var(--muted);line-height:1.35;overflow-wrap:anywhere}
 .tp-flag,.tp-verified{flex:0 0 auto;font-size:0.68rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:4px 8px;border-radius:999px;background:var(--surface-2,#f1f4f8);color:var(--muted)}
-.tp-verified{display:inline-flex;align-items:center;gap:4px;color:var(--ok,#2E7D5B)}
+.tp-verified{display:inline-flex;align-items:center;gap:4px;color:var(--ok)}
 .tp-verified svg{width:13px;height:13px}
 .tp-card{border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px;background:var(--card,#fff)}
 .tp-headline{font-size:0.9rem;line-height:1.5;margin:8px 0 0}
@@ -967,10 +988,10 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
 .tp-empty p{margin:6px 0 0;font-size:0.86rem;line-height:1.5}
 /* Where a job has got to. Semantic colour, kept separate from the brand. */
 .tp-status{flex:0 0 auto;font-size:0.68rem;font-weight:700;letter-spacing:0.03em;padding:4px 9px;border-radius:999px;background:var(--surface-2,#f1f4f8);color:var(--muted);white-space:nowrap}
-.tp-status.is-quoted,.tp-status.is-re_quoted,.tp-status.is-work_done{background:rgba(184,121,31,0.14);color:#8A5B12}
+.tp-status.is-quoted,.tp-status.is-re_quoted,.tp-status.is-work_done{background:rgba(184,121,31,0.14);color:var(--warning)}
 .tp-status.is-accepted,.tp-status.is-scheduled,.tp-status.is-in_progress{background:rgba(11,31,63,0.09);color:var(--brand,#0B1F3F)}
-.tp-status.is-confirmed{background:rgba(46,125,91,0.14);color:#2E7D5B}
-.tp-status.is-disputed,.tp-status.is-declined,.tp-status.is-cancelled,.tp-status.is-expired{background:rgba(178,58,58,0.12);color:#B23A3A}
+.tp-status.is-confirmed{background:rgba(46,125,91,0.14);color:var(--success)}
+.tp-status.is-disputed,.tp-status.is-declined,.tp-status.is-cancelled,.tp-status.is-expired{background:rgba(178,58,58,0.12);color:var(--danger)}
 .tp-status-line{margin:0 0 4px}
 .tp-money{margin:12px 0 0;display:flex;flex-direction:column;gap:6px}
 .tp-money div{display:flex;justify-content:space-between;gap:12px;font-size:0.86rem}
@@ -987,8 +1008,8 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
 .tp-banner svg{flex:0 0 auto;width:18px;height:18px;margin-top:1px}
 .tp-banner strong{display:block;font-size:0.9rem;margin-bottom:2px}
 .tp-banner p{margin:2px 0 0}
-.tp-banner.is-live{background:rgba(46,125,91,0.1);border:1px solid rgba(46,125,91,0.4);color:#22684A}
-.tp-banner.is-blocked{background:rgba(178,58,58,0.08);border:1px solid rgba(178,58,58,0.35);color:#8F2E2E}
+.tp-banner.is-live{background:rgba(46,125,91,0.1);border:1px solid rgba(46,125,91,0.4);color:var(--success)}
+.tp-banner.is-blocked{background:rgba(178,58,58,0.08);border:1px solid rgba(178,58,58,0.35);color:var(--danger)}
 /* THE PILLS ARE CONTENT, NOT FIELD LABELS.
    Each one is a <label> inside a .field, so it was inheriting the form-label
    treatment meant for "WHAT DO YOU DO?" above it: 11.5px, uppercase,
@@ -1019,7 +1040,7 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
    staring at a blank white column with the form off the left of the screen.
    position:relative on the pill plus inset:0 confines it exactly to the pill,
    and the min-height/padding resets stop .field's rules reaching it at all. */
-.tp-pick{position:relative;display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border:1px solid var(--line);border-radius:999px;font-size:0.86rem;font-weight:500;letter-spacing:normal;text-transform:none;color:var(--navy);background:#fbfdff;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.tp-pick{position:relative;display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border:1px solid var(--line);border-radius:999px;font-size:0.86rem;font-weight:500;letter-spacing:normal;text-transform:none;color:var(--navy);background:var(--card);cursor:pointer;transition:background .15s,border-color .15s,color .15s}
 .tp-pick input{position:absolute;inset:0;width:100%;height:100%;min-width:0;min-height:0;margin:0;padding:0;opacity:0;pointer-events:none}
 .tp-pick.is-on,.tp-pick:has(input:checked){background:var(--brand,#0B1F3F);border-color:var(--brand,#0B1F3F);color:#fff;font-weight:600}
 /* A pill is operated with a finger and with a keyboard. Without this the
@@ -1040,8 +1061,8 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
 .tp-vetting{margin-top:14px}
 .tp-check{display:flex;align-items:center;gap:6px;font-size:0.83rem;margin:8px 0 0}
 .tp-check svg{width:14px;height:14px}
-.tp-check.is-missing{color:#B23A3A}
-.tp-check.is-done{color:#2E7D5B}
+.tp-check.is-missing{color:var(--danger)}
+.tp-check.is-done{color:var(--success)}
 @media (max-width:380px){
   .tp-pro-row{padding:10px 11px;gap:9px}
   .tp-ico{width:34px;height:34px}
@@ -1088,7 +1109,7 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
 .tp-advisory.is-compact{margin-top:4px}
 /* ---------------------------------------- TitoPro photos, terms and chat */
 .tp-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;margin-bottom:10px}
-.tp-photo{position:relative;margin:0;aspect-ratio:1;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:#fbfdff}
+.tp-photo{position:relative;margin:0;aspect-ratio:1;border-radius:12px;overflow:hidden;border:1px solid var(--line);background:var(--card)}
 .tp-photo img{width:100%;height:100%;object-fit:cover;display:block}
 /* The remove control sits ON the photo, so it is where a thumb already is. */
 .tp-photo-remove{position:absolute;top:4px;right:4px;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;border-radius:999px;background:rgba(11,31,63,0.72);color:#fff;cursor:pointer}
@@ -1140,7 +1161,46 @@ html[data-theme=night] .sv-terms-body{background:rgba(255,255,255,.06)}
 .tp-rated{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:0.84rem;color:var(--muted);margin:0}
 /* Reporting is a last resort, not a call to action. It is findable and it is
    quiet, so nobody reaches for it by accident. */
-.btn.tp-report{color:#8F2E2E}
+.btn.tp-report{color:var(--danger)}
+/* ------------------------- TitoPro, after dark -------------------------
+   Everything above inherits night mode through the palette. These four are
+   the exceptions that genuinely cannot: each is a translucent TINT plus a
+   fixed ink chosen for a pale background, and a tint is not a variable.
+
+   Left alone they fail in the two ways tints always fail on a dark ground:
+   a dark tint over dark navy disappears, and dark ink chosen to sit on a
+   pale wash becomes unreadable on it. */
+html[data-theme=night] .tp-advisory{
+  background:rgba(229,165,0,.10);
+  border-color:rgba(229,165,0,.34);
+  color:#F2DCB0;
+}
+html[data-theme=night] .tp-advisory-title{color:#FFE9BF}
+html[data-theme=night] .tp-advisory-liability{border-top-color:rgba(229,165,0,.28)}
+/* rgba(11,31,63,.09) is navy at 9% - invisible on a navy page. The accent at
+   the same weight reads as the same emphasis the light theme intends. */
+html[data-theme=night] .tp-status.is-accepted,
+html[data-theme=night] .tp-status.is-scheduled,
+html[data-theme=night] .tp-status.is-in_progress{background:rgba(111,176,255,.16)}
+html[data-theme=night] .tp-status.is-quoted,
+html[data-theme=night] .tp-status.is-re_quoted,
+html[data-theme=night] .tp-status.is-work_done{background:rgba(229,170,74,.18)}
+html[data-theme=night] .tp-status.is-confirmed{background:rgba(55,201,143,.18)}
+html[data-theme=night] .tp-status.is-disputed,
+html[data-theme=night] .tp-status.is-declined,
+html[data-theme=night] .tp-status.is-cancelled,
+html[data-theme=night] .tp-status.is-expired{background:rgba(255,139,139,.16)}
+html[data-theme=night] .tp-banner.is-live{background:rgba(55,201,143,.12);border-color:rgba(55,201,143,.4)}
+html[data-theme=night] .tp-banner.is-blocked{background:rgba(255,139,139,.12);border-color:rgba(255,139,139,.38)}
+/* The remove control sits on a photograph, so it needs to stay dark and
+   opaque rather than following the page. */
+html[data-theme=night] .tp-photo-remove{background:rgba(0,0,0,.66)}
+/* AN UNLIT STAR HAS TO STILL BE A STAR. It is var(--line) - a hairline colour
+   - which at night is #22375f, within a whisker of the page itself. The empty
+   star vanished, so a 4.6 rating rendered as four stars floating in the dark
+   and read as a worse score than it is. Dim, but present. */
+html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
+
 .btn.tp-report svg{width:15px;height:15px}
 @media (max-width:380px){
   .tp-rate-pick .tp-star svg{width:28px;height:28px}

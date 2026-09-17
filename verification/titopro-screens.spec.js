@@ -652,6 +652,71 @@ const CATALOGUE = { ok: true, shapes: [], professions: PROFESSIONS, vettingAdvis
       }
     }
 
+    // ---- 5h. NIGHT MODE --------------------------------------------------
+    //
+    // TitoPro shipped unreadable after dark and no test noticed, because every
+    // check here runs in the default theme. The cause was not a missing night
+    // rule: the whole TitoPro stylesheet was written against --surface-2,
+    // --brand, --ink and --ok, four variables this app does not define. Each
+    // reference fell through to its hardcoded fallback, a hardcoded literal
+    // does not invert, and the profession icons became nine near-white squares
+    // punched through a dark navy page.
+    //
+    // A test naming colours would have to be rewritten every time a shade
+    // moves. This measures the property that actually matters instead: on a
+    // dark page nothing may be markedly lighter than the page, and no text may
+    // be near-black. Both are theme-independent statements.
+    for (const [name, ready, open, listing] of [
+      ["browse", ".tp-pro-row", (page) => page.evaluate(() => window.openTitoProModal()),
+        { ok: true, profile: null, eligibility: { eligible: false, blockers: [] } }],
+      ["professional", ".tp-advisory",
+        (page) => page.evaluate((id) => window.openTitoProProfessional(id), VETTED_PRO.professional.userId), null],
+      ["job", ".tp-steps", (page) => page.evaluate((job) => window.openTitoProJob(job.id), CONFIRMED), null],
+      ["listing", ".tp-picks", (page) => page.evaluate(() => window.openTitoProListing()), null]
+    ]) {
+      s = await openApp(browser, 390, { "/v1/titopro/professions": CATALOGUE,
+        "/professionals/": VETTED_PRO, "/rating": { ok: true, rating: null },
+        "/v1/titopro/jobs/": { ok: true, job: CONFIRMED },
+        "/v1/titopro/me/listing": listing || { ok: true,
+          profile: { status: "draft", professions: ["cleaner"], serviceRadiusKm: 20, tradingName: "Nomsa's Home Care",
+            photos: [], outstandingChecks: ["Police clearance"], enhancedVettingProfessions: ["cleaner"] },
+          eligibility: { eligible: false, ficaVerified: true, blockers: ["Police clearance outstanding."] } } });
+      await s.page.evaluate(() => document.documentElement.setAttribute("data-theme", "night"));
+      await open(s.page);
+      await s.page.waitForSelector(ready, { timeout: 10000 });
+
+      const night = await s.page.evaluate(() => {
+        // Relative luminance, so the judgement is about light and dark rather
+        // than about any particular shade.
+        const lum = (value) => {
+          const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(value || "");
+          if (!m) return null;
+          if (m[4] !== undefined && parseFloat(m[4]) < 0.2) return null;
+          const f = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+          return 0.2126 * f(m[1] / 255) + 0.7152 * f(m[2] / 255) + 0.0722 * f(m[3] / 255);
+        };
+        const pageLum = lum(getComputedStyle(document.body).backgroundColor) ?? 0;
+        const pale = [];
+        const dark = [];
+        for (const el of document.querySelectorAll('[class*="tp-"]')) {
+          const rect = el.getBoundingClientRect();
+          if (!rect.width || !rect.height) continue;
+          const style = getComputedStyle(el);
+          const bg = lum(style.backgroundColor);
+          const fg = lum(style.color);
+          const label = String(el.className).slice(0, 34);
+          if (bg !== null && bg > pageLum + 0.35) pale.push(`${label}=${style.backgroundColor}`);
+          if (fg !== null && fg < 0.18) dark.push(`${label}=${style.color}`);
+        }
+        return { pale, dark };
+      });
+      check(`NIGHT · ${name} · nothing glares white out of the dark page`,
+        night.pale.length === 0, night.pale.slice(0, 3).join(", "));
+      check(`NIGHT · ${name} · no near-black text on a dark page`,
+        night.dark.length === 0, night.dark.slice(0, 3).join(", "));
+      await s.context.close();
+    }
+
     // ---- 6. Narrow phone -------------------------------------------------
     for (const width of [360, 414]) {
       s = await openApp(browser, width, { "/v1/titopro/professions": CATALOGUE });
