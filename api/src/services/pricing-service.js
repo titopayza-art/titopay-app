@@ -660,9 +660,10 @@ async function calculateFee(serviceCode, amount) {
   if (Number(rule.maximum_fee) > 0) fee = Math.min(fee, Number(rule.maximum_fee));
   // A hardcoded R0.50 floor for qr_payment used to sit here. It was written when
   // the QR fee WAS R0.50 and it silently overrode anything an operator
-  // configured below that. The schedule now carries a flat R1.50 on the
-  // customer side, and a floor belongs in minimum_fee where an admin can see
-  // and change it.
+  // configured below that. A floor belongs in minimum_fee, where an admin can
+  // see and change it, rather than hidden in this function. (This comment said
+  // the schedule carries a flat R1.50 on the customer side. It does not, and
+  // did not - qr_payment is flat R0.50.)
   // A fee is never negative. A negative rule reaching here would debit LESS
   // than the amount while the recipient is credited the full amount, and would
   // "credit" the revenue wallet a negative number — which debits it. TitoPay

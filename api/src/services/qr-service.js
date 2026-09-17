@@ -318,8 +318,14 @@ async function payQr(actor, payload) {
   if (!Number.isFinite(amount) || amount <= 0) throw new AppError(400, "Amount must be greater than zero");
   // TWO SIDES, PRICED SEPARATELY.
   //
-  //   the customer pays   a flat R1.50, ON TOP of the amount
-  //   the merchant pays   R1.50 + 1.5% of the amount, OUT OF the credit
+  //   the customer pays   a flat R0.50, ON TOP of the amount
+  //   the merchant pays   1.5% of the amount, OUT OF the credit
+  //
+  // Those are the figures in APPROVED_PRICING_SCHEDULE today - qr_payment is
+  // [flat 0.50] and merchant_qr_payment is [flat 0, min 0, 1.5%]. This comment
+  // said R1.50 on both sides, which was true of neither and is the sort of
+  // thing somebody reads to answer "what do we charge?" without opening the
+  // schedule. Read the schedule; these lines only describe it.
   //
   // Both come from the pricing schedule, so an operator changes them in the
   // admin console and neither is a number written into this file. The merchant
@@ -329,11 +335,21 @@ async function payQr(actor, payload) {
   const merchantFee = roundMoney(merchantPricing.fee);
   // A SALE SMALLER THAN ITS OWN FEE IS REFUSED, NOT SETTLED AT ZERO.
   //
-  // The merchant's side carries a flat component, so below roughly R1.52 the
-  // fee reaches the whole sale. Clamping it to the amount would have taken the
-  // customer's money, credited the business nothing, and reported success.
-  // Nobody is served by that, so it is refused before anything moves, and the
-  // message says the real reason rather than a generic rejection.
+  // Clamping the fee to the sale would take the customer's money, credit the
+  // business nothing, and report success. Nobody is served by that, so it is
+  // refused before anything moves.
+  //
+  // THIS DOES NOT FIRE UNDER TODAY'S SCHEDULE, and the comment here used to
+  // claim it did ("below roughly R1.52"). The merchant side is currently pure
+  // percentage - 1.5%, no flat component - so the fee is always a fraction of
+  // the sale and can never reach it. The guard stays because an operator CAN
+  // add a flat merchant fee in the admin console, and the day they do this is
+  // what stops a R1.00 sale settling at zero.
+  //
+  // NOTE WHERE THE REAL SMALL-SALE COST SITS: the customer's R0.50 is flat, so
+  // it is 100% of a R0.50 sale and 50% of a R1.00 one. Nothing here refuses
+  // that, because what a customer may be charged is a pricing decision and not
+  // this file's to make.
   if (merchantFee >= amount) {
     throw new AppError(400,
       `This amount is too small to pay by QR. The fee on a QR payment would take the whole sale, `
