@@ -39,6 +39,11 @@ const H = 595.28;
 const M = 54;
 const CW = W - M * 2;
 
+// The brand line, in one place. It appears on the cover and the closing
+// slide, and a tagline that differs between two slides of the same deck is
+// the first thing a reader notices and the last thing anybody checks.
+const TAGLINE = "Smart Payments, Simplified";
+
 const doc = new PDFDocument({ size: [W, H], margin: 0, bufferPages: true,
   info: { Title: "TitoPay - Investor Overview", Author: "TitoPay (Pty) Ltd" } });
 
@@ -185,8 +190,8 @@ doc.roundedRect(W - 250, -70, 330, 330, 40).fillColor("#10294f").fill();
 doc.roundedRect(W - 180, 300, 300, 300, 40).fillColor("#0e2447").fill();
 
 wordmark(M, 96, 44, true);
-doc.font("Helvetica").fontSize(11).fillColor(PALE)
-  .text("SMART PAYMENTS", M, 150, { characterSpacing: 3.4, lineBreak: false });
+doc.font("Helvetica").fontSize(13).fillColor(PALE)
+  .text(TAGLINE, M, 152, { characterSpacing: 0.6, lineBreak: false });
 
 doc.font("Helvetica-Bold").fontSize(40).fillColor("#ffffff")
   .text("One wallet for\nevery payment\na business needs.", M, 232, { width: 470, lineGap: 6 });
@@ -379,10 +384,12 @@ wordmark(M, 92, 34, true);
 doc.font("Helvetica-Bold").fontSize(34).fillColor("#ffffff")
   .text("The wallet is built.\nThe rails are open.\nThe next step is reach.", M, 200, { width: 520, lineGap: 7 });
 
+doc.font("Helvetica").fontSize(12.5).fillColor(SKY)
+  .text(TAGLINE, M, 404, { characterSpacing: 0.4, lineBreak: false });
 doc.font("Helvetica").fontSize(12).fillColor(PALE)
-  .text("TitoPay (Pty) Ltd", M, 430, { lineBreak: false });
+  .text("TitoPay (Pty) Ltd", M, 436, { lineBreak: false });
 doc.font("Helvetica").fontSize(11).fillColor("#6d86ad")
-  .text("titopay.co.za", M, 452, { lineBreak: false });
+  .text("titopay.co.za", M, 458, { lineBreak: false });
 
 /* =========================================================== SLIDE NUMBERS */
 

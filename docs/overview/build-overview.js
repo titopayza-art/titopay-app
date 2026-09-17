@@ -40,6 +40,7 @@ const PAGE_W = 595.28;
 const PAGE_H = 841.89;
 const CONTENT_W = PAGE_W - MARGIN * 2;
 
+const TAGLINE = "Smart Payments, Simplified";
 const BUILD = process.env.BUILD_LABEL || "v580";
 const COMMIT = process.env.COMMIT_LABEL || "d43c167";
 const DATED = process.env.DATE_LABEL || "17 September 2026";
@@ -187,8 +188,8 @@ doc.font("Helvetica-Bold").fontSize(30);
   doc.fillColor("#ffffff").text("Tito", MARGIN, 58, { lineBreak: false });
   doc.fillColor(SKY).text("Pay", MARGIN + w, 58, { lineBreak: false });
 }
-doc.font("Helvetica").fontSize(9).fillColor("#93a8c9")
-  .text("SMART PAYMENTS", MARGIN, 96, { characterSpacing: 2.4 });
+doc.font("Helvetica").fontSize(11).fillColor("#93a8c9")
+  .text(TAGLINE, MARGIN, 96, { characterSpacing: 0.5 });
 
 doc.font("Helvetica-Bold").fontSize(23).fillColor("#ffffff")
   .text("Platform Overview", MARGIN, 134, { width: CONTENT_W });
