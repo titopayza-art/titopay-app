@@ -7,6 +7,7 @@ const {
   listProducts,
   createProduct,
   updateProduct,
+  clearDraftProduct,
   recordStockMovement,
   listMovements,
   recordSale
@@ -36,6 +37,17 @@ router.put("/:id", async (req, res, next) => {
   try {
     const productId = requireUuid(req.params.id, "Product ID");
     res.json({ ok: true, product: await updateProduct(req.auth.userId, productId, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Removing a product that was never sold. Archiving is still the answer for
+// one that was - see the service for why the two are not the same button.
+router.delete("/:id", async (req, res, next) => {
+  try {
+    const productId = requireUuid(req.params.id, "Product ID");
+    res.json({ ok: true, ...(await clearDraftProduct(req.auth.userId, productId)) });
   } catch (error) {
     next(error);
   }

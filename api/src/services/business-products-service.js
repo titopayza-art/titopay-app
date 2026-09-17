@@ -12,6 +12,7 @@ const { v4: uuidv4 } = require("uuid");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { boundedText } = require("../lib/validation");
+const { assertClearable, blocker, countReferences } = require("../lib/clearable");
 
 const money = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
@@ -79,6 +80,12 @@ function shapeProduct(row) {
     lowStockThreshold: money(row.low_stock_threshold),
     lowStock: row.track_stock && Number(row.stock_quantity) <= Number(row.low_stock_threshold),
     status: row.status,
+    // Whether clearing is even on offer for this one - see clearDraftProduct
+    // for what makes a product a draft. Sent with the list so the sale screen
+    // can show Clear only where it will work, instead of showing it everywhere
+    // and letting most of them fail. Absent (undefined) wherever the caller
+    // did not ask for it; the screen treats that as "no".
+    canClear: row.history_count === undefined ? undefined : Number(row.history_count) === 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -87,10 +94,16 @@ function shapeProduct(row) {
 async function listProducts(userId, { includeArchived = false } = {}) {
   await ensureProductsSchema();
   await requireBusiness(userId);
+  // history_count is every movement that is not the 'opening' one written by
+  // createProduct: a sale, a restock, an adjustment, a stock take. Zero means
+  // nothing has happened to this product since it was typed in.
   const { rows } = await pool.query(
-    `SELECT * FROM business_products
-     WHERE business_user_id = $1${includeArchived ? "" : " AND status = 'active'"}
-     ORDER BY category ASC, LOWER(name) ASC
+    `SELECT p.*,
+            (SELECT COUNT(*)::int FROM business_stock_movements m
+              WHERE m.product_id = p.id AND m.movement_type <> 'opening') AS history_count
+     FROM business_products p
+     WHERE p.business_user_id = $1${includeArchived ? "" : " AND p.status = 'active'"}
+     ORDER BY p.category ASC, LOWER(p.name) ASC
      LIMIT 500`,
     [userId]
   );
@@ -177,6 +190,53 @@ async function updateProduct(userId, productId, payload = {}) {
   } finally {
     client.release();
   }
+}
+
+// CLEARING A PRODUCT THAT WAS NEVER SOLD.
+//
+// Somebody types "Coke 500ml" twice, or adds a line they never stocked. Today
+// the only way out is archiving, which is right for a product that HAS been
+// sold - the sales that reference it must still name something - and wrong for
+// one that has not, where archiving just moves clutter to another list.
+//
+// THE SALE IS THE TEST, AND THE MOVEMENT TRAIL IS WHERE IT LIVES. A sale
+// writes a 'sale' movement; a restock, an adjustment and a stock take write
+// theirs. Any of those is a business record: somebody counted something and
+// the variance was kept on purpose. An 'opening' movement is NOT - it is
+// written by createProduct itself and is part of typing the product in, not
+// something that happened to it afterwards.
+//
+// The rows themselves cascade, so this is about whether they SHOULD, not
+// whether they can.
+async function clearDraftProduct(userId, productId) {
+  await ensureProductsSchema();
+  await requireBusiness(userId);
+  const { rows } = await pool.query(
+    "SELECT * FROM business_products WHERE id = $1 AND business_user_id = $2 LIMIT 1",
+    [productId, userId]);
+  const product = rows[0];
+  if (!product) throw new AppError(404, "Product not found");
+
+  const [sales, counts] = await Promise.all([
+    countReferences(pool, "business_stock_movements", "product_id", productId,
+      "AND movement_type = 'sale'"),
+    countReferences(pool, "business_stock_movements", "product_id", productId,
+      "AND movement_type IN ('restock', 'adjustment', 'stock_take')")
+  ]);
+
+  assertClearable("product", [
+    blocker(sales, "it has been sold once", "it has been sold {count} times"),
+    blocker(counts, "its stock has been counted or adjusted", "its stock has been counted or adjusted {count} times")
+  ], "Archive it instead, which takes it off the sale screen and keeps its history.");
+
+  await pool.query("DELETE FROM business_products WHERE id = $1 AND business_user_id = $2",
+    [productId, userId]);
+  await require("./audit-service").writeAuditLog({
+    actorType: "customer", actorId: userId,
+    action: "business_product_draft_cleared", entityType: "business_product", entityId: productId,
+    metadata: { name: product.name }
+  }).catch(() => null);
+  return { cleared: true };
 }
 
 // One movement, three flavours:
@@ -363,6 +423,7 @@ module.exports = {
   listProducts,
   createProduct,
   updateProduct,
+  clearDraftProduct,
   recordStockMovement,
   listMovements,
   recordSale

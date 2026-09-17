@@ -189,6 +189,14 @@ router.patch("/venues/:id/services/:serviceId", handle(async (req, res) => {
   res.json({ ok: true, service });
 }));
 
+// A service that was typed in and never booked. See the service for why this
+// is a different door from switching one off.
+router.delete("/venues/:id/services/:serviceId", handle(async (req, res) => {
+  requireBusiness(req);
+  res.json({ ok: true, ...(await catalogue.clearDraftService(
+    actorOf(req), req.params.id, req.params.serviceId, metaOf(req))) });
+}));
+
 router.get("/venues/:id/resources", handle(async (req, res) => {
   requireBusiness(req);
   res.json({ ok: true, resources: await catalogue.listResources(req.auth.userId, req.params.id) });
@@ -205,6 +213,12 @@ router.patch("/venues/:id/resources/:resourceId", handle(async (req, res) => {
   const resource = await catalogue.updateResource(
     actorOf(req), req.params.id, req.params.resourceId, req.body || {}, metaOf(req));
   res.json({ ok: true, resource });
+}));
+
+router.delete("/venues/:id/resources/:resourceId", handle(async (req, res) => {
+  requireBusiness(req);
+  res.json({ ok: true, ...(await catalogue.clearDraftResource(
+    actorOf(req), req.params.id, req.params.resourceId, metaOf(req))) });
 }));
 
 /* --------------------------------------------------------- opening hours */

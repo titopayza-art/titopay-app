@@ -548,6 +548,10 @@ const ICON_PATHS = {
     menu: `<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>`,
     "more-horizontal": `<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>`,
     x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
+    // icon() falls back to the generic grid square for a name it does not
+    // know, so "trash" was drawing a square next to Delete on the coupon row
+    // long before anything else asked for it. Here it is, drawn properly.
+    trash: `<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>`,
     ban: `<circle cx="12" cy="12" r="9"/><path d="m5.9 5.9 12.2 12.2"/>`,
     flag: `<path d="M5 21V4"/><path d="M5 4.5h11l-1.6 3.6L16 12H5"/>`
 };
@@ -4458,7 +4462,7 @@ async function onClick(event) {
       .catch((error) => showToast(friendlyFormError(error, "support"), "error"));
     return;
   }
-  const stockAction = event.target.closest("[data-product-restock], [data-product-stocktake], [data-product-price], [data-product-history], [data-product-archive]");
+  const stockAction = event.target.closest("[data-product-restock], [data-product-stocktake], [data-product-price], [data-product-history], [data-product-archive], [data-product-clear]");
   if (stockAction) {
     handleStockAction(stockAction);
     return;
@@ -4520,6 +4524,11 @@ async function onClick(event) {
   const documentEdit = event.target.closest("[data-document-edit]");
   if (documentEdit) {
     editDocumentDraft(documentEdit.dataset.documentEdit);
+    return;
+  }
+  const documentClear = event.target.closest("[data-document-clear]");
+  if (documentClear) {
+    clearDocumentDraft(documentClear.dataset.documentClear);
     return;
   }
   const documentFinalise = event.target.closest("[data-document-finalise]");
@@ -4618,6 +4627,11 @@ async function onClick(event) {
   const stockvelClose = event.target.closest("[data-stockvel-close]");
   if (stockvelClose) {
     openStockvelCloseModal(stockvelClose.dataset.stockvelClose);
+    return;
+  }
+  const stockvelClear = event.target.closest("[data-stockvel-clear]");
+  if (stockvelClear) {
+    await clearStockvelDraftGroup(stockvelClear.dataset.stockvelClear);
     return;
   }
   const stockvelTermsPublish = event.target.closest("[data-stockvel-terms-publish]");
@@ -5320,6 +5334,10 @@ async function handleAction(action, actionElement = null) {
     await submitTicketingEvent(action.split(":")[1]);
     return;
   }
+  if (String(action || "").startsWith("ticketing-clear:")) {
+    await clearTicketingDraftEvent(action.split(":")[1]);
+    return;
+  }
   if (String(action || "").startsWith("ticketing-request-change:")) {
     openEventChangeRequestModal(action.split(":").slice(1).join(":"));
     return;
@@ -5579,6 +5597,7 @@ async function handleAction(action, actionElement = null) {
   if (action === "titopro-listing") { await openTitoProListing(); return; }
   if (action === "titopro-publish") { await publishTitoProListing(); return; }
   if (action === "titopro-pause") { await pauseTitoProListing(); return; }
+  if (action === "titopro-clear") { await clearTitoProListing(); return; }
   if (action === "titopro-back") { renderTitoProBrowse(await titoProCatalogue()); return; }
   if (action === "book-open") { await openBookModal(); return; }
   if (action === "book-discover") { await openBookDiscover(); return; }
@@ -5605,6 +5624,10 @@ async function handleAction(action, actionElement = null) {
   if (action === "book-photo") { openBookPhoto(); return; }
   if (action === "book-photo-remove") { await removeBookPhoto(event.target.closest("button")); return; }
   if (action === "book-services") { openBookServices(); return; }
+  if (action.startsWith("book-service-clear:")) {
+    await clearBookService(action.split(":").slice(1).join(":"));
+    return;
+  }
   if (action.startsWith("book-service-toggle:")) {
     await toggleBookService(action.split(":")[1]); return;
   }
@@ -11686,7 +11709,11 @@ function openBusinessDocumentHistory() {
               <small>${esc(record.kind)} · ${esc(friendlyDate(record.issueDate))}${record.dueDate ? ` · ${esc(record.dateLabel || "Due")} ${esc(friendlyDate(record.dueDate))}` : ""}</small>
             </div>
             ${record.status === "draft"
-              ? `<button class="btn secondary mini" type="button" data-document-edit="${esc(record.id)}">Edit</button>`
+              ? `<div class="row-actions">
+                  <button class="btn secondary mini" type="button" data-document-edit="${esc(record.id)}">Edit</button>
+                  <button class="btn ghost mini" type="button" data-document-clear="${esc(record.id)}"
+                    aria-label="Clear the draft for ${esc(record.customerName || "this customer")}">${icon("trash")} Clear</button>
+                </div>`
               : `<button class="btn secondary mini" type="button" data-document-open="${esc(record.id)}">Open</button>`}
           </article>
         `).join("")}
@@ -12064,6 +12091,40 @@ function duplicateDocumentAsDraft(id) {
   state.editingDocumentDraftId = null;
   openInvoiceDocumentModal({ action: source.action, serviceCode: source.serviceCode || source.action }, source);
   showToast("Copied into a new draft. It has no number until you finalise it.");
+}
+// THROWING A DRAFT AWAY.
+//
+// A draft is working paper. It has no number, it has not been handed to
+// anybody, and it holds no place in the numbered series - so removing one
+// takes nothing out of the record, and leaving it there is just clutter on the
+// saved list.
+//
+// A FINALISED DOCUMENT IS NOT ON OFFER HERE, and the guard below is not
+// belt-and-braces for the hidden button: an invoice or quote that has been
+// numbered has been sent to somebody, who is holding it. The series it sits in
+// is the reason a customer can be told that invoice 0007 exists and what it
+// said. Deleting one breaks the series and destroys this person's own evidence
+// of what they charged. The existing rule already says a finalised document
+// cannot be EDITED; it cannot be erased either.
+async function clearDocumentDraft(id) {
+  const draft = (state.businessDocuments || []).find((item) => item.id === id);
+  if (!draft) return showToast("That draft is no longer available.", "error");
+  if (draft.status !== "draft") {
+    return showToast("A finalised document cannot be cleared. It is part of your numbered record.", "error");
+  }
+  const confirmed = await askToConfirm({
+    title: "Clear this draft?",
+    body: `The draft for ${draft.customerName || "this customer"} is removed from this device. It was never numbered or sent, so nothing else changes.`,
+    confirmLabel: "Clear draft",
+    tone: "danger"
+  });
+  if (!confirmed) return;
+  state.businessDocuments = (state.businessDocuments || []).filter((item) => item.id !== draft.id);
+  if (state.activeBusinessDocumentId === draft.id) state.activeBusinessDocumentId = null;
+  if (state.editingDocumentDraftId === draft.id) state.editingDocumentDraftId = null;
+  localStorage.setItem(BUSINESS_DOCUMENTS_KEY, JSON.stringify(state.businessDocuments));
+  showToast("Draft cleared.");
+  openBusinessDocumentHistory();
 }
 function saveBusinessDocumentDraft(document) {
   const existing = state.businessDocuments.filter((item) => item.id !== document.id);
@@ -17111,6 +17172,7 @@ function renderSalesStockView(products) {
           <button class="chip" type="button" data-product-price="${esc(product.id)}">Price</button>
           <button class="chip" type="button" data-product-history="${esc(product.id)}">History</button>
           <button class="chip" type="button" data-product-archive="${esc(product.id)}">Archive</button>
+          ${product.canClear ? `<button class="chip" type="button" data-product-clear="${esc(product.id)}">Clear</button>` : ""}
         </div>
         <div data-product-history-host="${esc(product.id)}"></div>
       </div>
@@ -17147,8 +17209,9 @@ async function handleStockAction(target) {
   const priceId = target.dataset.productPrice;
   const historyId = target.dataset.productHistory;
   const archiveId = target.dataset.productArchive;
+  const clearId = target.dataset.productClear;
   const products = state.businessProducts || [];
-  const product = products.find((item) => item.id === (restockId || stocktakeId || priceId || historyId || archiveId));
+  const product = products.find((item) => item.id === (restockId || stocktakeId || priceId || historyId || archiveId || clearId));
   if (!product) return;
   try {
     if (restockId) {
@@ -17187,6 +17250,16 @@ async function handleStockAction(target) {
       })) return;
       await api(`/v1/business/products/${product.id}`, { method: "PUT", body: { status: "archived" } });
       showToast("Product archived.");
+    } else if (clearId) {
+      // Offered only where the list came back with canClear, so this is the
+      // second check rather than the first. The API still decides.
+      if (!await askToConfirm({
+        title: "Clear product",
+        body: `"${product.name}" has never been sold, restocked or counted, so there is nothing to keep. It is removed completely.`,
+        confirmLabel: "Clear", tone: "danger"
+      })) return;
+      await api(`/v1/business/products/${product.id}`, { method: "DELETE" });
+      showToast("Product cleared.");
     } else if (historyId) {
       const host = document.querySelector(`[data-product-history-host="${product.id}"]`);
       if (!host) return;
@@ -19748,6 +19821,9 @@ function renderStockvelSettings(group, store) {
       ${/organiser|organizer|admin|owner|creator/i.test(group.role || "") || group.canManage ? `
         <p class="field-hint">Closing ends the group for every member. Only do this once the balance is settled.</p>
         <button class="btn ghost sv-danger-btn" type="button" data-stockvel-close="${esc(group.id)}">Close this group</button>` : ""}
+      ${stockvelLooksLikeDraft(group) ? `
+        <p class="field-hint">This group has no members but you and nothing has been contributed, so there is nothing to keep a record of. Clearing removes it entirely.</p>
+        <button class="btn ghost sv-danger-btn" type="button" data-stockvel-clear="${esc(group.id)}">${icon("trash")} Clear this group</button>` : ""}
     </section>`;
 }
 // ---- Statement -------------------------------------------------------------
@@ -20115,6 +20191,46 @@ async function respondToStockvelWithdrawal(withdrawalId, approve) {
 }
 // ---- Closing a group -------------------------------------------------------
 
+// WHEN THE CLEAR BUTTON IS EVEN OFFERED.
+//
+// The server decides - it is the only side that can see the contributions,
+// withdrawals, messages and meetings, and it refuses with a sentence naming
+// every reason. This is only about whether to PUT THE BUTTON THERE, and it is
+// deliberately stricter than the server: offering a destructive action that
+// then refuses is worse than not offering it.
+//
+// So: only the person who created it, only while nobody else has joined, and
+// only while nothing has been contributed. A group that fails any of these has
+// Close, which is the right answer for it anyway.
+function stockvelLooksLikeDraft(group) {
+  if (!group || !group.canManage) return false;
+  if (Number(group.totalContributed) > 0 || Number(group.balance) > 0) return false;
+  // Unknown member count means the screen does not know; do not guess.
+  return group.memberCount != null && Number(group.memberCount) <= 1;
+}
+// Clearing removes the group outright, so it asks first and then reports
+// whatever the server says - including its refusal, which is written for the
+// person reading it and needs no translation here.
+async function clearStockvelDraftGroup(id) {
+  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  if (!group) return;
+  const confirmed = await askToConfirm({
+    title: `Clear ${group.name}?`,
+    body: "The group is removed and its invite code stops working. Nothing has been contributed to it, so there is no record to keep.",
+    confirmLabel: "Clear this group",
+    tone: "danger"
+  });
+  if (!confirmed) return;
+  try {
+    await api(`${STOCKVEL_PATH}/${encodeURIComponent(id)}/draft`, { method: "DELETE" });
+    showToast("The group has been cleared.");
+    state.stockvel.status = "idle";
+    state.stockvel.detail = null;
+    openStockvelModal();
+  } catch (error) {
+    showToast(error?.message || "Could not clear this group.", "error");
+  }
+}
 // Closing ends the group for everyone, so it asks twice: once for intent, then
 // for the group's name typed out.
 function openStockvelCloseModal(id) {
@@ -23542,6 +23658,7 @@ function ticketingEventRow(event) {
         ${event.marketingLink ? `<a class="btn ghost mini" href="${esc(event.marketingLink)}" target="_blank" rel="noopener">${icon("share")} Public page</a>` : ""}
         ${["approved", "suspended"].includes(event.status) && !event.pendingChangeRequest ? `<button class="btn ghost mini" type="button" data-action="ticketing-request-change:${esc(event.id)}">${icon("feedback")} Request change</button>` : ""}
         ${!["cancelled", "completed"].includes(event.status) && types.length ? `<button class="btn ghost mini" type="button" data-action="ticketing-seating:${esc(event.id)}">${icon("grid")} Seating</button>` : ""}
+        ${event.status === "draft" && !sold ? `<button class="btn ghost mini" type="button" data-action="ticketing-clear:${esc(event.id)}">${icon("trash")} Clear draft</button>` : ""}
       </div>
     </article>
   `;
@@ -24152,6 +24269,27 @@ async function submitTicketingEventForm(data, form) {
 async function submitTicketingEvent(eventId) {
   await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}/submit`, { method: "POST", body: {} });
   showToast("Event submitted for approval.");
+  await returnToTicketing("events");
+}
+
+// Only offered on a draft with nothing sold - see the API for the full test,
+// which also covers orders, event staff and vendors this screen cannot see.
+// The refusal that comes back names what is actually in the way.
+async function clearTicketingDraftEvent(eventId) {
+  const event = (state.ticketing.events || []).find((item) => item.id === eventId);
+  if (!event) { showToast("That event could not be found. Try refreshing.", "error"); return; }
+  if (!await askToConfirm({
+    title: `Clear ${event.eventName || "this draft"}?`,
+    body: "The draft is removed with its ticket types. It was never sent for approval and nobody has seen it, so nothing else changes.",
+    confirmLabel: "Clear draft",
+    tone: "danger"
+  })) return;
+  try {
+    await api(`/v1/ticketing/business/events/${encodeURIComponent(eventId)}`, { method: "DELETE" });
+    showToast("Draft cleared.");
+  } catch (error) {
+    showToast(error.message || "That draft could not be cleared.", "error");
+  }
   await returnToTicketing("events");
 }
 
@@ -31319,14 +31457,18 @@ function openBookServices() {
     ${services.length ? `
       <section class="settings-list">
         ${services.map((service) => `
-          <button class="settings-row-button" type="button" data-action="book-service-toggle:${esc(service.id)}">
-            <span class="icon-bubble">${icon("receipt-list")}</span>
-            <span class="settings-row-body"><strong>${esc(service.name)}</strong>
-              <small>${service.price > 0 ? `${esc(money(service.price))} · ` : ""}${service.durationMinutes} minutes${service.capacity > 1 ? ` · up to ${service.capacity} at once` : ""}</small></span>
-            <span class="ticket-status ${service.status === "active" ? "is-approved" : "is-draft"}">${service.status === "active" ? "On" : "Off"}</span>
-          </button>`).join("")}
+          <div class="bk-offer-row">
+            <button class="settings-row-button" type="button" data-action="book-service-toggle:${esc(service.id)}">
+              <span class="icon-bubble">${icon("receipt-list")}</span>
+              <span class="settings-row-body"><strong>${esc(service.name)}</strong>
+                <small>${service.price > 0 ? `${esc(money(service.price))} · ` : ""}${service.durationMinutes} minutes${service.capacity > 1 ? ` · up to ${service.capacity} at once` : ""}</small></span>
+              <span class="ticket-status ${service.status === "active" ? "is-approved" : "is-draft"}">${service.status === "active" ? "On" : "Off"}</span>
+            </button>
+            ${service.canClear ? `<button class="icon-btn bk-offer-clear" type="button" data-action="book-service-clear:${esc(service.id)}"
+              aria-label="Clear ${esc(service.name)}" title="Clear ${esc(service.name)}">${icon("trash")}</button>` : ""}
+          </div>`).join("")}
       </section>
-      <p class="field-hint">Tap one to turn it on or off. Turning it off hides it from your page without deleting it.</p>
+      <p class="field-hint">Tap one to turn it on or off. Turning it off hides it from your page without deleting it.${services.some((service) => service.canClear) ? " The bin clears one nobody has booked." : ""}</p>
     ` : `
       <section class="empty-state">
         <p><strong>Nothing to book yet</strong></p>
@@ -31366,6 +31508,30 @@ async function submitBookService(data) {
   });
   bookState().services = [...(bookState().services || []), result.service];
   showToast("Added.", "success");
+  openBookServices();
+}
+
+// Clearing one that was typed in and never booked. The bin only appears where
+// the API said canClear, and the API decides again when it is pressed.
+async function clearBookService(serviceId) {
+  const store = bookState();
+  const venue = store.venues[0];
+  const service = (store.services || []).find((item) => item.id === serviceId);
+  if (!venue || !service) return;
+  if (!await askToConfirm({
+    title: `Clear ${service.name}?`,
+    body: "Nobody has booked it, so there is nothing to keep. It comes off your booking page completely.",
+    confirmLabel: "Clear it",
+    tone: "danger"
+  })) return;
+  try {
+    await api(`/v1/book/venues/${encodeURIComponent(venue.id)}/services/${encodeURIComponent(serviceId)}`,
+      { method: "DELETE" });
+    store.services = (store.services || []).filter((item) => item.id !== serviceId);
+    showToast("Cleared.");
+  } catch (error) {
+    showToast(error.friendlyMessage || error.message || "That could not be cleared.", "error");
+  }
   openBookServices();
 }
 
@@ -32860,6 +33026,11 @@ async function openTitoProListing() {
           : `<button class="btn ${eligibility.eligible ? "primary" : "secondary"}" type="button" data-action="titopro-publish">${icon("upload")} Go live</button>`}
       <button class="btn ghost" type="button" data-action="titopro-hire">${icon("search")} Hire somebody</button>
     </div>
+    ${titoProListingIsDraft(profile) ? `
+      <p class="field-hint">This listing has never been live, so there is nothing on it a customer has seen. Clearing removes it and you can start again whenever you like.</p>
+      <div class="action-row tp-actions">
+        <button class="btn ghost" type="button" data-action="titopro-clear">${icon("trash")} Clear my listing</button>
+      </div>` : ""}
   `);
 }
 
@@ -32931,6 +33102,33 @@ async function publishTitoProListing() {
 async function pauseTitoProListing() {
   await api("/v1/titopro/me/listing/pause", { method: "POST" }).catch(() => null);
   showToast("Your listing is paused.");
+  await openTitoProListing();
+}
+
+// Whether to offer clearing at all. The API decides for real - it can see the
+// jobs sent through this listing, which this screen cannot - and this is only
+// about the button. Stricter on purpose: a listing that has ever been live, or
+// that TitoPay has taken down, is not a draft and never becomes one again.
+function titoProListingIsDraft(profile) {
+  if (!profile || !profile.id) return false;
+  return !profile.publishedAt && profile.status !== "published" && !profile.adminAction;
+}
+async function clearTitoProListing() {
+  const confirmed = await askToConfirm({
+    title: "Clear your listing?",
+    body: "Everything you typed here goes, including your photos and your terms. It has never been live, so no customer sees any change.",
+    confirmLabel: "Clear my listing",
+    tone: "danger"
+  });
+  if (!confirmed) return;
+  try {
+    await api("/v1/titopro/me/listing", { method: "DELETE" });
+    showToast("Your listing has been cleared.");
+  } catch (error) {
+    // The API's refusal names the reason - a job already sent, a takedown -
+    // and is written for the person reading it.
+    showToast(error.message || "Your listing could not be cleared.", "error");
+  }
   await openTitoProListing();
 }
 

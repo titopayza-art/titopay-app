@@ -59,6 +59,7 @@ const {
   removeEventPromoter,
   recordPromoterVisit,
   duplicateEvent,
+  clearDraftEvent,
   listEventCoupons,
   createEventCoupon,
   updateEventCoupon,
@@ -953,6 +954,17 @@ router.post("/business/events/:id/duplicate", requireAuth, async (req, res, next
   try {
     const eventId = await requireEventOwner(req);
     res.status(201).json({ ok: true, event: await duplicateEvent(req.auth, eventId, req.body || {}) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Throwing away a draft nobody has seen. DELETE because that is what happens
+// to it; cancelling a real event is a different route with a different result.
+router.delete("/business/events/:id", requireAuth, async (req, res, next) => {
+  try {
+    const eventId = await requireEventOwner(req);
+    res.json({ ok: true, ...(await clearDraftEvent(req.auth, eventId)) });
   } catch (error) {
     next(error);
   }

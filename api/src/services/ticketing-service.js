@@ -3,6 +3,7 @@ const QRCode = require("qrcode");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { writeAuditLog } = require("./audit-service");
+const { assertClearable, blocker, countReferences } = require("../lib/clearable");
 const { ensureDefaultPricingRule, calculateFee } = require("./pricing-service");
 const { applyWalletMovement } = require("./wallet-service");
 // Ticketing communicates by EMAIL (and in-app), never SMS.
@@ -4712,6 +4713,57 @@ async function duplicateEvent(actor, eventId, payload = {}) {
   return getBusinessEvent(actor.userId, newId);
 }
 
+// CLEARING AN EVENT THAT WAS NEVER PUT IN FRONT OF ANYBODY.
+//
+// An organiser plans three events and runs one. The other two sit on the
+// business screen forever, because cancelling is for an event people bought
+// tickets to and there is nothing else to do with one that never opened.
+//
+// 'draft' IS THE WHOLE TEST FOR THE EVENT ITSELF. The moment an event is
+// submitted it has been put in front of TitoPay's reviewers, and everything
+// after that - approved, rejected, suspended, cancelled - is a decision
+// somebody made and may be asked about. Only a draft has no such history, and
+// a rejected event is emphatically not cleared away by the person rejected.
+//
+// THE DATABASE ALREADY REFUSES THE MONEY CASE: ticket_orders, tickets,
+// ticket_refunds and ticket_settlements are ON DELETE RESTRICT, so a sold
+// event cannot be deleted whatever this function forgets. The counts below are
+// not the safety net - they are how somebody is told WHY in a sentence instead
+// of meeting a foreign key violation. Everything else about an event is the
+// organiser's own setup and cascades.
+async function clearDraftEvent(actor, eventId) {
+  await ensureTicketingSchema();
+  const { rows } = await pool.query(
+    "SELECT id, status, event_name FROM events WHERE id = $1 AND business_user_id = $2 LIMIT 1",
+    [eventId, actor.userId]);
+  const event = rows[0];
+  if (!event) throw new AppError(404, "Event not found");
+
+  const [orders, ticketsIssued, staff, vendors] = await Promise.all([
+    countReferences(pool, "ticket_orders", "event_id", eventId),
+    countReferences(pool, "tickets", "event_id", eventId),
+    countReferences(pool, "event_staff", "event_id", eventId),
+    countReferences(pool, "event_vendors", "event_id", eventId)
+  ]);
+
+  assertClearable("event", [
+    event.status !== "draft" ? `it has already been sent to TitoPay for approval` : null,
+    blocker(orders, "somebody has ordered a ticket", "{count} ticket orders have been placed"),
+    blocker(ticketsIssued, "a ticket has been issued", "{count} tickets have been issued"),
+    blocker(staff, "you have added somebody to the event team", "you have added {count} people to the event team"),
+    blocker(vendors, "a vendor has been given access", "{count} vendors have been given access")
+  ], "Cancel it instead, which keeps the record and tells everybody involved.");
+
+  await pool.query("DELETE FROM events WHERE id = $1 AND business_user_id = $2", [eventId, actor.userId]);
+  await writeAuditLog({
+    actorType: "customer", actorId: actor.userId,
+    action: "event_draft_cleared", entityType: "event", entityId: eventId,
+    ipAddress: actor.ipAddress, userAgent: actor.userAgent,
+    metadata: { eventName: event.event_name }
+  }).catch(() => null);
+  return { cleared: true };
+}
+
 async function listTicketRefunds({ status = "", limit = 100 } = {}) {
   await ensureTicketingSchema();
   const params = [];
@@ -5498,6 +5550,7 @@ module.exports = {
   removeEventPromoter,
   recordPromoterVisit,
   duplicateEvent,
+  clearDraftEvent,
   listEventCoupons,
   createEventCoupon,
   updateEventCoupon,

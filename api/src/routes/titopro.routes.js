@@ -96,6 +96,16 @@ router.post("/me/listing/pause", async (req, res, next) => {
   }
 });
 
+// Throwing away a listing that never went live. DELETE rather than another
+// POST under /me/listing, because that is what it does: the row goes.
+router.delete("/me/listing", async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await profiles.clearDraftProfile(req.auth)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // A professional may see the state of their OWN checks - cleared, pending,
 // when one expires - so they can renew a certificate before their listing
 // drops rather than after. They cannot decide one; that is admin only.

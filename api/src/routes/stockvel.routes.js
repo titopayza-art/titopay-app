@@ -58,6 +58,15 @@ router.delete("/:id", run(async (req, res) => {
   res.json({ ok: true, ...(await svc.deleteGroup(req.auth.userId, groupId)) });
 }));
 
+// CLEARING A GROUP THAT NEVER GOT GOING, which is a different act from
+// closing one that did. A separate route rather than a flag on the one above:
+// the two have different rules, different outcomes and different things to be
+// sure of, and a boolean in a body is a poor place to keep that distinction.
+router.delete("/:id/draft", run(async (req, res) => {
+  const groupId = requireUuid(req.params.id, "Group ID");
+  res.json({ ok: true, ...(await svc.clearDraftGroup(req.auth.userId, groupId)) });
+}));
+
 router.post("/:id/invitations", run(async (req, res) => {
   const groupId = requireUuid(req.params.id, "Group ID");
   const identifiers = Array.isArray(req.body?.identifiers) ? req.body.identifiers : [];

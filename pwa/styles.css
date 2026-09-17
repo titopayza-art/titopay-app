@@ -16545,3 +16545,14 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
   .tp-rate-pick .tp-star svg{width:28px;height:28px}
   .tp-rate-pick{padding:3px}
 }
+
+/* CLEARING A DRAFT: THE BIN NEXT TO A ROW THAT IS ITSELF A BUTTON.
+   Book's "what you offer" row is one big button - tapping it turns the service
+   on or off - and a button cannot legally contain another button. So the row
+   and its bin are siblings inside a flex line instead, and the sibling margin
+   that used to separate the rows moves onto the line. */
+.bk-offer-row{display:flex;align-items:center;gap:8px}
+.bk-offer-row+.bk-offer-row{margin-top:8px}
+.bk-offer-row>.settings-row-button{margin-top:0}
+.bk-offer-clear{flex:0 0 auto;color:var(--danger)}
+.bk-offer-clear svg{width:18px;height:18px}

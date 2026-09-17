@@ -15,6 +15,7 @@ const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
+const { assertClearable, blocker, countReferences } = require("../lib/clearable");
 const { boundedText } = require("../lib/validation");
 
 const money = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -439,6 +440,65 @@ async function deleteGroup(userId, groupId) {
   }
   await pool.query("UPDATE stockvel_groups SET status = 'closed', updated_at = NOW() WHERE id = $1", [groupId]);
   return { closed: true };
+}
+
+// CLEARING A GROUP THAT NEVER GOT GOING.
+//
+// deleteGroup above CLOSES a group, which is right for one that ran: the
+// contributions, the withdrawal decisions and the meeting minutes are a record
+// of other people's money and must survive. But it leaves a group that never
+// started sitting on the customer's list forever, marked closed - and somebody
+// who named a stokvel, invited nobody and contributed nothing has no record to
+// protect. They have clutter.
+//
+// So this is the other half, and it is deliberately strict about which one you
+// get. Every reason a group is NOT a draft is checked and reported together:
+// somebody who removes a member only to be told about a contribution has been
+// sent round a loop that could have been one sentence.
+//
+// The row goes entirely. Every dependent table is ON DELETE CASCADE from
+// stockvel_groups, so there is nothing orphaned behind it - and by the time
+// this runs there is nothing in any of them worth keeping anyway, which is
+// what the checks above established.
+async function clearDraftGroup(userId, groupId) {
+  const member = await requireMember(groupId, userId);
+  if (member.role !== "chair") {
+    throw new AppError(403, "Only the person who created this stokvel can clear it.");
+  }
+
+  const [totals, others, withdrawals, messages, meetings] = await Promise.all([
+    contributionTotals(groupId),
+    // $2 is bound, not interpolated: userId is a value, and a value in a SQL
+    // string is the shape of every injection ever written.
+    countReferences(pool, "stockvel_members", "group_id", groupId,
+      "AND status = 'active' AND user_id <> $2", [userId]),
+    countReferences(pool, "stockvel_withdrawals", "group_id", groupId),
+    countReferences(pool, "stockvel_messages", "group_id", groupId),
+    countReferences(pool, "stockvel_meetings", "group_id", groupId)
+  ]);
+
+  assertClearable("stokvel", [
+    // Money first: it is the one that matters most and the one a customer is
+    // most likely to have forgotten.
+    totals.contributed > 0
+      ? `R${totals.contributed.toFixed(2)} has already been contributed`
+      : null,
+    blocker(others, "somebody else has joined", "{count} other people have joined"),
+    blocker(withdrawals, "a withdrawal has been requested", "{count} withdrawals have been requested"),
+    blocker(messages, "the group has a message in it", "the group has {count} messages in it"),
+    blocker(meetings, "a meeting has been held", "{count} meetings have been held")
+  ], "Close it instead, which keeps the record and takes it off your active list.");
+
+  const { rowCount } = await pool.query("DELETE FROM stockvel_groups WHERE id = $1", [groupId]);
+  // Required late, the way this file already does it elsewhere: the audit
+  // service pulls in the pool and a circular require at module load would
+  // leave one of the two half-built.
+  await require("./audit-service").writeAuditLog({
+    actorType: "customer", actorId: userId,
+    action: "stockvel_draft_cleared", entityType: "stockvel_group", entityId: groupId,
+    metadata: { rowsRemoved: rowCount }
+  }).catch(() => null);
+  return { cleared: true };
 }
 
 async function requestWithdrawal(userId, groupId, payload = {}) {
@@ -1116,6 +1176,7 @@ async function inviteMembers(userId, groupId, identifiers = []) {
 }
 
 module.exports = {
+  clearDraftGroup,
   ensureStockvelSchema,
   createGroup,
   previewContribution,

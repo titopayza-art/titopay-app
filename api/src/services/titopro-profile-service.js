@@ -34,6 +34,7 @@ const crypto = require("node:crypto");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { boundedText } = require("../lib/validation");
+const { assertClearable, blocker, countReferences } = require("../lib/clearable");
 const { writeAuditLog } = require("./audit-service");
 const reference = require("../config/titopro-reference");
 const { tierForUserRow } = require("./compliance-service");
@@ -395,6 +396,49 @@ async function publishProfile(actor) {
     metadata: { professions: rows[0].professions, city: rows[0].city }
   }).catch(() => null);
   return present(rows[0], eligibility);
+}
+
+// CLEARING A LISTING THAT WAS NEVER PUBLISHED.
+//
+// Somebody starts a listing, picks two services, and thinks better of it. The
+// draft then sits on their TitoPro screen forever, because pausing is for a
+// listing that went live and there is nothing else to do with one that did
+// not. This removes it.
+//
+// A PUBLISHED LISTING IS NOT A DRAFT, even if it is paused today. It has been
+// in front of customers, it may have jobs and ratings against it, and
+// published_at is the record of when TitoPay put it there. That case is
+// pauseProfile's, and one taken down by an operator is admin_action's - never
+// this. The three checks below are the difference.
+async function clearDraftProfile(actor) {
+  await ensureProfileSchema();
+  if (!actor?.userId) throw new AppError(401, "Sign in to clear your TitoPro listing");
+  const { rows } = await pool.query(
+    "SELECT * FROM titopro_profiles WHERE user_id = $1 LIMIT 1", [actor.userId]);
+  const profile = rows[0];
+  if (!profile) return { cleared: false, reason: "nothing to clear" };
+
+  await require("./titopro-service").ensureTitoProSchema();
+  const jobs = await countReferences(pool, "titopro_jobs", "professional_user_id", actor.userId);
+
+  assertClearable("listing", [
+    profile.published_at
+      ? "it has been live on TitoPro before"
+      : (profile.status === "published" ? "it is live on TitoPro" : null),
+    // An admin takedown is not something the person taken down may tidy away.
+    // Clearing the row would erase the reason it came down along with it.
+    profile.admin_action ? "TitoPay has taken it down" : null,
+    blocker(jobs, "a customer has sent you a job through it", "{count} customers have sent you jobs through it")
+  ], "Pause it instead, which takes it off TitoPro and keeps your work.");
+
+  await pool.query("DELETE FROM titopro_profiles WHERE user_id = $1", [actor.userId]);
+  await writeAuditLog({
+    actorType: "customer", actorId: actor.userId,
+    action: "titopro_listing_draft_cleared", entityType: "titopro_profile", entityId: profile.id,
+    ipAddress: actor.ipAddress, userAgent: actor.userAgent,
+    metadata: { professions: profile.professions }
+  }).catch(() => null);
+  return { cleared: true };
 }
 
 // The professional taking themselves off the list - on holiday, fully booked.
@@ -796,6 +840,7 @@ function present(row, eligibility = null) {
 module.exports = {
   FICA_VERIFIED_TIER,
   PROFILE_STATUSES,
+  clearDraftProfile,
   enforceVerificationStillHolds,
   ensureProfileSchema,
   getMyProfile,

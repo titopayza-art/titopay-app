@@ -18,6 +18,7 @@ const { randomUUID } = require("node:crypto");
 const { pool } = require("../db/pool");
 const { AppError } = require("../lib/errors");
 const { writeAuditLog } = require("./audit-service");
+const { assertClearable, blocker, countReferences } = require("../lib/clearable");
 const { ensureBookSchema } = require("./book-schema");
 const { canManageVenue } = require("./book-service");
 
@@ -56,6 +57,11 @@ function shapeService(row, resourceIds = []) {
     cancellationNoticeMinutes: row.cancellation_notice_minutes,
     status: row.status,
     sortOrder: row.sort_order,
+    // Whether clearing is on offer - see clearDraftService. Sent with the list
+    // so the console offers Clear only where it will work rather than offering
+    // it everywhere and refusing most of the time. Undefined where the caller
+    // did not count; the screen reads that as "no".
+    canClear: row.booking_count === undefined ? undefined : Number(row.booking_count) === 0,
     resourceIds
   };
 }
@@ -83,8 +89,11 @@ async function listServices(userId, venueId) {
 async function readServices(venueId, { activeOnly = false } = {}) {
   await ensureBookSchema();
   const { rows } = await pool.query(
-    `SELECT * FROM book_services WHERE venue_id = $1 ${activeOnly ? "AND status = 'active'" : ""}
-      ORDER BY sort_order, created_at`,
+    `SELECT s.*,
+            (SELECT COUNT(*)::int FROM book_bookings b WHERE b.service_id = s.id) AS booking_count
+       FROM book_services s
+      WHERE s.venue_id = $1 ${activeOnly ? "AND s.status = 'active'" : ""}
+      ORDER BY s.sort_order, s.created_at`,
     [venueId]
   );
   if (!rows.length) return [];
@@ -170,6 +179,78 @@ async function updateService(actor, venueId, serviceId, payload = {}, meta = {})
   const found = all.find((s) => s.id === serviceId);
   if (!found) throw new AppError(404, "That service was not found.");
   return found;
+}
+
+// CLEARING A SERVICE NOBODY HAS BOOKED.
+//
+// Setting a venue up means typing things in and getting them wrong: a service
+// named twice, a price entered as a duration, a package the business decided
+// not to offer. Switching it to 'inactive' hides it from customers and is the
+// right answer for a service that HAS been booked - past bookings name it, and
+// a customer looking at last month's appointment should still see what they
+// came in for. For one nobody ever booked there is nothing to name.
+//
+// WHY THIS IS NOT LEFT TO THE DATABASE. book_bookings.service_id is
+// ON DELETE SET NULL, so deleting a booked service would succeed and quietly
+// blank the service out of every booking that referenced it. The count below
+// is the only thing standing between "tidy up my list" and a customer's
+// appointment losing what it was for.
+async function clearDraftService(actor, venueId, serviceId, meta = {}) {
+  await canManageVenue(actor.userId, venueId);
+  const { rows } = await pool.query(
+    "SELECT id, name FROM book_services WHERE id = $1 AND venue_id = $2 LIMIT 1",
+    [serviceId, venueId]);
+  const service = rows[0];
+  if (!service) throw new AppError(404, "That service was not found.");
+
+  const bookings = await countReferences(pool, "book_bookings", "service_id", serviceId);
+  assertClearable("service", [
+    blocker(bookings, "a customer has booked it", "{count} customers have booked it")
+  ], "Switch it off instead, which takes it off your booking page and keeps those bookings readable.");
+
+  // The resource links go with it and are the venue's own wiring, not a record
+  // of anything: cascade handles them.
+  await pool.query("DELETE FROM book_services WHERE id = $1 AND venue_id = $2", [serviceId, venueId]);
+  await writeAuditLog({
+    actorType: "customer", actorId: actor.userId, action: "book_service_draft_cleared",
+    entityType: "book_service", entityId: serviceId,
+    ipAddress: meta.ipAddress, userAgent: meta.userAgent, metadata: { venueId, name: service.name }
+  }).catch(() => {});
+  return { cleared: true };
+}
+
+// The same for a chair, a table or a bay that was typed in and never used.
+//
+// TWO BLOCKERS, NOT ONE. Bookings, for the reason above - resource_id is also
+// ON DELETE SET NULL, and a booking that forgets which table it was at is
+// worse than useless on the night. And services still pointing at it: removing
+// a resource takes its link with it, which can leave a live service with
+// nothing to be booked into and no visible reason why. Detaching it is the
+// business's decision to make deliberately, not a side effect of tidying up.
+async function clearDraftResource(actor, venueId, resourceId, meta = {}) {
+  await canManageVenue(actor.userId, venueId);
+  const { rows } = await pool.query(
+    "SELECT id, name FROM book_resources WHERE id = $1 AND venue_id = $2 LIMIT 1",
+    [resourceId, venueId]);
+  const resource = rows[0];
+  if (!resource) throw new AppError(404, "That was not found.");
+
+  const [bookings, links] = await Promise.all([
+    countReferences(pool, "book_bookings", "resource_id", resourceId),
+    countReferences(pool, "book_service_resources", "resource_id", resourceId)
+  ]);
+  assertClearable("resource", [
+    blocker(bookings, "a customer has been booked into it", "{count} customers have been booked into it"),
+    blocker(links, "a service still uses it", "{count} services still use it")
+  ], "Switch it off instead, or take it off those services first.");
+
+  await pool.query("DELETE FROM book_resources WHERE id = $1 AND venue_id = $2", [resourceId, venueId]);
+  await writeAuditLog({
+    actorType: "customer", actorId: actor.userId, action: "book_resource_draft_cleared",
+    entityType: "book_resource", entityId: resourceId,
+    ipAddress: meta.ipAddress, userAgent: meta.userAgent, metadata: { venueId, name: resource.name }
+  }).catch(() => {});
+  return { cleared: true };
 }
 
 // Replace the whole set rather than diff it: the screen sends what it wants the
@@ -350,7 +431,7 @@ async function setOpeningHours(actor, venueId, rules = [], meta = {}) {
 }
 
 module.exports = {
-  listServices, readServices, createService, updateService,
-  listResources, readResources, createResource, updateResource,
+  listServices, readServices, createService, updateService, clearDraftService,
+  listResources, readResources, createResource, updateResource, clearDraftResource,
   listOpeningHours, readOpeningHours, setOpeningHours
 };
