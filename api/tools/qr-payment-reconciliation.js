@@ -12,7 +12,13 @@
 // and reports any that do not. It is READ ONLY - nothing but SELECT - so it is
 // safe to point at production:
 //
-//   POSTGRES_URL='...' node verification/qr-payment-reconciliation.js
+//   POSTGRES_URL='...' node api/tools/qr-payment-reconciliation.js
+//
+// It lives under api/ rather than verification/ ON PURPOSE: this is the one
+// check that has to run where the DATABASE is, which on a cPanel deployment is
+// the API folder on the server. verification/ is not in any release archive,
+// so a reconciliation kept there could never be pointed at production - which
+// is the only place the answer matters.
 //
 // It exits non-zero if a single payment fails to reconcile, so it can sit in a
 // cron and shout rather than be remembered.
@@ -29,7 +35,7 @@ process.env.POSTGRES_URL = process.env.POSTGRES_URL
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "reconcile-access-secret-long-enough";
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "reconcile-refresh-secret-long-enough";
 
-const { pool } = require("../api/src/db/pool");
+const { pool } = require("../src/db/pool");
 
 const QR_CODES = ["qr_payment", "qr_pay", "customer_qr_payment"];
 const cents = (value) => Math.round((Number(value) || 0) * 100);
