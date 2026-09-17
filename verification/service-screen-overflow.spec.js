@@ -233,6 +233,40 @@ const MEASURE = `(() => {
     if (wideFieldsets.size) [...wideFieldsets].slice(0, 8).forEach((f) => console.log("       " + f));
     check("no fieldset refuses to shrink or outgrows its card",
       wideFieldsets.size === 0, `${fieldsetsSeen} fieldsets checked, ${wideFieldsets.size} bad`);
+
+    // THE REPORTED FAILURE, REPRODUCED.
+    //
+    // The sheet is full-bleed on a phone, but that rule is keyed to
+    // max-width: 950px. iOS widens the LAYOUT viewport when something on the
+    // page has an intrinsic width it cannot shrink, and once it passes 950 the
+    // full-bleed rule drops out and the sheet jumps to its desktop width,
+    // centred - 680px centred in a 920px layout, on a 390px screen, is a sheet
+    // sitting 120px off the left with its right-hand side past the other edge.
+    // That is what the screenshots showed.
+    //
+    // So: a wide layout viewport with a phone-sized glass, which is the exact
+    // state, and the sheet must still come out phone-sized.
+    const wide = await browser.newContext({ viewport: { width: 1000, height: 844 } });
+    const wp = await wide.newPage();
+    await wp.route(`${API}/**`, (route) => route.fulfill({ status: 200, contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" }, body: JSON.stringify({ ok: true, items: [] }) }));
+    await wp.goto(`http://127.0.0.1:${global.__port}/`, { waitUntil: "domcontentloaded" });
+    await wp.waitForFunction(() => typeof window.openInvoiceDocumentModal === "function", null, { timeout: 15000 });
+    await wp.evaluate(() => window.saveAuth({ accessToken: "a", refreshToken: "r" }));
+    const clamp = await wp.evaluate(() => {
+      window.openInvoiceDocumentModal({ action: "quote", serviceCode: "quote" });
+      const backdrop = document.querySelector(".modal-backdrop");
+      const width = () => Math.round(document.querySelector(".modal-card").getBoundingClientRect().width);
+      backdrop.style.setProperty("--sheet-max", "358px");
+      const clamped = width();
+      backdrop.style.removeProperty("--sheet-max");
+      return { clamped, unclamped: width() };
+    });
+    await wide.close();
+    check("A SHEET CANNOT OUTGROW THE GLASS WHEN THE LAYOUT VIEWPORT BLOWS OUT",
+      clamp.clamped === 358, `clamped to ${clamp.clamped}px (would be ${clamp.unclamped}px without it)`);
+    check("and the clamp is what is doing it, not the layout being narrow anyway",
+      clamp.unclamped > clamp.clamped, `${clamp.unclamped}px vs ${clamp.clamped}px`);
   } finally {
     await browser.close();
     server.close();

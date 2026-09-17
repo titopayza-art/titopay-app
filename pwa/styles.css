@@ -5451,7 +5451,12 @@ fieldset {
 }
 
 .modal-card {
-  width: min(100%, 560px);
+  /* --sheet-max is the GLASS width, set by openModal from
+     window.visualViewport. It is here so the sheet can never be wider
+     than the screen even when the layout viewport blows out - see
+     syncSheetWidthToGlass in app.js for what that looks like and why.
+     It falls back to 560px, so with JS unavailable nothing changes. */
+  width: min(100%, var(--sheet-max, 560px), 560px);
   max-height: min(88vh, 760px);
   max-height: min(88svh, 760px);
   margin: 0 auto;
@@ -13659,7 +13664,7 @@ img {
 /* Ticketing sheets: wider as the window allows, never wider than is
    readable. Phone behaviour is untouched. */
 @media (min-width: 760px) {
-  .modal-card.ticketing-wide { width: min(100%, 860px); }
+  .modal-card.ticketing-wide { width: min(100%, var(--sheet-max, 860px), 860px); }
   .ticketing-hub-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .campaign-prices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -13680,8 +13685,16 @@ img {
 
    3. An input inside a form-grid label was sizing to its own default width,
       not its container: 208px of input in a 506px row. They fill the row. */
+/* --sheet-max (the glass, from app.js) is in every one of these for one
+   reason: the full-bleed phone rule below stops matching if the LAYOUT
+   viewport blows past 950px, which iOS does when something on the page
+   has an intrinsic width it cannot shrink. The sheet then jumps to its
+   desktop width and centres - 680px centred in a 920px layout on a 390px
+   screen puts it 120px off the left with its right-hand side past the
+   other edge. That is the drifting, cut-off sheet that was reported.
+   Clamping to the glass makes it impossible whatever widens the page. */
 @media (min-width: 720px) {
-  .modal-card { width: min(100%, 680px); }
+  .modal-card { width: min(100%, var(--sheet-max, 680px), 680px); }
   .statement-periods,
   .sv-filter-row,
   .sv-tabs,
@@ -13693,8 +13706,8 @@ img {
 }
 
 @media (min-width: 1080px) {
-  .modal-card { width: min(100%, 760px); }
-  .modal-card.ticketing-wide { width: min(100%, 900px); }
+  .modal-card { width: min(100%, var(--sheet-max, 760px), 760px); }
+  .modal-card.ticketing-wide { width: min(100%, var(--sheet-max, 900px), 900px); }
 }
 
 .form-grid label > input:not([type="checkbox"]):not([type="radio"]),

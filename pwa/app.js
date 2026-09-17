@@ -272,6 +272,12 @@ const REGISTERED_RECIPIENT_SERVICES = new Set([
 const app = document.querySelector("#app");
 window.addEventListener("scroll", lockHorizontalScroll, { passive: true });
 window.addEventListener("resize", lockHorizontalScroll, { passive: true });
+// Rotating the phone, or the keyboard opening, changes the glass. The open
+// sheet has to follow it or it keeps a width from the orientation before.
+window.addEventListener("resize", () => syncSheetWidthToGlass(), { passive: true });
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", () => syncSheetWidthToGlass(), { passive: true });
+}
 if (typeof Element !== "undefined" && !Element.prototype.matches) {
   Element.prototype.matches = Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
 }
@@ -3869,6 +3875,38 @@ function onHistoryBack(event) {
   }
   sheetHistorySkips = 0;
 }
+// THE SHEET FOLLOWS THE GLASS, NOT THE LAYOUT.
+//
+// .modal-card is width: min(100%, 560px). The 560 is the desktop maximum, and
+// on a phone 100% always wins - UNLESS the layout viewport is wider than the
+// phone. iOS widens it when something on the page has an intrinsic width it
+// cannot shrink (a native date control is the classic one). The moment that
+// happens the sheet stops being 100% of a 390px screen and becomes 560px
+// centred in a viewport the browser thinks is, say, 920px - so it sits 180px
+// off the left of the glass with its right-hand side past the other edge.
+// That is a sheet drifting sideways with its labels cut off, which is exactly
+// how it was reported.
+//
+// window.visualViewport.width is the GLASS - the actual pixels the person is
+// looking at. It does not widen when content overflows, which is precisely the
+// property needed here. Pinning the sheet's maximum to it means the sheet
+// cannot be wider than the screen even if the layout around it blows out.
+//
+// Belt and braces, not a substitute for fixing what widens the page: the
+// native date controls that caused this are already dealt with in the
+// stylesheet. This is what stops the NEXT one from looking cheap.
+function sheetMaxWidth() {
+  const glass = (window.visualViewport && window.visualViewport.width) || window.innerWidth || 0;
+  if (!glass) return null;
+  // The backdrop's own 16px gutters live outside the card.
+  return Math.max(240, Math.round(glass - 32));
+}
+function syncSheetWidthToGlass(backdrop) {
+  const target = backdrop || document.querySelector(".modal-backdrop");
+  if (!target) return;
+  const max = sheetMaxWidth();
+  if (max) target.style.setProperty("--sheet-max", `${max}px`);
+}
 function openModal(html) {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const keepPrevious = !isFocusRestorationTarget(active) || Boolean(active.closest(".modal-backdrop"));
@@ -3883,6 +3921,7 @@ function openModal(html) {
   lockPageScroll();
   const wrapper = document.createElement("div");
   wrapper.className = "modal-backdrop";
+  syncSheetWidthToGlass(wrapper);
   // The ticketing sheets carry tables and side-by-side cards, so on a desktop
   // they are allowed more room than a confirmation dialog needs. Phones are
   // unaffected: the wider rule only applies from 760px up.
