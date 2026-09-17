@@ -16598,3 +16598,19 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
 .bk-offer-row>.settings-row-button{margin-top:0}
 .bk-offer-clear{flex:0 0 auto;color:var(--danger)}
 .bk-offer-clear svg{width:18px;height:18px}
+
+/* NOTHING OF THE APP SHELL READS THROUGH AN OPEN SHEET.
+   The modal scrim is rgba(6, 26, 61, 0.46) - deliberately translucent, so the
+   page behind it blurs rather than disappears. That is the intended look for a
+   dashboard, and it is the wrong look for the bottom navigation: the nav is a
+   near-white bar with a bright blue centre button, so at 54% show-through it
+   does not blur into a background, it reads as a second UI sitting under the
+   first. On a dark theme with the keyboard up it lands in the strip between
+   the sheet and the keyboard, which is exactly where the eye goes.
+   It cannot be tapped behind a sheet either, so there is nothing to lose by
+   taking it out of the picture entirely while one is open. */
+.modal-open .bottom-nav {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}

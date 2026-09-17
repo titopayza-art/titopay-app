@@ -267,6 +267,46 @@ const MEASURE = `(() => {
       clamp.clamped === 358, `clamped to ${clamp.clamped}px (would be ${clamp.unclamped}px without it)`);
     check("and the clamp is what is doing it, not the layout being narrow anyway",
       clamp.unclamped > clamp.clamped, `${clamp.unclamped}px vs ${clamp.clamped}px`);
+
+    // NOTHING OF THE SHELL READS THROUGH AN OPEN SHEET.
+    //
+    // The scrim is 46% opaque on purpose, so the dashboard behind it blurs.
+    // The bottom navigation is the one piece of chrome that does not blur into
+    // a background - a near-white bar with a bright blue centre button - and
+    // with the keyboard up it lands in the strip between the sheet and the
+    // keyboard. It was reported as "I can see the background".
+    const shell = await browser.newContext({ viewport: { width: 393, height: 852 } });
+    const sp = await shell.newPage();
+    await sp.route(`${API}/**`, (route) => route.fulfill({ status: 200, contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" }, body: JSON.stringify({ ok: true, items: [] }) }));
+    await sp.goto(`http://127.0.0.1:${global.__port}/`, { waitUntil: "domcontentloaded" });
+    await sp.waitForFunction(() => typeof window.openModal === "function", null, { timeout: 15000 });
+    const chrome = await sp.evaluate(() => {
+      // The nav only renders for a signed-in shell, which this harness does not
+      // stand up, so the element is created here and the CSS contract measured
+      // on it. What is under test is the rule, not the dashboard.
+      const nav = document.createElement("nav");
+      nav.className = "bottom-nav";
+      nav.innerHTML = "<button>More</button>";
+      document.body.appendChild(nav);
+      const read = () => {
+        const cs = getComputedStyle(nav);
+        return { visibility: cs.visibility, opacity: cs.opacity, zIndex: cs.zIndex };
+      };
+      const closed = read();
+      document.body.classList.add("modal-open");
+      const open = read();
+      document.body.classList.remove("modal-open");
+      nav.remove();
+      return { closed, open };
+    });
+    await shell.close();
+    check("the bottom navigation is visible with no sheet open",
+      chrome.closed.visibility === "visible" && chrome.closed.opacity === "1",
+      JSON.stringify(chrome.closed));
+    check("AND IS NOT VISIBLE THROUGH AN OPEN SHEET",
+      chrome.open.visibility === "hidden" && chrome.open.opacity === "0",
+      JSON.stringify(chrome.open));
   } finally {
     await browser.close();
     server.close();
