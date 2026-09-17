@@ -257,6 +257,9 @@ const FLOW_MONTHLY_COLUMNS = 6;
 const BALANCE_HIDDEN_KEY = "titopay_balance_hidden_v1";
 const OFFICIAL_APP_WARNING = "Use TitoPay only at https://app.titopay.co.za. Never enter your TitoPay details on any other website or link.";
 const BUSINESS_DOCUMENTS_KEY = "titopay_business_documents_v1";
+// The high-water mark of each numbered document series, kept apart from the
+// documents themselves so losing them cannot restart the numbering.
+const DOCUMENT_SERIES_KEY = "titopay_document_series_v1";
 const BUSINESS_STAFF_KEY = "titopay_business_staff_v1";
 const DOCUMENT_PDF_FEE = 2.5;
 const REGISTERED_RECIPIENT_SERVICES = new Set([
@@ -12106,14 +12109,68 @@ function documentPrefix(action) {
   if (action === "proforma-invoice") return "PRO";
   return "INV";
 }
+// THE NUMBER SERIES MUST ONLY EVER GO FORWARDS.
+//
+// This counted the finalised documents on the device and added one. That is
+// correct only while the device still holds every document it has ever
+// issued, and it does not: the list is capped at 40, and localStorage on iOS
+// is evicted after a stretch of not opening the app. Lose the list and the
+// count is zero again, so the next invoice is numbered 0001 for the second
+// time - two different documents with one number, which is the one thing a
+// numbered series exists to prevent.
+//
+// So the series is remembered separately from the documents. A high-water
+// mark per prefix per year is written the moment a number is ISSUED, and the
+// next number is one past the highest of: that mark, and the highest number
+// actually present. Reading both means an older install that never wrote a
+// mark still moves forward from what it can see, and a device that lost its
+// documents still moves forward from the mark.
+//
+// Drafts are still excluded. A draft holds no number, so counting one would
+// reserve a place in the series that nothing ever fills, and a numbered
+// series with gaps is the first thing an auditor asks about.
+function documentSeriesMarks() {
+  return readJson(DOCUMENT_SERIES_KEY) || {};
+}
+function documentSeriesKey(prefix, year) {
+  return `${prefix}-${year}`;
+}
+// The highest number this device has actually issued in the series, read off
+// the documents it still holds.
+function highestIssuedNumber(prefix, year) {
+  const pattern = new RegExp(`^${prefix}-${year}-(\\d+)$`);
+  return (state.businessDocuments || []).reduce((highest, item) => {
+    const match = pattern.exec(String(item.number || ""));
+    return match ? Math.max(highest, Number(match[1]) || 0) : highest;
+  }, 0);
+}
 function nextBusinessDocumentNumber(action) {
   const prefix = documentPrefix(action);
-  // Drafts are excluded deliberately. A draft holds no number, so counting one
-  // would reserve a place in the series that nothing ever fills - and a
-  // numbered document series with gaps is the first thing an auditor queries.
-  const count = state.businessDocuments
-    .filter((item) => item.prefix === prefix && item.status !== "draft").length + 1;
-  return `${prefix}-${new Date().getFullYear()}-${leftPad(String(count), 4, "0")}`;
+  const year = new Date().getFullYear();
+  const marks = documentSeriesMarks();
+  const mark = Number(marks[documentSeriesKey(prefix, year)]) || 0;
+  const next = Math.max(mark, highestIssuedNumber(prefix, year)) + 1;
+  return `${prefix}-${year}-${leftPad(String(next), 4, "0")}`;
+}
+// Called when a number is committed to a document, never when one is merely
+// previewed: the identity card shows the next number before anything is
+// finalised, and burning the series every time somebody opens the form would
+// leave a gap for every abandoned draft.
+function recordIssuedDocumentNumber(number) {
+  const match = /^([A-Z]+)-(\d{4})-(\d+)$/.exec(String(number || ""));
+  if (!match) return;
+  const [, prefix, year, issued] = match;
+  const key = documentSeriesKey(prefix, year);
+  const marks = documentSeriesMarks();
+  const value = Number(issued) || 0;
+  if (value <= (Number(marks[key]) || 0)) return;
+  marks[key] = value;
+  try {
+    localStorage.setItem(DOCUMENT_SERIES_KEY, JSON.stringify(marks));
+  } catch (error) {
+    // A device with storage disabled keeps the in-list behaviour, which is
+    // what it had before this existed.
+  }
 }
 function parseDocumentLineItems(lineItems, fallbackAmount) {
   const rows = String(lineItems || "")
@@ -12225,9 +12282,11 @@ function finaliseDocumentDraft(id) {
   const draft = (state.businessDocuments || []).find((item) => item.id === id);
   if (!draft) return showToast("That draft is no longer available.", "error");
   if (draft.status !== "draft") return openBusinessDocumentSavedModal(draft, null);
+  const issuedNumber = draft.number || nextBusinessDocumentNumber(draft.action);
+  recordIssuedDocumentNumber(issuedNumber);
   const finalised = Object.assign({}, draft, {
     status: "final",
-    number: draft.number || nextBusinessDocumentNumber(draft.action),
+    number: issuedNumber,
     finalisedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
@@ -12290,6 +12349,13 @@ async function clearDocumentDraft(id) {
   openBusinessDocumentHistory();
 }
 function saveBusinessDocumentDraft(document) {
+  // The one choke point every persisted document passes through, so the series
+  // mark is written wherever a number was assigned - finalising a draft, or
+  // creating a numbered document outright. Idempotent and monotonic, so being
+  // called twice for one document changes nothing.
+  if (document && document.status !== "draft" && document.number) {
+    recordIssuedDocumentNumber(document.number);
+  }
   const existing = state.businessDocuments.filter((item) => item.id !== document.id);
   state.businessDocuments = [document].concat(existing).slice(0, 40);
   state.activeBusinessDocumentId = document.id;
@@ -27310,7 +27376,7 @@ function mergeServiceCatalogue(defaults = [], remote = []) {
 }
 async function loadDefaultServices() {
   if (!defaultServicesPromise) {
-    defaultServicesPromise = fetch("./services-default.json?v=559")
+    defaultServicesPromise = fetch("./services-default.json?v=577")
       .then((response) => {
         if (!response.ok) throw new Error("Default service catalogue unavailable");
         return response.json();

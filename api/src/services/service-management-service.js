@@ -9,7 +9,7 @@ const VALID_AUDIENCES = new Set(["personal", "business", "all"]);
 const DEFAULT_SERVICES = [
   ["top-up", "Top Up", "upload", "top-up", "Add money to your TitoPay wallet.", "active", true, true, 10, "none"],
   ["withdraw", "Withdraw", "withdraw", "withdraw", "Withdraw available wallet funds.", "active", true, false, 20, "none"],
-  ["send-money", "Send Money", "send", "send-money", "Send money using a username, cellphone number or email address.", "active", true, false, 30, "none"],
+  ["send-money", "Send Money", "send", "send-money", "Send money using a username, cellphone number or email address.", "active", true, true, 30, "none"],
   ["receive-money", "Receive Money", "download", "receive-money", "Generate a TitoPay QR to receive money.", "active", true, true, 40, "none"],
   ["qr-pay", "QR Pay", "qr", "qr-pay", "Scan and pay TitoPay QR codes. A flat R0.50 QR payment fee applies.", "active", true, true, 50, "none"],
   ["payment-request", "Payment Request", "download", "payment-request", "Request money from a customer, friend or family member.", "active", true, true, 60, "none"],
@@ -312,6 +312,7 @@ async function applyServiceCopyFixups() {
   );
   await openTicketsToBusinessOnce();
   await openBookToCustomersOnce();
+  await openSendMoneyToBusinessOnce();
   await addTitoProTileOnce();
   await openRewardsOnce();
   await correctStokvelSpellingOnce();
@@ -343,6 +344,37 @@ async function applyServiceCopyFixups() {
 //
 // It never throws. This sits on the path of every catalogue read, and a
 // platform_settings hiccup must not take the whole service list down with it.
+// SEND MONEY IS NOT A PERSONAL-ONLY ACT.
+//
+// send-money seeded with business_visible = FALSE, so a business account had
+// no way to pay anybody from its own wallet: the tile simply was not on the
+// screen. A shop pays a supplier, refunds a walk-in, settles with a driver -
+// the same wallet transfer a personal account has always had. There was no
+// rule behind the flag, only a default nobody revisited.
+//
+// One-shot and guarded like the two below it: it corrects a default once and
+// records that it has, so an operator who later hides the tile keeps that
+// decision.
+const SEND_MONEY_BUSINESS_FIXUP_KEY = "service_fixup_send_money_business_visible";
+async function openSendMoneyToBusinessOnce() {
+  try {
+    const applied = await pool.query(
+      "SELECT 1 FROM platform_settings WHERE key = $1 LIMIT 1", [SEND_MONEY_BUSINESS_FIXUP_KEY]);
+    if (applied.rows.length) return;
+    const { rowCount } = await pool.query(
+      `UPDATE service_config
+          SET business_visible = TRUE, updated_at = NOW()
+        WHERE service_code = 'send-money' AND business_visible = FALSE`);
+    await pool.query(
+      `INSERT INTO platform_settings (key, value)
+       VALUES ($1, $2::JSONB) ON CONFLICT (key) DO NOTHING`,
+      [SEND_MONEY_BUSINESS_FIXUP_KEY, JSON.stringify({ appliedAt: new Date().toISOString(), rowsChanged: rowCount })]);
+    if (rowCount) console.info("[services] Send Money is now available to business accounts");
+  } catch (error) {
+    console.error("[services] could not open Send Money to business accounts", { message: error.message });
+  }
+}
+
 const TICKETS_BUSINESS_FIXUP_KEY = "service_fixup_tickets_business_visible";
 async function openTicketsToBusinessOnce() {
   try {
@@ -665,6 +697,9 @@ async function updateService(id, payload, actor) {
 
 module.exports = {
   capabilityReport,
+  // The catalogue's own defaults, so a test can assert what the platform
+  // intends for a service without re-typing the tuple.
+  DEFAULT_SERVICES,
   createService,
   ensureDefaultServices,
   listServices,
@@ -674,4 +709,5 @@ module.exports = {
   // like it worked. The only way to prove this one does its own job is to call
   // it on its own. Nothing in the running API calls it from here.
   addTitoProTileOnce,
+  openSendMoneyToBusinessOnce,
 };

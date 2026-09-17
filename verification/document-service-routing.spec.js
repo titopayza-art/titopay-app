@@ -266,6 +266,14 @@ const ok = (label, pass, detail) => {
 
     state.businessDocuments = [];
     state.editingDocumentDraftId = null;
+    // THE SERIES MARK GOES TOO, and clearing the list is no longer enough to
+    // do it. A number series now remembers its high-water mark separately from
+    // the documents, precisely so that a device losing its documents cannot
+    // reissue a number somebody is already holding. That is the right rule and
+    // it is what makes this scenario need an explicit reset: an earlier check
+    // in this same page has already issued invoice numbers, so without this the
+    // "first" document below starts wherever that left off.
+    try { localStorage.removeItem("titopay_document_series_v1"); } catch (error) { /* private mode */ }
 
     // 1. A first document, finalised straight away, takes INV-...0001.
     await openFresh();
