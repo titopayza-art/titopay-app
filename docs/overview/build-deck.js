@@ -57,6 +57,12 @@ function wordmark(x, y, size, light) {
 }
 
 // Every slide starts the same way so the deck has one rhythm.
+//
+// THE HEADING OWNS ITS OWN SPACE. This used to park the cursor on a fixed
+// y after drawing the title, which is only safe while every title is one
+// line. A title that wrapped to two ran past that fixed line and the body
+// copy was drawn straight over it. The bottom of the title is measured here
+// instead, so the heading can be any length and the copy still clears it.
 function slide(kicker, title, opts = {}) {
   if (slideNo > 0) doc.addPage();
   slideNo += 1;
@@ -67,11 +73,22 @@ function slide(kicker, title, opts = {}) {
     doc.font("Helvetica-Bold").fontSize(9).fillColor(BLUE)
       .text(kicker.toUpperCase(), M, 48, { characterSpacing: 2.2, lineBreak: false });
   }
+  let bottom = 96;
   if (title) {
-    doc.font("Helvetica-Bold").fontSize(opts.size || 30).fillColor(NAVY)
-      .text(title, M, 68, { width: opts.titleWidth || CW, lineGap: 1 });
+    const size = opts.size || 30;
+    const width = opts.titleWidth || CW;
+    doc.font("Helvetica-Bold").fontSize(size).fillColor(NAVY);
+    bottom = 68 + doc.heightOfString(title, { width, lineGap: 1 });
+    doc.text(title, M, 68, { width, lineGap: 1 });
   }
-  doc.y = opts.startY || 128;
+  doc.y = bottom + (opts.gap === undefined ? 26 : opts.gap);
+}
+
+// Move down to a chosen line, but never backwards. The slides below place
+// their blocks on a deliberate grid; this keeps that grid while making it
+// impossible for a block to be pulled back up into the heading.
+function flow(y) {
+  doc.y = Math.max(doc.y, y);
 }
 
 function lead(text, width) {
@@ -139,9 +156,15 @@ function ticks(items, opts = {}) {
     const row = i % perCol;
     const x = M + col * (colW + 28);
     const y = startY + row * (opts.rowH || 30);
-    doc.circle(x + 6, y + 7, 6).fillColor(opts.tone || BLUE).fill();
-    doc.font("Helvetica-Bold").fontSize(7).fillColor("#ffffff")
-      .text("✓", x + 2.6, y + 4, { width: 8, lineBreak: false });
+    // THE TICK IS DRAWN, NOT TYPED. U+2713 is not in WinAnsiEncoding, which
+    // is what pdfkit uses for the built-in Helvetica, and it was written into
+    // the page as its raw code point - two bytes that come out as an
+    // apostrophe followed by nothing. Two strokes give a tick on any reader.
+    const cx = x + 6;
+    const cy = y + 7;
+    doc.circle(cx, cy, 6).fillColor(opts.tone || BLUE).fill();
+    doc.moveTo(cx - 2.7, cy + 0.2).lineTo(cx - 0.8, cy + 2.1).lineTo(cx + 2.9, cy - 2.3)
+      .lineWidth(1.3).lineCap("round").lineJoin("round").strokeColor("#ffffff").stroke();
     doc.font("Helvetica").fontSize(11.5).fillColor(INK)
       .text(item, x + 20, y, { width: colW - 24, lineGap: 2 });
     maxY = Math.max(maxY, doc.y);
@@ -194,10 +217,10 @@ doc.font("Helvetica").fontSize(13).fillColor(PALE)
   .text(TAGLINE, M, 152, { characterSpacing: 0.6, lineBreak: false });
 
 doc.font("Helvetica-Bold").fontSize(40).fillColor("#ffffff")
-  .text("One wallet for\nevery payment\na business needs.", M, 232, { width: 470, lineGap: 6 });
+  .text("One wallet for\neveryday payments\nin South Africa.", M, 232, { width: 470, lineGap: 6 });
 
 doc.font("Helvetica").fontSize(12.5).fillColor(PALE)
-  .text("A South African payments platform for people and the businesses they buy from.",
+  .text("People use it to pay and to get paid. Businesses use it to sell, invoice and settle.",
     M, 420, { width: 430, lineGap: 4 });
 
 doc.font("Helvetica").fontSize(9).fillColor("#6d86ad")
@@ -206,15 +229,16 @@ slideNo = 1;
 
 /* ========================================================= 2. THE PICTURE */
 
-slide("The opportunity", "Money moves, but the tools around it don't keep up.");
-lead("South Africans pay each other, run businesses and get paid every day. The accounts they use were "
-  + "designed for a branch network, not for a phone, a market stall or a side business.", 560);
+slide("The opportunity", "Everyday money still runs on\nbranch-era accounts.");
+lead("South Africans pay each other, run small businesses and get paid every day. The accounts and card "
+  + "machines they use were built around branches and rental contracts, and both are a poor fit for a "
+  + "phone or a market stall.", 580);
 
-doc.y = 250;
+flow(250);
 cards([
-  { title: "People", body: "Want to send, receive and pay without a card machine, a branch visit or a form." },
-  { title: "Small businesses", body: "Need to take a payment, issue an invoice and get settled without a merchant onboarding process." },
-  { title: "Providers", body: "Have the licences and the rails, and need reach and a product people will actually open." }
+  { title: "People", body: "A person wants to send money, receive it and pay a shop without a branch visit or a form to fill in." },
+  { title: "Small businesses", body: "A trader wants to take a payment, issue an invoice and get settled without a merchant onboarding process." },
+  { title: "Licensed providers", body: "Providers hold the licences and the rails. What they need is reach and a product customers open every day." }
 ], { perRow: 3 });
 
 doc.font("Helvetica-Oblique").fontSize(9.5).fillColor(MUTED)
@@ -223,22 +247,22 @@ doc.font("Helvetica-Oblique").fontSize(9.5).fillColor(MUTED)
 
 /* ============================================================ 3. WHAT WE ARE */
 
-slide("What TitoPay is", "A wallet, a business toolkit\nand three marketplaces.", { size: 30 });
-doc.y = 190;
+slide("What TitoPay is", "One account, three parts.");
+flow(190);
 
 cards([
-  { big: "01", title: "The wallet", body: "Send, receive, pay by QR, request money, split a bill, save in a group, top up by card, withdraw to a bank." },
-  { big: "02", title: "The business side", body: "Take payments, run a till with stock, issue quotes and invoices, refund customers, settle to the bank." },
-  { big: "03", title: "The marketplaces", body: "TitoPro for professional services, Book for appointments, and a full event ticketing platform." }
+  { big: "01", title: "The wallet", body: "Send, receive, pay by QR, request money, split a bill, save in a group, top up by card and withdraw to a bank." },
+  { big: "02", title: "The business side", body: "Take payments, run a till with stock, issue quotes and invoices, refund customers and settle to the bank." },
+  { big: "03", title: "The marketplaces", body: "TitoPro for professional services, Book for appointments and a full platform for event ticketing." }
 ], { perRow: 3 });
 
 doc.font("Helvetica").fontSize(11.5).fillColor(MUTED)
-  .text("All of it on one balance, one identity and one record of every movement.", M, H - 88, { width: CW });
+  .text("All three run on one balance, one identity and one record of every movement.", M, H - 88, { width: CW });
 
 /* ========================================================== 4. THE WALLET */
 
-slide("For people", "Everything a phone should\nalready be able to do.", { size: 30 });
-doc.y = 186;
+slide("For people", "What a customer can do.");
+flow(186);
 ticks([
   "Send money by username, cellphone or email",
   "Pay any business by scanning its QR code",
@@ -254,10 +278,10 @@ ticks([
 
 /* ======================================================== 5. THE BUSINESS */
 
-slide("For business", "A card machine, a stock system\nand an accountant's drawer.", { size: 30 });
-doc.y = 186;
+slide("For business", "What a business can do.");
+flow(186);
 ticks([
-  "Take payment by QR - no terminal, no rental",
+  "Take payment by QR, with no terminal and no rental",
   "Ring up a basket from a product catalogue",
   "Track stock, restocks and stock takes",
   "Issue quotes, invoices and proformas as PDFs",
@@ -271,11 +295,11 @@ ticks([
 
 /* ===================================================== 6. THE MARKETPLACES */
 
-slide("Where it goes further", "Three marketplaces on top\nof the same wallet.", { size: 30 });
-doc.y = 200;
+slide("Where it goes further", "Three marketplaces run on\nthe same balance.");
+flow(200);
 cards([
-  { title: "TitoPro", body: "Customers find and hire vetted professionals - trades, home services, creative work. Ratings, reporting and moderation built in." },
-  { title: "Book", body: "Any business with a diary gets a public booking page: services, staff or rooms, opening hours, confirmations." },
+  { title: "TitoPro", body: "Customers find and hire vetted professionals for trades, home services and creative work. Ratings, reporting and moderation are built in." },
+  { title: "Book", body: "Any business with a diary gets a public booking page carrying its services, staff or rooms, opening hours and confirmations." },
   { title: "Ticketing", body: "Events from approval to the door: ticket types, seating, promoters, coupons, scanning, refunds and cashless wristbands." }
 ], { perRow: 3 });
 
@@ -285,22 +309,23 @@ doc.font("Helvetica").fontSize(11.5).fillColor(MUTED)
 
 /* ======================================================= 7. HOW WE EARN */
 
-slide("The model", "TitoPay earns on movement,\nnot on balances.");
-doc.y = 168;
-lead("Every service carries a published fee from one schedule. Nothing is hidden, and the customer sees "
-  + "the fee before they confirm.", 560);
+slide("The model", "TitoPay earns a fee when\nmoney moves.");
+flow(168);
+lead("Every service carries a published fee taken from a single schedule. The customer sees the fee before "
+  + "confirming the payment.", 580);
 
-doc.y = 238;
+flow(238);
 cards([
   { big: "1.5%", title: "On business takings", body: "Charged to the business on QR sales and on settlement to the bank." },
   { big: "10%", title: "On ticket sales", body: "Commission to the organiser, plus a service fee on each order." },
-  { big: "R20", title: "Plus 1.5% on TitoPro", body: "Charged to the professional on completed work." },
+  { big: "R20", title: "On TitoPro jobs", body: "A flat fee plus 1.5%, charged to the professional on completed work." },
   { big: "3%", title: "On bulk payouts", body: "Payroll, grants, allowances and distributions." }
 ], { perRow: 4 });
 
 /* =============================================================== 8. FEES */
 
-slide("The schedule", "Published, and the same\nfor everybody.", { size: 26, startY: 150 });
+slide("The schedule", "One published fee schedule,\nthe same for everybody.", { size: 26 });
+flow(150);
 feeTable([
   { svc: "Send or receive money", who: "Customer", fee: "Free" },
   { svc: "QR payment", who: "Customer", fee: "R0.50" },
@@ -319,36 +344,36 @@ doc.font("Helvetica").fontSize(9.5).fillColor(MUTED)
 
 /* ========================================================= 9. COMPLIANCE */
 
-slide("Risk and compliance", "Access grows with identity.");
-doc.y = 162;
-lead("Every account sits on a verification level that sets what it may move and hold. Limits are TitoPay's "
-  + "own operational controls, applied on top of monitoring, screening and account status.", 600);
+slide("Risk and compliance", "Limits follow the level\nof verification.");
+flow(162);
+lead("Every account sits on a verification level that sets what it may move and hold. These limits are "
+  + "TitoPay's own operational controls, applied on top of monitoring, screening and account status.", 600);
 
-doc.y = 240;
+flow(240);
 cards([
-  { big: "01", title: "Limited access", body: "Lower ceilings while identity verification is outstanding.\n\nR2 500 per payment\nR25 000 a month" },
-  { big: "02", title: "Basic verified", body: "Identity confirmed.\n\nR10 000 per payment\nR200 000 a month" },
-  { big: "03", title: "Fully verified", body: "Identity and documentary due diligence completed.\n\nNo fixed monthly ceiling, with activity monitored throughout" }
+  { big: "01", title: "Limited access", body: "Lower ceilings apply while identity verification is outstanding.\n\nR2 500 per payment\nR25 000 a month" },
+  { big: "02", title: "Basic verified", body: "Identity has been confirmed.\n\nR10 000 per payment\nR200 000 a month" },
+  { big: "03", title: "Fully verified", body: "Identity and documentary due diligence are complete.\n\nNo fixed monthly ceiling. Activity is monitored throughout." }
 ], { perRow: 3 });
 
 /* ============================================================ 10. TRUST */
 
-slide("Trust", "Built so the money is\nalways accounted for.", { size: 30 });
-doc.y = 190;
+slide("Trust", "How the money is kept\naccounted for.");
+flow(190);
 cards([
   { title: "Double-entry ledger", body: "Every movement is written as matching entries in one step. Money cannot appear or disappear between accounts." },
   { title: "Card details never held", body: "Card payments are processed by a licensed provider. TitoPay does not store card numbers." },
   { title: "Charged once", body: "A repeated tap or a retried request returns the original transaction rather than charging again." },
-  { title: "Monitored and backed up", body: "Transaction monitoring, screening and audit trails throughout. Backups are encrypted, verified and held off-site." }
+  { title: "Monitored and backed up", body: "Transaction monitoring, screening and audit trails run throughout. Backups are encrypted, verified and held off-site." }
 ], { perRow: 2 });
 
 /* ========================================================== 11. TODAY */
 
 slide("Where it stands", "Live today.");
-doc.y = 156;
-lead("The platform is built and operating. These are in customers' hands now, not on a roadmap.", 600);
+flow(156);
+lead("The platform is built and operating. Everything on this slide is in customers' hands today.", 600);
 
-doc.y = 220;
+flow(220);
 cards([
   { big: "28", title: "Services live", body: "Across personal and business accounts." },
   { big: "3", title: "Marketplaces", body: "TitoPro, Book and Ticketing, all operating." },
@@ -362,14 +387,14 @@ doc.font("Helvetica").fontSize(11.5).fillColor(MUTED)
 /* ========================================================== 12. NEXT */
 
 slide("What comes next", "The next rails to open.");
-doc.y = 162;
-lead("Each of these is built into the platform and waiting on a supply agreement rather than on development.", 600);
+flow(162);
+lead("Each of these is already built into the platform and is waiting on a supply agreement.", 600);
 
-doc.y = 232;
+flow(232);
 cards([
-  { title: "Prepaid and utilities", body: "Airtime, data, electricity, vouchers and bill payments - the highest-frequency reasons a customer opens a wallet." },
-  { title: "Cash in and out", body: "Reaching customers who still need a physical point to load or draw." },
-  { title: "Marketplace and beyond", body: "Goods, cross-border and further services on the same wallet and the same ledger." }
+  { title: "Prepaid and utilities", body: "Airtime, data, electricity, vouchers and bill payments, which are the most frequent reasons a customer opens a wallet." },
+  { title: "Cash in and out", body: "Reaching the customers who still need somewhere physical to load or draw cash." },
+  { title: "Marketplace and beyond", body: "Goods, cross-border payments and further services on the same wallet and the same ledger." }
 ], { perRow: 3 });
 
 /* ============================================================ 13. CLOSE */
@@ -382,7 +407,7 @@ doc.roundedRect(W - 210, -80, 320, 320, 40).fillColor("#10294f").fill();
 
 wordmark(M, 92, 34, true);
 doc.font("Helvetica-Bold").fontSize(34).fillColor("#ffffff")
-  .text("The wallet is built.\nThe rails are open.\nThe next step is reach.", M, 200, { width: 520, lineGap: 7 });
+  .text("The platform is built.\nThe next step is reach.", M, 220, { width: 520, lineGap: 7 });
 
 doc.font("Helvetica").fontSize(12.5).fillColor(SKY)
   .text(TAGLINE, M, 404, { characterSpacing: 0.4, lineBreak: false });
