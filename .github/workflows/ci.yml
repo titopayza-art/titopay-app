@@ -48,3 +48,79 @@ jobs:
           name: screenshots
           path: tests/artifacts/
           if-no-files-found: ignore
+
+  # Supply-chain gate: install the backend from its locked tree and fail on a
+  # high or critical advisory. Runs alongside verify; neither blocks the other.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install API dependencies (locked)
+        working-directory: api
+        run: npm ci --omit=dev --no-audit --no-fund
+      - name: Audit API dependencies
+        working-directory: api
+        run: npm audit --omit=dev --audit-level=high
+
+  # Secret gate: scan the working tree for committed credentials. Configured by
+  # .gitleaks.toml; the allowlist there keeps name-only templates and fixtures
+  # from tripping it, so it fails only on a genuine leak.
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gitleaks
+        run: |
+          VERSION=8.21.2
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+      - name: Scan for secrets
+        run: gitleaks detect --no-git --config .gitleaks.toml --redact --verbose
+
+  # Backend gate: the full API test suite (1200+ tests, including the guardrail
+  # suite that fails the build if a whole class of defect - capped totals, UTC
+  # calendar windows, blind reversals, the send-cap idempotency gap, webhook SSRF
+  # - is reintroduced) runs against a real Postgres. Until now only the browser
+  # suites gated CI, so a backend regression could merge green; this closes that.
+  api-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: titopay
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/titopay
+      JWT_ACCESS_SECRET: ci-access-secret-must-be-at-least-32-bytes-long
+      JWT_REFRESH_SECRET: ci-refresh-secret-must-be-at-least-32-bytes-long
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install API dependencies (locked)
+        working-directory: api
+        run: npm ci --no-audit --no-fund
+      - name: Initialize schema + pricing
+        working-directory: api
+        run: node src/db/init.js
+      - name: Run API test suite (with guardrails)
+        working-directory: api
+        run: node --test --test-concurrency=1

@@ -1,0 +1,154 @@
+# TitoPay PWA — caching rules for Apache (cPanel) and any CDN in front of it.
+#
+# WHY THIS FILE EXISTS
+# service-worker.js was being edge-cached by the CDN for hours. After an upload,
+# different cache nodes held DIFFERENT versions of the worker, so the app kept
+# "updating" back and forth and reloaded itself in a loop — visible as the app
+# twitching/jumping. A service worker must always come straight from the origin.
+#
+# Cloudflare respects these origin Cache-Control headers by default, so this
+# file fixes the problem at the root for both browsers and the CDN.
+
+# WHAT IS NOT SERVED
+#
+# The package ships more than the browser loads, and everything extra lands in
+# a public document root. Nothing is deleted from the package — the sources
+# stay on the server where they are useful for support — but Apache will not
+# hand them to the internet.
+#
+#   app.js / styles.css   The unminified sources. index.html and the service
+#                         worker load only the .min versions, so nothing
+#                         references these; left unguarded they were a 1 MB
+#                         download of the frontend source with every internal
+#                         engineering comment intact.
+#   *.md                  Deployment documentation. It names internal route
+#                         paths and the deploy procedure. The admin package has
+#                         always denied these; this one did not.
+#
+# DEPLOYMENT_BUILD_MARKER.txt stays reachable on purpose: it is what a deploy is
+# verified against.
+#
+# WHY REWRITE AND NOT "Require all denied"
+# The admin document root blocks its documentation with `Require all denied`,
+# and that is confirmed working in production. `Require` belongs to Apache's
+# AuthConfig override class though, and this document root has never used a
+# directive from that class — if AllowOverride here does not include it, Apache
+# answers every request with 500, taking the whole app down rather than just
+# hiding one file. RewriteRule belongs to the FileInfo class, which the
+# Cache-Control rules below already prove is permitted here, so the worst case
+# is that the block does nothing. The IfModule guard covers mod_rewrite being
+# absent for the same reason. Same 403, none of the blast radius.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Without this the HSTS header above is inert on a first visit: a browser
+  # arriving over plain HTTP never receives it, so it never learns to upgrade.
+  # admin/.htaccess has carried these two lines in production for as long as it
+  # has existed, which is what rules out the failure people fear here — a
+  # Cloudflare "Flexible SSL" origin, where the edge always speaks HTTP to us
+  # and this rule would loop forever. It does not loop for admin, and admin sits
+  # behind the same edge.
+  RewriteCond %{HTTPS} !=on
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  RewriteRule ^\.ht                   - [F,L]
+  RewriteRule ^(app\.js|styles\.css)$ - [F,L]
+  RewriteRule \.md$                   - [F,L]
+
+  # LINK PREVIEWS FOR SHARED EVENTS.
+  #
+  # WhatsApp, Facebook, X, Slack, LinkedIn and iMessage fetch a URL and read its
+  # <meta> tags. They do NOT run JavaScript, and this app renders itself on the
+  # phone, so a shared /events/<slug> link previewed as a bare "TitoPay" with no
+  # title, no date and no poster.
+  #
+  # The old answer was to share an api.titopay.co.za URL instead, which fixed
+  # the preview and gave organisers a link that reads like a developer path to
+  # everyone they send it to. This is the same fix without that cost: the link
+  # people share is the real one, and only the CRAWLERS are sent to the
+  # server-rendered preview, which carries the tags and nothing else.
+  #
+  # A plain 302 by user agent. No mod_proxy, which shared cPanel rarely has.
+  # Every one of these agents follows redirects and reads the tags at the end.
+  #
+  # Two things keep this safe. The pattern matches ONLY /events/<slug>, so no
+  # other path on the site can be affected. And the whole block is bounded by
+  # the user-agent condition, so a person on any browser never touches it: they
+  # fall through to the app shell exactly as before.
+  RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|facebookcatalog|WhatsApp|Twitterbot|Slackbot|LinkedInBot|TelegramBot|Discordbot|SkypeUriPreview|redditbot|Pinterest|vkShare|W3C_Validator|Google-InspectionTool|Applebot|iMessageBot) [NC]
+  RewriteRule ^events/([A-Za-z0-9][A-Za-z0-9._-]{0,199})/?$ https://api.titopay.co.za/v1/ticketing/public/events/$1/preview [L,R=302,QSA]
+
+  # SINGLE-PAGE-APP FALLBACK.
+  #
+  # The app is one index.html with client-side routing, and it already knows how
+  # to open a shared event from /events/<slug> (it reads the path on boot). But
+  # the server never gave it the chance: a request for /events/<slug> matched no
+  # file, so Apache answered its own bare 404 — which is exactly what the
+  # "Public page" link produced. Admin and HR have carried this fallback since
+  # they shipped; the PWA was the one document root without it.
+  #
+  # Anything that IS a real file or directory (index.html, app.min.js, the
+  # assets, verify-email/, service-worker.js) is served as-is; only paths that
+  # resolve to nothing fall through to the app shell, so nothing that works today
+  # changes. The block rules above run first, so .ht/app.js/*.md still 403.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  # SECURITY HEADERS
+  #
+  # The admin document root has carried these since it shipped. This one never
+  # did, and the gap is not cosmetic: index.html declares its policy in a
+  # <meta http-equiv> tag, and a meta tag CANNOT deliver frame-ancestors. The
+  # spec ignores it there. So the customer app — the one that moves money — was
+  # frameable, while the admin portal was not. A lookalike page could load the
+  # real app in an invisible iframe and sit its own buttons on top of the send
+  # flow.
+  #
+  # The policy below is character-for-character the one already in the meta tag,
+  # so nothing about what the app may load changes. When a page carries both,
+  # the browser enforces both, and two identical policies intersect to the same
+  # policy. The single practical difference is that frame-ancestors now binds.
+  # If the meta tag is ever edited, edit this line with it.
+  Header always set Content-Security-Policy "default-src 'self'; connect-src 'self' https://api.titopay.co.za wss://api.titopay.co.za; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self'"
+
+  # X-Frame-Options is redundant against frame-ancestors on a current browser
+  # and is the only protection on an old one. It costs a header.
+  Header always set X-Frame-Options "DENY"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "no-referrer"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+
+  # HSTS WITHOUT includeSubDomains.
+  #
+  # The first version of this comment justified the omission by saying
+  # includeSubDomains could strand the other portals. That was wrong: app, hr,
+  # admin and api are SIBLING hosts under titopay.co.za, so a declaration from
+  # this one never reaches them. The honest reason is narrower — this origin can
+  # only speak for itself, a browser caches the promise for a year, and there is
+  # no way to withdraw it early. Declaring only what is being served here is the
+  # conservative choice, not the only defensible one.
+  Header always set Strict-Transport-Security "max-age=31536000"
+
+  # The service worker is the update mechanism itself — never cache it anywhere.
+  <FilesMatch "^service-worker\.js$">
+    Header set Cache-Control "no-store, max-age=0"
+  </FilesMatch>
+
+  # The HTML shell, manifest and build marker must always revalidate so a new
+  # build is picked up immediately.
+  <FilesMatch "^(index\.html|offline\.html|manifest\.webmanifest|DEPLOYMENT_BUILD_MARKER\.txt|services-default\.json)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+
+  # Versioned assets (?v=N in their URLs) are immutable per version — cache hard.
+  <FilesMatch "\.(css|js)$">
+    Header setifempty Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "\.(png|jpg|ico|webmanifest)$">
+    Header setifempty Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>
