@@ -3111,30 +3111,147 @@ function openRefundModal(service) {
       <div><p class="eyebrow">Business Tool</p><h2>Refund customer</h2><p class="lead">Refund a customer from the business wallet using a full or partial refund option.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
-    <form class="form-grid" data-form="transaction">
+    <form class="form-grid" data-form="merchant-refund">
       <input type="hidden" name="serviceCode" value="${esc(service.serviceCode)}">
-      <input type="hidden" name="integrationFlow" value="merchant_refund">
-      ${recipientMethodField("auto")}
-      <div class="field"><label>Customer</label><input name="recipient" placeholder="@username, cellphone or email" required></div>
-      ${contactSuggestions()}
-      <div class="field"><label>Original transaction reference</label><input name="originalReference" placeholder="TP-REF or receipt number" required></div>
+      <!-- THERE IS NO CUSTOMER FIELD, AND THAT IS THE POINT.
+
+           This screen used to ask the business to type the customer in beside
+           the reference, which meant a typo paid a stranger and the word
+           "refund" travelled with it. The person refunded is now read off the
+           payment being refunded - the API will not accept any other
+           destination - so the reference is the only thing to get right, and
+           Check tells you who it belongs to before anything moves. -->
       <div class="field">
-        <label>Refund type</label>
-        <select name="refundType">
+        <label for="rf-ref">Original payment reference</label>
+        <input id="rf-ref" name="originalReference" placeholder="e.g. TX-1730000000-A1B2C3" required
+          autocomplete="off" spellcheck="false" data-refund-reference>
+        <small class="field-hint">On the payment in your Activity. TitoPay refunds the person who made it.</small>
+      </div>
+      <button class="btn secondary" type="button" data-action="refund-lookup">${icon("search")} Check this payment</button>
+      <div data-refund-found></div>
+      <div class="field">
+        <label for="rf-type">Refund type</label>
+        <select id="rf-type" name="refundType">
           <option value="full_refund">Full refund</option>
           <option value="partial_refund">Partial refund</option>
         </select>
       </div>
-      <div class="field"><label>Refund amount</label><div class="input-affix currency-affix" data-prefix="R"><input name="amount" inputmode="decimal" required></div></div>
-      <div class="field"><label>Reason</label><select name="reason"><option>Customer return</option><option>Duplicate payment</option><option>Incorrect amount</option><option>Service not fulfilled</option><option>Other</option></select></div>
-      <div class="field"><label>Refund message</label><textarea name="message" placeholder="Optional message for the customer"></textarea></div>
-      <section class="integration-note" aria-label="Refund processing">
-        <p>${icon("refresh")} <span><strong>Refund options:</strong> choose full or partial refund before the fee preview and confirmation.</span></p>
-        <p>${icon("shield")} <span><strong>Audit ready:</strong> original reference, customer, reason and refund type are sent as transaction metadata.</span></p>
+      <div class="field" data-refund-amount-field hidden>
+        <label for="rf-amount">Refund amount</label>
+        <div class="input-affix currency-affix" data-prefix="R"><input id="rf-amount" name="amount" inputmode="decimal"></div>
+      </div>
+      <div class="field"><label for="rf-reason">Reason</label><select id="rf-reason" name="reason"><option>Customer return</option><option>Duplicate payment</option><option>Incorrect amount</option><option>Service not fulfilled</option><option>Other</option></select></div>
+      <div class="field"><label for="rf-message">Refund message</label><textarea id="rf-message" name="message" maxlength="300" placeholder="Optional message for the customer"></textarea></div>
+      <section class="integration-note" aria-label="How a refund works">
+        <p>${icon("refresh")} <span><strong>The customer gets the full amount.</strong> The ${esc(money(1))} processing fee comes off your wallet, not off what they are owed.</span></p>
+        <p>${icon("shield")} <span><strong>Capped at the original.</strong> Partial refunds add up, and a payment can never be refunded for more than it was.</span></p>
       </section>
       <button class="btn primary" type="submit">${icon("refresh")} Preview refund</button>
     </form>
   `);
+}
+// CHECKING A PAYMENT BEFORE REFUNDING IT.
+//
+// Names the customer and says how much of the payment is still refundable, so
+// the business sees who they are about to pay before they commit to it rather
+// than after. Read-only: this moves nothing.
+async function lookupRefundPayment() {
+  const input = document.querySelector("[data-refund-reference]");
+  const host = document.querySelector("[data-refund-found]");
+  if (!input || !host) return;
+  const reference = String(input.value || "").trim();
+  if (!reference) {
+    host.innerHTML = `<p class="field-hint">Enter the reference first.</p>`;
+    return;
+  }
+  host.innerHTML = `<p class="field-hint">Checking…</p>`;
+  try {
+    const found = await api(`/v1/refunds/lookup?reference=${encodeURIComponent(reference)}`);
+    state.refundLookup = found;
+    host.innerHTML = `
+      <section class="integration-note" aria-label="The payment being refunded">
+        <p>${icon("check-circle")} <span><strong>${esc(found.customerName)}</strong> paid ${esc(money(found.paid))}.</span></p>
+        <p>${icon("receipt-list")} <span>${found.alreadyRefunded > 0
+          ? `${esc(money(found.alreadyRefunded))} already refunded · <strong>${esc(money(found.refundable))}</strong> left`
+          : `<strong>${esc(money(found.refundable))}</strong> available to refund`}</span></p>
+      </section>`;
+  } catch (error) {
+    state.refundLookup = null;
+    host.innerHTML = `<section class="failure-panel"><p class="failure-message">${esc(error.message || "That payment could not be found.")}</p></section>`;
+  }
+}
+// Partial is the only type that needs an amount; a full refund returns
+// whatever is left, which the API works out.
+function syncRefundAmountField() {
+  const type = document.querySelector('[data-form="merchant-refund"] [name="refundType"]');
+  const field = document.querySelector("[data-refund-amount-field]");
+  if (!type || !field) return;
+  const partial = type.value === "partial_refund";
+  field.hidden = !partial;
+  const input = field.querySelector("input");
+  if (input) input.required = partial;
+}
+async function submitMerchantRefundForm(data) {
+  const body = {
+    originalReference: String(data.originalReference || "").trim(),
+    refundType: data.refundType === "partial_refund" ? "partial_refund" : "full_refund",
+    reason: data.reason,
+    message: data.message
+  };
+  if (body.refundType === "partial_refund") body.amount = parseAmount(data.amount);
+  const { preview } = await api("/v1/refunds/preview", { method: "POST", body });
+  openRefundReviewModal(preview, body);
+}
+// THE REVIEW. Three numbers, named for what they are, because the one that
+// matters to the person on the other end is the one in the middle.
+function openRefundReviewModal(preview, body) {
+  state.pendingRefund = { preview, body };
+  openModal(`
+    <div class="modal-head">
+      <div><p class="eyebrow">Refund Review</p><h2>Refund ${esc(preview.customerName)}?</h2>
+        <p class="lead">Nothing leaves your wallet until you press Confirm.</p></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+    </div>
+    <section class="activity-list review-transaction-list">
+      ${settingsRow("They receive", money(preview.customerReceives), "wallet")}
+      ${settingsRow("Processing fee", money(preview.fee), "receipt-list")}
+      ${settingsRow("Leaves your wallet", money(preview.total), "withdraw")}
+      ${settingsRow("Original payment", `${esc(preview.originalReference)} · ${money(preview.originalAmount)}`, "list")}
+    </section>
+    ${preview.sufficientBalance ? "" : `
+      <section class="failure-panel">
+        <p class="failure-message">Your wallet has ${esc(money(preview.walletBalance))}, and this refund needs ${esc(money(preview.total))}.</p>
+        <p class="failure-guidance">Top up before confirming. Nothing has been taken.</p>
+      </section>`}
+    <section class="integration-note" aria-label="Refund safety">
+      <p>${icon("shield")} <span><strong>${esc(preview.customerName)} gets ${esc(money(preview.customerReceives))} in full.</strong> The fee is yours, not theirs.</span></p>
+      <p>${icon("check-circle")} <span><strong>Protected against double taps.</strong> One refund per payment, however many times this is pressed.</span></p>
+    </section>
+    <div class="auth-actions">
+      <button class="btn primary" type="button" data-action="confirm-refund"${preview.sufficientBalance ? "" : " disabled"}>${icon("check-circle")} Confirm refund</button>
+      <button class="btn ghost" type="button" data-close>Cancel</button>
+    </div>
+  `);
+}
+async function confirmMerchantRefund(button) {
+  const pending = state.pendingRefund;
+  if (!pending) return;
+  setButtonBusy(button, true);
+  try {
+    // The key is minted once per review, so a retry of THIS refund is the same
+    // refund rather than a second one.
+    pending.body.idempotencyKey = pending.body.idempotencyKey
+      || `rf-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const { refund } = await api("/v1/refunds", { method: "POST", body: pending.body });
+    state.pendingRefund = null;
+    state.refundLookup = null;
+    showToast(`${money(refund.customerReceives)} refunded to ${refund.customerName}.`);
+    closeModal();
+    refreshData().catch(() => {});
+  } catch (error) {
+    setButtonBusy(button, false);
+    showToast(error.message || "That refund could not be completed.", "error");
+  }
 }
 function termChipLabel(days) {
   if (!days) return "On receipt";
@@ -4108,6 +4225,7 @@ async function onSubmit(event) {
     else if (form.dataset.form === "stockvel-withdrawal") await submitStockvelWithdrawal(data);
     else if (form.dataset.form === "stockvel-close") await submitStockvelClose(data);
     else if (form.dataset.form === "transaction") await processTransaction(data);
+    if (form.dataset.form === "merchant-refund") await submitMerchantRefundForm(data);
     if (form.dataset.form === "payment-request") await submitPaymentRequestForm(form, data);
     if (form.dataset.form === "bill-split") await submitBillSplitForm(form, data);
     if (form.dataset.form === "qr-pay") await processQrPayment(data);
@@ -5048,6 +5166,10 @@ function onInput(event) {
   }
 }
 function onChange(event) {
+  if (event.target.closest('form[data-form="merchant-refund"] [name="refundType"]')) {
+    syncRefundAmountField();
+    return;
+  }
   const titoProPhoto = event.target.closest("[data-titopro-photo-input]");
   if (titoProPhoto) { addTitoProPhoto(titoProPhoto); return; }
   // THE TITOPRO SERVICE PICKER, COUNTED AS IT IS TICKED.
@@ -5350,6 +5472,8 @@ async function handleAction(action, actionElement = null) {
     closeModal();
     showToast("Ticket purchase cancelled. Nothing was charged.");
   }
+  if (action === "refund-lookup") { await lookupRefundPayment(); return; }
+  if (action === "confirm-refund") { await confirmMerchantRefund(event.target.closest("button")); return; }
   if (action === "ticketing-create-event") {
     openTicketingEventForm();
     return;

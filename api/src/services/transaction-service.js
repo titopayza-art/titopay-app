@@ -157,9 +157,25 @@ const PROVIDER_DEPENDENT_SERVICES = new Set([
   "donate",
   "cross_border",
   "get_cash",
-  "cash_back",
-  "refund"
+  "cash_back"
 ]);
+
+// REFUNDS HAVE A LIFECYCLE, so `refund` is no longer in the list above.
+//
+// It sat there among doors whose flows were never built, and the effect was a
+// business filling in the whole Refund customer screen and being told at the
+// last step that refunds were not enabled - while the service catalogue
+// published the tile as active and the approved schedule had priced it at R1
+// all along. Nothing was missing but the flow, and services/refund-service.js
+// is now that flow.
+//
+// It is refused HERE all the same, the way a withdrawal and a VAS purchase
+// are: createTransaction does a single debit and knows nothing about the
+// payment being refunded, so it can hold none of the rules that make a refund
+// a refund - capped at the original, once only, and payable only to the person
+// who actually paid. The fee preview is deliberately still allowed through, so
+// the screen can price a refund before the business commits to it.
+const REFUND_SERVICES = new Set(["refund", "merchant_refund"]);
 
 function splitRecipientList(value) {
   if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
@@ -265,6 +281,13 @@ async function assertLiveTransactionSupported(normalizedServiceCode, payload = {
       409,
       "Airtime, data, electricity, vouchers and bill payments are completed through the purchase flow. No wallet debit was made.",
       { code: "USE_VAS_PURCHASE_FLOW", endpoint: "/v1/vas/purchase" }
+    );
+  }
+  if (REFUND_SERVICES.has(normalizedServiceCode)) {
+    throw new AppError(
+      409,
+      "Refunds are completed through the refund flow. No wallet debit was made.",
+      { code: "USE_REFUND_FLOW", endpoint: "/v1/refunds" }
     );
   }
   if (LIVE_QR_WALLET_SERVICES.has(normalizedServiceCode)) {

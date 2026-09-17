@@ -12,6 +12,7 @@ const integrationsRoutes = require("./integrations.routes");
 const transactionRoutes = require("./transaction.routes");
 const merchantRoutes = require("./merchant.routes");
 const paymentsRoutes = require("./payments.routes");
+const refundsRoutes = require("./refunds.routes");
 const complianceRoutes = require("./compliance.routes");
 const payoutsRoutes = require("./payouts.routes");
 const usersRoutes = require("./users.routes");
@@ -129,6 +130,7 @@ function mountVersionedRoutes(prefix) {
   router.use(`${prefix}/transactions`, transactionRoutes);
   router.use(`${prefix}/merchants`, merchantRoutes);
   router.use(`${prefix}/payments`, paymentsRoutes);
+  router.use(`${prefix}/refunds`, refundsRoutes);
   router.use(`${prefix}/compliance`, complianceRoutes);
   router.use(`${prefix}/payouts`, payoutsRoutes);
   router.use(`${prefix}/users`, usersRoutes);
