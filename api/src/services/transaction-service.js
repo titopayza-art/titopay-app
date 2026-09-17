@@ -991,7 +991,11 @@ async function listTransactionsForUser(userId) {
               pr.service_name, (t.metadata->>'netAmount')::NUMERIC AS net_amount,
               (posted.entry_count > 0) AS wallet_posted,
               posted.entry_count AS ledger_entry_count,
-              posted.net_posted AS posted_amount
+              posted.net_posted AS posted_amount,
+              -- Money out already shows amount and fee separately, so the
+              -- gross adds nothing here; NULL keeps the two halves of the
+              -- UNION the same shape.
+              NULL::NUMERIC AS gross_amount
        FROM transactions t
        LEFT JOIN pricing_rules pr ON pr.service_code = t.service_code
        ${POSTED_LEDGER_LATERAL}
@@ -1001,8 +1005,26 @@ async function listTransactionsForUser(userId) {
 
        -- Money somebody else sent to this wallet. A posted credit IS settled,
        -- so it is reported as completed with the exact figure that landed.
+       -- THE FEE THE RECIPIENT WAS ACTUALLY CHARGED, not a hardcoded zero.
+       --
+       -- This column was a literal zero, and it made a real charge
+       -- invisible on the one screen the person charged is looking at. A
+       -- merchant paid R10.00 through a QR was credited R9.85 - the merchant
+       -- side of the QR schedule is 1.5% - and their transaction read
+       -- "Fee R0.00" beside "+R9.85", with the R10.00 it was taken from
+       -- nowhere on the screen. Fifteen cents that cannot be seen cannot be
+       -- reconciled, and a merchant who cannot reconcile their takings is
+       -- owed an explanation rather than a rounding mystery.
+       --
+       -- Derived from the ledger rather than from metadata: ABS(wl.amount) IS
+       -- what landed and src.amount IS what the payment was for, so the
+       -- difference is exactly what was withheld, whichever fee mechanism put
+       -- it there. For a transfer that credits in full it is zero, which is
+       -- the truth for those too.
        SELECT wl.id, $1::UUID AS user_id, wl.wallet_id, src.service_code,
-              ABS(wl.amount) AS amount, 0::NUMERIC AS fee, ABS(wl.amount) AS total,
+              ABS(wl.amount) AS amount,
+              GREATEST(src.amount - ABS(wl.amount), 0)::NUMERIC AS fee,
+              ABS(wl.amount) AS total,
               'completed' AS status, 'credit' AS direction, wl.reference,
               NULL AS recipient_reference,
               jsonb_build_object(
@@ -1015,7 +1037,10 @@ async function listTransactionsForUser(userId) {
               ) AS metadata,
               wl.created_at,
               pr2.service_name, ABS(wl.amount) AS net_amount,
-              TRUE AS wallet_posted, 1 AS ledger_entry_count, ABS(wl.amount) AS posted_amount
+              TRUE AS wallet_posted, 1 AS ledger_entry_count, ABS(wl.amount) AS posted_amount,
+              -- What the payment was for, so the screen can show
+              -- gross - fee = what landed instead of one figure on its own.
+              src.amount AS gross_amount
        FROM wallet_ledger wl
        JOIN wallets w ON w.id = wl.wallet_id AND w.user_id = $1
        JOIN transactions src ON src.id = wl.transaction_id

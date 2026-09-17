@@ -9223,14 +9223,34 @@ function openTransactionDetailModal(key) {
   // The one line that answers "did this actually affect my balance?", taken
   // from the wallet ledger rather than from the transaction's own status.
   const settled = transactionPostedToWallet(item);
+  // MONEY IN THAT ARRIVED SHORT HAS TO SAY WHY.
+  //
+  // A merchant paid R10.00 through a QR is credited R9.85, because the
+  // merchant side of the QR schedule is 1.5%. Until now the screen showed
+  // "+R9.85" and "Fee R0.00" and never mentioned the R10.00 at all, so the
+  // fifteen cents simply was not accounted for anywhere the merchant could
+  // see. Three lines that add up are the whole fix: what the payment was for,
+  // what TitoPay took, and what landed.
+  //
+  // The gross line appears only when it DIFFERS from what landed. On a
+  // transfer that credits in full it would just repeat the figure below it.
+  const grossRaw = item.gross_amount ?? item.grossAmount;
+  const gross = Number(grossRaw);
+  const landed = statementPostedAmount(item);
+  const showsGross = direction === "credit" && Number.isFinite(gross) && gross - landed > 0.004;
   const rows = [
     ["Type", service, "grid"],
-    ["Direction", direction === "credit" ? "Money in" : "Money out", direction === "credit" ? "download" : "upload"],
-    ["Wallet movement", settled
-      ? `${direction === "credit" ? "+" : "-"}${money(statementPostedAmount(item))}`
-      : "None. Your balance was not affected", settled ? "wallet" : "shield"]
+    ["Direction", direction === "credit" ? "Money in" : "Money out", direction === "credit" ? "download" : "upload"]
   ];
-  if (hasFee) rows.push(["Fee", money(Number(feeRaw)), "shield"]);
+  if (showsGross) rows.push(["Amount paid to you", money(gross), "receipt-list"]);
+  rows.push(["Wallet movement", settled
+    ? `${direction === "credit" ? "+" : "-"}${money(landed)}`
+    : "None. Your balance was not affected", settled ? "wallet" : "shield"]);
+  if (hasFee) {
+    // Named for what it did on an arrival. "Fee" beside a credit reads as
+    // something still to come off; this one already has.
+    rows.push([showsGross ? "TitoPay fee deducted" : "Fee", money(Number(feeRaw)), "shield"]);
+  }
   if (dateObj && !Number.isNaN(dateObj.getTime())) {
     rows.push(["Date", dateObj.toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" }), "list"]);
     rows.push(["Time", dateObj.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }), "refresh"]);
