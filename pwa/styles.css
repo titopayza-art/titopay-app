@@ -2595,6 +2595,35 @@ body.landing-static .landing-flow.auth-screen {
 .field input[type="month"] {
   max-width: 100%;
   min-width: 0;
+  /* THE SAME iOS SPILL THE ACTIVITY FILTERS HIT, FIXED EVERYWHERE THIS TIME.
+
+     max-width and min-width above are not enough on iOS: a native date control
+     carries an INTRINSIC width that ignores them and pushes the field - and
+     therefore the card - past the right edge of the phone. That was found once,
+     on Activity's From/To fields, and the cure was applied only to
+     .report-filters. Every other date field in the app kept the spill, which is
+     why Quote, Invoice, Proforma, Payment request, Statements and the event
+     forms all drift sideways on a handset while looking perfect on a desktop
+     browser.
+
+     Dropping the native inline appearance is what stops it. Tapping still opens
+     the iOS date picker - the control is unchanged, only its inline widget
+     sizing is - and box-sizing keeps the padding inside the field. */
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* A fieldset does not shrink. Its UA min-inline-size is min-content, so one
+   wide control inside it makes the whole panel wider than the card and there is
+   no sideways scroll to reveal what fell off the left. .doc-section and
+   .otp-channel-picker each set min-width: 0 for this reason; .sv-panel never
+   did, and the next fieldset somebody adds would not either. Set once, for all
+   of them. */
+fieldset {
+  min-inline-size: 0;
 }
 
 .field input[type="date"]::-webkit-date-and-time-value,
