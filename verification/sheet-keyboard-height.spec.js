@@ -116,12 +116,23 @@ function serve() {
     await page.waitForFunction(() => document.querySelectorAll("[data-sv-chat] [data-sv-decision]").length >= 12,
       null, { timeout: 8000 });
 
+    // A SHEET THAT IS STILL ARRIVING IS NOT A SHEET TO MEASURE. .modal-card
+    // runs modal-rise for 220ms, sliding up from 14px below where it lands.
+    // Measured mid-flight it reads a pixel or two low, which is a fact about
+    // the clock and not about the layout. Wait for the animation to finish.
+    const settle = () => page.evaluate(() => Promise.all(
+      document.querySelector(".modal-card").getAnimations().map((animation) => animation.finished)
+    ).catch(() => null).then(() => new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+    await settle();
+
     await page.evaluate(() => {
       document.querySelector(".modal-card textarea[name=message]").focus();
       window.visualViewport.dispatchEvent(new Event("resize"));
     });
-    // Two frames: one for the scheduled update, one for the style to land.
-    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    // One frame for the scheduled update, one for the style to land, then
+    // anything the resize itself started.
+    await settle();
 
     const geometry = await page.evaluate(() => {
       const backdrop = document.querySelector(".modal-backdrop");

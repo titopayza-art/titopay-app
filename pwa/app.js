@@ -20355,9 +20355,64 @@ async function submitStockvelAddMembers(data) {
 }
 // ---- Withdrawals: request and approve --------------------------------------
 
+// How many people can actually decide a withdrawal in this group. Only
+// counted from a real member list: the hub's group summaries do not carry
+// one, and a count of zero there must never be mistaken for a group with no
+// organisers.
+function stockvelDeciderCount(group) {
+  const members = Array.isArray(group && group.members) ? group.members : [];
+  return members.filter((member) => /^(chair|organiser)$/i.test(String(member.role || ""))
+    && !/^(removed|left)$/i.test(String(member.status || ""))).length;
+}
 function openStockvelWithdrawalRequestModal(id) {
-  const group = (state.stockvel.groups || []).find((item) => item.id === id) || state.stockvel.detail;
+  // The detail is the fuller record - it carries the member list and the
+  // balance the server worked out - so it wins whenever it is this group.
+  const detail = state.stockvel.detail;
+  const group = detail && detail.id === id
+    ? detail
+    : ((state.stockvel.groups || []).find((item) => item.id === id) || detail);
   if (!group) return;
+
+  // AN EMPTY POT IS NOT A FORM.
+  //
+  // The server refuses any amount above what the group holds, so on a group
+  // holding nothing every possible entry is rejected. The screen still
+  // printed "The group holds R 0,00" directly under an amount box and let
+  // the person type a figure, write a reason and press Send, only to be told
+  // afterwards that there was never anything to ask for. Say it first.
+  //
+  // Only when the balance is actually known: a summary that ships no balance
+  // gives null, and null is not zero.
+  if (group.balance != null && group.balance <= 0) {
+    openModal(`
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">${esc(group.name)}</p>
+          <h2>Request a withdrawal</h2>
+        </div>
+        <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
+      </div>
+      ${stockvelUnavailablePanel(
+        "There is nothing to withdraw yet",
+        `The group holds ${money(group.balance)}. Once members have contributed, a withdrawal can be requested against what the group holds.`
+      )}
+      <div class="tx-detail-actions">
+        <button class="btn secondary" type="button" data-stockvel-contribute="${esc(group.id)}">${icon("wallet")} Make my contribution</button>
+      </div>
+    `);
+    return;
+  }
+
+  // THE ONLY ORGANISER CANNOT BE THE ONE WHO ASKS.
+  //
+  // An organiser may not approve their own withdrawal - a deliberate control,
+  // and the right one. On a new group the creator is the only organiser, so
+  // their own request has nobody who may decide it and simply waits. The
+  // request is not wasted (promoting a second organiser later releases it),
+  // so this warns and lets them carry on rather than blocking. Shown only
+  // when there is a real member list to count.
+  const stranded = Boolean(group.canManage) && stockvelDeciderCount(group) === 1;
+
   openModal(`
     <div class="modal-head">
       <div>
@@ -20367,6 +20422,10 @@ function openStockvelWithdrawalRequestModal(id) {
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
+    ${stranded ? `
+      <section class="integration-note" aria-label="Who can approve this">
+        <p>${icon("staff-badge")} <span><strong>You are this group's only organiser.</strong> An organiser cannot approve their own withdrawal, so this request will wait until the group has a second one. Open Members, choose someone and tap Make organiser.</span></p>
+      </section>` : ""}
     <form class="form-grid" data-form="stockvel-withdrawal">
       <input type="hidden" name="stockvelId" value="${esc(group.id)}">
       <div class="field">
@@ -20376,7 +20435,10 @@ function openStockvelWithdrawalRequestModal(id) {
       </div>
       <div class="field">
         <label for="sv-wd-reason">What is it for?</label>
-        <textarea id="sv-wd-reason" name="reason" placeholder="The group will see this reason when they vote" required></textarea>
+        <!-- There is no vote. One organiser decides, which is what the
+             heading above and the note below both say; this placeholder was
+             the last piece of the quorum-vote wording left on the screen. -->
+        <textarea id="sv-wd-reason" name="reason" placeholder="The organisers see this when they decide" required></textarea>
       </div>
       <button class="btn primary" type="submit">${icon("withdraw")} Send request to the group</button>
     </form>
