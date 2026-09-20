@@ -20593,7 +20593,7 @@ function openStockvelChatModal(groupId) {
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <div data-sv-meeting-bar></div>
-    <section class="activity-list" data-sv-chat style="max-height:44vh;overflow-y:auto"><p class="field-hint">Loading the conversation…</p></section>
+    <section class="activity-list sv-chat-scroll" data-sv-chat><p class="field-hint">Loading the conversation…</p></section>
     <form class="form-grid" data-form="stockvel-chat" style="margin-top:8px">
       <input type="hidden" name="groupId" value="${esc(id)}">
       <div class="field"><textarea name="message" minlength="1" maxlength="1000" required placeholder="Message the group" rows="2"></textarea></div>

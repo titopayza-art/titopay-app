@@ -1219,3 +1219,47 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
 .bk-offer-clear svg{width:18px;height:18px}
 
 .modal-open .bottom-nav{opacity:0;visibility:hidden;pointer-events:none}
+
+/* A SHEET WITH THE KEYBOARD UP HAS TO FIT IN WHAT IS LEFT OF THE SCREEN.
+   Reported on the stokvel group chat: the sheet glitches and the page behind
+   it scrolls into view under the composer.
+
+   Two rules described the same box and neither knew about the other:
+
+     .keyboard-aware-backdrop.keyboard-open .keyboard-aware-card   (0,3,0)
+       max-height: calc(var(--auth-viewport-height) - ...)
+     .modal-backdrop:not(.auth-modal-backdrop) > .modal-card       (0,3,0)
+       height: 100dvh; max-height: 100dvh;
+
+   Equal specificity, so the later one won - and that is the full-screen phone
+   rule, which knows nothing about keyboards. 100dvh does not shrink for a
+   software keyboard on iOS, so with the keyboard up the backdrop correctly
+   became the visible glass while the card stayed a whole screen tall: on a
+   393x852 handset, an 852px card inside a 516px box. Measured, the card's
+   scrollHeight equalled its clientHeight - it had no overflow, so it could
+   not be scrolled, and a third of it was simply unreachable. The browser then
+   scrolled the only thing it could to reach the focused field, which is the
+   page behind the sheet. That is the background coming into view.
+
+   Four classes beats three, so this settles it wherever it sits in the file
+   rather than by being written last. Both properties are set, because the
+   rule it has to beat sets both. */
+.modal-backdrop.keyboard-aware-backdrop.keyboard-open > .modal-card.keyboard-aware-card {
+  height: var(--auth-viewport-height, 100dvh);
+  max-height: var(--auth-viewport-height, 100dvh);
+}
+
+/* The group chat's message list was sized in vh, which is the layout viewport
+   and takes no notice of the keyboard. At 44vh it kept a full 375px of a
+   516px glass for itself and pushed the composer and its Send button out of
+   reach. It is a class now rather than an inline style, so the keyboard can
+   have a say; 44vh is unchanged with the keyboard down. */
+.sv-chat-scroll {
+  max-height: 44vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.keyboard-aware-backdrop.keyboard-open .sv-chat-scroll {
+  max-height: calc(var(--auth-viewport-height, 100dvh) * 0.34);
+}
