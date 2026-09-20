@@ -7,8 +7,17 @@
 // A tap during the glide landed on the wrong chip or was swallowed as the
 // start of another swipe.
 const { chromium } = require("playwright");
+const fs = require("node:fs");
+const path = require("node:path");
 const PWA = "http://127.0.0.1:8010";
 const API = "http://127.0.0.1:8110/v1";
+
+// Screenshots go where every other harness puts them. This one wrote to a
+// bare relative path, so the files landed in whatever directory it happened
+// to be run from - in practice the repository root, as untracked clutter
+// next to the source.
+const ARTIFACTS = path.join(__dirname, "artifacts");
+fs.mkdirSync(ARTIFACTS, { recursive: true });
 
 const stamp = Date.now();
 const USER = {
@@ -175,7 +184,7 @@ const VIEWPORTS = [
       check(`${viewport.name}: all ${stillAll.count} options are still on screen afterwards`, stillAll.hidden === false);
     }
 
-    await page.screenshot({ path: `pwa-chat-options-${viewport.width}.png` });
+    await page.screenshot({ path: `${ARTIFACTS}/pwa-chat-options-${viewport.width}.png` });
     check(`${viewport.name}: no script errors`, errors.length === 0, errors.slice(0, 2).join(" | ").slice(0, 160));
     await ctx.close();
   }
