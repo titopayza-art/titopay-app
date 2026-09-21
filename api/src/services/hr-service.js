@@ -246,10 +246,101 @@ function toCamel(value) {
   return value.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 }
 
-function cleanPayload(payload, config) {
+// A TEXT BOX ON A JSONB COLUMN.
+//
+// hr_employees.emergency_contact and .medical_info are jsonb NOT NULL. The
+// portal renders both as ordinary text inputs and submits whatever is in
+// them - including "" when they are blank, because the form posts every
+// field. An empty string is not JSON, so Postgres refused the row with
+// `invalid input syntax for type json` and the whole request came back as a
+// 500 reading "Unable to complete the request."
+//
+// The effect was that Invite employee could not succeed at all: not with the
+// field filled in, and not with it left empty either. Creating an employee is
+// the first thing anybody does in an HR system, so this read as the system
+// being entirely non-functional, and fairly.
+//
+// Everything that reaches a JSON column is turned into valid JSON here,
+// which is the one place every HR create and update passes through. The
+// empty value per column is the column's own default, so a blank field
+// stores what the schema already says "nothing recorded" looks like.
+const JSON_COLUMN_EMPTY = {
+  emergency_contact: {},
+  medical_info: {},
+  metadata: {},
+  options: []
+};
+
+function asJsonColumn(value, empty) {
+  if (value === null || value === undefined) return JSON.stringify(empty);
+  if (typeof value === "object") return JSON.stringify(value);
+  const text = String(value).trim();
+  if (!text) return JSON.stringify(empty);
+  // Text that is already JSON is kept as the structure it describes, so a
+  // caller sending {"name":"…","phone":"…"} is not buried inside a string.
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object") return JSON.stringify(parsed);
+  } catch (error) {
+    /* Not JSON, which is the ordinary case: somebody typed a name. */
+  }
+  // Free text becomes a JSON string, so it reads back as the same text the
+  // person typed and lands in the same text box unchanged.
+  return JSON.stringify(text);
+}
+
+// AND A BLANK BOX IS NOT A UUID, A DATE OR A NUMBER EITHER.
+//
+// The same shape of fault as the jsonb one above, and found the moment that
+// was fixed: the portal's forms post every field they render, so a Manager ID
+// nobody filled in arrives as "" and reaches a uuid column. Postgres answers
+// `invalid input syntax for type uuid: ""` and the person gets another 500.
+// Dates, salaries and every other typed column are the same wager.
+//
+// Rather than name the columns - a list that is wrong again the next time one
+// is added - the table is asked what it has. A blank arriving at a column
+// that is not textual means "nothing here", so:
+//
+//   nullable column  ->  NULL
+//   NOT NULL column  ->  the key is dropped, and the column's own default
+//                        applies instead of a NULL that would be rejected
+//
+// Text columns are untouched: a blank name is a blank name and always was.
+const columnMetaByTable = new Map();
+
+async function columnMeta(table) {
+  if (columnMetaByTable.has(table)) return columnMetaByTable.get(table);
+  const { rows } = await pool.query(
+    `SELECT column_name, data_type, is_nullable
+       FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = $1`,
+    [table]
+  );
+  const meta = new Map(rows.map((row) => [row.column_name, {
+    textual: ["text", "character varying", "character", "citext"].includes(row.data_type),
+    nullable: row.is_nullable === "YES"
+  }]));
+  columnMetaByTable.set(table, meta);
+  return meta;
+}
+
+async function cleanPayload(payload, config) {
   const clean = {};
+  const meta = await columnMeta(config.table).catch(() => new Map());
   Object.entries(config.columns).forEach(([apiKey, dbKey]) => {
-    if (payload[apiKey] !== undefined) clean[dbKey] = payload[apiKey];
+    const value = payload[apiKey];
+    if (value === undefined) return;
+    if (Object.prototype.hasOwnProperty.call(JSON_COLUMN_EMPTY, dbKey)) {
+      clean[dbKey] = asJsonColumn(value, JSON_COLUMN_EMPTY[dbKey]);
+      return;
+    }
+    const column = meta.get(dbKey);
+    const blank = value === null || (typeof value === "string" && !value.trim());
+    if (blank && column && !column.textual) {
+      if (column.nullable) clean[dbKey] = null;
+      return;
+    }
+    clean[dbKey] = value;
   });
   return clean;
 }
@@ -411,11 +502,20 @@ function normaliseHrPayload(resourceName, payload = {}, auth = {}, mode = "creat
     next.department = asTrimmedText(next.department);
     next.employmentType = asTrimmedText(next.employmentType) || "Permanent";
     next.startDate = normaliseDate(next.startDate);
+    // AN EMPTY BOX IS NOT A BAD NUMBER.
+    //
+    // asNumber returns undefined for "", so a Monthly salary nobody filled in
+    // failed !Number.isFinite and the person was told "Salary must be a
+    // non-negative amount" about a field they had left alone - on a form that
+    // does not mark it required, and which posts it blank either way. The
+    // complaint only belongs to a value somebody actually typed.
+    const salaryGiven = next.salary !== undefined && String(next.salary).trim() !== "";
     const salary = asNumber(next.salary);
-    if (next.salary !== undefined && (!Number.isFinite(salary) || salary < 0)) throw new AppError(400, "Salary must be a non-negative amount");
+    if (salaryGiven && (!Number.isFinite(salary) || salary < 0)) throw new AppError(400, "Salary must be a non-negative amount");
     next.salary = salary;
+    const hourlyRateGiven = next.hourlyRate !== undefined && String(next.hourlyRate).trim() !== "";
     const hourlyRate = asNumber(next.hourlyRate);
-    if (next.hourlyRate !== undefined && (!Number.isFinite(hourlyRate) || hourlyRate < 0)) throw new AppError(400, "Hourly rate must be a non-negative amount");
+    if (hourlyRateGiven && (!Number.isFinite(hourlyRate) || hourlyRate < 0)) throw new AppError(400, "Hourly rate must be a non-negative amount");
     next.hourlyRate = hourlyRate;
     next.contractHoursPerWeek = asNumber(next.contractHoursPerWeek);
     next.workStartTime = normaliseTime(next.workStartTime);
@@ -859,10 +959,22 @@ async function applyClaimDecision(id, auth, data) {
   data.status = deriveClaimStatus(merged);
 }
 
+// The two employee fields the portal draws as text boxes. They are jsonb in
+// the database (see asJsonColumn), so an empty one comes back as {} and would
+// put "[object Object]" in the box the next time somebody opened the record.
+// Handing back "" for empty keeps the round trip honest: what was typed is
+// what returns, and a blank field stays blank.
+const JSON_TEXT_FIELDS = ["emergencyContact", "medicalInfo"];
+
 function rowToApi(row) {
   const out = {};
   Object.entries(row).forEach(([key, value]) => {
     out[toCamel(key)] = value;
+  });
+  JSON_TEXT_FIELDS.forEach((field) => {
+    const value = out[field];
+    if (value === null || value === undefined) return;
+    if (typeof value === "object" && !Array.isArray(value) && !Object.keys(value).length) out[field] = "";
   });
   if (out.firstName || out.lastName) out.name = `${out.firstName || ""} ${out.lastName || ""}`.trim();
   return out;
@@ -1588,7 +1700,7 @@ async function create(resourceName, auth, payload, meta = {}) {
   if (config.readOnly) throw new AppError(405, "This HR resource is read-only");
   assertPermission(auth, config, "write");
   const normalizedPayload = normaliseHrPayload(effectiveResourceName, payload, auth);
-  const data = cleanPayload(normalizedPayload, config);
+  const data = await cleanPayload(normalizedPayload, config);
   if (effectiveResourceName === "projects") {
     data.owner = data.owner || auth.name || auth.email || "HR";
     data.priority = data.priority || "normal";
@@ -1742,7 +1854,7 @@ async function update(resourceName, id, auth, payload, meta = {}) {
   if (config.readOnly) throw new AppError(405, "This HR resource is read-only");
   assertPermission(auth, config, "write");
   const normalizedPayload = normaliseHrPayload(effectiveResourceName, payload, auth, "update");
-  const data = cleanPayload(normalizedPayload, config);
+  const data = await cleanPayload(normalizedPayload, config);
   await resolveEmployeeLink(effectiveResourceName, data, auth);
   if (effectiveResourceName === "expenses") await applyClaimDecision(id, auth, data);
   const keys = Object.keys(data);
