@@ -106,7 +106,7 @@ const proxyToLocalApi = async (route) => {
   console.log("  EVENT TAGS — the organiser console and the admin console");
   console.log("=============================================================\n");
 
-  const { Client } = require("./api/node_modules/pg");
+  const { Client } = require("../api/node_modules/pg");
   const db = new Client({ connectionString: process.env.POSTGRES_URL || process.env.DATABASE_URL });
   await db.connect();
 

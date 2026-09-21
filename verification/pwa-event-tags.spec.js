@@ -87,7 +87,7 @@ async function fundWallet(token, amount) {
   console.log("  PWA — an Event Tag reads as a credential, never as a wallet");
   console.log("=============================================================\n");
 
-  const { Client } = require("./api/node_modules/pg");
+  const { Client } = require("../api/node_modules/pg");
   const db = new Client({ connectionString: process.env.POSTGRES_URL || process.env.DATABASE_URL });
   await db.connect();
 

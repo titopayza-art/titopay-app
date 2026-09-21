@@ -46,7 +46,7 @@ const COMPOSERS = [
   console.log(`\n${"=".repeat(72)}\n  MARKETING CENTRE — starter templates\n${"=".repeat(72)}\n`);
 
   const fs = require("fs");
-  const { Client } = require("./api/node_modules/pg");
+  const { Client } = require("../api/node_modules/pg");
   const db = new Client({ connectionString: process.env.POSTGRES_URL
     || fs.readFileSync(`${__dirname}/local.env`, "utf8").match(/^POSTGRES_URL=(.*)$/m)[1] });
   await db.connect();

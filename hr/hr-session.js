@@ -1,11 +1,45 @@
 "use strict";
 
 (() => {
+  // "/index.html" IS NOT A ROUTE, AND THE PORTAL DIES ON IT.
+  //
+  // The workspace is a single-page app whose router matches on the path. Its
+  // routes are "/", "/employees", "/leave" and so on - there is no
+  // "/index.html". Apache serves that URL as a real file rather than
+  // rewriting it (see .htaccess: RewriteRule ^index\.html$ - [L]), so anyone
+  // who types or bookmarks it reaches the router with a path it does not
+  // know. What they see is a portal that looks completely alive - it signs
+  // them in, the whole sidebar renders, their name and role are in the
+  // corner - and a body that says "Page not found". Nothing is loaded
+  // because the app makes no further API calls at all from that route. It
+  // was reported, accurately, as the HR system being non-functional.
+  //
+  // This runs before the application bundle, so the router never sees the
+  // bad path. The directory is kept rather than assuming the portal is at
+  // the domain root, so a portal served from /hr/index.html lands on /hr/.
+  // Wrapped because a sandboxed or file:// context can refuse replaceState,
+  // and a portal that cannot tidy its own URL must still start.
+  try {
+    if (/(^|\/)index\.html$/i.test(window.location.pathname)) {
+      const root = window.location.pathname.replace(/index\.html$/i, "");
+      window.history.replaceState(null, "", root + window.location.search + window.location.hash);
+    }
+  } catch (error) {
+    /* Not fatal: the app still boots, it just starts on the wrong route. */
+  }
+
   const HR_API_BASE = "https://api.titopay.co.za/api/v1/hr";
   const ACCESS_TOKEN_KEY = "hr_token";
   const REFRESH_TOKEN_KEY = "hr_refresh_token";
   const USER_KEY = "hr_user";
   const SESSION_BUILD_KEY = "titopay_hr_session_build";
+  // NOT the same number as the ?v= on this file's script tag, and it does not
+  // follow it. ?v= exists so a new copy of this file gets past Cloudflare,
+  // which caches .js by extension; it moved to 7 for the routing fix above.
+  // SESSION_BUILD throws away every stored session when it changes, so it
+  // moves only when stored session state has actually stopped being valid.
+  // A routing fix has not invalidated anybody's session, so it stays at 6 and
+  // nobody is signed out to receive it.
   const SESSION_BUILD = "6";
   const nativeFetch = window.fetch.bind(window);
 

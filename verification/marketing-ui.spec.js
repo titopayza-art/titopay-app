@@ -23,7 +23,7 @@ const flat = (t) => String(t || "").replace(/[\s  ]+/g, " ").trim();
   // exhaust the five-per-fifteen-minutes allowance. Clearing the sandbox
   // counters is a test-environment action and touches nothing else.
   const fs = require("fs");
-  const { Client } = require("./api/node_modules/pg");
+  const { Client } = require("../api/node_modules/pg");
 // Harness screenshots go here, not into the repo root. A verification run
 // must never leave build artifacts in the working tree; three got committed
 // that way before this existed. The directory is gitignored.

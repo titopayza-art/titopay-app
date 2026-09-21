@@ -13,7 +13,7 @@
 // is on screen. Nothing is asserted by reading source.
 const fs = require("fs");
 const { chromium } = require("playwright");
-const { Client } = require("./api/node_modules/pg");
+const { Client } = require("../api/node_modules/pg");
 
 const CHROME = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const PORTAL = "http://127.0.0.1:8030/index.html";
