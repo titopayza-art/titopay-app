@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#ffffff">
+    <title>Verify your TitoPay email</title>
+    <link rel="icon" href="../assets/favicon.png?v=165">
+    <link rel="stylesheet" href="./verify-email.css?v=228">
+    <script src="./verify-email.js?v=228" defer></script>
+  </head>
+  <body>
+    <main aria-labelledby="verification-title">
+      <img src="../assets/titopay-logo.png" alt="TitoPay">
+      <p class="eyebrow">Email verification</p>
+      <h1 id="verification-title">Confirming your email</h1>
+      <p id="verification-copy">Please wait while TitoPay securely verifies this email address.</p>
+      <div class="status" id="verification-status" role="status" aria-live="polite">Verifying…</div>
+
+      <!-- Only ever shown when the link did not work. A link that expired or was
+           already replaced is the one case where a customer needs a new one, and
+           making them go and find the app to ask for it is how a verification
+           flow quietly stops being completed. -->
+      <form id="resend-form" hidden novalidate>
+        <label for="resend-email">Email address</label>
+        <input id="resend-email" name="email" type="email" autocomplete="email"
+               inputmode="email" placeholder="you@example.com" required>
+        <button type="submit" id="resend-button">Send a new link</button>
+        <p class="resend-note" id="resend-note" role="status" aria-live="polite"></p>
+      </form>
+
+      <a id="open-titopay" href="../" hidden>Open TitoPay</a>
+      <p class="safety">TitoPay will never ask for your password, PIN or card details by email.</p>
+    </main>
+  </body>
+</html>
