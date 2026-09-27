@@ -40,9 +40,9 @@ return [
         'temporary_password' => '#47LigcabhoRes',
         'accounts' => [
             ['email' => 'admin@ligcabhoresidences.co.za',      'name' => 'Administrator',      'role' => 'owner'],
-            ['email' => 'ceo@ligcabhoresidences.co.za',        'name' => 'Chief Executive',    'role' => 'owner'],
             ['email' => 'e.director@ligcabhoresidences.co.za', 'name' => 'Executive Director', 'role' => 'owner'],
-            ['email' => 'manager@ligcabhoresidences.co.za',    'name' => 'Residence Manager',  'role' => 'manager'],
+            ['email' => 'ceo@ligcabhoresidences.co.za',        'name' => 'Chief Executive',    'role' => 'staff'],
+            ['email' => 'manager@ligcabhoresidences.co.za',    'name' => 'Residence Manager',  'role' => 'staff'],
             ['email' => 'support@ligcabhoresidences.co.za',    'name' => 'Student Support',    'role' => 'staff'],
         ],
     ],

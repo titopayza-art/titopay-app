@@ -70,7 +70,7 @@ function patch_record(string $table, int $id, array $statuses) {
 }
 
 function delete_record(string $table, int $id) {
-    $u = require_role(['owner', 'manager']);
+    $u = require_role(['owner']);
     $st = db()->prepare("DELETE FROM $table WHERE id = ?");
     $st->execute([$id]);
     if ($st->rowCount() === 0) fail('That record no longer exists.', 404);
@@ -385,7 +385,7 @@ try {
                 json_out(['ok' => true, 'items' => $rows]);
             }
             if (ctype_digit($second) && ($method === 'PATCH' || $method === 'POST')) {
-                require_role(['owner', 'manager']);
+                require_role(['owner']);
                 $b = body();
                 $set = [];
                 $args = [];
@@ -422,7 +422,7 @@ try {
                 json_out(['ok' => true, 'items' => db()->query($sql)->fetchAll()]);
             }
             if ($method === 'POST' && $second === '') {
-                $u = require_role(['owner', 'manager']);
+                $u = require_role(['owner']);
                 $b = body();
                 $f = need($b, ['title']);
                 db()->prepare('INSERT INTO vacancies (title,department,location,employment_type,summary,description,requirements,closing_date,status,created_at,updated_at)
@@ -437,7 +437,7 @@ try {
                 json_out(['ok' => true]);
             }
             if (ctype_digit($second) && ($method === 'PATCH' || $method === 'POST')) {
-                require_role(['owner', 'manager']);
+                require_role(['owner']);
                 $b = body();
                 $set = [];
                 $args = [];
@@ -646,7 +646,7 @@ try {
             }
 
             if ($method === 'POST' && $second === '') {
-                $u = require_role(['owner', 'manager']);
+                $u = require_role(['owner']);
                 $b = body();
                 $f = need($b, ['tenant_name', 'tenant_surname', 'tenant_email']);
                 if (!filter_var($f['tenant_email'], FILTER_VALIDATE_EMAIL)) fail('That email address is not valid.', 422);
@@ -691,7 +691,7 @@ try {
                 }
 
                 if ($third === 'send' && $method === 'POST') {
-                    require_role(['owner', 'manager']);
+                    require_role(['owner']);
                     if (!in_array($lease['status'], ['draft', 'sent'], true)) fail('That lease has moved past sending.', 409);
                     db()->prepare("UPDATE leases SET status = 'sent', sent_at = ?, updated_at = ? WHERE id = ?")
                         ->execute([now(), now(), $id]);
@@ -712,7 +712,7 @@ try {
                 }
 
                 if ($third === 'countersign' && $method === 'POST') {
-                    require_role(['owner', 'manager']);
+                    require_role(['owner']);
                     if ($lease['status'] !== 'signed') fail('Counter-sign once the tenant has signed.', 409);
                     $b = body();
                     $sig = (string) ($b['signature'] ?? '');
@@ -738,7 +738,7 @@ try {
                 }
 
                 if ($third === 'cancel' && $method === 'POST') {
-                    require_role(['owner', 'manager']);
+                    require_role(['owner']);
                     db()->prepare("UPDATE leases SET status = 'cancelled', updated_at = ? WHERE id = ?")
                         ->execute([now(), $id]);
                     audit('lease_cancelled', 'lease#' . $id . ' by ' . $u['email']);
@@ -1219,7 +1219,7 @@ try {
             }
 
             if ($method === 'POST' && $second === '') {
-                $u = require_role(['owner', 'manager']);
+                $u = require_role(['owner']);
                 $b = body();
                 $f = need($b, ['name', 'email']);
                 if (!filter_var($f['email'], FILTER_VALIDATE_EMAIL)) fail('That email address is not valid.', 422);
@@ -1272,7 +1272,7 @@ try {
                 }
 
                 if ($third === 'send' && $method === 'POST') {
-                    $u = require_role(['owner', 'manager']);
+                    $u = require_role(['owner']);
                     $bank = cfg('lease.bank');
                     $lines = '';
                     foreach ((array) json_decode($inv['items'], true) as $l) {
@@ -1302,7 +1302,7 @@ try {
                 }
 
                 if ($third === 'paid' && $method === 'POST') {
-                    require_role(['owner', 'manager']);
+                    require_role(['owner']);
                     $b = body();
                     db()->prepare("UPDATE invoices SET status = 'paid', paid_on = ?, updated_at = ? WHERE id = ?")
                         ->execute([s($b['paid_on'] ?? date('Y-m-d'), 32), now(), $id]);
@@ -1411,7 +1411,7 @@ try {
 
             /* The same message to a list of people, one at a time. */
             if ($method === 'POST' && $second === 'bulk') {
-                $u = require_role(['owner', 'manager']);
+                $u = require_role(['owner']);
                 $b = body();
                 $f = need($b, ['subject', 'body']);
                 $people = (array) ($b['recipients'] ?? []);
@@ -1588,7 +1588,7 @@ try {
             }
 
             if ($method === 'POST' && $second === 'retry-failed') {
-                $u = require_role(['owner', 'manager']);
+                $u = require_role(['owner']);
                 $ids = db()->prepare('SELECT id FROM mail_log WHERE status = ? ORDER BY id LIMIT 200');
                 $ids->execute(['failed']);
                 $sent = 0;
@@ -1615,7 +1615,7 @@ try {
 
         /* The SMTP details, so the office can set email up themselves. */
         case 'mail-settings':
-            $u = require_role(['owner', 'manager']);
+            $u = require_role(['owner']);
             if ($method === 'POST') {
                 $b = body();
                 $from = strtolower(s($b['from'] ?? '', 190));
