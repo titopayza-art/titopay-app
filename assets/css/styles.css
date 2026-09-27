@@ -222,7 +222,6 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
   transition: background .18s ease, border-color .18s ease;
 }
 .hero__kicker:hover { background: rgba(245, 149, 29, .3); border-color: var(--orange); color: #fff; }
-.hero__pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 0 rgba(245, 149, 29, .7); animation: pulse 2.4s infinite; flex: none; }
 .hero__lede { font-size: clamp(1.02rem, .98rem + .3vw, 1.16rem); color: #e8ded4; max-width: 60ch; }
 .hero__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
 .hero__facts { position: relative; z-index: 2; border-top: 1px solid rgba(255, 255, 255, .16); background: rgba(20, 15, 12, .86); }
