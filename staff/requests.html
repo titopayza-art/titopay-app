@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en-ZA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Staff requests | Ligcabho Residences</title>
+<meta name="description" content="Submit leave, notice, claims and other staff requests to the Ligcabho office.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#221c18">
+<link rel="icon" href="../assets/img/brand/favicon.png" sizes="any">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@700;800&amp;display=swap">
+<link rel="stylesheet" href="../assets/css/styles.css">
+</head>
+<body class="page" data-no-chat>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap site-header__inner">
+    <a class="brand" href="../index.html">
+      <img class="brand__logo" src="../assets/img/brand/logo.png" width="836" height="348" alt="Ligcabho Le&#x27;Africa Residences">
+    </a>
+    <a class="btn btn--ghost btn--sm nav__cta" href="../index.html">The website</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav" aria-label="Open menu"><span></span></button>
+    <nav class="nav" id="primary-nav" aria-label="Staff">
+      <div class="nav__head">
+        <strong>Staff portal</strong>
+        <button class="nav__close" type="button" aria-label="Close menu">&times;</button>
+      </div>
+      <ul class="nav__list"><li class="nav__item"><a class="nav__link" href="index.html">Staff portal</a></li><li class="nav__item"><a class="nav__link" href="requests.html" aria-current="page">Leave, notice and claims</a></li><li class="nav__item"><a class="nav__link" href="supplies.html">Order supplies</a></li><li class="nav__item"><a class="nav__link" href="conduct.html">Code of conduct</a></li></ul>
+      <div class="nav__foot">
+        <a class="btn btn--ghost btn--sm btn--block" href="../index.html">Back to the website</a>
+        <a class="btn btn--ghost btn--sm btn--block" href="tel:+27137524161">Call 013 752 4161</a>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<section class="pagehead"><div class="wrap pagehead__inner"><p class="crumbs"><a href="../index.html">Home</a> / Staff / Submit a request</p><h1>Leave, notice and claims</h1><p>One form for everything you need the office to action. You get a reference number by email, and the office works from the same list.</p></div></section>
+<section class="section">
+  <div class="wrap">
+    <div class="split" style="align-items:flex-start">
+      <form class="form fieldset" data-endpoint="staff-requests" data-busy="Sending&hellip;" data-reference
+            data-success="Request received." novalidate>
+        <legend>Your request</legend>
+        <div class="field"><label for="sr-kind">What is this about? *</label>
+          <select id="sr-kind" name="kind" required>
+            <option value="">Choose one</option>
+            <option value="annual leave">Annual leave</option>
+            <option value="sick leave">Sick leave</option>
+            <option value="family responsibility leave">Family responsibility leave</option>
+            <option value="unpaid leave">Unpaid leave</option>
+            <option value="shift swap">Shift swap</option>
+            <option value="resignation notice">Resignation notice</option>
+            <option value="expense claim">Expense claim</option>
+            <option value="payslip or IRP5">Payslip or IRP5</option>
+            <option value="equipment or uniform">Equipment or uniform</option>
+            <option value="grievance">Grievance</option>
+            <option value="other">Something else</option>
+          </select></div>
+
+        <div class="form__grid" style="margin-top:18px">
+          <div class="field"><label for="sr-name">Your name *</label><input id="sr-name" name="name" type="text" autocomplete="name" required></div>
+          <div class="field"><label for="sr-email">Email *</label><input id="sr-email" name="email" type="email" autocomplete="email" required></div>
+          <div class="field"><label for="sr-phone">Phone</label><input id="sr-phone" name="phone" type="tel" autocomplete="tel"></div>
+          <div class="field"><label for="sr-role">Your role</label>
+            <input id="sr-role" name="role" type="text" placeholder="House warden, cleaner, admin, security"></div>
+          <div class="field"><label for="sr-res">Where are you based?</label>
+            <select id="sr-res" name="residence"><option value="">Head office</option><option>8 Jan Frederik</option><option>10 Jan Frederik</option><option>14 Jan Frederik</option><option>53 Boslorie</option><option>1 Silver Oak</option><option>16 Sperwer Street</option><option>20 &amp; 22 Drysdale</option><option>21 Van Rooyen</option><option>23 Dolomiet</option><option>48 Mataffin Hill</option><option>49 Mostert</option><option>72 Percy Fitzpatrick</option><option>74a Percy Fitzpatrick Drive</option><option>9 Sarel Cilliers Street</option><option>01 Penny Street</option><option>Plot No. 80, Burger Street</option><option>Portion 10 Farm, Rocky&#x27;s Drift</option></select></div>
+          <div class="field"><label for="sr-days">Days (if leave)</label><input id="sr-days" name="days" inputmode="numeric"></div>
+          <div class="field"><label for="sr-start">From</label><input id="sr-start" name="start_date" type="date"></div>
+          <div class="field"><label for="sr-end">To</label><input id="sr-end" name="end_date" type="date"></div>
+          <div class="field"><label for="sr-amount">Amount (if a claim)</label>
+            <input id="sr-amount" name="amount" inputmode="decimal" placeholder="R">
+          </div>
+        </div>
+
+        <div class="field" style="margin-top:18px"><label for="sr-detail">Tell us what you need *</label>
+          <textarea id="sr-detail" name="detail" required
+            placeholder="Dates, cover arrangements, what you spent and why — whatever the office needs to decide."></textarea></div>
+
+        <div class="field"><label for="sr-doc">Attach a document</label>
+          <input id="sr-doc" name="document" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
+          <span class="field__hint">A medical certificate, a slip, a signed letter. PDF, image or Word, up to 32&nbsp;MB.</span></div>
+
+        <p class="form__status" data-status hidden></p>
+        <button class="btn btn--primary" type="submit">Send the request</button>
+        <p class="form__note">Leave still needs your manager's agreement on the roster. This form is the written
+          record of it.</p>
+      </form>
+
+      <aside class="stack">
+        <div class="card">
+          <h3>Before you send</h3>
+          <ul class="ticks">
+            <li>Sick leave of more than two days needs a medical certificate attached</li>
+            <li>Annual leave: give as much notice as you can, and say who is covering</li>
+            <li>Expense claims need the slip — no slip, no claim</li>
+            <li>Resignation notice runs from the date the office receives it</li>
+          </ul>
+        </div>
+        <div class="callout">
+          <h3>Something urgent?</h3>
+          <p>If you cannot come in today, phone your manager first and send this afterwards so it is on record.</p>
+          <p><a class="btn btn--primary btn--sm" href="tel:+27137524161">Call the office</a></p>
+        </div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer__bottom" style="border:0;margin:0;padding:0">
+      <span>&copy; <span data-year>2026</span> Ligcabho Le&#x27;Africa Residences</span>
+      <span>No 11 Liza&#x27;s Court, 28 Van Rensburg Street, Nelspruit 1200</span>
+      <span><a href="../index.html">The website</a> &middot; <a href="../admin/">Admin portal</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>window.LIGCABHO_API_BASE = '../api/';</script>
+<script src="../assets/js/main.js" defer></script>
+</body>
+</html>
