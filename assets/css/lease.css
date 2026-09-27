@@ -1,0 +1,78 @@
+/* Ligcabho lease agreement, tenant view */
+
+.lease-page { background: var(--sand); }
+
+.lease-top { background: #fff; border-bottom: 1px solid var(--line); }
+.lease-top__inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 76px; }
+.lease-top__tag { font-family: var(--display); font-weight: 700; font-size: .82rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+
+.lease-wrap { padding-block: clamp(24px, 4vw, 48px); max-width: 900px; }
+
+.lease-state { text-align: center; padding: 80px 20px; }
+.lease-state h1 { margin-bottom: .4em; }
+.lease-spinner { width: 34px; height: 34px; margin: 0 auto 18px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--orange); animation: leasespin .8s linear infinite; }
+@keyframes leasespin { to { transform: rotate(360deg); } }
+
+.lease-banner { background: var(--orange-soft); border: 1px solid #f8dcb4; color: #7a4a06; border-radius: var(--r); padding: 14px 18px; font-size: .92rem; font-weight: 600; margin-bottom: 20px; }
+.lease-banner--done { background: #e8f5ee; border-color: #b7dfc9; color: #16653f; }
+
+.lease-doc { background: #fff; border: 1px solid var(--line); border-radius: var(--r-lg); padding: clamp(24px, 4vw, 52px); box-shadow: var(--shadow-sm); }
+.lease-doc__head { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 26px; }
+.lease-doc__head h1 { margin-bottom: .2em; }
+.lease-doc__head p { margin: 0; color: var(--ink-3); font-size: .95rem; }
+
+.lease-block + .lease-block { margin-top: 32px; }
+.lease-block h2 { font-size: 1.15rem; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.lease-block h3 { font-size: .98rem; margin: 22px 0 .3em; }
+.lease-clauses p { font-size: .93rem; margin-bottom: 0; }
+
+.lease-dl { display: grid; grid-template-columns: 38% 62%; gap: 0; margin: 0; font-size: .93rem; }
+.lease-dl dt { color: var(--ink-3); padding: 9px 0; border-bottom: 1px solid var(--line); }
+.lease-dl dd { margin: 0; padding: 9px 0; border-bottom: 1px solid var(--line); color: var(--ink); font-weight: 600; }
+@media (max-width: 560px) { .lease-dl { grid-template-columns: 1fr; } .lease-dl dt { border: 0; padding-bottom: 0; } }
+
+.sig-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-top: 16px; }
+.sig-box { border: 1px dashed var(--line); border-radius: var(--r); padding: 16px; min-height: 140px; }
+.sig-box__label { display: block; font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px; }
+.sig__img { max-height: 88px; width: auto; }
+.sig__meta { font-size: .82rem; color: var(--ink-3); margin: 8px 0 0; }
+
+/* signing form */
+.lease-sign { background: #fff; border: 1px solid var(--line); border-radius: var(--r-lg); padding: clamp(22px, 3vw, 36px); margin-top: 26px; box-shadow: var(--shadow-sm); }
+.lease-sign h2 { font-size: 1.3rem; }
+.lease-sign__lead { color: var(--ink-3); font-size: .93rem; }
+.lease-sign .field { margin-bottom: 18px; }
+.lease-agree { margin: 6px 0 20px; }
+
+.sig-label { display: block; font-size: .86rem; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+.sig { border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.sig__tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--sand); }
+.sig__tab { flex: 1; background: none; border: 0; padding: 11px; font: inherit; font-size: .86rem; font-weight: 700; color: var(--ink-3); cursor: pointer; }
+.sig__tab.is-on { background: #fff; color: var(--orange-dark); box-shadow: inset 0 -2px 0 var(--orange); }
+.sig__pad { position: relative; background: #fff; }
+.sig__pad canvas { display: block; width: 100%; touch-action: none; cursor: crosshair; }
+.sig__hint { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; color: #b5a89c; font-size: .88rem; }
+.sig__typed { padding: 16px; display: grid; gap: 12px; }
+.sig__typed input { font: inherit; font-size: .96rem; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+.sig__preview { min-height: 62px; display: block; font-family: "Segoe Script", "Brush Script MT", cursive; font-style: italic; font-size: 2rem; color: #1b1410; border-bottom: 1px solid var(--line); }
+.sig__actions { display: flex; justify-content: flex-end; padding: 10px; border-top: 1px solid var(--line); background: var(--sand); }
+
+.lease-foot { background: var(--ink); color: #9b8d82; font-size: .82rem; padding: 22px 0; margin-top: 40px; text-align: center; }
+.lease-foot p { margin: 0; }
+
+/* printing: the agreement only */
+@media print {
+  .lease-top, .lease-foot, .lease-sign, .lease-banner, .lease-done, .wa-float, .chat { display: none !important; }
+  body { background: #fff; }
+  .lease-wrap { padding: 0; max-width: none; }
+  .lease-doc { border: 0; box-shadow: none; padding: 0; border-radius: 0; }
+  .lease-block { break-inside: avoid; }
+  .lease-doc__head { border-bottom: 2px solid #000; }
+  a[href]::after { content: ""; }
+}
+
+/* one clause, with its sub-numbering kept on its own lines */
+.clause { margin: 0 0 22px; }
+.clause h3 { margin: 0 0 8px; font-size: 1.02rem; }
+.clause__body { display: grid; gap: 6px; }
+.clause__line { display: block; font-size: .95rem; line-height: 1.6; color: var(--ink-2, #4a403a); }

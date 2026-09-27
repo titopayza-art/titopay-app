@@ -1,0 +1,65 @@
+# Ligcabho Le'Africa Residences — Apache configuration (Afrihost / cPanel friendly)
+
+Options -Indexes
+DirectoryIndex index.html index.php
+
+# The database and uploaded documents are never served.
+RedirectMatch 404 ^/data(/|$)
+
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+  Header set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+
+  # Prevent LiteSpeed and browsers from caching HTML (always revalidate)
+  <FilesMatch "\.html$">
+    Header set Cache-Control "max-age=0, no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+
+  # Prevent LiteSpeed from caching PHP responses
+  <FilesMatch "\.php$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+  </FilesMatch>
+
+  # Tell LiteSpeed not to cache these file types
+  Header set X-LiteSpeed-Cache-Control "off" env=X_LITESPEED_NONOCACHE
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Force HTTPS
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+
+  # One canonical address per page: /residences.html redirects to /residences
+  RewriteCond %{THE_REQUEST} "\s/+(.+)\.html[\s?]" [NC]
+  RewriteRule ^ /%1 [R=301,L]
+
+  # Clean URLs: /residences serves residences.html (deploy-check.php looks for this line)
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{REQUEST_URI} !^/api/
+  RewriteCond %{REQUEST_URI} !^/data/
+  RewriteRule ^([^.]+)$ $1.html [L]
+</IfModule>
+
+ErrorDocument 404 /404.html
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType text/css "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+  ExpiresByType application/pdf "access plus 1 month"
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml
+</IfModule>

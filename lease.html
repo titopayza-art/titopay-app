@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en-ZA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lease Agreement · Ligcabho Le'Africa Residences</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#221c18">
+<link rel="icon" href="assets/img/brand/favicon.png" sizes="any">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@700;800&amp;display=swap">
+<link rel="stylesheet" href="assets/css/styles.css?v=202609272237">
+<link rel="stylesheet" href="assets/css/lease.css">
+</head>
+<body class="page lease-page" data-no-chat>
+
+<header class="lease-top">
+  <div class="wrap lease-top__inner">
+    <a href="index.html"><img class="brand__logo" src="assets/img/brand/logo.png" width="836" height="348" alt="Ligcabho Le'Africa Residences"></a>
+    <span class="lease-top__tag">Lease agreement</span>
+  </div>
+</header>
+
+<main id="main" class="wrap lease-wrap">
+  <div id="state" class="lease-state"><div class="lease-spinner"></div><p>Loading your lease…</p></div>
+
+  <div id="doc" hidden>
+    <div class="lease-banner" id="banner"></div>
+
+    <article class="lease-doc" id="paper">
+      <header class="lease-doc__head">
+        <h1>Lease Agreement</h1>
+        <p id="head-parties"></p>
+      </header>
+
+      <section class="lease-block">
+        <h2>Parties</h2>
+        <dl class="lease-dl" id="parties"></dl>
+      </section>
+
+      <section class="lease-block">
+        <h2>The room</h2>
+        <dl class="lease-dl" id="terms"></dl>
+      </section>
+
+      <section class="lease-block lease-clauses" id="clauses"></section>
+
+      <section class="lease-block" id="signatures"></section>
+    </article>
+
+    <form class="lease-sign" id="sign-form" novalidate>
+      <h2>Sign your lease</h2>
+      <p class="lease-sign__lead">Fill in the last few details, then sign in the box. Your signature is recorded with
+        the date, the time and your IP address.</p>
+
+      <div class="field">
+        <label for="home-address">Your permanent home address *</label>
+        <textarea id="home-address" rows="3" required></textarea>
+        <p class="field__error" hidden></p>
+      </div>
+
+      <div class="form__grid">
+        <div class="field">
+          <label for="kin-name">Next of kin *</label>
+          <input id="kin-name" type="text" required>
+          <p class="field__error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="kin-contact">Their contact number *</label>
+          <input id="kin-contact" type="tel" required>
+          <p class="field__error" hidden></p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="signed-name">Type your full name, exactly as it appears above *</label>
+        <input id="signed-name" type="text" autocomplete="name" required>
+        <p class="field__hint" id="name-hint"></p>
+        <p class="field__error" hidden></p>
+      </div>
+
+      <div class="field">
+        <span class="sig-label">Your signature *</span>
+        <div class="sig">
+          <div class="sig__tabs" role="tablist">
+            <button type="button" class="sig__tab is-on" data-mode="draw" role="tab" aria-selected="true">Draw it</button>
+            <button type="button" class="sig__tab" data-mode="type" role="tab" aria-selected="false">Type it</button>
+          </div>
+          <div class="sig__pad" id="pad-wrap">
+            <canvas id="pad" aria-label="Signature area"></canvas>
+            <span class="sig__hint" id="pad-hint">Sign here with your finger or mouse</span>
+          </div>
+          <div class="sig__typed" id="typed-wrap" hidden>
+            <input id="typed" type="text" placeholder="Type your name" aria-label="Typed signature">
+            <output class="sig__preview" id="typed-preview"></output>
+          </div>
+          <div class="sig__actions">
+            <button type="button" class="btn btn--ghost btn--sm" id="sig-clear">Clear</button>
+          </div>
+        </div>
+        <p class="field__error" id="sig-err" hidden></p>
+      </div>
+
+      <div class="form__grid">
+        <div class="field">
+          <label for="place">Signed at (town or city)</label>
+          <input id="place" type="text" value="Mbombela" autocomplete="address-level2">
+        </div>
+        <div class="field">
+          <label for="wit1">Witness 1 (optional)</label>
+          <input id="wit1" type="text" placeholder="Full name">
+          <span class="field__hint">Clause 12 leaves room for witnesses. Your electronic signature is binding on
+            its own, so these are only filled in if someone watched you sign.</span>
+        </div>
+        <div class="field">
+          <label for="wit2">Witness 2 (optional)</label>
+          <input id="wit2" type="text" placeholder="Full name">
+        </div>
+      </div>
+
+      <label class="check lease-agree">
+        <input type="checkbox" id="agree" required>
+        <span>I have read this agreement and I accept it. I understand that signing electronically is as binding as
+          signing on paper.</span>
+      </label>
+      <p class="field__error" id="agree-err" hidden></p>
+
+      <div class="hero__actions">
+        <button class="btn btn--primary" type="submit" id="sign-btn">Sign the lease</button>
+        <button class="btn btn--ghost" type="button" id="print-btn">Print a copy</button>
+        <a class="btn btn--ghost" id="pdf-btn" href="#" target="_blank" rel="noopener">Download the PDF</a>
+      </div>
+      <p class="form__status" id="sign-status" hidden></p>
+      <p class="form__note">Questions before you sign? Call 013 752 4161 during office hours, or email
+        admin@ligcabhoresidences.co.za and we will answer in writing. Never sign anything you do not understand.</p>
+    </form>
+
+    <div class="hero__actions lease-done" id="done-actions" hidden>
+      <a class="btn btn--primary" id="pdf-btn-2" href="#" target="_blank" rel="noopener">Download your signed lease (PDF)</a>
+      <button class="btn btn--ghost" type="button" id="print-btn-2">Print it</button>
+      <a class="btn btn--ghost" href="api/docs/house-rules.pdf" target="_blank" rel="noopener">House rules (PDF)</a>
+      <a class="btn btn--ghost" href="index.html">Back to the website</a>
+    </div>
+  </div>
+</main>
+
+<footer class="lease-foot">
+  <div class="wrap">
+    <p>Ligcabho Le'Africa Residences · No 11 Liza's Court, 28 Van Rensburg Street, Nelspruit 1200 · 013 752 4161</p>
+  </div>
+</footer>
+
+<script src="assets/js/lease.js" defer></script>
+</body>
+</html>

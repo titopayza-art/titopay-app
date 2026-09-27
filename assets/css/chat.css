@@ -1,0 +1,79 @@
+/* Ligcabho application assistant */
+
+.chat { position: fixed; right: 18px; bottom: 18px; z-index: 95; display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+
+.chat__launch {
+  display: inline-flex; align-items: center; gap: 10px;
+  background: var(--orange, #f5951d); color: #1b1410; border: 0; cursor: pointer;
+  padding: 14px 22px; border-radius: 999px; font: inherit; font-size: .95rem; font-weight: 700;
+  font-family: var(--display, inherit); box-shadow: 0 14px 30px rgba(34, 28, 24, .3);
+}
+.chat__launch svg { width: 22px; height: 22px; }
+.chat__launch:hover { background: var(--orange-dark, #d97a08); color: #fff; }
+
+/* One gentle nudge on arrival, so the assistant is noticed and then left alone. */
+@keyframes chatnudge {
+  0%, 84%, 100% { transform: translateY(0); }
+  88% { transform: translateY(-5px); }
+  92% { transform: translateY(0); }
+  96% { transform: translateY(-2px); }
+}
+.chat:not(.is-open) .chat__launch { animation: chatnudge 9s ease-in-out 3s 2; }
+@media (prefers-reduced-motion: reduce) { .chat:not(.is-open) .chat__launch { animation: none; } }
+.chat.is-open .chat__launch { display: none; }
+
+/* The panel is display:flex, which outranks the browser's [hidden] rule,
+   so closing it has to be stated explicitly. */
+.chat__panel[hidden] { display: none; }
+
+.chat__panel {
+  width: min(380px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 140px));
+  background: #fff; border: 1px solid var(--line, #e7e0d7); border-radius: 20px;
+  box-shadow: 0 30px 70px rgba(34, 28, 24, .28);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
+.chat__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; background: var(--ink, #221c18); color: #fff; }
+.chat__head strong { display: block; font-family: var(--display, inherit); font-size: .98rem; }
+.chat__head span { font-size: .76rem; color: #c8bcb1; }
+.chat__close { background: none; border: 0; color: #fff; font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 0 4px; }
+
+.chat__log {
+  flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px;
+  background: var(--sand, #f7f4ef);
+  overscroll-behavior: contain;      /* scrolling the chat never drags the page */
+  -webkit-overflow-scrolling: touch;
+}
+.chat__msg { max-width: 86%; padding: 10px 14px; border-radius: 16px; font-size: .92rem; line-height: 1.5; white-space: pre-wrap; }
+.chat__msg--bot { background: #fff; border: 1px solid var(--line, #e7e0d7); border-bottom-left-radius: 5px; align-self: flex-start; color: var(--ink-2, #4a403a); }
+.chat__msg--user { background: var(--orange, #f5951d); color: #1b1410; border-bottom-right-radius: 5px; align-self: flex-end; font-weight: 600; }
+
+.chat__typing { display: flex; gap: 4px; align-items: center; }
+.chat__typing span { width: 7px; height: 7px; border-radius: 50%; background: #c3b6aa; animation: chatdot 1.1s infinite; }
+.chat__typing span:nth-child(2) { animation-delay: .15s; }
+.chat__typing span:nth-child(3) { animation-delay: .3s; }
+@keyframes chatdot { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+
+.chat__options { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px; background: var(--sand, #f7f4ef); overscroll-behavior: contain; }
+.chat__options:not(:empty) { padding: 10px 12px 2px; }
+.chat__chip { background: #fff; border: 1px solid var(--line, #e7e0d7); color: var(--ink, #221c18); border-radius: 999px; padding: 7px 13px; font: inherit; font-size: .84rem; font-weight: 600; cursor: pointer; }
+.chat__chip:hover { background: var(--orange-soft, #fff4e5); border-color: #f8dcb4; color: var(--orange-dark, #d97a08); }
+
+.chat__form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line, #e7e0d7); background: #fff; }
+.chat__form input { flex: 1; font: inherit; font-size: .92rem; padding: 11px 14px; border: 1px solid var(--line, #e7e0d7); border-radius: 999px; color: var(--ink, #221c18); }
+.chat__form input:focus { outline: 2px solid rgba(245, 149, 29, .3); border-color: var(--orange, #f5951d); }
+.chat__send { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--orange, #f5951d); color: #1b1410; font-size: 1.2rem; cursor: pointer; flex: none; }
+.chat__send:hover { background: var(--orange-dark, #d97a08); color: #fff; }
+
+.chat__note { margin: 0; padding: 0 14px 12px; font-size: .72rem; color: var(--ink-3, #7b6f67); background: #fff; }
+
+@media (max-width: 480px) {
+  .chat { right: 12px; bottom: 12px; left: 12px; align-items: stretch; }
+  .chat__panel { width: 100%; height: min(70vh, 520px); }
+  .chat__launch { align-self: flex-end; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat__typing span { animation: none; }
+}
