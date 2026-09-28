@@ -16693,3 +16693,28 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
     visibility: hidden;
   }
 }
+
+/* AND THE SHELL'S GPU LAYERS ARE STOOD DOWN WHILE A SHEET IS OPEN.
+   Belt and braces for the rule above, aimed at the one thing that can
+   defeat it. .service-tile carries transform: translateZ(0), which hands
+   each tile its own compositor layer. iOS has a long history of painting a
+   promoted layer over content that should be in front of it, and this file
+   already carries two earlier attempts at the same problem on the same
+   elements - .modal-open .service-tile flattening transform-style, and a
+   transform: none !important on the tiles for three specific services. Both
+   were written because tiles came through something they should not have.
+
+   A visibility:hidden subtree is not rasterised at all, so in principle the
+   rule above already ends it. This drops the layers as well, so there is
+   nothing promoted left to mis-composite even if a WebKit build disagrees.
+   Nothing is lost: the tiles are not visible or reachable behind a sheet
+   that covers the screen, so they have no need of a layer. */
+@media (max-width: 519px), (pointer: coarse) and (max-width: 950px) {
+  body.modal-open:has(.modal-backdrop:not(.auth-modal-backdrop)) .service-tile,
+  body.modal-open:has(.modal-backdrop:not(.auth-modal-backdrop)) .wallet-card,
+  body.modal-open:has(.modal-backdrop:not(.auth-modal-backdrop)) .service-grid {
+    transform: none;
+    will-change: auto;
+    backdrop-filter: none;
+  }
+}

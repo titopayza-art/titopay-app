@@ -241,6 +241,23 @@ function serve() {
       return { painted, hits: hits.slice(0, 5), count: hits.length };
     });
     check("the page behind a full-screen sheet is not painted", !bleed.painted);
+
+    // NOTHING BEHIND THE SHEET KEEPS A COMPOSITOR LAYER. A promoted layer is
+    // the one thing that can paint over content in front of it on iOS, which
+    // is what the tiles in the screenshot were doing.
+    const promoted = await page.evaluate(() => {
+      const shell = document.querySelector(".app-shell");
+      const out = [];
+      shell.querySelectorAll(".service-tile, .wallet-card, .service-grid").forEach((el) => {
+        const style = getComputedStyle(el);
+        if (style.transform !== "none" || style.willChange !== "auto") {
+          out.push(`${(el.className || "").toString().split(" ")[0]}: transform=${style.transform} will-change=${style.willChange}`);
+        }
+      });
+      return out.slice(0, 4);
+    });
+    check("and keeps no compositor layer that could paint over it",
+      promoted.length === 0, promoted.join(" | "));
     check("SO NOTHING OF IT SHOWS THROUGH, EVEN WITH A STRIP OPEN UNDER THE SHEET",
       bleed.count === 0, bleed.hits.join(" | "));
 
