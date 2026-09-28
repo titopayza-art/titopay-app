@@ -1263,3 +1263,38 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
 .keyboard-aware-backdrop.keyboard-open .sv-chat-scroll {
   max-height: calc(var(--auth-viewport-height, 100dvh) * 0.34);
 }
+
+/* THE PAGE BEHIND A FULL-SCREEN SHEET IS NOT PAINTED AT ALL.
+   Reported twice, from a phone, on the stokvel group chat: with the keyboard
+   up, the wallet's quick actions - Top up, Withdraw, Receive Money - read
+   through the strip under the composer.
+
+   The sheet is opaque and, on a phone, covers the whole screen, so in
+   principle none of this is reachable. In practice the strip appears whenever
+   the sheet's height and the visible glass disagree by even a few pixels, and
+   on iOS they disagree for reasons the page does not control: the keyboard
+   accessory bar arrives after the viewport has already been measured, the
+   reported height lags the animation, a resize fires a frame late. Chasing
+   each of those is a fight the page cannot win, and every miss looks like
+   this one - a second interface showing through the first.
+
+   The scrim is translucent on purpose, so that a dialog on a dashboard blurs
+   what is behind it rather than hiding it. That is the right look for a
+   dialog and the wrong one here: a full-screen sheet has nothing to show
+   behind it, because it covers everything. Not painting the shell at all
+   ends the whole class - drift or no drift, there is nothing left to read
+   through. What remains behind the scrim is the page's own background.
+
+   visibility, not display: the shell keeps its layout and its scroll
+   position, so closing the sheet puts the person back exactly where they
+   were. It cannot be focused through either, which is what a modal wants.
+
+   Scoped to the sheets that actually fill the screen. Auth is excluded here
+   for the same reason it is excluded from the full-screen rule itself - its
+   panel floats, and hiding the page around it would leave a void. Where
+   :has() is unsupported the rule simply does not apply and nothing changes. */
+@media (max-width: 519px), (pointer: coarse) and (max-width: 950px) {
+  body.modal-open:has(.modal-backdrop:not(.auth-modal-backdrop)) .app-shell {
+    visibility: hidden;
+  }
+}

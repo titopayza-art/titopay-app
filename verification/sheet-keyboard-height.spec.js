@@ -204,6 +204,46 @@ function serve() {
       return box.top <= glass.top + 1 && box.bottom >= glass.top + glass.height - 1;
     }));
 
+    // NOTHING OF THE PAGE BEHIND THE SHEET CAN BE READ THROUGH IT.
+    //
+    // This is the symptom that was reported twice: the wallet's quick actions
+    // showing in the strip under the composer. The sheet is deliberately
+    // shrunk here to force that strip open, because on a real handset it
+    // opens by itself whenever the reported viewport and the visible glass
+    // disagree - a keyboard accessory bar that arrives late, a resize a frame
+    // behind the animation. Whatever the cause, the page behind must not be
+    // painted.
+    const bleed = await page.evaluate(() => {
+      const card = document.querySelector(".modal-card");
+      const shell = document.querySelector(".app-shell");
+      const glass = window.__glass;
+      const painted = getComputedStyle(shell).visibility !== "hidden";
+      // Open a 140px strip under the sheet, the way the drift does.
+      const was = card.style.height;
+      card.style.height = `${Math.round(glass.height - 140)}px`;
+      const hits = [];
+      for (let y = glass.top + glass.height - 130; y < glass.top + glass.height - 4; y += 18) {
+        for (let x = 24; x < window.innerWidth - 24; x += Math.floor(window.innerWidth / 4)) {
+          // elementsFromPoint, not elementFromPoint: the scrim is
+          // translucent, so the topmost element at a point is always the
+          // backdrop and asking for it alone proves nothing. The whole stack
+          // is what the eye sees through it, and hit testing leaves out
+          // anything visibility:hidden - which is exactly the question.
+          for (const el of document.elementsFromPoint(x, y)) {
+            if (shell.contains(el)) {
+              hits.push(`${el.tagName}.${(el.className || "").toString().split(" ")[0]} at ${x},${Math.round(y)}`);
+              break;
+            }
+          }
+        }
+      }
+      card.style.height = was;
+      return { painted, hits: hits.slice(0, 5), count: hits.length };
+    });
+    check("the page behind a full-screen sheet is not painted", !bleed.painted);
+    check("SO NOTHING OF IT SHOWS THROUGH, EVEN WITH A STRIP OPEN UNDER THE SHEET",
+      bleed.count === 0, bleed.hits.join(" | "));
+
     check("no page errors", errors.length === 0, errors.join(" | "));
     await context.close();
     console.log("");
