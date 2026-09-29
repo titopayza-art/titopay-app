@@ -6695,18 +6695,25 @@ function authView() {
       </header>
 
       <section class="hero landing-hero">
+        ${/* The headline sits on a dark panel of its own rather than on the
+              page. With no tiles left there is nothing else to give the screen
+              a centre of gravity, and a large white line on ink does it
+              without adding a word. The panel takes whatever height the
+              screen has spare - it is the flexible row - so it is a band on a
+              short phone and most of the screen on a tall one.
+
+              It is also where a photograph goes when there is one. There is
+              none for now, and the panel has to stand up without one, which
+              is why the type is sized to carry it alone. */""}
+        <div class="landing-hero-panel">
+          <h1>${isBusiness ? "Accept payments. Grow your business." : "Send, pay and get paid."}</h1>
+          <p class="landing-hero-line">${isBusiness ? "One account for taking payments, invoicing and getting settled." : "One wallet for everyday payments in South Africa."}</p>
+        </div>
         <div class="segment${isBusiness ? " is-business" : ""}" role="tablist" aria-label="Account type" data-account-segment>
           <span class="segment-thumb" aria-hidden="true"></span>
           <button type="button" role="tab" aria-selected="${!isBusiness}" class="${!isBusiness ? "active" : ""}" data-account="personal">Personal</button>
           <button type="button" role="tab" aria-selected="${isBusiness}" class="${isBusiness ? "active" : ""}" data-account="business">Business</button>
         </div>
-        ${/* ONE TAGLINE, NOT TWO. "Smart Payments. Simplified." sat directly
-              under a headline that already said the same thing in the specific
-              rather than the generic, so the page opened by making its point
-              twice and weakening it the second time. The strapline still lives
-              where a strapline belongs - the splash screen, the tip poster and
-              the email footer - and the landing now opens with one line. */""}
-        <h1>${isBusiness ? "Accept payments. Grow your business." : "Send, pay and get paid."}</h1>
       </section>
 
       ${/* WHAT THIS SCREEN NO LONGER SAYS, AND WHY.
@@ -6741,8 +6748,17 @@ function authView() {
         <button class="btn secondary" data-auth-tab="login">Sign in</button>
       </section>
 
-      <footer class="scan-card landing-cta-footer" aria-label="${isBusiness ? "Accept payment" : "Scan to pay"}">
-        <span class="icon-bubble">${icon(isBusiness ? "qr" : "scan")}</span>
+      ${/* THE BAND BECOMES A LINE.
+            This was a filled panel with an icon in a circle, a line of copy
+            and a full-width button - a third call to action competing with
+            the two above it, and on a sparse screen it grew to half the
+            page. It is one quiet control now.
+
+            It keeps its element and its classes on purpose: landing-quality
+            measures this footer, and anything painted over it, by those
+            names. Turning it into a plain link would have left that check
+            with nothing to look at and passing for the wrong reason. */""}
+      <footer class="scan-card landing-cta-footer is-quiet" aria-label="${isBusiness ? "Accept payment" : "Scan to pay"}">
         <div class="landing-cta-copy">
           ${/* ONE LINE AND A BUTTON. The heading here read "Scan To Pay"
                 directly above a button reading "Scan to pay" - the same three
@@ -6754,7 +6770,6 @@ function authView() {
                 paying from your wallet, above a button that says scan, was the
                 same idea three times. The lead says what the button does not,
                 so it is the one that stays. */""}
-          <p class="landing-cta-lead">${isBusiness ? "Take payment straight into your business wallet." : "Pay straight from your wallet, in seconds."}</p>
         </div>
         <button class="btn primary landing-cta-btn" data-auth-tab="login" data-post-login="qr" aria-label="${isBusiness ? "Sign in to show your payment QR" : "Sign in to scan a TitoPay QR"}">${icon(isBusiness ? "qr" : "scan")} ${isBusiness ? "Show my QR" : "Scan to pay"}</button>
       </footer>
@@ -20432,12 +20447,21 @@ function openStockvelWithdrawalRequestModal(id) {
       </section>` : ""}
     <form class="form-grid" data-form="stockvel-withdrawal">
       <input type="hidden" name="stockvelId" value="${esc(group.id)}">
-      <div class="field">
-        <label for="sv-wd-amount">Amount</label>
-        ${/* The balance moved to the line under the title. Repeating it here,
-              directly under the box, said the same number twice on a screen
-              with two fields on it. */""}
-        <div class="input-affix currency-affix" data-prefix="R"><input id="sv-wd-amount" name="amount" inputmode="decimal" required></div>
+      ${/* THE AMOUNT IS THE POINT OF THE SCREEN, SO IT IS THE SIZE OF ONE.
+            It was a labelled box the same size as the reason box under it, on
+            a form whose whole job is to choose a number. Here it is set large
+            and centred with the rule under it, and its label sits beneath,
+            where it reads as a caption rather than another field heading.
+
+            The balance moved to the line under the title. Repeating it here,
+            directly under the box, said the same number twice on a screen
+            with two fields on it. */""}
+      <div class="field sv-amount-field">
+        <div class="sv-amount">
+          <span class="sv-amount-prefix" aria-hidden="true">R</span>
+          <input id="sv-wd-amount" name="amount" inputmode="decimal" placeholder="0" required aria-label="Amount to withdraw">
+        </div>
+        <label for="sv-wd-amount">Amount to withdraw</label>
       </div>
       <div class="field">
         <label for="sv-wd-reason">What is it for?</label>

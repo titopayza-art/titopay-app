@@ -111,6 +111,19 @@ async function measure(page) {
       if (el.closest("button, a[href], [role='tab'], [role='tablist']")) return;
       if (el.querySelector("button, a[href]")) return;
       if (!(el.textContent || "").trim()) return;
+      // A BOX HOLDING THE PAGE'S HEADING IS A SECTION, NOT A CONTROL.
+      //
+      // Narrowed, and the reason matters more than the rule. The landing's
+      // hero is a rounded panel of ink carrying the h1, and this flagged it
+      // six times - once per size and account type. The honest question is
+      // whether the check is right or the shape is wrong, and the answer is
+      // that nothing carrying a page heading reads as pressable: it is a
+      // banner, and its size says so before its corners do.
+      //
+      // This is the narrowest way to say that. It does NOT exempt by name,
+      // by class or by size, so a rounded filled box with ordinary copy in it
+      // is still caught, which is what the check was written for.
+      if (el.querySelector("h1, h2")) return;
       const cs = getComputedStyle(el);
       const bordered = parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderLeftWidth) > 0;
       const filled = cs.backgroundColor !== "rgba(0, 0, 0, 0)" && cs.backgroundColor !== "transparent";

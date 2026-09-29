@@ -16769,9 +16769,13 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
      by about half and takes the room the tiles used to occupy. There is no
      photograph behind it - that is a later decision, and this has to stand up
      without one. */
+  /* stretch, not center: the hero IS the flexible row, and the dark panel
+     inside it is what should take the slack. Centring the section made it
+     hug its content and left the spare height as dead ground above and
+     below it. */
   body.landing-static .landing-flow .landing-hero {
-    align-self: center;
-    padding-block: clamp(14px, 5vw, 32px);
+    align-self: stretch;
+    min-height: 0;
   }
 
   body.landing-static .landing-flow .landing-hero h1 {
@@ -16891,3 +16895,286 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
   color: var(--muted);
   font-size: 0.86rem;
 }
+
+/* ==========================================================================
+   The landing hero panel, the account tabs and the quiet scan line
+   ========================================================================== */
+
+/* The hero is a column: the panel takes the room, the tabs sit under it. */
+.landing-flow .landing-hero {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 4vw, 22px);
+  min-height: 0;
+  text-align: left;
+}
+
+/* Ink, not the page. The panel is the flexible part of the flexible row, so
+   it is a band on a short phone and most of the screen on a tall one, and
+   the headline sits at its foot where a caption sits under a picture -
+   which is where a picture will go when there is one. */
+.landing-flow .landing-hero-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: clamp(20px, 6vw, 30px);
+  border-radius: 26px;
+  background: var(--navy);
+  overflow: hidden;
+}
+
+.landing-flow .landing-hero-panel h1 {
+  margin: 0;
+  color: #ffffff;
+  font-size: clamp(2.1rem, 8.6vw, 2.9rem);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.landing-flow .landing-hero-line {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: clamp(0.95rem, 3.6vw, 1.05rem);
+  line-height: 1.45;
+  max-width: 30rem;
+}
+
+/* The account choice reads as two tabs with a rule under the live one rather
+   than a filled pill. The pill put a second block of solid brand blue on a
+   screen whose only job is to point at one button; an underline says the
+   same thing and takes no colour to do it. The thumb is kept - it is what
+   makes the change slide rather than blink - and becomes the rule. */
+.landing-flow .landing-hero .segment {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  gap: 0;
+  max-width: none;
+  margin-inline: 0;
+}
+
+.landing-flow .landing-hero .segment::before,
+.landing-flow .landing-hero .segment::after {
+  display: none;
+}
+
+.landing-flow .landing-hero .segment > button {
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  padding-block: 12px;
+  border-radius: 0;
+  box-shadow: none;
+  border-bottom: 2px solid var(--line);
+}
+
+.landing-flow .landing-hero .segment > button.active {
+  color: var(--text);
+  font-weight: 700;
+  border-bottom-color: transparent;
+}
+
+.landing-flow .landing-hero .segment-thumb {
+  top: auto;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--text);
+  box-shadow: none;
+}
+
+/* One line, centred, at the foot. It was a filled band with an icon circle,
+   a line of copy and a full-width button. */
+.landing-flow .scan-card.landing-cta-footer.is-quiet {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: clamp(10px, 3vw, 16px) 0 calc(clamp(10px, 3vw, 16px) + var(--safe-bottom));
+  color: var(--muted);
+}
+
+.landing-flow .scan-card.is-quiet .landing-cta-copy {
+  display: none;
+}
+
+.landing-flow .scan-card.is-quiet .btn.landing-cta-btn.primary {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  box-shadow: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+  min-height: 44px;
+  padding-inline: 12px;
+}
+
+.landing-flow .scan-card.is-quiet .btn.landing-cta-btn.primary svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* The withdrawal amount, set as the thing the screen is for. */
+.sv-amount-field {
+  align-items: center;
+  text-align: center;
+  padding-block: clamp(18px, 6vw, 34px) 0;
+}
+
+.sv-amount {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--blue);
+  min-width: 140px;
+  max-width: 100%;
+}
+
+.sv-amount-prefix {
+  color: #b3bfd4;
+  font-size: clamp(1.5rem, 6vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* The box itself carries none of the usual field chrome: the rule under the
+   group is the field, so a second border around the input would draw a box
+   inside a box. It sizes to its own content so the rule grows with the
+   number rather than sitting at some fixed width. */
+.sv-amount input {
+  width: auto;
+  min-width: 0;
+  field-sizing: content;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  min-height: 0;
+  text-align: center;
+  color: var(--text);
+  font-size: clamp(2.4rem, 11vw, 3.4rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Browsers without field-sizing still need a sensible width. */
+@supports not (field-sizing: content) {
+  .sv-amount input {
+    width: 100%;
+  }
+}
+
+.sv-amount input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.sv-amount input::placeholder {
+  color: #c3cddf;
+}
+
+/* Under the number, so it reads as a caption and not another field heading. */
+.sv-amount-field > label {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+/* An id and !important, which needs saying out loud.
+   Two rules in this file size a decimal input, and the second one carries
+   !important:
+
+     input,select,textarea            { font-size: max(1em,16px) !important }
+     .field input[inputmode=decimal]  { font-size: 1.4rem        !important }
+
+   The first is the iOS rule that stops Safari zooming the page when a field
+   under 16px takes focus; the second exists to beat it for amount boxes. An
+   ordinary selector cannot get past either, however specific - measured at
+   22.4px through a class chain and again through the id alone, which is how
+   the !important was found at all, since a plain grep had matched only the
+   copy without it.
+
+   So this matches the convention it has to beat, and does it with the id of
+   the one input it applies to rather than a class another field could pick
+   up by accident. It stays above 16px at every width, so the iOS rule's
+   purpose is kept. */
+#sv-wd-amount {
+  font-size: clamp(2.4rem, 11vw, 3.4rem) !important;
+}
+
+/* --- Corrections after rendering the amount field --- */
+
+/* The rule under the number is a short centred stroke, not a full-width
+   border. field-sizing: content would let it hug the digits as they are
+   typed, but it is not in this engine yet and the @supports fallback stretched
+   the group to the whole sheet. A fixed, centred width behaves the same at
+   every length and does not move while somebody types. */
+/* The R and the figure sit together, centred, with the rule as wide as the
+   pair. Giving the group a fixed width pushed the R to the far left of an
+   empty 220px box with the number stranded in the middle of it. */
+.sv-amount {
+  width: fit-content;
+  margin-inline: auto;
+  justify-content: center;
+  min-width: 0;
+}
+
+/* Left, not centre. Centring the digits inside their own 6ch box put the
+   figure in the middle of it and left the R stranded against the far edge
+   with a hand's width of nothing between them. Aligned left they read as one
+   thing, "R 0", and the number grows rightwards into the box as it is typed. */
+.sv-amount input {
+  width: 5.5ch;
+  max-width: 100%;
+  text-align: left;
+}
+
+@supports not (field-sizing: content) {
+  .sv-amount input {
+    width: 5.5ch;
+  }
+}
+
+/* .modal-card .field label is uppercased, letter-spaced and tiny - right for
+   a form of labelled boxes, wrong for a caption under a number the size of a
+   headline. This one reads as a sentence. */
+/* .modal-card .field label uppercases and letter-spaces every field label -
+   right for a form of labelled boxes, wrong for a caption under a number set
+   at headline size. Matching that selector's shape is what it takes to win;
+   measured uppercase twice before the .modal-card was added. */
+.modal-card .field.sv-amount-field > label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Air between the figure and the next question. */
+.sv-amount-field {
+  margin-bottom: clamp(14px, 5vw, 26px);
+}
+
+/* NOT bottom-anchored, deliberately. The mockup pinned the button to the
+   foot of the sheet, and the rules to do it were written and then taken out
+   again: the full-screen sheet pins every one of the card's children with
+   .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:not(...) > *, and
+   beating that from here needs a selector longer than the thing it is
+   styling. The app already has a sanctioned way to put an action at the foot
+   - a .modal-actions block as the card's last child - so if this screen wants
+   that, it should use it rather than carry a rule that only works until
+   somebody reorders the sheet. The button follows the fields for now. */
