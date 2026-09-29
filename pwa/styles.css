@@ -2044,7 +2044,7 @@ h3 {
 
 .landing-flow.auth-screen {
   padding-top: calc(max(10px, var(--safe-top)) + 2px);
-  padding-bottom: 22px;
+  padding-bottom: 8px;
 }
 
 /* A page that fits must feel fixed: no rubber-band scroll on the landing. */
@@ -2165,6 +2165,7 @@ body.landing-static {
   border-radius: 0;
   background: linear-gradient(180deg, rgba(79, 163, 255, 0.1), rgba(79, 163, 255, 0.18));
   box-shadow: none;
+  padding: 12px 16px;
 }
 
 /* The footer is the QR pitch, so it is built as a band rather than a strip:
@@ -2173,7 +2174,8 @@ body.landing-static {
    product is about. */
 .landing-flow .scan-card.landing-cta-footer {
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: clamp(12px, 3vw, 22px);
+  gap: clamp(10px, 2vw, 14px);
+  padding: 12px 16px;
   color: #fff;
   background: linear-gradient(135deg, #06214f 0%, #0a4dff 100%);
   border-top: 0;
