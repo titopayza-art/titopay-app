@@ -2065,8 +2065,199 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
       rgba(6, 26, 61, 0.90) 72%,
       rgba(6, 26, 61, 0.96) 100%
     ),
-    url("assets/landing-sandton.webp?v=603");
+    url("assets/landing-personal.webp?v=605");
   background-size: cover;
   background-position: center 28%;
   background-repeat: no-repeat;
+}
+
+/* Business gets its own frame: the aerial over the financial district rather
+   than the boulevard at street level. .business-landing is an extra class on
+   the SAME element as .landing-flow, so this is one class more specific and
+   wins on the same property without touching anything else in the panel. */
+.landing-flow.business-landing .landing-hero-panel {
+  background-image:
+    linear-gradient(
+      180deg,
+      rgba(6, 26, 61, 0.34) 0%,
+      rgba(6, 26, 61, 0.56) 30%,
+      rgba(6, 26, 61, 0.84) 50%,
+      rgba(6, 26, 61, 0.94) 70%,
+      rgba(6, 26, 61, 0.97) 100%
+    ),
+    url("assets/landing-business.webp?v=605");
+}
+
+/* THE BUSINESS FRAME NEEDS MORE SCRIM THAN THE PERSONAL ONE, AND IT IS NOT A
+   MATTER OF TASTE. The aerial is full of lit towers and the personal frame is
+   mostly sky, so the same gradient over each gives different results where it
+   matters. Measured on the shipped build with the type hidden and the
+   lightest pixel in the headline's box taken as the worst case, the business
+   headline came out at 2.65 against a floor of 3.0 on a 375x667 screen -
+   below AA, while the identical scrim gave the personal frame 5.64. The stops
+   above are the business ones; the personal panel keeps the lighter set. */
+
+/* ==========================================================================
+   The landing fills the screen on a tablet and a desktop too
+   ==========================================================================
+
+   The >=900px rules were written for the landing that had a trust strip and a
+   preview grid in a second column. The redesign deleted both, but the block
+   kept its old shape: a two-column template naming "trust" and "grid" areas
+   that no longer exist, align-content: center, and .landing-hero pinned to
+   align-self: center. The scan line was never given an area at all, so it
+   dropped into an implicit row.
+
+   Measured, the result was a hero panel holding 14% of an iPad Pro with a
+   335px hole above the scan line - the "empty funky space" this is about.
+   The phones were fine throughout, because their rules had been rewritten.
+
+   So the desktop now uses the SAME construction as the phones: one column,
+   four rows, exactly one of them flexible. The hero takes whatever is left
+   after the bar, the buttons and the scan line have what they need, which is
+   what makes the composition fill any height instead of floating in the
+   middle of it. Nothing here is a magic number - the only sizes are the row
+   gap and the column width.
+
+   verification/landing-fits-every-device.spec.js measures all of this on
+   eleven screens in both account types and fails on a gap over 90px. */
+@media (min-width: 900px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    height: 100dvh;
+    min-height: 100svh;
+    overflow: hidden;
+    max-width: min(640px, 92vw);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "bar"
+      "hero"
+      "cta"
+      "scan";
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    align-content: stretch;
+    row-gap: clamp(16px, 2.4vh, 30px);
+  }
+
+  /* The panel is the flexible row, so it has to be allowed to stretch AND to
+     shrink: min-height: 0 is what lets a grid item go below its content's
+     natural height instead of pushing the page taller. */
+  body.landing-static .landing-flow .landing-hero {
+    grid-area: hero;
+    align-self: stretch;
+    min-height: 0;
+    text-align: left;
+  }
+
+  body.landing-static .landing-flow .auth-actions {
+    grid-area: cta;
+    align-self: end;
+  }
+
+  /* It had no area of its own, which is where the hole came from. */
+  body.landing-static .landing-flow .scan-card.landing-cta-footer,
+  body.landing-static .business-landing .scan-card.landing-cta-footer {
+    grid-area: scan;
+    align-self: end;
+  }
+}
+
+/* ==========================================================================
+   The quiet scan line is a line, not a band
+   ==========================================================================
+
+   From 900px up the scan line was still built as the thing it used to be: a
+   full-bleed blue footer, positioned absolutely across the whole viewport,
+   pinned to the bottom, with min-height 112px - and the landing reserved a
+   matching 112px, 160px, 172px or 192px of bottom padding so nothing sat
+   under it.
+
+   The redesign made it .is-quiet: transparent, no band, one short line. The
+   band rules were never revisited, so the desktop kept reserving room for a
+   footer that is not there any more. Measured on three desktops, the gap
+   between the scan line and the install pill was 116px to 136px of nothing,
+   and because the element was positioned absolutely it had also dropped out
+   of the grid entirely - which is why giving it a grid area did nothing and
+   the fourth row measured 0px.
+
+   So at this width it goes back in the flow, like it is on every phone, and
+   the reservation shrinks to what is actually below it. The install pill
+   measures 46px and floats 10px off the bottom; 78px clears it with room,
+   instead of 192px. */
+@media (min-width: 900px) {
+  body.landing-static .landing-flow .scan-card.landing-cta-footer.is-quiet,
+  body.landing-static .business-landing .scan-card.landing-cta-footer.is-quiet {
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    width: auto;
+    transform: none;
+    min-height: 0;
+    padding-inline: 0;
+    margin: 0;
+    grid-area: scan;
+    align-self: end;
+  }
+
+  body.landing-static .landing-flow.auth-screen:has(.landing-cta-footer),
+  body.landing-static .business-landing.auth-screen:has(.landing-cta-footer) {
+    align-content: stretch;
+    padding-bottom: calc(22px + var(--safe-bottom));
+  }
+
+  /* With the install pill showing, clear the pill and nothing more. The
+     selector matches the shape of the rules it replaces - body:has(...) plus
+     .auth-screen:has(...) - because anything shorter loses to them however
+     late it is written. */
+  body:has(.install-float-wrap.public-install) .landing-flow.auth-screen:has(.landing-cta-footer),
+  body:has(.install-float-wrap.public-install) .business-landing.auth-screen:has(.landing-cta-footer) {
+    padding-bottom: calc(78px + var(--safe-bottom));
+  }
+}
+
+/* ==========================================================================
+   The shortest screens, where ten pixels decide it
+   ==========================================================================
+
+   A 360x640 Android on the business landing overflowed by 10px and the page
+   scrolled. Measured, the composition came to 650.39px in a 640px viewport:
+
+     topbar        50.00
+     hero          334.39   (the flexible row)
+     buttons       112.00
+     scan line     128.00   = 12 top + 44 button + 72 bottom
+     3 row gaps     18.00
+     top padding     8.00
+
+   The 72px under the scan line is clearance for the floating install pill.
+   That is right on a normal phone and expensive on a short one - the pill is
+   46px and sits 10px off the bottom, so it occupies the last 56px and 72px
+   was buying 16px of air nobody sees.
+
+   This does not clamp the height. body.landing-static deliberately keeps
+   overflow visible so that content which genuinely does not fit scrolls
+   rather than being clipped - that rule exists to stop the footer being
+   hidden, and it stays. What changes is that the content fits, so the valve
+   is never reached: 6px off the scan line's top padding, 8px off its
+   clearance (still 8px clear of the pill), and the row gaps from 6px to 4px.
+   About 20px recovered against 10.39px needed.
+
+   Personal on this screen already fitted, and every taller screen is
+   untouched: this band only applies below 700px of height. */
+@media (max-height: 700px) {
+  body.landing-static .landing-flow .scan-card.landing-cta-footer.is-quiet,
+  body.landing-static .business-landing .scan-card.landing-cta-footer.is-quiet {
+    padding-top: 6px;
+  }
+
+  body:has(.install-float-wrap.public-install) .landing-flow .scan-card.landing-cta-footer.is-quiet,
+  body:has(.install-float-wrap.public-install) .business-landing .scan-card.landing-cta-footer.is-quiet {
+    padding-bottom: calc(64px + var(--safe-bottom));
+  }
+
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    row-gap: 4px;
+  }
 }

@@ -1,10 +1,10 @@
-const CACHE_NAME = "titopay-pwa-v604-verify-type";
+const CACHE_NAME = "titopay-pwa-v609-verify-type";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./head-boot.js?v=604",
-  "./styles.min.css?v=604",
-  "./app.min.js?v=604",
+  "./head-boot.js?v=609",
+  "./styles.min.css?v=609",
+  "./app.min.js?v=609",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=577",
   "./manifest.webmanifest?v=193",
@@ -22,12 +22,16 @@ const APP_SHELL = [
   // behind a dead connection should still get the sheet it was shown, so the
   // screen ships in the shell alongside the wordmarks.
   "./assets/poster-app-screen.jpg?v=488",
-  // The landing hero's photograph. The panel keeps navy as its background
-  // colour underneath, so a miss here degrades to the flat panel rather than
-  // to nothing - but the landing is the first screen anybody sees, and it
-  // ships in the same archive as styles.min.css two lines above. If assets/
-  // never landed, this entry failing is the least of it.
-  "./assets/landing-sandton.webp?v=603",
+  // The landing hero's photographs, one per account type. The panel keeps
+  // navy as its background colour underneath, so a miss here degrades to the
+  // flat panel rather than to nothing - but the landing is the first screen
+  // anybody sees, and both ship in the same archive as styles.min.css above.
+  // Both are precached rather than only the default: the account type is
+  // remembered between visits, so a business customer's FIRST paint is the
+  // business frame, and leaving it out would show them the flat panel every
+  // cold start while personal customers got the photograph.
+  "./assets/landing-personal.webp?v=605",
+  "./assets/landing-business.webp?v=605",
   "./assets/icon-192.png?v=165",
   "./assets/icon-512.png?v=165",
   "./assets/maskable-512.png?v=165",

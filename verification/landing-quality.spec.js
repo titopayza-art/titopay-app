@@ -16,7 +16,7 @@
 //                                       never failed on. Content is what counts.
 //   the page does not scroll            the landing is designed to be one
 //                                       screen. If it scrolls, it is broken.
-//   the band sits on the bottom edge    it is full-bleed by design; a gap under
+//   nothing is stranded under it        measured to the floating install pill,
 //                                       it reads as a rendering fault.
 //   44px tap targets                    the platform minimum, on the screen a
 //                                       first-time customer meets first.
@@ -153,6 +153,20 @@ async function measure(page) {
       scrollY: de.scrollHeight - de.clientHeight,
       scrollX: de.scrollWidth - de.clientWidth,
       bandGap: band ? Math.round(de.clientHeight - band.getBoundingClientRect().bottom) : null,
+      // The same gap, but measured to whatever is floating over the bottom of
+      // the screen rather than to the viewport edge. The install pill is
+      // position: fixed there and the landing reserves room for it on purpose,
+      // so the distance to the edge counts that reservation as emptiness.
+      bandGapToFloat: band ? (() => {
+        const r = band.getBoundingClientRect();
+        const floatTop = [...document.querySelectorAll("body *")].filter((el) => {
+          const cs = getComputedStyle(el);
+          if (cs.position !== "fixed" || cs.display === "none" || cs.visibility === "hidden") return false;
+          const fr = el.getBoundingClientRect();
+          return fr.height > 4 && fr.bottom > de.clientHeight * 0.5;
+        }).reduce((low, el) => Math.min(low, el.getBoundingClientRect().top), de.clientHeight);
+        return Math.round(floatTop - r.bottom);
+      })() : null,
       h1Size: h1 ? Math.round(parseFloat(getComputedStyle(h1).fontSize)) : 0,
       biggest,
     };
@@ -191,7 +205,26 @@ async function measure(page) {
       // already right - it very nearly did. Reported, never asserted.
       if (m.overBand.length) console.log(`        (floats in the band's reserved space, by design: ${m.overBand.join(", ")})`);
       ok(`${at} the page does not scroll`, m.scrollY <= 1 && m.scrollX <= 1, `y=${m.scrollY} x=${m.scrollX}`);
-      ok(`${at} the band sits on the bottom edge`, m.bandGap !== null && Math.abs(m.bandGap) <= 1, `${m.bandGap}px`);
+      // THIS CHECK USED TO ASSERT THE FOOTER WAS A FULL-BLEED BAND PINNED TO
+      // THE VIEWPORT EDGE, AND THAT DESIGN IS GONE.
+      //
+      // From 900px up the scan line was positioned absolutely across the whole
+      // viewport with a 112px minimum height, and the landing reserved up to
+      // 192px of bottom padding to sit clear of it. The redesign made it
+      // .is-quiet - transparent, no band, one short line - and put it back in
+      // the grid, which is what removed 116px to 136px of measured dead ground
+      // on every desktop. Pinned to the edge is no longer the right answer, so
+      // asserting it would hold the layout to a design that was replaced.
+      //
+      // What still matters is that nothing is stranded under it. That is the
+      // same question, asked against the floating install pill instead of the
+      // viewport edge: the landing reserves room for the pill deliberately, so
+      // the space between the line and the pill is the only space that is
+      // genuinely empty. verification/landing-fits-every-device.spec.js asks
+      // it across eleven screens; this keeps it honest at these three.
+      ok(`${at} nothing is stranded under the scan line`,
+        m.bandGapToFloat !== null && m.bandGapToFloat <= 40,
+        `${m.bandGapToFloat}px to the float (${m.bandGap}px to the viewport edge)`);
       ok(`${at} every tap target is at least 44px`, m.small.length === 0, m.small.slice(0, 3).join(", "));
       ok(`${at} only controls look like controls`, m.fakeControls.length === 0, m.fakeControls.slice(0, 4).join(", "));
       ok(`${at} the headline is the largest text`, m.biggest.isH1 || m.h1Size >= m.biggest.size,
