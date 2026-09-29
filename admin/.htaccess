@@ -1,0 +1,59 @@
+Options -Indexes
+DirectoryIndex index.html
+
+# Dotfiles and repository documentation are never served. admin-version.txt
+# stays reachable by design: deployments are verified against it.
+<FilesMatch "^\.ht">
+  Require all denied
+</FilesMatch>
+<FilesMatch "\.md$">
+  Require all denied
+</FilesMatch>
+# The operational .txt files describe the upload and rollback procedure and the
+# document-root layout. UPLOAD-INSTRUCTIONS.txt even claims documentation is not
+# publicly readable, which was true of the .md files and false of itself.
+<FilesMatch "^(UPLOAD-INSTRUCTIONS|DEPLOYMENT_BUILD_MARKER)\.txt$">
+  Require all denied
+</FilesMatch>
+
+ErrorDocument 403 /403.html
+ErrorDocument 404 /404.html
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "no-referrer"
+  Header always set X-Robots-Tag "noindex, nofollow"
+  Header always set Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=(), usb=(), interest-cohort=()"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  Header always set Cross-Origin-Resource-Policy "same-origin"
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  Header always set Content-Security-Policy "default-src 'self'; connect-src 'self' https://api.titopay.co.za wss://api.titopay.co.za; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+  <FilesMatch "^(index\.html|404\.html|403\.html|admin-version\.txt)$">
+    Header always set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+    Header always set Pragma "no-cache"
+    Header always set Expires "0"
+  </FilesMatch>
+  <FilesMatch "\.(css|js)$">
+    Header always set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  RewriteCond %{HTTPS} !=on
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  RewriteRule ^$ index.html [L]
+  RewriteRule ^([a-z-]+)/?$ $1/index.html [L]
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType text/css .css
+  AddType application/javascript .js
+</IfModule>

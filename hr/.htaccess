@@ -1,0 +1,78 @@
+Options -Indexes
+DirectoryIndex index.html
+<IfModule mod_headers.c>
+# SECURITY HEADERS
+#
+# This portal shows salary, disciplinary, leave and payroll information, and it
+# shipped without a single one of these — while the admin portal, which shows
+# less sensitive data, has had the full set since it launched. Framing is the
+# one that matters most here: without X-Frame-Options nothing stopped this
+# portal being loaded inside someone else's page.
+#
+# A PARTIAL Content-Security-Policy, and the omissions are the deliberate part.
+#
+# An earlier version of this file sent no CSP at all, on the reasoning that
+# index.html carries the whole application inline — six <script> blocks and a
+# <style> block — so a policy would blank the portal. That reasoning is only
+# true of script-src and style-src. The four directives below have nothing to do
+# with inline code and cost this portal nothing: served under the same document
+# root with them applied, the page rendered identically, all 513 CSS rules
+# parsed, every inline script still ran, and Chromium reported zero violations.
+#
+# What they buy on a portal that is 100% inline script:
+#   frame-ancestors  refuses embedding to spec, and unlike X-Frame-Options it
+#                    also covers <object> and <embed>
+#   base-uri         stops an injection repointing every relative URL on the page
+#   form-action      stops a form being made to POST staff data elsewhere
+#   object-src       removes the plugin surface entirely
+#
+# script-src and style-src are what still wait on moving the inline code into
+# files. That is a change to the application rather than to its delivery, and it
+# is the remaining work here — not an oversight.
+Header always set Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+Header always set X-Frame-Options "DENY"
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "no-referrer"
+Header always set X-Robots-Tag "noindex, nofollow"
+Header always set Cross-Origin-Opener-Policy "same-origin"
+Header always set Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=(), usb=(), interest-cohort=()"
+# Scoped to this origin only — see the note in pwa/.htaccess for why
+# includeSubDomains is not sent from a document root that cannot enumerate them.
+Header always set Strict-Transport-Security "max-age=31536000"
+
+# index.html carries the whole application inline, so it must never be cached
+# — a stale copy is a stale portal.
+Header set Cache-Control "no-cache, no-store, must-revalidate"
+Header set Pragma "no-cache"
+Header set Expires "0"
+
+# The logo and favicon are immutable and account for ~120 KB. Sending them
+# no-store meant every page load re-fetched them, which on South African
+# mobile data is a cost staff pay for nothing. Version them by filename if
+# they ever change.
+<FilesMatch "\.(png|ico|jpg|jpeg|svg|webp|woff2?)$">
+Header set Cache-Control "public, max-age=2592000, immutable"
+Header unset Pragma
+Header unset Expires
+</FilesMatch>
+</IfModule>
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+# Same two lines admin/.htaccess has run in production since it shipped. Without
+# them the HSTS header above is never delivered to a browser arriving over plain
+# HTTP, which is exactly the visit it needs to protect.
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+RewriteRule ^index\.html$ - [L]
+# Root assets requested from a nested route. index.html references
+# ./hr-session.js and ./titopay-logo.png relatively, so on a two-segment URL
+# such as /employees/42 the browser asks for /employees/hr-session.js. Without
+# this rule that miss falls through to the SPA fallback below and is answered
+# with index.html, so the session shim is parsed as HTML and never installs.
+RewriteRule ^.+/(hr-session\.js|titopay-logo\.png|favicon\.ico)$ /$1 [L]
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+RewriteRule . /index.html [L]
+</IfModule>

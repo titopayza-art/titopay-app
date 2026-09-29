@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#0B1F3F">
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="referrer" content="no-referrer">
+    <meta name="description" content="TitoPay Developer Portal - sandbox, credentials, simulators and webhook tooling for POS partners.">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.titopay.co.za https://api-sandbox.titopay.co.za; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'">
+    <title>TitoPay Developers</title>
+    <link rel="stylesheet" href="portal.css?v=dev-portal-v1">
+    <script src="portal.js?v=dev-portal-v1" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <div class="brand">
+          <img src="titopay-logo-night.png" alt="TitoPay" class="brand-logo">
+          <small>Developer Portal</small>
+        </div>
+        <nav id="nav" aria-label="Portal sections">
+          <button class="nav-item active" data-view="overview">Overview</button>
+          <button class="nav-item" data-view="keys">API Keys</button>
+          <button class="nav-item" data-view="sandbox">Sandbox</button>
+          <button class="nav-item" data-view="simulator">Payment Simulator</button>
+          <button class="nav-item" data-view="webhooks">Webhooks</button>
+          <button class="nav-item" data-view="events">Event Logs</button>
+          <button class="nav-item" data-view="usage">Usage</button>
+          <button class="nav-item" data-view="docs">Integration Guide</button>
+        </nav>
+        <div class="rail-foot">
+          <label for="api-base">API base</label>
+          <input id="api-base" spellcheck="false" autocomplete="off">
+          <p class="hint">Sandbox integrations point at the sandbox API. Production is served only to approved partners.</p>
+        </div>
+      </aside>
+      <main id="main" class="main" aria-live="polite"></main>
+    </div>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
+</html>

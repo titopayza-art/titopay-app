@@ -1,0 +1,1205 @@
+TitoPay deployment build — 2026-08-17 UTC
+Branch: claude/peach-payments-403-fix-6sv7cy
+PWA bundle: v427 (titopay-pwa-v427-receipt-id)
+Requires: api.zip build 55
+Admin console: admin-console-v89
+
+TitoPay deployment build — 2026-08-17 UTC
+Branch: claude/peach-payments-403-fix-6sv7cy
+PWA bundle: v428 (titopay-pwa-v428-merchant-id)
+Requires: api.zip build 55
+Admin console: admin-console-v89
+
+THE MERCHANT'S SLIP SHOWS THEIR TRADING ID, NOT AN ACCOUNT UUID
+
+   currentMerchantId() ended in `user.id`, and nothing in the session ever
+   carried a merchant id, so the last link in that chain was not a theoretical
+   fallback: it was what every merchant receipt actually printed. A live slip
+   read
+
+      Merchant ID   c226fea5-152e-4c53-a91e-7ac3dad14a20
+
+   which is the owner's internal ACCOUNT UUID, on a document that has a Share
+   button on it. The account UUID was stripped off the printed A4 posters in
+   build 45 for exactly this reason; it was still on the receipts.
+
+   GET /v1/merchants/me already existed and already returned the real trading
+   id, TPM-1786309461967-TG61 and the like. It had simply never been called.
+   The app now loads it with the rest of the account and the slip reads
+
+      Merchant ID   TPM-1786929755780-5592
+
+   NO API CHANGE. The endpoint, its response and every other contract are
+   untouched. The call is one more entry in the same Promise.all the app
+   already uses, wrapped in a catch, so a personal account or an account with
+   no merchant row resolves to null and every previous fallback still applies.
+
+   Proven on a real rendered screen by verification/receipt-slips-live.js,
+   which now REFUSES a UUID in that field outright rather than only checking
+   the row is present.
+
+   AND A CORRECTION TO A FIGURE STATED IN CHAT.
+
+   The business fee on a R100 sale was quoted as R1.50, forgetting the 1.5%.
+   It is R1.50 + 1.5% = R3.00, so the business is credited R97.00. The receipt
+   was right and the message was wrong. On a R100 QR payment:
+
+      customer pays      R101.50
+      business receives  R 97.00
+      TitoPay            R  4.50
+
+PREVIOUS BUILD — BUILD 55 — URGENT FIX FOR BUILD 54, WHICH COULD REFUSE TO START
+
+   Build 54 treated a variable that had never been set as a reason to stop.
+   Deploying it to a server that did not yet have TITOPAY_ENV and the three
+   integration modes therefore STOPPED THE API. The check was right. The
+   rollout was the outage.
+
+   ON AN UNDECLARED ENVIRONMENT, BUILD 55 IS BEHAVIOURALLY IDENTICAL TO 53.
+
+   That is a claim worth being able to check, so here is the whole of it. Only
+   these files differ from build 53 at runtime:
+
+      config/env.js        NO behavioural difference. The three modes still
+                           default to "production" exactly as they always have.
+                           Changing that in 54 also changed what
+                           GET /v1/integrations reports, from "production" to
+                           an empty string, which is a live response shape
+                           moving for no reason the caller asked for. The
+                           safety layer reads process.env directly and never
+                           consults this, so it loses nothing by staying put.
+
+      peach services       The new branches are UNREACHABLE, because the value
+                           they guard against being empty is never empty again.
+                           Behaviour is the historic one, unchanged.
+
+      server.js            Startup log lines. Refuses ONLY on a contradiction.
+
+      health.routes.js     Two ADDED fields. Nothing renamed, retyped or moved.
+
+      deployment-safety.js New file, called from those two places only.
+
+   SO THE ONLY THING AN UNDECLARED SERVER SEES IS LOG LINES AND TWO NEW HEALTH
+   FIELDS.
+
+   WHAT STILL REFUSES, AND ONLY THIS:
+
+      a production API on a database STAMPED sandbox
+      an integration declared in a different environment from the deployment
+      NODE_ENV contradicting TITOPAY_ENV
+
+   Each is only reachable once the variables are deliberately set, so refusal
+   can never fell a server that was working a minute ago.
+
+   WHAT NO LONGER REFUSES, EACH OF WHICH COULD HAVE STOPPED A HEALTHY SERVER:
+
+      an undeclared or half-declared environment
+      a mode with a typo in it
+      a database that cannot be REACHED, which turned a Postgres hiccup during
+        a restart into a hard outage, strictly worse than the old behaviour
+      missing Peach CREDENTIALS, which can come from the stored integration
+        config in the admin console and are invisible from the environment
+      Peach with no mode set, which in 54 would have thrown and failed EVERY
+        card top-up on a server that never had PEACH_PAYMENTS_MODE
+
+   PROVEN BY BOOTING, NOT BY ASSERTION. Six environment shapes, every one
+   answering /v1/health:
+
+      empty environment (the state of the live server)   HTTP 200
+      fully declared sandbox                             HTTP 200
+      partially declared                                 HTTP 200
+      NODE_ENV=production and nothing else               HTTP 200
+      garbage in a mode                                  HTTP 200
+      database unreachable at boot                       HTTP 500, still serving
+
+   And the three contradictions above each refused.
+
+   790 tests. Every Peach suite green: checkout top-up 24, payments v2 13,
+   withdrawal 22, payout capability 26, http contract 9. Eight live harnesses.
+
+PREVIOUS BUILD — THE CUSTOMER'S SLIP NO LONGER SHOWS A RAW MERCHANT ID
+
+   Merchant ID is the MERCHANT'S. On their own slip it is the trading id they
+   quote to Support and reconcile against. On the payer's copy the same field
+   falls through to the QR CODE'S id, so a customer who had just paid was
+   handed a bare UUID identifying nothing they could act on:
+
+      Merchant ID   e2186835-f16c-4c8d-83ce-ec242302154f
+
+   The Merchant NAME above it is what actually tells them who they paid, and
+   that stays. The id is gone from the payer's copy and kept on the merchant's.
+
+   Each receipt now records whose copy it is. A receipt saved BEFORE this
+   change carries no role and keeps the row: hiding on unknown would have
+   stripped a real identifier off every merchant slip already on a phone in
+   order to tidy up a customer one.
+
+   Read off a real rendered screen by verification/receipt-slips-live.js,
+   which rings up R50 on a till, pays it from a second account in a second
+   browser page, then opens BOTH receipts and reads the printed rows:
+
+      THE CUSTOMER'S SLIP          THE MERCHANT'S SLIP
+        Merchant Name  Corner Cafe   Merchant Name  Corner Cafe
+        (no Merchant ID)             Merchant ID    <the merchant's>
+        Amount         R 50.00       Amount         R 50.00
+        Fees           R  1.50       Fees           R  2.25
+        Total paid     R 51.50       Net Amount     R 47.75
+
+   Six unit tests hold the same two rules against the SHIPPING source of
+   receiptRows, not a copy of it, and were mutation-tested by putting the row
+   back: the test fails naming what the customer is being shown.
+
+   WHY THE PREVIOUS FIX APPEARED NOT TO WORK.
+
+   v426 corrected the customer's net figure, and a receipt taken afterwards
+   still showed the old one. The bundle was not at fault: app.titopay.co.za was
+   serving v426 with the fix correctly compiled in. The APP ON THE PHONE was
+   still running v425. The service worker calls skipWaiting() and
+   clients.claim(), so the cache updates, but neither replaces JavaScript
+   ALREADY RUNNING in an open page, and an installed PWA that is never fully
+   closed keeps its copy indefinitely.
+
+   FULLY CLOSE THE APP AFTER EVERY DEPLOY, or the fix is on the server and not
+   on the phone. Making the app notice a new bundle and reload itself is a
+   separate change, offered and not yet made.
+
+PREVIOUS BUILD — THE API NOW REFUSES TO START ON AN UNSAFE ENVIRONMENT
+
+   PEACH_PAYMENTS_MODE, DOCFOX_MODE and OTT_MODE each read
+
+      process.env.X || "production"
+
+   so an unset variable, a typo, or a stripped environment file put TitoPay in
+   PRODUCTION silently. Going live could happen by omission.
+
+   That default is gone. Those three, plus a new TITOPAY_ENV, must each be
+   exactly "sandbox" or "production". Missing, empty, whitespace, "prod",
+   "PRODUCTION", anything else: the process prints what is wrong and exits 78
+   before it accepts a single request. It never guesses, in either direction.
+
+   THE DATABASE NOW SAYS WHAT IT IS.
+
+   Nothing stopped a production API opening the sandbox database, or a sandbox
+   API opening production. Two checks now do:
+
+      the database NAME, used only ever to REFUSE, never to approve
+      an identity marker the database itself carries, which is authoritative
+
+   The marker is one platform_settings row, written once, ON CONFLICT DO
+   NOTHING. NO FINANCIAL TABLE GAINED A COLUMN. A database that has never been
+   stamped is stamped to match the declared environment on first boot, so an
+   existing deployment upgrades without ceremony; after that a disagreement is
+   fatal, permanently, even if the databases are renamed or restored elsewhere.
+
+   NODE_ENV IS DELIBERATELY NOT OVERLOADED.
+
+   Two behaviours already key off it. Setting NODE_ENV=sandbox would turn the
+   CUSTOMER REGISTRATION GEO-LOCK OFF by default and add 62 localhost origins
+   to CORS, so carrying the deployment identity there would have turned a
+   safety change into a safety regression. TITOPAY_ENV is separate and
+   explicit; NODE_ENV keeps its ordinary meaning. Stating both and having them
+   disagree is itself an error rather than something resolved by guessing.
+
+   THE WEBHOOK WAS AUDITED, AND IT WAS ALREADY RIGHT.
+
+   HMAC-SHA256 with a timing-safe compare, a timestamp window, a webhook-id
+   format check, merchant/entity/amount/currency validation, and idempotency
+   through INSERT ... ON CONFLICT DO NOTHING RETURNING with all processing
+   gated behind it. It was not rewritten. What it lacked was PROOF, so 14 tests
+   now hold it, including that a duplicate delivery is never PROCESSED a second
+   time. Mutation-tested by removing the guard: the test fails with "a wallet
+   would have been credited 2 times".
+
+   /health carries an environment indicator now, purely an identifier, so an
+   operator can tell which deployment answered. Every existing field keeps its
+   name, type and position. No connection string, host, key or secret is
+   exposed anywhere, in the response or in the startup log.
+
+   WHAT WAS NOT TOUCHED.
+
+      no customer data read beyond COUNT(*), deleted or modified
+      no wallet balance, transaction, ledger row or revenue record changed
+      no pricing changed
+      no schema migration, destructive or otherwise
+      no PWA change, no Admin change, no API contract change
+      no authentication change
+
+   Sandbox counts before and after are identical: 2,499 users, 1,961 wallets,
+   2,347 transactions, 4,374 ledger rows, 588 revenue rows.
+
+   781 tests pass. Eleven live harnesses pass.
+
+PREVIOUS BUILD — GOING LIVE WITHOUT TEST MONEY BECOMING REAL MONEY
+
+   npm run db:init-production            report only, writes nothing
+   npm run db:init-production -- --apply do it
+
+   Sandbox on TitoPay is NOT a separate database. It is one environment
+   variable per integration choosing which URL and keys the server talks to,
+   and no table records which mode created a row: transactions and wallets
+   have no environment column. So flipping the keys leaves every test balance
+   exactly where it is.
+
+   That matters because a wallet balance becomes a CLAIM ON REAL MONEY the
+   moment the keys are live. A test account holding R5000 could request a
+   withdrawal and TitoPay would attempt to send R5000 of real money to a real
+   bank account, funded from a float that never received it.
+
+   THE ANSWER IS A CLEAN DATABASE, NOT A CLEANUP.
+
+   This stands up a NEW production database and leaves the existing one as the
+   test environment. Nothing is deleted, so nothing can go wrong irreversibly,
+   and "is it clean?" becomes a row count rather than a hope.
+
+      the schema, from the same files db:init uses
+      the approved pricing schedule
+      the service catalogue and the email templates
+      THE REVENUE WALLET, which nothing else in the codebase creates and whose
+        absence failed every fee-bearing payment in production
+      the suspense wallet
+      one admin account, when ADMIN_PASSWORD is supplied
+      a verification pass that counts what exists and proves the invariants
+
+   IT CANNOT DESTROY ANYTHING.
+
+   No DROP, no DELETE, no TRUNCATE, and no UPDATE to a customer row. If it
+   finds customer data it REFUSES OUTRIGHT, prints what it found and exits
+   non-zero. There is no override flag, because a flag that lets you point it
+   at the live database is the exact accident it exists to prevent. It writes
+   nothing at all without --apply, and re-running it against its own output
+   changes nothing.
+
+   Four tests in the suite assert those properties against the script's own
+   SOURCE, so a DELETE added later by anyone fails the build. Mutation-tested
+   by adding one: it fails, naming the file and the pattern.
+
+   PROVEN, IN THIS ORDER.
+
+      pointed at the sandbox with --apply, it refused and exited 1, listing
+        2,499 users and 4,374 ledger rows, having written nothing
+      pointed at an empty database it set up 93 pricing rules, 31 templates,
+        a revenue wallet opening at R0.00 and one admin
+      re-run against its own output, it changed nothing
+      the sandbox was then re-counted and is byte-for-byte unchanged
+      and a real payment harness run against the BRAND NEW database settled
+        five payments to the cent, so it is functional and not merely populated
+
+   The runbook is GOING-LIVE.md in the repository root: the full sequence, the
+   integration modes (all three default to "production" when unset, so going
+   live can happen by omission), and the reminder that every A4 poster printed
+   during testing must be reprinted, because its QR points at an account that
+   will not exist on the new database.
+
+PREVIOUS BUILD — AN EMAIL STATEMENT NOW ARRIVES AS A STATEMENT
+
+   A customer pays a fee for an Email Statement. What the fee bought was an
+   email whose body held the whole ledger typed out as monospace lines:
+
+      DATE | TYPE | AMOUNT | BALANCE | REFERENCE
+      2026-08-16 23:23 | CREDIT | +R 97.00 | R 1854.10 | TX-1786922588288-ZPUB66
+
+   On a phone every one of those wrapped across three rows and the columns
+   stopped lining up. The one thing the fee buys is a document you can send to
+   a bank or a landlord, and that could not be used as one.
+
+   IT IS NOW AN ATTACHED A4 PDF.
+
+      the TitoPay wordmark, the statement reference, the period
+      the account holder, their email, the wallet number, the account type
+      the FICA-VERIFIED IDENTITY where the account has an approved review,
+        which is what makes a statement usable at a bank
+      money in, money out, net movement and closing balance
+      the ledger as a real table, credits green and debits red, ruled rows,
+        a running balance, and page furniture that repeats the table head so
+        page two is readable on its own
+
+   Rendered locally with pdfkit, the same way the ticket PDF already is. No
+   fonts fetched, no images fetched, nothing leaves the server to build it.
+
+   AND THE EMAIL IS A COVERING NOTE.
+
+   A clean summary table, then "your full statement is attached as a PDF". The
+   plain-text half of the message still carries the whole ledger, because the
+   fee has already been charged: if a PDF cannot be built for any reason the
+   customer still receives everything they paid for, and the note in the email
+   says which of the two they are holding.
+
+   Templated email could not carry a file at all before this. Only the raw path
+   could, so anything needing an attachment had to give up its admin-editable
+   template. Every provider already read content.attachments, so this was one
+   missing line rather than a new capability.
+
+   A FIXUP MECHANISM THAT HAS NEVER ONCE WORKED.
+
+   seedDefaultTemplates carries copy corrections for templates already seeded
+   with older wording, guarded on the old text so an operator's own edit is
+   never overwritten. Every one of them ran:
+
+      UPDATE email_templates SET body = ...
+
+   email_templates has html_body and text_body. It has never had a `body`. So
+   each statement threw "column does not exist" straight into a .catch(() => {})
+   and NO copy correction shipped this way has ever reached a live database:
+   the OTP wording fix and all three receipt rewrites have been dead since the
+   day they were written. They now write the two real columns, still guarded on
+   the old text, and a failure is logged instead of swallowed silently.
+
+   Proven in verification/statement-pdf-live.js, which runs the real charged
+   path, decrypts what actually went into the send queue, and reads the
+   finished PDF back out of the attachment: the fee, the attachment, a
+   well-formed document, the holder and reference on it, every wallet movement
+   present with the totals, a body with no monospace dump, a text part that
+   still carries the ledger, and the verified identity block. 8 checks.
+
+PREVIOUS BUILD — THE PERSON WHO WAS PAID IS NOW TOLD
+
+   Every receipt TitoPay has ever sent went to the person who PAID. Nothing
+   was ever sent to the person who was PAID. So a Payment A4 poster on a
+   counter, a Tip A4 poster on a table, a till, an event selling tickets and
+   money sent to a username all produced silence on the receiving side.
+
+   The only recipient-side notice in the entire codebase belonged to a gift.
+
+   The "Payment received" line on the merchant POS is written by the till
+   SCREEN in the browser, and only while that screen is open. A poster on a
+   wall with nobody watching a screen produced nothing at all.
+
+   WHAT NOW HAPPENS, ON EVERY PAYMENT.
+
+      in-app   always. It costs nothing and it is where people look.
+      email    when the customer has transaction receipts switched on, which
+               is the same switch that governs the payer's own receipt.
+
+   Not SMS. Transactional comms on TitoPay are in-app and email. The SMS
+   provider exists and is used for one-time passcodes; it is not used here.
+
+   THE FIGURE IS THE ONE THE WALLET MOVED BY.
+
+   The notice states the NET that reached the wallet, after the receiver's own
+   fee, so it agrees with the balance rather than with the sticker price. On a
+   R250 QR sale the business is told "You received R244.75", not R250.00, and
+   the fee is named in the same breath.
+
+   ONE NOTIFIER, CALLED FROM EVERY PATH THAT PAYS SOMEBODY.
+
+   api/src/services/payment-received-service.js is the only place that writes
+   these. createTransaction calls it, which covers QR payments from a poster or
+   a till, money sent to a username, a paid payment request, a bill split and a
+   stokvel contribution. The ticket sale calls it separately, because it credits
+   the organiser through applyWalletMovement and never passed the place where
+   receipts are written. Adding a new way to be paid means adding one call,
+   not remembering to write a notification again.
+
+   NOTHING IS ANNOUNCED TWICE.
+
+   A gift keeps its own richer notice, which carries the sender, the occasion
+   and their message. A held credit keeps notifyHold, which says the money has
+   NOT arrived yet. The email is keyed on the transaction, so a retried
+   delivery cannot double-announce a single payment.
+
+   AND NOTHING HERE CAN EVER FAIL A PAYMENT. The money has already moved by the
+   time any of it runs. Every path is wrapped: a customer who was paid but not
+   told is a bad day, a payment rolled back because an email queue was busy is
+   a disaster.
+
+   Proven in verification/payment-received-notices-live.js, which pays real
+   posters with real money and then asks the database what the receiver was
+   told: both posters, money to a username, a ticket sale reaching its
+   organiser, the net figure matching the wallet to the cent, the email switch
+   honoured, no double notice, and the gift left alone. 8 checks.
+
+PREVIOUS BUILD — A PERSON PAYS A FLAT R1.50 TO PAY BY QR. THE BUSINESS CARRIES THE PERCENTAGE.
+
+   Customer:  a flat R1.50, whatever the sale, charged ON TOP.
+   Business:  R1.50 + 1.5% of the sale, taken OUT OF what is credited.
+
+   A person pays the same R1.50 on a R20 coffee as on a R5000 sofa. Nothing on
+   the customer's side moves with the sale, so there is nothing left to cap.
+
+   WHAT MOVES.
+
+      sale        customer pays   business gets   TitoPay
+      R   10        R   11.50       R    8.35     R  3.15
+      R   50        R   51.50       R   47.75     R  3.75
+      R  250        R  251.50       R  244.75     R  6.75
+      R  850        R  851.50       R  835.75     R 15.75
+      R 5000        R 5001.50       R 4923.50     R 78.00
+
+   Verified cent by cent on real payments through the real service, checking on
+   every one that debited - credited - revenue == 0.
+   verification/qr-two-sided-pricing-live.js
+
+   WHERE THIS CAME FROM.
+
+   It was a flat R0.50 from the customer and NOTHING from the business. A
+   merchant_qr_payment rule has sat in the pricing schedule since the day it
+   was written, at 1.7%, read by no code at all: every business on TitoPay has
+   been settled at 0% on every QR payment the platform has ever processed.
+
+   Build 49 put R1.50 + 1% capped at R10 on the customer. That percentage now
+   moves to the business, where the sale is being earned, and the customer's
+   side is the flat R1.50 alone.
+
+   A SALE TOO SMALL TO CARRY ITS OWN FEE IS NOW REFUSED.
+
+   The business side has a flat component, so under about R1.52 the fee reaches
+   the whole sale. Rather than taking the customer's money, crediting the
+   business nothing and reporting success, the payment is refused before
+   anything moves and the message says the real reason.
+
+   THE R0.50 FLOOR IN THE CODE IS GONE, AND SO ARE THE TWO THAT PUT IT BACK.
+
+   calculateFee ended with a hardcoded Math.max(fee, 0.50). An admin could set
+   the QR fee to R0.20 in the console, see it saved, and customers would still
+   be charged R0.50. Two more copies of the same idea sat in the schema repair
+   and in the service catalogue, pushing the price and the wording back to
+   R0.50 on every start, so the QR Pay tile would have gone on advertising a
+   price nobody is charged. All three are corrected: what an admin sets is what
+   is charged, and the tile now reads a flat R1.50.
+
+   HOW THE LIVE RULES MOVE.
+
+   A one-shot fixup runs on boot, guarded on a platform_settings key AND on the
+   old values. It lists every rate TitoPay itself has ever set — the original
+   R0.50 and 1.7%, and build 49's R1.50 + 1% and 1.5% — so a database sitting on
+   any of them converges, and a rate an operator has tuned by hand is left
+   exactly as they set it.
+
+   THE SLIPS SAY WHOSE FEE IS WHOSE.
+
+   The merchant's slip carries the business's fee and what reached the wallet.
+   The customer's carries their own R1.50 and Total paid. The merchant's slip
+   showed Fees R0.00, and the customer's printed the MERCHANT'S net as the
+   customer's own figure.
+
+PREVIOUS BUILD — THE MERCHANT POS NOW BEHAVES LIKE A SOFT POS
+
+   A till puts a code on screen, the customer pays, and the screen turns over
+   with a slip. This one said "Waiting for payment..." until it expired, on
+   EVERY completed sale, with the money already in the wallet. Three separate
+   faults, stacked.
+
+   1. EVERY SALE WAS CANCELLED THE INSTANT ITS QR APPEARED.
+
+      closeModal() ended a live sale whenever it ran. openModal() calls
+      closeModal() before it opens the next thing — so rendering the QR screen
+      cancelled the sale that had just been started, one line before the timers
+      were set.
+
+      Everything downstream then read as broken and none of it was. The
+      countdown froze at 05:00 because its tick returns unless the status is
+      "waiting". The payment poll bailed for the same reason. One line, three
+      symptoms.
+
+      A sale is cancelled when a PERSON dismisses the sheet: the X, the
+      backdrop, Escape, the back gesture. All of those call closeModal() with no
+      argument. openModal's internal swap already passes preserveStack, which is
+      the same distinction the back trail relies on, so that is what is used.
+
+   2. THE TILL WAS LOOKING FOR THE PAYMENT WHERE IT CANNOT BE.
+
+      It searched the MERCHANT'S OWN transaction list for a credit of the right
+      amount. There has never been such a row. A payment writes ONE transactions
+      row and it belongs to the PAYER; the merchant is credited through
+      wallet_ledger, and listTransactionsForUser filters on t.user_id.
+
+      GET /v1/qr/:id/status (API build 48) answers the question directly, for
+      the owner of the code and nobody else. The till polls it every two
+      seconds while the code is up. Another business asking about that code gets
+      "QR code not found", because whether a code has been paid is the
+      merchant's business alone.
+
+   3. THE SLIP SHORTCHANGED THE MERCHANT BY THE CUSTOMER'S FEE.
+
+      On a QR payment the R0.50 is the PAYER'S: they are debited R250.50 and the
+      merchant is credited R250.00 in full. The slip subtracted that fee from
+      the takings, so a R250.00 sale printed as R249.50 received — a figure
+      neither party ever saw. The server now states what was received, and the
+      payer's fee is carried separately so a slip can show it without implying
+      the merchant paid it.
+
+   Proven in verification/merchant-pos-live.js, which runs a real till against a
+   real customer: ring up R250 on the keypad, generate the code, the countdown
+   TICKS, another business is refused the status, the customer pays from their
+   own account, and the till turns over BY ITSELF with nothing clicked. The slip
+   says received R250.00, merchant fee R0.00, and the wallet agrees: +R250.00.
+   7 checks.
+
+
+A SUCCESSFUL QR PAYMENT WAS BEING REPORTED AS A FAILURE
+
+   THE PAYMENT WENT THROUGH. THE APP SAID "Can't find variable: data".
+
+   confirmReviewedQrPayment() sends the payment with context.data, correctly.
+   Then, AFTER the money has moved, it built the receipt from a bare `data` —
+   a name declared nowhere in that function. app.js is strict mode, so that is a
+   ReferenceError, and Safari words it exactly as above.
+
+   It had been there for as long as the function had, and could not be seen,
+   because /v1/qr/pay was failing earlier in the function for an unrelated
+   reason (no revenue wallet) and the receipt block was never reached. The first
+   QR payment that actually succeeded hit it immediately.
+
+   A CUSTOMER TOLD A COMPLETED PAYMENT FAILED WILL PAY AGAIN. That is the worst
+   thing this screen can do, so two things changed, not one:
+
+     the five bare `data` reads are context.data, which is what they meant
+     everything after the money moves is wrapped, so no receipt, notification
+       or refresh error can ever again present as a failed payment
+
+   The success message is shown after that guard, so it is shown either way. If
+   the receipt cannot be written the failure goes to the console and the
+   customer is left pointed at Activity, which is the server-side record and the
+   thing that is actually true.
+
+   TWO TESTS, AND BOTH WERE MUTATION-TESTED BY PUTTING THE BUG BACK.
+
+   api/test/pwa-free-variables.test.js fails the build if any function in the
+   bundle reads data.something without a `data` in scope, and separately if the
+   post-payment block is ever unwrapped or the receipt goes back to reading a
+   free name. Restoring one of the five original lines fails both.
+
+
+THE PAYER NO LONGER TYPES A PRICE THE TILL IS ALREADY SHOWING THEM
+
+   Make a Sale mints a code for one exact amount, and the till screen shows it:
+   R 300,00, in large type, facing the customer.
+
+   The payer scanned it and got an EMPTY amount box.
+
+   The code carried the price. The API knew the price. The screen in front of
+   them showed the price. The one thing the app did was ask them to copy it in
+   by hand, which is also the only way left to get it wrong, since build 45
+   refuses any figure other than the merchant's.
+
+   Scanning a code that carries a price now fills it in and locks it, and the
+   capture note names who is being paid:
+
+     "R 300.00 to Corner Cafe. Check the name, then pay."
+
+   Typing or pasting a QR ID by hand does the same thing, so the two routes into
+   that screen behave alike.
+
+   AN OPEN CODE IS UNCHANGED. A static till code names no price, so the amount
+   box stays empty and editable and the payer names the amount, exactly as
+   before. The note still tells them who they are paying.
+
+   A failed lookup is not a failed scan: the id is captured either way, the
+   amount box stays editable, and the payment works as it did.
+
+   Proven in verification/qr-scanner-camera-live.js, driven with a real camera
+   feed, now 8 checks: the code is found and its id recovered, the price is
+   filled in and locked, an open code is left empty and editable, a code printed
+   before the payload was trimmed still scans, and a blank camera produces no
+   false read.
+
+
+QR CODES ARE FAR EASIER TO SCAN
+
+   The scanner itself was never broken. It was driven with a REAL camera feed:
+   a video of a live TitoPay payment QR handed to Chromium as its webcam, with
+   the app told nothing. It opened the camera, found the code and recovered the
+   right id, and a blank camera correctly produced no false read.
+
+   What was wrong is the codes themselves, and it is measurable.
+
+   1. THE IMAGE CARRIED 219 CHARACTERS THE SERVER NEVER READS.
+
+      Encoded into every printed code: the id, the owner's account UUID, the
+      amount, the currency, the reference, the label and a metadata object.
+
+      payQr reads NONE of that. The owner, the price, the status and the expiry
+      all come from the qr_codes row, keyed on the id alone, which is why a
+      forged payload has always changed nothing. All of it was dead weight.
+
+        was    219 characters    61 x 61 modules
+        now     66 characters    37 x 37 modules
+
+      At one printed size that makes each module about 65% wider, which is the
+      single biggest thing that can be done for scanning reliability. A phone
+      across a counter, a poster at an angle, a code on a lit screen: all of
+      them get easier.
+
+   2. THE QUIET ZONE WAS ONE MODULE. THE STANDARD REQUIRES FOUR.
+
+      A camera finds a code by locating its three finder patterns against clear
+      space. Starve that space and the lock fails, most often in exactly the
+      conditions a till is in: a busy counter, a printed sheet with text beside
+      it, a code shown on a screen.
+
+   EVERY CODE ALREADY PRINTED STILL SCANS. Proven, not assumed: the harness
+   builds a video of the OLD long-form payload and the scanner still recovers
+   the right id from it. The id is the only field anything has ever read.
+
+   Reprinting the A4 posters is worth doing once this is live, because that is
+   where the bigger modules actually help. Nothing breaks if you do not.
+
+   Proven in verification/qr-scanner-camera-live.js, 6 checks with a real
+   camera feed, and 2 more pinned in the build.
+
+
+THE EVENT WEB ADDRESS READS LIKE ONE
+
+   A free name has always been used exactly as it is:
+
+     app.titopay.co.za/events/titopay-launch
+
+   What was ugly was the COLLISION, when a second event wants a name another
+   event already holds. That appended six characters of a sha1 digest:
+
+     app.titopay.co.za/events/titopay-launch-3d4c29
+
+   Nobody can read that, nobody can say it down a phone, and it looks like a
+   fault rather than an address. It is now the obvious thing, the way every
+   publishing tool does it: the next free number.
+
+     titopay-launch
+     titopay-launch-2
+     titopay-launch-3
+
+   A long name is also no longer cut leaving a dangling hyphen. The 70-character
+   limit is applied before the trailing hyphen is stripped, so a name that got
+   cut mid-word used to end up as "the-annual-general-" as a web address.
+
+   NEW ADDRESSES ONLY. Every event already published keeps the exact slug it
+   has, so nothing already shared, printed or posted changes. Measured against
+   the whole events table: 222 existing addresses, none moved.
+
+   Proven in verification/event-slug-live.js: a free name is untouched, a second
+   gets -2 and a third -3, a long name has no dangling hyphen, punctuation,
+   accents and emoji never reach the address, renaming an event to its own name
+   keeps its address, and every existing address is left alone. 7 checks, plus
+   4 pinned in the build.
+
+
+SECURITY: A PAYER COULD SET THEIR OWN PRICE ON A SALE
+
+   THIS IS THE MOST SERIOUS THING FOUND IN THIS WHOLE RUN OF WORK. IT WAS
+   EXPLOITABLE FROM AN ORDINARY CUSTOMER ACCOUNT, WITH NO SPECIAL ACCESS.
+
+   Make a Sale mints a DYNAMIC QR for one exact amount and shows "Waiting for
+   payment...". The server read the amount like this:
+
+     const amount = Number(payload.amount ?? qr.amount ?? 0);
+
+   payload is the REQUEST BODY. So the payer's phone won, and the merchant's own
+   price was only a fallback for when the payer sent none.
+
+   Measured, on a real R200 sale:
+
+     the payer sent amount: 1
+     the merchant was credited          R1.00
+     the code was marked PAID
+     the till screen turned over to a completed sale
+
+   A QR code is handed to strangers by design. It is on a poster on a wall, on a
+   till screen, in somebody's camera roll. Everything inside it is readable and
+   editable by whoever is paying, and the payer's phone has to be assumed
+   hostile. Only the ID may be trusted from a scan.
+
+   The amount is now read from TitoPay's own row. A payer who sends a different
+   figure is refused outright rather than silently corrected, because nobody may
+   be charged an amount they did not see on their own review screen:
+
+     "This QR code is for R200.00. Scan it again to pay the amount the merchant
+      asked for. Nothing was taken from your wallet."
+
+   An OPEN code, which carries no price, is unchanged: the payer names the
+   amount, because on those the merchant never named one. And the app now shows
+   the merchant's figure on the review screen rather than asking for one, so
+   nobody walks into that refusal.
+
+   ALSO REMOVED: THE ACCOUNT ID PRINTED ON EVERY POSTER.
+
+   The QR payload encoded into the image carried the owner's internal account
+   UUID, so it was sitting in public on every A4 sheet TitoPay has ever printed
+   and in every photograph of one. Nothing read it: the owner has always been
+   resolved from the qr_codes row by id, which is why a forged one has always
+   been ignored. It is gone from newly minted codes.
+
+   EVERY CODE ALREADY PRINTED KEEPS WORKING. The id is the only field the server
+   has ever trusted, and it has not changed.
+
+   THE FULL AUDIT, WHICH IS WHAT FOUND IT.
+
+   verification/qr-tamper-audit.js attacks a payment QR from an ordinary
+   customer account over the real HTTP API. All twelve now hold:
+
+     a payer cannot set their own price on a dynamic QR
+     and the honest payment still settles at the merchant's price
+     a dynamic QR cannot be paid twice
+     a forged userId in the scanned payload changes nothing
+     an expired QR is refused
+     a revoked QR is refused
+     zero, negative, non-numeric and overflow amounts are all refused
+     every QR id is a random v4 UUID, so codes cannot be enumerated
+     an event ticket is refused as a payment instrument
+     malformed, oversized and injection-shaped scans answer a clean refusal
+     the QR owner lookup discloses a name, a username and a type, nothing else
+     the printed QR carries no internal account identifier
+
+   Five of those are also pinned as build tests in
+   api/test/qr-payment-integrity.test.js, so none of them can quietly come undone.
+
+
+THE EVENT SHARE LINK IS THE REAL ONE NOW
+
+   Tapping Share on an event put THIS on the clipboard:
+
+     https://api.titopay.co.za/v1/ticketing/public/events/titopay-launch/preview
+
+   It worked, and it landed in the right place. It also meant every organiser
+   was sending their audience a URL that reads like a developer path, on the one
+   screen whose whole job is to make an event look real and worth buying into.
+
+   The reason it existed is genuine. WhatsApp, Facebook, X, Slack and iMessage
+   fetch a URL and read its <meta> tags, and they do NOT run JavaScript. This
+   app renders itself on the phone, so a link straight into it previewed as a
+   bare "TitoPay" with no title, no date and no poster.
+
+   The answer was never to make the human's link ugly. It is to send only the
+   CRAWLERS to the preview:
+
+     a person       gets https://app.titopay.co.za/events/<name>, the app
+     a crawler      is redirected by the app's own .htaccess to the preview,
+                    reads the tags there, and shows a rich card
+
+   The preview page is unchanged and still exists, so every link already shared
+   keeps working exactly as it did.
+
+   THE POSTER NOW APPEARS IN THE PREVIEW. IT NEVER HAS BEFORE.
+
+   Posters are stored as data: URLs, which is right for the app and useless to
+   a crawler: og:image was only ever emitted for an http(s) URL, so it was
+   omitted on every event that has ever existed. Checked against the live
+   TitoPay Launch event: no og:image at all.
+
+   A new public route serves the poster as real image bytes, decoded from the
+   same column. Read-only, no authentication, approved events only, cached for
+   an hour, and it refuses anything that is not an image. An event with no
+   poster offers no og:image rather than one that 404s.
+
+   AND THE DESCRIPTION NO LONGER STOPS MID-WORD.
+
+   It used to slice the raw text at 160 characters, so the live event previewed
+   as "...users can manage their" with the description's own line breaks still
+   in it, inside an HTML attribute. It is now flattened and cut at a word
+   boundary with an ellipsis.
+
+   PROVEN, INCLUDING AGAINST A REAL APACHE.
+
+   verification/event-share-link-live.js: 9 checks over the live API. The app
+   shares the app link, the preview carries the title and points at the app
+   link, og:image points at a fetchable poster, that URL returns real PNG bytes
+   with an image content type, the description has no raw line breaks and no
+   mid-word cut, a promoter's ?ref= survives the hop, an event with no poster
+   offers no og:image, and the Apache rule matches /events/<slug> and nothing
+   else.
+
+   The .htaccess rule was then run through a REAL Apache with this exact file:
+
+     a person on iPhone Safari    /events/<slug>  200   and every other path 200
+     WhatsApp, Facebook, X,
+       Slack, LinkedIn, Telegram  /events/<slug>  302   to the preview
+     a crawler on ANY other path  /, /dashboard, /assets/..., /verify-email/,
+                                  /events, /events/a/b   all 200, untouched
+     ?ref=ABC123                  survives the redirect
+     app.js, styles.css, .md, .ht still 403, for people and crawlers alike
+
+
+THE PRINTED A4 POSTERS NAMED THE WRONG PERSON
+
+   A Payment A4 poster and a Tip A4 poster are downloaded once and stuck on a
+   counter, where they stay for months. Nothing about a printed sheet can be
+   corrected afterwards, so what is on it has to be right the first time.
+
+   THE POSTER AND THE PAYER'S PHONE DISAGREED ABOUT WHO WAS BEING PAID.
+
+   The poster printed a name resolved from the phone's own session, which falls
+   back to the owner's personal full name when no business name is on it. The
+   payer's review screen names the merchant. So the counter said one thing and
+   the phone about to pay it said another, on the exact screen the app tells
+   people to check one against the other.
+
+   Measured on one account, before the fix:
+
+     the poster printed      "qp0573980 Person 121"
+     the payer's phone said  "qp0573980 Corner Cafe"
+
+   Nobody saw this until now, because until build 43 the payer's phone said
+   "Owner not confirmed" and there was nothing to disagree with.
+
+   The poster now asks the SAME endpoint the payer's review screen asks and
+   prints the answer. They cannot disagree, because there is only one source. A
+   failed lookup falls back to the old local name rather than blocking the
+   poster, so an older API still prints a sheet.
+
+   AND THE PRINTED CODES THEMSELVES WERE PROVEN, NOT ASSUMED.
+
+   verification/qr-poster-scan-live.js does not trust any id the app happens to
+   be holding. It takes the QR IMAGE off the rendered poster, decodes it with
+   jsQR exactly as the in-app scanner does, and drives everything from the
+   string the decoder returns. For BOTH posters:
+
+     the printed QR decodes off the page                        268x268 pixels
+     the scanner classifies it as a payment code and recovers the id
+     the printed "QR ID" footer is the same id the scan produces, so a
+       customer who types it in by hand reaches the same place
+     the owner is traced, and the name MATCHES the name on the poster
+     paying the scanned code settles at payer -R150.50, owner +R150.00
+     an event ticket scanned at a till is still not a payment code
+
+   12 checks. A test also fails the build if the poster ever goes back to
+   naming the owner from the session object.
+
+   PAYMENT INTEGRITY IS UNCHANGED BY ANY OF THIS. Re-run against this bundle:
+   8 QR payment integrity checks, 13 money path checks including "every cent
+   debited is credited somewhere", 23 money screen checks, 697 API tests.
+
+
+THE QR PAYMENT SCREEN, AND ONE FAULT THAT WAS LOSING MONEY
+
+   FOUR THINGS. THE SECOND IS THE SERIOUS ONE.
+
+   1. THE OWNER OF A QR CODE CAN FINALLY BE NAMED.
+
+      The review screen has always had a card for this and it has always read
+      "Owner not confirmed" -- for every code, every customer, every time --
+      because the app called GET /v1/qr/{id}/details and that endpoint was
+      never built. The Security Tip screen tells people to read the verified
+      recipient name before pressing Confirm. There was no name to read.
+
+      The endpoint exists in build 43. The review now shows who owns the code:
+      a registered business under its business name, a person under the name on
+      their verified identity, with the TitoPay username beside it. It returns
+      nothing else. No email address, no phone number, no wallet number, no
+      balance, because a payment QR is shown to strangers by design.
+
+      On an older API the caution card still appears, which remains the honest
+      answer when nothing can be confirmed.
+
+   2. A PAYMENT WITH NOBODY TO CREDIT TOOK THE MONEY ANYWAY.
+
+      The recipient was credited only if their wallet could be resolved, and
+      there was no other branch. A QR code whose owner had no wallet row
+      therefore debited the payer in full, collected the fee, credited nobody,
+      held nothing, and reported the payment as completed.
+
+      Measured before the fix, on a R200 payment: R200.50 left the payer,
+      R0.50 reached the revenue wallet, and R200.00 existed nowhere at all.
+
+      Such a payment is now refused before anything moves, with a sentence that
+      says plainly that nothing was taken. Only the wallet-to-wallet services
+      reach that line, so nothing that legitimately pays out elsewhere is
+      affected, and an ordinary QR payment settles exactly as it always did.
+
+   3. PAYING YOUR OWN QR CODE IS REFUSED.
+
+      It moved money in a circle and charged the fee for doing it. The review
+      screen now says so before Confirm, and the API refuses it after.
+
+   4. "UNABLE TO COMPLETE THE REQUEST" HAD A CAUSE, AND NOW IT NAMES ITSELF.
+
+      Nothing in the codebase creates the TitoPay revenue wallet; it is
+      provisioned once by scripts/ensure-revenue-wallet.js --create. Without it
+      every fee-bearing wallet payment fails at Confirm while the fee preview on
+      the same screen works perfectly, because only the settlement needs it.
+
+      The error it raised was written for an operator, and the API correctly
+      refuses to show an unauthored 5xx to a customer, so what reached the phone
+      was the blanket "Unable to complete the request. Please try again."
+      Nothing named the cause, on the phone or in the admin console.
+
+      Two changes. The customer is now told that nothing was taken from their
+      wallet, that this is a fault on TitoPay's side and not their account, and
+      to contact Support -- without being shown TitoPay's internal wallet
+      architecture. And the admin console's "revenue wallet exists" probe used
+      to pass whenever the query RAN, so it reported OK on a database that had
+      never had one. A probe that must return a row now fails when it does not.
+
+      IF YOUR QR PAYMENTS ARE FAILING, THIS IS THE FIRST THING TO CHECK:
+
+        node scripts/ensure-revenue-wallet.js            reports, changes nothing
+        node scripts/ensure-revenue-wallet.js --create   provisions it
+
+   Proven in verification/qr-payment-integrity-live.js over the real HTTP API:
+   the owner is named and nothing private leaks, a payment with no recipient is
+   refused with the payer's balance identical before and after, a self-payment
+   is refused and costs nothing, an ordinary payment still settles at payer
+   -R200.50 and merchant +R200.00, and a missing revenue wallet produces a
+   sentence a person can act on. 8 checks.
+
+   Also verified unchanged: 13/13 money path checks, including "every cent
+   debited is credited somewhere".
+
+
+A BUSINESS CAN START FROM ITS COMPANY REGISTRATION NUMBER
+
+   Limits & Verification offered a South African ID, a passport and "other
+   approved identity document". A business owner holding a CIPC certificate and
+   nothing else had no option on that screen at all.
+
+   The screen that DOES take a registration number, Business Verification, then
+   refused to show its form until the owner had already verified themselves with
+   an identity document. So the two screens pointed at each other and the only
+   way out was the ID number, which is exactly what it looked like from inside.
+
+   TWO CHANGES, AND THE SECOND IS THE ONE THAT MATTERS.
+
+   1. A FOURTH OPTION, ON BUSINESS ACCOUNTS ONLY.
+
+      Identity document now reads: South African ID, Passport, Company
+      registration number, Other approved identity document. Choosing the third
+      swaps the lower half of the form to the business name, the type of
+      business and the registration number, and the button becomes Add this
+      business. A personal account still sees three options and never sees a
+      company field.
+
+      A sole proprietor, partnership or informal trader has no registration
+      number and is still never asked for one.
+
+   2. THE BUSINESS CAN BE RECORDED BEFORE THE PERSON IS VERIFIED.
+
+      Capturing an entity is not verifying it. Writing down a name and a
+      registration number proves nothing on its own, so there was nothing to
+      protect by refusing it, and refusing it is what created the loop.
+
+      WHAT DID NOT CHANGE, AND MUST NOT: a company registration number does not
+      verify a person and does not move a limit. It says a company is on a
+      register anybody can search. It says nothing about who is holding the
+      phone. The business is recorded as unverified and stays that way, and it
+      cannot be submitted for verification until a person is verified behind it.
+
+   Proven in verification/business-registration-option.js, driven in a real
+   browser: a business account sees four options and a personal account sees
+   three, the form swaps, the business is written with its registration number,
+   the person is STILL unverified afterwards, the business is unverified, the
+   submit is refused with a reason a person can read, and a sole proprietor is
+   accepted with no number at all. 9 checks.
+
+   A test fails the build if that branch is ever pointed at the personal
+   verification endpoint, or if it ever tells a customer their identity is
+   verified.
+
+
+THE EVENT POSTER: VISIBLE ON THE SHARED LINK, RIGHT SHAPE, AND CHANGEABLE
+
+   THREE THINGS. THE FIRST IS THE ONE A CUSTOMER SEES FIRST.
+
+   0. THE SHARED EVENT LINK SHOWED NO POSTER AT ALL.
+
+      One event has two screens in the app, and only one of them is reached by
+      tapping a card:
+
+        the in-app sheet, opened from Events, which drew the poster
+        the standalone screen a shared titopay.co.za/events/<name> link opens,
+          which never drew it
+
+      The second one is the screen that matters most, because it is what an
+      organiser sends to their audience and what someone without the app sees.
+      It opened on a heading and a wall of text, with the poster nowhere on it.
+
+      The poster was in the payload the whole time. That screen simply never
+      rendered it. It now shows it at the top, at the same 16:9 the event card
+      uses, so the link and the card agree. An event with no poster is unchanged.
+
+      Nothing else on that screen moved: the tickets, the price, the venue, the
+      organiser links and the buy flow are all exactly where they were.
+
+   1. THE DIMENSIONS WE ASKED FOR WERE THE WRONG ONES.
+
+      The Create Event form asked for portrait 1080 x 1350 (4:5). The event
+      card renders the poster at 16:9 with background-size: cover. So a poster
+      made to our own spec had roughly two thirds of its height cropped away,
+      keeping only a band across the middle. On a text-heavy poster the result
+      was unreadable, with the heading clipped off the top.
+
+      The form now asks for landscape 1920 x 1080 (16:9), which is the shape
+      the card actually draws, and says plainly what happens to a portrait
+      image if one is used anyway. Nothing about the card changed, so every
+      poster already uploaded looks exactly as it does today.
+
+   2. THE ORGANISER CAN REPLACE THE POSTER ON A LIVE EVENT.
+
+      Approved events could not be edited in the app at all, which meant a
+      wrong poster on a selling event could only be fixed by an admin. The
+      poster is now the one exception: Business Ticketing > Events shows the
+      current poster with an Add or Replace poster control, and the change is
+      live at once.
+
+      Everything else on an approved event still goes through the change
+      request an admin reviews. The date, the venue, the price and the refund
+      terms are what a buyer decided on; the poster is the shop window.
+
+      Every replacement is written to that event's audit trail with who did it
+      and when. A cancelled or finished event refuses, with a reason a person
+      can read. Another business cannot touch it.
+
+   Proven in verification/event-poster-replace-live.js against a real approved
+   event selling paid tickets: the ordinary edit path still refuses it, the
+   poster alone changes, the event stays approved with nothing else moved, the
+   audit row is written, an empty upload is refused rather than wiping the
+   poster, and another business is turned away. 8 checks.
+
+   NEW: verification/event-poster-shared-link.js opens a real shared link in a
+   real browser and measures what is on the page. Run against the v416 bundle it
+   fails on "no poster on the shared-link screen"; against this one it passes 7,
+   including that the browser decoded the image and drew it at 16:9.
+
+
+THE SECURITY TIP SCREEN IS BACK AFTER SIGN-IN
+
+   THIS IS A FAULT v413 INTRODUCED, AND THIS BUILD FIXES IT.
+
+   The back-gesture work in v413 made every popstate close the top layer. But
+   setting location.hash ALSO fires popstate, and signing in does exactly that
+   with a sheet still open: it sets the route to dashboard, closes the sign-in
+   sheet, then opens the Security Tip screen. The close ran a moment later, by
+   which time the sheet on screen was the Security Tip screen rather than the
+   sign-in sheet the gesture was aimed at, so it closed the wrong one.
+
+   The result was that the Security Tip screen stopped appearing after sign-in
+   in v413 and v414. Nothing errored, nothing was logged, and the screen itself
+   was never broken: it opened and was removed a fraction of a second later.
+
+   A popstate that moved the route is now recognised for what it is and closes
+   nothing, and any close is checked against the exact sheet that was on screen
+   when the gesture arrived.
+
+   NEW: verification/pwa-sign-in-journey.spec.js drives the real journey -- tap
+   Sign in, type, press the button -- and watches for eight seconds. Run against
+   the v414 bundle it fails five checks; against this one it passes twelve. The
+   original testing called showSecurityTipModal() directly, which worked
+   perfectly while the journey was broken, and that is exactly why this was
+   missed.
+
+   Every back-gesture behaviour from v413 still holds: 19 native feel checks
+   pass, including closing a sheet, the Pay hub, and a dialog over a sheet.
+
+
+THE BUSINESS NOTE THAT v416 ADDED IS NOW THE OPTION ITSELF
+
+   v416 added one sentence to "Verify your identity" on a business account,
+   telling the owner that their registration number belonged on a different
+   screen. That was honest, and it was not enough: the screen it pointed at
+   would not show its form until the owner had already verified themselves,
+   so the sentence sent people to a door that was locked from the other side.
+
+   The sentence is replaced by the fourth option described at the top of these
+   notes. A business owner can now act on that screen rather than be redirected
+   from it. Personal accounts see no change at all.
+
+
+EVERYTHING BELOW ARRIVED IN v413, AND SHIPS WITH THIS UPLOAD
+
+THE APP BEHAVES LIKE AN APP
+
+Everything below was found by walking the real bundle across the real screens
+on two phone sizes and measuring it, not by reading the source. Each item is
+something a person can see on a phone.
+
+
+1. THE BACK GESTURE NOW CLOSES WHAT IS ON TOP.
+
+   This is the one that mattered. The sheets, the Pay hub and the confirm
+   dialog lived outside the browser's history, so the system Back gesture
+   skipped straight past them. On Android, pressing Back with a sheet open left
+   the app. On iPhone, swiping in from the edge took the whole screen away with
+   a sheet still sitting over it. No installed app behaves that way, and it is
+   the loudest difference between an app and a page saved to a home screen.
+
+   Back now peels one layer at a time, top layer first:
+
+     a confirm dialog    is cancelled, and the sheet under it stays open
+     the Pay hub         closes, and the screen under it does not move
+     a sheet             closes, and the screen under it does not move
+     a sheet within a    returns to the sheet that opened it, the way the
+       sheet             back arrow in its corner already did
+     nothing on top      an ordinary move between screens, as before
+
+   Closing a sheet by hand (the X, the backdrop, Escape) gives the history
+   entry back, so the very next Back is a real navigation rather than a press
+   that appears to do nothing.
+
+   Every existing way of closing a sheet still works exactly as it did.
+
+
+2. EVERY CONTROL ANSWERS A TAP.
+
+   The app deliberately suppresses the grey flash iOS paints over a tapped
+   control, because that flash is the most website-looking thing a web app
+   does. The cost is that any control with no pressed state of its own gives no
+   feedback at all, and a tap that shows nothing reads as a miss.
+
+   A walk of the screens found three that had no answer: the Personal /
+   Business segment on the landing, the statement period chips, and the small
+   dismiss button on the download prompt. All three now use the same press the
+   tiles and buttons already use, and all three respect reduced motion.
+
+
+3. THE FIRST CONTROL A NEW CUSTOMER TOUCHES IS BIG ENOUGH.
+
+   On a short screen the Personal / Business segment was 40px tall, under the
+   44px both platforms ask for. Measured before it was changed: at 44px the
+   landing still fits with no scrolling on 360x640, 375x667, 360x740, 390x664,
+   412x732 and 414x736.
+
+
+4. THE LAUNCH FLASH IS GONE, ON EVERY iPHONE.
+
+   iOS shows a white rectangle between tapping the icon and the app's first
+   paint unless it is given a startup image whose pixel size matches the device
+   EXACTLY. The app declared one such image, for one phone — and that file had
+   been truncated when it was written: the top 660 rows of 2532 were all that
+   was ever there, with no end marker, so it would not decode. Every device,
+   including the one it was cut for, got the flash the file existed to prevent.
+
+   There are now eleven, covering every iPhone from the SE to the 16 Pro Max,
+   each drawn with the same gradient and wordmark the app paints on its own
+   first frame, so the handover is invisible. They are not precached, so first
+   load is no slower. A test reads every one of them off disk and fails the
+   build if any is truncated or is not the size it claims.
+
+   Regenerate them with verification/make-splash-screens.py.
+
+
+NOTHING ELSE MOVED
+
+   No screen, colour, spacing, icon, animation or navigation path changed.
+   The wallet, transfers, QR payments, tickets, stokvels, TitoKids, merchant,
+   staff and rewards flows are untouched.
+
+WHAT PROVES IT
+
+   710 API tests, 7 merchant POS checks, 8 camera scanner checks, 7 event address checks, 12 QR tamper audit checks, 9 share link checks, 12 printed poster scan checks, 8 QR payment integrity checks, 13 money path checks,
+   9 business registration checks driven in a real browser,
+   98 service-journey checks across both account types with
+   both wallets byte-for-byte unchanged, 23 money-screen checks, 19 native
+   feel checks and 12 sign-in journey checks driven in a real browser, 7
+   shared-link poster checks, 10 landing swipe checks and 8 modal-route
+   checks. All green.
+
+UPLOAD NOTES
+
+   Replace the whole app directory as usual, INCLUDING .htaccess, which is
+   where the crawler rule lives. The asset stamp moves to ?v=425 in index.html
+   and service-worker.js and the cache name becomes
+   titopay-pwa-v425-soft-pos, so no customer can be served a cached
+   bundle.
+
+   UPLOAD api.zip BUILD 48 FIRST, AND DO NOT DELAY IT. The price fix is
+   server-side and the app cannot enforce it: until build 45 is live, a payer
+   can still settle a R200 sale for R1.
+   On build 43 the shared link still works and the preview still shows a title;
+   it just carries no image, which is exactly where it was before. Reprinting the A4 posters is worth doing once this is live,
+   but the codes on the sheets already printed keep working exactly as they are:
+   only the NAME printed beside them was wrong, never the code.
+
+   UPLOAD api.zip BUILD 43 WITH IT. Both of the recent changes need it: the QR
+   owner card needs the details endpoint, and the company registration option
+   needs the relaxed capture rule. On an older API both fail safely rather than
+   badly, showing the caution card and a refusal respectively. The poster
+   changes need no API change at all. admin.zip is unchanged.
+
+   AND RUN scripts/ensure-revenue-wallet.js. If it reports no revenue wallet,
+   that is why QR payments fail at Confirm, and no code change fixes it.

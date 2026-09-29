@@ -1,0 +1,21 @@
+# gitleaks configuration for the secret-scan CI gate.
+# Extends the default ruleset; the allowlist below covers files that legitimately
+# contain secret-shaped text but no real secrets, so the gate fails only on a
+# genuine leak.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Files that hold placeholders or historical fixtures, not live secrets"
+paths = [
+  '''api/\.env\.example$''',        # names-only template, no values
+  '''.*\.lock$''',
+  '''.*-lock\.json$''',
+  '''.*\.diff$''',                  # captured provider-fix diffs (fixtures)
+  '''.*/test/.*''',                 # test fixtures use throwaway values
+  '''.*\.test\.js$''',
+]
+regexTarget = "match"
+regexes = [
+  '''(?i)example|placeholder|your[-_]?(secret|key|token)|changeme|xxxx+|<[a-z_]+>''',
+]

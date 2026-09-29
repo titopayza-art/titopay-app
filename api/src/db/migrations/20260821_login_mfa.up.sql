@@ -1,0 +1,12 @@
+-- Opt-in customer login MFA.
+--
+-- A customer can choose to require an email one-time code at sign-in. It is OFF
+-- by default, so every existing account signs in exactly as before; the flag
+-- only takes effect for an account that has switched it on AND has an email to
+-- receive the code. The sign-in OTP path it reuses already exists (the same one
+-- admin sign-in uses), so this migration only adds the per-user switch.
+--
+-- BOOLEAN NOT NULL DEFAULT FALSE is a metadata-only add in PostgreSQL 11+, so it
+-- takes no table rewrite and no long lock even on a large users table.
+-- Idempotent: safe to re-run against a database that already has the column.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS login_mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE;
