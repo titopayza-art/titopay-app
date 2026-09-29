@@ -17428,3 +17428,52 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
 .sv-msg.is-mine + .sv-msg:not(.is-mine) {
   margin-top: 8px;
 }
+
+/* ==========================================================================
+   The hero panel carries a photograph
+   ==========================================================================
+
+   The panel shipped as flat navy, which was the placeholder the mockup marked
+   [ PHOTOGRAPHY ]. This is the photograph: Sandton at blue hour, the city the
+   app is for.
+
+   Two things make it safe to put white type over a photo.
+
+   The navy stays as the background COLOUR underneath. It paints immediately,
+   before the image arrives and if the image never arrives at all - on a
+   throttled connection the headline is white on navy for a moment rather than
+   white on white, and a customer whose network drops the request sees exactly
+   the panel that shipped last week.
+
+   The scrim is a gradient, not a flat wash: light at the top where the sky is
+   and there is nothing to read, heavy at the foot where the headline and the
+   supporting line sit. A flat overlay dark enough for the type would have
+   muddied the whole photograph to make one corner legible. Measured against
+   white after rendering, not assumed.
+
+   WebP, at about 100KB. The app already requires :has() and dvh units, which
+   are Safari 15.4, two years past WebP support, so there is no engine that
+   can run this app and cannot decode this file.
+
+   The ?v= is load-bearing, not habit. service-worker.js precaches this file
+   BY ITS FULL URL and matches without ignoreSearch, so a reference here
+   without the query misses the precached copy entirely: the file would sit in
+   the cache, never be hit, and refetch over the network on every cold start.
+   poster-app-screen.jpg carries its ?v=488 in exactly the same way and for
+   exactly this reason. If this image is ever replaced, the number changes in
+   both files or neither. */
+.landing-flow .landing-hero-panel {
+  background-image:
+    linear-gradient(
+      180deg,
+      rgba(6, 26, 61, 0.30) 0%,
+      rgba(6, 26, 61, 0.46) 32%,
+      rgba(6, 26, 61, 0.72) 52%,
+      rgba(6, 26, 61, 0.90) 72%,
+      rgba(6, 26, 61, 0.96) 100%
+    ),
+    url("assets/landing-sandton.webp?v=603");
+  background-size: cover;
+  background-position: center 28%;
+  background-repeat: no-repeat;
+}

@@ -1,10 +1,10 @@
-const CACHE_NAME = "titopay-pwa-v601-verify-type";
+const CACHE_NAME = "titopay-pwa-v604-verify-type";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./head-boot.js?v=601",
-  "./styles.min.css?v=601",
-  "./app.min.js?v=601",
+  "./head-boot.js?v=604",
+  "./styles.min.css?v=604",
+  "./app.min.js?v=604",
   "./notification-routing-fix.js?v=1",
   "./services-default.json?v=577",
   "./manifest.webmanifest?v=193",
@@ -22,6 +22,12 @@ const APP_SHELL = [
   // behind a dead connection should still get the sheet it was shown, so the
   // screen ships in the shell alongside the wordmarks.
   "./assets/poster-app-screen.jpg?v=488",
+  // The landing hero's photograph. The panel keeps navy as its background
+  // colour underneath, so a miss here degrades to the flat panel rather than
+  // to nothing - but the landing is the first screen anybody sees, and it
+  // ships in the same archive as styles.min.css two lines above. If assets/
+  // never landed, this entry failing is the least of it.
+  "./assets/landing-sandton.webp?v=603",
   "./assets/icon-192.png?v=165",
   "./assets/icon-512.png?v=165",
   "./assets/maskable-512.png?v=165",
