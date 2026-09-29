@@ -1770,3 +1770,254 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
    - a .modal-actions block as the card's last child - so if this screen wants
    that, it should use it rather than carry a rule that only works until
    somebody reorders the sheet. The button follows the fields for now. */
+
+/* ==========================================================================
+   The group chat is a dark room
+   ==========================================================================
+
+   A conversation is not a form, and it was wearing a form's clothes: a white
+   sheet, a fixed-height window of messages, and a composer floating in the
+   middle of a full-height card with four hundred pixels of nothing under it.
+
+   Two changes, and the second one is the one that matters:
+
+     the sheet goes dark, so the bubbles are the only bright things on it;
+     the message window becomes the row that grows, so the composer sits on
+     the bottom edge of the glass the way every messaging app puts it.
+
+   Every colour below used to live in a style attribute inside the render
+   loop, where no stylesheet could reach it. :has() is what scopes this to
+   the chat sheet without adding a class through openModal(), which takes
+   only markup and is called from some four hundred places. */
+
+.modal-card:has(> .sv-chat-scroll) {
+  background: var(--navy);
+  color: #e9effa;
+}
+
+.modal-card:has(> .sv-chat-scroll) .modal-head {
+  border-bottom-color: rgba(255, 255, 255, 0.14);
+}
+
+.modal-card:has(> .sv-chat-scroll) .modal-head h2 {
+  color: #ffffff;
+}
+
+.modal-card:has(> .sv-chat-scroll) .sv-chat-sub {
+  color: #9db0d0;
+}
+
+.modal-card:has(> .sv-chat-scroll) .icon-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.modal-card:has(> .sv-chat-scroll) .field-hint {
+  color: #9db0d0;
+}
+
+/* One message. The row decides the side; the bubble decides the colour. */
+.sv-msg {
+  margin: 7px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.sv-msg.is-mine {
+  align-items: flex-end;
+}
+
+.sv-bubble {
+  max-width: 85%;
+  border-radius: 14px;
+  padding: 8px 12px;
+  background: #eef2fa;
+  color: #0b1f3f;
+}
+
+.sv-msg.is-mine .sv-bubble {
+  background: #2f5cff;
+  color: #ffffff;
+}
+
+/* A pinned decision is the one thing on this sheet that is not a message, so
+   it does not take either side's colour. */
+.sv-msg.is-decision .sv-bubble {
+  background: #fdf3e2;
+  color: #8a5b00;
+}
+
+.sv-decision-tag {
+  display: block;
+  font-weight: 700;
+}
+
+.sv-msg-name {
+  display: block;
+  opacity: 0.75;
+}
+
+.sv-msg-time {
+  margin-top: 2px;
+  color: #8fa2c1;
+  font-size: 0.74rem;
+}
+
+/* The composer reads as a place to type rather than a field on a form. */
+.modal-card:has(> .sv-chat-scroll) .sv-composer textarea {
+  border-radius: 22px;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.modal-card:has(> .sv-chat-scroll) .sv-composer textarea::placeholder {
+  color: #8fa2c1;
+}
+
+.modal-card:has(> .sv-chat-scroll) .sv-composer textarea:focus {
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: none;
+}
+
+/* The meeting bar and the minutes are panels built for a white sheet. */
+.modal-card:has(> .sv-chat-scroll) .integration-note {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #e9effa;
+}
+
+.modal-card:has(> .sv-chat-scroll) .integration-note small,
+.modal-card:has(> .sv-chat-scroll) .integration-note pre {
+  color: #c3d1e8;
+}
+
+.modal-card:has(> .sv-chat-scroll) .btn.secondary {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #ffffff;
+}
+
+/* THE MESSAGE WINDOW IS THE ROW THAT GROWS.
+   .sv-chat-scroll carried max-height: 44vh, and with the keyboard up a third
+   of the visible glass. Both were fractions picked to keep the composer
+   reachable - which they did, by never letting the conversation get tall
+   enough to push it away, at the cost of a sheet that stopped two-thirds of
+   the way down.
+
+   The card is already bounded: a full-screen sheet is 100dvh, and with the
+   keyboard up it is --auth-viewport-height, which is the glass. So the
+   window does not need a fraction of anything - it can take whatever is left
+   after the header, the meeting bar and the composer, and flex will shrink it
+   as the keyboard takes the room. min-height: 0 is what allows that shrink;
+   without it a flex item refuses to go below its content. */
+@media (max-width: 519px), (pointer: coarse) and (max-width: 950px) {
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:has(> .sv-chat-scroll) {
+    background: var(--navy);
+  }
+
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:has(> .sv-chat-scroll) > .modal-head {
+    background: var(--navy);
+  }
+
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:has(> .sv-chat-scroll) > .sv-chat-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:has(> .sv-chat-scroll) > .sv-composer {
+    padding-bottom: 4px;
+  }
+}
+
+/* ==========================================================================
+   The withdrawal sheet fills the sheet
+   ========================================================================== */
+
+/* The card's own bottom-anchor rule reaches direct children only, and the
+   button is inside the form. So the form becomes the row that grows and the
+   action row inside it takes the margin. display:flex with the same 14px gap
+   reproduces .form-grid's single-column stacking exactly.
+
+   The two :not()s are not decoration. The card pins every direct child with
+      .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:not(.fullscreen-modal):not(.chatbot-fullscreen-modal) > *
+   which is five classes; without them this rule is four classes and one
+   element, loses, and the form stays flex: 0 0 auto. Measured: the button sat
+   412px off the bottom with the shorter selector in place. */
+@media (max-width: 519px), (pointer: coarse) and (max-width: 950px) {
+  .modal-backdrop:not(.auth-modal-backdrop) > .modal-card:not(.fullscreen-modal):not(.chatbot-fullscreen-modal) > form[data-form="stockvel-withdrawal"] {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  form[data-form="stockvel-withdrawal"] > .sv-wd-actions {
+    margin-top: auto;
+  }
+}
+
+.sv-wd-actions {
+  display: grid;
+  gap: 10px;
+}
+
+/* The figure and the rule under it hug each other.
+   field-sizing lets the box be exactly as wide as what is typed, which is
+   what makes the rule sit under "R 0" rather than under "R 0" plus five
+   characters of empty box - the reason the pair looked stranded at the left
+   of its own underline. The fixed 5.5ch above stays as the fallback for
+   engines without it. */
+@supports (field-sizing: content) {
+  .sv-amount input {
+    width: auto;
+    min-width: 1ch;
+    field-sizing: content;
+  }
+}
+
+/* Every label on this form reads as a sentence, not as a form's small print.
+   The amount's caption was already exempted; the reason's was not, so the
+   screen said "Amount to withdraw" in sentence case and "WHAT IS IT FOR?"
+   in capitals directly beneath it. */
+.modal-card .field.sv-reason-field > label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* .activity-list's 10px grid gap PLUS .sv-msg's 7px block margin put 24px
+   between every pair of bubbles, which on a phone is a message and a half of
+   wasted glass. A conversation is a tight column; the reading gap belongs
+   between speakers, not between every line. */
+.sv-chat-scroll {
+  gap: 2px;
+  /* THE ROWS MUST NOT STRETCH.
+     .activity-list is a grid, and a grid's auto-sized rows grow to fill the
+     container when align-content is left at its initial value. That was
+     harmless while the list was capped at 44vh and shorter than its content.
+     The moment it became the row that grows, every message row stretched to
+     share the leftover height: two messages in a full-height sheet measured
+     302px tall each, for about 70px of bubble and timestamp. The messages
+     stack from the top and keep their own height. */
+  align-content: start;
+}
+
+.sv-msg {
+  margin: 0;
+}
+
+/* A little air only where the speaker changes, so a run of messages from one
+   person reads as one turn. */
+.sv-msg + .sv-msg.is-mine,
+.sv-msg.is-mine + .sv-msg:not(.is-mine) {
+  margin-top: 8px;
+}

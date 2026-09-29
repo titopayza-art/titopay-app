@@ -113,7 +113,16 @@ function groupFixture(overrides) {
     check("a funded group still gets the form", funded.hasForm);
     check("THE REASON BOX NO LONGER PROMISES A VOTE",
       !/vote/i.test(funded.placeholder), funded.placeholder);
-    check("and says who actually reads it", /organiser/i.test(funded.placeholder), funded.placeholder);
+    // WHO READS IT IS CHECKED ON THE SCREEN, NOT IN THE PLACEHOLDER.
+    //
+    // This used to require the word "organiser" inside the reason box's
+    // placeholder, because that placeholder was where the fact had been put
+    // when the quorum-vote wording came out. It is a fact about the screen,
+    // not about that one box: the placeholder now shows the shape of an
+    // answer ("Deposit for the flights") and the line above the send button
+    // says who acts next. The check follows the fact.
+    check("and the screen says who actually decides it",
+      /organiser/i.test(funded.text), funded.text.slice(0, 90));
     check("the screen mentions no vote anywhere", !/\bvote\b/i.test(funded.text));
 
     /* ---- 3. Who can decide it ------------------------------------------- */

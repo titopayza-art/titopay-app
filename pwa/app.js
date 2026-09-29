@@ -20460,12 +20460,23 @@ function openStockvelWithdrawalRequestModal(id) {
         </div>
         <label for="sv-wd-amount">Amount to withdraw</label>
       </div>
-      <div class="field">
+      <div class="field sv-reason-field">
         <label for="sv-wd-reason">What is it for?</label>
-        <!-- There is no vote. One organiser decides, which is what the
-             heading above and the note below both say; this placeholder was
-             the last piece of the quorum-vote wording left on the screen. -->
-        <textarea id="sv-wd-reason" name="reason" placeholder="The organisers see this when they decide" required></textarea>
+        <!-- There is no vote. One organiser decides, which is what the line
+             above the button says; the placeholder that used to carry that
+             fact - "The organisers see this when they decide" - was the last
+             piece of the quorum-vote wording left on the screen, and it was
+             also the only thing in the box, so the box showed a rule instead
+             of an example. A placeholder's job is to show the shape of the
+             answer. Who reads it is said once, where it belongs, under the
+             button that sends it.
+
+             The example is not the one from the mockup. That one began with a
+             word this app may not print in customer copy - api/test/
+             regulatory-red-lines.test.js forbids it, because TitoPay is not a
+             bank and must never read as one that takes them. The suite caught
+             it; this is the same sentence without the claim. -->
+        <textarea id="sv-wd-reason" name="reason" placeholder="Flights for the December trip" required></textarea>
       </div>
       ${/* FORTY WORDS OF CUSTODY, SEVEN WORDS BEFORE AND THE REST AFTER.
              A panel here used to explain that nothing moves yet, that an
@@ -20485,8 +20496,24 @@ function openStockvelWithdrawalRequestModal(id) {
              enough members agree", which promised a quorum vote and an
              automatic payout. There is neither. That wording is gone and this
              note records why, so it does not come back.) */""}
-      <p class="sv-approval-line">An organiser approves it, then pays you from their own wallet.</p>
-      <button class="btn primary" type="submit">${icon("withdraw")} Send request</button>
+      ${/* THE ACTION SITS UNDER THE THUMB, NOT IN THE MIDDLE OF THE SHEET.
+             On a full-screen sheet the card is a flex column whose trailing
+             action row takes margin-top:auto - the route the rest of the app
+             already uses. That only reaches a DIRECT child of the card, and
+             this button lives inside the form, so the form grows instead and
+             pins this row inside itself. Before this the button floated with
+             four hundred pixels of nothing beneath it.
+
+             The line above it lost "from their own wallet". That the money
+             comes from a person rather than from TitoPay is the custody fact,
+             and it is not dropped - the confirmation in submitStockvelWithdrawal
+             says it in full at the moment it becomes true. Here, seven words
+             about who acts next is the whole of what is worth knowing while
+             you are still choosing an amount. */""}
+      <div class="modal-actions sv-wd-actions">
+        <p class="sv-approval-line">An organiser approves it, then pays you.</p>
+        <button class="btn primary" type="submit">Send request</button>
+      </div>
     </form>
   `);
 }
@@ -20684,6 +20711,26 @@ function openStockvelInviteModal(id) {
 }
 /* ---- Group chat and meetings: members talk, organisers pin decisions,
    and closing a meeting compiles the minutes and emails them to everyone. */
+// A MESSAGE IS STAMPED THE WAY A CHAT STAMPS ONE.
+//
+// This read "2026/09/28, 20:36" under every bubble - a machine's date, four
+// digits of year the reader already knows, on a line that appears once per
+// message. "28 Sep, 20:36" is the same fact in a form people read without
+// decoding. The year is deliberately absent: a stokvel conversation is read
+// in the present, and a message old enough for the year to matter is far
+// enough up the scroll that its neighbours date it.
+function stockvelChatTime(value) {
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return "";
+  // en-ZA, as everywhere else in this file. September comes out "Sept"
+  // rather than "Sep" - that is what current CLDR data says for both en-ZA
+  // and en-GB, so switching locale does not change it, and it is correct
+  // English. Hardcoding a month table to save one character would trade a
+  // real name for a hand-maintained one.
+  const day = at.toLocaleDateString("en-ZA", { day: "numeric", month: "short" });
+  const time = at.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${day}, ${time}`;
+}
 function openStockvelChatModal(groupId) {
   const group = state.stockvel?.detail?.id === groupId ? state.stockvel.detail : (state.stockvel?.detail || (state.stockvel?.groups || []).find((item) => item.id === groupId));
   const id = groupId || group?.id;
@@ -20719,6 +20766,13 @@ function openStockvelChatModal(groupId) {
     </div>
     <div data-sv-meeting-bar></div>
     <section class="activity-list sv-chat-scroll" data-sv-chat><p class="field-hint">Loading the conversation…</p></section>
+    ${/* THE MINUTES MOVED ABOVE THE COMPOSER, WHICH IS WHY THE ORDER MATTERS.
+          The composer is the last child of the card so that the sheet's flex
+          column can pin it to the bottom of the glass, under the thumb, the
+          way a messaging app does. With the minutes after it the composer
+          floated in the middle of a full-height sheet with dead space beneath
+          it - which is exactly what the screen looked like. */""}
+    <div data-sv-minutes></div>
     ${/* The send control sits beside the box you type in, the way every
           messaging app puts it, instead of being a full-width bar underneath.
           That is roughly sixty pixels back on a glass that has already lost
@@ -20728,7 +20782,6 @@ function openStockvelChatModal(groupId) {
       <textarea name="message" minlength="1" maxlength="1000" required placeholder="Message the group" rows="1" aria-label="Message the group"></textarea>
       <button class="btn primary sv-composer-send" type="submit" aria-label="Send to the group">${icon("send")}</button>
     </form>
-    <div data-sv-minutes style="margin-top:10px"></div>
   `);
   refreshStockvelGroupChat();
 }
@@ -20760,15 +20813,26 @@ async function refreshStockvelGroupChat() {
     if (host) {
       const items = messagesResult.items || [];
       const myId = state.user?.id;
-      host.innerHTML = items.length ? items.map((message) => `
-        <div style="margin:7px 0;display:flex;flex-direction:column;align-items:${message.userId === myId ? "flex-end" : "flex-start"}" ${chat.canManage ? `data-sv-decision="${esc(message.id)}" role="button" tabindex="0" title="Tap to pin as a decision"` : ""}>
-          <div style="max-width:85%;background:${message.isDecision ? "#fdf3e2" : message.userId === myId ? "#2f5cff" : "#eef2fa"};color:${message.isDecision ? "#8a5b00" : message.userId === myId ? "#fff" : "#0b1f3f"};border-radius:14px;padding:8px 12px">
-            ${message.isDecision ? `<small style="display:block;font-weight:700">DECISION</small>` : ""}
-            <small style="display:block;opacity:0.75">${esc(message.name || message.username || "Member")}</small>
+      // THE BUBBLES CARRY CLASSES RATHER THAN INLINE STYLE.
+      //
+      // Every colour here used to be written into the style attribute, which
+      // beats any stylesheet rule: the sheet could not be themed without
+      // rewriting this loop, and the one place the palette lived was a
+      // template literal. The classes below say what each part IS - mine,
+      // theirs, a pinned decision - and the stylesheet decides what that
+      // looks like on the sheet it is drawn on.
+      host.innerHTML = items.length ? items.map((message) => {
+        const mine = message.userId === myId;
+        return `
+        <div class="sv-msg${mine ? " is-mine" : ""}${message.isDecision ? " is-decision" : ""}" ${chat.canManage ? `data-sv-decision="${esc(message.id)}" role="button" tabindex="0" title="Tap to pin as a decision"` : ""}>
+          <div class="sv-bubble">
+            ${message.isDecision ? `<small class="sv-decision-tag">DECISION</small>` : ""}
+            <small class="sv-msg-name">${esc(message.name || message.username || "Member")}</small>
             ${esc(message.message)}
           </div>
-          <small class="field-hint" style="margin-top:2px">${esc(new Date(message.createdAt).toLocaleString("en-ZA", { dateStyle: "short", timeStyle: "short" }))}</small>
-        </div>`).join("")
+          <small class="sv-msg-time">${esc(stockvelChatTime(message.createdAt))}</small>
+        </div>`;
+      }).join("")
         : `<p class="field-hint">No messages yet. Whatever the group says here stays visible to every member.</p>`;
       host.scrollTop = host.scrollHeight;
     }
