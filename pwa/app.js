@@ -20415,11 +20415,14 @@ function openStockvelWithdrawalRequestModal(id) {
   const stranded = Boolean(group.canManage) && stockvelDeciderCount(group) === 1;
 
   openModal(`
+    ${/* The group's name comes off the eyebrow and onto the line under the
+          title, where it sits beside the number that decides what can be
+          asked for. The paragraph that stood here said what the line above
+          the button now says in seven words, at the moment it matters. */""}
     <div class="modal-head">
       <div>
-        <p class="eyebrow">${esc(group.name)}</p>
         <h2>Request a withdrawal</h2>
-        <p class="lead">An organiser approves the withdrawal on behalf of the group, then pays you.</p>
+        <p class="sv-chat-sub">${esc([group.name, group.balance != null ? `${money(group.balance)} available` : ""].filter(Boolean).join(" · "))}</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -20431,8 +20434,10 @@ function openStockvelWithdrawalRequestModal(id) {
       <input type="hidden" name="stockvelId" value="${esc(group.id)}">
       <div class="field">
         <label for="sv-wd-amount">Amount</label>
+        ${/* The balance moved to the line under the title. Repeating it here,
+              directly under the box, said the same number twice on a screen
+              with two fields on it. */""}
         <div class="input-affix currency-affix" data-prefix="R"><input id="sv-wd-amount" name="amount" inputmode="decimal" required></div>
-        ${group.balance != null ? `<p class="field-hint">The group holds ${esc(money(group.balance))}.</p>` : ""}
       </div>
       <div class="field">
         <label for="sv-wd-reason">What is it for?</label>
@@ -20441,19 +20446,27 @@ function openStockvelWithdrawalRequestModal(id) {
              the last piece of the quorum-vote wording left on the screen. -->
         <textarea id="sv-wd-reason" name="reason" placeholder="The organisers see this when they decide" required></textarea>
       </div>
-      <button class="btn primary" type="submit">${icon("withdraw")} Send request to the group</button>
+      ${/* FORTY WORDS OF CUSTODY, SEVEN WORDS BEFORE AND THE REST AFTER.
+             A panel here used to explain that nothing moves yet, that an
+             organiser decides, and that TitoPay holds no group pot so the
+             organiser pays by ordinary transfer. Every word of that is true
+             and the custody part matters, which is why it is not deleted -
+             it is moved to where it lands.
+
+             "Nothing moves yet" is a statement about what happens when you
+             press the button, so it belongs to the moment you press it, not
+             to the minute you spend filling the form. The confirmation in
+             submitStockvelWithdrawal now carries it. What stays here is the
+             one thing worth knowing before you decide the amount: who acts
+             next, and that it is a person rather than the platform.
+
+             (An earlier version of this panel claimed "money only leaves once
+             enough members agree", which promised a quorum vote and an
+             automatic payout. There is neither. That wording is gone and this
+             note records why, so it does not come back.) */""}
+      <p class="sv-approval-line">An organiser approves it, then pays you from their own wallet.</p>
+      <button class="btn primary" type="submit">${icon("withdraw")} Send request</button>
     </form>
-    <section class="integration-note" aria-label="How approval works">
-      <!-- THE ONE PLACE THIS PRODUCT OVERPROMISED.
-           It said "money only leaves once enough members agree", which claims
-           a quorum vote and an automatic payout. There is neither: one
-           organiser decides, and TitoPay holds no group pot, so the organiser
-           holding the money pays by ordinary transfer. Everything else here is
-           scrupulous about custody - the statement screen says "TitoPay holds
-           no group pot" and the contribution confirmation names the person
-           holding it - which is exactly why this line stood out. -->
-      <p>${icon("shield")} <span><strong>Nothing moves yet.</strong> This records your request for the group. An organiser approves or declines it, and TitoPay never holds the group's money — the organiser holding it sends you the amount as an ordinary transfer.</span></p>
-    </section>
   `);
 }
 async function submitStockvelWithdrawal(data) {
@@ -20468,7 +20481,12 @@ async function submitStockvelWithdrawal(data) {
       headers: { "Idempotency-Key": createClientTransactionKey("stockvel-withdrawal") },
       body: { amount, reason }
     });
-    showToast("Withdrawal request sent to the group.");
+    // WHERE THE CUSTODY LINE WENT. The request screen used to carry forty
+    // words explaining that nothing moves yet, that an organiser decides, and
+    // that TitoPay holds no group pot. "Nothing moves yet" is a fact about
+    // the button, so it is said here, on the far side of pressing it, rather
+    // than read and forgotten while the form was being filled.
+    showToast("Request sent. An organiser approves it and pays you — TitoPay does not hold the group's money.");
     closeModal();
     await refreshStockvelDashboard(groupId);
   } catch (error) {
@@ -20650,17 +20668,44 @@ function openStockvelChatModal(groupId) {
   const id = groupId || group?.id;
   if (!id) { showToast("Open the group first.", "error"); return; }
   state.stockvelChat = { groupId: id, groupName: group?.name || "Stokvel group", canManage: Boolean(group?.canManage), meetings: [] };
+  const members = group?.memberCount != null
+    ? `${group.memberCount} member${group.memberCount === 1 ? "" : "s"}`
+    : "";
   openModal(`
+    ${/* A CHAT DOES NOT NEED EXPLAINING TO SOMEBODY LOOKING AT IT.
+          This opened with an eyebrow, a title and then eighteen words -
+          "Talk as a group. Organisers pin decisions; closing a meeting turns
+          the conversation into minutes for everyone." - above a window that
+          was visibly a conversation. On a phone with the keyboard up that
+          line was a fifth of the glass, and it was part of why the composer
+          kept being squeezed off the bottom.
+
+          The group's name moves off the eyebrow and onto the line under the
+          title, where a chat app puts it, with the member count beside it -
+          which is the one thing the header can say that the screen cannot
+          already show.
+
+          What the subtitle was actually for - that an organiser can pin a
+          message as a decision, and that closing a meeting compiles the
+          minutes - belongs where those things happen. Pinning is offered on
+          a message; the meeting bar below says what an open meeting does. */""}
     <div class="modal-head">
-      <div><p class="eyebrow">${esc(state.stockvelChat.groupName)}</p><h2>Group chat</h2><p class="lead">Talk as a group. Organisers pin decisions; closing a meeting turns the conversation into minutes for everyone.</p></div>
+      <div>
+        <h2>Group chat</h2>
+        <p class="sv-chat-sub">${esc([state.stockvelChat.groupName, members].filter(Boolean).join(" · "))}</p>
+      </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <div data-sv-meeting-bar></div>
     <section class="activity-list sv-chat-scroll" data-sv-chat><p class="field-hint">Loading the conversation…</p></section>
-    <form class="form-grid" data-form="stockvel-chat" style="margin-top:8px">
+    ${/* The send control sits beside the box you type in, the way every
+          messaging app puts it, instead of being a full-width bar underneath.
+          That is roughly sixty pixels back on a glass that has already lost
+          most of itself to the keyboard. */""}
+    <form class="sv-composer" data-form="stockvel-chat">
       <input type="hidden" name="groupId" value="${esc(id)}">
-      <div class="field"><textarea name="message" minlength="1" maxlength="1000" required placeholder="Message the group" rows="2"></textarea></div>
-      <button class="btn primary" type="submit">${icon("send")} Send to the group</button>
+      <textarea name="message" minlength="1" maxlength="1000" required placeholder="Message the group" rows="1" aria-label="Message the group"></textarea>
+      <button class="btn primary sv-composer-send" type="submit" aria-label="Send to the group">${icon("send")}</button>
     </form>
     <div data-sv-minutes style="margin-top:10px"></div>
   `);

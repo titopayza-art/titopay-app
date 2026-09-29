@@ -79,7 +79,10 @@ function serve() {
     // A REAL CONVERSATION, NOT AN EMPTY ONE. An empty chat fits in any glass,
     // so it cannot show the defect: the sheet was reported with messages in
     // it, and it is the messages that push the composer out of reach.
-    const messages = Array.from({ length: 12 }, (_, i) => ({
+    // Long enough to overflow the glass. Twelve fitted once the header lost
+    // its paragraph and the composer became one line, and a conversation that
+    // fits cannot show anything about reaching what does not.
+    const messages = Array.from({ length: 30 }, (_, i) => ({
       id: `m${i}`, userId: "u2", name: "Thuso Tshiloane",
       message: `Message number ${i + 1} in the group conversation.`,
       createdAt: "2026-09-20T20:18:00.000Z", isDecision: false
@@ -113,7 +116,7 @@ function serve() {
       window.openStockvelChatModal("g1");
     });
     await page.waitForSelector(".modal-backdrop .modal-card textarea[name=message]", { timeout: 8000 });
-    await page.waitForFunction(() => document.querySelectorAll("[data-sv-chat] [data-sv-decision]").length >= 12,
+    await page.waitForFunction(() => document.querySelectorAll("[data-sv-chat] [data-sv-decision]").length >= 30,
       null, { timeout: 8000 });
 
     // A SHEET THAT IS STILL ARRIVING IS NOT A SHEET TO MEASURE. .modal-card
@@ -166,8 +169,21 @@ function serve() {
       geometry.card.height <= geometry.glass.height + 2,
       `card ${Math.round(geometry.card.height)}px in a ${geometry.glass.height}px glass`);
 
-    check("THE CARD CAN STILL BE SCROLLED TO REACH ITS OWN CONTENT",
-      geometry.scrollable,
+    // NONE OF THE CARD IS OUT OF REACH.
+    //
+    // This asked for the card to be scrollable, full stop. That was the right
+    // question while the sheet was too tall for its own glass and could not
+    // scroll, which is the defect it was written for - content below the fold
+    // was simply clipped away. It is the wrong question now: the header lost
+    // an eighteen-word paragraph and the composer became one line, so on a
+    // larger phone the whole conversation fits and there is nothing to
+    // scroll. A sheet that needs no scrolling is not a broken sheet.
+    //
+    // The invariant that actually matters is that nothing is unreachable:
+    // either the content fits, or the card scrolls to it. The two checks
+    // below then prove it by reaching the composer and the send control.
+    check("NOTHING IN THE CARD IS OUT OF REACH",
+      geometry.scrollable || geometry.scrollHeight <= geometry.clientHeight + 1,
       `scrollHeight ${geometry.scrollHeight} vs clientHeight ${geometry.clientHeight}`);
 
     // THE POINT OF THE WHOLE THING: the person can reach the box they type in
@@ -183,8 +199,11 @@ function serve() {
         return box.top >= window.__glass.top - 1
           && box.bottom <= window.__glass.top + window.__glass.height + 1;
       };
+      // Found by its accessible name, not its text: the send control is an
+      // icon button beside the composer now, so it has an aria-label and no
+      // text at all. Looking for the words alone would report it missing.
       const send = [...card.querySelectorAll("button[type=submit]")]
-        .find((b) => /send to the group/i.test(b.textContent));
+        .find((b) => /send to the group/i.test(`${b.textContent} ${b.getAttribute("aria-label") || ""}`));
       return {
         composer: inGlass(card.querySelector("textarea[name=message]")),
         send: Boolean(send) && inGlass(send),

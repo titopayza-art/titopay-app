@@ -16833,3 +16833,61 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
     margin-inline: auto;
   }
 }
+
+/* ==========================================================================
+   The stokvel group chat header and composer
+   ========================================================================== */
+
+/* The group's name and member count, under the title. It replaces an eyebrow
+   above it and an eighteen-word paragraph below it. */
+.sv-chat-sub {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+/* Box and send button on one line. The button is square and stays its own
+   size while the box takes the rest, so a long message never squeezes the
+   thing that sends it. align-items: end keeps them aligned on the bottom
+   edge when the box grows to two or three lines. */
+.sv-composer {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sv-composer textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 48px;
+  max-height: 120px;
+  resize: none;
+}
+
+.sv-composer .sv-composer-send {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  min-height: 48px;
+  padding: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sv-composer .sv-composer-send svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* The one line that survives on the withdrawal form: who acts next. It sits
+   directly above the button it describes, so it reads as part of pressing it
+   rather than as a notice to get past. */
+.sv-approval-line {
+  margin: 2px 0 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
