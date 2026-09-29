@@ -1752,8 +1752,7 @@ async function openVerificationLevelsModal() {
   if (!status) { showToast("Unable to load verification levels just now.", "error"); return; }
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Limits &amp; Verification</p><h2>Verification levels</h2>
-        <p class="lead">What each level means, and what may be asked for along the way.</p></div>
+      <div><p class="eyebrow">Limits &amp; Verification</p><h2>Verification levels</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${(status.tiers || []).map((entry) => verificationLevelBlock(entry, status)).join("")}
@@ -2441,7 +2440,6 @@ function activityView() {
     <section class="hero">
       <p class="eyebrow">Transactions</p>
       <h1>Wallet activity.</h1>
-      <p class="lead">View, filter and export your wallet transactions.</p>
     </section>
     <section class="panel report-filters">
       <div class="field"><label>Search</label><input data-filter="search" value="${esc(state.transactionFilters.search)}" placeholder="Reference, service, recipient"></div>
@@ -2735,7 +2733,7 @@ function openLandingMenu() {
   ];
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Menu</p><h2>TitoPay</h2><p class="lead">What TitoPay is, what it costs, and how to reach us.</p></div>
+      <div><p class="eyebrow">Menu</p><h2>TitoPay</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${securityTipCard()}
@@ -3117,7 +3115,7 @@ async function submitBillSplitForm(form, data) {
 function openRefundModal(service) {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Business Tool</p><h2>Refund customer</h2><p class="lead">Refund a customer from the business wallet using a full or partial refund option.</p></div>
+      <div><p class="eyebrow">Business Tool</p><h2>Refund customer</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="merchant-refund">
@@ -3293,7 +3291,7 @@ function openReceiveModal() {
 function openTipModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Tip</p><h2>Send a Tip</h2><p class="lead">Show appreciation for great service. Send a tip to anyone on TitoPay instantly from your wallet.</p></div>
+      <div><h2>Send a Tip</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${balanceContextRow("Wallet")}
@@ -7391,7 +7389,7 @@ async function showLoginHistory() {
   }
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Security</p><h2>Login history</h2><p class="lead">This is the audit trail of past sign-ins and security activity.</p></div>
+      <div><p class="eyebrow">Security</p><h2>Login history</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="activity-list">
@@ -8086,7 +8084,7 @@ function openSecurityCentreModal() {
   const pct = Math.round((active / signals.length) * 100);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Security Centre</p><h2>Your account protection</h2><p class="lead">Everything keeping your wallet safe, in one place.</p></div>
+      <div><p class="eyebrow">Security Centre</p><h2>Your account protection</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="security-score" aria-label="Security score">
@@ -8183,7 +8181,7 @@ function openBiometricInfoModal() {
 function openActiveSessionsModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Security</p><h2>Active session</h2><p class="lead">Where you are signed in right now.</p></div>
+      <div><p class="eyebrow">Security</p><h2>Active session</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="activity-list">
@@ -8343,7 +8341,7 @@ function openWhyTrustModal() {
   const signedIn = Boolean(state.auth?.accessToken);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Security &amp; Privacy</p><h2>Why trust TitoPay?</h2><p class="lead">Plain answers about how your money and information are protected.</p></div>
+      <div><p class="eyebrow">Security &amp; Privacy</p><h2>Why trust TitoPay?</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="activity-list">
@@ -8406,7 +8404,7 @@ async function openDeviceManagementModal() {
   }
   openModal(`
       <div class="modal-head">
-      <div><p class="eyebrow">Security</p><h2>Device sessions</h2><p class="lead">These are active or recently trusted devices linked to this TitoPay profile.</p></div>
+      <div><p class="eyebrow">Security</p><h2>Device sessions</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="activity-list">
@@ -8858,7 +8856,7 @@ async function submitProfileDetails(data) {
 function openAccountActivityModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Account</p><h2>Unread Messages</h2><p class="lead">Notifications live here together with support updates, chat alerts, devices and login history.</p></div>
+      <div><p class="eyebrow">Account</p><h2>Unread Messages</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="settings-list">
@@ -9729,7 +9727,7 @@ function openTransactionFailureModal(message, error = null) {
   const refused = error ? isPermanentServiceRefusal(error) : false;
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Not confirmed</p><h2>Transaction not confirmed</h2></div>
+      <div><h2>Transaction not confirmed</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="failure-panel" aria-label="Transaction failure details">
@@ -10180,7 +10178,7 @@ async function openWithdrawModal(service) {
   }
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Withdraw</p><h2>Withdraw funds</h2><p class="lead">Withdrawals are paid to your bank by Peach Payments after wallet checks and confirmation.</p></div>
+      <div><h2>Withdraw funds</h2><p class="lead">Withdrawals are paid to your bank by Peach Payments after wallet checks and confirmation.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid money-form" data-form="transaction">
@@ -12588,7 +12586,7 @@ function openReceiptModal(receiptId) {
   }
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Wallet Receipt</p><h2>Receipt</h2><p class="lead">Secure TitoPay payment record.</p></div>
+      <div><p class="eyebrow">Wallet Receipt</p><h2>Receipt</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${receiptHtml(receipt)}
@@ -12712,7 +12710,7 @@ function openWalletReceiptsModal() {
   const merchants = Array.from(new Set(titoPayReceipts().map((item) => item.merchantName).filter(Boolean)));
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Wallet</p><h2>Receipts</h2><p class="lead">Search, filter, open and share TitoPay receipts.</p></div>
+      <div><p class="eyebrow">Wallet</p><h2>Receipts</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="receipt-filters">
@@ -12731,7 +12729,7 @@ function openWalletReceiptsModal() {
 function openShareTitoPayModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Invite someone</p><h2>Share TitoPay</h2><p class="lead">Choose how you would like to share the TitoPay app.</p></div>
+      <div><p class="eyebrow">Invite someone</p><h2>Share TitoPay</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="profile-feature-grid" aria-label="Share TitoPay options">
@@ -12923,7 +12921,6 @@ function openStatementsModal() {
       <div>
         <p class="eyebrow">Statements</p>
         <h2>${isBusiness ? "Business statements" : "Wallet statements"}</h2>
-        <p class="lead">Choose a period, check the summary, then download it as a PDF statement or a CSV export.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -15144,7 +15141,7 @@ function openSendGiftModal(service) {
   const occasions = ["Birthday", "Wedding", "Graduation", "Thank You", "Anniversary", "Christmas", "Eid", "Mother's Day", "Father's Day", "Valentine's Day", "Congratulations", "Custom"];
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Send Gift</p><h2>Send a digital gift</h2><p class="lead">Pick the occasion, the amount and a message. You will see everything before it sends.</p></div>
+      <div><h2>Send a digital gift</h2><p class="lead">Pick the occasion, the amount and a message. You will see everything before it sends.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid stable-service-form gift-form" data-form="transaction">
@@ -16187,7 +16184,7 @@ async function downloadMarketingPosterPdf() {
 function openTipQrModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Tip</p><h2>Generate tip QR</h2><p class="lead">Create a TitoPay Tip QR, share it, and track tips in transaction history.</p></div>
+      <div><h2>Generate tip QR</h2><p class="lead">Create a TitoPay Tip QR, share it, and track tips in transaction history.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="receive">
@@ -16213,7 +16210,7 @@ function openTipQrModal() {
 function openQrPayModal(existing = {}) {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">QR Pay</p><h2>Pay a TitoPay QR</h2><p class="lead">Scan a TitoPay QR code or enter the QR ID manually.</p></div>
+      <div><h2>Pay a TitoPay QR</h2><p class="lead">Scan a TitoPay QR code or enter the QR ID manually.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <form class="form-grid" data-form="qr-pay">
@@ -16964,7 +16961,7 @@ function expireMerchantSale() {
   if (state.merchantSale) state.merchantSale.status = "expired";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Sale expired</p><h2>QR code expired</h2><p class="lead">This payment QR has expired. Start a new sale to generate a fresh QR.</p></div>
+      <div><p class="eyebrow">Sale expired</p><h2>QR code expired</h2><p class="lead">Start a new sale to generate a fresh QR.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="empty-state compact-state">${icon("qr")}<strong>Unable to complete sale</strong><p>No payment was received before the 5-minute timer ended.</p></section>
@@ -17139,7 +17136,7 @@ function openSalesHistoryModal() {
   state.receiptFilters.range = previousRange || "all";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Merchant</p><h2>Sales History</h2><p class="lead">Tap a sale to open its receipt.</p></div>
+      <div><p class="eyebrow">Merchant</p><h2>Sales History</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${receiptListItems(titoPayReceipts().filter((item) => item.accountType === "business"))}
@@ -17210,7 +17207,7 @@ function openBusinessSalesModal(tab) {
   const active = (key) => (state.businessSales.tab === key ? "primary" : "secondary");
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Business</p><h2>Sales</h2><p class="lead">Money that reached your wallet, reconciled to the cent. Reports, day-by-day data and door staff performance.</p></div>
+      <div><p class="eyebrow">Business</p><h2>Sales</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <div class="auth-actions" role="tablist" aria-label="Sales views">
@@ -17912,7 +17909,7 @@ async function openTitoKidsModal() {
   openModal(`
     <div class="modal-head">
       <button class="icon-btn" type="button" data-action="modal-back" aria-label="Back">${icon("arrow-left")}</button>
-      <div><p class="eyebrow">TitoKids</p><h2>Your family</h2><p class="lead">Money made easier for your family.</p></div>
+      <div><p class="eyebrow">TitoKids</p><h2>Your family</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section data-tk-home><p class="field-hint">Loading your family…</p></section>
@@ -20659,7 +20656,7 @@ function openStockvelInviteModal(id) {
   const code = group.inviteCode || "";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">${esc(group.name)}</p><h2>Invite members</h2><p class="lead">Share the group's invite so people can join.</p></div>
+      <div><p class="eyebrow">${esc(group.name)}</p><h2>Invite members</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${code || url ? `
@@ -20928,7 +20925,6 @@ async function openPersonalTicketsDashboard() {
       <div>
         <p class="eyebrow">TitoPay Tickets</p>
         <h2>What's on</h2>
-        <p class="lead">Verified TitoPay events with secure digital tickets.</p>
       </div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
@@ -22934,7 +22930,7 @@ function renderBusinessTicketingHub() {
   };
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2><p class="lead">Everything for your events, one thing at a time.</p></div>
+      <div><p class="eyebrow">Business Ticketing</p><h2>Events and tickets</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${canCreateFree ? `
@@ -25724,7 +25720,7 @@ function openTitoPayChatUserPreview(user) {
   const accountType = user.accountType === "business" ? "Business" : "Personal";
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Verified TitoPay user</p><h2>Confirm who you are messaging</h2><p class="lead">Check these details before starting the conversation.</p></div>
+      <div><p class="eyebrow">Verified TitoPay user</p><h2>Confirm who you are messaging</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="panel compact-panel chat-user-preview">
@@ -26862,7 +26858,7 @@ function openTitoPayCallHistory() {
   const items = titoPayCallHistory().filter((item) => !thread || item.threadId === thread.id).slice(0, 12);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">TitoPay Call</p><h2>Call history</h2><p class="lead">Recent verified-user call activity.</p></div>
+      <div><p class="eyebrow">TitoPay Call</p><h2>Call history</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${items.length ? `
@@ -26930,7 +26926,7 @@ function openChatbotModal() {
     : ["Failed payment", "Account access", "Security", "Fees", "Top up", "Withdraw", "Send money", "Talk to a human"];
   openModal(`
     <div class="modal-head chatbot-head">
-      <div><p class="eyebrow">TitoPay Assistant</p><h2>${business ? "Business support" : "Personal support"}</h2><p class="lead">Ask a question, choose a quick topic, or request Customer Care.</p></div>
+      <div><p class="eyebrow">TitoPay Assistant</p><h2>${business ? "Business support" : "Personal support"}</h2></div>
       <div class="chatbot-head-actions">
         <button class="icon-btn" type="button" data-action="chat-blue-toggle" aria-pressed="${chatBlueBackgroundOn()}" aria-label="Toggle the blue chat background">${icon("chat")}</button>
         <button class="icon-btn" type="button" data-action="support-refresh" aria-label="Refresh conversation">${icon("refresh")}</button>
@@ -28200,7 +28196,7 @@ function settleRewardAdsCarousel(host) {
 async function openRewardsModal() {
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Rewards</p><h2>Offers &amp; Rewards</h2><p class="lead">Promotions, discounts and coupon codes, published in-app by TitoPay. We never send offers over WhatsApp or ask for your PIN to claim one.</p></div>
+      <div><h2>Offers &amp; Rewards</h2><p class="lead">Promotions, discounts and coupon codes, published in-app by TitoPay. We never send offers over WhatsApp or ask for your PIN to claim one.</p></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <div class="rewards-list" data-rewards-list>
@@ -28661,7 +28657,7 @@ function openReceivedGiftModal(noticeId) {
            split the sender's screen uses ("Send Gift" above "You sent a
            gift"). Saying "You've received a gift" in both places read as a
            stutter in the first preview. -->
-      <div><p class="eyebrow">Gift</p><h2>Gift received</h2></div>
+      <div><h2>Gift received</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="gift-receipt-card" data-gift-motion="${esc(giftMotionFamily(occasion))}" role="note" aria-label="Gift received">
@@ -28815,7 +28811,7 @@ function openNotificationsModal(options = {}) {
   const unread = unreadNotificationCount();
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Notification Centre</p><h2>Notifications</h2><p class="lead">Payments, chat, support and security -- everything that happened on your account.</p></div>
+      <div><p class="eyebrow">Notification Centre</p><h2>Notifications</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="notification-inbox-summary">
@@ -29148,7 +29144,7 @@ function openRecipientVerificationResults(results) {
   const missing = results.filter((item) => (!item.result || !item.result.registered) && !(item.result && item.result.lookupFailed));
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Recipient check</p><h2>TitoPay user verification</h2><p class="lead">Confirm the user before sending money, requesting payment or starting a chat.</p></div>
+      <div><p class="eyebrow">Recipient check</p><h2>TitoPay user verification</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     ${verified.length ? `
@@ -29367,7 +29363,7 @@ function openProfileVerificationModal() {
   const ficaStatus = ficaDisplayStatus(user.ficaStatus || user.fica_status);
   openModal(`
     <div class="modal-head">
-      <div><p class="eyebrow">Profile</p><h2>Profile & Verification</h2><p class="lead">Manage your TitoPay profile details and verification status.</p></div>
+      <div><h2>Profile & Verification</h2></div>
       <button class="icon-btn" data-close aria-label="Close">${icon("x")}</button>
     </div>
     <section class="settings-list">
