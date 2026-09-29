@@ -6687,7 +6687,6 @@ function resetQuickServices() {
 }
 function authView() {
   const isBusiness = state.accountType === "business";
-  const previewServices = landingPreviewServices();
   return `
     <main class="screen auth-screen landing-flow ${isBusiness ? "business-landing" : ""}" data-landing-swipe>
       <header class="topbar">
@@ -6710,49 +6709,51 @@ function authView() {
         <h1>${isBusiness ? "Accept payments. Grow your business." : "Send, pay and get paid."}</h1>
       </section>
 
-      <section class="trust-strip" aria-label="TitoPay trust features">
-        ${trustItem("wallet", isBusiness ? "Business Wallet" : "One Wallet")}
-        ${trustItem(isBusiness ? "sale" : "check-circle", isBusiness ? "Sales & Payouts" : "No Monthly Fees")}
-        ${/* THE THIRD CELL, AND THE HISTORY BEHIND IT.
-              Personal reads "Instant Transfers", which is checkable: a wallet
-              transfer returns status "completed" in the same request
-              (transaction-service.js).
+      ${/* WHAT THIS SCREEN NO LONGER SAYS, AND WHY.
+            Counted, the landing carried 43 words, 13 things to tap, 17 cards
+            and icon circles, and the brand blue in seven places. Everything
+            was drawn at the same weight, so nothing led: six identical white
+            tiles above two buttons above a third call to action.
 
-              Business reads "Secure Payments" at the operator's decision. The
-              concern raised against it, recorded here rather than argued again:
-              it is the one line on this strip a reader cannot verify, beside two
-              they can, and on a platform where identity is not yet verified
-              against an authoritative source it is a promise rather than a fact.
-              That is the operator's call to make and it has been made.
+            Two sections are gone.
 
-              It also wraps to two lines at 320, 360, 390 and 430 - measured -
-              while "Business Wallet" and "Sales & Payouts" hold one line from
-              390 up. If the ragged row comes up again, that is why; the
-              one-line candidates measured at the time were Sale Receipts, Free
-              to Open, No Setup Cost, Paid Instantly and QR Payments. */""}
-        ${trustItem("shield", isBusiness ? "Secure Payments" : "Instant Transfers")}
-      </section>
+            THE TRUST STRIP - One Wallet / No Monthly Fees / Instant Transfers,
+            and the business row ending in Secure Payments. The note that stood
+            here recorded an operator decision about that last cell, so for the
+            record it is not overruled, only unpublished: the strip is off the
+            landing, and if one of those lines is worth making it belongs
+            somewhere it can be read rather than in a row of three competing
+            for the same glance.
 
-      <section class="service-grid preview-grid">
-        ${previewServices.length ? previewServices.map((service) => serviceTile(service)).join("") : serviceEmptyState()}
-      </section>
+            THE SIX PREVIEW TILES. They answered "what can it do" by listing
+            six of twenty-eight services, which is the question the app itself
+            answers the moment somebody is inside it. They also supplied twelve
+            of the seventeen icon circles and every one of the tiles that kept
+            appearing through open sheets on iOS.
 
-      <section class="auth-actions">
-        <button class="btn primary" data-auth-tab="login">${icon("lock")} Sign in</button>
-        <button class="btn secondary" data-auth-tab="register">${isBusiness ? "Create Business Account" : "Create Account"}</button>
+            What is left is what a person actually has to decide: which kind of
+            account, and whether to open one or sign in. The QR band stays,
+            quietly, because paying by QR without an account is the thing
+            TitoPay does that its references do not. */""}
+
+      <section class="auth-actions landing-actions">
+        <button class="btn primary" data-auth-tab="register">${isBusiness ? "Create Business Account" : "Create Account"}</button>
+        <button class="btn secondary" data-auth-tab="login">Sign in</button>
       </section>
 
       <footer class="scan-card landing-cta-footer" aria-label="${isBusiness ? "Accept payment" : "Scan to pay"}">
         <span class="icon-bubble">${icon(isBusiness ? "qr" : "scan")}</span>
         <div class="landing-cta-copy">
-          ${/* EYEBROW, ONE LINE, BUTTON. The heading here read "Scan To Pay"
+          ${/* ONE LINE AND A BUTTON. The heading here read "Scan To Pay"
                 directly above a button reading "Scan to pay" - the same three
                 words twice, in a band whose eyebrow had already said QR. The
-                lead says what the button does not, so it stays.
-                The bullet list went with it. It was hidden on every phone
+                bullet list went at the same time; it was hidden on every phone
                 width by four separate rules and only ever rendered on tablet
-                and desktop, where it repeated the lead in three parts. */""}
-          <p class="landing-cta-eyebrow">TitoPay QR</p>
+                and desktop, where it repeated the lead in three parts.
+                The eyebrow has now gone too: "TitoPay QR" above a line about
+                paying from your wallet, above a button that says scan, was the
+                same idea three times. The lead says what the button does not,
+                so it is the one that stays. */""}
           <p class="landing-cta-lead">${isBusiness ? "Take payment straight into your business wallet." : "Pay straight from your wallet, in seconds."}</p>
         </div>
         <button class="btn primary landing-cta-btn" data-auth-tab="login" data-post-login="qr" aria-label="${isBusiness ? "Sign in to show your payment QR" : "Sign in to scan a TitoPay QR"}">${icon(isBusiness ? "qr" : "scan")} ${isBusiness ? "Show my QR" : "Scan to pay"}</button>

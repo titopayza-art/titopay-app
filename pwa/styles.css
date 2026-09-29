@@ -11382,10 +11382,23 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
    account type scrolling while the other sat fixed.
 
    This block replaces the guessing for every one-column landing (phones and
-   portrait tablets): the container is the dynamic viewport, the service grid
-   is the one flexible row, and the tiles shrink into whatever height is left
-   after the insets take theirs. The page cannot overflow, so it cannot
-   scroll; the cap keeps tiles card-shaped when there is room to spare.
+   portrait tablets): the container is the dynamic viewport, ONE row is
+   flexible, and that row absorbs whatever the insets leave. The page cannot
+   overflow, so it cannot scroll.
+
+   THE FLEXIBLE ROW IS NOW THE HERO. It used to be the service grid, and the
+   tiles shrank into the space left over. The trust strip and those tiles have
+   since come off the landing, so the six rows became four -- bar, hero, cta,
+   band -- and the row template has to say four or the two it no longer has
+   are still counted. Left at six, the grid handed the slack to a row with
+   nothing in it and dropped four hundred pixels of empty ground between Sign
+   in and the QR band.
+
+   The hero is the right row to carry it: with the tiles gone the headline is
+   what holds the screen, and a headline centred in the space above the
+   actions is the composition. Everything else about the construction is
+   unchanged, including the height-band fallbacks below, which still release
+   the fixed layout on screens too short for it.
    --------------------------------------------------------------------------- */
 @media (max-width: 899px) {
   body.landing-static .landing-flow.auth-screen,
@@ -11393,7 +11406,7 @@ body:has(.install-float-wrap.public-install) .business-landing .scan-card.landin
     height: 100dvh;
     min-height: 100svh;
     align-content: stretch;
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
     overflow: hidden;
   }
 
@@ -16716,5 +16729,107 @@ html[data-theme=night] .tp-star{color:rgba(232,238,255,.26)}
     transform: none;
     will-change: auto;
     backdrop-filter: none;
+  }
+}
+
+/* ==========================================================================
+   The landing screen after the trust strip and the preview tiles came off
+   ==========================================================================
+   Counted before the change: 43 words, 13 things to tap, 17 cards and icon
+   circles, the brand blue in seven places, every element at the same weight.
+   After: 21 words, 6 things to tap, one icon.
+
+   These rules carry body.landing-static because that is the layout that
+   actually runs. The first attempt at this did not, lost to the existing
+   rules, and was only caught by measuring the rendered page rather than
+   reading the stylesheet - the buttons stayed side by side and the band
+   stayed 444px tall, half the screen.
+
+   The desktop layout mattered more. At 900px and up the landing is a
+   two-column grid whose right-hand column WAS the preview tiles:
+
+       "bar   bar"
+       "hero  grid"
+       "trust grid"
+       "cta   grid"
+
+   With the tiles gone that column has nothing in it and two of the four rows
+   are empty, so the named areas are rewritten below rather than left to
+   collapse into a half-empty frame. */
+
+/* ---- Phones and small tablets ---- */
+@media (max-width: 899px) {
+  /* Four rows: bar, hero, actions, band. The HERO takes the slack, not the
+     band. Putting it on the last row settled the band at the foot correctly
+     but left four hundred pixels of empty ground between Sign in and it,
+     which reads as a page that did not finish loading. With the slack in the
+     hero the headline centres in the space above the actions, the actions sit
+     directly over the band, and the screen composes. */
+  /* Nothing is left to carry the screen but the type, so the headline grows
+     by about half and takes the room the tiles used to occupy. There is no
+     photograph behind it - that is a later decision, and this has to stand up
+     without one. */
+  body.landing-static .landing-flow .landing-hero {
+    align-self: center;
+    padding-block: clamp(14px, 5vw, 32px);
+  }
+
+  body.landing-static .landing-flow .landing-hero h1 {
+    margin-bottom: 0;
+    font-size: clamp(2.25rem, 9.5vw, 3rem);
+    line-height: 1.04;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+  }
+
+  body.landing-static .landing-flow .landing-hero .segment {
+    margin-bottom: clamp(18px, 5vw, 28px);
+  }
+
+  /* Two buttons of equal width side by side read as equal choices, and they
+     are not: opening an account is what this screen is for, and signing in is
+     what the people who already have one come back to. Stacked, the first is
+     simply first. */
+  body.landing-static .landing-flow .auth-actions {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    align-self: start;
+  }
+}
+
+/* ---- One column from 900px up, now that the second one is empty ---- */
+@media (min-width: 900px) {
+  body.landing-static .landing-flow.auth-screen,
+  body.landing-static .business-landing.auth-screen {
+    max-width: min(640px, 92vw);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "bar"
+      "hero"
+      "cta";
+    align-content: center;
+  }
+
+  body.landing-static .landing-flow .landing-hero {
+    text-align: center;
+    align-self: center;
+  }
+
+  body.landing-static .landing-flow .segment {
+    margin-inline: auto;
+  }
+
+  body.landing-static .landing-flow .landing-hero h1 {
+    font-size: clamp(2.6rem, 4.6vw, 3.4rem);
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    margin-bottom: 0;
+  }
+
+  body.landing-static .landing-flow .auth-actions {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    max-width: 380px;
+    margin-inline: auto;
   }
 }
