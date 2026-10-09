@@ -82,7 +82,7 @@ for (const [file, out] of [["account.html", "account.html"], ["organiser.html", 
 
 // ---- api/
 const API = path.join(OUT, "api");
-for (const item of ["index.php", "bootstrap.php", "cron.php", "schema.sql", "lib", "routes", ".htaccess"]) copy(path.join(ROOT, "php", "api", item), path.join(API, item));
+for (const item of ["index.php", "bootstrap.php", "cron.php", "schema.sql", "lib", "routes", "wallet", ".htaccess"]) copy(path.join(ROOT, "php", "api", item), path.join(API, item));
 const config = fs.readFileSync(path.join(ROOT, "php", "api", "config.php"), "utf8");
 if (!config.includes("{{ADMIN_PASSWORD_HASH}}")) throw new Error("config.php placeholder missing");
 fs.writeFileSync(path.join(API, "config.php"), config.replace("{{ADMIN_PASSWORD_HASH}}", hash));

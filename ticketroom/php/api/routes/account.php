@@ -68,3 +68,18 @@ foreach (['POST /api/me/payment-methods/titopay/link', 'POST /api/me/payment-met
     [$m, $p] = explode(' ', $r);
     route($m, $p, function () { require_auth(); throw not_available(); });
 }
+
+// ---- Apple Wallet and Google Wallet ----------------------------------------------
+route('GET', '/api/me/tickets/:id/wallet/apple', function ($a) {
+    $u = require_auth();
+    limit('walletpass', 60, 3600, $u['id']);
+    if (!wallet_apple_ready()) throw not_available();
+    $t = wallet_ticket($u, $a['id']);
+    return raw_out(wallet_apple_pkpass($t), 'application/vnd.apple.pkpass', 200, ['Content-Disposition' => 'attachment; filename="ticketroom-' . $t['code'] . '.pkpass"', 'Cache-Control' => 'no-store']);
+});
+route('GET', '/api/me/tickets/:id/wallet/google', function ($a) {
+    $u = require_auth();
+    limit('walletpass', 60, 3600, $u['id']);
+    if (!wallet_google_ready()) throw not_available();
+    return ['url' => wallet_google_url(wallet_ticket($u, $a['id']))];
+});

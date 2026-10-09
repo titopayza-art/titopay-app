@@ -418,6 +418,10 @@ route('POST', '/api/organiser/:orgId/events', function ($a) {
     $b = check(body(), org_event_shape());
     if ($b['endsAt'] <= $b['startsAt']) throw bad('The event must end after it starts.', ['endsAt' => 'Must be after the start.']);
     org_assert_upload($org['id'], $b['imageUploadId'] ?? null);
+    // The same event twice (same name, same start) is almost always a double
+    // click or a copy made by mistake; listings and tickets would be split.
+    $dup = val("SELECT id FROM events WHERE organiser_id = ? AND lower(trim(title)) = lower(trim(?)) AND starts_at = ? AND status NOT IN ('cancelled')", [$org['id'], $b['title'], $b['startsAt']]);
+    if ($dup) throw conflict('You already have an event with this name starting at this time. Open it from My events instead of creating it again.', 'duplicate_event', ['eventId' => $dup]);
     $id = tx(function () use ($u, $org, $b) {
         $now = now_iso();
         $row = ['id' => uuid(), 'organiser_id' => $org['id'], 'slug' => org_slugify($b['title']) . '-' . strtolower(random_code(4)), 'created_by' => $u['id'], 'created_at' => $now, 'updated_at' => $now];

@@ -11,6 +11,7 @@ require TR_APP . '/lib/site.php';
 require TR_APP . '/lib/messaging.php';
 require TR_APP . '/lib/domain.php';
 require TR_APP . '/lib/qr.php';
+require TR_APP . '/lib/wallet.php';
 
 // The data folder holds everything the site creates for itself: the
 // database, uploaded posters, the signing keys and your own settings. It goes

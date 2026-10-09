@@ -102,6 +102,57 @@ const download = async (p, click) => { const [d] = await Promise.all([p.waitForE
     assert.deepEqual([...opng.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
     step("organiser downloads the event QR code");
 
+    // A customer likes and shares an event, and saves their ticket.
+    const fan = await page(browser, { email: "sipho@example.co.za", password: "fan-password-123" }, { width: 390, height: 844 });
+    await fan.goto(`${BASE}/`);
+    await fan.locator(".event-card", { hasText: "Free Jazz in the Park" }).first().click();
+    const like = fan.locator(".like-btn");
+    await like.click();
+    await fan.locator(".like-btn.on").waitFor();
+    assert.match(await like.innerText(), /1/);
+    const wa = await fan.locator('.share-bar a[data-share="WhatsApp"]').getAttribute("href");
+    assert.match(decodeURIComponent(wa), /^https:\/\/wa\.me\/\?text=.*\/events\/free-jazz-in-the-park/);
+    await fan.goto(`${BASE}/account#/saved`);
+    await fan.getByRole("link", { name: "Free Jazz in the Park" }).waitFor();
+    await fan.goto(`${BASE}/account#/tickets`);
+    const tpng = await download(fan, () => fan.getByRole("button", { name: "Save ticket image" }).first().click());
+    assert.deepEqual([...tpng.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+    assert.equal(await fan.locator(".wallet-btn").count(), 0, "wallet buttons hidden until the wallet accounts are set up");
+    const visitor = await page(browser);
+    await visitor.goto(fan.url().replace(/account.*/, "events/" + (await (await visitor.request.get(`${BASE}/api/public/events`)).json()).events.find((e) => e.title === "Free Jazz in the Park").slug));
+    await visitor.locator(".like-btn").click();
+    await visitor.locator("dialog").getByText(/Sign in to like events/).waitFor();
+    step("like, share link, saved events, ticket image; signed-out likes ask to sign in");
+
+    // Fake and duplicate tickets at the gate: the organiser scans as gate staff.
+    const sign = (code) => execFileSync("php", ["-r", `require '${ROOT}/api/bootstrap.php'; tr_load(); echo qr_payload(row('SELECT code, qr_version FROM tickets WHERE code = ?', [$argv[1]]));`, code]).toString();
+    const csrf = (await (await o.request.get(`${BASE}/api/auth/me`)).json()).csrfToken;
+    const evs = (await (await o.request.get(`${BASE}/api/staff/events`)).json()).events;
+    const evId = evs.find((e) => e.title === "Free Jazz in the Park").id;
+    const scan = async (payload) => (await (await o.request.post(`${BASE}/api/staff/scan`, { data: { eventId: evId, payload }, headers: { "x-csrf-token": csrf } })).json()).outcome;
+    const fanTickets = execFileSync("php", ["-r", `require '${ROOT}/api/bootstrap.php'; tr_load(); echo json_encode(array_column(rows("SELECT t.code FROM tickets t JOIN users u ON u.id = t.owner_user_id WHERE u.email = 'sipho@example.co.za' AND t.status = 'valid'"), 'code'));`]).toString();
+    const code = JSON.parse(fanTickets)[0];
+    const real = sign(code);
+    const forged = real.slice(0, -1) + (real.endsWith("A") ? "B" : "A");
+    assert.equal(await scan(forged), "invalid", "altered QR refused");
+    assert.equal(await scan("TR1.ABCDEFGHJK.1.aaaaaaaaaaaaaaaaaaaaaa"), "invalid", "made-up QR refused");
+    assert.equal(await scan("ZZZZZZZZZZ"), "invalid", "made-up typed code refused");
+    const outcomes = await Promise.all(Array.from({ length: 10 }, () => scan(real)));
+    assert.equal(outcomes.filter((x) => x === "admitted").length, 1, `exactly one admit from 10 phones at once: ${outcomes}`);
+    assert.equal(outcomes.filter((x) => x === "already_used").length, 9);
+    assert.equal(await scan(real), "already_used", "second scan refused");
+    step("fake and altered QR codes refused; 10 phones at once let one person in once");
+
+    // The same event twice is refused.
+    const ocsrf = csrf;
+    const orgId = (await (await o.request.get(`${BASE}/api/auth/me`)).json()).user.organisers[0].id;
+    const ev1 = { title: "Twice Test", category: "music", venueName: "Hall", city: "Soweto", startsAt: "2027-03-01T17:00:00.000Z", endsAt: "2027-03-01T21:00:00.000Z", capacity: 100 };
+    assert.equal((await o.request.post(`${BASE}/api/organiser/${orgId}/events`, { data: ev1, headers: { "x-csrf-token": ocsrf } })).status(), 201);
+    const again = await o.request.post(`${BASE}/api/organiser/${orgId}/events`, { data: ev1, headers: { "x-csrf-token": ocsrf } });
+    assert.equal(again.status(), 409);
+    assert.equal((await again.json()).error.code, "duplicate_event");
+    step("the same event cannot be created twice");
+
     // Locked password page: secret word, one wrong word locks it, staff accounts only.
     const unlock = path.join(ROOT, "data", "unlock-reset");
     assert.equal((await fetch(`${BASE}/set-password.php`)).status, 404);

@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, qrPng } from "/assets/core.js";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -34,11 +34,42 @@ function ticketCard(t, offline = false) {
         <dt>Where</dt><dd>${t.venue_name}, ${t.city}</dd><dt>Ticket</dt><dd>${t.ticket_type}</dd><dt>Holder</dt><dd>${t.holder_name || "—"}</dd><dt>Order</dt><dd class="mono">${t.order_reference}</dd></dl>
         ${t.pending_transfer ? html`<p class="callout warn mt small">Transfer to <strong>${t.pending_transfer.toEmail}</strong> is waiting to be accepted. <a href="#/transfers">Manage</a></p>` : ""}
         ${!offline && live ? html`<div class="row mt no-print">${t.transfers_enabled && !t.pending_transfer && new Date(t.starts_at) > new Date() ? html`<button class="btn btn-ghost btn-sm" data-transfer="${t.id}">Transfer</button>` : ""}
-          <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>` : ""}
+          <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
+          ${t.status === "valid" ? html`<div class="wallet-row no-print" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}"></div>` : ""}` : ""}
       </div></div>
     <div class="t-qr">${live && qrSrc ? html`<img src="${qrSrc}" alt="QR code for ticket ${t.code}" width="200" height="200">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}
       <span class="code mono">${t.code}</span>${t.status === "used" ? html`<span class="small muted">Scanned ${fmtDateTime(t.admitted_at)}</span>` : live ? html`<span class="tiny muted center">Show this at the gate. The first scan admits.</span>` : ""}</div>
   </article>`;
+}
+
+// Wallet buttons under each ticket, matched to the phone: Apple Wallet on an
+// iPhone or iPad, Google Wallet on Android, both on a computer. They show only
+// once TicketRoom's wallet accounts are set up. "Save ticket image" always
+// works: a picture of the QR code for the phone's photo gallery.
+const DEVICE = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) ? "apple"
+  : /Android/i.test(navigator.userAgent) ? "google" : "desktop";
+async function walletButtons() {
+  const f = await features();
+  for (const box of $$("[data-wallet]")) {
+    const id = box.dataset.wallet;
+    const apple = f.walletApple && DEVICE !== "google";
+    const google = f.walletGoogle && DEVICE !== "apple";
+    render(box, html`${apple ? html`<a class="wallet-btn apple" href="/api/me/tickets/${id}/wallet/apple">${raw('<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18" stroke="currentColor" stroke-width="2"/></svg>')} Add to Apple Wallet</a>` : ""}
+      ${google ? html`<button type="button" class="wallet-btn google" data-gw>${raw('<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18" stroke="currentColor" stroke-width="2"/></svg>')} Add to Google Wallet</button>` : ""}
+      <button type="button" class="btn btn-ghost btn-sm" data-img>Save ticket image</button>`);
+    $("[data-gw]", box)?.addEventListener("click", async () => {
+      try { location.href = (await get(`/api/me/tickets/${id}/wallet/google`)).url; } catch (err) { toast(err.message, "bad"); }
+    });
+    $("[data-img]", box).addEventListener("click", async () => {
+      try {
+        const svg = await fetch(`/api/me/tickets/${id}/qr.svg`, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
+        const png = await qrPng(svg, { size: 1024, caption: `${box.dataset.title} · ${box.dataset.code}` });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(png); a.download = `ticket-${box.dataset.code}.png`; document.body.append(a); a.click(); a.remove();
+        toast("Saved. Show this picture at the gate if you have no signal.", "good");
+      } catch (err) { toast(err.message, "bad"); }
+    });
+  }
 }
 
 async function tickets() {
@@ -59,6 +90,7 @@ async function tickets() {
     ${past.length ? html`<h2 class="mt-lg">Past & inactive</h2><div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Ticket</th><th>Status</th></tr></thead><tbody>
       ${past.map((t) => html`<tr><td>${t.title}</td><td>${fmtDate(t.starts_at)}</td><td class="mono">${t.code}</td><td>${badge(t.status)}</td></tr>`)}</tbody></table></div>` : ""}`);
   $$("[data-print]").forEach((b) => b.addEventListener("click", () => window.print()));
+  walletButtons();
   $$("[data-transfer]").forEach((b) => b.addEventListener("click", () => transferDialog(b.dataset.transfer)));
   $$("[data-rename]").forEach((b) => b.addEventListener("click", () => {
     const d = dialog("Ticket holder", html`<form class="stack"><div class="field"><label for="hn">Name on ticket</label><input id="hn" name="holderName" value="${b.dataset.name}" required maxlength="120"></div><button class="btn btn-dark">Save</button></form>`);

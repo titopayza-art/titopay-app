@@ -468,3 +468,8 @@ body.venue main#main { min-height: 0; }
 .likes-count { display: inline-flex; align-items: center; gap: 4px; }
 .likes-count .ico { color: var(--bad); fill: currentColor; }
 .footer-social { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; }
+
+/* ---------- wallet buttons ---------- */
+.wallet-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.wallet-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 10px 16px; border-radius: 12px; background: #000; color: #fff; font: inherit; font-weight: 700; font-size: .92rem; text-decoration: none; border: 0; cursor: pointer; }
+.wallet-btn:hover { background: #222; }

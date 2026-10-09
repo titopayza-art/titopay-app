@@ -167,6 +167,10 @@ router.post("/:orgId/events", wrap(async (req, res) => {
   const b = check(req.body, eventShape());
   if (new Date(b.endsAt) <= new Date(b.startsAt)) throw bad("The event must end after it starts.", { endsAt: "Must be after the start." });
   await assertUpload(organiser.id, b.imageUploadId);
+  // The same event twice (same name, same start) is almost always a double
+  // click or a copy made by mistake; listings and tickets would be split.
+  const { rows: dup } = await db.query("SELECT id FROM events WHERE organiser_id = $1 AND lower(trim(title)) = lower(trim($2)) AND starts_at = $3 AND status <> 'cancelled'", [organiser.id, b.title, b.startsAt]);
+  if (dup.length) throw conflict("You already have an event with this name starting at this time. Open it from My events instead of creating it again.", "duplicate_event", { eventId: dup[0].id });
   const cols = Object.keys(b).filter((k) => b[k] !== undefined);
   const { rows } = await db.query(
     `INSERT INTO events (organiser_id, slug, created_by, ${cols.map((k) => COLS[k]).join(", ")})
