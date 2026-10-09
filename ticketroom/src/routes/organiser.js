@@ -96,8 +96,14 @@ router.get("/:orgId/members", wrap(async (req, res) => {
   res.json({ members: rows });
 }));
 
-router.post("/:orgId/members", wrap(async (req, res) => {
-  await organiserAccess(req.user, req.params.orgId, ["owner"]);
+// Inviting people (team members, scanners) sends email from hello@, so it
+// waits until TicketRoom has approved the organiser.
+function requireApproved(org) {
+  if (org.status !== "approved") throw conflict("Your organiser account is waiting for approval. You can add people once TicketRoom has approved it.", "organiser_not_approved");
+}
+
+router.post("/:orgId/members", limit("orgmember", 30, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  requireApproved((await organiserAccess(req.user, req.params.orgId, ["owner"])).organiser);
   const b = check(req.body, { email: r.email(), role: r.oneOf(["manager", "marketing", "finance", "viewer"]) });
   const { rows } = await db.query("SELECT id FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
   if (!rows[0]) throw notFound("No TicketRoom account uses that email. Ask them to sign up first.");
@@ -208,6 +214,13 @@ router.patch("/:orgId/events/:eventId", wrap(async (req, res) => {
     `UPDATE events SET ${keys.map((k, i) => `${COLS[k]} = $${i + 2}`).join(", ")}, updated_at = now() WHERE id = $1 RETURNING *`,
     [event.id, ...keys.map((k) => b[k])]);
   await audit.record(null, { actor: req.user, action: "event.updated", entityType: "event", entityId: event.id, organiserId: event.organiser_id, details: { fields: keys } });
+  // A live event changed after approval: tell the team so they can look at it.
+  const changed = keys.filter((k) => String(rows[0][COLS[k]] ?? "") !== String(event[COLS[k]] ?? ""));
+  if (event.status === "published" && changed.length) {
+    const s = await require("../modules/site/settings").all();
+    await db.withTx((c) => outbox.enqueue(c, { to: s.support.email, subject: `[TicketRoom] Live event edited: ${event.title}`,
+      body: `${req.user.fullName} (${req.user.email}) edited a published event.\n\nEvent: ${event.title}\nChanged: ${changed.join(", ")}\nPage: ${config.publicBaseUrl}/events/${event.slug}\n\nCheck it in Admin portal → All events; suspend it there if the change is not acceptable.` }));
+  }
   res.json({ event: rows[0] });
 }));
 
@@ -330,7 +343,7 @@ router.get("/:orgId/events/:eventId/attendees", wrap(async (req, res) => {
   if (req.query.format === "csv") {
     const { rows } = await db.query(`${sql} ORDER BY t.holder_name NULLS LAST, t.created_at`, [event.id]);
     await audit.record(null, { actor: req.user, action: "attendees.exported", entityType: "event", entityId: event.id, organiserId: event.organiser_id, details: { rows: rows.length } });
-    const esc = (v) => { const s = String(v ?? ""); return /^[=+\-@]/.test(s) ? `"'${s.replace(/"/g, '""')}"` : `"${s.replace(/"/g, '""')}"`; };
+    const esc = (v) => { const s = String(v ?? ""); return /^[=+\-@\t\r]/.test(s) ? `"'${s.replace(/"/g, '""')}"` : `"${s.replace(/"/g, '""')}"`; };
     const csv = ["code,status,holder_name,ticket_type,order_reference,buyer_email,admitted_at", ...rows.map((x) => [x.code, x.status, x.holder_name, x.ticket_type, x.reference, x.buyer_email, x.admitted_at?.toISOString?.() || ""].map(esc).join(","))].join("\n");
     res.setHeader("Content-Disposition", `attachment; filename="attendees-${event.slug}.csv"`);
     return res.type("text/csv").send(csv);
@@ -389,8 +402,9 @@ router.get("/:orgId/events/:eventId/staff", wrap(async (req, res) => {
 
 // Add a scanner / desk staff member. Someone without an account is created and
 // emailed an invite to set their password (link valid 7 days).
-router.post("/:orgId/events/:eventId/staff", limit("staffadd", 60, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+router.post("/:orgId/events/:eventId/staff", limit("staffadd", 30, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
   const { event, organiser } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
+  requireApproved(organiser);
   const b = check(req.body, { email: r.email(), fullName: r.str({ optional: true, min: 2, max: 120 }), canScan: r.bool({ fallback: true }), canManageTags: r.bool() });
   let { rows } = await db.query("SELECT id FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
   let invited = false;

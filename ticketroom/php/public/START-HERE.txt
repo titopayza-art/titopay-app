@@ -35,9 +35,16 @@ WHAT IS WHERE
   assets/                              Styles, scripts, logo.
   api/                                 The PHP behind /api/. Never shown to
                                        visitors. Do not edit; uploads replace it.
-  data/                                The database, the ticket keys, uploaded
-                                       posters and YOUR settings (data/config.php).
-                                       Locked. Uploads never touch it. BACK IT UP.
+  data/                                Only for the two unlock files below.
+
+  ticketroom-data/  (NEXT TO public_html, not inside it)
+                                       The database, the ticket keys, uploaded
+                                       posters and YOUR settings (config.php).
+                                       The web cannot reach it, and uploads
+                                       never touch it. BACK IT UP. (If the host
+                                       does not allow a folder there, it lives
+                                       in public_html/data instead, locked.
+                                       deploy-check.php shows which.)
   index.php                            Front door, for hosts that send every
                                        request to PHP.
   version.txt                          The build. Open
@@ -62,7 +69,7 @@ Open https://ticketroom.co.za/version.txt
 THE DEPLOY CHECK
 ----------------
 In File Manager, open public_html/data and create an empty file called
-unlock-check (+ File). Then open https://ticketroom.co.za/deploy-check.php
+unlock-check (+ File). Within 30 minutes, open https://ticketroom.co.za/deploy-check.php
 It reports what reached the server, whether the API, clean addresses and
 email work, and what is left over from earlier uploads. Fix anything marked
 "Fix". Delete data/unlock-check when you are done.
@@ -73,18 +80,25 @@ EMAIL
 Until the hello@ mailbox password is set, email goes out through the
 server's built-in mail, which often lands in spam. To fix it:
   1. cPanel → Email Accounts: make sure hello@ticketroom.co.za exists.
-  2. File Manager → public_html/data/config.php → Edit. Put the mailbox
-     password between the quotes on the smtpPass line. Save.
+  2. File Manager → ticketroom-data/config.php (the folder next to
+     public_html) → Edit. Put the mailbox password between the quotes on
+     the smtpPass line. Save.
 For big events (thousands of tickets) use an email relay instead (Amazon
 SES, Mailgun or Brevo): put its details in the same four smtp lines.
 
 
 FORGOTTEN ADMIN PASSWORD
 ------------------------
-In File Manager, open public_html/data and create an empty file called
-unlock-reset. Open https://ticketroom.co.za/set-password.php and set a new
-password. The unlock file is removed again straight away, so nobody else
-can use that page.
+For TicketRoom staff accounts (admin, finance, support):
+  1. In File Manager, open public_html/data and create a file called
+     unlock-reset (+ File). Open it (Edit), type a secret word of your own,
+     at least 8 characters, and save.
+  2. Within 30 minutes, open https://ticketroom.co.za/set-password.php,
+     enter that word, the account email and the new password.
+The page only works while that file exists, for 30 minutes, and with the
+word in it. One wrong word deletes the file. It removes the file itself
+once the password is set. Customers and organisers use "Forgot password?"
+on the sign-in screen instead.
 
 
 OLD FILES FROM EARLIER UPLOADS

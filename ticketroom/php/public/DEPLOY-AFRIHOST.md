@@ -61,10 +61,13 @@ a different user). Right-click → **Change Permissions**.
 cPanel → **Email Accounts** → **Create** → `hello@ticketroom.co.za`. Give it a
 real password and keep it.
 
-Then **File Manager** → `public_html/data/config.php` → **Edit**, and put that
+Then **File Manager** → `ticketroom-data/config.php` (the folder next to
+`public_html`, not inside it) → **Edit**, and put that
 password between the quotes on the `smtpPass` line. Save.
 
-(`data/config.php` appears the first time the site is opened. If it is not
+(`ticketroom-data` and its `config.php` appear the first time the site is
+opened. If your host does not allow that folder, they are in `public_html/data`
+instead; the deploy check in step 5 shows which. If it is not
 there yet, open https://ticketroom.co.za once and look again.)
 
 This matters: the site sends tickets as `hello@ticketroom.co.za`, and email
@@ -133,7 +136,7 @@ section says what is wrong.
 - [ ] The padlock shows, and http:// goes to https://
 - [ ] The temporary admin password has been changed
 - [ ] A test ticket email arrived
-- [ ] cPanel → **Backup** includes `public_html/data` (keep a copy off the server)
+- [ ] cPanel → **Backup** includes `ticketroom-data` (keep a copy off the server)
 
 ## Big matches (up to 100,000 fans)
 
@@ -144,7 +147,7 @@ on a test server; a shared hosting plan is slower.
 
 - **Hosting:** for match week, ask Afrihost for a VPS or their biggest plan.
 - **Email:** hosting mailboxes send a few hundred emails an hour. Use an email
-  relay (Amazon SES, Mailgun or Brevo) in `data/config.php`. Tickets always
+  relay (Amazon SES, Mailgun or Brevo) in `ticketroom-data/config.php`. Tickets always
   show in the fan's account, even before the email arrives.
 - **Scanners:** each scanner opens https://ticketroom.co.za/scan and picks the
   match on Wi-Fi before the gates open, until it says "Offline ready". If the

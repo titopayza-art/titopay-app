@@ -2,13 +2,15 @@
 /**
  * Deploy check: reports what actually reached the server and whether it works.
  *
- * Locked: it only opens while an empty file called unlock-check exists in the
- * data folder (cPanel → File Manager → public_html/data → + File). Delete that
- * file when you are done.
+ * Locked: it only opens while a file called unlock-check exists in
+ * public_html/data (cPanel → File Manager → + File), and only for 30 minutes
+ * after that file was made. Delete it when you are done.
  */
 declare(strict_types=1);
 
 $root = __DIR__;
+clearstatcache();
+if (is_file("$root/data/unlock-check") && filemtime("$root/data/unlock-check") < time() - 1800) @unlink("$root/data/unlock-check");
 if (!is_file("$root/data/unlock-check")) {
     http_response_code(404);
     header('Content-Type: text/html; charset=utf-8');
@@ -66,11 +68,19 @@ if ($data) {
     $add('Data', 'Database', is_file("$data/ticketroom.sqlite"), is_file("$data/ticketroom.sqlite") ? number_format(filesize("$data/ticketroom.sqlite") / 1048576, 1) . ' MB · ' . $state['users'] . ($state['users'] === 1 ? ' account · ' : ' accounts · ') . $state['events'] . ($state['events'] === 1 ? ' event' : ' events') : '');
     $add('Data', 'Ticket signing keys', is_file("$data/keys.php") || !empty(cfg('keys.qr')), 'Back up the data folder: every ticket QR code depends on these keys.');
     $add('Data', 'Administrator', $state['admin'] ? ($state['temp'] ? null : true) : false, $state['admin'] ? $state['admin']['email'] . ($state['temp'] ? ' · still on the temporary password: change it under Admin portal → My password' : '') : 'No administrator found.');
-    if ($data !== "$root/data") $add('Data', 'Data kept from the earlier package', null, "$data is still in use. That is fine; nothing needs moving.");
+    $outsideWeb = !str_starts_with($data . '/', $root . '/');
+    $add('Data', 'Data folder is outside the website folder', $outsideWeb ? true : null, $outsideWeb ? 'The web server cannot reach it at all.'
+        : 'It is inside public_html, protected by .htaccess (the "database cannot be downloaded" check below confirms that works). The host did not allow a folder next to public_html.');
 }
 
 // ---- Through the web, as a visitor sees it
-$base = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
+// Ask our own site, never whatever host the request names: the live address
+// from settings, or this same server when testing locally.
+$reqHost = strtolower((string) parse_url('//' . ($_SERVER['HTTP_HOST'] ?? ''), PHP_URL_HOST));
+$liveHost = strtolower((string) parse_url(function_exists('base_url') ? base_url() : 'https://ticketroom.co.za', PHP_URL_HOST));
+$scheme = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http';
+$base = in_array($reqHost, ['localhost', '127.0.0.1'], true) ? "$scheme://$reqHost:" . (int) ($_SERVER['SERVER_PORT'] ?? 80)
+    : (in_array($reqHost, [$liveHost, "www.$liveHost"], true) ? "$scheme://$liveHost" : (function_exists('base_url') ? base_url() : "https://$liveHost"));
 $fetch = function (string $path) use ($base): array {
     $ctx = stream_context_create(['http' => ['method' => 'GET', 'timeout' => 6, 'ignore_errors' => true, 'follow_location' => 0], 'ssl' => ['verify_peer' => false, 'verify_peer_name' => false]]);
     $body = @file_get_contents($base . $path, false, $ctx);
@@ -92,7 +102,7 @@ $add('Web', 'https', str_starts_with($base, 'https'), str_starts_with($base, 'ht
 if ($data) {
     $mode = mail_mode();
     $add('Email', 'How email is sent', $mode === 'smtp' ? true : null, $mode === 'smtp' ? 'Through the mailbox ' . cfg('mail.smtpUser') . ' at ' . cfg('mail.smtpHost')
-        : "The hosting server's built-in mail. It works, but often lands in spam. Put the hello@ mailbox password in data/config.php.");
+        : "The hosting server's built-in mail. It works, but often lands in spam. Put the hello@ mailbox password in " . $data . "/config.php.");
     if ($mode === 'smtp') { $h = smtp_health(); $add('Email', 'Mail server reachable', $h['ok'], $h['detail']); }
     else $add('Email', 'PHP mail() available', function_exists('mail') && !in_array('mail', array_map('trim', explode(',', (string) ini_get('disable_functions'))), true), '');
 }

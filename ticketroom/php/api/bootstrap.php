@@ -13,16 +13,22 @@ require TR_APP . '/lib/domain.php';
 require TR_APP . '/lib/qr.php';
 
 // The data folder holds everything the site creates for itself: the
-// database, uploaded posters, the signing keys and your own settings. It is
-// public_html/data, locked against the web. Sites installed with an earlier
-// package kept it in ../ticketroom-data or tr-data; that is still used, so
-// nothing is lost.
+// database, uploaded posters, the signing keys and your own settings. It goes
+// next to public_html, in "ticketroom-data", where the web server cannot reach
+// it at all. Only if the host does not allow a folder there does it use
+// public_html/data, which .htaccess locks. A site that already has its data
+// in one of these places (or in tr-data from an earlier package) keeps it there.
 function tr_data_dir(): string
 {
-    foreach ([dirname(TR_ROOT) . '/ticketroom-data', TR_ROOT . '/tr-data'] as $old) {
-        if (is_file("$old/config.php") && is_file("$old/ticketroom.sqlite")) return $old;
+    static $dir = null;
+    if ($dir) return $dir;
+    $outside = dirname(TR_ROOT) . '/ticketroom-data';
+    $inside = TR_ROOT . '/data';
+    foreach ([$outside, TR_ROOT . '/tr-data', $inside] as $d) {
+        if (is_file("$d/.installed") || (is_file("$d/config.php") && is_file("$d/ticketroom.sqlite"))) return $dir = $d;
     }
-    return TR_ROOT . '/data';
+    if ((is_dir($outside) || @mkdir($outside, 0750)) && is_writable($outside)) return $dir = $outside;
+    return $dir = $inside;
 }
 
 function tr_load(): void

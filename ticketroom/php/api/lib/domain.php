@@ -124,6 +124,15 @@ function create_order(array $user, array $in): array
         $wanted = array_sum(array_column($qt['lines'], 'quantity'));
         if ($used + $wanted > $event['capacity']) throw conflict('Not enough tickets left for this event.', 'sold_out');
         if ($qt['total'] > 0) throw new AppError(503, 'payments_not_configured', 'Card payments are not switched on yet. Free tickets are available; paid tickets go on sale soon.');
+        // Free tickets: the per-person limit counts every order this person
+        // already has for the event, so one account cannot take them all.
+        foreach ($qt['lines'] as $l) {
+            $have = (int) val("SELECT COALESCE(SUM(oi.quantity),0) FROM order_items oi JOIN orders o ON o.id = oi.order_id
+                                WHERE o.user_id = ? AND o.event_id = ? AND oi.ticket_type_id = ? AND o.status IN ('pending_payment','paid','paid_unfulfilled','partially_refunded')",
+                [$user['id'], $event['id'], $l['ticketType']['id']]);
+            $max = (int) $l['ticketType']['per_order_limit'];
+            if ($have + $l['quantity'] > $max) throw conflict($have ? "Free tickets are limited to $max × {$l['ticketType']['name']} per person, and you already have $have." : "Free tickets are limited to $max × {$l['ticketType']['name']} per person.", 'limit_exceeded');
+        }
         foreach ($qt['lines'] as $l) {
             if (affected('UPDATE ticket_types SET quantity_held = quantity_held + ? WHERE id = ? AND quantity_sold + quantity_held + ? <= quantity_total', [$l['quantity'], $l['ticketType']['id'], $l['quantity']]) === 0) {
                 throw conflict("Not enough {$l['ticketType']['name']} tickets left.", 'sold_out');

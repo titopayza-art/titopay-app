@@ -650,7 +650,8 @@ router.get("/subscribers", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
   if (req.query.format === "csv") {
     const { rows } = await db.query("SELECT email, status, source, created_at, confirmed_at, unsubscribed_at FROM newsletter_subscribers ORDER BY created_at");
     await audit.record(null, { actor: req.user, action: "subscribers.exported", entityType: "newsletter", details: { rows: rows.length } });
-    const esc = (v) => `"${String(v instanceof Date ? v.toISOString() : v ?? "").replace(/"/g, '""')}"`;
+    // A cell starting with = + - @ (or tab/CR) would run as a formula in Excel.
+    const esc = (v) => { const t = String(v instanceof Date ? v.toISOString() : v ?? "").replace(/"/g, '""'); return /^[=+\-@\t\r]/.test(t) ? `"'${t}"` : `"${t}"`; };
     res.setHeader("Content-Disposition", 'attachment; filename="ticketroom-subscribers.csv"');
     return res.type("text/csv").send(["email,status,source,signed_up,confirmed,unsubscribed", ...rows.map((x) => [x.email, x.status, x.source, x.created_at, x.confirmed_at, x.unsubscribed_at].map(esc).join(","))].join("\n") + "\n");
   }

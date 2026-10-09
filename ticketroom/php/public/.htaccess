@@ -88,6 +88,14 @@ ErrorDocument 404 /404.html
   <FilesMatch "\.(png|jpg|jpeg|webp|svg|ico)$">
     Header set Cache-Control "public, max-age=86400"
   </FilesMatch>
+  # Pages may only run TicketRoom's own scripts and talk to TicketRoom itself,
+  # so injected code could not run or send data anywhere else.
+  <FilesMatch "\.html$">
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    Header set Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=()"
+  </FilesMatch>
+  # Once https works everywhere, remove the # below so browsers always use it.
+  # Header always set Strict-Transport-Security "max-age=31536000"
   Header always set X-Content-Type-Options "nosniff"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
   Header always set X-Frame-Options "SAMEORIGIN"

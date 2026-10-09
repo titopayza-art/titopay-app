@@ -470,7 +470,7 @@ function chatWidget(s) {
     $("[data-cbq]", el)?.addEventListener("click", () => callbackDialog({ source: "chat", message: lastQuestion() }));
     $$("[data-fb]", el).forEach((b) => b.addEventListener("click", () => {
       m.helpful = b.dataset.fb === "1"; save();
-      post(`/api/site/chat/${m.id}/feedback`, { helpful: m.helpful }).catch(() => {});
+      post(`/api/site/chat/${m.id}/feedback`, { helpful: m.helpful, conversation: state.conversation }).catch(() => {});
       render($(".fb", el), m.helpful ? "Thanks for the feedback." : html`Sorry about that. <button class="btn-link" data-cbq2>Ask us to call you</button> and someone from our team will help.`);
       $("[data-cbq2]", el)?.addEventListener("click", () => callbackDialog({ source: "chat", message: lastQuestion() }));
     }));

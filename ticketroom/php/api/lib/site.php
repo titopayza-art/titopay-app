@@ -49,7 +49,7 @@ function setting_clean(string $key, $v): array
         case 'maintenance': return check($v, ['enabled' => R::bool(), 'message' => R::text(['max' => 500])]);
         case 'banner':
             return check($v, ['enabled' => R::bool(), 'text' => R::str(['max' => 200]), 'linkText' => R::str(['optional' => true, 'max' => 40]),
-                'linkUrl' => R::str(['optional' => true, 'max' => 200, 'pattern' => '#^(/|https://)#', 'message' => 'Start with / or https://'])]);
+                'linkUrl' => R::str(['optional' => true, 'max' => 200, 'pattern' => '#^(/(?![/\\\\])|https://[^/\\\\\s])#', 'message' => 'Start with / or https://'])]);
         case 'hours':
             $week = [];
             foreach (['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as $d) {

@@ -1,22 +1,17 @@
-TICKETROOM DATA FOLDER
-======================
+TICKETROOM: public_html/data
+============================
 
-Everything TicketRoom creates for itself lives here. The website never
-serves these files, and uploading a new version of the site never changes
-them.
+This folder is only for the two "unlock" files that open the locked tools.
+Make one when you need it (File Manager, + File), and it locks itself again
+after 30 minutes:
 
-  ticketroom.sqlite   The database: accounts, events, orders, tickets.
-                      (-wal and -shm next to it are part of it.)
-  keys.php            The keys that sign every ticket QR code and email link.
-  config.php          YOUR settings: the hello@ mailbox password, and an
-                      optional assistant key. Edit it here in File Manager.
-  uploads/            Event posters and advertising images.
-
-BACK THIS FOLDER UP (cPanel → Backup). Losing keys.php means no ticket
-already issued can be scanned at the gate; losing the database loses every
-account, event and ticket.
-
-Two empty "unlock" files open the locked tools, one at a time:
   unlock-check   opens https://ticketroom.co.za/deploy-check.php
   unlock-reset   opens https://ticketroom.co.za/set-password.php
-Delete them again when you are done (unlock-reset removes itself).
+                 (type a secret word of your own, 8+ characters, inside it;
+                 the page asks for that word)
+
+The database, the ticket signing keys, uploaded posters and your settings
+(config.php) live in "ticketroom-data", the folder NEXT TO public_html,
+where the web cannot reach them. Back that folder up (cPanel → Backup).
+If your host does not allow that folder, they are kept here instead, and
+this folder's .htaccess stops anyone downloading them.

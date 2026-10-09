@@ -154,8 +154,8 @@ ${kb}`,
   return { source: "ai", text: text.replace(/\s*\[CALLBACK\]\s*/g, " ").trim(), callback };
 }
 
-async function feedback(id, helpful) {
-  await db.query("UPDATE chat_messages SET helpful = $2 WHERE id = $1", [id, helpful]);
+async function feedback(id, helpful, conversation) {
+  await db.query("UPDATE chat_messages SET helpful = $2 WHERE id = $1 AND conversation = $3 AND helpful IS NULL", [id, helpful, conversation]);
 }
 
 module.exports = { reply, feedback, rank, tokens, ensureDefaults, articles };

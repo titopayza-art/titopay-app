@@ -71,8 +71,9 @@ router.post("/chat", limit("chat", 20, 60e3), limit("chatday", 200, 24 * 3600e3)
 }));
 
 router.post("/chat/:id/feedback", limit("chatfb", 30, 60e3), wrap(async (req, res) => {
-  const b = check(req.body, { helpful: r.bool() });
-  await assistant.feedback(Number(req.params.id) || 0, b.helpful);
+  // Only the person who had the conversation can rate its answers, once.
+  const b = check(req.body, { helpful: r.bool(), conversation: r.str({ max: 40, pattern: /^[A-Za-z0-9_-]+$/ }) });
+  await assistant.feedback(Number(req.params.id) || 0, b.helpful, b.conversation);
   res.json({ ok: true });
 }));
 
@@ -100,7 +101,10 @@ router.post("/subscribe", limit("subscribe", 10, 3600e3), wrap(async (req, res) 
   const b = check(req.body, { email: r.email(), source: r.str({ optional: true, max: 40 }) });
   const email = b.email;
   const { rows: [row] } = await db.query("SELECT * FROM newsletter_subscribers WHERE lower(email) = $1", [email]);
-  if (row?.status === "subscribed") return res.json({ ok: true, status: "subscribed", message: `You're already subscribed. Updates go to ${email}.` });
+  // Same answer whether or not the address is already on the list, so the
+  // form never reveals who subscribes.
+  const pending = { ok: true, status: "pending", message: `Thanks. If ${email} isn't on our list yet, we've sent it an email: click the link in it to confirm.` };
+  if (row?.status === "subscribed") return res.json(pending);
   // A signed-in person whose email is already confirmed needs no second email.
   const direct = !!(req.user && req.user.email.toLowerCase() === email && req.user.emailVerified);
   const status = direct ? "subscribed" : "pending";
@@ -114,7 +118,7 @@ router.post("/subscribe", limit("subscribe", 10, 3600e3), wrap(async (req, res) 
     const url = `${config.publicBaseUrl}/subscribe?t=${signLink({ n: sub.id, confirm: true }, 7 * 86400)}`;
     await db.withTx((c) => outbox.enqueue(c, { to: email, ...templates.newsletterConfirm({ url }) }));
   }
-  res.json({ ok: true, status: "pending", message: `Nearly done. We've sent an email to ${email}: click the link in it to confirm.` });
+  res.json(pending);
 }));
 router.post("/subscribe/confirm", limit("subconfirm", 30, 3600e3), wrap(async (req, res) => {
   const b = check(req.body, { token: r.str({ max: 600 }) });

@@ -182,7 +182,8 @@ function org_csv_esc($v): string
 {
     $s = (string) ($v ?? '');
     $q = str_replace('"', '""', $s);
-    return preg_match('/^[=+\-@]/', $s) ? "\"'$q\"" : "\"$q\"";
+    // A cell starting with = + - @ (or tab/CR) would run as a formula in Excel.
+    return preg_match('/^[=+\-@\t\r]/', $s) ? "\"'$q\"" : "\"$q\"";
 }
 
 // ============================================================== marketing
@@ -367,9 +368,17 @@ route('GET', '/api/organiser/:orgId/members', function ($a) {
     return ['members' => rows('SELECT u.id, u.full_name, u.email, m.role, m.created_at FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = ? ORDER BY m.created_at', [$a['orgId']])];
 });
 
+// Inviting people (team members, scanners) sends email from hello@, so it
+// waits until TicketRoom has approved the organiser.
+function org_require_approved(array $org): void
+{
+    if (($org['status'] ?? '') !== 'approved') throw conflict('Your organiser account is waiting for approval. You can add people once TicketRoom has approved it.', 'organiser_not_approved');
+}
+
 route('POST', '/api/organiser/:orgId/members', function ($a) {
     $u = require_auth();
-    organiser_access($u, $a['orgId'], ['owner']);
+    limit('orgmember', 30, 3600, $u['id']);
+    org_require_approved(organiser_access($u, $a['orgId'], ['owner'])['organiser']);
     $b = check(body(), ['email' => R::email(), 'role' => R::oneOf(['manager', 'marketing', 'finance', 'viewer'])]);
     $uid = val("SELECT id FROM users WHERE lower(email) = ? AND status = 'active'", [$b['email']]);
     if (!$uid) throw not_found('No TicketRoom account uses that email. Ask them to sign up first.');
@@ -469,6 +478,13 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId', function ($a) {
     $p[] = $event['id'];
     q('UPDATE events SET ' . implode(', ', $sets) . ', updated_at = ? WHERE id = ?', $p);
     audit('event.updated', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id'], 'details' => ['fields' => array_keys($b)]]);
+    // A live event changed after approval: tell the team so they can look at it.
+    $changed = array_values(array_filter(array_keys($b), fn($k) => (string) ($b[$k] ?? '') !== (string) ($event[ORG_EVENT_COLS[$k]] ?? '')));
+    if ($event['status'] === 'published' && $changed) {
+        $s = settings_all();
+        outbox_enqueue(['to' => $s['support']['email'], 'subject' => "[TicketRoom] Live event edited: {$event['title']}",
+            'body' => "{$u['fullName']} ({$u['email']}) edited a published event.\n\nEvent: {$event['title']}\nChanged: " . implode(', ', $changed) . "\nPage: " . base_url() . "/events/{$event['slug']}\n\nCheck it in Admin portal → All events; suspend it there if the change is not acceptable."]);
+    }
     return ['event' => row('SELECT * FROM events WHERE id = ?', [$event['id']])];
 });
 
@@ -654,8 +670,9 @@ route('GET', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
 // emailed an invite to set their password (link valid 7 days).
 route('POST', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
     $u = require_auth();
-    limit('staffadd', 60, 3600, $u['id']);
+    limit('staffadd', 30, 3600, $u['id']);
     ['event' => $event, 'organiser' => $org] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
+    org_require_approved($org);
     $b = check(body(), ['email' => R::email(), 'fullName' => R::str(['optional' => true, 'min' => 2, 'max' => 120]),
         'canScan' => org_bool(['optional' => true, 'fallback' => true]), 'canManageTags' => R::bool()]);
     $uid = val("SELECT id FROM users WHERE lower(email) = ? AND status = 'active'", [$b['email']]);

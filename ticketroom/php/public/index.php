@@ -15,6 +15,9 @@ declare(strict_types=1);
 $root = __DIR__;
 $path = rawurldecode((string) (parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH) ?: '/'));
 $key = trim($path, '/');
+// Backslashes and NUL bytes have no place in an address here; refusing them
+// keeps every redirect below on this site (browsers read /\x.com as //x.com).
+if (str_contains($path, '\\') || str_contains($path, "\0")) { http_response_code(400); exit; }
 $qs = (string) ($_SERVER['QUERY_STRING'] ?? '');
 $go = function (string $to, int $code = 301) use ($qs) { header('Location: ' . $to . ($qs !== '' ? "?$qs" : ''), true, $code); exit; };
 
@@ -54,12 +57,18 @@ $types = [
 foreach ($candidates as $rel) {
     $full = realpath("$root/$rel");
     if ($full === false || !is_file($full) || !str_starts_with($full, $root . DIRECTORY_SEPARATOR)) continue;
+    // Check the real location too, so /./data/… or /x/../api/… cannot slip past.
+    if (preg_match('#^(data|api|tr-app|tr-data)(/|$)#', substr($full, strlen($root) + 1))) break;
     $name = basename($full);
     $ext = strtolower(pathinfo($full, PATHINFO_EXTENSION));
     // Only web files: never PHP source, notes, archives or hidden files.
     if ($name[0] === '.' || !isset($types[$ext]) || $name === 'START-HERE.txt') break;
     header('Content-Type: ' . $types[$ext]);
     header('X-Content-Type-Options: nosniff');
+    if ($ext === 'html') {
+        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+        header('X-Frame-Options: DENY');
+    }
     header('Cache-Control: ' . (in_array($ext, ['html', 'css', 'js', 'webmanifest'], true) ? 'no-cache' : 'public, max-age=86400'));
     readfile($full);
     exit;

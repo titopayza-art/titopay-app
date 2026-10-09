@@ -119,7 +119,7 @@ test("security headers are set and errors do not leak internals", async () => {
   assert.doesNotMatch(JSON.stringify(malformed.body), /stack|node_modules|SyntaxError/);
 });
 
-test("login failures are generic and lock the account after repeated attempts", async () => {
+test("login failures are generic and repeated attempts are throttled", async () => {
   const c = new h.HttpClient();
   const unknown = await c.post("/api/auth/login", { email: "nobody@test.local", password: "whatever-123" });
   const wrong = await c.post("/api/auth/login", { email: fan.user.email, password: "wrong-password-1" });
@@ -127,8 +127,8 @@ test("login failures are generic and lock the account after repeated attempts", 
   assert.deepEqual(unknown.body, wrong.body);
   const target = await h.user();
   for (let i = 0; i < 5; i++) await c.post("/api/auth/login", { email: target.user.email, password: "wrong-password-x" });
-  const locked = await c.post("/api/auth/login", { email: target.user.email, password: h.PASSWORD });
-  assert.equal(locked.status, 423);
+  const throttled = await c.post("/api/auth/login", { email: target.user.email, password: h.PASSWORD });
+  assert.equal(throttled.status, 429);
 });
 
 test("passwords, PINs and tokens are never stored or logged in clear", async () => {

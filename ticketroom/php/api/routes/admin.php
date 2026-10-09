@@ -421,7 +421,7 @@ function adm_poster_input(bool $optional): array
         'title' => R::str(['min' => 2, 'max' => 120, 'optional' => $optional]),
         'subtitle' => R::str(['optional' => true, 'max' => 200]),
         'imageUploadId' => R::uuid(['optional' => true]),
-        'linkUrl' => R::str(['optional' => true, 'max' => 300, 'pattern' => '#^(/|https?://)#', 'message' => 'Start with / or https://']),
+        'linkUrl' => R::str(['optional' => true, 'max' => 300, 'pattern' => '#^(/(?![/\\\\])|https?://[^/\\\\\s])#', 'message' => 'Start with / or https://']),
         'placement' => $optional ? R::oneOf(['home', 'events'], ['optional' => true]) : R::oneOf(['home', 'events'], ['optional' => true, 'fallback' => 'home']),
         'startsAt' => R::date(['optional' => true]),
         'endsAt' => R::date(['optional' => true]),
@@ -472,7 +472,7 @@ function adm_kb_input(bool $optional): array
         'question' => R::str(['min' => 5, 'max' => 200, 'optional' => $optional]),
         'answer' => R::text(['max' => 2000, 'optional' => $optional]),
         'keywords' => R::arr(R::str(['max' => 40]), ['optional' => true, 'max' => 30]),
-        'linkUrl' => R::str(['optional' => true, 'max' => 200, 'pattern' => '#^/#', 'message' => 'Use a site path like /help']),
+        'linkUrl' => R::str(['optional' => true, 'max' => 200, 'pattern' => '#^/(?![/\\\\])#', 'message' => 'Use a site path like /help']),
         'active' => R::bool(['optional' => true, 'fallback' => null]),
         'sortOrder' => R::int(['optional' => true, 'min' => 0, 'max' => 1000]),
     ]), 'active');
@@ -590,7 +590,7 @@ route('GET', '/api/admin/subscribers', function () {
         $st = q("SELECT email, status, source, created_at, confirmed_at, unsubscribed_at FROM newsletter_subscribers ORDER BY created_at");
         $out = "email,status,source,signed_up,confirmed,unsubscribed\n";
         $n = 0;
-        while ($r = $st->fetch(PDO::FETCH_NUM)) { $out .= implode(',', array_map(fn($v) => '"' . str_replace('"', '""', (string) ($v ?? '')) . '"', $r)) . "\n"; $n++; }
+        while ($r = $st->fetch(PDO::FETCH_NUM)) { $out .= implode(',', array_map('org_csv_esc', $r)) . "\n"; $n++; }
         $st->closeCursor();
         audit('subscribers.exported', ['actor' => $u, 'entityType' => 'newsletter', 'details' => ['rows' => $n]]);
         return raw_out($out, 'text/csv; charset=utf-8', 200, ['Content-Disposition' => 'attachment; filename="ticketroom-subscribers.csv"']);

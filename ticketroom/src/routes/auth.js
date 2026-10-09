@@ -3,16 +3,16 @@ const config = require("../config");
 const db = require("../lib/db");
 const audit = require("../lib/audit");
 const { r, check } = require("../lib/validate");
-const { limit } = require("../lib/ratelimit");
+const { hit, limit } = require("../lib/ratelimit");
 const { randomToken, sha256, hashSecret, verifySecret, DUMMY_HASH, signLink, verifyLink } = require("../lib/crypto");
-const { AppError, conflict, bad } = require("../lib/errors");
+const { AppError, conflict, bad, tooMany } = require("../lib/errors");
 const { wrap, requireAuth, setSessionCookie, clearSessionCookie } = require("../middleware/http");
 const outbox = require("../modules/messaging/outbox");
 const templates = require("../modules/messaging/templates");
 const marketing = require("../modules/marketing/service");
 
 const router = express.Router();
-const LOCK_AFTER = 5;
+const LOCK_AFTER = 30;
 
 async function createSession(res, req, userId, q = db) {
   const token = randomToken(32);
@@ -66,9 +66,17 @@ router.post("/login", limit("login", 20, 15 * 60e3), wrap(async (req, res) => {
   const { rows } = await db.query("SELECT * FROM users WHERE lower(email) = $1", [b.email]);
   const u = rows[0];
   const ok = verifySecret(b.password, u?.password_hash || DUMMY_HASH);
-  const generic = new AppError(401, "bad_credentials", "Email or password is incorrect.");
+  // The same answer for an unknown email, a wrong password and a locked
+  // account, so the sign-in box never reveals who has an account.
+  const generic = new AppError(401, "bad_credentials", 'Email or password is incorrect. After several tries, wait 15 minutes or use "Forgot password?".');
   if (!u || u.status === "deleted") throw generic;
-  if (u.locked_until && new Date(u.locked_until) > new Date()) throw new AppError(423, "locked", "Too many attempts. Try again in 15 minutes, or reset your password.");
+  // 5 tries per email from one connection every 15 minutes, and a pause for
+  // the whole account only after 30 failures from anywhere, which then clears
+  // itself: nobody can keep someone else locked out for long.
+  if (!hit(`loginpair:${b.email}|${req.ip}`, 5, 15 * 60e3)) throw tooMany();
+  const locked = u.locked_until && new Date(u.locked_until) > new Date();
+  if (u.locked_until && !locked) await db.query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1", [u.id]);
+  if (locked) throw generic;
   if (!ok) {
     await db.query("UPDATE users SET failed_logins = failed_logins + 1, locked_until = CASE WHEN failed_logins + 1 >= $2 THEN now() + interval '15 minutes' END WHERE id = $1", [u.id, LOCK_AFTER]);
     throw generic;

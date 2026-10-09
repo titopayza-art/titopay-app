@@ -44,11 +44,19 @@ route('POST', '/api/auth/login', function () {
     $u = row('SELECT * FROM users WHERE lower(email) = ?', [$b['email']]);
     // Compare against a real hash even for unknown emails, so timing does not reveal accounts.
     $ok = verify_secret($b['password'], $u['password_hash'] ?? '$2y$10$WPT59Gnb/QYXeEjTyv1sp.pD4KgnvD5SRlQY9iG6ybrv4y.LW5AXy') && $u;
-    $generic = new AppError(401, 'bad_credentials', 'Email or password is incorrect.');
+    // The same answer for an unknown email, a wrong password and a locked
+    // account, so the sign-in box never reveals who has an account.
+    $generic = new AppError(401, 'bad_credentials', 'Email or password is incorrect. After several tries, wait 15 minutes or use "Forgot password?".');
     if (!$u || $u['status'] === 'deleted') throw $generic;
-    if ($u['locked_until'] && to_unix($u['locked_until']) > microtime(true)) throw new AppError(423, 'locked', 'Too many attempts. Try again in 15 minutes, or reset your password.');
+    // 5 tries per email from one connection every 15 minutes, and a pause for
+    // the whole account only after 30 failures from anywhere, which then
+    // clears itself: nobody can keep someone else locked out for long.
+    limit('loginpair', 5, 900, $b['email'] . '|' . client_ip());
+    $locked = $u['locked_until'] && to_unix($u['locked_until']) > microtime(true);
+    if ($u['locked_until'] && !$locked) { q('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?', [$u['id']]); $u['failed_logins'] = 0; }
+    if ($locked) throw $generic;
     if (!$ok) {
-        q('UPDATE users SET failed_logins = failed_logins + 1, locked_until = CASE WHEN failed_logins + 1 >= 5 THEN ? END WHERE id = ?', [iso_in(900), $u['id']]);
+        q('UPDATE users SET failed_logins = failed_logins + 1, locked_until = CASE WHEN failed_logins + 1 >= 30 THEN ? END WHERE id = ?', [iso_in(900), $u['id']]);
         throw $generic;
     }
     if ($u['status'] === 'suspended') throw new AppError(403, 'suspended', 'This account is suspended. Contact hello@ticketroom.co.za.');

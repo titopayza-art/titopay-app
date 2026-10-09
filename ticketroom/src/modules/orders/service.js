@@ -89,6 +89,18 @@ async function createOrder(user, input) {
     if (cap[0].used + wanted > event.capacity) throw conflict("Not enough tickets left for this event.", "sold_out");
     const { rows: orgRows } = await c.query("SELECT commission_bps FROM organisers WHERE id = $1", [event.organiser_id]);
     const organiserFee = bpsOf(qt.subtotal - qt.discount, commissionBps(orgRows[0]));
+    // Free tickets: the per-person limit counts every order this person
+    // already has for the event, so one account cannot take them all.
+    if (qt.total === 0) {
+      for (const l of qt.lines) {
+        const { rows: [{ have }] } = await c.query(
+          `SELECT COALESCE(SUM(oi.quantity),0)::int AS have FROM order_items oi JOIN orders o ON o.id = oi.order_id
+            WHERE o.user_id = $1 AND o.event_id = $2 AND oi.ticket_type_id = $3 AND o.status IN ('pending_payment','paid','paid_unfulfilled','partially_refunded')`,
+          [user.id, event.id, l.ticketType.id]);
+        const max = l.ticketType.per_order_limit;
+        if (have + l.quantity > max) throw conflict(have ? `Free tickets are limited to ${max} × ${l.ticketType.name} per person, and you already have ${have}.` : `Free tickets are limited to ${max} × ${l.ticketType.name} per person.`, "limit_exceeded");
+      }
+    }
     const method = qt.total > 0 ? (input.paymentMethod || "card") : null;
     if (method === "card" && !require("../payments/providers").cardPaymentsEnabled()) {
       throw new (require("../../lib/errors").AppError)(503, "payments_not_configured", "Card payments are not switched on yet. Free tickets are available; paid tickets go on sale soon.");

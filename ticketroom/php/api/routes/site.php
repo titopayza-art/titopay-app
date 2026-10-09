@@ -51,8 +51,9 @@ route('POST', '/api/site/chat', function () {
 
 route('POST', '/api/site/chat/:id/feedback', function ($a) {
     limit('chatfb', 30, 60);
-    $b = check(body(), ['helpful' => R::bool()]);
-    q('UPDATE chat_messages SET helpful = ? WHERE id = ?', [$b['helpful'] ? 1 : 0, (int) $a['id']]);
+    // Only the person who had the conversation can rate its answers, once.
+    $b = check(body(), ['helpful' => R::bool(), 'conversation' => R::str(['max' => 40, 'pattern' => '/^[A-Za-z0-9_-]+$/'])]);
+    q('UPDATE chat_messages SET helpful = ? WHERE id = ? AND conversation = ? AND helpful IS NULL', [$b['helpful'] ? 1 : 0, (int) $a['id'], $b['conversation']]);
     return ['ok' => true];
 });
 
@@ -82,9 +83,11 @@ route('POST', '/api/site/subscribe', function () {
     limit('subscribe', 10, 3600);
     $b = check(body(), ['email' => R::email(), 'source' => R::str(['optional' => true, 'max' => 40])]);
     $email = $b['email'];
-    $done = ['ok' => true, 'status' => 'pending', 'message' => "Nearly done. We've sent an email to $email: click the link in it to confirm."];
+    $done = ['ok' => true, 'status' => 'pending', 'message' => "Thanks. If $email isn't on our list yet, we've sent it an email: click the link in it to confirm."];
     $row = row('SELECT * FROM newsletter_subscribers WHERE lower(email) = ?', [$email]);
-    if ($row && $row['status'] === 'subscribed') return ['ok' => true, 'status' => 'subscribed', 'message' => "You're already subscribed. Updates go to $email."];
+    // Same answer whether or not the address is already on the list, so the
+    // form never reveals who subscribes.
+    if ($row && $row['status'] === 'subscribed') return $done;
     $now = now_iso();
     // A signed-in person whose email is already confirmed needs no second email.
     $u = user();
