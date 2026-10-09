@@ -15,9 +15,10 @@ function outbox_enqueue(array $m): ?string
 }
 function mail_mode(): string
 {
-    $mode = (string) cfg('mail.mode', '');
-    if ($mode) return $mode;
-    return cfg('mail.smtpHost') ? 'smtp' : 'mail';
+    // 'auto' (the default): send through the mailbox once its password is set.
+    $mode = (string) cfg('mail.mode', 'auto');
+    if ($mode !== 'auto' && $mode !== '') return $mode;
+    return cfg('mail.smtpHost') && (string) cfg('mail.smtpPass', '') !== '' ? 'smtp' : 'mail';
 }
 // Sends one batch. Marketing is re-checked against consent at send time.
 function outbox_deliver(int $limit = 25): int

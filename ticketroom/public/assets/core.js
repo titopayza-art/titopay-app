@@ -238,9 +238,32 @@ export async function header(el, { portal, links = [], active } = {}) {
   $("[data-signin]", el)?.addEventListener("click", () => authDialog("signin"));
   $("[data-signup]", el)?.addEventListener("click", () => authDialog("signup"));
   $("[data-signout]", el)?.addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/"; });
+  if (u?.mustChangePassword && !$(".pw-nag")) {
+    const nag = document.createElement("div");
+    nag.className = "pw-nag";
+    nag.setAttribute("role", "status");
+    render(nag, html`<div class="wrap">You're signed in with the temporary password. <a href="/account#/settings">Change it now</a>.</div>`);
+    el.after(nag);
+  }
+  maintenanceScreen(u).catch(() => {});
   // Gate, till and back-office screens stay uncluttered: no banner or assistant there.
   if (!/^\/(scan|pos|admin)(\/|$)/.test(location.pathname)) siteExtras().catch(() => {});
   return u;
+}
+
+// While maintenance mode is on, visitors see only the message. TicketRoom
+// staff see the site as normal, and the sign-in page stays open for them.
+async function maintenanceScreen(u) {
+  if (roles(u).size || /^\/(admin|signin)(\/|$)/.test(location.pathname) || $(".maint-screen")) return;
+  const s = await siteInfo();
+  if (!s?.maintenance) return;
+  const box = document.createElement("div");
+  box.className = "maint-screen";
+  render(box, html`<main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260"><h1>We'll be right back</h1><p>${s.maintenance.message}</p>
+    <p class="small">Questions? <a href="mailto:hello@ticketroom.co.za">hello@ticketroom.co.za</a></p></main>`);
+  document.body.append(box);
+  document.documentElement.classList.add("maint-on");
+  document.title = "TicketRoom | Back soon";
 }
 
 export function footer(el) {

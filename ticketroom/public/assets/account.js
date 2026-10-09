@@ -211,7 +211,7 @@ async function settings() {
       <div class="row"><a class="btn btn-ghost" href="/api/auth/me/export" download>Download my data</a><button class="btn btn-danger" id="del">Delete my account</button></div></section>`);
   onSubmit($("#prof"), async (v) => { await patch("/api/auth/me", v); toast("Profile saved.", "good"); });
   onSubmit($("#pin"), async (v, f) => { await post("/api/auth/me/pin", v); f.reset(); toast("Spending PIN saved.", "good"); await me(true); });
-  onSubmit($("#pw"), async (v, f) => { await post("/api/auth/me/password", v); f.reset(); toast("Password changed.", "good"); });
+  onSubmit($("#pw"), async (v, f) => { await post("/api/auth/me/password", v); f.reset(); document.querySelector(".pw-nag")?.remove(); toast("Password changed.", "good"); });
   $$("[data-consent]").forEach((c) => c.addEventListener("change", async () => {
     try { await put("/api/auth/me/consents", { organiserId: c.dataset.org || undefined, channel: c.dataset.ch, granted: c.checked }); toast("Preferences saved.", "good"); }
     catch (err) { c.checked = !c.checked; toast(err.message, "bad"); }

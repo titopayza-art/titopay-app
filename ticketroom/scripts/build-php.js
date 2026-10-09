@@ -1,34 +1,89 @@
-// Builds the PHP edition: var/php-build/public_html (the exact contents of the
-// zip) and, with --zip, ticketroom.zip. The zip is extracted INSIDE public_html.
-//   zip root: index.php, .htaccess, assets/, sw.js, manifest.webmanifest,
-//             tr-app/ (PHP code, page templates, setup code — web access denied)
-// Usage: node scripts/build-php.js [--zip [output.zip]] [--setup-code CODE]
+// Builds the Afrihost (PHP) package: var/php-build/public_html, which is
+// exactly what goes inside public_html, and with --zip, ticketroom.zip.
+//
+//   public_html/
+//     index.html, sell.html, help.html, …   the pages (plain files, clean URLs)
+//     legal/                                 the legal documents
+//     assets/                                styles, scripts, images
+//     api/                                   the PHP that answers /api/ (never served as files)
+//     data/                                  database, keys, uploads, your settings (locked)
+//     index.php                              front door for hosts that route everything to PHP
+//     deploy-check.php, set-password.php     locked tools (see START-HERE.txt)
+//     version.txt, START-HERE.txt, DEPLOY-AFRIHOST.md
+//
+// The first administrator's temporary password is given at build time and
+// only its hash goes into the package:
+//   TR_ADMIN_PASSWORD='…' node scripts/build-php.js --zip [output.zip]
 const fs = require("fs");
 const path = require("path");
-const crypto = require("crypto");
 const { execFileSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const OUT_DIR = path.join(ROOT, "var", "php-build", "public_html");
+const OUT = path.join(ROOT, "var", "php-build", "public_html");
 const args = process.argv.slice(2);
 const zipIdx = args.indexOf("--zip");
-const codeIdx = args.indexOf("--setup-code");
-const ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
-const setupCode = codeIdx >= 0 ? args[codeIdx + 1] : Array.from(crypto.randomBytes(12), (b) => ALPHABET[b % 30]).join("");
+const password = process.env.TR_ADMIN_PASSWORD || "";
+if (password.length < 10) { console.error("Set TR_ADMIN_PASSWORD (at least 10 characters) to the administrator's temporary password."); process.exit(1); }
+const hash = execFileSync("php", ["-r", "echo password_hash(getenv('TR_ADMIN_PASSWORD'), PASSWORD_DEFAULT);"], { env: { ...process.env, TR_ADMIN_PASSWORD: password } }).toString();
+if (!hash.startsWith("$2y$")) throw new Error("Could not hash the admin password");
+
+const now = new Date();
+const pad = (n) => String(n).padStart(2, "0");
+const BUILD = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}-${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}`;
 
 function copy(src, dst) {
-  const st = fs.statSync(src);
-  if (st.isDirectory()) { fs.mkdirSync(dst, { recursive: true }); for (const f of fs.readdirSync(src)) copy(path.join(src, f), path.join(dst, f)); }
+  if (fs.statSync(src).isDirectory()) { fs.mkdirSync(dst, { recursive: true }); for (const f of fs.readdirSync(src)) copy(path.join(src, f), path.join(dst, f)); }
   else { fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.copyFileSync(src, dst); }
 }
+const write = (rel, text) => { const f = path.join(OUT, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); };
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
-fs.rmSync(path.dirname(OUT_DIR), { recursive: true, force: true });
-fs.mkdirSync(OUT_DIR, { recursive: true });
-copy(path.join(ROOT, "php", "public"), OUT_DIR);
-copy(path.join(ROOT, "public", "assets"), path.join(OUT_DIR, "assets"));
-for (const f of ["sw.js", "manifest.webmanifest"]) fs.copyFileSync(path.join(ROOT, "public", f), path.join(OUT_DIR, f));
-const APP = path.join(OUT_DIR, "tr-app");
-for (const item of ["bootstrap.php", "setup.php", "cron.php", "schema.sql", "lib", "routes"]) copy(path.join(ROOT, "php", "app", item), path.join(APP, item));
+fs.rmSync(path.dirname(OUT), { recursive: true, force: true });
+fs.mkdirSync(OUT, { recursive: true });
+
+// ---- root files
+for (const f of [".htaccess", "index.php", "deploy-check.php", "set-password.php", "START-HERE.txt", "DEPLOY-AFRIHOST.md", "robots.txt"]) copy(path.join(ROOT, "php", "public", f), path.join(OUT, f));
+copy(path.join(ROOT, "php", "public", "data"), path.join(OUT, "data"));
+write("version.txt", `TicketRoom build ${BUILD}\n`);
+for (const f of ["sw.js", "manifest.webmanifest"]) copy(path.join(ROOT, "public", f), path.join(OUT, f));
+copy(path.join(ROOT, "public", "assets"), path.join(OUT, "assets"));
+
+// ---- pages: one file per address, each with its own title and description
+const page = (template, title, description, canonical) => {
+  let h = fs.readFileSync(path.join(ROOT, "public", template), "utf8");
+  h = h.replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`);
+  h = h.replace(/<html lang="en-ZA">\n/, `<html lang="en-ZA">\n<!-- TicketRoom build ${BUILD} -->\n`);
+  if (description) h = /<meta name="description"/.test(h) ? h.replace(/<meta name="description" content="[^"]*">/, `<meta name="description" content="${esc(description)}">`) : h.replace("</title>", `</title>\n  <meta name="description" content="${esc(description)}">`);
+  if (canonical) h = h.replace("</title>", `</title>\n  <link rel="canonical" href="https://ticketroom.co.za${canonical}">`);
+  return h;
+};
+const PUBLIC = [
+  ["index.html", "TicketRoom | Tickets for events across South Africa", "Find concerts, comedy, sport and festivals across South Africa, and keep your tickets on your phone.", "/"],
+  ["event.html", "Event tickets | TicketRoom", "", ""],
+  ["order.html", "Your order | TicketRoom", "", ""],
+  ["sell.html", "Sell tickets | TicketRoom", "List your event on TicketRoom. Free events cost nothing to run; paid events carry a 5% commission.", "/sell"],
+  ["help.html", "Help centre | TicketRoom", "Answers about tickets, transfers, refunds and events, and how to reach the TicketRoom team.", "/help"],
+  ["contact.html", "Contact us | TicketRoom", "Email hello@ticketroom.co.za or ask us to call you back. We reply within 24 to 48 hours.", "/contact"],
+  ["unsubscribe.html", "Unsubscribe | TicketRoom", "", ""],
+  ["signin.html", "Sign in | TicketRoom", "", "/signin"],
+  ["404.html", "Page not found | TicketRoom", "", ""],
+];
+for (const [file, title, desc, canon] of PUBLIC) write(file, page("index.html", title, desc, canon));
+for (const [slug, title] of [["terms-of-use", "Terms of Use"], ["terms", "Terms and Conditions"], ["privacy", "Privacy Policy"], ["cookies", "Cookie Policy"], ["paia", "PAIA manual"]]) {
+  write(`legal/${slug}.html`, page("index.html", `${title} | TicketRoom`, `TicketRoom ${title}. TicketRoom (Pty) Ltd, registration number K2026811077.`, `/legal/${slug}`));
+}
+// Portals keep their own page and title; /organisers is organisers.html.
+for (const [file, out] of [["account.html", "account.html"], ["organiser.html", "organisers.html"], ["admin.html", "admin.html"], ["scan.html", "scan.html"], ["pos.html", "pos.html"]]) {
+  const title = fs.readFileSync(path.join(ROOT, "public", file), "utf8").match(/<title>([^<]*)<\/title>/)[1];
+  write(out, page(file, title, "", ""));
+}
+
+// ---- api/
+const API = path.join(OUT, "api");
+for (const item of ["index.php", "bootstrap.php", "cron.php", "schema.sql", "lib", "routes", ".htaccess"]) copy(path.join(ROOT, "php", "api", item), path.join(API, item));
+const config = fs.readFileSync(path.join(ROOT, "php", "api", "config.php"), "utf8");
+if (!config.includes("{{ADMIN_PASSWORD_HASH}}")) throw new Error("config.php placeholder missing");
+fs.writeFileSync(path.join(API, "config.php"), config.replace("{{ADMIN_PASSWORD_HASH}}", hash));
 // Assistant answers come from the shared knowledge base; features this edition
 // does not have yet are answered as "coming soon".
 const COMING_SOON = {
@@ -37,18 +92,12 @@ const COMING_SOON = {
   "How do organisers get paid?": "Payouts start when paid ticket sales open. Organisers will be paid by EFT a few days after their event, less the 5% commission and any refunds. Free events don't involve any money.",
 };
 const kb = require(path.join(ROOT, "src", "modules", "site", "kb-defaults.js")).map((a) => (COMING_SOON[a.q] ? { ...a, a: COMING_SOON[a.q], cb: a.q === "I lost my wristband" } : a));
-fs.writeFileSync(path.join(APP, "kb-defaults.json"), JSON.stringify(kb, null, 1));
-fs.copyFileSync(path.join(ROOT, "php", "app", "app-htaccess"), path.join(APP, ".htaccess"));
-fs.mkdirSync(path.join(APP, "pages"), { recursive: true });
-for (const f of fs.readdirSync(path.join(ROOT, "public")).filter((x) => x.endsWith(".html"))) fs.copyFileSync(path.join(ROOT, "public", f), path.join(APP, "pages", f));
-fs.writeFileSync(path.join(APP, "setup-code.txt"), setupCode + "\n");
-fs.writeFileSync(path.join(APP, "README.txt"), fs.readFileSync(path.join(ROOT, "php", "README-AFRIHOST.txt"), "utf8").replace("{{SETUP_CODE}}", setupCode));
+fs.writeFileSync(path.join(API, "kb-defaults.json"), JSON.stringify(kb, null, 1));
 
 (function perms(p) {
-  const st = fs.statSync(p);
-  if (st.isDirectory()) { fs.chmodSync(p, 0o755); for (const f of fs.readdirSync(p)) perms(path.join(p, f)); }
+  if (fs.statSync(p).isDirectory()) { fs.chmodSync(p, 0o755); for (const f of fs.readdirSync(p)) perms(path.join(p, f)); }
   else fs.chmodSync(p, 0o644);
-})(OUT_DIR);
+})(OUT);
 
 if (zipIdx >= 0) {
   const out = path.resolve(args[zipIdx + 1] && !args[zipIdx + 1].startsWith("--") ? args[zipIdx + 1] : path.join(ROOT, "..", "ticketroom.zip"));
@@ -67,8 +116,8 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
             full = os.path.join(base, f); arc = os.path.relpath(full, stage)
             zi = zipfile.ZipInfo(arc, date_time=now); zi.external_attr = (0o100644 << 16); zi.compress_type = zipfile.ZIP_DEFLATED
             with open(full, "rb") as fh: z.writestr(zi, fh.read())
-`, OUT_DIR, out]);
+`, OUT, out]);
   console.log(`Built ${out} (${(fs.statSync(out).size / 1024 / 1024).toFixed(2)} MB)`);
 }
-console.log(`Staged ${OUT_DIR}`);
-console.log(`Setup code: ${setupCode}`);
+console.log(`Staged ${OUT}`);
+console.log(`Build ${BUILD}`);

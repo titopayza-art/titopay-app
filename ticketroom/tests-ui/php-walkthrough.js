@@ -1,15 +1,17 @@
 // Browser acceptance test for the PHP (Afrihost) edition, on a FRESH install:
-// setup screen → admin → organiser applies → free event → admin approves →
+// home page works straight away (no setup screen) → admin signs in with the
+// temporary password and changes it → organiser applies → free event → admin approves →
 // fan gets tickets → QR shows → gate scan → live count; plus every portal
 // page loads without console errors or CSP violations.
-//   node tests-ui/php-walkthrough.js http://127.0.0.1:8400 SETUPCODE
+//   node tests-ui/php-walkthrough.js http://127.0.0.1:8400 TEMP-PASSWORD
+// (TEMP-PASSWORD is what the package was built with: TR_ADMIN_PASSWORD.)
 const fs = require("fs");
 const path = require("path");
 const assert = require("assert/strict");
 const { chromium } = require("playwright");
 
 const BASE = process.argv[2] || "http://127.0.0.1:8400";
-const CODE = process.argv[3] || "TESTCODE1234";
+const TEMP = process.argv[3] || "Temp-pass-#2026";
 const SHOTS = path.resolve(__dirname, "artifacts", "php");
 const problems = [];
 let step = 0;
@@ -43,22 +45,30 @@ async function signIn(p, email, password) {
   fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: ["--no-sandbox"] });
   try {
-    // 1. Setup screen.
+    // 1. The home page is the live site from the first visit.
     const a = await page(browser);
     await a.goto(BASE);
-    await a.getByRole("heading", { name: "Set up TicketRoom" }).waitFor();
-    await shot(a, "setup");
-    await a.getByLabel("Setup code").fill("WRONGCODE");
-    await a.getByLabel("Admin password").fill(ADMIN.password);
-    await a.getByLabel("Confirm password").fill(ADMIN.password);
-    await a.getByRole("button", { name: /Finish setup/ }).click();
-    await a.getByText("That setup code is not right.").waitFor();
-    await a.getByLabel("Setup code").fill(CODE);
-    await a.getByLabel("Admin password").fill(ADMIN.password);
-    await a.getByLabel("Confirm password").fill(ADMIN.password);
-    await a.getByRole("button", { name: /Finish setup/ }).click();
+    await a.locator("#footer").getByText("K2026811077").waitFor();
+    assert.equal(await a.getByText("Set up TicketRoom").count(), 0, "no setup screen");
+    await shot(a, "home-first-visit");
+    // The administrator signs in with the temporary password and is told to change it.
+    await a.goto(`${BASE}/signin`);
+    const d = a.locator("dialog");
+    await d.getByLabel("Email").fill(ADMIN.email);
+    await d.getByLabel("Password").fill(TEMP);
+    await d.getByRole("button", { name: "Sign in" }).click();
+    await a.waitForURL(/\/account/);
+    await a.getByText("You're signed in with the temporary password.").waitFor();
+    await a.getByRole("link", { name: "Change it now" }).click();
+    await a.getByLabel("Current password").fill(TEMP);
+    await a.getByLabel("New password").fill(ADMIN.password);
+    await a.locator("#pw").getByRole("button").click();
+    await a.getByText("Password changed.").waitFor();
+    assert.equal(await a.locator(".pw-nag").count(), 0, "reminder gone");
+    await a.goto(`${BASE}/admin#/site`);
     await a.getByRole("heading", { name: "Site settings" }).waitFor();
-    await shot(a, "admin-after-setup");
+    assert.equal(await a.locator(".pw-nag").count(), 0, "reminder stays gone");
+    await shot(a, "admin-signed-in");
     for (const [hash, heading] of [["#/", "Overview"], ["#/organisers", "Organisers"], ["#/events", "Events"], ["#/users", "Users"], ["#/support", "Support & callbacks"],
       ["#/posters", "Advertising posters"], ["#/assistant", "Assistant"], ["#/emails", "Email templates"], ["#/integrations", "Integrations"], ["#/audit", "Audit log"], ["#/outbox", "Messages"]]) {
       await a.goto(`${BASE}/admin${hash}`);

@@ -66,7 +66,11 @@ route('POST', '/api/auth/logout', function () {
 
 route('GET', '/api/auth/me', function () {
     if (!user()) return ['user' => null];
-    return ['user' => profile(user()['id']), 'csrfToken' => session()['csrfToken']];
+    $p = profile(user()['id']);
+    // The first administrator signs in with a temporary password; the pages
+    // keep reminding them until it is changed.
+    if (val('SELECT 1 FROM meta WHERE key = ?', ['temp_password:' . user()['id']])) $p['mustChangePassword'] = true;
+    return ['user' => $p, 'csrfToken' => session()['csrfToken']];
 });
 
 route('PATCH', '/api/auth/me', function () {
@@ -83,6 +87,7 @@ route('POST', '/api/auth/me/password', function () {
     if (!verify_secret($b['currentPassword'], val('SELECT password_hash FROM users WHERE id = ?', [$u['id']]))) throw new AppError(401, 'bad_credentials', 'Current password is incorrect.');
     q('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [hash_secret($b['newPassword']), now_iso(), $u['id']]);
     q('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND id <> ? AND revoked_at IS NULL', [now_iso(), $u['id'], session()['id']]);
+    q('DELETE FROM meta WHERE key = ?', ["temp_password:{$u['id']}"]);
     audit('user.password_changed', ['entityType' => 'user', 'entityId' => $u['id'], 'ip' => client_ip()]);
     return ['ok' => true];
 });
@@ -130,6 +135,7 @@ route('POST', '/api/auth/password/reset', function () {
         // A staff invite doubles as email proof, so mark the address verified.
         q('UPDATE users SET password_hash = ?, failed_logins = 0, locked_until = NULL, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?', [hash_secret($b['password']), $now, $now, $r['user_id']]);
         q('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [$now, $r['user_id']]);
+        q('DELETE FROM meta WHERE key = ?', ["temp_password:{$r['user_id']}"]);
         audit('user.password_reset', ['actor' => ['id' => $r['user_id']], 'entityType' => 'user', 'entityId' => $r['user_id'], 'ip' => client_ip()]);
     });
     return ['ok' => true];

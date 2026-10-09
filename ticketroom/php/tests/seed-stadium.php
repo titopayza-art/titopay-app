@@ -5,7 +5,7 @@ declare(strict_types=1);
 $dir = $argv[1];
 $GLOBALS['TR_DATA_DIR'] = $dir;
 $GLOBALS['TR_CONFIG'] = require "$dir/config.php";
-require dirname(__DIR__) . '/app/lib/core.php';
+require dirname(__DIR__) . '/api/lib/core.php';
 $t0 = microtime(true);
 $pdo = db();
 $pdo->exec('PRAGMA synchronous = OFF');

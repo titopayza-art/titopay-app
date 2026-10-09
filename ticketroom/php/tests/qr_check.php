@@ -5,7 +5,7 @@
  *   php php/tests/qr_check.php --json    -> prints JSON test cases for qr_check.js
  * Full verification: node php/tests/qr_check.js  (calls this script with --json and decodes with jsQR)
  */
-require __DIR__ . '/../app/lib/qr.php';
+require __DIR__ . '/../api/lib/qr.php';
 
 function qc_ticket(int $seed): string
 {

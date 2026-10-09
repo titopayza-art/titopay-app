@@ -1,0 +1,90 @@
+TICKETROOM WEBSITE: READ THIS FIRST
+===================================
+
+PUTTING IT LIVE
+---------------
+Open DEPLOY-AFRIHOST.md in this folder and work down it. It is the whole job
+in order, with the cPanel screens named.
+
+The short version:
+  1. cPanel → File Manager → public_html. Settings (top right) → tick
+     "Show Hidden Files". Upload ticketroom.zip, right-click → Extract into
+     public_html itself, then DELETE ticketroom.zip.
+  2. Open https://ticketroom.co.za. The home page shows straight away.
+     There is no setup screen: the database and the admin account are
+     created by themselves the first time the site is opened.
+  3. Sign in at https://ticketroom.co.za/signin
+        hello@ticketroom.co.za
+        (the temporary password you were given; it is not written in any
+        file on the site)
+     A yellow bar reminds you to change it. Do that first: My account →
+     Settings → Change password.
+
+
+WHAT IS WHERE
+-------------
+  index.html, sell.html, help.html …   The pages. Plain files.
+  legal/                               Terms, privacy, cookies, PAIA.
+  assets/                              Styles, scripts, logo.
+  api/                                 The PHP behind /api/. Never shown to
+                                       visitors. Do not edit; uploads replace it.
+  data/                                The database, the ticket keys, uploaded
+                                       posters and YOUR settings (data/config.php).
+                                       Locked. Uploads never touch it. BACK IT UP.
+  index.php                            Front door, for hosts that send every
+                                       request to PHP.
+  version.txt                          The build. Open
+                                       https://ticketroom.co.za/version.txt to
+                                       see which build the server has.
+
+Addresses are clean: ticketroom.co.za/sell, /help, /contact,
+/legal/privacy, /events/<event>, /account, /organisers, /scan, /admin.
+
+
+IF THE SITE DID NOT CHANGE AFTER AN UPLOAD
+------------------------------------------
+Open https://ticketroom.co.za/version.txt
+  * "404 Not Found": the files are not in the folder the domain shows.
+    cPanel → Domains → ticketroom.co.za → its "Document Root" is where the
+    files go.
+  * An older build: something is serving a cached copy. cPanel →
+    LiteSpeed Web Cache Manager → Purge All, and purge Cloudflare if used.
+  * The new build: the upload worked. Open the page in a private window.
+
+
+THE DEPLOY CHECK
+----------------
+In File Manager, open public_html/data and create an empty file called
+unlock-check (+ File). Then open https://ticketroom.co.za/deploy-check.php
+It reports what reached the server, whether the API, clean addresses and
+email work, and what is left over from earlier uploads. Fix anything marked
+"Fix". Delete data/unlock-check when you are done.
+
+
+EMAIL
+-----
+Until the hello@ mailbox password is set, email goes out through the
+server's built-in mail, which often lands in spam. To fix it:
+  1. cPanel → Email Accounts: make sure hello@ticketroom.co.za exists.
+  2. File Manager → public_html/data/config.php → Edit. Put the mailbox
+     password between the quotes on the smtpPass line. Save.
+For big events (thousands of tickets) use an email relay instead (Amazon
+SES, Mailgun or Brevo): put its details in the same four smtp lines.
+
+
+FORGOTTEN ADMIN PASSWORD
+------------------------
+In File Manager, open public_html/data and create an empty file called
+unlock-reset. Open https://ticketroom.co.za/set-password.php and set a new
+password. The unlock file is removed again straight away, so nobody else
+can use that page.
+
+
+OLD FILES FROM EARLIER UPLOADS
+------------------------------
+Earlier packages left a tr-app folder (and sometimes ticketroom-app,
+holding or tr-data). They are blocked from the web, but delete them:
+deploy-check.php lists exactly which are still there. If an earlier
+install kept its data in tr-data or in ticketroom-data next to
+public_html, TicketRoom keeps using it, so nothing is lost; deploy-check
+says so.

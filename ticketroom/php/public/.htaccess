@@ -1,14 +1,74 @@
-# TicketRoom — public_html/.htaccess (Afrihost LiteSpeed / Apache)
+# TicketRoom: Apache / LiteSpeed settings (Afrihost cPanel)
+#
+# The pages are plain .html files and are served straight from disk. Only
+# /api/ (and uploaded images at /media/) run PHP, through api/index.php.
+
+DirectoryIndex index.html index.php
 Options -Indexes
-DirectoryIndex index.php
+RewriteEngine On
 
-# Private folders: application code and (if kept here) the data folder.
-<IfModule mod_alias.c>
-  RedirectMatch 404 ^/(tr-app|tr-data)(/|$)
-</IfModule>
+# --- One address for the site --------------------------------------------
+# www.ticketroom.co.za goes to ticketroom.co.za. The scheme is carried
+# across, so this is safe before the certificate exists.
+RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+RewriteRule ^ %{REQUEST_SCHEME}://%1%{REQUEST_URI} [R=301,L]
 
-# Never serve archives, configuration, databases, logs or dot-files.
-<FilesMatch "(?i)\.(zip|tar|gz|tgz|rar|7z|env|sql|sqlite|sqlite-wal|sqlite-shm|db|bak|old|log|sh|ini|pem|key|txt|json)$|^\.">
+# --- Force https -----------------------------------------------------------
+# Sign-in and tickets need https. Use cPanel → Domains → "Force HTTPS
+# Redirect" once the certificate shows as issued under SSL/TLS Status. If
+# that switch is not there, delete the # from the three lines below instead.
+# If the site stops loading straight after, the certificate is not active
+# yet: put the # marks back, run AutoSSL, and try again.
+# RewriteCond %{HTTPS} !=on
+# RewriteCond %{HTTP:X-Forwarded-Proto} !https
+# RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+# --- Private folders --------------------------------------------------------
+# data/ holds the database, keys and uploads. tr-app/ and tr-data/ are left
+# over from the earlier package (delete them; deploy-check.php lists them).
+RewriteRule ^(data|tr-app|tr-data)(/|$) - [F,L]
+
+# --- The API ----------------------------------------------------------------
+# Everything under /api/ runs api/index.php; nothing else in api/ is served.
+RewriteCond %{REQUEST_URI} !^/api/index\.php$
+RewriteRule ^api(/|$) /api/index.php [L,QSA]
+RewriteRule ^media/ /api/index.php [L,QSA]
+
+# --- Addresses that moved ---------------------------------------------------
+RewriteRule ^organiser(/.*)?$ /organisers$1 [R=301,L]
+RewriteRule ^(privacy|cookies|terms)/?$ /legal/$1 [R=301,L]
+RewriteRule ^legal/refunds/?$ /legal/terms [R=301,L]
+RewriteRule ^browse/?$ / [R=301,L]
+
+# --- Clean addresses --------------------------------------------------------
+# One address per page: /sell, never /sell.html, and / rather than /index.html.
+# THE_REQUEST is the browser's original request, so the internal rewrites
+# below cannot trigger these redirects and loop.
+RewriteCond %{THE_REQUEST} "\s/+([^?\s]*/)?index(\.html)?[\s?]" [NC]
+RewriteRule ^ /%1 [R=301,L]
+RewriteCond %{THE_REQUEST} "\s/+(.+?)\.html[\s?]" [NC]
+RewriteRule ^ /%1 [R=301,L]
+
+# A trailing slash on anything but a real folder is dropped.
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.+)/$ /$1 [R=301,L]
+
+# Event and order pages share one page each; the address says which.
+RewriteRule ^events/[^/]+$ /event.html [L]
+RewriteRule ^orders/[^/]+$ /order.html [L]
+
+# The clean address serves the matching .html file.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{DOCUMENT_ROOT}/$1.html -f
+RewriteRule ^(.+?)/?$ /$1.html [L]
+
+ErrorDocument 404 /404.html
+
+# --- Never served -----------------------------------------------------------
+# Hidden files, notes, archives and databases. .zip matters: an archive left in
+# public_html would let anyone who guesses its name download the site.
+<FilesMatch "^\.|\.(md|sql|sqlite|sqlite-wal|sqlite-shm|zip|tar|gz|bak|log|ini)$|^START-HERE\.txt$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
@@ -17,37 +77,25 @@ DirectoryIndex index.php
     Deny from all
   </IfModule>
 </FilesMatch>
-<FilesMatch "^manifest\.webmanifest$">
-  <IfModule mod_authz_core.c>
-    Require all granted
-  </IfModule>
-</FilesMatch>
 
-<IfModule mod_rewrite.c>
-  RewriteEngine On
-  # After SSL is active (cPanel → SSL/TLS Status → Run AutoSSL), remove the "#"
-  # from the next two lines to send everyone to https://.
-  # RewriteCond %{HTTPS} !=on
-  # RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-  # Real files (assets, images) are served directly; everything else goes to TicketRoom.
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteRule ^ index.php [L,QSA]
-</IfModule>
-
+# --- Caching ----------------------------------------------------------------
+# Pages, styles and scripts are re-checked on every visit (a quick "not
+# changed" when nothing is new), so a new upload shows straight away.
 <IfModule mod_headers.c>
+  <FilesMatch "\.(html|css|js|webmanifest)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+  <FilesMatch "\.(png|jpg|jpeg|webp|svg|ico)$">
+    Header set Cache-Control "public, max-age=86400"
+  </FilesMatch>
   Header always set X-Content-Type-Options "nosniff"
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
-</IfModule>
-<IfModule mod_expires.c>
-  ExpiresActive On
-  ExpiresByType text/css "access plus 1 hour"
-  ExpiresByType application/javascript "access plus 1 hour"
-  ExpiresByType image/png "access plus 1 day"
-  ExpiresByType image/svg+xml "access plus 1 day"
+  Header always set X-Frame-Options "SAMEORIGIN"
 </IfModule>
 
-# Compress pages, scripts and API answers (the scanner's offline ticket list
-# for a full stadium shrinks from about 4 MB to under 1 MB).
+# --- Compression ------------------------------------------------------------
+# The scanner's offline ticket list for a full stadium shrinks from about
+# 4 MB to under 1 MB.
 <IfModule mod_deflate.c>
   AddOutputFilterByType DEFLATE text/html text/css text/plain text/csv application/javascript text/javascript application/json image/svg+xml application/manifest+json
 </IfModule>

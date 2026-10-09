@@ -5,13 +5,17 @@ The PHP edition re-implements the Node API (`src/routes/*.js`) for shared hostin
 Scope: everything for free events (accounts, organisers, events, free tickets, transfers, scanning, marketing email, admin, site settings, assistant). **Not** in this edition (return `throw not_available();`, or an empty list where a page only lists things): payments, refunds of paid orders, payouts, settlements, ledger, reconciliation, webhooks, cashless wallets/top-ups, tags/wristbands, vendors, POS, terminals, SMS.
 
 ## Layout
-- `app/bootstrap.php` front controller (`tr_handle`), page routing, maintenance, background jobs.
-- `app/lib/core.php` errors, time, db, router, validation (`R::*`, `check()`), crypto, sessions/CSRF, `limit()`, `audit()`.
-- `app/lib/domain.php` access helpers, consent, orders, tickets, admission, uploads.
-- `app/lib/messaging.php` `outbox_enqueue`, delivery, `tpl($name, $args)`, `email_catalog()`, `email_html()`, reminders.
-- `app/lib/site.php` settings (`settings_all`, `setting`, `setting_set`, `hours_status`), assistant/KB.
-- `app/routes/*.php` route files; every file in this folder is loaded for each API request.
-- `app/schema.sql` SQLite schema — same table/column names as PostgreSQL.
+The package mirrors what sits in `public_html` (see `scripts/build-php.js`):
+- Pages are plain `.html` files at the root (built from `public/*.html`), served by the web server with clean addresses from `php/public/.htaccess`. `php/public/index.php` is a front door that does the same mapping for hosts that send every request to PHP.
+- `api/index.php` answers every `/api/` request and `/media/{id}` images; `api/bootstrap.php` loads config, finds the data folder, installs the database and first admin on the first request (no setup screen), runs upgrades and background jobs.
+- `api/config.php` holds defaults (the admin's temporary password only as a hash, filled in at build time). The site's own settings are in `data/config.php`, created on first run and never touched by uploads; `data/keys.php` holds the signing keys.
+- `api/lib/core.php` errors, time, db, router, validation (`R::*`, `check()`), crypto, sessions/CSRF, `limit()`, `audit()`.
+- `api/lib/domain.php` access helpers, consent, orders, tickets, admission, uploads.
+- `api/lib/messaging.php` `outbox_enqueue`, delivery, `tpl($name, $args)`, `email_catalog()`, `email_html()`, reminders.
+- `api/lib/site.php` settings (`settings_all`, `setting`, `setting_set`, `hours_status`), assistant/KB.
+- `api/routes/*.php` route files; every file in this folder is loaded for each API request.
+- `api/schema.sql` SQLite schema, same table/column names as PostgreSQL.
+- `deploy-check.php` and `set-password.php` open only while `data/unlock-check` / `data/unlock-reset` exist.
 
 ## Conventions
 - Register: `route('GET', '/api/x/:id', function (array $a) { ... return [...]; });` Return an array (→ 200 JSON) or `json_out($data, 201)` / `raw_out($text, $type)`.
@@ -31,11 +35,8 @@ Scope: everything for free events (accounts, organisers, events, free tickets, t
 
 ## Running locally
 ```
-node scripts/build-php.js --setup-code TESTCODE1234
+TR_ADMIN_PASSWORD='Admin-pass-#2026' node scripts/build-php.js
 cp -r var/php-build/public_html /tmp/x/public_html
 php -S 127.0.0.1:PORT -t /tmp/x/public_html php/dev-router.php
-curl -c jar -X POST http://127.0.0.1:PORT/ --data-urlencode setupCode=TESTCODE1234 --data-urlencode fullName=Admin \
-  --data-urlencode email=admin@test.local --data-urlencode password=admin-pass-123 --data-urlencode password2=admin-pass-123 \
-  --data-urlencode baseUrl=http://127.0.0.1:PORT
+# sign in as hello@ticketroom.co.za with that password
 ```
-Then edit `/tmp/x/ticketroom-data/config.php`: set `'mail' => ['mode' => 'log', ...]`, add `'dev' => true, 'rateLimitDisabled' => true, 'cookieSecure' => false`. API calls need the session cookie and the `x-csrf-token` header from `GET /api/auth/me`, and `content-type: application/json`.
