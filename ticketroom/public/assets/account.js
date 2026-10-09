@@ -6,7 +6,7 @@ const CACHE_KEY = "tr_wallet_v1";
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 const nav = () => render($("#sidenav"), html`
-  <div class="sect">Tickets</div><a href="#/tickets">My tickets</a><a href="#/orders">Orders</a><a href="#/transfers">Transfers</a>
+  <div class="sect">Tickets</div><a href="#/tickets">My tickets</a><a href="#/orders">Orders</a><a href="#/transfers">Transfers</a><a href="#/saved">Saved events</a>
   <div class="sect" data-feature="cashless">Cashless</div><a href="#/wallet" data-feature="cashless">Wallets</a><a href="#/tags" data-feature="cashless">Tags & wristbands</a>
   <div class="sect">Account</div><a href="#/refunds">Refunds & support</a><a href="#/payment-methods" data-feature="payments">Payment methods</a><a href="#/settings">Settings & privacy</a>`);
 
@@ -255,6 +255,17 @@ async function paymentMethods() {
   });
 }
 
+// Events this person liked (the heart on an event page).
+async function saved() {
+  const { events } = await get("/api/me/likes");
+  const upcoming = events.filter((e) => new Date(e.ends_at) > new Date());
+  render(main, html`<div class="page-head"><div><h1>Saved events</h1><p class="muted">Events you liked. Tap the heart on any event page to add or remove one.</p></div></div>
+    ${upcoming.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>When</th><th>Where</th><th></th></tr></thead><tbody>${upcoming.map((e) => html`<tr>
+      <td><a href="/events/${e.slug}"><strong>${e.title}</strong></a></td><td class="small">${fmtDateTime(e.starts_at)}</td><td class="small">${e.venue_name}, ${e.city}</td>
+      <td><a class="btn btn-primary btn-sm" href="/events/${e.slug}">${e.remaining === 0 ? "View" : "Get tickets"}</a></td></tr>`)}</tbody></table></div>`
+      : empty("Nothing saved yet. Tap the heart on an event you like and it will appear here.", html`<a class="btn btn-primary" href="/">Find events</a>`)}`);
+}
+
 async function verify({ token }) {
   try { await post("/api/auth/verify-email", { token }); toast("Email confirmed. Thank you.", "good"); } catch (err) { toast(err.message, "bad"); }
   location.hash = "#/tickets";
@@ -274,7 +285,7 @@ function reset({ token }) {
   await header($("#header"), { portal: "customer" });
   nav();
   router([
-    ["/", tickets], ["/tickets", tickets], ["/orders", orders], ["/transfers", transfers], ["/claim/:token", claim], ["/tags", gate("cashless", tags)],
+    ["/", tickets], ["/tickets", tickets], ["/saved", saved], ["/orders", orders], ["/transfers", transfers], ["/claim/:token", claim], ["/tags", gate("cashless", tags)],
     ["/wallet", gate("cashless", wallets)], ["/wallet/:eventId", gate("cashless", wallet)], ["/refunds", refunds], ["/payment-methods", gate("payments", paymentMethods)], ["/settings", settings], ["/verify/:token", verify], ["/reset/:token", reset],
   ], () => { location.hash = "#/tickets"; });
 })();

@@ -147,7 +147,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -168,6 +168,11 @@ const UPGRADES = [
         'CREATE UNIQUE INDEX IF NOT EXISTS newsletter_email_uq ON newsletter_subscribers (lower(email))',
         'CREATE INDEX IF NOT EXISTS newsletter_status_idx ON newsletter_subscribers (status)',
         'CREATE TABLE IF NOT EXISTS newsletter_issues ( id TEXT PRIMARY KEY, subject TEXT NOT NULL, body TEXT NOT NULL, recipients INTEGER NOT NULL, sent_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL )',
+    ],
+    // Liked events.
+    5 => [
+        'CREATE TABLE IF NOT EXISTS event_likes ( user_id TEXT NOT NULL REFERENCES users(id), event_id TEXT NOT NULL REFERENCES events(id), created_at TEXT NOT NULL, PRIMARY KEY (user_id, event_id) )',
+        'CREATE INDEX IF NOT EXISTS event_likes_event_idx ON event_likes (event_id)',
     ],
 ];
 function tr_upgrade(): void

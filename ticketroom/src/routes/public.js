@@ -14,7 +14,8 @@ const router = express.Router();
 const PUBLIC_EVENT = `e.id, e.slug, e.title, e.is_free, e.summary, e.category, e.venue_name, e.address, e.city, e.province, e.starts_at, e.ends_at,
   e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.status, e.sales_start_at, e.sales_end_at, o.name AS organiser_name,
   (SELECT MIN(price_cents) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS from_price_cents,
-  (SELECT COALESCE(SUM(quantity_total - quantity_sold - quantity_held),0) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale')::int AS remaining`;
+  (SELECT COALESCE(SUM(quantity_total - quantity_sold - quantity_held),0) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale')::int AS remaining,
+  (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id)::int AS likes`;
 
 router.get("/events", limit("browse", 300, 60e3), wrap(async (req, res) => {
   const q = String(req.query.q || "").slice(0, 80).trim();
@@ -45,10 +46,22 @@ router.get("/events/:slug", wrap(async (req, res) => {
             GREATEST(quantity_total - quantity_sold - quantity_held, 0)::int AS remaining
        FROM ticket_types WHERE event_id = $1 AND status = 'on_sale' ORDER BY sort_order, price_cents`, [ev.id]);
   const { ticketFee } = require("../lib/money");
-  res.json({ event: { ...ev, salesOpen: orders.salesOpen(ev) }, ticketTypes: types.map((t) => ({ ...t, fee_cents: ticketFee(t.price_cents) })) });
+  const liked = req.user ? (await db.query("SELECT 1 FROM event_likes WHERE user_id = $1 AND event_id = $2", [req.user.id, ev.id])).rows.length > 0 : false;
+  res.json({ event: { ...ev, salesOpen: orders.salesOpen(ev), liked }, ticketTypes: types.map((t) => ({ ...t, fee_cents: ticketFee(t.price_cents) })) });
 }));
 
 // Tracking link click (?ref=CODE on an event page).
+// Like (or unlike) an event. Liked events are saved in the customer portal.
+router.post("/events/:slug/like", requireAuth, limit("like", 120, 60e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body, { liked: r.bool() });
+  const { rows: [ev] } = await db.query("SELECT id FROM events WHERE slug = $1 AND status IN ('published','completed')", [req.params.slug]);
+  if (!ev) throw notFound("Event not found.");
+  if (b.liked) await db.query("INSERT INTO event_likes (user_id, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [req.user.id, ev.id]);
+  else await db.query("DELETE FROM event_likes WHERE user_id = $1 AND event_id = $2", [req.user.id, ev.id]);
+  const { rows: [{ n }] } = await db.query("SELECT count(*)::int AS n FROM event_likes WHERE event_id = $1", [ev.id]);
+  res.json({ liked: b.liked, likes: n });
+}));
+
 router.post("/events/:slug/click", limit("click", 30, 60e3), wrap(async (req, res) => {
   const b = check(req.body, { ref: r.str({ max: 40, pattern: /^[A-Za-z0-9_-]+$/ }) });
   await db.query("UPDATE tracking_links SET clicks = clicks + 1 WHERE code = $2 AND event_id = (SELECT id FROM events WHERE slug = $1)", [req.params.slug, b.ref]);
@@ -147,4 +160,5 @@ router.post("/support", limit("support", 5, 60 * 60e3), wrap(async (req, res) =>
   res.status(201).json({ reference: rows[0].reference });
 }));
 
+router.PUBLIC_EVENT = PUBLIC_EVENT;
 module.exports = router;

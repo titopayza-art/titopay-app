@@ -377,7 +377,8 @@ export function footer(el) {
       <p class="mb-0">Be first to hear about new events, ticket releases and free shows near you.</p></div><div data-sub></div></section>
     <div class="footer-grid">
     <div>${brand()}<p class="mt small">Tickets for concerts, comedy, sport and festivals across South Africa.</p>
-      <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p></div>
+      <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p>
+      <a class="footer-social" href="${INSTAGRAM}" target="_blank" rel="noopener">${svgIcon("instagram", 20)} @ticketroom_za on Instagram</a></div>
     <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
     <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/advertise">Advertise your business</a></li><li><a href="/organisers">Organiser portal</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
     <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
@@ -699,4 +700,61 @@ export function qrPanel(svg, { name = "qr-code", caption = "", background, ink }
   });
   $("[data-svg]", box).addEventListener("click", () => saveBlob(new Blob([svg], { type: "image/svg+xml" }), `${fileSafe(name)}.svg`));
   return box;
+}
+
+// ---------- sharing and likes ----------
+export const INSTAGRAM = "https://www.instagram.com/ticketroom_za/";
+const ICONS = {
+  heart: '<path d="M12 20.5s-7-4.4-9.4-8.6C.9 8.9 2.3 5.3 5.6 4.6c2-.4 3.8.5 4.9 2h3c1.1-1.5 2.9-2.4 4.9-2 3.3.7 4.7 4.3 3 7.3-2.4 4.2-9.4 8.6-9.4 8.6z"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+  instagram: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>',
+};
+export const svgIcon = (name, size = 18) => raw(`<svg class="ico" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`);
+
+// Share an event (or any page): the phone's own share sheet where there is
+// one (WhatsApp, Instagram, Telegram, SMS…), plus direct buttons.
+export function shareBar(url, title, { text = "" } = {}) {
+  const box = document.createElement("div");
+  box.className = "share-bar";
+  const msg = text || `${title} on TicketRoom`;
+  const enc = encodeURIComponent;
+  const links = [
+    ["WhatsApp", `https://wa.me/?text=${enc(`${msg}: ${url}`)}`],
+    ["Facebook", `https://www.facebook.com/sharer/sharer.php?u=${enc(url)}`],
+    ["X", `https://twitter.com/intent/tweet?text=${enc(msg)}&url=${enc(url)}`],
+    ["Email", `mailto:?subject=${enc(title)}&body=${enc(`${msg}\n\n${url}`)}`],
+  ];
+  render(box, html`<span class="share-label">Share</span>
+    ${navigator.share ? html`<button type="button" class="btn btn-ghost btn-sm" data-native>${svgIcon("share", 16)} Share…</button>` : ""}
+    ${links.map(([name, href]) => html`<a class="btn btn-ghost btn-sm" href="${href}" target="_blank" rel="noopener" data-share="${name}">${name}</a>`)}
+    <button type="button" class="btn btn-ghost btn-sm" data-copy>${svgIcon("link", 16)} Copy link</button>`);
+  $("[data-native]", box)?.addEventListener("click", () => navigator.share({ title, text: msg, url }).catch(() => {}));
+  $("[data-copy]", box).addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(url); toast("Link copied.", "good"); } catch { toast(url); }
+  });
+  return box;
+}
+
+// Heart button. Signed-out people are asked to sign in first; the like is
+// saved to their account ("Saved events" in the customer portal).
+export function likeButton(slug, { liked = false, likes = 0 } = {}) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "like-btn";
+  const draw = () => {
+    b.classList.toggle("on", liked);
+    b.setAttribute("aria-pressed", String(liked));
+    b.setAttribute("aria-label", liked ? "Remove from saved events" : "Like this event");
+    render(b, html`${svgIcon("heart", 20)}<span>${likes ? likes.toLocaleString("en-ZA") : ""}</span><span class="like-word">${liked ? "Saved" : "Like"}</span>`);
+  };
+  draw();
+  b.addEventListener("click", async () => {
+    if (!(await me()) && !(await requireUser("Sign in to like events. They're saved to your account so you can find them again."))) return;
+    const want = !liked;
+    liked = want; likes += want ? 1 : -1; draw();
+    try { const r = await post(`/api/public/events/${encodeURIComponent(slug)}/like`, { liked: want }); liked = r.liked; likes = r.likes; draw(); }
+    catch (err) { liked = !want; likes += want ? -1 : 1; draw(); toast(err.message, "bad"); }
+  });
+  return b;
 }

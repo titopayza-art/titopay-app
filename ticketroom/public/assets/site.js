@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -13,7 +13,7 @@ function card(e) {
     <div class="body"><span class="cat-label">${e.category}</span><h3>${e.title}</h3>
       <span class="muted small">${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })} · ${fmtTime(e.starts_at)}</span>
       <span class="muted small">${e.venue_name}, ${e.city}</span>
-      <div class="foot">${fromPrice(e)}<span class="small muted">${e.organiser_name}</span></div></div></a>`;
+      <div class="foot">${fromPrice(e)}<span class="small muted">${e.likes ? html`<span class="likes-count" aria-label="${e.likes} likes">${svgIcon("heart", 14)} ${e.likes}</span> · ` : ""}${e.organiser_name}</span></div></div></a>`;
 }
 
 // Small line icons (stroke follows the text colour).
@@ -102,6 +102,7 @@ async function eventPage(slug) {
       <span class="cat-label">${e.category}</span><h1>${e.title}</h1>
       ${e.summary ? html`<p class="lead">${e.summary}</p>` : ""}
       <div class="event-facts"><span>${icon("calendar")}${fmtDate(e.starts_at, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</span><span>${icon("clock")}${fmtTime(e.starts_at)} to ${fmtTime(e.ends_at)}</span><span>${icon("pin")}${e.venue_name}, ${e.city}</span></div>
+      <div class="event-actions" data-actions></div>
       ${e.status === "cancelled" ? html`<p class="callout bad mt"><strong>This event has been cancelled.</strong> Ticket holders are refunded automatically.</p>` : ""}
     </div></section>
     <div class="wrap event-layout">
@@ -119,6 +120,8 @@ async function eventPage(slug) {
       <aside class="card ticket-box" id="box" aria-labelledby="tix-h"></aside>
     </div>`);
 
+  const eventUrl = `${location.origin}/events/${e.slug}`;
+  $("[data-actions]").append(likeButton(e.slug, { liked: e.liked, likes: e.likes }), shareBar(eventUrl, e.title, { text: `${e.title}, ${fmtDate(e.starts_at, { day: "numeric", month: "long" })} at ${e.venue_name}` }));
   const box = $("#box");
   const selection = () => ticketTypes.filter((t) => qty[t.id] > 0).map((t) => ({ ticketTypeId: t.id, quantity: qty[t.id] }));
   const drawSelect = () => {
@@ -220,7 +223,8 @@ async function orderPage(ref) {
     render(main, html`<div class="wrap section"><div class="card pad-lg stack" aria-live="polite">
       <div class="row between"><span class="muted small">Order ${o.reference}</span>${badge(o.status)}</div>
       ${o.status === "paid" ? html`<h1>You're going</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've also emailed a confirmation.</p>
-          <div class="row"><a class="btn btn-primary" href="/account#/tickets">View my tickets</a><a class="btn btn-ghost" href="/events/${o.event.slug}">Back to event</a></div>`
+          <div class="row"><a class="btn btn-primary" href="/account#/tickets">View my tickets</a><a class="btn btn-ghost" href="/events/${o.event.slug}">Back to event</a></div>
+          <div class="card flat stack"><strong>Tell your friends you're going</strong><div data-share></div></div>`
         : pending && wallet && payment.status === "failed" ? html`<h1>Payment not approved</h1><p>The TitoPay wallet payment was declined or not approved in time. Nothing was charged.</p><div class="row"><button class="btn btn-primary" data-repay>Try again</button><button class="btn btn-ghost" data-cancel>Cancel order</button></div>`
         : pending && wallet ? html`<h1>Approve in your TitoPay app</h1><p>We've sent a payment request of <strong>${moneyExact(o.totalCents)}</strong> to your TitoPay wallet. Open the TitoPay app and approve it. This page will update by itself.</p>${spinner()}`
         : pending ? html`<h1>Confirming your payment…</h1><p>We're waiting for the payment provider to confirm. This usually takes a few seconds. Please don't pay again.</p>${tries > 20 ? html`<p class="callout warn">Still waiting. If you completed payment, your tickets will appear in your account as soon as the provider confirms. <button class="btn-link" data-repay>Return to payment</button> · <button class="btn-link" data-cancel>Cancel order</button></p>` : spinner()}`
@@ -231,6 +235,7 @@ async function orderPage(ref) {
         ${o.discountCents ? html`<div class="line"><span>Discount</span><span>−${moneyExact(o.discountCents)}</span></div>` : ""}
         <div class="line"><span>Booking fee</span><span>${moneyExact(o.feeCents)}</span></div><div class="line total"><span>Total</span><span>${moneyExact(o.totalCents)}</span></div></div></div>
     </div></div>`);
+    $("[data-share]")?.append(shareBar(`${location.origin}/events/${o.event.slug}`, o.event.title, { text: `I'm going to ${o.event.title}. Get your ticket` }));
     $("[data-repay]")?.addEventListener("click", async () => { try { const r = await post(`/api/public/orders/${ref}/pay`); if (r.payment.redirectUrl) location.href = r.payment.redirectUrl; else { tries = 0; draw(); } } catch (err) { toast(err.message, "bad"); } });
     $("[data-cancel]")?.addEventListener("click", async () => { await post(`/api/public/orders/${ref}/cancel`); draw(); });
     if (pending && !(wallet && payment.status === "failed") && tries++ < 120) setTimeout(draw, tries < 10 ? 1500 : 4000);
@@ -332,6 +337,7 @@ async function supportPanel(site, { topic = "callback" } = {}) {
     <section class="card stack"><h2>Contact us</h2>
       ${site ? html`<p class="callout ${site.hours.openNow ? "good" : "warn"} mb-0"><strong>${hoursText(site.hours)}.</strong></p>` : ""}
       <p class="mb-0">Email <a href="mailto:${site?.support?.email || "hello@ticketroom.co.za"}">${site?.support?.email || "hello@ticketroom.co.za"}</a></p>
+      <p class="mb-0"><a class="row" style="gap:6px;display:inline-flex" href="${INSTAGRAM}" target="_blank" rel="noopener">${svgIcon("instagram", 18)} Follow us on Instagram: @ticketroom_za</a></p>
       <h3>Office hours</h3>${site ? weekTable(site.hours) : html`<p>Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.</p>`}
       ${site?.hours.upcomingHolidays?.length ? html`<p class="small muted mb-0">Upcoming closures: ${site.hours.upcomingHolidays.map((h) => `${fmtDate(h.date + "T12:00:00+02:00", { day: "numeric", month: "short" })} (${h.name})`).join(", ")}</p>` : ""}
       <p class="small muted mb-0">Requests received after hours, on weekends or public holidays are handled on the next working day.</p>

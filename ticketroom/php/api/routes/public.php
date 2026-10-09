@@ -5,7 +5,8 @@ declare(strict_types=1);
 const PUBLIC_EVENT = "e.id, e.slug, e.title, e.is_free, e.summary, e.category, e.venue_name, e.address, e.city, e.province, e.starts_at, e.ends_at,
   e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.status, e.sales_start_at, e.sales_end_at, o.name AS organiser_name,
   (SELECT MIN(price_cents) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS from_price_cents,
-  (SELECT COALESCE(SUM(quantity_total - quantity_sold - quantity_held),0) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS remaining";
+  (SELECT COALESCE(SUM(quantity_total - quantity_sold - quantity_held),0) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS remaining,
+  (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id) AS likes";
 
 route('GET', '/api/public/events', function () {
     limit('browse', 300, 60);
@@ -40,7 +41,25 @@ route('GET', '/api/public/events/:slug', function ($a) {
                      FROM ticket_types WHERE event_id = ? AND status = 'on_sale' ORDER BY sort_order, price_cents", [$ev['id']]);
     foreach ($types as &$t) $t['fee_cents'] = ticket_fee((int) $t['price_cents']);
     $ev['salesOpen'] = sales_open($ev);
+    $ev['liked'] = user() ? (bool) val('SELECT 1 FROM event_likes WHERE user_id = ? AND event_id = ?', [user()['id'], $ev['id']]) : false;
     return ['event' => $ev, 'ticketTypes' => $types];
+});
+
+// Like (or unlike) an event. Liked events are saved in the customer portal.
+route('POST', '/api/public/events/:slug/like', function ($a) {
+    $u = require_auth();
+    limit('like', 120, 60, $u['id']);
+    $b = check(body(), ['liked' => R::bool()]);
+    $id = val("SELECT id FROM events WHERE slug = ? AND status IN ('published','completed')", [$a['slug']]);
+    if (!$id) throw not_found('Event not found.');
+    if ($b['liked']) q('INSERT OR IGNORE INTO event_likes (user_id, event_id, created_at) VALUES (?,?,?)', [$u['id'], $id, now_iso()]);
+    else q('DELETE FROM event_likes WHERE user_id = ? AND event_id = ?', [$u['id'], $id]);
+    return ['liked' => $b['liked'], 'likes' => (int) val('SELECT count(*) FROM event_likes WHERE event_id = ?', [$id])];
+});
+route('GET', '/api/me/likes', function () {
+    $u = require_auth();
+    return ['events' => rows('SELECT ' . PUBLIC_EVENT . " FROM event_likes l JOIN events e ON e.id = l.event_id JOIN organisers o ON o.id = e.organiser_id
+                               WHERE l.user_id = ? AND e.status IN ('published','completed') ORDER BY (e.ends_at < ?), e.starts_at LIMIT 200", [$u['id'], now_iso()])];
 });
 
 route('POST', '/api/public/events/:slug/click', function ($a) {

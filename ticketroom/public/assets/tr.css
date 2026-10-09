@@ -452,3 +452,19 @@ body.venue main#main { min-height: 0; }
 @media (min-width: 900px) { .qr-studio { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; } }
 .qr-colours { display: flex; gap: 16px; flex-wrap: wrap; }
 .qr-colours input[type=color] { width: 56px; height: 40px; padding: 2px; border-radius: 8px; }
+
+/* ---------- share and like ---------- */
+.share-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.share-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; color: var(--muted); margin-right: 2px; }
+.event-hero .share-bar .btn { color: #fff; border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.06); }
+.event-hero .share-label { color: #C8D4EA; }
+.like-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 8px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.06); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.like-btn .ico { fill: none; }
+.like-btn.on { background: #fff; color: var(--bad); border-color: #fff; }
+.like-btn.on .ico { fill: currentColor; }
+.card .like-btn, .like-btn.light { border-color: var(--line); background: #fff; color: var(--ink); }
+.card .like-btn.on { color: var(--bad); }
+.event-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; }
+.likes-count { display: inline-flex; align-items: center; gap: 4px; }
+.likes-count .ico { color: var(--bad); fill: currentColor; }
+.footer-social { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; }

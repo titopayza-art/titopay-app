@@ -134,4 +134,11 @@ router.get("/support", wrap(async (req, res) => {
   res.json({ cases: rows });
 }));
 
+router.get("/likes", wrap(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT ${require("./public").PUBLIC_EVENT} FROM event_likes l JOIN events e ON e.id = l.event_id JOIN organisers o ON o.id = e.organiser_id
+      WHERE l.user_id = $1 AND e.status IN ('published','completed') ORDER BY (e.ends_at < now()), e.starts_at LIMIT 200`, [req.user.id]);
+  res.json({ events: rows });
+}));
+
 module.exports = router;

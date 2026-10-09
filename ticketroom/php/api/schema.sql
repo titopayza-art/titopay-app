@@ -478,3 +478,12 @@ CREATE TABLE IF NOT EXISTS newsletter_issues (
   sent_by     TEXT NOT NULL REFERENCES users(id),
   created_at  TEXT NOT NULL
 );
+
+-- Events people like (saved to their account).
+CREATE TABLE IF NOT EXISTS event_likes (
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  event_id   TEXT NOT NULL REFERENCES events(id),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS event_likes_event_idx ON event_likes (event_id);
