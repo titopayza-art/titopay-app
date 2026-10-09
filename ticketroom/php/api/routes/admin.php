@@ -237,6 +237,57 @@ route('POST', '/api/admin/users/:id/roles', function ($a) {
     return ['ok' => true];
 });
 
+// ---- TicketRoom staff (admin portal team) --------------------------------------------
+const STAFF_ROLE_NAMES = ['admin' => 'Admin', 'finance' => 'Finance', 'support' => 'Support'];
+route('GET', '/api/admin/staff', function () {
+    adm_any();
+    $list = rows("SELECT u.id, u.full_name, u.email, u.status, u.created_at, group_concat(r.role) AS roles
+                    FROM users u JOIN platform_roles r ON r.user_id = u.id GROUP BY u.id ORDER BY u.full_name");
+    foreach ($list as &$x) $x['roles'] = array_values(array_filter(explode(',', (string) $x['roles'])));
+    return ['staff' => $list];
+});
+// Add someone to the team. A new address gets an account and an email to set a password.
+route('POST', '/api/admin/staff', function () {
+    $u = adm_admin();
+    limit('staffteam', 30, 3600, $u['id']);
+    $b = check(body(), ['email' => R::email(), 'fullName' => R::str(['min' => 2, 'max' => 120]), 'roles' => R::arr(R::oneOf(array_keys(STAFF_ROLE_NAMES)), ['min' => 1, 'max' => 3])]);
+    $roles = array_values(array_unique($b['roles']));
+    return tx(function () use ($u, $b, $roles) {
+        $now = now_iso();
+        $existing = row("SELECT id, status FROM users WHERE lower(email) = ?", [$b['email']]);
+        if ($existing && $existing['status'] !== 'active') throw conflict('That account is suspended or closed. Restore it under All users first.', 'account_inactive');
+        $url = null;
+        if ($existing) $id = $existing['id'];
+        else {
+            $id = uuid();
+            insert('users', ['id' => $id, 'email' => $b['email'], 'full_name' => $b['fullName'], 'password_hash' => hash_secret(random_token(24)), 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);
+            $token = random_token(32);
+            insert('password_resets', ['token_hash' => sha256($token), 'user_id' => $id, 'expires_at' => iso_in(7 * 86400), 'created_at' => $now]);
+            $url = base_url() . "/account#/reset/$token";
+        }
+        foreach ($roles as $r) q('INSERT OR IGNORE INTO platform_roles (user_id, role, granted_by, granted_at) VALUES (?,?,?,?)', [$id, $r, $u['id'], $now]);
+        $names = implode(' and ', array_map(fn($r) => STAFF_ROLE_NAMES[$r], $roles));
+        outbox_enqueue(['to' => $b['email'], 'userId' => $id] + tpl('teamInvite', ['name' => $existing ? null : $b['fullName'], 'by' => $u['fullName'], 'roles' => $names, 'url' => $url]));
+        audit('staff.added', ['actor' => $u, 'entityType' => 'user', 'entityId' => $id, 'details' => ['roles' => $roles, 'newAccount' => !$existing]]);
+        return json_out(['ok' => true, 'invited' => !$existing], 201);
+    });
+});
+// Set exactly these roles; an empty list removes the person from the team.
+route('PUT', '/api/admin/staff/:id', function ($a) {
+    $u = adm_admin();
+    $b = check(body(), ['roles' => R::arr(R::oneOf(array_keys(STAFF_ROLE_NAMES)), ['max' => 3])]);
+    if ($a['id'] === $u['id']) throw forbidden('You cannot change your own roles. Ask another admin.');
+    if (!row('SELECT 1 FROM users WHERE id = ?', [$a['id']])) throw not_found('Staff member not found.');
+    $want = array_values(array_unique($b['roles']));
+    tx(function () use ($u, $a, $want) {
+        $have = array_column(rows('SELECT role FROM platform_roles WHERE user_id = ?', [$a['id']]), 'role');
+        foreach (array_diff($have, $want) as $r) { q('DELETE FROM platform_roles WHERE user_id = ? AND role = ?', [$a['id'], $r]); audit('role.revoked', ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['role' => $r]]); }
+        foreach (array_diff($want, $have) as $r) { q('INSERT INTO platform_roles (user_id, role, granted_by, granted_at) VALUES (?,?,?,?)', [$a['id'], $r, $u['id'], now_iso()]); audit('role.granted', ['actor' => $u, 'entityType' => 'user', 'entityId' => $a['id'], 'details' => ['role' => $r]]); }
+        if (!$want) q('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [now_iso(), $a['id']]);
+    });
+    return ['ok' => true];
+});
+
 // ---- orders & tickets --------------------------------------------------------------
 route('GET', '/api/admin/orders', function () {
     adm_any();
@@ -579,4 +630,13 @@ route('POST', '/api/admin/subscribers/send', function () {
         return $n;
     });
     return ['ok' => true, 'recipients' => $n];
+});
+
+// ============================================================== QR code maker
+route('POST', '/api/admin/qr', function () {
+    $u = adm_any();
+    limit('adminqr', 120, 60, $u['id']);
+    $b = check(body(), ['text' => R::text(['max' => 1200]), 'dark' => R::str(['optional' => true, 'max' => 7]),
+        'light' => R::str(['optional' => true, 'max' => 7]), 'ecc' => R::oneOf(['M', 'Q', 'H'], ['optional' => true, 'fallback' => 'M'])]);
+    return ['svg' => qr_for_people($b['text'], $b)];
 });

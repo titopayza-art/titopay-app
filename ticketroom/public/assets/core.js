@@ -183,6 +183,17 @@ export function formValues(form) {
 }
 
 // Shows server validation errors next to fields; returns true if handled.
+// New-password forms have a second box; check both match before sending.
+// Throws a field error that showErrors() puts under the confirm box.
+export function matchPasswords(v, field, confirm) {
+  const pw = v[field] || "";
+  const again = v[confirm] || "";
+  delete v[confirm];
+  if (pw.length < 10) throw new ApiError(422, { error: { message: "Use at least 10 characters.", details: { [field]: "Use at least 10 characters." } } });
+  if (pw !== again) throw new ApiError(422, { error: { message: "The two passwords don't match.", details: { [confirm]: "The two passwords don't match." } } });
+  return v;
+}
+
 export function showErrors(form, err) {
   $$("[aria-invalid]", form).forEach((el) => el.removeAttribute("aria-invalid"));
   $$(".err", form).forEach((el) => el.remove());
@@ -538,6 +549,7 @@ export function authDialog(mode = "signin", { onDone, reason } = {}) {
       <div class="field"><label for="a-email">Email</label><input id="a-email" name="email" type="email" autocomplete="email" required></div>
       ${signup ? html`<div class="field"><label for="a-phone">Mobile number <span class="muted">(optional)</span></label><input id="a-phone" name="phone" type="tel" autocomplete="tel" placeholder="082 123 4567"><span class="hint">For ticket SMSes if you choose.</span></div>` : ""}
       <div class="field"><label for="a-pass">Password</label><input id="a-pass" name="password" type="password" autocomplete="${signup ? "new-password" : "current-password"}" required minlength="${signup ? 10 : 1}">${signup ? html`<span class="hint">At least 10 characters.</span>` : ""}</div>
+      ${signup ? html`<div class="field"><label for="a-pass2">Confirm password</label><input id="a-pass2" name="passwordConfirm" type="password" autocomplete="new-password" required minlength="10"></div>` : ""}
       ${signup ? html`<label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a> and <a href="/legal/terms" target="_blank">Terms and Conditions</a>, and have read the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label>
         <label class="check"><input type="checkbox" name="marketingOptIn"><span>Send me TicketRoom event news by email. You can unsubscribe at any time.</span></label>` : ""}
       <button class="btn btn-primary btn-block" type="submit">${signup ? "Create account" : "Sign in"}</button>
@@ -546,6 +558,7 @@ export function authDialog(mode = "signin", { onDone, reason } = {}) {
     </form>`);
   const form = $("form", d);
   onSubmit(form, async (v) => {
+    if (signup) matchPasswords(v, "password", "passwordConfirm");
     await post(signup ? "/api/auth/register" : "/api/auth/login", v);
     await me(true);
     d.close();
@@ -630,4 +643,48 @@ export function barChart(data, { height = 180, label = (d) => d.label, value = (
 // Width of meters is set via CSSOM (allowed under CSP), not style attributes.
 export function paintMeters(root = document) {
   $$(".meter > i[data-pct]", root).forEach((i) => { i.style.width = `${Math.max(0, Math.min(100, Number(i.dataset.pct)))}%`; });
+}
+
+// ---------- QR code downloads (organiser event QR, admin QR maker) ----------
+// `svg` comes from our own API (squares only). PNG is drawn on a canvas at
+// print size, with an optional caption under the code.
+const fileSafe = (s) => String(s || "qr-code").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "qr-code";
+function saveBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+export async function qrPng(svg, { size = 1024, caption = "", background = "#FFFFFF", ink = "#0B1A33" } = {}) {
+  const img = new Image();
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  await new Promise((ok, fail) => { img.onload = ok; img.onerror = () => fail(new Error("Could not draw the QR code.")); img.src = url; });
+  const pad = caption ? Math.round(size * 0.16) : 0;
+  const c = document.createElement("canvas");
+  c.width = size; c.height = size + pad;
+  const g = c.getContext("2d");
+  g.fillStyle = background; g.fillRect(0, 0, c.width, c.height);
+  g.imageSmoothingEnabled = false;
+  g.drawImage(img, 0, 0, size, size);
+  URL.revokeObjectURL(url);
+  if (caption) {
+    g.fillStyle = ink; g.textAlign = "center"; g.textBaseline = "middle";
+    let fs = Math.round(size * 0.06);
+    do { g.font = `700 ${fs}px Inter, "Segoe UI", Arial, sans-serif`; fs -= 2; } while (g.measureText(caption).width > size * 0.9 && fs > 12);
+    g.fillText(caption, size / 2, size + pad / 2 - size * 0.02);
+  }
+  return new Promise((ok) => c.toBlob(ok, "image/png"));
+}
+export function qrPanel(svg, { name = "qr-code", caption = "", background, ink } = {}) {
+  const box = document.createElement("div");
+  box.className = "qr-panel";
+  const sized = svg.replace("<svg ", '<svg role="img" aria-label="QR code" width="240" height="240" ');
+  render(box, html`<div class="qr-preview">${raw(sized)}</div>
+    <div class="row"><button class="btn btn-primary btn-sm" data-png>Download PNG</button><button class="btn btn-ghost btn-sm" data-svg>Download SVG</button></div>
+    <p class="tiny muted mb-0">PNG for WhatsApp, socials and printing (1024 px${caption ? ", with the caption" : ""}). SVG stays sharp at any size, for designers and large banners.</p>`);
+  $("[data-png]", box).addEventListener("click", async () => {
+    try { saveBlob(await qrPng(svg, { caption, background, ink }), `${fileSafe(name)}.png`); } catch (err) { toast(err.message, "bad"); }
+  });
+  $("[data-svg]", box).addEventListener("click", () => saveBlob(new Blob([svg], { type: "image/svg+xml" }), `${fileSafe(name)}.svg`));
+  return box;
 }

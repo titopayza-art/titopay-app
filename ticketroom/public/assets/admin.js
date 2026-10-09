@@ -1,6 +1,6 @@
 // TicketRoom back office. The server enforces every permission; the UI only
 // hides what a role cannot do.
-import { html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate, matchPasswords, qrPanel, ApiError } from "/assets/core.js";
 
 const main = $("#main");
 let R = new Set();
@@ -41,6 +41,101 @@ async function subscribers(params, q = "") {
   });
 }
 
+// QR code maker: links, event pages, WhatsApp, email, phone or plain text,
+// in TicketRoom colours or your own, as PNG (with an optional caption) or SVG.
+async function qrStudio() {
+  const { events } = await get("/api/admin/events?status=published").catch(() => ({ events: [] }));
+  const site = location.origin;
+  const KINDS = [["link", "Website link"], ["event", "Event page"], ["whatsapp", "WhatsApp chat"], ["email", "Email"], ["phone", "Phone call"], ["text", "Plain text"]];
+  render(main, html`${head("QR codes", "Make a QR code for a poster, flyer, banner or slide. Download it as a PNG to share or print, or as an SVG for designers.")}
+    <div class="qr-studio"><section class="card stack"><form class="stack" id="qf">
+      <div class="field"><label for="qk">What should it open?</label><select id="qk" name="kind">${KINDS.map(([v, l]) => html`<option value="${v}">${l}</option>`)}</select></div>
+      <div data-inputs></div>
+      <div class="field"><label for="qc">Caption under the code <span class="muted">(optional, PNG only)</span></label><input id="qc" name="caption" maxlength="60" placeholder="Scan for tickets"></div>
+      <div class="qr-colours"><div class="field"><label for="qd">Squares</label><input id="qd" name="dark" type="color" value="#0b1a33"></div>
+        <div class="field"><label for="ql">Background</label><input id="ql" name="light" type="color" value="#ffffff"></div>
+        <div class="field"><label for="qe">Strength</label><select id="qe" name="ecc"><option value="M">Standard</option><option value="Q">Strong</option><option value="H">Extra strong (for print that may get scuffed)</option></select></div></div>
+      <button class="btn btn-primary">Make QR code</button></form></section>
+      <section class="card stack" aria-live="polite"><h2>Preview</h2><div data-out><p class="muted mb-0">Fill in the form and press <strong>Make QR code</strong>.</p></div></section></div>`);
+  const f = $("#qf");
+  const inputs = () => {
+    const k = f.kind.value;
+    const box = $("[data-inputs]", f);
+    if (k === "link") render(box, html`<div class="field"><label for="qv">Web address</label><input id="qv" name="value" type="url" required placeholder="https://ticketroom.co.za" value="https://ticketroom.co.za"></div>`);
+    else if (k === "event") render(box, events.length ? html`<div class="field"><label for="qv">Event</label><select id="qv" name="value">${events.map((e) => html`<option value="${e.slug}">${e.title} (${fmtDate(e.starts_at)})</option>`)}</select><span class="hint">Only published events have a page people can open.</span></div>`
+      : html`<p class="callout warn mb-0">There are no published events yet. Choose "Website link" instead, or publish an event first.</p>`);
+    else if (k === "whatsapp") render(box, html`<div class="grid-2"><div class="field"><label for="qv">WhatsApp number</label><input id="qv" name="value" type="tel" required placeholder="076 884 7372"></div>
+      <div class="field"><label for="qm">First message <span class="muted">(optional)</span></label><input id="qm" name="message" maxlength="200" placeholder="Hi TicketRoom"></div></div>`);
+    else if (k === "email") render(box, html`<div class="grid-2"><div class="field"><label for="qv">Email address</label><input id="qv" name="value" type="email" required value="hello@ticketroom.co.za"></div>
+      <div class="field"><label for="qm">Subject <span class="muted">(optional)</span></label><input id="qm" name="message" maxlength="120"></div></div>`);
+    else if (k === "phone") render(box, html`<div class="field"><label for="qv">Phone number</label><input id="qv" name="value" type="tel" required placeholder="076 884 7372"></div>`);
+    else render(box, html`<div class="field"><label for="qv">Text</label><textarea id="qv" name="value" required maxlength="1000" rows="4"></textarea><span class="hint">Shown as text on the phone that scans it.</span></div>`);
+  };
+  // South African numbers: 076 884 7372 becomes 27768847372.
+  const intl = (n) => { const d = String(n).replace(/[^0-9+]/g, "").replace(/^\+/, ""); return d.startsWith("0") ? `27${d.slice(1)}` : d; };
+  const content = () => {
+    const k = f.kind.value, v = (f.value?.value || "").trim(), m = (f.message?.value || "").trim();
+    if (!v) throw new Error("Fill in what the code should open.");
+    if (k === "link") { if (!/^https?:\/\/[^\s.]+\.[^\s]+$/i.test(v)) throw new Error("Enter a full web address, starting with https://"); return { text: v, name: v.replace(/^https?:\/\//, "") }; }
+    if (k === "event") return { text: `${site}/events/${v}`, name: v };
+    if (k === "whatsapp") { const n = intl(v); if (!/^[1-9][0-9]{7,14}$/.test(n)) throw new Error("Enter a valid phone number."); return { text: `https://wa.me/${n}${m ? `?text=${encodeURIComponent(m)}` : ""}`, name: `whatsapp-${n}` }; }
+    if (k === "email") { if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) throw new Error("Enter a valid email address."); return { text: `mailto:${v}${m ? `?subject=${encodeURIComponent(m)}` : ""}`, name: `email-${v}` }; }
+    if (k === "phone") { const n = intl(v); if (!/^[1-9][0-9]{7,14}$/.test(n)) throw new Error("Enter a valid phone number."); return { text: `tel:+${n}`, name: `call-${n}` }; }
+    return { text: v, name: "text" };
+  };
+  f.kind.addEventListener("change", inputs);
+  inputs();
+  onSubmit(f, async () => {
+    let c;
+    try { c = content(); } catch (err) { toast(err.message, "bad"); return; }
+    const r = await post("/api/admin/qr", { text: c.text, dark: f.dark.value, light: f.light.value, ecc: f.ecc.value });
+    const out = $("[data-out]");
+    render(out, html`<p class="small mb-0">Opens: <span class="mono">${c.text}</span></p>`);
+    out.append(qrPanel(r.svg, { name: `ticketroom-qr-${c.name}`, caption: f.caption.value.trim(), background: f.light.value, ink: f.dark.value }));
+    out.insertAdjacentHTML("beforeend", '<p class="tiny muted mb-0">Test it with your phone camera before you print.</p>');
+  });
+}
+
+// The TicketRoom team: who can use the admin portal, and what each may do.
+const ROLE_INFO = [
+  ["admin", "Admin", "Runs the platform: approves organisers and events, site settings, staff and roles."],
+  ["finance", "Finance", "Approves refunds and payouts, reconciliation and the ledger."],
+  ["support", "Support", "Helps customers: looks up orders and tickets, handles callbacks and support cases."],
+];
+async function staffPage() {
+  const { staff } = await get("/api/admin/staff");
+  const meId = (await me()).id;
+  const roleBoxes = (prefix, has = []) => html`<fieldset class="stack"><legend class="label">Roles</legend>${ROLE_INFO.map(([k, name, what]) => html`<label class="check"><input type="checkbox" name="${prefix}${k}" ${raw(has.includes(k) ? "checked" : "")}><span><strong>${name}</strong><br><span class="small muted">${what}</span></span></label>`)}</fieldset>`;
+  render(main, html`${head("Staff & roles", "Everyone who can open the admin portal. Give each person only the roles they need.")}
+    ${isA() ? html`<section class="card stack"><h2>Add a staff member</h2>
+      <form class="stack" id="sf"><div class="grid-2"><div class="field"><label for="sn">Full name</label><input id="sn" name="fullName" required maxlength="120"></div>
+        <div class="field"><label for="se">Email</label><input id="se" name="email" type="email" required><span class="hint">Someone new gets an email to set their password. An existing account just gets the roles.</span></div></div>
+        ${roleBoxes("r_", ["support"])}<button class="btn btn-primary">Add to the team</button></form></section>` : ""}
+    <section class="mt"><h2>The team</h2>${tbl(["Name", "Email", "Roles", ""], staff.map((s) => html`<tr><td>${s.full_name}${s.id === meId ? html` <span class="tiny muted">(you)</span>` : ""}</td><td class="small">${s.email}</td>
+      <td>${s.roles.map((r) => html`<span class="badge ${r === "admin" ? "bad" : r === "finance" ? "info" : "good"}">${(ROLE_INFO.find(([k]) => k === r) || [, r])[1]}</span> `)}</td>
+      <td>${isA() && s.id !== meId ? html`<button class="btn btn-ghost btn-sm" data-edit="${s.id}">Change roles</button>` : ""}</td></tr>`), "No staff yet.")}</section>`);
+  const f = $("#sf");
+  if (f) onSubmit(f, async (v) => {
+    const roles = ROLE_INFO.map(([k]) => k).filter((k) => v[`r_${k}`]);
+    if (!roles.length) throw new ApiError(422, { error: { message: "Tick at least one role." } });
+    const r = await post("/api/admin/staff", { fullName: v.fullName, email: v.email, roles });
+    toast(r.invited ? `Added. ${v.email} will get an email to set a password.` : `Added. ${v.email} can sign in with their usual password.`, "good");
+    staffPage();
+  });
+  $$("[data-edit]").forEach((b) => b.addEventListener("click", () => {
+    const s = staff.find((x) => x.id === b.dataset.edit);
+    const d = dialog(`Roles for ${s.full_name}`, html`<form class="stack" id="rf">${roleBoxes("e_", s.roles)}
+      <p class="tiny muted mb-0">Untick everything to remove ${s.full_name} from the team. They are signed out straight away.</p>
+      <div class="row"><button class="btn btn-primary">Save roles</button></div></form>`);
+    onSubmit($("#rf", d), async (v) => {
+      const roles = ROLE_INFO.map(([k]) => k).filter((k) => v[`e_${k}`]);
+      if (!roles.length && !(await confirmDialog(`Remove ${s.full_name} from the team?`, "They lose access to the admin portal and are signed out.", { confirm: "Remove", danger: true }))) return;
+      await put(`/api/admin/staff/${s.id}`, { roles });
+      d.close(); toast(roles.length ? "Roles saved." : `${s.full_name} has been removed from the team.`, "good"); staffPage();
+    });
+  }));
+}
+
 // Staff change their own password here, inside the admin portal.
 async function myPassword() {
   const u = await me(true);
@@ -48,8 +143,9 @@ async function myPassword() {
     <section class="card" style="max-width:520px"><form class="stack" id="pw">
       <div class="field"><label for="cp">Current password</label><input id="cp" name="currentPassword" type="password" required autocomplete="current-password"></div>
       <div class="field"><label for="np">New password</label><input id="np" name="newPassword" type="password" required minlength="10" autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
+      <div class="field"><label for="np2">Confirm new password</label><input id="np2" name="newPasswordConfirm" type="password" required minlength="10" autocomplete="new-password"></div>
       <button class="btn btn-dark">Change password</button></form></section>`);
-  onSubmit($("#pw"), async (v, f) => { await post("/api/auth/me/password", v); f.reset(); $(".pw-nag")?.remove(); toast("Password changed.", "good"); });
+  onSubmit($("#pw"), async (v, f) => { await post("/api/auth/me/password", matchPasswords(v, "newPassword", "newPasswordConfirm")); f.reset(); $(".pw-nag")?.remove(); toast("Password changed.", "good"); });
 }
 const act = async (fn, msg = "Done.") => { try { await fn(); toast(msg, "good"); return true; } catch (err) { toast(err.message, "bad"); return false; } };
 const reason = (title, msg, label = "Reason") => confirmDialog(title, msg, { confirm: "Confirm", input: { label, required: true } });
@@ -59,9 +155,9 @@ function nav(counts = {}) {
   render($("#sidenav"), html`<a href="#/">Overview</a>
     <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users">All users</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
     <div class="sect" data-feature="finance">Finance</div><a href="#/refunds" data-feature="finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance">Ledger</a>
-    <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/subscribers">Subscribers</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
+    <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/subscribers">Subscribers</a><a href="#/qr">QR codes</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
     <div class="sect">Governance</div><a href="#/integrations">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
-    <div class="sect">You</div><a href="#/password">My password</a>`);
+    <div class="sect">You</div><a href="#/staff">Staff & roles</a><a href="#/password">My password</a>`);
 }
 
 async function overview() {
@@ -547,5 +643,5 @@ async function integrations() {
   document.title = "Admin portal | TicketRoom";
   nav();
   router([["/", overview], ["/organisers", organisers], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support],
-    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers]], () => { location.hash = "#/"; });
+    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers], ["/qr", qrStudio], ["/staff", staffPage]], () => { location.hash = "#/"; });
 })();

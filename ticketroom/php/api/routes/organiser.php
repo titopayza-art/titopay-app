@@ -814,3 +814,11 @@ route('POST', '/api/organiser/:orgId/campaigns/:id/cancel', function ($a) {
     }
     return ['campaign' => row('SELECT * FROM campaigns WHERE id = ?', [$a['id']])];
 });
+
+// QR code for the event's public page, for posters, flyers and socials.
+route('GET', '/api/organiser/:orgId/events/:eventId/qr', function ($a) {
+    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
+    $url = base_url() . '/events/' . $event['slug'];
+    return ['url' => $url, 'title' => $event['title'], 'status' => $event['status'],
+        'svg' => qr_for_people($url, ['dark' => qs('dark'), 'light' => qs('light'), 'ecc' => qs('ecc') ?? 'Q'])];
+});

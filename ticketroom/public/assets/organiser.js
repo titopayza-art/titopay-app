@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, isStaff } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, isStaff, qrPanel } from "/assets/core.js";
 
 const main = $("#main");
 let ORG = null;
@@ -155,6 +155,27 @@ async function eventWorkspace({ id, tab = "" }) {
   await fns[tab](el, d, () => eventWorkspace({ id, tab }));
 }
 
+// "Share your event": the public link and a QR code to download for posters,
+// flyers and socials. Shown on every event; the QR works once it is published.
+async function shareCard(el, event) {
+  const card = document.createElement("section");
+  card.className = "card mt";
+  card.setAttribute("aria-labelledby", "share-h");
+  el.append(card);
+  render(card, html`<div class="card-title"><h3 id="share-h">Share your event</h3></div>${spinner()}`);
+  try {
+    const q = await get(`${base()}/events/${event.id}/qr`);
+    render(card, html`<div class="card-title"><h3 id="share-h">Share your event</h3></div>
+      <div class="grid-2"><div class="stack"><p class="mb-0">Your event page:</p><p class="mb-0"><a class="mono small" href="${q.url}" target="_blank" rel="noopener">${q.url}</a></p>
+        <div class="row"><button class="btn btn-ghost btn-sm" data-copy>Copy link</button></div>
+        ${q.status === "published" ? html`<p class="small muted mb-0">Put the QR code on posters, flyers and slides. Scanning it opens your event page, where people get tickets.</p>`
+          : html`<p class="callout warn small mb-0">The QR code opens your event page once the event is published. You can download it now and use it after approval.</p>`}</div>
+        <div data-qr></div></div>`);
+    $("[data-qr]", card).append(qrPanel(q.svg, { name: `${q.title} QR code`, caption: q.title }));
+    $("[data-copy]", card).addEventListener("click", async () => { try { await navigator.clipboard.writeText(q.url); toast("Link copied.", "good"); } catch { toast(q.url); } });
+  } catch (err) { render(card, html`<p class="muted mb-0">The QR code could not be made right now: ${err.message}</p>`); }
+}
+
 async function overviewTab(el, d) {
   const a = await get(`${base()}/events/${d.event.id}/analytics`);
   const t = a.totals;
@@ -178,6 +199,7 @@ async function overviewTab(el, d) {
     </div>`);
   paintMeters(el);
   $("[data-tbl]", el).addEventListener("click", (ev) => { const t2 = $("#dtbl"); t2.classList.toggle("hidden"); ev.target.textContent = t2.classList.contains("hidden") ? "Show as table" : "Hide table"; });
+  shareCard(el, d.event);
 }
 
 async function ticketsTab(el, d, reload) {

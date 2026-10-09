@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords } from "/assets/core.js";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -198,7 +198,8 @@ async function settings() {
         <div class="field"><label for="pp">Your password</label><input id="pp" name="password" type="password" required autocomplete="current-password"></div><button class="btn btn-dark">${u.has_pin ? "Change PIN" : "Set PIN"}</button></form></section>
       <section class="card"><h2>Password</h2><form class="stack" id="pw">
         <div class="field"><label for="cp">Current password</label><input id="cp" name="currentPassword" type="password" required autocomplete="current-password"></div>
-        <div class="field"><label for="np">New password</label><input id="np" name="newPassword" type="password" required minlength="10" autocomplete="new-password"></div>
+        <div class="field"><label for="np">New password</label><input id="np" name="newPassword" type="password" required minlength="10" autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
+        <div class="field"><label for="np2">Confirm new password</label><input id="np2" name="newPasswordConfirm" type="password" required minlength="10" autocomplete="new-password"></div>
         <button class="btn btn-dark">Change password</button><p class="tiny muted mb-0">Other devices will be signed out.</p></form></section>
       <section class="card"><h2>Marketing preferences</h2>
         ${consents.length ? html`<div class="stack">${consents.map((c) => html`<label class="check"><input type="checkbox" data-consent data-org="${c.organiser_id || ""}" data-ch="${c.channel}" ${raw(c.granted ? "checked" : "")}><span>${c.organiser_name || "TicketRoom"} — ${c.channel === "sms" ? "SMS" : "email"}</span></label>`)}</div>`
@@ -211,7 +212,7 @@ async function settings() {
       <div class="row"><a class="btn btn-ghost" href="/api/auth/me/export" download>Download my data</a><button class="btn btn-danger" id="del">Delete my account</button></div></section>`);
   onSubmit($("#prof"), async (v) => { await patch("/api/auth/me", v); toast("Profile saved.", "good"); });
   onSubmit($("#pin"), async (v, f) => { await post("/api/auth/me/pin", v); f.reset(); toast("Spending PIN saved.", "good"); await me(true); });
-  onSubmit($("#pw"), async (v, f) => { await post("/api/auth/me/password", v); f.reset(); document.querySelector(".pw-nag")?.remove(); toast("Password changed.", "good"); });
+  onSubmit($("#pw"), async (v, f) => { await post("/api/auth/me/password", matchPasswords(v, "newPassword", "newPasswordConfirm")); f.reset(); document.querySelector(".pw-nag")?.remove(); toast("Password changed.", "good"); });
   $$("[data-consent]").forEach((c) => c.addEventListener("change", async () => {
     try { await put("/api/auth/me/consents", { organiserId: c.dataset.org || undefined, channel: c.dataset.ch, granted: c.checked }); toast("Preferences saved.", "good"); }
     catch (err) { c.checked = !c.checked; toast(err.message, "bad"); }
@@ -260,8 +261,8 @@ async function verify({ token }) {
 }
 
 function reset({ token }) {
-  render(main, html`${head("Choose a new password")}<div class="card"><form class="stack" id="rs"><div class="field"><label for="np">New password</label><input id="np" name="password" type="password" minlength="10" required autocomplete="new-password"></div><button class="btn btn-dark">Save password</button></form></div>`);
-  onSubmit($("#rs"), async (v) => { await post("/api/auth/password/reset", { token, password: v.password }); toast("Password changed. Please sign in.", "good"); location.href = "/signin"; });
+  render(main, html`${head("Choose a new password")}<div class="card"><form class="stack" id="rs"><div class="field"><label for="np">New password</label><input id="np" name="password" type="password" minlength="10" required autocomplete="new-password"><span class="hint">At least 10 characters.</span></div><div class="field"><label for="np2">Confirm new password</label><input id="np2" name="passwordConfirm" type="password" minlength="10" required autocomplete="new-password"></div><button class="btn btn-dark">Save password</button></form></div>`);
+  onSubmit($("#rs"), async (v) => { matchPasswords(v, "password", "passwordConfirm"); await post("/api/auth/password/reset", { token, password: v.password }); toast("Password changed. Please sign in.", "good"); location.href = "/signin"; });
 }
 
 (async () => {

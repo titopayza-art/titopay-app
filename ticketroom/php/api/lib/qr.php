@@ -557,3 +557,29 @@ function tr_qr_svg(string $data, array $opts = []): string
         . '<path fill="' . $dark . '" d="' . $d . '"/>'
         . '</svg>';
 }
+
+// QR codes people make for posters and links (organiser event QR, admin QR
+// maker). Colours must be plain #RRGGBB with enough contrast to scan; the
+// text itself never appears in the SVG, only the squares that encode it.
+function qr_colour(?string $c, string $fallback): string
+{
+    $c = trim((string) $c);
+    return preg_match('/^#[0-9a-fA-F]{6}$/', $c) ? strtoupper($c) : $fallback;
+}
+function qr_luminance(string $hex): float
+{
+    $l = [];
+    foreach ([1, 3, 5] as $i) { $v = hexdec(substr($hex, $i, 2)) / 255; $l[] = $v <= 0.03928 ? $v / 12.92 : (($v + 0.055) / 1.055) ** 2.4; }
+    return 0.2126 * $l[0] + 0.7152 * $l[1] + 0.0722 * $l[2];
+}
+function qr_for_people(string $text, array $o = []): string
+{
+    if ($text === '' || strlen($text) > 1200) throw bad('Use between 1 and 1,200 characters.');
+    $dark = qr_colour($o['dark'] ?? null, '#0B1A33');
+    $light = qr_colour($o['light'] ?? null, '#FFFFFF');
+    // Scanners need dark squares on a light background with real contrast.
+    $ld = qr_luminance($dark); $ll = qr_luminance($light);
+    if ($ld >= $ll || ($ll + 0.05) / ($ld + 0.05) < 3) throw invalid(['dark' => 'Pick a darker colour for the squares, or a lighter background. Phones cannot read low-contrast codes.']);
+    $ecc = in_array($o['ecc'] ?? 'M', ['M', 'Q', 'H'], true) ? $o['ecc'] : 'M';
+    return tr_qr_svg($text, ['ecc' => $ecc, 'margin' => 4, 'dark' => $dark, 'light' => $light]);
+}

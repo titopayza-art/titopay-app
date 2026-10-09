@@ -301,6 +301,9 @@ function tpl(string $name, array $a): array
             return ['subject' => "Changes needed before {$a['event']['title']} can go live",
                 'body' => $hi . "We've looked at {$a['event']['title']} and need a few changes before we can publish it.\n\n"
                     . (!empty($a['reason']) ? "What to change: {$a['reason']}\n\n" : '') . "Edit my event: $B/organisers#/events/{$a['event']['id']}\n\nOnce you've made the changes, send it to us again and we'll take another look." . FOOTER];
+        case 'teamInvite':
+            return ['subject' => "You've been added to the TicketRoom team",
+                'body' => $hi . "{$a['by']} has added you to the TicketRoom team as {$a['roles']}. " . ($a['url'] ? "Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\n" : "Sign in with your usual TicketRoom password.\n\n") . "After signing in you land in the admin portal. Keep your password to yourself: this account can see customer details." . FOOTER];
         case 'staffInvite':
             return ['subject' => "{$a['organiser']} added you as a ticket scanner on TicketRoom",
                 'body' => $hi . "{$a['organiser']} has added you as a ticket scanner for {$a['event']}. Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nOn the day, open ticketroom.co.za/scan on your phone, sign in, and point the camera at each ticket." . FOOTER];
@@ -335,6 +338,7 @@ function email_catalog(): array
         ['key' => 'organiserRejected', 'name' => 'Organiser not approved', 'audience' => 'Organiser', 'trigger' => 'When admin rejects an organiser', 'sample' => fn() => tpl('organiserRejected', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'reason' => "We couldn't verify the contact details."])],
         ['key' => 'eventPublished', 'name' => 'Event published', 'audience' => 'Organiser', 'trigger' => 'When admin approves an event', 'sample' => fn() => tpl('eventPublished', ['name' => 'Naledi Dlamini', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
         ['key' => 'eventChangesRequested', 'name' => 'Event needs changes', 'audience' => 'Organiser', 'trigger' => 'When admin sends an event back', 'sample' => fn() => tpl('eventChangesRequested', ['name' => 'Naledi Dlamini', 'event' => $ev, 'reason' => 'Please add the full venue address and a poster image.'])],
+        ['key' => 'teamInvite', 'name' => 'Added to the TicketRoom team', 'audience' => 'Staff', 'trigger' => 'When an admin adds a staff member', 'sample' => fn() => tpl('teamInvite', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'roles' => 'Support', 'url' => "$B/account#/reset/sample"])],
         ['key' => 'staffInvite', 'name' => 'Scanner staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new scanner', 'sample' => fn() => tpl('staffInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/account#/reset/sample"])],
     ];
 }

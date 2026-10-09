@@ -443,3 +443,12 @@ html.booting #main, html.booting #footer, html.booting .site-banner, html.bootin
 html.booting body::after { content: ""; position: fixed; left: 50%; top: 40vh; width: 28px; height: 28px; margin-left: -14px; border: 3px solid var(--line); border-top-color: var(--navy-900); border-radius: 50%; animation: spin .8s linear infinite; }
 body.venue main#main { min-height: 0; }
 #main { min-height: calc(100vh - 64px); }
+
+/* ---------- QR codes ---------- */
+.qr-panel { display: grid; gap: 12px; justify-items: start; }
+.qr-preview { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px; line-height: 0; }
+.qr-preview svg { width: 240px; height: 240px; display: block; }
+.qr-studio { display: grid; gap: 20px; }
+@media (min-width: 900px) { .qr-studio { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; } }
+.qr-colours { display: flex; gap: 16px; flex-wrap: wrap; }
+.qr-colours input[type=color] { width: 56px; height: 40px; padding: 2px; border-radius: 8px; }

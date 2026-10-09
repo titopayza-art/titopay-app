@@ -32,6 +32,7 @@ async function signUp(p, name, email, password) {
   await d.getByLabel("Full name").fill(name);
   await d.getByRole("textbox", { name: "Email" }).fill(email);
   await d.getByLabel("Password", { exact: true }).fill(password);
+  await d.getByLabel("Confirm password").fill(password);
   await d.getByText("I accept the").click();
   await d.getByRole("button", { name: "Create account" }).click();
   await p.getByRole("button", { name: /Sign out/ }).waitFor();
@@ -63,7 +64,8 @@ async function signIn(p, email, password) {
     await a.getByText("You're signed in with the temporary password.").waitFor();
     await a.getByRole("link", { name: "Change it now" }).click();
     await a.getByLabel("Current password").fill(TEMP);
-    await a.getByLabel("New password").fill(ADMIN.password);
+    await a.getByLabel("New password", { exact: true }).fill(ADMIN.password);
+    await a.getByLabel("Confirm new password").fill(ADMIN.password);
     await a.locator("#pw").getByRole("button").click();
     await a.getByText("Password changed.").waitFor();
     assert.equal(await a.locator(".pw-nag").count(), 0, "reminder gone");
@@ -145,6 +147,7 @@ async function signIn(p, email, password) {
     await dlg.getByLabel("Full name").fill("Sipho Fan");
     await dlg.getByRole("textbox", { name: "Email" }).fill("sipho@example.co.za");
     await dlg.getByLabel("Password", { exact: true }).fill("fan-password-123");
+    await dlg.getByLabel("Confirm password").fill("fan-password-123");
     await dlg.getByText("I accept the").click();
     await dlg.getByRole("button", { name: "Create account" }).click();
     await f.getByRole("heading", { name: "Checkout" }).waitFor();

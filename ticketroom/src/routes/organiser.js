@@ -604,4 +604,11 @@ router.post("/:orgId/campaigns/:id/cancel", wrap(async (req, res) => {
   res.json({ campaign: rows[0] });
 }));
 
+// QR code for the event's public page, for posters, flyers and socials.
+router.get("/:orgId/events/:eventId/qr", wrap(async (req, res) => {
+  const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, ["owner", "manager", "marketing", "finance", "viewer"]);
+  const url = `${require("../config").publicBaseUrl}/events/${event.slug}`;
+  res.json({ url, title: event.title, status: event.status, svg: await require("../lib/qr-people").qrForPeople(url, { dark: req.query.dark, light: req.query.light, ecc: req.query.ecc || "Q" }) });
+}));
+
 module.exports = router;

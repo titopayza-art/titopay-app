@@ -49,6 +49,7 @@ async function login(p, email) {
     await dlg.getByLabel("Full name").fill("Lerato E2E");
     await dlg.getByRole("textbox", { name: "Email" }).fill(email);
     await dlg.getByLabel("Password", { exact: true }).fill("e2e-password-123");
+    await dlg.getByLabel("Confirm password").fill("e2e-password-123");
     await dlg.getByText("I accept the").click();
     await dlg.getByRole("button", { name: "Create account" }).click();
     await a.getByRole("heading", { name: "Checkout" }).waitFor();

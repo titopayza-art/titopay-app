@@ -107,6 +107,10 @@ module.exports = {
     subject: `Changes needed before ${event.title} can go live`,
     body: `Hi ${first(name)},\n\nWe've looked at ${event.title} and need a few changes before we can publish it.\n\n${reason ? `What to change: ${reason}\n\n` : ""}Edit my event: ${base()}/organisers#/events/${event.id}\n\nOnce you've made the changes, send it to us again and we'll take another look.${FOOTER}`,
   }),
+  teamInvite: ({ name, by, roles, url }) => ({
+    subject: "You've been added to the TicketRoom team",
+    body: `Hi ${first(name)},\n\n${by} has added you to the TicketRoom team as ${roles}. ${url ? `Set a password to get started. The link works for 7 days.\n\nSet my password: ${url}\n\n` : "Sign in with your usual TicketRoom password.\n\n"}After signing in you land in the admin portal. Keep your password to yourself: this account can see customer details.${FOOTER}`,
+  }),
   staffInvite: ({ name, organiser, event, url }) => ({
     subject: `${organiser} added you as a ticket scanner on TicketRoom`,
     body: `Hi ${first(name)},\n\n${organiser} has added you as a ticket scanner for ${event}. Set a password to get started. The link works for 7 days.\n\nSet my password: ${url}\n\nOn the day, open ticketroom.co.za/scan on your phone, sign in, and point the camera at each ticket.${FOOTER}`,

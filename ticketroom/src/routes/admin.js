@@ -205,6 +205,59 @@ router.post("/users/:id/roles", ADMIN, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- TicketRoom staff (admin portal team) ------------------------------------------
+const STAFF_ROLE_NAMES = { admin: "Admin", finance: "Finance", support: "Support" };
+router.get("/staff", wrap(async (_req, res) => {
+  const { rows } = await db.query(`SELECT u.id, u.full_name, u.email, u.status, u.created_at, array_agg(r.role ORDER BY r.role) AS roles
+     FROM users u JOIN platform_roles r ON r.user_id = u.id GROUP BY u.id ORDER BY u.full_name`);
+  res.json({ staff: rows });
+}));
+// Add someone to the team. A new address gets an account and an email to set a password.
+router.post("/staff", ADMIN, limit("staffteam", 30, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body, { email: r.email(), fullName: r.str({ min: 2, max: 120 }), roles: r.arr(r.oneOf(Object.keys(STAFF_ROLE_NAMES)), { min: 1, max: 3 }) });
+  const roles = [...new Set(b.roles)];
+  const { hashSecret, randomToken, sha256 } = require("../lib/crypto");
+  const invited = await db.withTx(async (c) => {
+    const { rows: [existing] } = await c.query("SELECT id, status FROM users WHERE lower(email) = $1", [b.email]);
+    if (existing && existing.status !== "active") throw conflict("That account is suspended or closed. Restore it under All users first.", "account_inactive");
+    let id = existing?.id, url = null;
+    if (!existing) {
+      const token = randomToken(32);
+      ({ rows: [{ id }] } = await c.query("INSERT INTO users (email, full_name, password_hash) VALUES ($1,$2,$3) RETURNING id", [b.email, b.fullName, hashSecret(randomToken(24))]));
+      await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '7 days')", [sha256(token), id]);
+      url = `${config.publicBaseUrl}/account#/reset/${token}`;
+    }
+    for (const role of roles) await c.query("INSERT INTO platform_roles (user_id, role, granted_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [id, role, req.user.id]);
+    const names = roles.map((x) => STAFF_ROLE_NAMES[x]).join(" and ");
+    await outbox.enqueue(c, { to: b.email, userId: id, ...templates.teamInvite({ name: existing ? null : b.fullName, by: req.user.fullName, roles: names, url }) });
+    await audit.record(c, { actor: req.user, action: "staff.added", entityType: "user", entityId: id, details: { roles, newAccount: !existing } });
+    return !existing;
+  });
+  res.status(201).json({ ok: true, invited });
+}));
+// Set exactly these roles; an empty list removes the person from the team.
+router.put("/staff/:id", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { roles: r.arr(r.oneOf(Object.keys(STAFF_ROLE_NAMES)), { max: 3 }) });
+  if (req.params.id === req.user.id) throw forbidden("You cannot change your own roles. Ask another admin.");
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) throw notFound("Staff member not found.");
+  const want = [...new Set(b.roles)];
+  await db.withTx(async (c) => {
+    const { rows: found } = await c.query("SELECT 1 FROM users WHERE id = $1", [req.params.id]);
+    if (!found.length) throw notFound("Staff member not found.");
+    const have = (await c.query("SELECT role FROM platform_roles WHERE user_id = $1", [req.params.id])).rows.map((x) => x.role);
+    for (const role of have.filter((x) => !want.includes(x))) {
+      await c.query("DELETE FROM platform_roles WHERE user_id = $1 AND role = $2", [req.params.id, role]);
+      await audit.record(c, { actor: req.user, action: "role.revoked", entityType: "user", entityId: req.params.id, details: { role } });
+    }
+    for (const role of want.filter((x) => !have.includes(x))) {
+      await c.query("INSERT INTO platform_roles (user_id, role, granted_by) VALUES ($1,$2,$3)", [req.params.id, role, req.user.id]);
+      await audit.record(c, { actor: req.user, action: "role.granted", entityType: "user", entityId: req.params.id, details: { role } });
+    }
+    if (!want.length) await c.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [req.params.id]);
+  });
+  res.json({ ok: true });
+}));
+
 // ---- orders, tickets, payments ---------------------------------------------------
 router.get("/orders", wrap(async (req, res) => {
   const q = String(req.query.q || "").replace(/[%_\\]/g, "").slice(0, 80);
@@ -627,6 +680,12 @@ router.post("/subscribers/send", ADMIN, wrap(async (req, res) => {
     return rows.length;
   });
   res.json({ ok: true, recipients: n });
+}));
+
+// ---------------------------------------------------------------- QR code maker
+router.post("/qr", limit("adminqr", 120, 60e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body, { text: r.text({ max: 1200 }), dark: r.str({ optional: true, max: 7 }), light: r.str({ optional: true, max: 7 }), ecc: r.oneOf(["M", "Q", "H"], { optional: true, fallback: "M" }) });
+  res.json({ svg: await require("../lib/qr-people").qrForPeople(b.text, b) });
 }));
 
 module.exports = router;
