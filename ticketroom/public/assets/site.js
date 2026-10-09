@@ -350,7 +350,7 @@ async function help() {
   document.title = "Help | TicketRoom";
   const [site, feat] = await Promise.all([siteInfo(), features()]);
   render(main, html`<div class="wrap section stack-lg"><div><h1>Help centre</h1><p class="lead mb-0">Find a quick answer below, ask our assistant, or ask us to call you back.</p></div>
-    <div class="card">${FAQ.filter(([q]) => feat.cashless || !/cashless/i.test(q)).map(([q, a]) => html`<details class="tt"><summary class="name">${q}</summary><p class="muted mt">${a}</p></details>`)}</div>
+    <div class="card faq-list">${FAQ.filter(([q]) => feat.cashless || !/cashless/i.test(q)).map(([q, a]) => html`<details class="faq"><summary>${q}</summary><p>${a}</p></details>`)}</div>
     <div id="sup">${await supportPanel(site)}</div></div>`);
   wireSupport(main);
 }

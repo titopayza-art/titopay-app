@@ -147,7 +147,8 @@ dialog::backdrop { background: rgba(7,19,48,.55); }
 .chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 6px; scrollbar-width: none; }
 .chip { flex: none; border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 8px 14px; font: inherit; font-weight: 650; font-size: .9rem; cursor: pointer; color: var(--ink-2); text-decoration: none; }
 .chip[aria-pressed="true"] { background: var(--navy-900); border-color: var(--navy-900); color: #fff; }
-.section { padding: 28px 0; }
+/* Top and bottom only, so ".wrap section" keeps its side margin on phones. */
+.section { padding-top: 28px; padding-bottom: 28px; }
 .event-grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
 @media (min-width: 560px) { .event-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (min-width: 900px) { .event-grid { grid-template-columns: repeat(3, 1fr); } }
@@ -206,7 +207,8 @@ dialog::backdrop { background: rgba(7,19,48,.55); }
 .legal-line { border-top: 1px solid rgba(255,255,255,.1); margin-top: 24px; padding-top: 16px; font-size: .8rem; }
 
 /* ---------- portal shell (account / organiser / admin) ---------- */
-.shell { display: grid; grid-template-columns: 1fr; min-height: calc(100vh - 64px); }
+/* minmax(0, 1fr): a wide table scrolls inside its own box instead of pushing the page sideways. */
+.shell { display: grid; grid-template-columns: minmax(0, 1fr); min-height: calc(100vh - 64px); }
 @media (min-width: 980px) { .shell { grid-template-columns: 248px minmax(0, 1fr); } }
 .sidenav { background: #fff; border-right: 1px solid var(--line); padding: 16px 12px; }
 .sidenav .sect { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 800; padding: 14px 10px 6px; }
@@ -412,3 +414,13 @@ html.maint-on body > *:not(.maint-screen) { display: none !important; }
 .ad-band h2 { margin: 4px 0 6px; }
 .ad-band .btn { justify-self: start; }
 @media (min-width: 800px) { .ad-band { grid-template-columns: 1fr auto; } }
+
+/* ---------- questions and answers (help centre) ---------- */
+.faq-list { padding-top: 4px; padding-bottom: 4px; }
+.faq { border-bottom: 1px solid var(--line-2); }
+.faq:last-child { border-bottom: 0; }
+.faq summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 0; font-weight: 700; color: var(--ink); }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: ""; flex: none; width: 9px; height: 9px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); margin: -4px 4px 0 0; transition: transform .15s; }
+.faq[open] summary::after { transform: rotate(-135deg); margin-top: 4px; }
+.faq p { margin: -4px 0 16px; color: var(--ink-2); }
