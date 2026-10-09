@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, isStaff } from "/assets/core.js";
 
 const main = $("#main");
 let ORG = null;
@@ -25,15 +25,25 @@ function pendingBanner() {
 }
 
 // ---------------- apply ----------------
-function apply() {
+async function apply() {
+  const u = await me();
+  // A TicketRoom staff account opening the organiser portal: explain instead of
+  // offering the sign-up form (which would make the company email an organiser).
+  if (isStaff(u)) {
+    return render(main, html`${head("This is the organiser portal")}
+      <div class="card stack"><p class="mb-0">You're signed in as <strong>${u.email}</strong>, a TicketRoom staff account. Staff work in the admin portal; they don't sign up as organisers.</p>
+        <p class="mb-0">To review organisers, open <strong>Organiser accounts</strong> in the admin portal. To try the organiser portal yourself, sign out and create a separate account with a different email.</p>
+        <div class="row"><a class="btn btn-primary" href="/admin#/organisers">Go to Organiser accounts</a><button class="btn btn-ghost" data-out>Sign out</button></div></div>`), $("[data-out]").addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/signin"; });
+  }
   render(main, html`${head("Create your organiser account", "Tell us who you are. TicketRoom reviews every organiser before their events go live.")}
     <div class="card"><form class="stack" id="ap">
       <div class="field"><label for="n">Organisation or trading name</label><input id="n" name="name" required maxlength="120"></div>
-      <div class="grid-2"><div class="field"><label for="ce">Contact email</label><input id="ce" name="contactEmail" type="email" required></div>
+      <div class="grid-2"><div class="field"><label for="ce">Contact email</label><input id="ce" name="contactEmail" type="email" required><span class="hint">Where TicketRoom and your ticket buyers reach you. We've filled in your sign-in email; change it if you use another.</span></div>
       <div class="field"><label for="cp">Contact number</label><input id="cp" name="contactPhone" type="tel" placeholder="082 123 4567"></div></div>
       <div class="field"><label for="d">About your events</label><textarea id="d" name="description" maxlength="2000" placeholder="What kind of events do you run, and where?"></textarea></div>
       <button class="btn btn-primary">Submit for review</button></form></div>`);
-  me().then((u) => { $("#ce").value = u.email; if (u.phone) $("#cp").value = u.phone; });
+  $("#ce").value = u.email;
+  if (u.phone) $("#cp").value = u.phone;
   onSubmit($("#ap"), async (v) => { const r = await post("/api/organiser/apply", v); localStorage.setItem("tr_org", r.organiser.id); toast("Organiser account created.", "good"); location.hash = "#/"; location.reload(); });
 }
 

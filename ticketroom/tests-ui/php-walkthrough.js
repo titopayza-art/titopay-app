@@ -78,6 +78,12 @@ async function signIn(p, email, password) {
       await a.getByRole("heading", { name: heading, exact: true }).first().waitFor();
     }
     assert.equal(await a.getByRole("link", { name: /Payouts/ }).isVisible(), false, "finance menu hidden");
+    // The staff account is never offered the organiser sign-up form.
+    await a.goto(`${BASE}/organisers`);
+    await a.getByRole("heading", { name: "This is the organiser portal" }).waitFor();
+    assert.equal(await a.locator("#ce").count(), 0, "no organiser form for staff");
+    const staffApply = await a.request.post(`${BASE}/api/organiser/apply`, { data: { name: "Should Fail", contactEmail: ADMIN.email }, headers: { "x-csrf-token": (await (await a.request.get(`${BASE}/api/auth/me`)).json()).csrfToken } });
+    assert.equal(staffApply.status(), 403, "server refuses staff as organiser");
     await shot(a, "admin-messages");
 
     // 2. Organiser signs up, applies, lists a free event.

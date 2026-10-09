@@ -7,7 +7,7 @@ const audit = require("../lib/audit");
 const { r, check } = require("../lib/validate");
 const { limit } = require("../lib/ratelimit");
 const { randomCode, encrypt } = require("../lib/crypto");
-const { conflict, bad, notFound } = require("../lib/errors");
+const { AppError, conflict, bad, notFound } = require("../lib/errors");
 const { wrap, requireAuth } = require("../middleware/http");
 const { organiserAccess, eventAccess } = require("../middleware/access");
 const analytics = require("../modules/marketing/analytics");
@@ -31,6 +31,8 @@ const slugify = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^a-z0
 
 // ---- organiser account -------------------------------------------------------
 router.post("/apply", limit("orgapply", 5, 24 * 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  // Staff accounts run the admin portal; they never become organisers.
+  if (["admin", "finance", "support"].some((x) => req.user.platformRoles.has(x))) throw new AppError(403, "staff_account", "This is a TicketRoom staff account. Organisers need their own account: sign out, then create one with the organiser's own email.");
   const b = check(req.body, { name: r.str({ min: 2, max: 120 }), contactEmail: r.email(), contactPhone: r.phone({ optional: true }), description: r.text({ optional: true, max: 2000 }) });
   const org = await db.withTx(async (c) => {
     const { rows } = await c.query(

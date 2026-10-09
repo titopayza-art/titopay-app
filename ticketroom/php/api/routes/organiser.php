@@ -307,6 +307,8 @@ function org_due_scheduled_campaigns(): int
 route('POST', '/api/organiser/apply', function () {
     $u = require_auth();
     limit('orgapply', 5, 24 * 3600, $u['id']);
+    // Staff accounts run the admin portal; they never become organisers.
+    if (has_role($u, 'admin', 'finance', 'support')) throw new AppError(403, 'staff_account', "This is a TicketRoom staff account. Organisers need their own account: sign out, then create one with the organiser's own email.");
     $b = check(body(), ['name' => R::str(['min' => 2, 'max' => 120]), 'contactEmail' => R::email(), 'contactPhone' => R::phone(['optional' => true]), 'description' => R::text(['optional' => true, 'max' => 2000])]);
     $org = tx(function () use ($u, $b) {
         $now = now_iso();
