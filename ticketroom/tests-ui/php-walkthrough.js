@@ -67,6 +67,10 @@ async function signIn(p, email, password) {
     await a.locator("#pw").getByRole("button").click();
     await a.getByText("Password changed.").waitFor();
     assert.equal(await a.locator(".pw-nag").count(), 0, "reminder gone");
+    // Even for staff, the website and other portals never link to the admin portal.
+    await a.goto(`${BASE}/`);
+    await a.locator("#footer").waitFor();
+    assert.equal(await a.locator('#header a[href^="/admin"], #footer a[href^="/admin"]').count(), 0, "no admin link on the website");
     await a.goto(`${BASE}/admin#/site`);
     await a.locator(".portal-bar").getByText("Admin portal").waitFor();
     await a.getByRole("heading", { name: "Site settings" }).waitFor();
@@ -186,6 +190,11 @@ async function signIn(p, email, password) {
     await f.locator(".msg.assistant").nth(1).waitFor();
     await shot(f, "assistant", false);
     for (const hash of ["#/tickets", "#/orders", "#/transfers", "#/refunds", "#/settings"]) { await f.goto(`${BASE}/account${hash}`); await f.waitForTimeout(400); }
+    // The admin portal is invisible to customers: no link, and /admin is "Page not found".
+    assert.equal(await f.locator('a[href^="/admin"]').count(), 0, "no admin link for customers");
+    await f.goto(`${BASE}/admin`);
+    await f.getByRole("heading", { name: "Page not found" }).waitFor();
+    assert.equal(await f.getByText(/admin/i).count(), 0, "nothing says admin");
     assert.equal(await f.getByRole("link", { name: /Wallets/ }).isVisible(), false, "cashless menu hidden");
 
     // Mobile.

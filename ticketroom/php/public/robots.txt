@@ -2,7 +2,6 @@ User-agent: *
 Disallow: /api/
 Disallow: /account
 Disallow: /organisers
-Disallow: /admin
 Disallow: /scan
 Disallow: /pos
 Disallow: /orders/

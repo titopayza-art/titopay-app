@@ -498,12 +498,19 @@ async function integrations() {
 }
 
 (async () => {
-  await header($("#header"), { portal: "admin" });
-  const u = await requireUser("TicketRoom staff sign in.");
-  if (!u) return render(main, empty("Sign in."));
+  // Nothing on this page says "admin" until a staff account has signed in.
+  await header($("#header"));
+  const u = await requireUser("Sign in to continue.");
+  if (!u) return render(main, empty("Sign in to continue."));
   R = roles(await me(true));
+  // Not staff: this address shows nothing about the admin portal.
+  if (!R.size) {
+    document.title = "Page not found | TicketRoom";
+    render($("#sidenav"), "");
+    return render(main, html`<div class="card pad-lg stack"><h1>Page not found</h1><p class="mb-0">That page doesn't exist.</p><a class="btn btn-primary" href="/">Browse events</a></div>`);
+  }
   await header($("#header"), { portal: "admin" });
-  if (!R.size) { render($("#sidenav"), ""); return render(main, html`${head("No access")}<p>This area is for TicketRoom staff.</p>`); }
+  document.title = "Admin portal | TicketRoom";
   nav();
   router([["/", overview], ["/organisers", organisers], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support],
     ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword]], () => { location.hash = "#/"; });

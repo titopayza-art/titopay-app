@@ -241,9 +241,12 @@ export async function header(el, { portal, active } = {}) {
   const mine = portalsFor(u);
   // On the public website: Events, Sell tickets, Help, then the person's main
   // portal. Inside a portal: the website, then every other portal by its full name.
+  // The admin portal is never linked from the website or the other portals:
+  // staff open it at /admin (signing in takes them there).
+  const shown = mine.filter((k) => k !== "admin" && k !== portal);
   const links = here
-    ? [["/", "TicketRoom website"], ...mine.filter((k) => k !== portal).map((k) => [PORTALS[k].href, PORTALS[k].name])]
-    : [["/", "Events"], ["/sell", "Sell tickets"], ["/help", "Help"], ...(u ? [[homePortal(u), PORTALS[mine.includes("admin") ? "admin" : mine.includes("organiser") ? "organiser" : "customer"].name]] : [])];
+    ? [["/", "TicketRoom website"], ...shown.map((k) => [PORTALS[k].href, PORTALS[k].name])]
+    : [["/", "Events"], ["/sell", "Sell tickets"], ["/help", "Help"], ...(u ? [[PORTALS[mine.includes("organiser") ? "organiser" : "customer"].href, PORTALS[mine.includes("organiser") ? "organiser" : "customer"].name]] : [])];
   render(el, html`<a class="skip" href="#main">Skip to content</a><div class="wrap">${brand()}
     <button class="menu-toggle" aria-expanded="false" aria-controls="nav">Menu</button>
     <nav class="nav" id="nav" aria-label="Main">

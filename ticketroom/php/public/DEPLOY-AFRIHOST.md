@@ -111,7 +111,9 @@ never confused:
 
 Staff land in the admin portal when they sign in, organisers in the
 organiser portal, everyone else in the customer portal. The Menu button
-lists the other portals a person may open, by these names.
+lists the other portals a person may open, by these names. The admin portal
+is never linked anywhere on the site: staff open it by typing
+ticketroom.co.za/admin, and to anyone else that address shows "Page not found".
 
 ## 8. Prove that email works
 
