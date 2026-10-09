@@ -458,11 +458,11 @@ body.venue main#main { min-height: 0; }
 .share-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; color: var(--muted); margin-right: 2px; }
 .event-hero .share-bar .btn { color: #fff; border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.06); }
 .event-hero .share-label { color: #C8D4EA; }
-.like-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 8px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.06); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.like-btn, .pill-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 8px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.06); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
 .like-btn .ico { fill: none; }
 .like-btn.on { background: #fff; color: var(--bad); border-color: #fff; }
 .like-btn.on .ico { fill: currentColor; }
-.card .like-btn, .like-btn.light { border-color: var(--line); background: #fff; color: var(--ink); }
+.card .like-btn, .like-btn.light, .card .pill-btn { border-color: var(--line); background: #fff; color: var(--ink); }
 .card .like-btn.on { color: var(--bad); }
 .event-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; }
 .likes-count { display: inline-flex; align-items: center; gap: 4px; }
@@ -473,3 +473,12 @@ body.venue main#main { min-height: 0; }
 .wallet-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .wallet-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 10px 16px; border-radius: 12px; background: #000; color: #fff; font: inherit; font-weight: 700; font-size: .92rem; text-decoration: none; border: 0; cursor: pointer; }
 .wallet-btn:hover { background: #222; }
+
+/* Saved events */
+.saved-list { display: grid; gap: 12px; }
+.saved-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 18px; }
+.saved-item p { margin: 4px 0 0; }
+.saved-title { font-weight: 800; color: var(--ink); text-decoration: none; }
+.saved-title:hover { text-decoration: underline; }
+.saved-item .btn { flex: none; }
+@media (max-width: 520px) { .saved-item { flex-direction: column; align-items: flex-start; } }

@@ -122,7 +122,7 @@ async function eventPage(slug) {
 
   const eventUrl = `${location.origin}/events/${e.slug}`;
   const cal = document.createElement("button");
-  cal.type = "button"; cal.className = "like-btn"; cal.textContent = "Add to calendar";
+  cal.type = "button"; cal.className = "pill-btn"; cal.textContent = "Add to calendar";
   cal.addEventListener("click", () => calendarFile({ title: e.title, starts: e.starts_at, ends: e.ends_at, place: [e.venue_name, e.address, e.city].filter(Boolean).join(", "), url: eventUrl }));
   $("[data-actions]").append(likeButton(e.slug, { liked: e.liked, likes: e.likes }), cal, shareBar(eventUrl, e.title, { text: `${e.title}, ${fmtDate(e.starts_at, { day: "numeric", month: "long" })} at ${e.venue_name}` }));
   const box = $("#box");

@@ -293,9 +293,9 @@ async function saved() {
   const { events } = await get("/api/me/likes");
   const upcoming = events.filter((e) => new Date(e.ends_at) > new Date());
   render(main, html`<div class="page-head"><div><h1>Saved events</h1><p class="muted">Events you liked. Tap the heart on any event page to add or remove one.</p></div></div>
-    ${upcoming.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>When</th><th>Where</th><th></th></tr></thead><tbody>${upcoming.map((e) => html`<tr>
-      <td><a href="/events/${e.slug}"><strong>${e.title}</strong></a></td><td class="small">${fmtDateTime(e.starts_at)}</td><td class="small">${e.venue_name}, ${e.city}</td>
-      <td><a class="btn btn-primary btn-sm" href="/events/${e.slug}">${e.remaining === 0 ? "View" : "Get tickets"}</a></td></tr>`)}</tbody></table></div>`
+    ${upcoming.length ? html`<div class="saved-list">${upcoming.map((e) => html`<div class="card saved-item">
+      <div><a class="saved-title" href="/events/${e.slug}">${e.title}</a><p class="small muted">${fmtDateTime(e.starts_at)} · ${e.venue_name}, ${e.city}</p></div>
+      <a class="btn btn-primary btn-sm" href="/events/${e.slug}">${e.remaining === 0 ? "View" : "Get tickets"}</a></div>`)}</div>`
       : empty("Nothing saved yet. Tap the heart on an event you like and it will appear here.", html`<a class="btn btn-primary" href="/">Find events</a>`)}`);
 }
 

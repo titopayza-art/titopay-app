@@ -112,6 +112,8 @@ const download = async (p, click) => { const [d] = await Promise.all([p.waitForE
     assert.match(await like.innerText(), /1/);
     const wa = await fan.locator('.share-bar a[data-share="WhatsApp"]').getAttribute("href");
     assert.match(decodeURIComponent(wa), /^https:\/\/wa\.me\/\?text=.*\/events\/free-jazz-in-the-park/);
+    const ics = (await download(fan, () => fan.locator(".pill-btn", { hasText: "Add to calendar" }).click())).toString();
+    assert.match(ics, /BEGIN:VCALENDAR[\s\S]*SUMMARY:Free Jazz in the Park[\s\S]*BEGIN:VALARM/);
     await fan.goto(`${BASE}/account#/saved`);
     await fan.getByRole("link", { name: "Free Jazz in the Park" }).waitFor();
     await fan.goto(`${BASE}/account#/tickets`);
@@ -122,7 +124,7 @@ const download = async (p, click) => { const [d] = await Promise.all([p.waitForE
     await visitor.goto(fan.url().replace(/account.*/, "events/" + (await (await visitor.request.get(`${BASE}/api/public/events`)).json()).events.find((e) => e.title === "Free Jazz in the Park").slug));
     await visitor.locator(".like-btn").click();
     await visitor.locator("dialog").getByText(/Sign in to like events/).waitFor();
-    step("like, share link, saved events, ticket image; signed-out likes ask to sign in");
+    step("like, share link, calendar file, saved events, ticket image; signed-out likes ask to sign in");
 
     // Fake and duplicate tickets at the gate: the organiser scans as gate staff.
     const sign = (code) => execFileSync("php", ["-r", `require '${ROOT}/api/bootstrap.php'; tr_load(); echo qr_payload(row('SELECT code, qr_version FROM tickets WHERE code = ?', [$argv[1]]));`, code]).toString();
