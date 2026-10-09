@@ -8,6 +8,9 @@ const { randomCode, safeEqual } = require("../../../lib/crypto");
 const { AppError } = require("../../../lib/errors");
 
 const NAME = "simulated";
+const capabilities = { refunds: true, statusQuery: true, redirect: true };
+const environment = "mock";
+const health = async () => ({ ok: true, detail: "Built-in simulator. No real money moves." });
 
 function sign(raw, t = Math.floor(Date.now() / 1000)) {
   const v1 = crypto.createHmac("sha256", Buffer.from(config.payments.simWebhookSecret, "hex")).update(`${t}.${raw}`).digest("hex");
@@ -85,4 +88,4 @@ async function deliverWebhook(tx, id) {
   return res.status;
 }
 
-module.exports = { name: NAME, createCheckout, fetchStatus, verifyWebhook, refund, settlementReport, complete, sign, webhookBody, deliverWebhook };
+module.exports = { name: NAME, environment, capabilities, health, createCheckout, fetchStatus, verifyWebhook, refund, settlementReport, complete, sign, webhookBody, deliverWebhook };

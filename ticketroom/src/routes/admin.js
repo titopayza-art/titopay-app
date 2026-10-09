@@ -53,6 +53,7 @@ router.get("/organisers", wrap(async (req, res) => {
   const { rows } = await db.query(
     `SELECT o.id, o.name, o.status, o.contact_email, o.contact_phone, o.created_at, o.bank_account_last4,
             (SELECT count(*) FROM events WHERE organiser_id = o.id)::int AS events,
+            o.commission_bps,
             (SELECT u.full_name FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = o.id AND m.role = 'owner' LIMIT 1) AS owner_name
        FROM organisers o WHERE ($1::text IS NULL OR o.status = $1) ORDER BY o.created_at DESC LIMIT 200`, [status]);
   res.json({ organisers: rows });
@@ -66,6 +67,15 @@ router.post("/organisers/:id/status", ADMIN, wrap(async (req, res) => {
   if (!rows[0]) throw notFound("Organiser not found.");
   if (b.status === "suspended") await db.query("UPDATE events SET status = 'suspended', status_reason = 'organiser suspended' WHERE organiser_id = $1 AND status = 'published'", [req.params.id]);
   await audit.record(null, { actor: req.user, action: `organiser.${b.status}`, entityType: "organiser", entityId: req.params.id, organiserId: req.params.id, details: { reason: b.reason } });
+  res.json({ organiser: rows[0] });
+}));
+
+// Negotiated commission for one organiser (null = platform default).
+router.post("/organisers/:id/commission", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { commissionBps: r.int({ optional: true, min: 0, max: 5000 }) });
+  const { rows } = await db.query("UPDATE organisers SET commission_bps = $2 WHERE id = $1 RETURNING id, commission_bps", [req.params.id, b.commissionBps ?? null]);
+  if (!rows[0]) throw notFound("Organiser not found.");
+  await audit.record(null, { actor: req.user, action: "organiser.commission_set", entityType: "organiser", entityId: req.params.id, organiserId: req.params.id, details: { commissionBps: b.commissionBps ?? "default" } });
   res.json({ organiser: rows[0] });
 }));
 
@@ -240,6 +250,11 @@ router.post("/refunds/:id/decide", FINANCE, wrap(async (req, res) => {
   res.json({ refund: await refunds.decide(req.user, req.params.id, b.approve, b.note) });
 }));
 
+router.post("/refunds/:id/complete-manually", FINANCE, wrap(async (req, res) => {
+  const b = check(req.body, { providerReference: r.str({ min: 3, max: 80 }) });
+  res.json({ refund: await refunds.completeManually(req.user, req.params.id, b.providerReference) });
+}));
+
 router.post("/refunds/:id/retry", FINANCE, wrap(async (req, res) => res.json({ refund: await refunds.execute(req.user, req.params.id) })));
 
 router.post("/refunds/bulk-approve", FINANCE, wrap(async (req, res) => {
@@ -367,6 +382,48 @@ router.post("/terminals/:id/status", ADMIN, wrap(async (req, res) => {
   await db.query("UPDATE terminals SET status = $2 WHERE id = $1", [req.params.id, b.status]);
   await audit.record(null, { actor: req.user, action: `terminal.${b.status}`, entityType: "terminal", entityId: req.params.id });
   res.json({ ok: true });
+}));
+
+// ---- integrations (payments, SMS, TitoPay wallet) ------------------------------
+router.get("/integrations", wrap(async (_req, res) => {
+  const config = require("../config");
+  const i = config.integrations;
+  const { rows: calls } = await db.query(
+    `SELECT integration, count(*)::int AS calls, count(*) FILTER (WHERE NOT ok)::int AS failures, max(occurred_at) AS last_call,
+            round(avg(duration_ms))::int AS avg_ms
+       FROM integration_calls WHERE occurred_at > now() - interval '24 hours' GROUP BY integration`);
+  const { rows: hooks } = await db.query("SELECT provider, max(received_at) AS last_webhook, count(*) FILTER (WHERE status IN ('failed','rejected'))::int AS problems FROM webhook_events WHERE received_at > now() - interval '24 hours' GROUP BY provider");
+  const stat = (name) => ({ ...(calls.find((c) => c.integration === name) || {}), ...(hooks.find((h) => h.provider === name) || {}) });
+  const set = (v) => (v ? "set" : "missing");
+  res.json({
+    defaults: { bookingFeeCents: config.fees.ticketFeeFixedCents, bookingFeeBps: config.fees.ticketFeeBps, organiserCommissionBps: config.fees.organiserCommissionBps },
+    integrations: [
+      { key: "payments", label: "Card payments", provider: config.payments.provider, environment: config.payments.provider === "simulated" ? "mock" : i[config.payments.provider]?.env,
+        endpoint: config.payments.provider === "yoco" ? i.yoco.baseUrl : config.payments.provider === "payfast" ? i.payfast.processUrl : "built-in simulator",
+        webhookUrl: `${config.publicBaseUrl}/api/webhooks/${config.payments.provider}`,
+        credentials: config.payments.provider === "yoco" ? { secretKey: set(i.yoco.secretKey), webhookSecret: set(i.yoco.webhookSecret) } : config.payments.provider === "payfast" ? { merchantId: set(i.payfast.merchantId), merchantKey: set(i.payfast.merchantKey), passphrase: set(i.payfast.passphrase) } : {},
+        ...stat(config.payments.provider) },
+      { key: "sms", label: "SMS", provider: config.messaging.smsProvider, environment: config.messaging.smsProvider === "log" ? "mock" : i[config.messaging.smsProvider]?.env,
+        endpoint: config.messaging.smsProvider === "bulksms" ? i.bulksms.baseUrl : config.messaging.smsProvider === "clickatell" ? i.clickatell.baseUrl : "log only (not sent)",
+        credentials: config.messaging.smsProvider === "bulksms" ? { tokenId: set(i.bulksms.tokenId), tokenSecret: set(i.bulksms.tokenSecret) } : config.messaging.smsProvider === "clickatell" ? { apiKey: set(i.clickatell.apiKey) } : {},
+        ...stat(config.messaging.smsProvider) },
+      { key: "titopay", label: "TitoPay wallet", provider: i.titopay.enabled ? "titopay" : "disabled", environment: i.titopay.env, endpoint: i.titopay.baseUrl,
+        webhookUrl: `${config.publicBaseUrl}/api/webhooks/titopay`,
+        credentials: { clientId: set(i.titopay.clientId), clientSecret: set(i.titopay.clientSecret), webhookSecret: set(i.titopay.webhookSecret) }, ...stat("titopay") },
+    ],
+  });
+}));
+
+router.post("/integrations/:key/health", ADMIN, wrap(async (req, res) => {
+  const config = require("../config");
+  const { getProvider } = require("../modules/payments/providers");
+  let result;
+  if (req.params.key === "payments") result = await getProvider(config.payments.provider).health();
+  else if (req.params.key === "titopay") result = await require("../modules/titopay/client").health();
+  else if (req.params.key === "sms") result = await outbox.adapterFor("sms").health();
+  else throw notFound("Unknown integration.");
+  await audit.record(null, { actor: req.user, action: "integration.health_checked", entityType: "integration", entityId: req.params.key, details: { ok: result.ok } });
+  res.json(result);
 }));
 
 // ---- audit, support, outbox -------------------------------------------------------

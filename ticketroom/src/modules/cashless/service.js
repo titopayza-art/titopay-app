@@ -20,7 +20,7 @@ async function cashlessEvent(q, eventId) {
 
 const balance = (q, userId, eventId) => ledger.balanceByCode(q, ledger.codes.attendeeWallet(userId, eventId).code);
 
-async function startTopup(user, eventId, amountCents, idempotencyKey) {
+async function startTopup(user, eventId, amountCents, idempotencyKey, paymentMethod = "card") {
   const { minTopupCents, maxTopupCents, maxBalanceCents } = config.cashless;
   if (amountCents < minTopupCents || amountCents > maxTopupCents) {
     throw conflict(`Top-ups must be between R${minTopupCents / 100} and R${maxTopupCents / 100}.`, "topup_limits");
@@ -30,6 +30,8 @@ async function startTopup(user, eventId, amountCents, idempotencyKey) {
     if (prior.rows[0]) return { topup: prior.rows[0], replay: true };
     const ev = await cashlessEvent(c, eventId);
     if (ev.status !== "published" || new Date(ev.ends_at) < new Date()) throw conflict("Top-ups are closed for this event.", "event_closed");
+    if (paymentMethod === "card" && !require("../payments/providers").cardPaymentsEnabled()) throw conflict("Card top-ups are not switched on yet.", "payments_not_configured");
+    if (paymentMethod === "titopay_wallet" && !(await require("../wallets/service").activeToken(user.id))) throw conflict("Link your TitoPay wallet first.", "wallet_not_linked");
     const { rows: tk } = await c.query("SELECT 1 FROM tickets WHERE owner_user_id = $1 AND event_id = $2 AND status IN ('valid','used') LIMIT 1", [user.id, eventId]);
     if (!tk[0]) throw conflict("You need a ticket for this event to top up.", "no_ticket");
     // Serialise per wallet so pending top-ups are counted against the cap.
@@ -40,8 +42,8 @@ async function startTopup(user, eventId, amountCents, idempotencyKey) {
       "INSERT INTO wallet_topups (reference, user_id, event_id, amount_cents, idempotency_key) VALUES ($1,$2,$3,$4,$5) RETURNING *",
       [reference("TU"), user.id, eventId, amountCents, idempotencyKey]);
     const { rows: p } = await c.query(
-      "INSERT INTO payments (purpose, topup_id, user_id, provider, amount_cents) VALUES ('topup',$1,$2,$3,$4) RETURNING *",
-      [rows[0].id, user.id, config.payments.provider, amountCents]);
+      "INSERT INTO payments (purpose, topup_id, user_id, provider, method, amount_cents) VALUES ('topup',$1,$2,$3,$4,$5) RETURNING *",
+      [rows[0].id, user.id, require("../payments/providers").providerForMethod(paymentMethod), paymentMethod, amountCents]);
     return { topup: rows[0], payment: p[0], event: ev };
   });
   if (created.replay) {

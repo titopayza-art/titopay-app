@@ -17,8 +17,8 @@ test("paid order issues tickets only after a verified provider webhook", async (
   const r = await h.buy(buyer, ev.event, [{ ticketTypeId: ev.ticketTypes[0].id, quantity: 2 }]);
   assert.equal(r.status, 201);
   assert.equal(r.body.order.status, "pending_payment");
-  // Fee: R3 + 4.5% of R200 = R12 per ticket.
-  assert.equal(r.body.order.totalCents, 2 * 20000 + 2 * 1200);
+  // Booking fee: R10 per paid ticket.
+  assert.equal(r.body.order.totalCents, 2 * 20000 + 2 * 1000);
   // Visiting the success page is not proof of payment.
   let o = await buyer.get(`/api/public/orders/${r.body.order.reference}`);
   assert.equal(o.body.order.status, "pending_payment");
@@ -37,7 +37,7 @@ test("ledger records the sale as a balanced journal", async () => {
   const j = await h.one("SELECT count(*)::int AS n FROM journals WHERE kind = 'ticket_sale'");
   assert.equal(j.n, 1);
   const fee = await h.one("SELECT -SUM(e.amount_cents)::bigint AS s FROM ledger_entries e JOIN ledger_accounts a ON a.id = e.account_id WHERE a.code = 'platform_fee_revenue'");
-  assert.equal(Number(fee.s), 2400);
+  assert.equal(Number(fee.s), 2000);
 });
 
 test("order creation is idempotent per key and client prices are ignored", async () => {
@@ -47,7 +47,7 @@ test("order creation is idempotent per key and client prices are ignored", async
   assert.equal(a.status, 201);
   assert.equal(b.status, 200);
   assert.equal(a.body.order.reference, b.body.order.reference);
-  assert.equal(a.body.order.totalCents, 20000 + 1200);
+  assert.equal(a.body.order.totalCents, 20000 + 1000);
   await buyer.post(`/api/public/orders/${a.body.order.reference}/cancel`);
 });
 
@@ -171,7 +171,7 @@ test("payment arriving after expiry with stock gone becomes paid_unfulfilled wit
   const rf = await h.one("SELECT status, requested_by, amount_cents + fee_refund_cents AS total FROM refunds WHERE order_id = $1", [st.id]);
   assert.equal(rf.status, "requested");
   assert.equal(rf.requested_by, null);
-  assert.equal(Number(rf.total), 10000 + 750);
+  assert.equal(Number(rf.total), 10000 + 1000);
   const tt = await h.one("SELECT quantity_sold FROM ticket_types WHERE id = $1", [e.ticketTypes[0].id]);
   assert.equal(tt.quantity_sold, 1);
 });
@@ -183,7 +183,7 @@ test("promo codes discount correctly and respect max uses", async () => {
   const b = await h.user();
   const q = await b.post("/api/public/checkout/quote", { eventSlug: e.event.slug, items: [{ ticketTypeId: e.ticketTypes[0].id, quantity: 2 }], promoCode: "half" });
   assert.equal(q.body.quote.discountCents, 10000);
-  assert.equal(q.body.quote.totalCents, 20000 - 10000 + 2 * 750);
+  assert.equal(q.body.quote.totalCents, 20000 - 10000 + 2 * 1000);
   assert.equal((await h.buy(b, e.event, [{ ticketTypeId: e.ticketTypes[0].id, quantity: 1 }], { promoCode: "HALF" })).status, 201);
   const second = await h.buy(await h.user(), e.event, [{ ticketTypeId: e.ticketTypes[0].id, quantity: 1 }], { promoCode: "HALF" });
   assert.equal(second.status, 409);

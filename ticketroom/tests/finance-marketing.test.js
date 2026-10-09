@@ -29,7 +29,7 @@ test("partial ticket refund: approve -> provider refund -> tickets void -> ledge
   const o = await h.one("SELECT id, total_cents FROM orders WHERE user_id = $1", [buyers[0].user.id]);
   const rq = await owner.post(`${A()}/events/${ev.event.id}/orders/${o.id}/refund`, { reason: "can't attend", ticketIds: [t1.id], includeFees: true });
   assert.equal(rq.status, 201);
-  assert.equal(rq.body.refund.amountCents, 20000 + 1200);
+  assert.equal(rq.body.refund.amountCents, 20000 + 1000);
   // The same ticket can't be refunded twice while one is open.
   assert.equal((await owner.post(`${A()}/events/${ev.event.id}/orders/${o.id}/refund`, { reason: "again", ticketIds: [t1.id] })).status, 409);
   const rf = await h.one("SELECT id FROM refunds WHERE reference = $1", [rq.body.refund.reference]);
@@ -37,7 +37,7 @@ test("partial ticket refund: approve -> provider refund -> tickets void -> ledge
   assert.equal(d.body.refund.status, "completed");
   const after = await h.one("SELECT status, refunded_cents FROM orders WHERE id = $1", [o.id]);
   assert.equal(after.status, "partially_refunded");
-  assert.equal(Number(after.refunded_cents), 21200);
+  assert.equal(Number(after.refunded_cents), 21000);
   const tk = await h.one("SELECT status FROM tickets WHERE id = $1", [t1.id]);
   assert.equal(tk.status, "refunded");
   const sold = await h.one("SELECT quantity_sold FROM ticket_types WHERE id = $1", [ev.ticketTypes[0].id]);
@@ -98,7 +98,7 @@ test("a payout cannot be approved by the person who requested it", async () => {
   await h.db.query("INSERT INTO organiser_members (organiser_id, user_id, role) VALUES ($1,$2,'finance')", [ev.organiser.id, both.user.id]);
   const b = await h.user();
   await h.db.query("UPDATE events SET status = 'published' WHERE id = $1", [ev.event.id]);
-  const e2 = await h.addEvent(ev.organiser.id, { startsAt: new Date(Date.now() - 20 * 864e5), types: [["GA", 10000, 10]] });
+  const e2 = await h.addEvent(ev.organiser.id, { startsAt: new Date(Date.now() - 20 * 864e5), types: [["GA", 20000, 10]] });
   await h.db.query("UPDATE events SET starts_at = now() + interval '1 day', ends_at = now() + interval '2 days' WHERE id = $1", [e2.event.id]);
   await h.buyAndPay(b, e2.event, [{ ticketTypeId: e2.ticketTypes[0].id, quantity: 1 }]);
   await h.db.query("UPDATE events SET starts_at = now() - interval '10 days', ends_at = now() - interval '9 days' WHERE id = $1", [e2.event.id]);
@@ -161,7 +161,7 @@ test("sending a campaign queues one message per recipient with opt-out, never tw
   assert.equal((await owner.post(`${A()}/campaigns/${c.body.campaign.id}/send`, {})).status, 409);
   const msgs = (await h.db.query("SELECT * FROM message_outbox WHERE campaign_id = $1", [c.body.campaign.id])).rows;
   assert.equal(msgs.length, 2);
-  assert.ok(msgs.every((m) => /Unsubscribe: http/.test(m.body) && /TitoPay \(Pty\) Ltd/.test(m.body)));
+  assert.ok(msgs.every((m) => /Unsubscribe: http/.test(m.body) && /powered by TitoPay/.test(m.body)));
   assert.ok(msgs.some((m) => m.body.startsWith("Hi Buyer, new dates")));
 });
 

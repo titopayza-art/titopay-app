@@ -2,7 +2,7 @@
   "name": "ticketroom",
   "version": "0.1.0",
   "private": true,
-  "description": "TicketRoom — event ticketing, tags and cashless platform. A division of TitoPay (Pty) Ltd.",
+  "description": "TicketRoom — event ticketing, tags and cashless platform. Powered by TitoPay.",
   "main": "server.js",
   "engines": {
     "node": ">=20"
@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "express": "4.22.3",
+    "nodemailer": "10.0.10",
     "pg": "8.13.1",
     "qrcode": "1.5.4"
   },

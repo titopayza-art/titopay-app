@@ -14,15 +14,76 @@ function mask(addr) {
   return s.length > 4 ? `${s.slice(0, 3)}*****${s.slice(-2)}` : "***";
 }
 
-// Delivery adapters. Only "log" exists: it records delivery without sending
-// anything. Real SMTP / SMS gateways are pending provider selection and are
-// deliberately not faked here (see docs/INTEGRATIONS.md).
+// Delivery adapters.
+//   log        — records delivery, sends nothing (default; email + SMS)
+//   bulksms    — BulkSMS JSON API  (POST {base}/messages, Basic token auth)
+//   clickatell — Clickatell One API (POST {base}/v1/message, Authorization: <api key>)
+// The SMS adapters follow each gateway's published API shape and are tested
+// against the local mock. Verify with the gateway's test account before live.
+const http = require("../../lib/http");
+const sms = (text) => text.replace(/\s+\n/g, "\n").slice(0, 918); // max 6 concatenated GSM segments
+
 const adapters = {
   log: {
     name: "log (SIMULATED — not delivered)",
     async send(msg) {
       if (!config.isTest) console.log(`[outbox:${msg.channel}] -> ${mask(msg.to_address)} ${msg.subject ? `"${msg.subject}"` : ""}`);
       return { providerMessageId: `log_${randomToken(9)}` };
+    },
+    health: async () => ({ ok: true, detail: "log adapter: messages are recorded, not delivered" }),
+  },
+  smtp: {
+    name: "SMTP",
+    transport() {
+      if (!this._t) {
+        const c = config.messaging.smtp;
+        this._t = require("nodemailer").createTransport({ host: c.host, port: c.port, secure: c.secure, auth: { user: c.user, pass: c.pass } });
+      }
+      return this._t;
+    },
+    async send(msg) {
+      const info = await this.transport().sendMail({ from: config.messaging.fromEmail, to: msg.to_address, subject: msg.subject || "TicketRoom", text: msg.body });
+      return { providerMessageId: String(info.messageId || "") };
+    },
+    async health() {
+      try { await this.transport().verify(); return { ok: true, detail: `SMTP login OK (${config.messaging.smtp.host})` }; }
+      catch (err) { return { ok: false, detail: `SMTP: ${err.message}` }; }
+    },
+  },
+  bulksms: {
+    name: "BulkSMS",
+    async send(msg) {
+      const c = config.integrations.bulksms;
+      const r = await http.call({ integration: "bulksms", environment: c.env, operation: "send_sms", url: `${c.baseUrl}/messages`, method: "POST",
+        headers: { authorization: `Basic ${Buffer.from(`${c.tokenId}:${c.tokenSecret}`).toString("base64")}` },
+        json: [{ to: msg.to_address, body: sms(msg.body), from: config.messaging.smsSenderId }] });
+      if (!r.ok) throw new Error(`BulkSMS HTTP ${r.status}`);
+      const id = Array.isArray(r.body) ? r.body[0]?.id : r.body?.id;
+      return { providerMessageId: String(id || "") };
+    },
+    async health() {
+      const c = config.integrations.bulksms;
+      if (!c.tokenId || !c.tokenSecret) return { ok: false, detail: "BULKSMS_TOKEN_ID / BULKSMS_TOKEN_SECRET not set" };
+      try {
+        const r = await http.call({ integration: "bulksms", environment: c.env, operation: "health", url: `${c.baseUrl}/profile`, headers: { authorization: `Basic ${Buffer.from(`${c.tokenId}:${c.tokenSecret}`).toString("base64")}` }, timeoutMs: 5000 });
+        if (r.status === 401 || r.status === 403) return { ok: false, detail: "credentials rejected" };
+        return { ok: true, detail: `reachable (HTTP ${r.status}) — ${c.env}` };
+      } catch (err) { return { ok: false, detail: err.message }; }
+    },
+  },
+  clickatell: {
+    name: "Clickatell",
+    async send(msg) {
+      const c = config.integrations.clickatell;
+      const r = await http.call({ integration: "clickatell", environment: c.env, operation: "send_sms", url: `${c.baseUrl}/v1/message`, method: "POST",
+        headers: { authorization: c.apiKey }, json: { messages: [{ channel: "sms", to: msg.to_address.replace(/^\+/, ""), content: sms(msg.body) }] } });
+      const m = r.body?.messages?.[0];
+      if (!r.ok || m?.accepted === false) throw new Error(`Clickatell HTTP ${r.status}${m?.error ? `: ${m.error}` : ""}`);
+      return { providerMessageId: String(m?.apiMessageId || "") };
+    },
+    async health() {
+      const c = config.integrations.clickatell;
+      return c.apiKey ? { ok: true, detail: `configured for ${c.env} (${c.baseUrl}); send a test campaign SMS to verify` } : { ok: false, detail: "CLICKATELL_API_KEY not set" };
     },
   },
 };

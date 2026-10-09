@@ -2,7 +2,7 @@
 const config = require("../../config");
 const { formatZar } = require("../../lib/money");
 
-const FOOTER = `\n\n—\nTicketRoom · ticketroom.co.za\nA division of ${config.operator}`;
+const FOOTER = `\n\n—\nTicketRoom · ticketroom.co.za\nPowered by TitoPay`;
 const when = (d) => new Date(d).toLocaleString("en-ZA", { dateStyle: "full", timeStyle: "short", timeZone: "Africa/Johannesburg" });
 
 module.exports = {

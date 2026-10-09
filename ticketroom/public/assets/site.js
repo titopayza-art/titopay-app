@@ -19,7 +19,7 @@ function card(e) {
 async function home() {
   document.title = "TicketRoom — Your event. Your ticket.";
   const params = new URLSearchParams(location.search);
-  const state = { q: params.get("q") || "", category: params.get("category") || "", city: params.get("city") || "", when: params.get("when") || "" };
+  const state = { q: params.get("q") || "", category: params.get("category") || "", city: params.get("city") || "", when: params.get("when") || "", free: params.get("free") || "" };
   render(main, html`
     <section class="hero"><div class="wrap">
       <h1>Your event. <b>Your ticket.</b></h1>
@@ -32,7 +32,7 @@ async function home() {
     </div></section>
     <section class="section"><div class="wrap">
       <div class="row between"><h2 class="mb-0">Upcoming events</h2>
-        <div class="chips" role="group" aria-label="When">${[["", "Any date"], ["weekend", "This weekend"], ["month", "Next 30 days"]].map(([v, l]) => html`<button class="chip" data-when="${v}" aria-pressed="${state.when === v}">${l}</button>`)}</div></div>
+        <div class="chips" role="group" aria-label="When">${[["", "Any date"], ["weekend", "This weekend"], ["month", "Next 30 days"]].map(([v, l]) => html`<button class="chip" data-when="${v}" aria-pressed="${state.when === v}">${l}</button>`)}<button class="chip" data-free aria-pressed="${state.free === "1"}">Free events</button></div></div>
       <div class="chips mt" role="group" aria-label="Category">${CATS.map(([v, l]) => html`<button class="chip" data-cat="${v}" aria-pressed="${state.category === v}">${l}</button>`)}</div>
       <div class="event-grid mt" id="grid" aria-live="polite">${spinner()}</div>
     </div></section>
@@ -50,20 +50,21 @@ async function home() {
     if (sel.options.length === 1) cities.forEach((c) => { const o = new Option(`${c.city} (${c.n})`, c.city); sel.add(o); });
     sel.value = state.city;
     render($("#grid"), events.length ? html`${events.map(card)}` : empty("No events match. Try another search or category."));
-    if (!state.q && !state.category && !state.city && !state.when) {
+    if (!state.q && !state.category && !state.city && !state.when && !state.free) {
       const feat = events.filter((e) => e.featured).slice(0, 6);
       render($("#featured"), html`${(feat.length ? feat : events.slice(0, 4)).map((e) => html`<a class="feature" href="/events/${e.slug}">${poster(e)}<span class="shade"></span><div class="meta"><span class="badge amber plain">${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })}</span><h3>${e.title}</h3><span class="small">${e.venue_name}, ${e.city} · ${e.from_price_cents === 0 ? "Free" : `from ${money(e.from_price_cents)}`}</span></div></a>`)}`);
     } else render($("#featured"), "");
   };
   $("#search").addEventListener("submit", (e) => { e.preventDefault(); state.q = $("#q").value.trim(); state.city = $("#city").value; load(); });
   $$("[data-cat]").forEach((b) => b.addEventListener("click", () => { state.category = b.dataset.cat; $$("[data-cat]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
+  $("[data-free]").addEventListener("click", (e) => { state.free = state.free ? "" : "1"; e.currentTarget.setAttribute("aria-pressed", String(!!state.free)); load(); });
   $$("[data-when]").forEach((b) => b.addEventListener("click", () => { state.when = b.dataset.when; $$("[data-when]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
   await load();
 }
 
 // ---------------- event page + checkout ----------------
 async function eventPage(slug) {
-  const { event: e, ticketTypes } = await get(`/api/public/events/${encodeURIComponent(slug)}`);
+  const [{ event: e, ticketTypes }, cfg] = await Promise.all([get(`/api/public/events/${encodeURIComponent(slug)}`), get("/api/config")]);
   document.title = `${e.title} — TicketRoom`;
   const ref = new URLSearchParams(location.search).get("ref");
   if (ref) { sessionStorage.setItem(`tr_ref_${slug}`, ref); post(`/api/public/events/${slug}/click`, { ref }).catch(() => {}); }
@@ -101,14 +102,15 @@ async function eventPage(slug) {
     render(box, html`<h2 id="tix-h">Tickets</h2>
       ${closed ? html`<p class="callout warn">${e.status === "cancelled" ? "Sales are closed." : "Ticket sales are not open right now."}</p>` : ""}
       ${ticketTypes.length ? ticketTypes.map((t) => html`<div class="tt"><div class="info"><div class="name">${t.name}</div>
-          <div class="meta">${t.price_cents === 0 ? "Free" : html`${moneyExact(t.price_cents)} <span>+ ${moneyExact(t.fee_cents)} fee</span>`}${t.remaining === 0 ? " · Sold out" : t.remaining < 25 ? ` · Only ${t.remaining} left` : ""}</div>
+          <div class="meta">${t.price_cents === 0 ? "Free" : html`${moneyExact(t.price_cents)} <span>+ ${moneyExact(t.fee_cents)} booking fee</span>`}${t.remaining === 0 ? " · Sold out" : t.remaining < 25 ? ` · Only ${t.remaining} left` : ""}</div>
           ${t.description ? html`<div class="meta">${t.description}</div>` : ""}</div>
         <div class="stepper" role="group" aria-label="${t.name} quantity"><button data-dec="${t.id}" aria-label="Fewer ${t.name}" ${raw(qty[t.id] === 0 ? "disabled" : "")}>−</button><output aria-live="polite">${qty[t.id]}</output><button data-inc="${t.id}" aria-label="More ${t.name}" ${raw(closed || qty[t.id] >= Math.min(t.per_order_limit, t.remaining) ? "disabled" : "")}>+</button></div></div>`) : html`<p class="muted">No tickets available.</p>`}
       <div class="totals"><div class="line"><span>${count} ticket${count === 1 ? "" : "s"}</span><span>${moneyExact(sub)}</span></div>
-        <div class="line"><span>Service fees</span><span>${moneyExact(fee)}</span></div>
+        <div class="line"><span>Booking fee</span><span>${moneyExact(fee)}</span></div>
         <div class="line total"><span>Total</span><span>${moneyExact(sub + fee)}</span></div></div>
-      <button class="btn btn-primary btn-block mt" data-continue ${raw(count === 0 || closed ? "disabled" : "")}>Continue</button>
-      <p class="trust mt mb-0"><span aria-hidden="true">🔒</span> All-in pricing: what you see here is what you pay. Promo codes on the next step.</p>`);
+      ${!cfg.cardPaymentsEnabled && sub > 0 ? html`<p class="callout warn mt">Paid tickets go on sale soon. Free tickets are available now.</p>` : ""}
+      <button class="btn btn-primary btn-block mt" data-continue ${raw(count === 0 || closed || (!cfg.cardPaymentsEnabled && sub > 0) ? "disabled" : "")}>Continue</button>
+      <p class="trust mt mb-0"><span aria-hidden="true">🔒</span> All-in pricing: ${e.is_free ? "this event is free — just register." : "a R10 booking fee per paid ticket, nothing else. Promo codes on the next step."}</p>`);
     $$("[data-inc]", box).forEach((b) => b.addEventListener("click", () => { qty[b.dataset.inc]++; drawSelect(); $(`[data-inc="${b.dataset.inc}"]`, box)?.focus(); }));
     $$("[data-dec]", box).forEach((b) => b.addEventListener("click", () => { qty[b.dataset.dec]--; drawSelect(); $(`[data-dec="${b.dataset.dec}"]`, box)?.focus(); }));
     $("[data-continue]", box).addEventListener("click", async () => {
@@ -118,6 +120,9 @@ async function eventPage(slug) {
   };
 
   const drawCheckout = async (u, promo = "") => {
+    let pm = { links: [], titopayAvailable: false };
+    try { pm = await get("/api/me/payment-methods"); } catch { /* card only */ }
+    const titopay = pm.links.find((l) => l.provider === "titopay");
     let quote;
     try { quote = (await post("/api/public/checkout/quote", { eventSlug: slug, items: selection(), promoCode: promo || undefined })).quote; }
     catch (err) { if (promo) { toast(err.message, "bad"); return drawCheckout(u, ""); } throw err; }
@@ -128,12 +133,16 @@ async function eventPage(slug) {
       <div class="totals">${quote.lines.map((l) => html`<div class="line"><span>${l.quantity} × ${l.name}</span><span>${moneyExact(l.unitPriceCents * l.quantity)}</span></div>`)}</div>
       <div class="totals"><div class="line"><span>Subtotal</span><span>${moneyExact(quote.subtotalCents)}</span></div>
         ${quote.discountCents ? html`<div class="line"><span>Promo ${quote.promoCode}</span><span>−${moneyExact(quote.discountCents)}</span></div>` : ""}
-        <div class="line"><span>Service fees</span><span>${moneyExact(quote.feeCents)}</span></div>
+        <div class="line"><span>Booking fee</span><span>${moneyExact(quote.feeCents)}</span></div>
         <div class="line total"><span>Total</span><span>${moneyExact(quote.totalCents)}</span></div></div>
       <form class="row mt" id="promo"><label class="sr-only" for="pc">Promo code</label><input id="pc" name="code" placeholder="Promo code" class="grow" value="${quote.promoCode || ""}" maxlength="40"><button class="btn btn-ghost btn-sm">Apply</button></form>
       <form class="stack mt" id="pay">
         <p class="small mb-0">Tickets go to <strong>${u.email}</strong>.</p>
         <div class="field"><label for="ph">Mobile number <span class="muted">(optional)</span></label><input id="ph" name="buyerPhone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567"></div>
+        ${quote.totalCents > 0 ? html`<fieldset class="stack card flat"><legend class="label">Pay with</legend>
+          <label class="check"><input type="radio" name="paymentMethod" value="card" checked><span>Card, EFT or instant EFT</span></label>
+          ${pm.titopayAvailable ? (titopay ? html`<label class="check"><input type="radio" name="paymentMethod" value="titopay_wallet"><span>TitoPay wallet <span class="muted small">${titopay.display_handle}</span></span></label>`
+            : html`<p class="small mb-0">Have a TitoPay wallet? <a href="/account#/payment-methods">Link it</a> to pay in one tap.</p>`) : ""}</fieldset>` : ""}
         <fieldset class="stack card flat"><legend class="label">Hear from ${e.organiser_name}? <span class="muted">(optional)</span></legend>
           <label class="check"><input type="checkbox" name="mEmail"><span>Email me about their future events</span></label>
           <label class="check"><input type="checkbox" name="mSms"><span>SMS me about their future events</span></label>
@@ -147,7 +156,7 @@ async function eventPage(slug) {
     onSubmit($("#pay"), async (v) => {
       const res = await post("/api/public/orders", {
         eventSlug: slug, items: selection(), promoCode: quote.promoCode || undefined, ref: sessionStorage.getItem(`tr_ref_${slug}`) || undefined,
-        buyerPhone: v.buyerPhone, marketingOptIn: { email: !!v.mEmail, sms: !!v.mSms }, idempotencyKey: key,
+        buyerPhone: v.buyerPhone, marketingOptIn: { email: !!v.mEmail, sms: !!v.mSms }, idempotencyKey: key, paymentMethod: v.paymentMethod || "card",
       });
       sessionStorage.removeItem(`tr_idem_${slug}`);
       if (res.payment?.redirectUrl && res.order.status === "pending_payment") location.href = res.payment.redirectUrl;
@@ -163,24 +172,27 @@ async function orderPage(ref) {
   if (!u) return;
   let tries = 0;
   const draw = async () => {
-    const { order: o, items, tickets } = await get(`/api/public/orders/${encodeURIComponent(ref)}`);
+    const { order: o, items, tickets, payment } = await get(`/api/public/orders/${encodeURIComponent(ref)}`);
+    const wallet = payment?.method === "titopay_wallet";
     document.title = `Order ${o.reference} — TicketRoom`;
     const pending = o.status === "pending_payment";
     render(main, html`<div class="wrap section"><div class="card pad-lg stack" aria-live="polite">
       <div class="row between"><span class="muted small">Order ${o.reference}</span>${badge(o.status)}</div>
       ${o.status === "paid" ? html`<h1>You're going! 🎉</h1><p>Your ${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} ready for <strong>${o.event.title}</strong>. We've also emailed a confirmation.</p>
           <div class="row"><a class="btn btn-primary" href="/account#/tickets">View my tickets</a><a class="btn btn-ghost" href="/events/${o.event.slug}">Back to event</a></div>`
+        : pending && wallet && payment.status === "failed" ? html`<h1>Payment not approved</h1><p>The TitoPay wallet payment was declined or not approved in time. Nothing was charged.</p><div class="row"><button class="btn btn-primary" data-repay>Try again</button><button class="btn btn-ghost" data-cancel>Cancel order</button></div>`
+        : pending && wallet ? html`<h1>Approve in your TitoPay app</h1><p>We've sent a payment request of <strong>${moneyExact(o.totalCents)}</strong> to your TitoPay wallet. Open the TitoPay app and approve it — this page updates by itself.</p>${spinner()}`
         : pending ? html`<h1>Confirming your payment…</h1><p>We're waiting for the payment provider to confirm. This usually takes a few seconds. Please don't pay again.</p>${tries > 20 ? html`<p class="callout warn">Still waiting. If you completed payment, your tickets will appear in your account as soon as the provider confirms. <button class="btn-link" data-repay>Return to payment</button> · <button class="btn-link" data-cancel>Cancel order</button></p>` : spinner()}`
         : o.status === "paid_unfulfilled" ? html`<h1>Payment received — tickets unavailable</h1><p class="callout warn">Your payment arrived after your reservation expired and the tickets had sold out. A full refund has been started automatically.</p>`
         : html`<h1>${o.status === "expired" ? "Reservation expired" : o.status === "cancelled" ? "Order cancelled" : "Order " + o.status.replace(/_/g, " ")}</h1><p>No tickets were issued${o.status === "expired" || o.status === "cancelled" ? " and nothing was charged" : ""}.</p><a class="btn btn-primary" href="/events/${o.event.slug}">Try again</a>`}
       <div class="card flat"><h3>${o.event.title}</h3><p class="muted small mb-0">${fmtDateTime(o.event.startsAt)} · ${o.event.venue}, ${o.event.city}</p>
         <div class="totals">${items.map((i) => html`<div class="line"><span>${i.quantity} × ${i.name}</span><span>${moneyExact(i.unit_price_cents * i.quantity)}</span></div>`)}
         ${o.discountCents ? html`<div class="line"><span>Discount</span><span>−${moneyExact(o.discountCents)}</span></div>` : ""}
-        <div class="line"><span>Service fees</span><span>${moneyExact(o.feeCents)}</span></div><div class="line total"><span>Total</span><span>${moneyExact(o.totalCents)}</span></div></div></div>
+        <div class="line"><span>Booking fee</span><span>${moneyExact(o.feeCents)}</span></div><div class="line total"><span>Total</span><span>${moneyExact(o.totalCents)}</span></div></div></div>
     </div></div>`);
-    $("[data-repay]")?.addEventListener("click", async () => { const r = await post(`/api/public/orders/${ref}/pay`); location.href = r.payment.redirectUrl; });
+    $("[data-repay]")?.addEventListener("click", async () => { try { const r = await post(`/api/public/orders/${ref}/pay`); if (r.payment.redirectUrl) location.href = r.payment.redirectUrl; else { tries = 0; draw(); } } catch (err) { toast(err.message, "bad"); } });
     $("[data-cancel]")?.addEventListener("click", async () => { await post(`/api/public/orders/${ref}/cancel`); draw(); });
-    if (pending && tries++ < 60) setTimeout(draw, tries < 10 ? 1500 : 4000);
+    if (pending && !(wallet && payment.status === "failed") && tries++ < 120) setTimeout(draw, tries < 10 ? 1500 : 4000);
   };
   await draw();
 }
@@ -203,24 +215,29 @@ function organisersPage() {
       <div class="card"><h2>What's included</h2><div class="grid-2">
         <ul><li>Real-time sales dashboard and daily trend</li><li>Tracking links to see which channel sells</li><li>Email and SMS campaigns to fans who opted in (POPIA-aligned)</li><li>Free ticket transfers that invalidate the old QR</li></ul>
         <ul><li>RFID/NFC wristbands and QR tags for cashless events</li><li>Vendor POS on any phone, with per-vendor reporting</li><li>Refunds with dual approval and a full audit trail</li><li>Transparent settlements once your event has run</li></ul></div>
-        <p class="muted small mb-0">Buyers pay a published service fee per paid ticket; free events are free. Payouts are released after your event, less approved refunds.</p></div>
+      </div>
+      <div class="card" id="pricing"><h2>Simple pricing</h2><div class="grid-3">
+        <div><div class="kpi"><div class="k">You pay</div><div class="v">5%</div><div class="s">of ticket sales, deducted from your payout</div></div></div>
+        <div><div class="kpi"><div class="k">Your buyers pay</div><div class="v">R10</div><div class="s">booking fee per paid ticket</div></div></div>
+        <div><div class="kpi"><div class="k">Free events</div><div class="v">R0</div><div class="s">no fees at all — set up a free event in minutes</div></div></div></div>
+        <p class="muted small mt mb-0">Example: 100 tickets at R150 = R15 000 in sales. You receive R14 250; each buyer pays R160. Payouts are released after your event, less approved refunds.</p></div>
     </div></section>`);
   $("[data-apply]").addEventListener("click", async () => { const u = await requireUser("Create a free account first, then set up your organiser profile."); if (u) location.href = "/organiser#/apply"; });
 }
 
 // ---------------- help, legal, unsubscribe ----------------
 const LEGAL = {
-  terms: ["Terms of use", `These terms govern use of TicketRoom (ticketroom.co.za), operated by TitoPay (Pty) Ltd ("TitoPay", "we").
+  terms: ["Terms of use", `These terms govern use of TicketRoom (ticketroom.co.za), operated by TicketRoom ("TicketRoom", "we"). Payments and the TitoPay wallet are powered by TitoPay.
 
 1. TicketRoom sells tickets as an agent of the event organiser. The organiser is responsible for the event itself.
 2. A ticket is a licence to attend. The QR code is the ticket: the first valid scan admits; later copies are refused.
-3. Prices include VAT where applicable. A service fee per paid ticket is shown before payment.
+3. Prices include VAT where applicable. A booking fee of R10 per paid ticket is shown before payment. Free tickets carry no fee.
 4. Transfers are free while the organiser allows them. A transfer issues a new QR code and cancels the old one.
 5. Cashless balances are held for use at the specific event and may be refunded on request in line with the refund policy.
 6. We may cancel orders that breach these terms, including automated purchasing and resale above face value.
 
-DRAFT — these terms are a working draft pending review by TitoPay's legal advisers and must not be relied on as final.`],
-  privacy: ["Privacy notice (POPIA)", `TitoPay (Pty) Ltd is the responsible party for personal information processed by TicketRoom.
+DRAFT — these terms are a working draft pending review by TicketRoom's legal advisers and must not be relied on as final.`],
+  privacy: ["Privacy notice (POPIA)", `TicketRoom is the responsible party for personal information it processes. Contact: hello@ticketroom.co.za.
 
 What we collect: your name, email, optional mobile number, orders, tickets, tag links, cashless transactions and support requests. We do not store card numbers or CVV codes — payments are processed by our payment provider.
 
@@ -230,7 +247,7 @@ Organisers receive the attendee details they need to run their event. They may o
 
 Your rights: you can download your data and delete your account from Account → Privacy. Financial records are kept for the period the law requires, with your personal details removed. Contact the Information Officer at privacy@ticketroom.co.za. You may complain to the Information Regulator.
 
-DRAFT — pending review by TitoPay's Information Officer and legal advisers.`],
+DRAFT — pending review by TicketRoom's Information Officer and legal advisers.`],
   refunds: ["Refunds & cancellations", `Cancelled events: every ticket holder receives a full refund, including service fees, to the original payment method.
 
 Postponed or materially changed events: you will be told and offered a refund.
@@ -240,7 +257,7 @@ Otherwise, refunds follow the event's published refund policy. Ticket refunds ar
 Unused cashless balances can be refunded from Account → Cashless.
 
 DRAFT — pending legal review against the Consumer Protection Act and ECTA.`],
-  paia: ["PAIA manual", `TitoPay (Pty) Ltd's PAIA manual is available on request from info@titopay.co.za. DRAFT placeholder.`],
+  paia: ["PAIA manual", `TicketRoom's PAIA manual is available on request from hello@ticketroom.co.za. DRAFT placeholder.`],
 };
 
 function legal(doc) {

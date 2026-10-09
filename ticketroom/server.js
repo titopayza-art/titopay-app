@@ -1,13 +1,16 @@
+// TicketRoom entry point. Also the "Application startup file" for cPanel's
+// Setup Node.js App (Phusion Passenger), which provides the port itself.
 const config = require("./src/config");
 const { createApp } = require("./src/app");
-const migrate = require("./src/db/migrate");
 const workers = require("./src/workers");
+const startup = require("./src/startup");
 
 async function main() {
-  if (process.env.MIGRATE_ON_START === "true") await migrate.up();
+  await startup.run();
   const app = createApp();
-  const server = app.listen(config.port, () => {
-    console.log(`TicketRoom listening on :${config.port} (${config.env}) — payments: ${config.payments.provider}${config.payments.provider === "simulated" ? " [SIMULATED, no real money]" : ""}`);
+  const port = process.env.PORT || config.port;
+  const server = app.listen(port, () => {
+    console.log(`TicketRoom listening on ${port} (${config.env}) — payments: ${config.payments.provider}${config.payments.provider === "simulated" ? " [SIMULATED, no real money]" : ""}`);
   });
   const stopWorkers = process.env.WORKERS === "false" ? () => {} : workers.start();
   const shutdown = () => { stopWorkers(); server.close(() => process.exit(0)); setTimeout(() => process.exit(1), 10_000).unref(); };
@@ -15,4 +18,4 @@ async function main() {
   process.on("SIGINT", shutdown);
 }
 
-main().catch((err) => { console.error(err.message); process.exit(1); });
+main().catch((err) => { console.error(`TicketRoom failed to start: ${err.message}`); process.exit(1); });

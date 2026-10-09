@@ -11,6 +11,8 @@ async function eventAnalytics(event) {
       `SELECT COUNT(*) FILTER (WHERE status IN ${PAID})::int AS orders,
               COALESCE(SUM(subtotal_cents - discount_cents) FILTER (WHERE status IN ${PAID}),0)::bigint AS ticket_revenue_cents,
               COALESCE(SUM(fee_cents) FILTER (WHERE status IN ${PAID}),0)::bigint AS fees_cents,
+              COALESCE(SUM(organiser_fee_cents) FILTER (WHERE status IN ${PAID}),0)::bigint
+                - COALESCE((SELECT SUM(r.organiser_fee_cents) FROM refunds r WHERE r.order_id IN (SELECT id FROM orders WHERE event_id = $1) AND r.status = 'completed'),0)::bigint AS organiser_fee_cents,
               COALESCE(SUM(refunded_cents),0)::bigint AS refunded_cents,
               COUNT(*) FILTER (WHERE status = 'expired')::int AS abandoned,
               COUNT(*) FILTER (WHERE status = 'pending_payment')::int AS pending
@@ -49,8 +51,9 @@ async function eventAnalytics(event) {
   ]);
   const payable = await ledger.balanceByCode(db, ledger.codes.organiserPayable(event.organiser_id, id).code);
   const sold = byType.rows.reduce((s, t) => s + t.quantity_sold, 0);
+  const tr = totals.rows[0];
   return {
-    totals: { ...totals.rows[0], ticketsSold: sold, capacity: event.capacity, payableCents: payable },
+    totals: { ...tr, organiser_fee_cents: Number(tr.organiser_fee_cents), ticketsSold: sold, capacity: event.capacity, payableCents: payable, isFree: event.is_free },
     daily: daily.rows, byType: byType.rows, checkins: checkins.rows[0], checkinsByHour: byHour.rows,
     trackingLinks: links.rows, promoCodes: promos.rows, vendors: vendors.rows, cashless: topups.rows[0],
   };
@@ -60,7 +63,9 @@ async function organiserDashboard(organiserId) {
   const { rows } = await db.query(
     `SELECT e.id, e.title, e.slug, e.status, e.starts_at, e.capacity,
             COALESCE((SELECT SUM(quantity_sold) FROM ticket_types WHERE event_id = e.id),0)::int AS sold,
-            COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN ${PAID}),0)::bigint AS revenue_cents
+            e.is_free,
+            COALESCE((SELECT SUM(subtotal_cents - discount_cents) FROM orders WHERE event_id = e.id AND status IN ${PAID}),0)::bigint AS revenue_cents,
+            COALESCE((SELECT SUM(organiser_fee_cents) FROM orders WHERE event_id = e.id AND status IN ${PAID}),0)::bigint AS organiser_fee_cents
        FROM events e WHERE e.organiser_id = $1 ORDER BY e.starts_at DESC`, [organiserId]);
   const { rows: last7 } = await db.query(
     `SELECT COALESCE(SUM(o.subtotal_cents - o.discount_cents),0)::bigint AS revenue_cents, COUNT(*)::int AS orders
@@ -72,6 +77,7 @@ async function organiserDashboard(organiserId) {
       live: rows.filter((e) => e.status === "published" && new Date(e.starts_at) > new Date()).length,
       ticketsSold: rows.reduce((s, e) => s + e.sold, 0),
       revenueCents: rows.reduce((s, e) => s + e.revenue_cents, 0),
+      organiserFeeCents: rows.reduce((s, e) => s + e.organiser_fee_cents, 0),
       last7RevenueCents: last7[0].revenue_cents,
       last7Orders: last7[0].orders,
     },

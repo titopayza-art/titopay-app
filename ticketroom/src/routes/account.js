@@ -66,6 +66,25 @@ router.get("/orders", wrap(async (req, res) => {
   res.json({ orders: rows });
 }));
 
+// --- payment methods: TitoPay wallet linkage
+const wallets = require("../modules/wallets/service");
+router.get("/payment-methods", wrap(async (req, res) => {
+  const config = require("../config");
+  res.json({ links: await wallets.list(req.user.id), titopayAvailable: config.integrations.titopay.enabled, titopayEnvironment: config.integrations.titopay.env });
+}));
+
+router.post("/payment-methods/titopay/link", limit("walletlink", 5, 15 * 60e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body, { phone: r.phone() });
+  res.status(201).json(await wallets.startLink(req.user, b.phone));
+}));
+
+router.post("/payment-methods/titopay/confirm", limit("walletotp", 10, 15 * 60e3, (q) => q.user.id), wrap(async (req, res) => {
+  const b = check(req.body, { linkRequestId: r.uuid(), otp: r.str({ min: 4, max: 8, pattern: /^\d+$/, message: "Enter the code from TitoPay." }) });
+  res.status(201).json({ link: await wallets.confirmLink(req.user, b.linkRequestId, b.otp) });
+}));
+
+router.delete("/payment-methods/:id", wrap(async (req, res) => res.json(await wallets.unlink(req.user, req.params.id))));
+
 // --- tags
 router.get("/tags", wrap(async (req, res) => res.json({ tags: await tags.listForUser(req.user.id) })));
 
@@ -92,9 +111,9 @@ router.get("/wallets/:eventId", wrap(async (req, res) => {
 }));
 
 router.post("/wallets/:eventId/topups", limit("topup", 10, 15 * 60e3, (q) => q.user.id), wrap(async (req, res) => {
-  const b = check(req.body, { amountCents: r.int({ min: 1, max: 100000000 }), idempotencyKey: r.idemKey() });
-  const out = await cashless.startTopup(req.user, req.params.eventId, b.amountCents, b.idempotencyKey);
-  res.status(out.replay ? 200 : 201).json({ topup: { reference: out.topup.reference, status: out.topup.status }, payment: { status: out.payment?.status, redirectUrl: out.payment?.redirectUrl || null } });
+  const b = check(req.body, { amountCents: r.int({ min: 1, max: 100000000 }), idempotencyKey: r.idemKey(), paymentMethod: r.oneOf(["card", "titopay_wallet"], { optional: true, fallback: "card" }) });
+  const out = await cashless.startTopup(req.user, req.params.eventId, b.amountCents, b.idempotencyKey, b.paymentMethod);
+  res.status(out.replay ? 200 : 201).json({ topup: { reference: out.topup.reference, status: out.topup.status }, payment: { status: out.payment?.status, method: out.payment?.method, redirectUrl: out.payment?.redirectUrl || null, awaitingApproval: !!out.payment?.awaitingApproval } });
 }));
 
 router.post("/wallets/:eventId/refund", wrap(async (req, res) => {

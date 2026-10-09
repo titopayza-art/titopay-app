@@ -7,9 +7,13 @@ const { ticketFee, bpsOf } = require("../../lib/money");
 const { bad, conflict, notFound } = require("../../lib/errors");
 const tickets = require("../tickets/service");
 const outbox = require("../messaging/outbox");
+const { providerForMethod } = require("../payments/providers");
 const templates = require("../messaging/templates");
 
 const MAX_TICKETS_PER_ORDER = 20;
+
+// TicketRoom's commission on an organiser's ticket revenue (after discounts).
+const commissionBps = (organiser) => (organiser.commission_bps ?? config.fees.organiserCommissionBps);
 
 function salesOpen(event, now = new Date()) {
   if (event.status !== "published") return false;
@@ -83,6 +87,17 @@ async function createOrder(user, input) {
     const { rows: cap } = await c.query("SELECT COALESCE(SUM(quantity_sold + quantity_held),0)::int AS used FROM ticket_types WHERE event_id = $1", [event.id]);
     const wanted = qt.lines.reduce((s, l) => s + l.quantity, 0);
     if (cap[0].used + wanted > event.capacity) throw conflict("Not enough tickets left for this event.", "sold_out");
+    const { rows: orgRows } = await c.query("SELECT commission_bps FROM organisers WHERE id = $1", [event.organiser_id]);
+    const organiserFee = bpsOf(qt.subtotal - qt.discount, commissionBps(orgRows[0]));
+    const method = qt.total > 0 ? (input.paymentMethod || "card") : null;
+    if (method === "card" && !require("../payments/providers").cardPaymentsEnabled()) {
+      throw new (require("../../lib/errors").AppError)(503, "payments_not_configured", "Card payments are not switched on yet. Free tickets are available; paid tickets go on sale soon.");
+    }
+    if (method === "titopay_wallet") {
+      const wallets = require("../wallets/service");
+      if (!config.integrations.titopay.enabled) throw conflict("TitoPay wallet payments are not available right now.", "titopay_disabled");
+      if (!(await wallets.activeToken(user.id))) throw conflict("Link your TitoPay wallet first.", "wallet_not_linked");
+    }
 
     for (const l of qt.lines) {
       const { rowCount } = await c.query(
@@ -100,10 +115,10 @@ async function createOrder(user, input) {
 
     const { rows } = await c.query(
       `INSERT INTO orders (reference, event_id, user_id, status, buyer_name, buyer_email, buyer_phone, subtotal_cents,
-                           discount_cents, fee_cents, total_cents, promo_code_id, tracking_link_id, idempotency_key, expires_at)
-       VALUES ($1,$2,$3,'pending_payment',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now() + make_interval(mins => $14)) RETURNING *`,
+                           discount_cents, fee_cents, total_cents, promo_code_id, tracking_link_id, idempotency_key, expires_at, organiser_fee_cents)
+       VALUES ($1,$2,$3,'pending_payment',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now() + make_interval(mins => $14), $15) RETURNING *`,
       [reference("TR"), event.id, user.id, user.fullName, user.email, input.buyerPhone || user.phone || null, qt.subtotal, qt.discount, qt.fee, qt.total,
-        qt.promo?.id || null, trackingId, input.idempotencyKey, config.orders.holdMinutes]);
+        qt.promo?.id || null, trackingId, input.idempotencyKey, config.orders.holdMinutes, organiserFee]);
     let order = rows[0];
     for (const l of qt.lines) {
       await c.query("INSERT INTO order_items (order_id, ticket_type_id, quantity, unit_price_cents, unit_fee_cents) VALUES ($1,$2,$3,$4,$5)",
@@ -121,8 +136,8 @@ async function createOrder(user, input) {
       order = (await fulfil(c, order.id, null)).order;
     } else {
       const { rows: p } = await c.query(
-        `INSERT INTO payments (purpose, order_id, user_id, provider, amount_cents) VALUES ('order',$1,$2,$3,$4) RETURNING *`,
-        [order.id, user.id, config.payments.provider, order.total_cents]);
+        `INSERT INTO payments (purpose, order_id, user_id, provider, method, amount_cents) VALUES ('order',$1,$2,$3,$4,$5) RETURNING *`,
+        [order.id, user.id, providerForMethod(method), method, order.total_cents]);
       payment = p[0];
     }
     await audit.record(c, { actor: user, action: "order.created", entityType: "order", entityId: order.id, organiserId: event.organiser_id, details: { reference: order.reference, total: order.total_cents } });
@@ -183,14 +198,16 @@ async function fulfil(c, orderId, payment) {
   const { rows: upd } = await c.query("UPDATE orders SET status = $2, paid_at = now(), updated_at = now() WHERE id = $1 RETURNING *", [orderId, newStatus]);
 
   if (order.total_cents > 0) {
-    // Money in: provider holds it; organiser is owed the ticket revenue, the
-    // platform earns the service fee.
+    // Money in: the provider holds it. The organiser is owed ticket revenue
+    // less TicketRoom's commission; TicketRoom earns the commission and the
+    // consumer booking fee.
     await ledger.post(c, {
       kind: "ticket_sale", reference: order.reference, idempotencyKey: `order-paid:${order.id}`,
       memo: `Order ${order.reference}`,
       lines: [
         { account: ledger.codes.providerClearing(payment.provider), debit: order.total_cents },
-        { account: ledger.codes.organiserPayable(event.organiser_id, event.id), credit: order.subtotal_cents - order.discount_cents },
+        { account: ledger.codes.organiserPayable(event.organiser_id, event.id), credit: order.subtotal_cents - order.discount_cents - order.organiser_fee_cents },
+        { account: ledger.codes.organiserCommission(), credit: order.organiser_fee_cents },
         { account: ledger.codes.feeRevenue(), credit: order.fee_cents },
       ],
     });
@@ -201,9 +218,9 @@ async function fulfil(c, orderId, payment) {
     await outbox.enqueue(c, { to: order.buyer_email, userId: order.user_id, ...templates.orderConfirmed({ order: upd[0], event, ticketCount: issued.length }) });
   } else {
     const { rows: r } = await c.query(
-      `INSERT INTO refunds (reference, kind, order_id, event_id, user_id, amount_cents, fee_refund_cents, reason, requested_by)
-       VALUES ($1,'order',$2,$3,$4,$5,$6,'Payment arrived after reservation expired and tickets were no longer available', NULL) RETURNING id`,
-      [reference("RF"), order.id, order.event_id, order.user_id, order.subtotal_cents - order.discount_cents, order.fee_cents]);
+      `INSERT INTO refunds (reference, kind, order_id, event_id, user_id, amount_cents, fee_refund_cents, organiser_fee_cents, reason, requested_by)
+       VALUES ($1,'order',$2,$3,$4,$5,$6,$7,'Payment arrived after reservation expired and tickets were no longer available', NULL) RETURNING id`,
+      [reference("RF"), order.id, order.event_id, order.user_id, order.subtotal_cents - order.discount_cents, order.fee_cents, order.organiser_fee_cents]);
     await outbox.enqueue(c, { to: order.buyer_email, userId: order.user_id, ...templates.orderNeedsRefund({ order, event }) });
     await audit.record(c, { action: "order.paid_unfulfilled", entityType: "order", entityId: order.id, organiserId: event.organiser_id, details: { refundId: r[0].id } });
   }
@@ -272,4 +289,4 @@ async function getForUser(user, ref) {
   return { order: rows[0], items, payment };
 }
 
-module.exports = { quote, publicQuote, createOrder, fulfil, cancelPending, expireDue, getForUser, salesOpen, releaseHolds, latestPayment };
+module.exports = { commissionBps, quote, publicQuote, createOrder, fulfil, cancelPending, expireDue, getForUser, salesOpen, releaseHolds, latestPayment };

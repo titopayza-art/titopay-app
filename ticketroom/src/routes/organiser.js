@@ -148,12 +148,13 @@ const eventShape = (partial = false) => {
     salesStartAt: r.date({ optional: true }), salesEndAt: r.date({ optional: true }),
     refundPolicy: r.text({ optional: true, max: 2000 }), accessibilityInfo: r.text({ optional: true, max: 2000 }), ageRestriction: r.str({ optional: true, max: 60 }),
     transfersEnabled: r.bool({ optional: true, fallback: undefined }), cashlessEnabled: r.bool({ optional: true, fallback: undefined }), imageUploadId: r.uuid({ optional: true }),
+    isFree: r.bool({ optional: true, fallback: undefined }),
   };
 };
 const COLS = { title: "title", summary: "summary", description: "description", category: "category", venueName: "venue_name", address: "address", city: "city", province: "province",
   startsAt: "starts_at", endsAt: "ends_at", doorsOpenAt: "doors_open_at", capacity: "capacity", salesStartAt: "sales_start_at", salesEndAt: "sales_end_at",
   refundPolicy: "refund_policy", accessibilityInfo: "accessibility_info", ageRestriction: "age_restriction", transfersEnabled: "transfers_enabled",
-  cashlessEnabled: "cashless_enabled", imageUploadId: "image_upload_id" };
+  cashlessEnabled: "cashless_enabled", imageUploadId: "image_upload_id", isFree: "is_free" };
 
 async function assertUpload(orgId, uploadId) {
   if (!uploadId) return;
@@ -176,7 +177,11 @@ router.post("/:orgId/events", wrap(async (req, res) => {
     `INSERT INTO events (organiser_id, slug, created_by, ${cols.map((k) => COLS[k]).join(", ")})
      VALUES ($1,$2,$3, ${cols.map((_, i) => `$${i + 4}`).join(", ")}) RETURNING *`,
     [organiser.id, `${slugify(b.title)}-${randomCode(4).toLowerCase()}`, req.user.id, ...cols.map((k) => b[k])]);
-  await audit.record(null, { actor: req.user, action: "event.created", entityType: "event", entityId: rows[0].id, organiserId: organiser.id });
+  // A free event starts with one free registration type covering its capacity.
+  if (b.isFree) {
+    await db.query("INSERT INTO ticket_types (event_id, name, description, price_cents, quantity_total, per_order_limit) VALUES ($1,'Free admission','Free registration — no payment needed',0,$2,4)", [rows[0].id, b.capacity]);
+  }
+  await audit.record(null, { actor: req.user, action: "event.created", entityType: "event", entityId: rows[0].id, organiserId: organiser.id, details: { free: !!b.isFree } });
   res.status(201).json({ event: rows[0] });
 }));
 
@@ -203,6 +208,11 @@ router.patch("/:orgId/events/:eventId", wrap(async (req, res) => {
   const starts = b.startsAt || event.starts_at.toISOString();
   const ends = b.endsAt || event.ends_at.toISOString();
   if (new Date(ends) <= new Date(starts)) throw bad("The event must end after it starts.");
+  if (b.isFree !== undefined && b.isFree !== event.is_free) {
+    const { rows: paid } = await db.query("SELECT count(*) FILTER (WHERE price_cents > 0)::int AS paid FROM ticket_types WHERE event_id = $1", [event.id]);
+    if (sold[0].n > 0) throw conflict("An event with sales cannot be switched between free and paid.", "free_switch_locked");
+    if (b.isFree && paid[0].paid > 0) throw conflict("Remove or set to R0 the paid ticket types before making this a free event.", "free_event");
+  }
   const keys = Object.keys(b).filter((k) => b[k] !== undefined);
   if (!keys.length) return res.json({ event });
   const { rows } = await db.query(
@@ -249,6 +259,7 @@ const TT_COLS = { name: "name", description: "description", priceCents: "price_c
 router.post("/:orgId/events/:eventId/ticket-types", wrap(async (req, res) => {
   const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
   const b = check(req.body, ttShape());
+  if (event.is_free && b.priceCents > 0) throw conflict("This is a free event, so every ticket type costs R0.", "free_event");
   if (b.priceCents > 0 && b.priceCents < 1000) throw bad("Paid tickets must cost at least R10.", { priceCents: "Minimum R10, or R0 for free." });
   const keys = Object.keys(b);
   const { rows } = await db.query(`INSERT INTO ticket_types (event_id, ${keys.map((k) => TT_COLS[k]).join(", ")}) VALUES ($1, ${keys.map((_, i) => `$${i + 2}`).join(", ")}) RETURNING *`, [event.id, ...keys.map((k) => b[k])]);
@@ -261,6 +272,8 @@ router.patch("/:orgId/events/:eventId/ticket-types/:ttId", wrap(async (req, res)
   const b = check(req.body, ttShape({ optional: true }));
   const { rows: cur } = await db.query("SELECT * FROM ticket_types WHERE id = $1 AND event_id = $2", [req.params.ttId, event.id]);
   if (!cur[0]) throw notFound("Ticket type not found.");
+  if (event.is_free && b.priceCents > 0) throw conflict("This is a free event, so every ticket type costs R0.", "free_event");
+  if (b.priceCents > 0 && b.priceCents < 1000) throw bad("Paid tickets must cost at least R10.", { priceCents: "Minimum R10, or R0 for free." });
   if (b.priceCents !== undefined && b.priceCents !== cur[0].price_cents && cur[0].quantity_sold + cur[0].quantity_held > 0) throw conflict("Price cannot change after tickets of this type are sold. Create a new ticket type (e.g. a new release) instead.", "price_locked");
   if (b.quantityTotal !== undefined && b.quantityTotal < cur[0].quantity_sold + cur[0].quantity_held) throw conflict(`Quantity cannot go below ${cur[0].quantity_sold + cur[0].quantity_held} (sold + reserved).`, "quantity_below_sold");
   const keys = Object.keys(b).filter((k) => b[k] !== undefined);

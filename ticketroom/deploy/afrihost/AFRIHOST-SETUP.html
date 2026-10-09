@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TicketRoom — Afrihost setup</title>
+<style>
+:root{--navy:#0B1D3F;--amber:#F2A93B;--line:#E2E7F0}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#0E1A30;margin:0;background:#F5F7FB;line-height:1.55}
+header{background:var(--navy);color:#fff;padding:24px 16px}header h1{margin:0;font-size:1.6rem}header p{margin:6px 0 0;color:#C8D4EA}
+main{max-width:860px;margin:0 auto;padding:16px}
+section{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:16px 0}
+h2{margin:0 0 8px;font-size:1.2rem}h2 .n{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--amber);color:var(--navy);margin-right:8px;font-size:.95rem}
+code,kbd{background:#EEF1F6;border-radius:6px;padding:1px 6px;font-size:.92em}
+pre{background:#0B1D3F;color:#E8EEF8;border-radius:10px;padding:12px 14px;overflow-x:auto;font-size:.88rem}
+.warn{background:#FFF3DA;border-left:4px solid #DB8F1C;padding:10px 14px;border-radius:8px}
+.bad{background:#FBE9E7;border-left:4px solid #B8322A;padding:10px 14px;border-radius:8px}
+.ok{background:#E5F5EC;border-left:4px solid #17804A;padding:10px 14px;border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:.94rem}td,th{border-bottom:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}
+</style></head><body>
+<header><h1>TicketRoom on Afrihost — setup guide</h1><p>ticketroom.co.za · Powered by TitoPay</p></header>
+<main>
+
+<section class="bad"><h2><span class="n">!</span>First: remove what is public right now</h2>
+<p>In cPanel → <b>File Manager</b> → <code>public_html</code>, delete the folder <code>ticketroom</code> and the file <code>ticketroom.zip</code>. They expose the source code to anyone (that is the "Index of /" page). Then empty the File Manager trash.</p></section>
+
+<section><h2><span class="n">1</span>Upload and extract in your HOME folder</h2>
+<ol>
+<li>File Manager → click <b>Home</b> (the folder that <i>contains</i> <code>public_html</code>, e.g. <code>/home/youruser</code>).</li>
+<li><b>Upload</b> <code>ticketroom.zip</code> there, select it, click <b>Extract</b>, extract to the same Home folder.</li>
+<li>You now have <code>ticketroom-app/</code> (the application — private) and new files inside <code>public_html/</code> (a "Launching soon" page and a protective <code>.htaccess</code>).</li>
+<li>Delete <code>ticketroom.zip</code> from Home afterwards.</li>
+</ol>
+<p class="ok">Visit <b>http://ticketroom.co.za</b> — you should see the TicketRoom "Launching soon" page instead of "Index of /". This works on every Afrihost plan.</p></section>
+
+<section><h2><span class="n">2</span>Switch on HTTPS</h2>
+<p>cPanel → <b>SSL/TLS Status</b> → tick <code>ticketroom.co.za</code> and <code>www.ticketroom.co.za</code> → <b>Run AutoSSL</b>. When it shows a valid certificate, edit <code>public_html/.htaccess</code> and remove the <code>#</code> from the three "RewriteEngine / RewriteCond / RewriteRule" lines at the bottom. Sign-in only works over HTTPS.</p></section>
+
+<section><h2><span class="n">3</span>Check your plan supports the app</h2>
+<p>The TicketRoom app needs two cPanel features. Look for them on the cPanel home page:</p>
+<table><tr><th>Feature</th><th>Where in cPanel</th><th>Needed for</th></tr>
+<tr><td><b>Setup Node.js App</b> (Node 20 or newer)</td><td>Software section</td><td>Running TicketRoom</td></tr>
+<tr><td><b>PostgreSQL Databases</b> (version 13 or newer)</td><td>Databases section</td><td>Storing events, tickets, payments</td></tr></table>
+<p class="warn">If either is missing, ask Afrihost support: <i>"Please enable Setup Node.js App (Node 20+) and PostgreSQL 13+ databases on my cPanel account for ticketroom.co.za, or move me to a server that has them."</i> If PostgreSQL is not offered, you can use an external managed PostgreSQL database in a South African region and paste its connection string as <code>DATABASE_URL</code> in step 5 (add <code>?sslmode=require</code>). The holding page stays up meanwhile.</p></section>
+
+<section><h2><span class="n">4</span>Create the database and the mailbox</h2>
+<ol>
+<li>cPanel → <b>PostgreSQL Databases</b>: create a database (e.g. <code>ticketroom</code>), create a user with a strong password, then <b>Add User to Database</b> with <b>ALL PRIVILEGES</b>. cPanel prefixes names with your username, e.g. <code>youruser_ticketroom</code>.</li>
+<li>cPanel → <b>Email Accounts</b>: make sure <code>hello@ticketroom.co.za</code> exists. Its SMTP settings are under <b>Connect Devices</b> (normally server <code>mail.ticketroom.co.za</code>, port <code>465</code>, SSL).</li>
+</ol></section>
+
+<section><h2><span class="n">5</span>Configure the app</h2>
+<ol>
+<li>File Manager → <code>ticketroom-app</code> → copy <code>.env.example</code> to <code>.env</code> (enable "Show Hidden Files" in File Manager <b>Settings</b> to see dot-files).</li>
+<li>Edit <code>.env</code> and fill in every <code>CHANGE_ME</code>:
+<pre>DATABASE_URL=postgres://youruser_tr:DB_PASSWORD@localhost:5432/youruser_ticketroom
+ADMIN_EMAIL=hello@ticketroom.co.za
+ADMIN_PASSWORD=your temporary admin password
+SMTP_PASS=the hello@ mailbox password</pre>
+If a password contains <code># @ : / ?</code>, inside <code>DATABASE_URL</code> write it URL-encoded (<code>#</code> → <code>%23</code>, <code>@</code> → <code>%40</code>). For <code>ADMIN_PASSWORD</code> and <code>SMTP_PASS</code>, wrap it in double quotes, e.g. <code>ADMIN_PASSWORD="#Example123"</code>.</li>
+<li>Set the file's permissions to <code>600</code> (right-click → Change Permissions).</li>
+</ol></section>
+
+<section><h2><span class="n">6</span>Create the Node.js application</h2>
+<ol>
+<li>cPanel → <b>Setup Node.js App</b> → <b>Create Application</b>:
+<table><tr><td>Node.js version</td><td><b>22</b> (or 20 — not lower)</td></tr>
+<tr><td>Application mode</td><td>Production</td></tr>
+<tr><td>Application root</td><td><code>ticketroom-app</code></td></tr>
+<tr><td>Application URL</td><td><code>ticketroom.co.za</code> (leave the path empty)</td></tr>
+<tr><td>Application startup file</td><td><code>server.js</code></td></tr></table></li>
+<li>Click <b>Create</b>, then <b>Run NPM Install</b> and wait for it to finish.</li>
+<li>Click <b>Restart</b>.</li>
+<li>In File Manager delete <code>public_html/index.html</code> and the <code>public_html/holding</code> folder, so visitors reach the app. Keep <code>public_html/.htaccess</code> (cPanel has added lines to it — leave them).</li>
+</ol>
+<p class="ok">Open <b>https://ticketroom.co.za</b> — the TicketRoom site loads. <b>https://ticketroom.co.za/api/health</b> shows <code>"ok": true</code>. The first start creates the database tables and your admin account.</p>
+<p>If you get an error page: open <code>ticketroom-app/stderr.log</code> in File Manager. The first line says exactly what is wrong (for example a wrong database password, or PostgreSQL too old).</p></section>
+
+<section><h2><span class="n">7</span>Background jobs (cron)</h2>
+<p>Shared hosting can pause the app when nobody is visiting, which would pause ticket-reservation expiry and email delivery. cPanel → <b>Cron Jobs</b> → add one, <b>every 5 minutes</b>, with this command (copy the exact node path from the top of the Setup Node.js App page — the "source … activate" line shows your <code>nodevenv</code> folder):</p>
+<pre>cd /home/YOURUSER/ticketroom-app &amp;&amp; /home/YOURUSER/nodevenv/ticketroom-app/22/bin/node scripts/run-jobs.js &gt;/dev/null 2&gt;&amp;1</pre></section>
+
+<section><h2><span class="n">8</span>Sign in and secure the admin account</h2>
+<ol>
+<li>Go to <b>https://ticketroom.co.za/admin</b> and sign in with <code>ADMIN_EMAIL</code> and <code>ADMIN_PASSWORD</code>.</li>
+<li>Open <b>My tickets → Settings &amp; privacy</b> and change the password.</li>
+<li>Delete the <code>ADMIN_PASSWORD</code> line from <code>.env</code> and <b>Restart</b> the app.</li>
+</ol></section>
+
+<section><h2><span class="n">9</span>Back up</h2>
+<ul><li><code>ticketroom-app/var/secrets.json</code> — generated on first start. <b>Download a copy and keep it safe.</b> Without it every issued ticket QR code and registered tag stops working.</li>
+<li><code>ticketroom-app/.env</code> and the PostgreSQL database (cPanel → Backup).</li></ul></section>
+
+<section><h2>What works on day one</h2>
+<p>Public site, accounts, organiser sign-up and portal, free events with QR tickets, gate scanning with live counts, admin, email through your mailbox. <b>Paid ticket sales stay closed</b> (<code>PAYMENT_PROVIDER=none</code>) until a card gateway (Yoco or PayFast) is connected — then set its keys in <code>.env</code> and restart. SMS and the TitoPay wallet are switched on the same way.</p></section>
+
+<section><h2>Updating to a new version</h2>
+<p>Upload the new <code>ticketroom.zip</code> to Home, extract (overwrite), <b>do not</b> overwrite <code>.env</code> or <code>var/</code>, click <b>Run NPM Install</b> then <b>Restart</b>. Database changes are applied automatically on start.</p></section>
+</main></body></html>

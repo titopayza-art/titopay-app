@@ -1,0 +1,31 @@
+# TicketRoom — public_html/.htaccess
+# Works on Afrihost (LiteSpeed/Apache). When you create the Node.js app at the
+# domain root, cPanel adds its own Passenger lines to this file: keep them.
+
+# Never list folder contents ("Index of /").
+Options -Indexes
+DirectoryIndex index.html
+
+# Never serve archives, configuration, keys, databases or logs from the web root.
+<FilesMatch "(?i)\.(zip|tar|gz|tgz|rar|7z|env|sql|sqlite|db|bak|old|log|sh|ini|pem|key)$|^(package(-lock)?\.json|\.env.*|secrets\.json|\.git.*)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Basic hardening headers for static files.
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# After SSL is active (cPanel → SSL/TLS Status → Run AutoSSL), remove the "#"
+# from the next three lines to send everyone to https://.
+# RewriteEngine On
+# RewriteCond %{HTTPS} !=on
+# RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]

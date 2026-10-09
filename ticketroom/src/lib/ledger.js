@@ -9,7 +9,8 @@ const ACCOUNT_KINDS = {
   organiser_payable: "liability",   // owed to an organiser, per event
   vendor_payable: "liability",      // owed to a vendor
   attendee_wallet: "liability",     // prepaid event balance owed to attendee
-  platform_fee_revenue: "revenue",  // buyer service fees
+  platform_fee_revenue: "revenue",  // consumer booking fees (R10 per paid ticket)
+  organiser_commission_revenue: "revenue", // organiser commission (5% of ticket sales)
   platform_commission_revenue: "revenue", // vendor commissions
   provider_fee_expense: "expense",
 };
@@ -21,7 +22,8 @@ const codes = {
   organiserPayable: (orgId, eventId) => ({ code: `organiser_payable:${orgId}:${eventId}`, type: "organiser_payable", owner_type: "organiser", owner_id: orgId, event_id: eventId, name: "Organiser payable" }),
   vendorPayable: (vendorId, eventId) => ({ code: `vendor_payable:${vendorId}`, type: "vendor_payable", owner_type: "vendor", owner_id: vendorId, event_id: eventId, name: "Vendor payable" }),
   attendeeWallet: (userId, eventId) => ({ code: `attendee_wallet:${userId}:${eventId}`, type: "attendee_wallet", owner_type: "attendee", owner_id: userId, event_id: eventId, name: "Attendee event balance" }),
-  feeRevenue: () => ({ code: "platform_fee_revenue", type: "platform_fee_revenue", owner_type: "platform", name: "Ticket service fees" }),
+  feeRevenue: () => ({ code: "platform_fee_revenue", type: "platform_fee_revenue", owner_type: "platform", name: "Consumer booking fees" }),
+  organiserCommission: () => ({ code: "organiser_commission_revenue", type: "organiser_commission_revenue", owner_type: "platform", name: "Organiser commission" }),
   commissionRevenue: () => ({ code: "platform_commission_revenue", type: "platform_commission_revenue", owner_type: "platform", name: "Vendor commission" }),
   providerFees: (provider) => ({ code: `provider_fee_expense:${provider}`, type: "provider_fee_expense", owner_type: "provider", owner_id: provider, name: `Provider fees (${provider})` }),
 };
