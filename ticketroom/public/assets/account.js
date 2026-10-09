@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, qrPng } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, qrPng, calendarFile } from "/assets/core.js";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -35,7 +35,7 @@ function ticketCard(t, offline = false) {
         ${t.pending_transfer ? html`<p class="callout warn mt small">Transfer to <strong>${t.pending_transfer.toEmail}</strong> is waiting to be accepted. <a href="#/transfers">Manage</a></p>` : ""}
         ${!offline && live ? html`<div class="row mt no-print">${t.transfers_enabled && !t.pending_transfer && new Date(t.starts_at) > new Date() ? html`<button class="btn btn-ghost btn-sm" data-transfer="${t.id}">Transfer</button>` : ""}
           <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
-          ${t.status === "valid" ? html`<div class="wallet-row no-print" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}"></div>` : ""}` : ""}
+          ${t.status === "valid" ? html`<div class="wallet-row no-print" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}" data-starts="${t.starts_at}" data-ends="${t.ends_at}" data-place="${[t.venue_name, t.city].filter(Boolean).join(", ")}" data-slug="${t.slug}"></div>` : ""}` : ""}
       </div></div>
     <div class="t-qr">${live && qrSrc ? html`<img src="${qrSrc}" alt="QR code for ticket ${t.code}" width="200" height="200">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}
       <span class="code mono">${t.code}</span>${t.status === "used" ? html`<span class="small muted">Scanned ${fmtDateTime(t.admitted_at)}</span>` : live ? html`<span class="tiny muted center">Show this at the gate. The first scan admits.</span>` : ""}</div>
@@ -56,7 +56,8 @@ async function walletButtons() {
     const google = f.walletGoogle && DEVICE !== "apple";
     render(box, html`${apple ? html`<a class="wallet-btn apple" href="/api/me/tickets/${id}/wallet/apple">${raw('<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18" stroke="currentColor" stroke-width="2"/></svg>')} Add to Apple Wallet</a>` : ""}
       ${google ? html`<button type="button" class="wallet-btn google" data-gw>${raw('<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18" stroke="currentColor" stroke-width="2"/></svg>')} Add to Google Wallet</button>` : ""}
-      <button type="button" class="btn btn-ghost btn-sm" data-img>Save ticket image</button>`);
+      <button type="button" class="btn btn-ghost btn-sm" data-img>Save ticket image</button><button type="button" class="btn btn-ghost btn-sm" data-cal>Add to calendar</button>`);
+    $("[data-cal]", box).addEventListener("click", () => calendarFile({ title: box.dataset.title, starts: box.dataset.starts, ends: box.dataset.ends, place: box.dataset.place, url: `${location.origin}/events/${box.dataset.slug}` }));
     $("[data-gw]", box)?.addEventListener("click", async () => {
       try { location.href = (await get(`/api/me/tickets/${id}/wallet/google`)).url; } catch (err) { toast(err.message, "bad"); }
     });

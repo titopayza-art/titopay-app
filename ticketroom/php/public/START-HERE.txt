@@ -38,7 +38,13 @@ IN THE ADMIN PORTAL (ticketroom.co.za/admin)
   Subscribers       Everyone who asked for updates from the website.
                     Send them an update (test it on yourself first), or
                     export the list.
-Organisers get a QR code for each event under the event's Overview tab.
+Organisers get a QR code for each event as soon as they create it, and
+again any time under the event's Overview tab.
+
+Customers can like events (saved under Saved events), share them on
+WhatsApp, Facebook, X or email, add them to their calendar, and save each
+ticket as a picture. Apple Wallet and Google Wallet buttons switch on once
+TicketRoom's wallet accounts are set up: see DEPLOY-AFRIHOST.md.
 
 
 WHAT IS WHERE

@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -121,7 +121,10 @@ async function eventPage(slug) {
     </div>`);
 
   const eventUrl = `${location.origin}/events/${e.slug}`;
-  $("[data-actions]").append(likeButton(e.slug, { liked: e.liked, likes: e.likes }), shareBar(eventUrl, e.title, { text: `${e.title}, ${fmtDate(e.starts_at, { day: "numeric", month: "long" })} at ${e.venue_name}` }));
+  const cal = document.createElement("button");
+  cal.type = "button"; cal.className = "like-btn"; cal.textContent = "Add to calendar";
+  cal.addEventListener("click", () => calendarFile({ title: e.title, starts: e.starts_at, ends: e.ends_at, place: [e.venue_name, e.address, e.city].filter(Boolean).join(", "), url: eventUrl }));
+  $("[data-actions]").append(likeButton(e.slug, { liked: e.liked, likes: e.likes }), cal, shareBar(eventUrl, e.title, { text: `${e.title}, ${fmtDate(e.starts_at, { day: "numeric", month: "long" })} at ${e.venue_name}` }));
   const box = $("#box");
   const selection = () => ticketTypes.filter((t) => qty[t.id] > 0).map((t) => ({ ticketTypeId: t.id, quantity: qty[t.id] }));
   const drawSelect = () => {

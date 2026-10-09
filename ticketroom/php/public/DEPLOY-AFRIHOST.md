@@ -155,6 +155,50 @@ on a test server; a shared hosting plan is slower.
 - Tickets are by stand or ticket type; seat numbers are not supported yet.
 - Large sports events need the usual safety approvals (SASREA).
 
+## Optional: Apple Wallet and Google Wallet
+
+Every ticket already has "Save ticket image" and "Add to calendar". The
+**Add to Apple Wallet** and **Add to Google Wallet** buttons appear by
+themselves (iPhone users see Apple, Android users see Google) once these
+accounts are set up. Until then they stay hidden, so nothing looks broken.
+
+**Apple Wallet** (needs the Apple Developer Program, US$99 a year, in the
+name of TicketRoom (Pty) Ltd):
+
+1. developer.apple.com → Certificates, Identifiers & Profiles → Identifiers →
+   **+** → Pass Type IDs → `pass.za.co.ticketroom`.
+2. Open that Pass Type ID → **Create Certificate**, upload a certificate
+   request, and download the `.cer` file. Note your **Team ID** (top right).
+3. Download Apple's "Worldwide Developer Relations - G4" certificate from
+   apple.com/certificateauthority.
+4. Convert all three to PEM files (any developer can do this in a minute) and
+   upload them to `ticketroom-data`: `apple-pass-cert.pem`,
+   `apple-pass-key.pem`, `apple-wwdr.pem`.
+
+**Google Wallet** (free):
+
+1. pay.google.com/business/console → **Google Wallet API** → note the
+   **Issuer ID**.
+2. console.cloud.google.com → new project → enable the **Google Wallet API**
+   → create a **service account** → **Keys** → add a JSON key.
+3. Back in the Wallet console, add that service account's email as a user.
+4. Upload the JSON key to `ticketroom-data` as `google-wallet.json`.
+5. Ask Google for publishing access (in the console) so every customer can
+   save passes, not only test users.
+
+Then add this to `ticketroom-data/config.php`, inside the `return [ … ];`:
+
+    'wallet' => [
+        'apple' => ['passTypeId' => 'pass.za.co.ticketroom', 'teamId' => 'YOUR-TEAM-ID',
+                    'certFile' => 'apple-pass-cert.pem', 'keyFile' => 'apple-pass-key.pem',
+                    'keyPassword' => '', 'wwdrFile' => 'apple-wwdr.pem'],
+        'google' => ['issuerId' => 'YOUR-ISSUER-ID', 'serviceAccountFile' => 'google-wallet.json'],
+    ],
+
+Either one can be added on its own. A wallet pass carries the same signed QR
+code as the ticket, so it is checked at the gate exactly the same way, and it
+stops working if the ticket is transferred.
+
 ## Optional: background jobs on a timer
 
 Reminder emails and clean-up run after visitors' requests, which is enough for

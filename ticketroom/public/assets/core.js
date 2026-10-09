@@ -758,3 +758,20 @@ export function likeButton(slug, { liked = false, likes = 0 } = {}) {
   });
   return b;
 }
+
+// "Add to calendar": a standard .ics file that iPhone, Android (Google),
+// Outlook and Mac calendars all open.
+export function calendarFile({ title, starts, ends, place = "", url = "" }) {
+  const t = (iso) => new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const esc = (s) => String(s).replace(/[\;,]/g, (c) => `\\${c}`).replace(/\n/g, "\\n");
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//TicketRoom//Events//EN", "CALSCALE:GREGORIAN", "BEGIN:VEVENT",
+    `UID:${t(starts)}-${encodeURIComponent(url || title).slice(0, 60)}@ticketroom.co.za`, `DTSTAMP:${t(new Date().toISOString())}`,
+    `DTSTART:${t(starts)}`, `DTEND:${t(ends)}`, `SUMMARY:${esc(title)}`, place ? `LOCATION:${esc(place)}` : "", url ? `URL:${url}` : "",
+    url ? `DESCRIPTION:${esc(`Tickets and details: ${url}`)}` : "",
+    "BEGIN:VALARM", "TRIGGER:-PT3H", "ACTION:DISPLAY", `DESCRIPTION:${esc(title)} starts in 3 hours`, "END:VALARM",
+    "END:VEVENT", "END:VCALENDAR"].filter(Boolean).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+  a.download = `${String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50) || "event"}.ics`;
+  document.body.append(a); a.click(); a.remove();
+}

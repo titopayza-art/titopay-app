@@ -114,3 +114,24 @@ test("organisers waiting for approval cannot invite people; live-event edits ale
   const after = (await h.one("SELECT count(*)::int AS n FROM message_outbox WHERE subject LIKE '[TicketRoom] Live event edited%'")).n;
   assert.equal(after, before + 1);
 });
+
+test("likes: signed-in people like and unlike events; counts show on the event", async () => {
+  const slug = ev.event.slug;
+  assert.equal((await anon.post(`/api/public/events/${slug}/like`, { liked: true })).status, 401);
+  const a = await owner.post(`/api/public/events/${slug}/like`, { liked: true });
+  assert.deepEqual(a.body, { liked: true, likes: 1 });
+  await owner.post(`/api/public/events/${slug}/like`, { liked: true });
+  assert.equal((await owner.get(`/api/public/events/${slug}`)).body.event.likes, 1);
+  assert.equal((await owner.get(`/api/public/events/${slug}`)).body.event.liked, true);
+  assert.equal((await owner.get("/api/me/likes")).body.events[0].slug, slug);
+  assert.deepEqual((await owner.post(`/api/public/events/${slug}/like`, { liked: false })).body, { liked: false, likes: 0 });
+});
+
+test("the same event cannot be created twice by one organiser", async () => {
+  const A = `/api/organiser/${ev.organiser.id}/events`;
+  const body = { title: "Twice Test", category: "music", venueName: "Hall", city: "Soweto", startsAt: "2027-03-01T17:00:00.000Z", endsAt: "2027-03-01T21:00:00.000Z", capacity: 100 };
+  assert.equal((await owner.post(A, body)).status, 201);
+  const again = await owner.post(A, { ...body, title: "  twice test " });
+  assert.equal(again.status, 409);
+  assert.equal(again.body.error.code, "duplicate_event");
+});
