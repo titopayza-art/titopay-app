@@ -234,16 +234,35 @@ dialog::backdrop { background: rgba(7,19,48,.55); }
 .org-switch select { min-height: 38px; padding: 6px 8px; font-weight: 700; }
 
 /* ---------- tickets wallet ---------- */
-.ticket { background: #fff; border-radius: 20px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); display: grid; grid-template-columns: 1fr; }
-@media (min-width: 720px) { .ticket { grid-template-columns: 1fr 260px; } }
-.ticket .t-main { padding: 20px; position: relative; }
-.ticket .t-head { background: var(--navy-900); color: #fff; padding: 16px 20px; }
-.ticket .t-head .cat-label { color: var(--amber-500); }
-.ticket .t-qr { padding: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border-top: 2px dashed var(--line); background: #fff; }
-@media (min-width: 720px) { .ticket .t-qr { border-top: 0; border-left: 2px dashed var(--line); } }
-.ticket .t-qr img { width: 200px; height: 200px; image-rendering: pixelated; }
-.ticket .code { font-size: 1.05rem; font-weight: 800; letter-spacing: .12em; }
-.ticket.used .t-qr img, .ticket.void .t-qr img { opacity: .15; }
+.tk-wrap { max-width: 460px; margin: 0 auto; display: grid; gap: 12px; }
+.ticket { --tk-bg: var(--surface); background: #fff; border-radius: 24px; border: 1px solid var(--line); box-shadow: 0 2px 4px rgba(11,29,63,.05), 0 18px 40px rgba(11,29,63,.10); position: relative; text-align: center; }
+.ticket .tk-head { background: var(--navy-900); color: #fff; padding: 26px 22px 24px; border-radius: 23px 23px 0 0; }
+.tk-label { display: block; font-size: .78rem; font-weight: 800; letter-spacing: .28em; text-transform: uppercase; color: var(--amber-500); }
+.tk-foot .tk-label { color: var(--muted); }
+.ticket .tk-head h3 { color: #fff; font-size: clamp(1.4rem, 5.5vw, 1.8rem); line-height: 1.15; margin: 8px 0 10px; overflow-wrap: anywhere; }
+.tk-when, .tk-where { margin: 0; color: #C9D5EA; font-weight: 700; }
+.tk-where { margin-top: 2px; }
+.tk-body { padding: 20px 26px 8px; }
+.tk-rows { margin: 0 0 20px; display: grid; gap: 8px; text-align: left; }
+.tk-rows div { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
+.tk-rows dt { color: var(--muted); font-weight: 700; }
+.tk-rows dd { margin: 0; font-weight: 800; color: var(--ink); text-align: right; overflow-wrap: anywhere; }
+.ticket .t-qr { width: 244px; max-width: 100%; aspect-ratio: 1; margin: 0 auto; border: 2px solid var(--line); border-radius: 18px; display: grid; place-items: center; background: #fff; }
+.ticket .t-qr img { width: 220px; height: 220px; max-width: 90%; height: auto; image-rendering: pixelated; }
+.tk-scan { margin: 10px 0 0; color: var(--muted); font-weight: 700; font-size: .9rem; min-height: 1.2em; }
+.tk-perf { position: relative; height: 32px; margin: 4px 0; }
+.tk-perf::before { content: ""; position: absolute; left: 28px; right: 28px; top: 50%; border-top: 2px dashed #C3CDE0; }
+.tk-perf::after { content: ""; position: absolute; top: 0; bottom: 0; left: -17px; right: -17px; background: radial-gradient(circle at 17px 50%, var(--tk-bg) 15px, var(--line) 15.5px 16.5px, transparent 17px), radial-gradient(circle at calc(100% - 17px) 50%, var(--tk-bg) 15px, var(--line) 15.5px 16.5px, transparent 17px); }
+.tk-foot { padding: 6px 22px 26px; }
+.tk-code { display: block; margin-top: 6px; font-size: clamp(1.6rem, 7.5vw, 2.2rem); font-weight: 900; letter-spacing: .2em; font-variant-numeric: tabular-nums; color: var(--navy-900); padding-left: .22em; }
+.tk-note { margin: 10px 0 0; color: var(--muted); font-weight: 600; font-size: .85rem; }
+.tk-actions { display: grid; gap: 10px; justify-items: center; }
+.tk-actions .row { justify-content: center; }
+.ticket.used .t-qr, .ticket.void .t-qr { border-style: dashed; }
+.ticket.used .tk-code, .ticket.void .tk-code { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 2px; }
+.print-only { display: none; }
+.tk-brand { align-items: center; justify-content: center; gap: 10px; color: var(--navy-900); }
+.tk-brand .wordmark { font-size: 1.6rem; }
 .stamp { border: 2px solid currentColor; border-radius: 10px; padding: 4px 10px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; transform: rotate(-6deg); display: inline-block; }
 .dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: .92rem; margin: 0; }
 .dl dt { color: var(--muted); font-weight: 600; } .dl dd { margin: 0; font-weight: 650; }
@@ -295,8 +314,11 @@ body.sim { display: grid; place-items: center; min-height: 100vh; padding: 16px;
 .sim-banner { background: #FFF3DA; color: #6B4400; font-weight: 800; font-size: .82rem; border-radius: 10px; padding: 10px; }
 
 @media print {
-  .site-header, .sidenav, .site-footer, .no-print { display: none !important; }
-  body { background: #fff; } .ticket { box-shadow: none; break-inside: avoid; margin-bottom: 16px; }
+  .site-header, .sidenav, .site-footer, .no-print, .portal-bar, .toasts { display: none !important; }
+  body:has(.tk-wrap) .page-head, body:has(.tk-wrap) .tabs, body:has(.tk-wrap) h2, body:has(.tk-wrap) .table-wrap { display: none !important; }
+  body { background: #fff; } .ticket { --tk-bg: #fff; box-shadow: none; break-inside: avoid; } .tk-wrap { break-inside: avoid; margin-bottom: 24px; }
+  .ticket .tk-head, .tk-label { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .print-only { display: block; } .tk-brand.print-only { display: flex; }
 }
 .poster > .poster.fill, .poster.fill { position: absolute; inset: 0; }
 .feature { min-height: 250px; }
@@ -306,7 +328,6 @@ body.sim { display: grid; place-items: center; min-height: 100vh; padding: 16px;
 main:focus, main:focus-visible { outline: none; }
 .portal-tag { white-space: nowrap; }
 @media (max-width: 480px) { .portal-tag { display: none; } }
-@media (max-width: 719px) { .ticket .t-qr { order: -1; border-top: 0; border-bottom: 2px dashed var(--line); } .ticket .t-qr img { width: 240px; height: 240px; } }
 body.venue .tabs { border-color: rgba(255,255,255,.12); }
 body.venue .tabs button, body.venue .tabs a { color: #A9B8D3; }
 body.venue .tabs [aria-selected="true"] { color: #fff; }

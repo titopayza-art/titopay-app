@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, qrPng, calendarFile } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate, matchPasswords, features, ticketPng, calendarFile } from "/assets/core.js";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -25,21 +25,29 @@ async function cacheWallet(list) {
   } catch { /* storage full or blocked: wallet still works online */ }
 }
 
+// The ticket itself follows TicketRoom's ticket design: navy header with the
+// event, the details, the QR code, a tear line, then the ticket code. The
+// buttons sit under the ticket so it prints and screenshots clean.
 function ticketCard(t, offline = false) {
   const live = t.status === "valid";
   const qrSrc = offline ? t.qrData : `/api/me/tickets/${t.id}/qr.svg?v=${encodeURIComponent(t.qrPayload || t.status)}`;
-  return html`<article class="ticket ${t.status === "used" ? "used" : live ? "" : "void"}" aria-label="Ticket ${t.code}">
-    <div><div class="t-head"><span class="cat-label">${t.category}</span><h3 class="mb-0">${t.title}</h3></div>
-      <div class="t-main"><dl class="dl"><dt>When</dt><dd>${fmtDate(t.starts_at, { weekday: "long", day: "numeric", month: "long" })} · ${fmtTime(t.starts_at)}</dd>
-        <dt>Where</dt><dd>${t.venue_name}, ${t.city}</dd><dt>Ticket</dt><dd>${t.ticket_type}</dd><dt>Holder</dt><dd>${t.holder_name || "—"}</dd><dt>Order</dt><dd class="mono">${t.order_reference}</dd></dl>
-        ${t.pending_transfer ? html`<p class="callout warn mt small">Transfer to <strong>${t.pending_transfer.toEmail}</strong> is waiting to be accepted. <a href="#/transfers">Manage</a></p>` : ""}
-        ${!offline && live ? html`<div class="row mt no-print">${t.transfers_enabled && !t.pending_transfer && new Date(t.starts_at) > new Date() ? html`<button class="btn btn-ghost btn-sm" data-transfer="${t.id}">Transfer</button>` : ""}
-          <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
-          ${t.status === "valid" ? html`<div class="wallet-row no-print" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}" data-starts="${t.starts_at}" data-ends="${t.ends_at}" data-place="${[t.venue_name, t.city].filter(Boolean).join(", ")}" data-slug="${t.slug}"></div>` : ""}` : ""}
-      </div></div>
-    <div class="t-qr">${live && qrSrc ? html`<img src="${qrSrc}" alt="QR code for ticket ${t.code}" width="200" height="200">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}
-      <span class="code mono">${t.code}</span>${t.status === "used" ? html`<span class="small muted">Scanned ${fmtDateTime(t.admitted_at)}</span>` : live ? html`<span class="tiny muted center">Show this at the gate. The first scan admits.</span>` : ""}</div>
-  </article>`;
+  const place = [t.venue_name, t.city].filter(Boolean).join(", ");
+  return html`<div class="tk-wrap"><div class="tk-brand print-only"><img src="/assets/logo-mark-dark.svg" alt="" width="48" height="36"><span class="wordmark">TICKET<b>ROOM</b></span></div><article class="ticket ${t.status === "used" ? "used" : live ? "" : "void"}" aria-label="Ticket ${t.code}">
+    <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>${t.title}</h3>
+      <p class="tk-when">${fmtDate(t.starts_at, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(t.starts_at)}</p><p class="tk-where">${place}</p></header>
+    <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div><div><dt>Holder</dt><dd>${t.holder_name || "Not set"}</dd></div><div><dt>Order</dt><dd class="mono">${t.order_reference}</dd></div></dl>
+      <div class="t-qr">${live && qrSrc ? html`<img src="${qrSrc}" alt="QR code for ticket ${t.code}" width="220" height="220">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}</div>
+      <p class="tk-scan">${t.status === "used" ? `Scanned ${fmtDateTime(t.admitted_at)}` : live ? "Scan at the entrance" : ""}</p></div>
+    <div class="tk-perf" aria-hidden="true"></div>
+    <div class="tk-foot"><span class="tk-label">Ticket code</span><span class="tk-code">${t.code}</span>
+      <p class="tk-note">Present this ticket at the entrance. Do not share the code publicly.</p></div>
+  </article>
+  ${t.pending_transfer ? html`<p class="callout warn small no-print">Transfer to <strong>${t.pending_transfer.toEmail}</strong> is waiting to be accepted. <a href="#/transfers">Manage</a></p>` : ""}
+  ${!offline && live ? html`<div class="tk-actions no-print"><div class="row">${t.transfers_enabled && !t.pending_transfer && new Date(t.starts_at) > new Date() ? html`<button class="btn btn-ghost btn-sm" data-transfer="${t.id}">Transfer</button>` : ""}
+      <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
+    <div class="wallet-row" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}" data-starts="${t.starts_at}" data-ends="${t.ends_at}" data-place="${place}" data-slug="${t.slug}"
+      data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}"></div></div>` : ""}
+  </div>`;
 }
 
 // Wallet buttons under each ticket, matched to the phone: Apple Wallet on an
@@ -64,7 +72,8 @@ async function walletButtons() {
     $("[data-img]", box).addEventListener("click", async () => {
       try {
         const svg = await fetch(`/api/me/tickets/${id}/qr.svg`, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
-        const png = await qrPng(svg, { size: 1024, caption: `${box.dataset.title} · ${box.dataset.code}` });
+        const d = box.dataset;
+        const png = await ticketPng(svg, { title: d.title, when: `${fmtDate(d.starts, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(d.starts)}`, place: d.place, type: d.type, holder: d.holder || "Not set", order: d.order, code: d.code });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(png); a.download = `ticket-${box.dataset.code}.png`; document.body.append(a); a.click(); a.remove();
         toast("Saved. Show this picture at the gate if you have no signal.", "good");

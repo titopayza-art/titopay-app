@@ -688,6 +688,101 @@ export async function qrPng(svg, { size = 1024, caption = "", background = "#FFF
   }
   return new Promise((ok) => c.toBlob(ok, "image/png"));
 }
+// A ticket as a picture for the phone's gallery, in TicketRoom's ticket
+// design: logo, navy header with the event, the details, the QR code in a
+// frame, a tear line, the ticket code, and the tagline underneath.
+export async function ticketPng(svg, t) {
+  const load = (src) => new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => fail(new Error("Could not draw the ticket.")); i.src = src; });
+  const qrUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  const [qr, mark] = await Promise.all([load(qrUrl), load("/assets/logo-mark-dark.svg")]);
+  URL.revokeObjectURL(qrUrl);
+  const C = { bg: "#EEF2F9", navy: "#0B1D3F", amber: "#F2A93B", ink: "#0E1A30", muted: "#5E6C84", line: "#E2E7F0", soft: "#C9D5EA", dash: "#C3CDE0" };
+  const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  const W = 1200, X = 100, CW = 1000, MID = W / 2;
+  const font = (g, w, px) => { g.font = `${w} ${px}px ${SANS}`; };
+  const spaced = (g, text, y, sp) => {
+    const chars = [...text]; const total = chars.reduce((n, ch) => n + g.measureText(ch).width, 0) + sp * (chars.length - 1);
+    let x = MID - total / 2; g.textAlign = "left";
+    for (const ch of chars) { g.fillText(ch, x, y); x += g.measureText(ch).width + sp; }
+    g.textAlign = "center";
+  };
+  const wrap = (g, text, max, lines) => {
+    const out = []; let cur = "";
+    for (const w of String(text).split(/\s+/)) { const next = cur ? `${cur} ${w}` : w; if (g.measureText(next).width <= max || !cur) cur = next; else { out.push(cur); cur = w; } }
+    if (cur) out.push(cur);
+    if (out.length > lines) { out.length = lines; let last = out[lines - 1]; while (g.measureText(`${last}…`).width > max && last.length > 1) last = last.slice(0, -1); out[lines - 1] = `${last.trimEnd()}…`; }
+    return out;
+  };
+  const fit = (g, text, weight, px, max) => { do { font(g, weight, px); px -= 2; } while (g.measureText(text).width > max && px > 18); };
+  const rrect = (g, x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+
+  // Lay out once to learn the height, then draw.
+  const paint = (g, draw) => {
+    g.textAlign = "center"; g.textBaseline = "alphabetic";
+    if (draw) { g.fillStyle = C.bg; g.fillRect(0, 0, W, g.canvas.height); }
+    // Logo
+    font(g, 800, 76);
+    const wT = g.measureText("TICKET").width, wR = g.measureText("ROOM").width, mW = 112, mH = 84, gap = 18;
+    const lx = MID - (mW + gap + wT + wR) / 2;
+    if (draw) {
+      g.drawImage(mark, lx, 78, mW, mH); g.textAlign = "left";
+      g.fillStyle = C.navy; g.fillText("TICKET", lx + mW + gap, 148); g.fillStyle = C.amber; g.fillText("ROOM", lx + mW + gap + wT, 148); g.textAlign = "center";
+    }
+    // Header: card and navy band first, then the words on top.
+    const top = 230;
+    font(g, 800, 68); let lines = wrap(g, t.title, CW - 120, 2); if (lines.length > 1) { font(g, 800, 58); lines = wrap(g, t.title, CW - 120, 2); }
+    const lh = lines.length > 1 ? 68 : 0;
+    const headH = 92 + 92 + lh + 60 + 50 + 66;
+    if (draw) {
+      g.save(); g.shadowColor = "rgba(11,29,63,.14)"; g.shadowBlur = 50; g.shadowOffsetY = 16; g.fillStyle = "#fff"; rrect(g, X, top, CW, g.canvas.height - top - 200, 44); g.fill(); g.restore();
+      g.save(); rrect(g, X, top, CW, g.canvas.height - top - 200, 44); g.clip(); g.fillStyle = C.navy; g.fillRect(X, top, CW, headH); g.restore();
+    }
+    let y = top + 92;
+    font(g, 800, 30); if (draw) { g.fillStyle = C.amber; spaced(g, "TICKETROOM TICKET", y, 12); }
+    y += 92; font(g, 800, lines.length > 1 ? 58 : 68);
+    if (draw) { g.fillStyle = "#fff"; lines.forEach((l, i) => g.fillText(l, MID, y + i * 68)); }
+    y += lh + 60;
+    fit(g, t.when, 700, 36, CW - 120); if (draw) { g.fillStyle = C.soft; g.fillText(t.when, MID, y); }
+    y += 50; fit(g, t.place, 700, 36, CW - 120); if (draw) g.fillText(t.place, MID, y);
+    y = top + headH;
+    // Details
+    y += 84;
+    for (const [k, v] of [["Ticket", t.type], ["Holder", t.holder], ["Order", t.order]]) {
+      if (draw) {
+        font(g, 700, 36); g.textAlign = "left"; g.fillStyle = C.muted; g.fillText(k, X + 80, y);
+        fit(g, v, 800, 38, CW - 360); g.textAlign = "right"; g.fillStyle = C.ink; g.fillText(v, X + CW - 80, y); g.textAlign = "center";
+      }
+      y += 62;
+    }
+    // QR
+    y += 18; const box = 460;
+    if (draw) {
+      g.fillStyle = "#fff"; rrect(g, MID - box / 2, y, box, box, 34); g.fill(); g.lineWidth = 4; g.strokeStyle = C.line; g.stroke();
+      g.imageSmoothingEnabled = false; g.drawImage(qr, MID - 190, y + 40, 380, 380); g.imageSmoothingEnabled = true;
+    }
+    y += box + 50; font(g, 700, 30); if (draw) { g.fillStyle = C.muted; g.fillText("Scan at the entrance", MID, y); }
+    // Tear line with notches
+    y += 46;
+    if (draw) {
+      g.setLineDash([22, 16]); g.lineWidth = 4; g.strokeStyle = C.dash; g.beginPath(); g.moveTo(X + 64, y); g.lineTo(X + CW - 64, y); g.stroke(); g.setLineDash([]);
+      for (const cx of [X, X + CW]) { g.beginPath(); g.arc(cx, y, 36, 0, Math.PI * 2); g.fillStyle = C.bg; g.fill(); g.lineWidth = 3; g.strokeStyle = C.line; g.stroke(); }
+    }
+    // Code
+    y += 100; font(g, 800, 30); if (draw) { g.fillStyle = C.muted; spaced(g, "TICKET CODE", y, 12); }
+    y += 108; font(g, 900, 96); let sp = 22; while (sp > 4 && [...t.code].reduce((n, ch) => n + g.measureText(ch).width, 0) + sp * (t.code.length - 1) > CW - 100) sp -= 2;
+    if (draw) { g.fillStyle = C.navy; spaced(g, t.code, y, sp); }
+    y += 76; const note = "Present this ticket at the entrance. Do not share the code publicly.";
+    fit(g, note, 700, 30, CW - 100); if (draw) { g.fillStyle = C.muted; g.fillText(note, MID, y); }
+    y += 84;
+    // Tagline
+    y += 110; font(g, 800, 34); if (draw) { g.fillStyle = C.navy; g.fillText("Your event. Your ticket.", MID, y); }
+    return y + 90;
+  };
+  const c = document.createElement("canvas"); c.width = W; c.height = 10;
+  c.height = paint(c.getContext("2d"), false);
+  paint(c.getContext("2d"), true);
+  return new Promise((ok) => c.toBlob(ok, "image/png"));
+}
 export function qrPanel(svg, { name = "qr-code", caption = "", background, ink } = {}) {
   const box = document.createElement("div");
   box.className = "qr-panel";
