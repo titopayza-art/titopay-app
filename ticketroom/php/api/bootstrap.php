@@ -141,7 +141,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -155,6 +155,13 @@ const UPGRADES = [
     // The company registration number has no K prefix.
     3 => [
         "UPDATE site_settings SET value = replace(value, '\"K2026811077\"', '\"2026811077\"') WHERE key = 'legal'",
+    ],
+    // Subscribe to TicketRoom updates.
+    4 => [
+        'CREATE TABLE IF NOT EXISTS newsletter_subscribers ( id TEXT PRIMARY KEY, email TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN (\'pending\',\'subscribed\',\'unsubscribed\')), source TEXT NOT NULL DEFAULT \'web\', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, confirmed_at TEXT, unsubscribed_at TEXT )',
+        'CREATE UNIQUE INDEX IF NOT EXISTS newsletter_email_uq ON newsletter_subscribers (lower(email))',
+        'CREATE INDEX IF NOT EXISTS newsletter_status_idx ON newsletter_subscribers (status)',
+        'CREATE TABLE IF NOT EXISTS newsletter_issues ( id TEXT PRIMARY KEY, subject TEXT NOT NULL, body TEXT NOT NULL, recipients INTEGER NOT NULL, sent_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL )',
     ],
 ];
 function tr_upgrade(): void

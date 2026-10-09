@@ -7,6 +7,40 @@ let R = new Set();
 const isA = () => R.has("admin"), isF = () => R.has("finance"), isS = () => R.has("support");
 const head = (t, s = "", a = "") => html`<div class="page-head"><div><h1>${t}</h1>${s ? html`<p class="muted">${s}</p>` : ""}</div><div class="row">${a}</div></div>`;
 const tbl = (cols, rows, none = "Nothing here yet.") => rows.length ? html`<div class="table-wrap"><table><thead><tr>${cols.map((c) => html`<th class="${c.startsWith("#") ? "num" : ""}">${c.replace("#", "")}</th>`)}</tr></thead><tbody>${rows}</tbody></table></div>` : empty(none);
+// People who subscribed to TicketRoom updates on the website, and updates sent to them.
+async function subscribers(params, q = "") {
+  const d = await get(`/api/admin/subscribers${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+  const n = d.counts.subscribed;
+  render(main, html`${head("Subscribers", "People who asked for TicketRoom updates from the website. Each confirmed their email address first, and every update carries an unsubscribe link.",
+      html`<a class="btn btn-ghost" href="/api/admin/subscribers?format=csv" download>Export CSV</a>`)}
+    <div class="kpis"><div class="kpi"><div class="k">Subscribed</div><div class="v">${n.toLocaleString("en-ZA")}</div><div class="s">confirmed</div></div>
+      <div class="kpi"><div class="k">Waiting</div><div class="v">${d.counts.pending.toLocaleString("en-ZA")}</div><div class="s">haven't clicked the email yet</div></div>
+      <div class="kpi"><div class="k">Unsubscribed</div><div class="v">${d.counts.unsubscribed.toLocaleString("en-ZA")}</div><div class="s">never emailed again</div></div></div>
+    ${isA() ? html`<section class="card stack mt"><h2>Send an update</h2>
+      <form class="stack" id="nl"><div class="field"><label for="nl-s">Subject</label><input id="nl-s" name="subject" required maxlength="150" placeholder="New this month on TicketRoom"></div>
+        <div class="field"><label for="nl-m">Message</label><textarea id="nl-m" name="message" required rows="9" maxlength="10000" placeholder="Hi there,&#10;&#10;Here's what's new…"></textarea>
+          <span class="hint">Plain text. A line like "See what's on: https://ticketroom.co.za" becomes a button. The unsubscribe line and company details are added for you.</span></div>
+        <div class="row"><button type="button" class="btn btn-ghost" data-test>Send me a test</button><button class="btn btn-primary" ${raw(n ? "" : "disabled")}>Send to ${n.toLocaleString("en-ZA")} subscriber${n === 1 ? "" : "s"}</button></div></form></section>` : ""}
+    ${d.issues.length ? html`<section class="mt"><h2>Updates sent</h2>${tbl(["Sent", "Subject", "#Recipients", "By"], d.issues.map((i) => html`<tr><td class="small">${fmtDateTime(i.created_at)}</td><td>${i.subject}</td><td class="num">${i.recipients}</td><td class="small">${i.sent_by}</td></tr>`))}</section>` : ""}
+    <section class="mt"><div class="row between"><h2 class="mb-0">People</h2><form class="row" id="sq"><label class="sr-only" for="sq-in">Search subscribers</label><input id="sq-in" placeholder="Search email" value="${q}"><button class="btn btn-ghost">Search</button></form></div>
+      <div class="mt">${tbl(["Email", "Status", "Signed up", "Confirmed"], d.subscribers.map((s) => html`<tr><td class="small">${s.email}</td><td>${badge(s.status)}</td><td class="small">${fmtDate(s.created_at)}</td><td class="small">${s.confirmed_at ? fmtDate(s.confirmed_at) : ""}</td></tr>`),
+        q ? "Nobody matches that search." : "No one has subscribed yet. The sign-up form is at the bottom of every page on the website.")}</div></section>`);
+  $("#sq").addEventListener("submit", (e) => { e.preventDefault(); subscribers(params, $("#sq-in").value.trim()); });
+  const f = $("#nl");
+  if (!f) return;
+  const values = () => ({ subject: f.subject.value.trim(), message: f.message.value.trim() });
+  $("[data-test]", f).addEventListener("click", async () => {
+    if (!f.reportValidity()) return;
+    await act(() => post("/api/admin/subscribers/send", { ...values(), test: true }), "Test sent to your email address.");
+  });
+  onSubmit(f, async () => {
+    if (!(await confirmDialog(`Send this update to ${n.toLocaleString("en-ZA")} subscriber${n === 1 ? "" : "s"}?`, "It goes out straight away and can't be recalled. Send yourself a test first if you haven't.", { confirm: "Send update" }))) return;
+    const r = await post("/api/admin/subscribers/send", { ...values(), test: false });
+    toast(`Update on its way to ${r.recipients.toLocaleString("en-ZA")} subscriber${r.recipients === 1 ? "" : "s"}.`, "good");
+    subscribers(params);
+  });
+}
+
 // Staff change their own password here, inside the admin portal.
 async function myPassword() {
   const u = await me(true);
@@ -25,7 +59,7 @@ function nav(counts = {}) {
   render($("#sidenav"), html`<a href="#/">Overview</a>
     <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users">All users</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
     <div class="sect" data-feature="finance">Finance</div><a href="#/refunds" data-feature="finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance">Ledger</a>
-    <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
+    <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/subscribers">Subscribers</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
     <div class="sect">Governance</div><a href="#/integrations">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
     <div class="sect">You</div><a href="#/password">My password</a>`);
 }
@@ -513,5 +547,5 @@ async function integrations() {
   document.title = "Admin portal | TicketRoom";
   nav();
   router([["/", overview], ["/organisers", organisers], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support],
-    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword]], () => { location.hash = "#/"; });
+    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword], ["/subscribers", subscribers]], () => { location.hash = "#/"; });
 })();

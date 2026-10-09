@@ -456,3 +456,25 @@ CREATE TABLE meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- TicketRoom updates: people who subscribed from the website (double opt-in).
+CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+  id              TEXT PRIMARY KEY,
+  email           TEXT NOT NULL,
+  status          TEXT NOT NULL CHECK (status IN ('pending','subscribed','unsubscribed')),
+  source          TEXT NOT NULL DEFAULT 'web',
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  confirmed_at    TEXT,
+  unsubscribed_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS newsletter_email_uq ON newsletter_subscribers (lower(email));
+CREATE INDEX IF NOT EXISTS newsletter_status_idx ON newsletter_subscribers (status);
+CREATE TABLE IF NOT EXISTS newsletter_issues (
+  id          TEXT PRIMARY KEY,
+  subject     TEXT NOT NULL,
+  body        TEXT NOT NULL,
+  recipients  INTEGER NOT NULL,
+  sent_by     TEXT NOT NULL REFERENCES users(id),
+  created_at  TEXT NOT NULL
+);

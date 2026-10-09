@@ -531,3 +531,52 @@ route('GET', '/api/admin/outbox', function () {
     foreach ($list as &$m) $m['to_address'] = adm_mask($m['to_address']);
     return ['messages' => $list, 'adapters' => ['email' => mail_mode(), 'sms' => 'none']];
 });
+
+// ============================================================== subscribers (TicketRoom updates)
+route('GET', '/api/admin/subscribers', function () {
+    $u = adm_admin_or_support();
+    if (qs('format') === 'csv') {
+        $st = q("SELECT email, status, source, created_at, confirmed_at, unsubscribed_at FROM newsletter_subscribers ORDER BY created_at");
+        $out = "email,status,source,signed_up,confirmed,unsubscribed\n";
+        $n = 0;
+        while ($r = $st->fetch(PDO::FETCH_NUM)) { $out .= implode(',', array_map(fn($v) => '"' . str_replace('"', '""', (string) ($v ?? '')) . '"', $r)) . "\n"; $n++; }
+        $st->closeCursor();
+        audit('subscribers.exported', ['actor' => $u, 'entityType' => 'newsletter', 'details' => ['rows' => $n]]);
+        return raw_out($out, 'text/csv; charset=utf-8', 200, ['Content-Disposition' => 'attachment; filename="ticketroom-subscribers.csv"']);
+    }
+    $q = str_replace(['%', '_', '\\'], '', mb_substr(trim((string) qs('q', '')), 0, 80));
+    $counts = ['subscribed' => 0, 'pending' => 0, 'unsubscribed' => 0];
+    foreach (rows('SELECT status, count(*) AS n FROM newsletter_subscribers GROUP BY status') as $r) $counts[$r['status']] = (int) $r['n'];
+    return [
+        'counts' => $counts,
+        'subscribers' => rows("SELECT email, status, source, created_at, confirmed_at, unsubscribed_at FROM newsletter_subscribers WHERE (? = '' OR lower(email) LIKE lower(?)) ORDER BY created_at DESC LIMIT 200", [$q, "%$q%"]),
+        'issues' => rows('SELECT i.subject, i.recipients, i.created_at, u.full_name AS sent_by FROM newsletter_issues i JOIN users u ON u.id = i.sent_by ORDER BY i.created_at DESC LIMIT 20'),
+    ];
+});
+
+// Send an update to every confirmed subscriber, or a test to yourself first.
+route('POST', '/api/admin/subscribers/send', function () {
+    $u = adm_admin();
+    $b = check(body(), ['subject' => R::str(['min' => 3, 'max' => 150]), 'message' => R::text(['min' => 10, 'max' => 10000]), 'test' => R::bool()]);
+    $B = base_url();
+    if ($b['test']) {
+        limit('newstest', 20, 3600, $u['id']);
+        outbox_enqueue(['to' => $u['email'], 'userId' => $u['id'], 'kind' => 'marketing'] + tpl('newsletterUpdate', ['subject' => '[Test] ' . $b['subject'], 'message' => $b['message'], 'unsubscribeUrl' => "$B/unsubscribe"]));
+        return ['ok' => true, 'test' => true, 'to' => $u['email']];
+    }
+    limit('newssend', 5, 86400, $u['id']);
+    $n = tx(function () use ($u, $b, $B) {
+        $id = uuid();
+        $n = 0;
+        foreach (rows("SELECT id, email FROM newsletter_subscribers WHERE status = 'subscribed'") as $s) {
+            outbox_enqueue(['to' => $s['email'], 'kind' => 'marketing'] + tpl('newsletterUpdate', ['subject' => $b['subject'], 'message' => $b['message'],
+                'unsubscribeUrl' => "$B/unsubscribe?t=" . sign_link(['n' => $s['id']], 365 * 86400)]));
+            $n++;
+        }
+        if (!$n) throw conflict('There are no confirmed subscribers yet.', 'no_subscribers');
+        insert('newsletter_issues', ['id' => $id, 'subject' => $b['subject'], 'body' => $b['message'], 'recipients' => $n, 'sent_by' => $u['id'], 'created_at' => now_iso()]);
+        audit('newsletter.sent', ['actor' => $u, 'entityType' => 'newsletter', 'entityId' => $id, 'details' => ['recipients' => $n, 'subject' => $b['subject']]]);
+        return $n;
+    });
+    return ['ok' => true, 'recipients' => $n];
+});

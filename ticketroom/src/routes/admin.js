@@ -592,4 +592,41 @@ router.get("/outbox", wrap(async (_req, res) => {
 }));
 
 void ledger;
+// ---------------------------------------------------------------- subscribers (TicketRoom updates)
+router.get("/subscribers", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
+  if (req.query.format === "csv") {
+    const { rows } = await db.query("SELECT email, status, source, created_at, confirmed_at, unsubscribed_at FROM newsletter_subscribers ORDER BY created_at");
+    await audit.record(null, { actor: req.user, action: "subscribers.exported", entityType: "newsletter", details: { rows: rows.length } });
+    const esc = (v) => `"${String(v instanceof Date ? v.toISOString() : v ?? "").replace(/"/g, '""')}"`;
+    res.setHeader("Content-Disposition", 'attachment; filename="ticketroom-subscribers.csv"');
+    return res.type("text/csv").send(["email,status,source,signed_up,confirmed,unsubscribed", ...rows.map((x) => [x.email, x.status, x.source, x.created_at, x.confirmed_at, x.unsubscribed_at].map(esc).join(","))].join("\n") + "\n");
+  }
+  const q = String(req.query.q || "").trim().slice(0, 80).replace(/[%_\\]/g, "");
+  const counts = { subscribed: 0, pending: 0, unsubscribed: 0 };
+  for (const x of (await db.query("SELECT status, count(*)::int AS n FROM newsletter_subscribers GROUP BY status")).rows) counts[x.status] = x.n;
+  const { rows: subscribers } = await db.query("SELECT email, status, source, created_at, confirmed_at, unsubscribed_at FROM newsletter_subscribers WHERE ($1 = '' OR email ILIKE $2) ORDER BY created_at DESC LIMIT 200", [q, `%${q}%`]);
+  const { rows: issues } = await db.query("SELECT i.subject, i.recipients, i.created_at, u.full_name AS sent_by FROM newsletter_issues i JOIN users u ON u.id = i.sent_by ORDER BY i.created_at DESC LIMIT 20");
+  res.json({ counts, subscribers, issues });
+}));
+
+// Send an update to every confirmed subscriber, or a test to yourself first.
+router.post("/subscribers/send", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { subject: r.str({ min: 3, max: 150 }), message: r.text({ max: 10000 }), test: r.bool() });
+  const { signLink } = require("../lib/crypto");
+  const B = config.publicBaseUrl;
+  if (b.test) {
+    await db.withTx((c) => outbox.enqueue(c, { to: req.user.email, userId: req.user.id, kind: "marketing", ...templates.newsletterUpdate({ subject: `[Test] ${b.subject}`, message: b.message, unsubscribeUrl: `${B}/unsubscribe` }) }));
+    return res.json({ ok: true, test: true, to: req.user.email });
+  }
+  const n = await db.withTx(async (c) => {
+    const { rows } = await c.query("SELECT id, email FROM newsletter_subscribers WHERE status = 'subscribed'");
+    if (!rows.length) throw conflict("There are no confirmed subscribers yet.", "no_subscribers");
+    for (const s of rows) await outbox.enqueue(c, { to: s.email, kind: "marketing", ...templates.newsletterUpdate({ subject: b.subject, message: b.message, unsubscribeUrl: `${B}/unsubscribe?t=${signLink({ n: s.id }, 365 * 86400)}` }) });
+    const { rows: [issue] } = await c.query("INSERT INTO newsletter_issues (subject, body, recipients, sent_by) VALUES ($1,$2,$3,$4) RETURNING id", [b.subject, b.message, rows.length, req.user.id]);
+    await audit.record(c, { actor: req.user, action: "newsletter.sent", entityType: "newsletter", entityId: issue.id, details: { recipients: rows.length, subject: b.subject } });
+    return rows.length;
+  });
+  res.json({ ok: true, recipients: n });
+}));
+
 module.exports = router;

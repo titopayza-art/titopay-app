@@ -81,6 +81,14 @@ module.exports = {
     subject: "Unsubscribe from TicketRoom marketing",
     body: `Hi ${first(name)},\n\nYou asked to stop getting marketing emails from TicketRoom and the organisers you follow. Please confirm below. The link works for 7 days.\n\nConfirm unsubscribe: ${url}\n\nWe'll still email you about tickets you already have. If you didn't ask for this, you can ignore this email.${FOOTER}`,
   }),
+  newsletterConfirm: ({ url }) => ({
+    subject: "Confirm your TicketRoom updates",
+    body: `Hi there,\n\nThanks for signing up for TicketRoom updates: new events, ticket releases and the odd bit of news. Please confirm it's you. The link works for 7 days.\n\nConfirm my subscription: ${url}\n\nIf you didn't sign up, ignore this email and you won't hear from us.${FOOTER}`,
+  }),
+  newsletterUpdate: ({ subject, message, unsubscribeUrl }) => ({
+    subject,
+    body: `${String(message).trimEnd()}\n\n-- \nYou're getting this because you subscribed to TicketRoom updates on ticketroom.co.za. To stop them, unsubscribe here: ${unsubscribeUrl}\nTicketRoom (Pty) Ltd · Reg. no. 2026811077`,
+  }),
 
   // ---------------------------------------------------------------- organisers and staff
   organiserApproved: ({ name, organiser }) => ({

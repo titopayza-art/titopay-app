@@ -67,9 +67,46 @@ route('POST', '/api/site/unsubscribe-request', function () {
     limit('unsubreq', 5, 3600);
     $b = check(body(), ['email' => R::email()]);
     $u = row("SELECT id, full_name FROM users WHERE lower(email) = ? AND status = 'active'", [$b['email']]);
-    if ($u) {
-        $url = base_url() . '/unsubscribe?t=' . sign_link(['u' => $u['id'], 'all' => true], 7 * 86400);
-        outbox_enqueue(['to' => $b['email'], 'userId' => $u['id']] + tpl('unsubscribeLink', ['name' => $u['full_name'], 'url' => $url]));
+    $n = row("SELECT id FROM newsletter_subscribers WHERE lower(email) = ? AND status <> 'unsubscribed'", [$b['email']]);
+    if ($u || $n) {
+        $url = base_url() . '/unsubscribe?t=' . sign_link($u ? ['u' => $u['id'], 'all' => true] : ['n' => $n['id']], 7 * 86400);
+        outbox_enqueue(['to' => $b['email'], 'userId' => $u['id'] ?? null] + tpl('unsubscribeLink', ['name' => $u['full_name'] ?? null, 'url' => $url]));
     }
-    return ['ok' => true, 'message' => "If that email has a TicketRoom account, we've sent a link to unsubscribe from all marketing."];
+    return ['ok' => true, 'message' => "If that email is on any TicketRoom list, we've sent it a link to unsubscribe from all marketing."];
+});
+
+// ---- TicketRoom updates (newsletter). Double opt-in: a subscription only
+// counts once the person clicks the link in the confirmation email.
+const NEWS_CONFIRM_TTL = 7 * 86400;
+route('POST', '/api/site/subscribe', function () {
+    limit('subscribe', 10, 3600);
+    $b = check(body(), ['email' => R::email(), 'source' => R::str(['optional' => true, 'max' => 40])]);
+    $email = $b['email'];
+    $done = ['ok' => true, 'status' => 'pending', 'message' => "Nearly done. We've sent an email to $email: click the link in it to confirm."];
+    $row = row('SELECT * FROM newsletter_subscribers WHERE lower(email) = ?', [$email]);
+    if ($row && $row['status'] === 'subscribed') return ['ok' => true, 'status' => 'subscribed', 'message' => "You're already subscribed. Updates go to $email."];
+    $now = now_iso();
+    // A signed-in person whose email is already confirmed needs no second email.
+    $u = user();
+    $direct = $u && strtolower($u['email']) === $email && $u['emailVerified'];
+    $id = $row['id'] ?? uuid();
+    tx(function () use ($row, $id, $email, $now, $direct, $b) {
+        if ($row) q('UPDATE newsletter_subscribers SET status = ?, source = ?, updated_at = ?, confirmed_at = ?, unsubscribed_at = NULL WHERE id = ?', [$direct ? 'subscribed' : 'pending', $b['source'] ?? 'web', $now, $direct ? $now : null, $id]);
+        else insert('newsletter_subscribers', ['id' => $id, 'email' => $email, 'status' => $direct ? 'subscribed' : 'pending', 'source' => $b['source'] ?? 'web', 'created_at' => $now, 'updated_at' => $now, 'confirmed_at' => $direct ? $now : null]);
+    });
+    if ($direct) return ['ok' => true, 'status' => 'subscribed', 'message' => "You're subscribed. Updates go to $email."];
+    // Only one confirmation email per address every 10 minutes.
+    if (!$row || $row['status'] !== 'pending' || to_unix($row['updated_at']) < microtime(true) - 600) {
+        outbox_enqueue(['to' => $email] + tpl('newsletterConfirm', ['url' => base_url() . '/subscribe?t=' . sign_link(['n' => $id, 'confirm' => true], NEWS_CONFIRM_TTL)]));
+    }
+    return $done;
+});
+route('POST', '/api/site/subscribe/confirm', function () {
+    limit('subconfirm', 30, 3600);
+    $b = check(body(), ['token' => R::str(['max' => 600])]);
+    $d = verify_link($b['token']);
+    $row = $d && !empty($d['n']) && !empty($d['confirm']) ? row('SELECT * FROM newsletter_subscribers WHERE id = ?', [$d['n']]) : null;
+    if (!$row) throw bad('This confirmation link is invalid or has expired. Subscribe again and we will send a new one.');
+    if ($row['status'] !== 'subscribed') q("UPDATE newsletter_subscribers SET status = 'subscribed', confirmed_at = ?, updated_at = ?, unsubscribed_at = NULL WHERE id = ?", [now_iso(), now_iso(), $row['id']]);
+    return ['ok' => true, 'email' => $row['email']];
 });

@@ -424,3 +424,16 @@ html.maint-on body > *:not(.maint-screen) { display: none !important; }
 .faq summary::after { content: ""; flex: none; width: 9px; height: 9px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); margin: -4px 4px 0 0; transition: transform .15s; }
 .faq[open] summary::after { transform: rotate(-135deg); margin-top: 4px; }
 .faq p { margin: -4px 0 16px; color: var(--ink-2); }
+
+/* ---------- subscribe to updates ---------- */
+.sub-band { display: grid; gap: 16px; padding: 24px; margin-bottom: 32px; border-radius: 20px; background: var(--navy-800); color: #DCE5F5; }
+.sub-band h2 { color: #fff; margin: 0 0 6px; font-size: clamp(1.15rem, 3vw, 1.4rem); }
+@media (min-width: 800px) { .sub-band { grid-template-columns: 1fr 1.1fr; align-items: center; padding: 28px 32px; } }
+.sub-form { display: flex; gap: 8px; }
+.sub-form input { flex: 1; min-width: 0; font-size: 16px; }
+.sub-form .btn { flex: none; }
+.sub-note { margin: 8px 0 0; font-size: .8rem; color: #AFC0DD; }
+.site-footer .sub-note a { color: #DCE5F5; text-decoration: underline; }
+.sub-done { margin: 0; padding: 12px 14px; border-radius: 12px; background: rgba(23,128,74,.22); color: #C9F2DA; font-weight: 600; }
+.card .sub-note { color: var(--muted); } .card .sub-note a { color: inherit; }
+.card .sub-done { background: var(--good-bg); color: var(--good); }

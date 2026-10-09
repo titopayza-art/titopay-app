@@ -64,6 +64,27 @@ export function gate(feature, fn) {
   };
 }
 
+// ---------- calm first paint ----------
+// Pages start with class="booting": the header shows straight away, and the
+// rest appears in one go when the page has its content, instead of jumping
+// about while each piece loads on a slow connection.
+const root = document.documentElement;
+export function pageReady() {
+  if (!root.classList.contains("booting")) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("booting")));
+}
+setTimeout(pageReady, 6000); // never hide a page for long, whatever happens
+{
+  // Portal pages: ready when the main area first shows real content. The
+  // public website calls pageReady() itself (root.dataset.manualReady).
+  const m = document.getElementById("main");
+  if (m) {
+    const done = () => m.childElementCount && !(m.childElementCount === 1 && m.firstElementChild.classList.contains("spinner"));
+    const obs = new MutationObserver(() => { if (!root.dataset.manualReady && done()) { obs.disconnect(); pageReady(); } });
+    obs.observe(m, { childList: true });
+  }
+}
+
 // ---------- API ----------
 let csrfToken = null;
 let meCache;
@@ -192,7 +213,7 @@ export function onSubmit(form, fn) {
 
 export const badge = (status) => {
   const map = { valid: "good", used: "info", paid: "good", confirmed: "good", completed: "good", approved: "good", published: "good", active: "good", sent: "good", matched: "good", admitted: "good",
-    pending: "warn", pending_payment: "warn", requested: "warn", pending_approval: "warn", processing: "warn", scheduled: "warn", draft: "plain", assigned: "info", unassigned: "plain", in_progress: "warn", open: "warn", queued: "warn",
+    subscribed: "good", unsubscribed: "plain", pending: "warn", pending_payment: "warn", requested: "warn", pending_approval: "warn", processing: "warn", scheduled: "warn", draft: "plain", assigned: "info", unassigned: "plain", in_progress: "warn", open: "warn", queued: "warn",
     refunded: "info", partially_refunded: "info", reversed: "info", transferred: "info",
     failed: "bad", declined: "bad", cancelled: "bad", expired: "bad", revoked: "bad", blocked: "bad", lost: "bad", rejected: "bad", suspended: "bad", paid_unfulfilled: "bad", replaced: "plain" };
   return html`<span class="badge ${map[status] || ""}">${String(status || "").replace(/_/g, " ")}</span>`;
@@ -236,7 +257,7 @@ export function portalsFor(u) {
 export const homePortal = (u) => (isStaff(u) ? "/admin" : u?.organisers?.length ? "/organisers" : "/account");
 
 export async function header(el, { portal, active } = {}) {
-  const u = await me();
+  const [u, site] = await Promise.all([me(), siteInfo()]);
   const here = PORTALS[portal];
   const mine = portalsFor(u);
   // On the public website: Events, Sell tickets, Help, then the person's main
@@ -279,7 +300,8 @@ export async function header(el, { portal, active } = {}) {
   if (!u?.mustChangePassword) $(".pw-nag")?.remove();
   maintenanceScreen(u).catch(() => {});
   // Gate, till and back-office screens stay uncluttered: no banner or assistant there.
-  if (!/^\/(scan|pos|admin)(\/|$)/.test(location.pathname)) siteExtras({ banner: !here }).catch(() => {});
+  if (!here && !/^\/(scan|pos|admin)(\/|$)/.test(location.pathname)) showBanner(site);
+  if (!/^\/(scan|pos|admin)(\/|$)/.test(location.pathname)) siteExtras().catch(() => {});
   return u;
 }
 
@@ -298,14 +320,41 @@ async function maintenanceScreen(u) {
   document.title = "TicketRoom | Back soon";
 }
 
+// "Subscribe to updates" form, used in the footer and on /subscribe.
+export function subscribeForm(source = "footer") {
+  const box = document.createElement("div");
+  render(box, html`<form class="sub-form" novalidate><label class="sr-only" for="sub-${source}">Email address</label>
+    <input id="sub-${source}" name="email" type="email" autocomplete="email" inputmode="email" placeholder="Your email address" required>
+    <button class="btn btn-primary">Subscribe</button></form>
+    <p class="sub-note">New events and ticket news, about twice a month. Unsubscribe any time. See our <a href="/legal/privacy">Privacy Policy</a>.</p>`);
+  const f = box.querySelector("form");
+  me().then((u) => { if (u && !f.email.value) f.email.value = u.email; });
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = f.querySelector("button");
+    const email = f.email.value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { f.email.setAttribute("aria-invalid", "true"); f.email.focus(); toast("Enter a valid email address.", "bad"); return; }
+    btn.setAttribute("aria-busy", "true");
+    try {
+      const r = await post("/api/site/subscribe", { email, source });
+      render(box, html`<p class="sub-done" role="status">${r.message}</p>`);
+    } catch (err) { toast(err.message, "bad"); }
+    finally { btn.removeAttribute("aria-busy"); }
+  });
+  return box;
+}
+
 export function footer(el) {
-  render(el, html`<div class="wrap"><div class="footer-grid">
+  render(el, html`<div class="wrap"><section class="sub-band" aria-labelledby="sub-h"><div><h2 id="sub-h">Subscribe to receive updates</h2>
+      <p class="mb-0">Be first to hear about new events, ticket releases and free shows near you.</p></div><div data-sub></div></section>
+    <div class="footer-grid">
     <div>${brand()}<p class="mt small">Tickets for concerts, comedy, sport and festivals across South Africa.</p>
       <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p></div>
     <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
     <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/advertise">Advertise your business</a></li><li><a href="/organisers">Organiser portal</a></li><li><a href="/scan">Gate scanner</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
     <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
   </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. 2026811077 · ticketroom.co.za · Prices are in South African rand.</div></div>`);
+  $("[data-sub]", el).append(subscribeForm("footer"));
   siteExtras().catch(() => {});
 }
 
@@ -331,20 +380,23 @@ export function weekTable(hours) {
   return html`<dl class="dl hours">${Object.keys(DAY_NAMES).map((d) => html`<dt>${DAY_NAMES[d]}</dt><dd>${hours.week[d] ? `${hm(hours.week[d].open)} – ${hm(hours.week[d].close)}` : "Closed"}</dd>`)}<dt>Public holidays</dt><dd>Closed</dd></dl>`;
 }
 
-// The announcement banner belongs to the public website only, never inside a portal.
-export async function siteExtras({ banner = true } = {}) {
+export async function siteExtras() {
   const s = await siteInfo();
   if (!s) return;
   $$("[data-support-email]").forEach((a) => { a.href = `mailto:${s.support.email}`; a.textContent = s.support.email; });
   $$("[data-hours-line]").forEach((x) => { x.textContent = s.hours.note || "Monday to Friday, 9am to 5pm"; });
-  if (banner && s.banner && !$(".site-banner") && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
+  if (s.chatbot?.enabled && !$(".chat-fab")) chatWidget(s);
+}
+// The announcement banner belongs to the public website only, never inside a
+// portal. It goes in with the header, so it never pushes a loaded page down.
+function showBanner(s) {
+  if (s?.banner && !$(".site-banner") && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
     const b = document.createElement("div");
     b.className = "site-banner"; b.setAttribute("role", "region"); b.setAttribute("aria-label", "Announcement");
     render(b, html`<div class="wrap"><p><span class="pill" aria-hidden="true">New</span> ${s.banner.text} ${s.banner.linkText && s.banner.linkUrl ? html`<a href="${s.banner.linkUrl}">${s.banner.linkText} →</a>` : ""}</p><button class="icon-btn" data-hide aria-label="Hide announcement">×</button></div>`);
     $("[data-hide]", b).addEventListener("click", () => { store.set("tr_banner_hidden", hashText(s.banner.text)); b.remove(); });
     document.body.prepend(b);
   }
-  if (s.chatbot?.enabled && !$(".chat-fab")) chatWidget(s);
 }
 
 export async function callbackDialog({ topic = "callback", message = "", source = "web" } = {}) {
@@ -510,6 +562,7 @@ function forgotDialog() {
 export async function requireUser(reason) {
   const u = await me();
   if (u) return u;
+  pageReady();
   await new Promise((resolve) => authDialog("signin", { reason, onDone: resolve }));
   return me(true);
 }

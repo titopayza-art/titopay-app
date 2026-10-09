@@ -5,7 +5,8 @@ const config = require("../config");
 const db = require("../lib/db");
 const { r, check } = require("../lib/validate");
 const { limit } = require("../lib/ratelimit");
-const { reference, signLink, randomToken } = require("../lib/crypto");
+const { reference, signLink, verifyLink, randomToken } = require("../lib/crypto");
+const { bad } = require("../lib/errors");
 const { wrap } = require("../middleware/http");
 const settings = require("../modules/site/settings");
 const assistant = require("../modules/site/assistant");
@@ -84,12 +85,44 @@ router.post("/posters/:id/click", limit("adclick", 60, 60e3), wrap(async (req, r
 // only sends a signed one-click link to the address itself.
 router.post("/unsubscribe-request", limit("unsubreq", 5, 3600e3), wrap(async (req, res) => {
   const b = check(req.body, { email: r.email() });
-  const { rows } = await db.query("SELECT id, full_name FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
-  if (rows[0]) {
-    const url = `${config.publicBaseUrl}/unsubscribe?t=${signLink({ u: rows[0].id, all: true }, 7 * 86400)}`;
-    await db.withTx((c) => outbox.enqueue(c, { to: b.email, userId: rows[0].id, ...templates.unsubscribeLink({ name: rows[0].full_name, url }) }));
+  const { rows: [u] } = await db.query("SELECT id, full_name FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
+  const { rows: [n] } = await db.query("SELECT id FROM newsletter_subscribers WHERE lower(email) = $1 AND status <> 'unsubscribed'", [b.email]);
+  if (u || n) {
+    const url = `${config.publicBaseUrl}/unsubscribe?t=${signLink(u ? { u: u.id, all: true } : { n: n.id }, 7 * 86400)}`;
+    await db.withTx((c) => outbox.enqueue(c, { to: b.email, userId: u?.id || null, ...templates.unsubscribeLink({ name: u?.full_name, url }) }));
   }
-  res.json({ ok: true, message: "If that email has a TicketRoom account, we've sent a link to unsubscribe from all marketing." });
+  res.json({ ok: true, message: "If that email is on any TicketRoom list, we've sent it a link to unsubscribe from all marketing." });
+}));
+
+// ---- TicketRoom updates (newsletter). Double opt-in: a subscription only
+// counts once the person clicks the link in the confirmation email.
+router.post("/subscribe", limit("subscribe", 10, 3600e3), wrap(async (req, res) => {
+  const b = check(req.body, { email: r.email(), source: r.str({ optional: true, max: 40 }) });
+  const email = b.email;
+  const { rows: [row] } = await db.query("SELECT * FROM newsletter_subscribers WHERE lower(email) = $1", [email]);
+  if (row?.status === "subscribed") return res.json({ ok: true, status: "subscribed", message: `You're already subscribed. Updates go to ${email}.` });
+  // A signed-in person whose email is already confirmed needs no second email.
+  const direct = !!(req.user && req.user.email.toLowerCase() === email && req.user.emailVerified);
+  const status = direct ? "subscribed" : "pending";
+  const { rows: [sub] } = await db.query(
+    `INSERT INTO newsletter_subscribers (email, status, source, confirmed_at) VALUES ($1, $2, $3, CASE WHEN $2 = 'subscribed' THEN now() END)
+     ON CONFLICT (lower(email)) DO UPDATE SET status = EXCLUDED.status, source = EXCLUDED.source, updated_at = now(), confirmed_at = EXCLUDED.confirmed_at, unsubscribed_at = NULL
+     RETURNING id`, [email, status, b.source || "web"]);
+  if (direct) return res.json({ ok: true, status: "subscribed", message: `You're subscribed. Updates go to ${email}.` });
+  // Only one confirmation email per address every 10 minutes.
+  if (!row || row.status !== "pending" || new Date(row.updated_at) < Date.now() - 600e3) {
+    const url = `${config.publicBaseUrl}/subscribe?t=${signLink({ n: sub.id, confirm: true }, 7 * 86400)}`;
+    await db.withTx((c) => outbox.enqueue(c, { to: email, ...templates.newsletterConfirm({ url }) }));
+  }
+  res.json({ ok: true, status: "pending", message: `Nearly done. We've sent an email to ${email}: click the link in it to confirm.` });
+}));
+router.post("/subscribe/confirm", limit("subconfirm", 30, 3600e3), wrap(async (req, res) => {
+  const b = check(req.body, { token: r.str({ max: 600 }) });
+  const d = verifyLink(b.token);
+  const { rows: [row] } = d?.n && d.confirm ? await db.query("SELECT * FROM newsletter_subscribers WHERE id = $1", [d.n]) : { rows: [] };
+  if (!row) throw bad("This confirmation link is invalid or has expired. Subscribe again and we will send a new one.");
+  if (row.status !== "subscribed") await db.query("UPDATE newsletter_subscribers SET status = 'subscribed', confirmed_at = now(), updated_at = now(), unsubscribed_at = NULL WHERE id = $1", [row.id]);
+  res.json({ ok: true, email: row.email });
 }));
 
 module.exports = router;

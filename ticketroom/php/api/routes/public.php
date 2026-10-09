@@ -107,12 +107,18 @@ route('POST', '/api/public/unsubscribe', function () {
     limit('unsub', 30, 60);
     $b = check(body(), ['token' => R::str(['max' => 600])]);
     $d = verify_link($b['token']);
+    // TicketRoom updates subscriber (no account needed).
+    if ($d && !empty($d['n']) && empty($d['confirm'])) {
+        q("UPDATE newsletter_subscribers SET status = 'unsubscribed', unsubscribed_at = ?, updated_at = ? WHERE id = ?", [now_iso(), now_iso(), $d['n']]);
+        return ['ok' => true, 'organiser' => 'TicketRoom updates', 'channel' => 'email'];
+    }
     if (!$d || empty($d['u'])) throw bad('This unsubscribe link is invalid or has expired. You can manage preferences in your account.');
     if (!empty($d['all'])) {
         tx(function () use ($d) {
             foreach (rows('SELECT organiser_id, channel FROM marketing_consents WHERE user_id = ? AND granted = 1', [$d['u']]) as $x) set_consent($d['u'], $x['organiser_id'], $x['channel'], false, 'unsubscribe_all');
             set_consent($d['u'], null, 'email', false, 'unsubscribe_all');
             set_consent($d['u'], null, 'sms', false, 'unsubscribe_all');
+            q("UPDATE newsletter_subscribers SET status = 'unsubscribed', unsubscribed_at = ?, updated_at = ? WHERE lower(email) = (SELECT lower(email) FROM users WHERE id = ?) AND status <> 'unsubscribed'", [now_iso(), now_iso(), $d['u']]);
         });
         return ['ok' => true, 'all' => true];
     }

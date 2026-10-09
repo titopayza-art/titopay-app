@@ -114,6 +114,11 @@ router.post("/orders/:ref/cancel", requireAuth, wrap(async (req, res) => res.jso
 router.post("/unsubscribe", limit("unsub", 30, 60e3), wrap(async (req, res) => {
   const b = check(req.body, { token: r.str({ max: 600 }) });
   const data = verifyLink(b.token);
+  // TicketRoom updates subscriber (no account needed).
+  if (data?.n && !data.confirm) {
+    await db.query("UPDATE newsletter_subscribers SET status = 'unsubscribed', unsubscribed_at = now(), updated_at = now() WHERE id = $1", [data.n]);
+    return res.json({ ok: true, organiser: "TicketRoom updates", channel: "email" });
+  }
   if (!data?.u) throw bad("This unsubscribe link is invalid or has expired. You can manage preferences in your account.");
   if (data.all) {
     // Everything: every organiser, every channel, plus TicketRoom's own news.
@@ -122,6 +127,7 @@ router.post("/unsubscribe", limit("unsub", 30, 60e3), wrap(async (req, res) => {
       for (const x of rows) await marketing.setConsent(c, data.u, x.organiser_id, x.channel, false, "unsubscribe_all");
       await marketing.setConsent(c, data.u, null, "email", false, "unsubscribe_all");
       await marketing.setConsent(c, data.u, null, "sms", false, "unsubscribe_all");
+      await c.query("UPDATE newsletter_subscribers SET status = 'unsubscribed', unsubscribed_at = now(), updated_at = now() WHERE lower(email) = (SELECT lower(email) FROM users WHERE id = $1) AND status <> 'unsubscribed'", [data.u]);
     });
     return res.json({ ok: true, all: true });
   }

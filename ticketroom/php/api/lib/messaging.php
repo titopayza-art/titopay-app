@@ -281,6 +281,12 @@ function tpl(string $name, array $a): array
         case 'unsubscribeLink':
             return ['subject' => 'Unsubscribe from TicketRoom marketing',
                 'body' => $hi . "You asked to stop getting marketing emails from TicketRoom and the organisers you follow. Please confirm below. The link works for 7 days.\n\nConfirm unsubscribe: {$a['url']}\n\nWe'll still email you about tickets you already have. If you didn't ask for this, you can ignore this email." . FOOTER];
+        case 'newsletterConfirm':
+            return ['subject' => 'Confirm your TicketRoom updates',
+                'body' => "Hi there,\n\nThanks for signing up for TicketRoom updates: new events, ticket releases and the odd bit of news. Please confirm it's you. The link works for 7 days.\n\nConfirm my subscription: {$a['url']}\n\nIf you didn't sign up, ignore this email and you won't hear from us." . FOOTER];
+        case 'newsletterUpdate':
+            return ['subject' => $a['subject'],
+                'body' => rtrim($a['message']) . "\n\n-- \nYou're getting this because you subscribed to TicketRoom updates on ticketroom.co.za. To stop them, unsubscribe here: {$a['unsubscribeUrl']}\nTicketRoom (Pty) Ltd · Reg. no. 2026811077"];
         case 'organiserApproved':
             return ['subject' => "{$a['organiser']} is approved on TicketRoom",
                 'body' => $hi . "{$a['organiser']} has been approved. You can now send your events to us for review, and email people who asked to hear from you.\n\nGo to the organiser portal: $B/organisers\n\nFor now, free events are listed at no cost. Paid ticket sales are coming soon.\n\nIf you'd like a hand setting up your first event, ask us to call you at $B/contact." . FOOTER];
@@ -323,6 +329,8 @@ function email_catalog(): array
         ['key' => 'passwordReset', 'name' => 'Password reset', 'audience' => 'Everyone', 'trigger' => 'On "Forgot password"', 'sample' => fn() => tpl('passwordReset', ['name' => 'Lerato Mokoena', 'url' => "$B/account#/reset/sample"])],
         ['key' => 'callbackReceived', 'name' => 'Callback request received', 'audience' => 'Everyone', 'trigger' => 'When the callback form is sent', 'sample' => fn() => tpl('callbackReceived', ['name' => 'Lerato Mokoena', 'reference' => 'CB-4H8D2K', 'responseTime' => '24–48 hours', 'email' => 'hello@ticketroom.co.za', 'hoursNote' => 'Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.'])],
         ['key' => 'unsubscribeLink', 'name' => 'Unsubscribe link', 'audience' => 'Everyone', 'trigger' => 'From the Unsubscribe page', 'sample' => fn() => tpl('unsubscribeLink', ['name' => 'Lerato Mokoena', 'url' => "$B/unsubscribe?t=sample"])],
+        ['key' => 'newsletterConfirm', 'name' => 'Confirm updates subscription', 'audience' => 'Subscriber', 'trigger' => 'When someone subscribes to updates on the website', 'sample' => fn() => tpl('newsletterConfirm', ['url' => "$B/subscribe?t=sample"])],
+        ['key' => 'newsletterUpdate', 'name' => 'TicketRoom update', 'audience' => 'Subscriber', 'trigger' => 'Sent from Admin portal → Subscribers', 'sample' => fn() => tpl('newsletterUpdate', ['subject' => 'New this month on TicketRoom', 'message' => "Hi there,\n\nThree big free events have just been listed in Soweto and Pretoria, and the Derby Day tickets open on Friday.\n\nSee what's on: $B/", 'unsubscribeUrl' => "$B/unsubscribe?t=sample"])],
         ['key' => 'organiserApproved', 'name' => 'Organiser approved', 'audience' => 'Organiser', 'trigger' => 'When admin approves an organiser', 'sample' => fn() => tpl('organiserApproved', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts'])],
         ['key' => 'organiserRejected', 'name' => 'Organiser not approved', 'audience' => 'Organiser', 'trigger' => 'When admin rejects an organiser', 'sample' => fn() => tpl('organiserRejected', ['name' => 'Naledi Dlamini', 'organiser' => 'Soweto Community Arts', 'reason' => "We couldn't verify the contact details."])],
         ['key' => 'eventPublished', 'name' => 'Event published', 'audience' => 'Organiser', 'trigger' => 'When admin approves an event', 'sample' => fn() => tpl('eventPublished', ['name' => 'Naledi Dlamini', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions"])],

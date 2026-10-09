@@ -52,7 +52,7 @@ copy(path.join(ROOT, "public", "assets"), path.join(OUT, "assets"));
 const page = (template, title, description, canonical) => {
   let h = fs.readFileSync(path.join(ROOT, "public", template), "utf8");
   h = h.replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`);
-  h = h.replace(/<html lang="en-ZA">\n/, `<html lang="en-ZA">\n<!-- TicketRoom build ${BUILD} -->\n`);
+  h = h.replace(/<html lang="en-ZA"( class="booting")?>\n/, (m) => `${m}<!-- TicketRoom build ${BUILD} -->\n`);
   if (description) h = /<meta name="description"/.test(h) ? h.replace(/<meta name="description" content="[^"]*">/, `<meta name="description" content="${esc(description)}">`) : h.replace("</title>", `</title>\n  <meta name="description" content="${esc(description)}">`);
   if (canonical) h = h.replace("</title>", `</title>\n  <link rel="canonical" href="https://ticketroom.co.za${canonical}">`);
   return h;
@@ -63,6 +63,7 @@ const PUBLIC = [
   ["order.html", "Your order | TicketRoom", "", ""],
   ["sell.html", "Sell tickets | TicketRoom", "List your event on TicketRoom. Free events cost nothing to run; paid events carry a 5% commission.", "/sell"],
   ["advertise.html", "Advertise your business | TicketRoom", "Get a spot on TicketRoom from as little as R50 per day. Your poster in front of people planning their next event.", "/advertise"],
+  ["subscribe.html", "Subscribe to updates | TicketRoom", "Be first to hear about new events, ticket releases and free shows near you.", "/subscribe"],
   ["help.html", "Help centre | TicketRoom", "Answers about tickets, transfers, refunds and events, and how to reach the TicketRoom team.", "/help"],
   ["contact.html", "Contact us | TicketRoom", "Email hello@ticketroom.co.za or ask us to call you back. We reply within 24 to 48 hours.", "/contact"],
   ["unsubscribe.html", "Unsubscribe | TicketRoom", "", ""],

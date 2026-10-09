@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -355,6 +355,30 @@ async function help() {
   wireSupport(main);
 }
 
+// ---------------- subscribe to updates ----------------
+async function subscribePage() {
+  document.title = "Subscribe to updates | TicketRoom";
+  const token = new URLSearchParams(location.search).get("t");
+  if (!token) {
+    render(main, html`<div class="wrap section"><div class="card pad-lg stack" style="max-width:640px"><h1>Subscribe to receive updates</h1>
+      <p class="lead mb-0">Be first to hear about new events, ticket releases and free shows near you.</p><div data-sub></div></div></div>`);
+    $("[data-sub]", main).append(subscribeForm("page"));
+    return;
+  }
+  // From the confirmation email: confirm straight away (a script runs this, so
+  // email scanners that only fetch the link do not subscribe anyone).
+  render(main, html`<div class="wrap section"><div class="card pad-lg stack" style="max-width:640px" aria-live="polite">${spinner()}</div></div>`);
+  const card = $(".card", main);
+  try {
+    const r = await post("/api/site/subscribe/confirm", { token });
+    history.replaceState(null, "", "/subscribe");
+    render(card, html`<h1>You're subscribed</h1><p class="mb-0">Updates will go to <strong>${r.email}</strong>. Every email has an unsubscribe link at the bottom.</p><a class="btn btn-primary" href="/">See what's on</a>`);
+  } catch (err) {
+    render(card, html`<h1>That link didn't work</h1><p class="mb-0">${err.message}</p><div data-sub></div>`);
+    $("[data-sub]", card).append(subscribeForm("page"));
+  }
+}
+
 // ---------------- advertising ----------------
 async function advertisePage() {
   document.title = "Advertise your business | TicketRoom";
@@ -430,6 +454,7 @@ function unsubscribe() {
     else if ((m = p.match(/^\/legal\/([a-z-]+)$/))) await legal(m[1]);
     else if (p === "/sell") sellPage();
     else if (p === "/advertise") await advertisePage();
+    else if (p === "/subscribe") await subscribePage();
     else if (p === "/help") await help();
     else if (p === "/contact") await contact();
     else if (p === "/unsubscribe") unsubscribe();
