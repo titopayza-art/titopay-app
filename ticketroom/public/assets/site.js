@@ -46,11 +46,16 @@ async function home() {
       <div class="chips mt" role="group" aria-label="Category">${CATS.map(([v, l]) => html`<button class="chip" data-cat="${v}" aria-pressed="${state.category === v}">${l}</button>`)}</div>
       <div class="event-grid mt" id="grid" aria-live="polite">${spinner()}</div>
     </div></section>
-    <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/contact?topic=advertising">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
+    <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/advertise">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
     <section class="section"><div class="wrap"><div class="promo-band">
       <div><span class="cat-label">For organisers</span><h2>Putting on an event? List it with us.</h2>
         <ul><li>QR tickets and a live view of who has booked</li><li>Your staff scan tickets at the gate on their own phones</li><li>Email the people who asked to hear from you</li><li data-feature="cashless">Cashless wristbands, vendor POS and transparent payouts</li><li data-feature-off="cashless">Free events cost nothing to list. Paid tickets are on the way.</li></ul></div>
       <div class="row"><a class="btn btn-primary" href="/sell">Start selling</a><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div>
+    </div></div></section>
+    <section class="section pt-0"><div class="wrap"><div class="ad-band">
+      <div><span class="cat-label">Advertising</span><h2>Advertise your business on TicketRoom</h2>
+        <p class="mb-0">Get a spot today from as little as <strong>R50 per day</strong>. Your poster sits in front of people planning their next night out.</p></div>
+      <a class="btn btn-primary" href="/advertise">Get a spot</a>
     </div></div></section>`);
 
   const load = async () => {
@@ -350,6 +355,36 @@ async function help() {
   wireSupport(main);
 }
 
+// ---------------- advertising ----------------
+async function advertisePage() {
+  document.title = "Advertise your business | TicketRoom";
+  const u = await me();
+  const site = await siteInfo();
+  const tile = (t, s) => html`<div class="card flat"><h3>${t}</h3><p class="muted mb-0">${s}</p></div>`;
+  render(main, html`<section class="hero"><div class="wrap"><span class="cat-label">Advertising</span><h1>Advertise your business on <b>TicketRoom</b></h1>
+      <p class="lead">Get a spot today from as little as R50 per day. Your poster goes in the Featured section of our home page, where people across South Africa come to find their next event.</p>
+      <div class="row"><a class="btn btn-primary" href="#get-a-spot">Get a spot</a><a class="btn btn-outline-light" href="mailto:${site?.support?.email || "hello@ticketroom.co.za"}?subject=Advertising%20on%20TicketRoom">Email us</a></div></div></section>
+    <section class="section"><div class="wrap stack-lg">
+      <div class="grid-3">
+        ${tile("Seen by people going out", "Our visitors are planning their weekend: concerts, comedy, sport and festivals. Restaurants, transport, fashion and anything else for a night out fit right in.")}
+        ${tile("Your dates, your budget", "Run your poster for a day, a weekend or a whole month. You pay only for the days you choose.")}
+        ${tile("One tap to you", "Tapping your poster takes people straight to your website, WhatsApp or booking page.")}
+      </div>
+      <div class="grid-2">
+        <div class="card"><div class="kpi"><div class="k">Featured poster</div><div class="v">From R50</div><div class="s">per day</div></div>
+          <p class="small muted mt mb-0">We confirm the price, dates and poster with you before anything goes live. Nothing is charged online.</p></div>
+        <div class="card"><h2>How it works</h2><ol class="mb-0">
+          <li>Send us your details below.</li>
+          <li>We reply within ${site?.support?.responseTime || "24–48 hours"} (Monday to Friday) with a quote and available dates.</li>
+          <li>Send us your poster image and the link it should open. It goes live on your first day.</li></ol></div>
+      </div>
+      <section class="card stack" id="get-a-spot"><h2>Get a spot</h2>
+        <form class="stack" id="cbf" novalidate>${callbackFields(u, "advertising", "Business name:\nWhat you'd like to advertise:\nDates you have in mind:")}<button class="btn btn-primary">Send my enquiry</button>
+          <p class="tiny muted mb-0">We use these details only to reply to you. See our <a href="/legal/privacy">Privacy Policy</a>.</p></form></section>
+    </div></section>`);
+  wireSupport(main);
+}
+
 async function contact() {
   document.title = "Contact us | TicketRoom";
   const site = await siteInfo();
@@ -394,6 +429,7 @@ function unsubscribe() {
     else if ((m = p.match(/^\/orders\/([^/]+)$/))) await orderPage(decodeURIComponent(m[1]));
     else if ((m = p.match(/^\/legal\/([a-z-]+)$/))) await legal(m[1]);
     else if (p === "/sell") sellPage();
+    else if (p === "/advertise") await advertisePage();
     else if (p === "/help") await help();
     else if (p === "/contact") await contact();
     else if (p === "/unsubscribe") unsubscribe();

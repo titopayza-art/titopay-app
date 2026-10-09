@@ -62,6 +62,7 @@ const PUBLIC = [
   ["event.html", "Event tickets | TicketRoom", "", ""],
   ["order.html", "Your order | TicketRoom", "", ""],
   ["sell.html", "Sell tickets | TicketRoom", "List your event on TicketRoom. Free events cost nothing to run; paid events carry a 5% commission.", "/sell"],
+  ["advertise.html", "Advertise your business | TicketRoom", "Get a spot on TicketRoom from as little as R50 per day. Your poster in front of people planning their next event.", "/advertise"],
   ["help.html", "Help centre | TicketRoom", "Answers about tickets, transfers, refunds and events, and how to reach the TicketRoom team.", "/help"],
   ["contact.html", "Contact us | TicketRoom", "Email hello@ticketroom.co.za or ask us to call you back. We reply within 24 to 48 hours.", "/contact"],
   ["unsubscribe.html", "Unsubscribe | TicketRoom", "", ""],

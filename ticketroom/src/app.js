@@ -94,7 +94,7 @@ function createApp() {
 
   // Portal entry points (each is a small single-page app).
   const page = (file) => (_req, res) => res.sendFile(path.join(PUBLIC, file));
-  app.get(["/", "/events/:slug", "/checkout/:slug", "/orders/:ref", "/browse", "/signin", "/legal/:doc", "/help", "/contact", "/unsubscribe", "/sell", "/privacy", "/cookies", "/terms"], page("index.html"));
+  app.get(["/", "/events/:slug", "/checkout/:slug", "/orders/:ref", "/browse", "/signin", "/legal/:doc", "/help", "/contact", "/unsubscribe", "/sell", "/advertise", "/privacy", "/cookies", "/terms"], page("index.html"));
   app.get(["/account", "/account/*"], page("account.html"));
   // ticketroom.co.za/organisers is the organiser dashboard; /organiser is kept as an alias.
   app.get(["/organisers", "/organisers/*"], page("organiser.html"));
