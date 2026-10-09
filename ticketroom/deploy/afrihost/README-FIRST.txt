@@ -1,12 +1,13 @@
 TICKETROOM — Powered by TitoPay — Afrihost package
 ====================================================
 
-DO NOT extract this zip inside public_html.
+Extract ticketroom.zip INSIDE public_html. That's all for step 1.
 
-1. In cPanel File Manager, DELETE public_html/ticketroom and public_html/ticketroom.zip
-   (they expose source code publicly).
-2. Upload ticketroom.zip to your HOME folder (the one that contains public_html) and Extract there.
-   - public_html/       -> a "Launching soon" page + protective .htaccess (works immediately)
-   - ticketroom-app/    -> the TicketRoom application (private, outside the website folder)
-3. Open AFRIHOST-SETUP.html (in this package) and follow steps 2-9 to start the app
-   with cPanel "Setup Node.js App" + PostgreSQL.
+  public_html/
+    index.html, holding/   "Launching soon" page (works immediately, any plan)
+    .htaccess              hides folder listings and blocks private files
+    ticketroom-app/        the TicketRoom application (locked: not viewable on the web)
+
+Then delete ticketroom.zip from public_html and visit http://ticketroom.co.za.
+
+To start the full app, follow AFRIHOST-SETUP.html (also inside ticketroom-app/).

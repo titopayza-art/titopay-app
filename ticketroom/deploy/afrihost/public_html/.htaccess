@@ -2,6 +2,11 @@
 # Works on Afrihost (LiteSpeed/Apache). When you create the Node.js app at the
 # domain root, cPanel adds its own Passenger lines to this file: keep them.
 
+# The application folder holds code and configuration: never serve it.
+<IfModule mod_alias.c>
+  RedirectMatch 404 ^/ticketroom-app(/|$)
+</IfModule>
+
 # Never list folder contents ("Index of /").
 Options -Indexes
 DirectoryIndex index.html
