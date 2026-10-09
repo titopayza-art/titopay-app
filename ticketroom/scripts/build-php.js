@@ -28,7 +28,16 @@ copy(path.join(ROOT, "php", "public"), OUT_DIR);
 copy(path.join(ROOT, "public", "assets"), path.join(OUT_DIR, "assets"));
 for (const f of ["sw.js", "manifest.webmanifest"]) fs.copyFileSync(path.join(ROOT, "public", f), path.join(OUT_DIR, f));
 const APP = path.join(OUT_DIR, "tr-app");
-for (const item of ["bootstrap.php", "setup.php", "cron.php", "schema.sql", "kb-defaults.json", "lib", "routes"]) copy(path.join(ROOT, "php", "app", item), path.join(APP, item));
+for (const item of ["bootstrap.php", "setup.php", "cron.php", "schema.sql", "lib", "routes"]) copy(path.join(ROOT, "php", "app", item), path.join(APP, item));
+// Assistant answers come from the shared knowledge base; features this edition
+// does not have yet are answered as "coming soon".
+const COMING_SOON = {
+  "How do cashless wristbands work?": "Cashless wristbands are coming soon. When they arrive you'll be able to link a wristband to your account, top it up and pay vendors at the event with a tap.",
+  "I lost my wristband": "Cashless wristbands aren't available yet. If you've lost something at an event, contact the organiser, or ask us to call you back and we'll help where we can.",
+  "How do organisers get paid?": "Payouts start when paid ticket sales open. Organisers will be paid by EFT a few days after their event, less the 5% commission and any refunds. Free events don't involve any money.",
+};
+const kb = require(path.join(ROOT, "src", "modules", "site", "kb-defaults.js")).map((a) => (COMING_SOON[a.q] ? { ...a, a: COMING_SOON[a.q], cb: a.q === "I lost my wristband" } : a));
+fs.writeFileSync(path.join(APP, "kb-defaults.json"), JSON.stringify(kb, null, 1));
 fs.copyFileSync(path.join(ROOT, "php", "app", "app-htaccess"), path.join(APP, ".htaccess"));
 fs.mkdirSync(path.join(APP, "pages"), { recursive: true });
 for (const f of fs.readdirSync(path.join(ROOT, "public")).filter((x) => x.endsWith(".html"))) fs.copyFileSync(path.join(ROOT, "public", f), path.join(APP, "pages", f));

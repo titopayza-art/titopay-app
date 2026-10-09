@@ -37,7 +37,7 @@ By accessing or using the Platform you agree to these Terms of Use, our Privacy 
 - **Event**: any event, performance, activity, venue entry or experience listed on the Platform.
 - **Ticket**: a revocable licence to attend an Event, issued electronically with a unique QR code.
 - **Account**: your registered TicketRoom profile.`],
-        ["3. What TicketRoom does — and does not do", `TicketRoom provides technology that lets Organisers list Events, sell or distribute tickets, scan tickets at entry, run cashless payments and communicate with Attendees.
+        ["3. What TicketRoom does, and what it does not do", `TicketRoom provides technology that lets Organisers list Events, sell or distribute tickets, scan tickets at entry, run cashless payments and communicate with Attendees.
 
 **TicketRoom does not organise, host, produce, supervise or control any Event**, and is not responsible for an Event's content, quality, safety, timing, line-up, venue, health and safety compliance, security, licensing, or for the conduct of Organisers, performers, venue staff or other Attendees. The Organiser is solely responsible for its Event and for complying with all laws that apply to it. TicketRoom acts as the Organiser's agent for the purpose of distributing tickets and collecting payments on its behalf.`],
         ["4. Eligibility and accounts", `You must be at least 18 years old to open an Account. A person under 18 may only use the Platform under the supervision of a parent or legal guardian who accepts these terms on their behalf.
@@ -65,7 +65,7 @@ Organisers keep ownership of their content but grant TicketRoom a non-exclusive,
 - our total liability to you for any claim relating to the Platform is limited to the booking fees you paid to TicketRoom in the 12 months before the claim arose.
 
 Nothing in these terms limits liability that cannot be limited by law, including for gross negligence, intentional misconduct, or your rights under the Consumer Protection Act.`],
-        ["11. Indemnity", `You indemnify and hold harmless TicketRoom, its directors, employees, agents and technology and payment partners against all claims, losses, damages, penalties and costs (including reasonable legal fees) arising from your breach of these terms, your misuse of the Platform, your content, or — for Organisers — your Event.`],
+        ["11. Indemnity", `You indemnify and hold harmless TicketRoom, its directors, employees, agents and technology and payment partners against all claims, losses, damages, penalties and costs (including reasonable legal fees) arising from your breach of these terms, your misuse of the Platform, your content or, if you are an Organiser, your Event.`],
         ["12. Notices and electronic communication", `You agree to receive communications electronically. Notices to us must be sent to ${email}. Our physical address for legal notices is ${addr}. A notice sent by email is received when it enters the recipient's mailbox.`],
         ["13. Changes to these terms", `We may update these terms. The version and date at the top show when they last changed. For material changes we will give notice on the Platform or by email. Continuing to use the Platform after the effective date means you accept the update.`],
         ["14. General", `These terms are governed by the laws of the Republic of South Africa. You consent to the jurisdiction of the Magistrates' Court having jurisdiction, without prejudice to our right to approach the High Court. If any clause is invalid, the rest remain in force. Our failure to enforce a right is not a waiver. These terms, together with the documents they refer to, are the entire agreement on their subject.`],
@@ -98,7 +98,7 @@ Nothing in these terms limits liability that cannot be limited by law, including
 - The total you will pay is shown before you confirm your order.
 - We may correct obvious pricing errors; if a price is wrong we will offer you the choice to proceed at the correct price or cancel for a full refund.`],
         ["4. Orders and payment", `- Tickets are reserved for a limited time while you pay. If payment is not completed in time the reservation lapses.
-- An order is confirmed only when our payment provider confirms payment — not when you return to our website. We then issue your tickets and email you.
+- An order is confirmed only when our payment provider confirms payment, not when you return to our website. We then issue your tickets and email you.
 - We may cancel orders suspected of fraud, automated purchasing, or breach of purchase limits, and refund the amount received.
 - If payment is received after your reservation lapsed and the tickets are sold out, we refund you in full.
 - Do not pay twice. If something looks wrong, request a callback and we will check with the payment provider.
@@ -167,13 +167,13 @@ For Attendee information they receive, Organisers are separate responsible parti
 - **Technical:** IP address, browser type, session identifiers and security logs needed to protect the Platform.
 - **Marketing preferences:** which organisers and channels you opted in to, and when you changed them.`],
         ["3. How we collect it", `Directly from you; from Organisers (for example when they add you as staff); from people who transfer a ticket to you; from payment, SMS and email service providers; and automatically when you use the Platform (see our Cookie Policy).`],
-        ["4. Why we use it (purpose and lawful basis)", `- To create and manage your Account, sell and deliver tickets, process transfers and refunds — **to perform our contract with you** (POPIA s11(1)(b)).
-- To admit you to Events, prevent duplicate entry, fraud and abuse, and keep the Platform secure — **our legitimate interests** and those of Organisers (s11(1)(f)).
-- To keep financial and tax records, respond to lawful requests, and comply with law — **legal obligations** (s11(1)(c)).
-- To send transactional messages about your orders and Events — **contract**.
-- To remind you about Events you hold tickets for, and to send one reminder if you leave a booking unfinished (you can opt out at any time) — **legitimate interest**.
-- To send marketing from TicketRoom or an Organiser — **only with your consent** (s69), which you can withdraw at any time.
-- To answer support requests and improve our help content — **legitimate interests**.`],
+        ["4. Why we use it (purpose and lawful basis)", `- To create and manage your Account, sell and deliver tickets, process transfers and refunds: **to perform our contract with you** (POPIA s11(1)(b)).
+- To admit you to Events, prevent duplicate entry, fraud and abuse, and keep the Platform secure: **our legitimate interests** and those of Organisers (s11(1)(f)).
+- To keep financial and tax records, respond to lawful requests, and comply with law: **legal obligations** (s11(1)(c)).
+- To send transactional messages about your orders and Events: **contract**.
+- To remind you about Events you hold tickets for, and to send one reminder if you leave a booking unfinished (you can opt out at any time): **legitimate interest**.
+- To send marketing from TicketRoom or an Organiser: **only with your consent** (s69), which you can withdraw at any time.
+- To answer support requests and improve our help content: **legitimate interests**.`],
         ["5. Who we share it with", `- **Organisers** of Events you book or attend: your name, email, ticket and admission details, and your phone number if you provided it, so they can run the Event and contact you about it. Organisers may send you marketing only if you opted in for them.
 - **Service providers (operators)** who process information for us under written agreements: hosting, payment processing, email and SMS delivery, and, where our online assistant uses artificial intelligence, an AI service provider that processes the text of your question (do not include personal details in assistant questions).
 - **TitoPay**, our technology partner, where you choose TitoPay wallet payments.
@@ -207,18 +207,18 @@ Contact ${email} to exercise any right. We may need to verify your identity firs
       title: "Cookie Policy",
       summary: "TicketRoom uses only the cookies and on-device storage needed to run the service securely. We do not use advertising or third-party tracking cookies.",
       important: [
-        "Essential cookies only — no advertising, social-media or third-party analytics cookies.",
+        "We only use essential cookies. There are no advertising, social media or third-party analytics cookies.",
         "Blocking essential cookies will stop sign-in and checkout from working.",
       ],
       sections: [
         ["1. What cookies are", `Cookies are small text files a website stores on your device. Similar technologies include your browser's local storage. We refer to all of them as "cookies".`],
         ["2. Cookies we use", `
-- **tr_sid** — essential, first-party. Keeps you signed in securely (HttpOnly, Secure, SameSite). Expires after 14 days or when you sign out.
-- **Security token (in memory)** — essential. Protects forms against cross-site request forgery. Lasts for your session.
-- **tr_wallet_v1** (local storage) — essential. Saves your tickets on your own device so your QR code opens with poor signal at the venue. Cleared when you sign out of the browser or clear site data.
-- **tr_terminal_key** (local storage, vendor tills only) — essential. Identifies a registered point-of-sale device.
-- **tr_org, tr_scan_event, banner and chat preferences** (local/session storage) — functional. Remember your selected organisation, scanning event, dismissed banners and assistant conversation for convenience.
-- **Service worker cache** — functional. Stores the app shell so the ticket wallet loads offline. Contains no personal information.`],
+- **tr_sid**: essential, first-party. Keeps you signed in securely (HttpOnly, Secure, SameSite). Expires after 14 days or when you sign out.
+- **Security token (in memory)**: essential. Protects forms against cross-site request forgery. Lasts for your session.
+- **tr_wallet_v1** (local storage): essential. Saves your tickets on your own device so your QR code opens with poor signal at the venue. Cleared when you sign out of the browser or clear site data.
+- **tr_terminal_key** (local storage, vendor tills only): essential. Identifies a registered point-of-sale device.
+- **tr_org, tr_scan_event, banner and chat preferences** (local/session storage): functional. Remember your selected organisation, scanning event, dismissed banners and assistant conversation for convenience.
+- **Service worker cache**: functional. Stores the app shell so the ticket wallet loads offline. Contains no personal information.`],
         ["3. Third parties", `We do not allow third parties to set cookies on ticketroom.co.za. When you pay, you are sent to your payment provider's secure page, which uses its own cookies under its own policy.`],
         ["4. Managing cookies", `You can block or delete cookies in your browser settings. Because we only use essential and functional cookies, blocking them will prevent sign-in, checkout and the offline ticket wallet from working. If we ever introduce non-essential cookies (for example analytics), we will ask for your consent first and update this policy.`],
         ["5. Contact", `Questions about cookies: ${email}.`],
@@ -231,7 +231,7 @@ Contact ${email} to exercise any right. We may need to verify your identity firs
       important: [],
       sections: [
         ["Requests for information", `Our PAIA manual, describing the records we hold and how to request access to them, is available on request from ${email}. Requests are handled by ${io}. You can access most of your own information directly in Settings & privacy → Download my data.`],
-        ["Information Regulator", `Information Regulator (South Africa) — inforegulator.org.za — enquiries@inforegulator.org.za`],
+        ["Information Regulator", `Information Regulator (South Africa), inforegulator.org.za, enquiries@inforegulator.org.za`],
       ],
     },
   };

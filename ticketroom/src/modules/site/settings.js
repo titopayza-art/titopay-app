@@ -21,7 +21,7 @@ const SA_HOLIDAYS = [
 ].map(([date, name]) => ({ date, name }));
 
 const DEFAULTS = {
-  maintenance: { enabled: false, message: "TicketRoom is being updated. We'll be back shortly — thank you for your patience." },
+  maintenance: { enabled: false, message: "We're making a few improvements to TicketRoom and will be back shortly. Thanks for bearing with us." },
   banner: { enabled: true, text: "We're currently open for listing FREE events. Paid tickets are coming soon.", linkText: "List your free event", linkUrl: "/sell" },
   hours: {
     week: { mon: nineToFive, tue: nineToFive, wed: nineToFive, thu: nineToFive, fri: nineToFive, sat: null, sun: null },
@@ -29,9 +29,9 @@ const DEFAULTS = {
     note: "Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.",
   },
   support: { email: "hello@ticketroom.co.za", phone: "", responseTime: "24–48 hours" },
-  legal: { entityName: "TicketRoom", registrationNumber: "", vatNumber: "", physicalAddress: "", postalAddress: "", informationOfficer: "", website: "ticketroom.co.za" },
+  legal: { entityName: "TicketRoom (Pty) Ltd", registrationNumber: "K2026811077", vatNumber: "", physicalAddress: "", postalAddress: "", informationOfficer: "", website: "ticketroom.co.za" },
   emails: { reminderDayBefore: true, reminderSoon: true, abandonedCheckout: true, abandonedDelayHours: 1 },
-  chatbot: { enabled: true, aiEnabled: true, greeting: "Hi! I'm the TicketRoom assistant. Ask me about tickets, events, refunds, wristbands or selling tickets." },
+  chatbot: { enabled: true, aiEnabled: true, greeting: "Hi, I'm the TicketRoom assistant. Ask me about tickets, events, refunds or listing your own event." },
 };
 
 const time = r.str({ pattern: /^([01]\d|2[0-3]):[0-5]\d$/, message: "Use HH:MM (24-hour)." });

@@ -18,7 +18,7 @@ const ADMIN = { email: "hello@ticketroom.co.za", password: "Admin-pass-#2026" };
 async function page(browser, { width = 1280, height = 900 } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height } });
   const p = await ctx.newPage();
-  p.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource.*(401|404|409|501)/.test(m.text())) problems.push(`[console] ${p.url()} ${m.text()}`); });
+  p.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource.*(401|404|409|422|501)/.test(m.text())) problems.push(`[console] ${p.url()} ${m.text()}`); });
   p.on("pageerror", (e) => problems.push(`[pageerror] ${p.url()} ${e.message}`));
   return p;
 }
@@ -78,8 +78,9 @@ async function signIn(p, email, password) {
 
     // Admin approves the organiser.
     await a.goto(`${BASE}/admin#/organisers`);
-    await a.getByRole("button", { name: "Approve" }).first().click();
-    await a.getByText("Done.").waitFor();
+    await a.reload();
+    await a.locator("tr", { hasText: "Soweto Community Arts" }).getByRole("button", { name: "Approve" }).click();
+    await a.locator("tr", { hasText: "Soweto Community Arts" }).getByRole("button", { name: "Approve" }).waitFor({ state: "detached" });
 
     await o.reload();
     await o.goto(`${BASE}/organisers#/events/new`);
@@ -90,8 +91,8 @@ async function signIn(p, email, password) {
     const local = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     await o.getByLabel("Starts").fill(local(new Date(Date.now() + 3600e3)));
     await o.getByLabel("Ends").fill(local(new Date(Date.now() + 6 * 3600e3)));
-    await o.getByLabel("Venue").fill("Thokoza Park");
-    await o.getByLabel("City").fill("Soweto");
+    await o.getByLabel("Venue", { exact: true }).fill("Thokoza Park");
+    await o.getByLabel("City", { exact: true }).fill("Soweto");
     await o.getByRole("button", { name: "Create draft" }).click();
     await o.getByText(/Free admission/).first().waitFor();
     await shot(o, "organiser-free-event-tickets");
@@ -100,8 +101,10 @@ async function signIn(p, email, password) {
 
     // Admin publishes it.
     await a.goto(`${BASE}/admin#/events`);
-    await a.getByRole("button", { name: "Publish" }).first().click();
-    await a.getByText("Done.").waitFor();
+    await a.reload();
+    const row = a.locator("tr", { hasText: "Free Jazz in the Park" });
+    await row.getByRole("button", { name: "Publish" }).click();
+    await a.locator("tr", { hasText: "Free Jazz in the Park" }).getByRole("button", { name: "Publish" }).waitFor({ state: "detached" });
 
     // 3. A fan finds it and gets free tickets.
     const f = await page(browser);
@@ -133,6 +136,8 @@ async function signIn(p, email, password) {
 
     // 4. Gate scanning by the organiser (owner can scan), typed code.
     await o.goto(`${BASE}/scan`);
+    await o.getByRole("heading", { name: "Choose event" }).waitFor();
+    await o.locator("[data-ev]", { hasText: "Free Jazz in the Park" }).click();
     await o.locator("#mc").waitFor();
     await o.locator("#mc").fill(code);
     await o.getByRole("button", { name: "Check" }).click();

@@ -166,7 +166,7 @@ router.post("/:orgId/events", wrap(async (req, res) => {
     [organiser.id, `${slugify(b.title)}-${randomCode(4).toLowerCase()}`, req.user.id, ...cols.map((k) => b[k])]);
   // A free event starts with one free registration type covering its capacity.
   if (b.isFree) {
-    await db.query("INSERT INTO ticket_types (event_id, name, description, price_cents, quantity_total, per_order_limit) VALUES ($1,'Free admission','Free registration — no payment needed',0,$2,4)", [rows[0].id, b.capacity]);
+    await db.query("INSERT INTO ticket_types (event_id, name, description, price_cents, quantity_total, per_order_limit) VALUES ($1,'Free admission','Free entry. No payment needed.',0,$2,4)", [rows[0].id, b.capacity]);
   }
   await audit.record(null, { actor: req.user, action: "event.created", entityType: "event", entityId: rows[0].id, organiserId: organiser.id, details: { free: !!b.isFree } });
   res.status(201).json({ event: rows[0] });

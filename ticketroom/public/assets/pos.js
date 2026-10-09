@@ -5,7 +5,7 @@
 //    looks up that same request key before anything else can be charged, so a
 //    retry can never charge twice.
 //  - No offline spending. When the server can't be reached, charging is off.
-import { html, render, $, $$, get, post, header, requireUser, toast, money, moneyExact, fmtTime, fmtDateTime, badge, empty, spinner, idem, dialog, onSubmit, api } from "/assets/core.js";
+import { html, render, $, $$, get, post, header, requireUser, toast, money, moneyExact, fmtTime, fmtDateTime, badge, empty, spinner, idem, dialog, onSubmit, api, features } from "/assets/core.js";
 import { Camera, readNfc, nfcSupported, beep } from "/assets/reader.js";
 
 const main = $("#main");
@@ -178,6 +178,11 @@ async function summary() {
 
 (async () => {
   await header($("#header"), { portal: "POS", links: [["/pos", "POS"]] });
+  if (!(await features()).pos) {
+    return render(main, html`<div class="card pad-lg stack"><h1>Vendor point of sale is coming soon</h1>
+      <p>Cashless payments and the vendor till arrive together with paid ticket sales. Until then, vendors at your events can take payment the way they usually do.</p>
+      <div class="row"><a class="btn btn-primary" href="/organisers">Back to the organiser portal</a><a class="btn btn-ghost" href="/contact?topic=organiser">Ask us about it</a></div></div>`);
+  }
   const u = await requireUser("Vendor staff sign in.");
   if (!u) return render(main, empty("Sign in to use the POS."));
   await header($("#header"), { portal: "POS", links: [["/pos", "POS"]] });

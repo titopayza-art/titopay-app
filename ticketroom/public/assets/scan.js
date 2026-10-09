@@ -52,7 +52,7 @@ function verdict(kind, big, sub = "") { const v = $("#verdict"); v.className = `
 function drawDesk() {
   render($("#desk"), mode === "desk" ? html`<div class="card mt"><div class="row between"><strong>Registration desk</strong>${deskTicket ? html`<button class="btn btn-link" data-reset>Start over</button>` : ""}</div>
     <p class="small muted mb-0">1. Scan the attendee's ticket. 2. Scan or tap the tag. The tag is linked to that attendee and ticket.</p>
-    ${deskTicket ? html`<p class="small mt mb-0">Ticket scanned ✓</p>` : ""}</div>` : "");
+    ${deskTicket ? html`<p class="small mt mb-0">Ticket scanned</p>` : ""}</div>` : "");
   $("[data-reset]")?.addEventListener("click", () => { deskTicket = null; drawDesk(); idle(); });
 }
 

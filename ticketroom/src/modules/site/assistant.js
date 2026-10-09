@@ -69,7 +69,7 @@ const NEEDS_PERSON = /\b(paid but|charged|deducted|refund|fraud|scam|stolen|hack
 
 function hoursLine(h) {
   if (h.openNow) return "Our team is in the office now, so we may get to you sooner.";
-  return `Our office is closed right now${h.holiday ? ` for ${h.holiday}` : ""} — we work Monday to Friday, 9am to 5pm, and will pick it up on the next working day.`;
+  return `Our office is closed right now${h.holiday ? ` for ${h.holiday}` : ""}. We work Monday to Friday, 9am to 5pm, and will pick it up on the next working day.`;
 }
 
 async function reply({ question, history = [], conversation }) {

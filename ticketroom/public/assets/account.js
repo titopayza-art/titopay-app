@@ -1,14 +1,14 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router, gate } from "/assets/core.js";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 const nav = () => render($("#sidenav"), html`
-  <div class="sect">Tickets</div><a href="#/tickets">🎟️ My tickets</a><a href="#/orders">🧾 Orders</a><a href="#/transfers">🔁 Transfers</a>
-  <div class="sect" data-feature="cashless">Cashless</div><a href="#/wallet" data-feature="cashless">💳 Wallets</a><a href="#/tags" data-feature="cashless">📶 Tags & wristbands</a>
-  <div class="sect">Account</div><a href="#/refunds">↩️ Refunds & support</a><a href="#/payment-methods" data-feature="payments">🔗 Payment methods</a><a href="#/settings">⚙️ Settings & privacy</a>`);
+  <div class="sect">Tickets</div><a href="#/tickets">My tickets</a><a href="#/orders">Orders</a><a href="#/transfers">Transfers</a>
+  <div class="sect" data-feature="cashless">Cashless</div><a href="#/wallet" data-feature="cashless">Wallets</a><a href="#/tags" data-feature="cashless">Tags & wristbands</a>
+  <div class="sect">Account</div><a href="#/refunds">Refunds & support</a><a href="#/payment-methods" data-feature="payments">Payment methods</a><a href="#/settings">Settings & privacy</a>`);
 
 function head(title, sub = "", actions = "") {
   return html`<div class="page-head"><div><h1>${title}</h1>${sub ? html`<p class="muted">${sub}</p>` : ""}</div><div class="row">${actions}</div></div>`;
@@ -42,7 +42,7 @@ function ticketCard(t, offline = false) {
 }
 
 async function tickets() {
-  render(main, html`${head("My tickets", "Your QR code is your entry. Keep it private — screenshots can be used by whoever scans first.")}${spinner()}`);
+  render(main, html`${head("My tickets", "Your QR code gets you in. Keep it to yourself, because whoever scans it first gets in.")}${spinner()}`);
   let list, offline = false;
   try { list = (await get("/api/me/tickets")).tickets; cacheWallet(list); }
   catch (err) {
@@ -53,8 +53,8 @@ async function tickets() {
   const now = new Date();
   const upcoming = list.filter((t) => new Date(t.ends_at) > now && !["refunded", "revoked"].includes(t.status));
   const past = list.filter((t) => !upcoming.includes(t));
-  render(main, html`${head("My tickets", "Your QR code is your entry. Keep it private — the first scan wins.", html`<a class="btn btn-primary" href="/">Find events</a>`)}
-    ${offline ? html`<p class="callout warn">You're offline. Showing tickets saved on this device — they still scan at the gate.</p>` : ""}
+  render(main, html`${head("My tickets", "Your QR code gets you in. Keep it to yourself, because the first scan wins.", html`<a class="btn btn-primary" href="/">Find events</a>`)}
+    ${offline ? html`<p class="callout warn">You're offline. These are the tickets saved on this phone, and they still scan at the gate.</p>` : ""}
     ${upcoming.length ? html`<div class="stack-lg">${upcoming.map((t) => ticketCard(t, offline))}</div>` : empty("No upcoming tickets yet.", html`<a class="btn btn-primary" href="/">Browse events</a>`)}
     ${past.length ? html`<h2 class="mt-lg">Past & inactive</h2><div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Ticket</th><th>Status</th></tr></thead><tbody>
       ${past.map((t) => html`<tr><td>${t.title}</td><td>${fmtDate(t.starts_at)}</td><td class="mono">${t.code}</td><td>${badge(t.status)}</td></tr>`)}</tbody></table></div>` : ""}`);
@@ -91,7 +91,7 @@ async function orders() {
 async function transfers() {
   const { outgoing, incoming, emailVerified } = await get("/api/me/transfers");
   render(main, html`${head("Transfers", "Send tickets to friends. Transfers are free while the organiser allows them.")}
-    <section class="card"><h2>Incoming</h2>${!emailVerified ? html`<p class="callout">Confirm your email address to see transfers sent to you here — or open the link in the transfer email. <button class="btn-link" data-resend>Resend confirmation</button></p>` : ""}
+    <section class="card"><h2>Incoming</h2>${!emailVerified ? html`<p class="callout">Confirm your email address to see tickets people have sent you, or open the link in the transfer email. <button class="btn-link" data-resend>Resend confirmation</button></p>` : ""}
       ${incoming.length ? html`<div class="stack">${incoming.map((t) => html`<div class="row between card flat"><div><strong>${t.title}</strong><div class="small muted">From ${t.from_name} · expires ${fmtDate(t.expires_at)}</div></div><button class="btn btn-primary btn-sm" data-accept="${t.id}">Accept</button></div>`)}</div>` : html`<p class="muted mb-0">No transfers waiting for you.</p>`}</section>
     <section class="card mt"><h2>Sent</h2>${outgoing.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>To</th><th>Sent</th><th>Status</th><th></th></tr></thead><tbody>
       ${outgoing.map((t) => html`<tr><td>${t.title}</td><td>${t.to_email}</td><td>${fmtDate(t.created_at)}</td><td>${badge(t.status)}</td><td>${t.status === "pending" ? html`<button class="btn btn-ghost btn-sm" data-cancel="${t.id}">Cancel</button>` : ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted mb-0">You haven't sent any tickets.</p>`}</section>`);
@@ -116,7 +116,7 @@ async function tags() {
     <div class="grid-2">
       <section class="card"><h2>Link a tag</h2>
         ${events.length ? html`<form class="stack" id="link">
-          <div class="field"><label for="ev">Event</label><select id="ev" name="eventId">${events.map((t) => html`<option value="${t.event_id}">${t.title} — ${fmtDate(t.starts_at)}</option>`)}</select></div>
+          <div class="field"><label for="ev">Event</label><select id="ev" name="eventId">${events.map((t) => html`<option value="${t.event_id}">${t.title}, ${fmtDate(t.starts_at)}</option>`)}</select></div>
           <div class="field"><label for="dc">Tag code</label><input id="dc" name="displayCode" required placeholder="ABCD-EFGH" autocomplete="off" class="mono"><span class="hint">Printed on the tag or its card.</span></div>
           <div class="field"><label for="ac">Activation code</label><input id="ac" name="activationCode" required placeholder="6 characters" maxlength="6" autocomplete="off" class="mono"><span class="hint">Under the scratch panel on the card. Keep it private.</span></div>
           <button class="btn btn-dark">Link tag</button></form>` : html`<p class="muted">You need a ticket for an upcoming event before you can link a tag. You can also link at the event's registration desk.</p>`}
@@ -193,7 +193,7 @@ async function settings() {
         <div class="field"><label>Email</label><input value="${u.email}" disabled></div>
         <div class="field"><label for="ph">Mobile</label><input id="ph" name="phone" type="tel" value="${u.phone || ""}" placeholder="082 123 4567"></div>
         <button class="btn btn-dark">Save profile</button></form></section>
-      <section class="card"><h2>Spending PIN</h2><p class="muted small">Needed for cashless purchases of R200 or more, so a lost wristband can't be used for big spends. ${u.has_pin ? "A PIN is set." : "No PIN set yet."}</p>
+      <section class="card" data-feature="cashless"><h2>Spending PIN</h2><p class="muted small">Needed for cashless purchases of R200 or more, so a lost wristband can't be used for big spends. ${u.has_pin ? "A PIN is set." : "No PIN set yet."}</p>
         <form class="stack" id="pin"><div class="field"><label for="pn">New PIN (4–6 digits)</label><input id="pn" name="pin" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6" required autocomplete="off"></div>
         <div class="field"><label for="pp">Your password</label><input id="pp" name="password" type="password" required autocomplete="current-password"></div><button class="btn btn-dark">${u.has_pin ? "Change PIN" : "Set PIN"}</button></form></section>
       <section class="card"><h2>Password</h2><form class="stack" id="pw">
@@ -240,7 +240,7 @@ async function paymentMethods() {
           <div class="row"><button class="btn btn-danger" data-unlink="${titopay.id}">Unlink wallet</button></div>`
         : html`<p class="muted">We'll send a one-time code to the mobile number on your TitoPay wallet. TicketRoom never sees your TitoPay PIN or password.</p>
           <form class="stack" id="lk"><div class="field"><label for="lk-ph">TitoPay mobile number</label><input id="lk-ph" name="phone" type="tel" required placeholder="082 123 4567" autocomplete="tel"></div><button class="btn btn-dark">Send code</button></form>`}
-      ${pm.titopayEnvironment && pm.titopayEnvironment !== "live" ? html`<p class="tiny muted mb-0">Test environment (${pm.titopayEnvironment}) — no real money moves.</p>` : ""}
+      ${pm.titopayEnvironment && pm.titopayEnvironment !== "live" ? html`<p class="tiny muted mb-0">Test environment (${pm.titopayEnvironment}). No real money moves.</p>` : ""}
     </section>`);
   $("[data-unlink]")?.addEventListener("click", async (e) => {
     if (!(await confirmDialog("Unlink TitoPay wallet?", "You can link it again at any time.", { confirm: "Unlink", danger: true }))) return;
@@ -273,8 +273,8 @@ function reset({ token }) {
   await header($("#header"), { portal: "My account" });
   nav();
   router([
-    ["/", tickets], ["/tickets", tickets], ["/orders", orders], ["/transfers", transfers], ["/claim/:token", claim], ["/tags", tags],
-    ["/wallet", wallets], ["/wallet/:eventId", wallet], ["/refunds", refunds], ["/payment-methods", paymentMethods], ["/settings", settings], ["/verify/:token", verify], ["/reset/:token", reset],
+    ["/", tickets], ["/tickets", tickets], ["/orders", orders], ["/transfers", transfers], ["/claim/:token", claim], ["/tags", gate("cashless", tags)],
+    ["/wallet", gate("cashless", wallets)], ["/wallet/:eventId", gate("cashless", wallet)], ["/refunds", refunds], ["/payment-methods", gate("payments", paymentMethods)], ["/settings", settings], ["/verify/:token", verify], ["/reset/:token", reset],
   ], () => { location.hash = "#/tickets"; });
 })();
 void poster;

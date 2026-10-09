@@ -17,7 +17,7 @@ function setting_defaults(): array
 {
     $nine = ['open' => '09:00', 'close' => '17:00'];
     return [
-        'maintenance' => ['enabled' => false, 'message' => "TicketRoom is being updated. We'll be back shortly — thank you for your patience."],
+        'maintenance' => ['enabled' => false, 'message' => "We're making a few improvements to TicketRoom and will be back shortly. Thanks for bearing with us."],
         'banner' => ['enabled' => true, 'text' => "We're currently open for listing FREE events. Paid tickets are coming soon.", 'linkText' => 'List your free event', 'linkUrl' => '/sell'],
         'hours' => [
             'week' => ['mon' => $nine, 'tue' => $nine, 'wed' => $nine, 'thu' => $nine, 'fri' => $nine, 'sat' => null, 'sun' => null],
@@ -25,9 +25,9 @@ function setting_defaults(): array
             'note' => 'Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.',
         ],
         'support' => ['email' => 'hello@ticketroom.co.za', 'phone' => '', 'responseTime' => '24–48 hours'],
-        'legal' => ['entityName' => 'TicketRoom', 'registrationNumber' => '', 'vatNumber' => '', 'physicalAddress' => '', 'postalAddress' => '', 'informationOfficer' => '', 'website' => 'ticketroom.co.za'],
+        'legal' => ['entityName' => 'TicketRoom (Pty) Ltd', 'registrationNumber' => 'K2026811077', 'vatNumber' => '', 'physicalAddress' => '', 'postalAddress' => '', 'informationOfficer' => '', 'website' => 'ticketroom.co.za'],
         'emails' => ['reminderDayBefore' => true, 'reminderSoon' => true, 'abandonedCheckout' => true, 'abandonedDelayHours' => 1],
-        'chatbot' => ['enabled' => true, 'aiEnabled' => true, 'greeting' => "Hi! I'm the TicketRoom assistant. Ask me about tickets, events, refunds, wristbands or selling tickets."],
+        'chatbot' => ['enabled' => true, 'aiEnabled' => true, 'greeting' => "Hi, I'm the TicketRoom assistant. Ask me about tickets, events, refunds or listing your own event."],
     ];
 }
 function settings_all(bool $fresh = false): array
@@ -116,7 +116,7 @@ function kb_tokens(string $s): array
 function kb_ensure_defaults(): void
 {
     if ((int) val('SELECT count(*) FROM kb_articles') > 0) return;
-    $list = json_decode((string) file_get_contents(TR_APP . '/kb-defaults.json'), true) ?: [];
+    $list = json_decode((string) @file_get_contents(TR_APP . '/kb-defaults.json'), true) ?: [];
     tx(function () use ($list) {
         foreach ($list as $i => $a) {
             insert('kb_articles', ['id' => uuid(), 'question' => $a['q'], 'answer' => $a['a'], 'keywords' => json_encode($a['k'] ?? [], JSON_UNESCAPED_UNICODE),
@@ -161,7 +161,7 @@ function kb_rank(array $list, string $question): array
 function assistant_hours_line(array $h): string
 {
     if ($h['openNow']) return 'Our team is in the office now, so we may get to you sooner.';
-    return 'Our office is closed right now' . ($h['holiday'] ? " for {$h['holiday']}" : '') . ' — we work Monday to Friday, 9am to 5pm, and will pick it up on the next working day.';
+    return 'Our office is closed right now' . ($h['holiday'] ? " for {$h['holiday']}" : '') . '. We work Monday to Friday, 9am to 5pm, and will pick it up on the next working day.';
 }
 function assistant_reply(string $question, array $history, string $conversation): array
 {

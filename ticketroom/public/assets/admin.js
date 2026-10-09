@@ -1,6 +1,6 @@
 // TicketRoom back office. The server enforces every permission; the UI only
 // hides what a role cannot do.
-import { html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me, gate } from "/assets/core.js";
 
 const main = $("#main");
 let R = new Set();
@@ -12,11 +12,11 @@ const reason = (title, msg, label = "Reason") => confirmDialog(title, msg, { con
 
 function nav(counts = {}) {
   const c = (n) => (n ? html`<span class="count">${n}</span>` : "");
-  render($("#sidenav"), html`<a href="#/">📊 Overview</a>
-    <div class="sect">Operations</div><a href="#/organisers">🏢 Organisers${c(counts.orgs)}</a><a href="#/events">🎫 Events${c(counts.events)}</a><a href="#/users">👤 Users</a><a href="#/lookup">🔎 Orders & tickets</a><a href="#/tags" data-feature="tags">📶 Tags</a><a href="#/terminals" data-feature="pos">🧾 Terminals</a><a href="#/support">💬 Support${c(counts.support)}</a>
-    <div class="sect" data-feature="finance">Finance</div><a href="#/refunds" data-feature="finance">↩️ Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance">💰 Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance">💳 Payments & webhooks</a><a href="#/reconciliation" data-feature="finance">⚖️ Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance">📒 Ledger</a>
-    <div class="sect">Website</div><a href="#/site">🌐 Site settings</a><a href="#/posters">🖼️ Advertising posters</a><a href="#/assistant">🤖 Assistant</a><a href="#/emails">📧 Email templates</a>
-    <div class="sect">Governance</div><a href="#/integrations">🔌 Integrations</a><a href="#/audit">🛡️ Audit log</a><a href="#/outbox">✉️ Messages</a>`);
+  render($("#sidenav"), html`<a href="#/">Overview</a>
+    <div class="sect">Operations</div><a href="#/organisers">Organisers${c(counts.orgs)}</a><a href="#/events">Events${c(counts.events)}</a><a href="#/users">Users</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
+    <div class="sect" data-feature="finance">Finance</div><a href="#/refunds" data-feature="finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance">Ledger</a>
+    <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
+    <div class="sect">Governance</div><a href="#/integrations">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>`);
 }
 
 async function overview() {
@@ -37,12 +37,12 @@ async function overview() {
       ${alert(d.ops.payouts_open, "payouts open", "#/payouts")}
       ${alert(d.ops.unfulfilled, "paid orders without tickets (refund raised)", "#/lookup", "bad")}
       ${alert(d.ops.webhook_problems, "webhook failures / rejections in 24h", "#/payments", "bad")}
-      ${alert(d.ops.stale_payments, "payments pending > 30 min — re-check with provider", "#/payments")}
+      ${alert(d.ops.stale_payments, "payments pending for more than 30 minutes. Check them with the provider", "#/payments")}
       ${alert(d.ops.recon_exceptions, "unresolved reconciliation exceptions", "#/reconciliation", "bad")}
       ${alert(d.ops.messages_failed, "messages failed to send", "#/outbox", "bad")}
       ${alert(d.ops.support_open, "open support cases", "#/support")}
       ${Object.values(d.ops).every((x) => !x) && !d.organisers.pending && !d.events.pending ? html`<p class="callout good mb-0">All clear.</p>` : ""}</div></section>
-    <section class="card mt"><h2>Ledger integrity</h2><p class="${d.ledger.balanced ? "callout good" : "callout bad"}">${d.ledger.balanced ? `Balanced: ${d.ledger.entries} entries sum to R0.00.` : `UNBALANCED — investigate journals ${d.ledger.unbalancedJournals.join(", ")}`}</p>
+    <section class="card mt"><h2>Ledger integrity</h2><p class="${d.ledger.balanced ? "callout good" : "callout bad"}">${d.ledger.balanced ? `Balanced: ${d.ledger.entries} entries sum to R0.00.` : `UNBALANCED. Investigate journals ${d.ledger.unbalancedJournals.join(", ")}`}</p>
       ${tbl(["Provider clearing", "#Ledger", "#Expected", "Check"], d.ledger.clearing.map((c) => html`<tr><td class="mono">${c.account}</td><td class="num">${moneyExact(c.ledgerCents)}</td><td class="num">${moneyExact(c.expectedCents)}</td><td>${badge(c.ok ? "matched" : "failed")}</td></tr>`))}</section>`);
 }
 
@@ -140,9 +140,9 @@ async function refunds() {
   const { refunds: list } = await get(`/api/admin/refunds${filter === "all" ? "" : `?status=${filter}`}`);
   const actionable = list.filter((r) => r.status === "requested" && !r.mine);
   render(main, html`${head("Refunds", "Every refund needs a second person: you cannot approve a refund you requested.", isF() && filter === "requested" && actionable.length ? html`<button class="btn btn-good" data-bulk>Approve all ${actionable.length} I can</button>` : "")}
-    ${!isF() ? html`<p class="callout">View only — refund approvals need the finance role.</p>` : ""}
+    ${!isF() ? html`<p class="callout">View only. Approving refunds needs the finance role.</p>` : ""}
     <div class="chips">${["requested", "manual_pending", "failed", "completed", "rejected", "all"].map((k) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${k}</button>`)}</div>
-    <div class="mt">${tbl(["Ref", "Event", "Type", "Reason", "By", "#Amount", "Status", ""], list.map((r) => html`<tr><td class="mono">${r.reference}${r.order_reference ? html`<div class="tiny muted">${r.order_reference}</div>` : ""}</td><td>${r.event_title}</td><td>${r.kind.replace("_", " ")}</td><td class="small">${r.reason}${r.failure_reason ? html`<div class="tiny">⚠ ${r.failure_reason}</div>` : ""}</td><td class="small">${r.requested_by_name || "system"}${r.decided_by_name ? html`<div class="tiny muted">decided: ${r.decided_by_name}</div>` : ""}</td>
+    <div class="mt">${tbl(["Ref", "Event", "Type", "Reason", "By", "#Amount", "Status", ""], list.map((r) => html`<tr><td class="mono">${r.reference}${r.order_reference ? html`<div class="tiny muted">${r.order_reference}</div>` : ""}</td><td>${r.event_title}</td><td>${r.kind.replace("_", " ")}</td><td class="small">${r.reason}${r.failure_reason ? html`<div class="tiny">Failed: ${r.failure_reason}</div>` : ""}</td><td class="small">${r.requested_by_name || "system"}${r.decided_by_name ? html`<div class="tiny muted">decided: ${r.decided_by_name}</div>` : ""}</td>
       <td class="num">${moneyExact(r.amount_cents + r.fee_refund_cents)}</td><td>${badge(r.status)}</td>
       <td>${isF() && r.status === "requested" && !r.mine ? html`<div class="row"><button class="btn btn-good btn-sm" data-ok="${r.id}">Approve</button><button class="btn btn-ghost btn-sm" data-no="${r.id}">Reject</button></div>` : ""}
         ${isF() && r.status === "failed" ? html`<button class="btn btn-ghost btn-sm" data-retry="${r.id}">Retry</button>` : ""}${isF() && r.status === "manual_pending" ? html`<button class="btn btn-dark btn-sm" data-manual="${r.id}">Mark paid manually</button>` : ""}${r.mine && r.status === "requested" ? html`<span class="tiny muted">yours — needs someone else</span>` : ""}</td></tr>`))}</div>`);
@@ -177,7 +177,7 @@ async function payouts() {
 
 async function payments() {
   const [{ payments: list }, { webhooks }] = await Promise.all([get("/api/admin/payments"), get("/api/admin/webhooks")]);
-  render(main, html`${head("Payments & webhooks", "A payment is confirmed only by a verified provider webhook or a direct status query — never by the buyer's browser.")}
+  render(main, html`${head("Payments & webhooks", "A payment is confirmed only by a verified provider webhook or a direct status check, never by the buyer's browser.")}
     <h2>Payments</h2>${tbl(["When", "Purpose", "User", "Provider ref", "#Amount", "Status", ""], list.map((p) => html`<tr><td class="small">${fmtDateTime(p.created_at)}</td><td>${p.purpose}</td><td class="small">${p.email}</td><td class="mono small">${p.provider_reference || "—"}</td><td class="num">${moneyExact(p.amount_cents)}${p.refunded_cents ? html`<div class="tiny">−${moneyExact(p.refunded_cents)}</div>` : ""}</td><td>${badge(p.status)}${p.failure_reason ? html`<div class="tiny muted">${p.failure_reason}</div>` : ""}</td>
       <td>${["pending", "cancelled", "failed"].includes(p.status) && p.provider_reference ? html`<button class="btn btn-ghost btn-sm" data-re="${p.id}">Re-check</button>` : ""}</td></tr>`))}
     <h2 class="mt-lg">Webhook deliveries</h2>${tbl(["Received", "Event id", "Signature", "Attempts", "Status", "Error"], webhooks.map((w) => html`<tr><td class="small">${fmtDateTime(w.received_at)}</td><td class="mono small">${w.provider_event_id}</td><td>${w.signature_valid ? "valid" : html`<span class="badge bad">invalid</span>`}</td><td>${w.attempts}</td><td>${badge(w.status)}</td><td class="small">${w.error || ""}</td></tr>`))}`);
@@ -187,10 +187,10 @@ async function payments() {
 async function reconciliation() {
   const { runs, ledger } = await get("/api/admin/reconciliation");
   const today = new Date(); const from = new Date(today.getTime() - 7 * 864e5);
-  render(main, html`${head("Reconciliation", "Compare TicketRoom's records with the provider's report. Every difference must be resolved with a note — nothing is auto-corrected.")}
+  render(main, html`${head("Reconciliation", "Compare TicketRoom's records with the provider's report. Every difference needs a note before it is resolved. Nothing is corrected automatically.")}
     ${isF() ? html`<section class="card"><h2>New run</h2><form class="stack" id="rf"><div class="grid-3"><div class="field"><label for="rp">Provider</label><select id="rp" name="provider"><option value="simulated">simulated</option></select></div>
       <div class="field"><label for="rfr">From</label><input id="rfr" name="from" type="date" value="${from.toISOString().slice(0, 10)}"></div><div class="field"><label for="rto">To (exclusive)</label><input id="rto" name="to" type="date" value="${new Date(today.getTime() + 864e5).toISOString().slice(0, 10)}"></div></div>
-      <div class="field"><label for="rc">Provider CSV <span class="muted">(optional — otherwise fetched from the provider)</span></label><textarea id="rc" name="csv" placeholder="reference,amount_cents,status,refunded_cents,fee_cents"></textarea></div><button class="btn btn-dark">Run reconciliation</button></form></section>` : ""}
+      <div class="field"><label for="rc">Provider CSV <span class="muted">(optional, otherwise fetched from the provider)</span></label><textarea id="rc" name="csv" placeholder="reference,amount_cents,status,refunded_cents,fee_cents"></textarea></div><button class="btn btn-dark">Run reconciliation</button></form></section>` : ""}
     <section class="card mt"><h2>Ledger</h2><p class="${ledger.balanced ? "callout good" : "callout bad"} mb-0">${ledger.balanced ? "Every journal balances." : "Unbalanced journals found."} ${ledger.clearing.map((c) => `${c.account}: ledger ${moneyExact(c.ledgerCents)} vs expected ${moneyExact(c.expectedCents)}`).join(" · ")}</p></section>
     <h2 class="mt-lg">Runs</h2>${tbl(["When", "Period", "Source", "Matched", "Exceptions", "#Provider total", "#Internal total", ""], runs.map((r) => html`<tr><td class="small">${fmtDateTime(r.created_at)}<div class="tiny muted">${r.created_by_name || ""}</div></td><td class="small">${fmtDate(r.period_start)} – ${fmtDate(r.period_end)}</td><td>${r.source}</td><td>${r.summary.matched || 0}</td><td>${r.summary.exceptions ? html`<span class="badge bad">${r.summary.exceptions}</span>` : "0"}</td><td class="num">${moneyExact(r.summary.providerTotalCents)}</td><td class="num">${moneyExact(r.summary.internalTotalCents)}</td><td><button class="btn btn-ghost btn-sm" data-run="${r.id}">Open</button></td></tr>`))}`);
   if ($("#rf")) onSubmit($("#rf"), async (v) => { await post("/api/admin/reconciliation", { provider: v.provider, from: new Date(v.from).toISOString(), to: new Date(v.to).toISOString(), csv: v.csv }); toast("Reconciliation complete.", "good"); reconciliation(); });
@@ -224,7 +224,7 @@ async function tags() {
       <div class="field"><label for="tm">Mode</label><select id="tm" name="mode"><option value="generate">Generate tokens (QR print / NDEF encode)</option><option value="import">Import chip UIDs (identifier only)</option></select></div>
       <div class="field"><label for="te">Event</label><select id="te" name="eventId"><option value="">Not yet assigned</option>${evs.map((e) => html`<option value="${e.id}">${e.title}</option>`)}</select></div></div>
       <div class="grid-2"><div class="field"><label for="tq">Quantity</label><input id="tq" name="quantity" type="number" min="1" max="2000" value="50"></div><div class="field"><label for="tu">Chip UIDs (import mode, one per line)</label><textarea id="tu" name="uids" placeholder="04A1B2C3D4E5F6"></textarea></div></div>
-      <p class="callout warn small mb-0"><strong>Security:</strong> UID-only tags are identifiers, not credentials — they are easy to clone and are refused for payments by default. Generated tokens on QR/NDEF can be copied too; pair them with spending PINs and limits. Cryptographic tags (e.g. NTAG 424 DNA SUN) are not yet supported.</p>
+      <p class="callout warn small mb-0"><strong>Security:</strong> UID-only tags are identifiers, not credentials: they are easy to clone and are refused for payments by default. Generated tokens on QR/NDEF can be copied too; pair them with spending PINs and limits. Cryptographic tags (e.g. NTAG 424 DNA SUN) are not yet supported.</p>
       <button class="btn btn-dark">Create batch & download CSV</button></form></section>` : ""}
     <h2 class="mt-lg">Search</h2><form class="row" id="ts"><input id="tqq" class="grow mono" placeholder="Tag code" aria-label="Tag code"><button class="btn btn-ghost">Search</button></form><div id="tl" class="mt">${spinner()}</div>`);
   if ($("#bf")) onSubmit($("#bf"), async (v) => {
@@ -232,7 +232,7 @@ async function tags() {
     const r = await post("/api/admin/tag-batches", body);
     const csv = ["payload,display_code,activation_code,security_level", ...r.tags.map((t) => [t.payload, t.displayCode, t.activationCode, t.securityLevel].join(","))].join("\n");
     const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: `ticketroom-tags-${r.batchId.slice(0, 8)}.csv` });
-    a.click(); toast(`${r.tags.length} tags created. The CSV is the only copy of the tokens and activation codes — store it securely.`, "good"); draw();
+    a.click(); toast(`${r.tags.length} tags created. The CSV is the only copy of the tokens and activation codes. Store it somewhere safe.`, "good"); draw();
   });
   $("#ts").addEventListener("submit", (e) => { e.preventDefault(); draw($("#tqq").value); });
   draw();
@@ -280,7 +280,7 @@ async function siteSettings() {
   const ro = raw(isA() ? "" : "disabled");
   const save = async (key, value, msg) => { if (await act(() => put(`/api/admin/settings/${key}`, value), msg)) siteSettings(); };
   render(main, html`${head("Site settings", "Changes apply to the live site within a few seconds. Every change is written to the audit log.")}
-    ${!isA() ? html`<p class="callout">View only — changing site settings needs the admin role.</p>` : ""}
+    ${!isA() ? html`<p class="callout">View only. Changing site settings needs the admin role.</p>` : ""}
     <div class="grid-2">
     <section class="card stack ${s.maintenance.enabled ? "flat" : ""}" aria-labelledby="mt-h"><h2 id="mt-h">Maintenance mode ${s.maintenance.enabled ? html`<span class="badge bad">ON</span>` : html`<span class="badge good">off</span>`}</h2>
       <p class="small muted mb-0">When on, visitors see a maintenance page. TicketRoom staff can still sign in and use the site. Webhooks from payment providers keep working.</p>
@@ -303,7 +303,7 @@ async function siteSettings() {
           ${DAYS.map(([k, l]) => html`<tr><td>${l}</td><td><input type="checkbox" name="${k}-on" aria-label="${l} open" ${raw(s.hours.week[k] ? "checked" : "")} ${ro}></td>
             <td><input type="time" name="${k}-open" aria-label="${l} opens" value="${s.hours.week[k]?.open || "09:00"}" ${ro}></td><td><input type="time" name="${k}-close" aria-label="${l} closes" value="${s.hours.week[k]?.close || "17:00"}" ${ro}></td></tr>`)}</tbody></table></div>
         <div class="field"><label for="hr-note">Hours note (shown to customers)</label><input id="hr-note" name="note" maxlength="200" value="${s.hours.note}" ${ro}></div>
-        <div class="field"><label for="hr-hol">Closed days — one per line as <code>YYYY-MM-DD Name</code></label><textarea id="hr-hol" name="holidays" rows="10" class="mono" ${ro}>${s.hours.holidays.map((h) => `${h.date} ${h.name}`).join("\n")}</textarea>
+        <div class="field"><label for="hr-hol">Closed days, one per line as <code>YYYY-MM-DD Name</code></label><textarea id="hr-hol" name="holidays" rows="10" class="mono" ${ro}>${s.hours.holidays.map((h) => `${h.date} ${h.name}`).join("\n")}</textarea>
           <span class="hint">South African public holidays for 2026–2027 are pre-loaded. Add company closures (e.g. 2026-12-24 Christmas Eve) the same way.</span></div>
         <button class="btn btn-dark" ${ro}>Save hours</button></form></section>
 
@@ -339,7 +339,7 @@ async function siteSettings() {
     e.preventDefault();
     const on = e.submitter?.value === "1";
     if (on && !(await confirmDialog("Turn maintenance mode on?", "Visitors will see the maintenance page until you turn it off. Staff can still sign in.", { confirm: "Turn on", danger: true }))) return;
-    save("maintenance", { enabled: on, message: $("#mt-msg").value }, on ? "Maintenance mode is ON." : "Maintenance mode is off — the site is live.");
+    save("maintenance", { enabled: on, message: $("#mt-msg").value }, on ? "Maintenance mode is ON." : "Maintenance mode is off. The site is live.");
   });
   $("[data-save-mt]").addEventListener("click", () => save("maintenance", { enabled: s.maintenance.enabled, message: $("#mt-msg").value }, "Message saved."));
   $("#f-bn").addEventListener("submit", (e) => { e.preventDefault(); const v = fv(e.target); save("banner", { enabled: e.target.enabled.checked, text: v.text, linkText: v.linkText || undefined, linkUrl: v.linkUrl || undefined }, "Banner saved."); });
@@ -409,13 +409,13 @@ async function assistantPage() {
     <div class="chips mt">${[["kb", "Knowledge base"], ["log", "All conversations"], ["gaps", "Gaps & unhelpful"]].map(([k, l]) => html`<button class="chip" data-tab="${k}" aria-pressed="${tab === k}">${l}</button>`)}</div>
     <div class="mt">${tab === "kb" ? tbl(["Question", "Answer", "Link", "Status", ""], articles.map((a) => html`<tr><td><strong>${a.question}</strong><div class="tiny muted">${(a.keywords || []).join(", ")}</div></td><td class="small">${a.answer.slice(0, 220)}${a.answer.length > 220 ? "…" : ""}</td><td class="small mono">${a.link_url || ""}</td><td>${a.active ? badge("active") : html`<span class="badge">off</span>`}</td>
         <td>${canEdit ? html`<button class="btn btn-ghost btn-sm" data-edit="${a.id}">Edit</button>` : ""}</td></tr>`))
-      : tbl(["When", "Question", "Answer", "Source", "Feedback"], chats.map((c) => html`<tr><td class="small">${fmtDateTime(c.created_at)}</td><td><strong>${c.question}</strong>${c.matched ? html`<div class="tiny muted">matched: ${c.matched}</div>` : ""}</td><td class="small">${c.answer.slice(0, 240)}</td><td>${c.source}</td><td>${c.helpful === true ? "👍" : c.helpful === false ? "👎" : ""}${canEdit && tab === "gaps" ? html` <button class="btn btn-ghost btn-sm" data-from="${c.id}">Answer it</button>` : ""}</td></tr>`))}</div>`);
+      : tbl(["When", "Question", "Answer", "Source", "Feedback"], chats.map((c) => html`<tr><td class="small">${fmtDateTime(c.created_at)}</td><td><strong>${c.question}</strong>${c.matched ? html`<div class="tiny muted">matched: ${c.matched}</div>` : ""}</td><td class="small">${c.answer.slice(0, 240)}</td><td>${c.source}</td><td>${c.helpful === true ? "Helpful" : c.helpful === false ? "Not helpful" : ""}${canEdit && tab === "gaps" ? html` <button class="btn btn-ghost btn-sm" data-from="${c.id}">Answer it</button>` : ""}</td></tr>`))}</div>`);
   $$("[data-tab]").forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_as", b.dataset.tab); assistantPage(); }));
   const editor = (a = {}) => {
     const d = dialog(a.id ? "Edit article" : "New article", html`<form class="stack">
       <div class="field"><label for="kq">Question</label><input id="kq" name="question" required minlength="5" maxlength="200" value="${a.question || ""}"></div>
       <div class="field"><label for="ka">Answer</label><textarea id="ka" name="answer" required maxlength="2000" rows="6">${a.answer || ""}</textarea></div>
-      <div class="field"><label for="kk">Keywords <span class="muted">(comma separated — words customers use)</span></label><input id="kk" name="keywords" value="${(a.keywords || []).join(", ")}"></div>
+      <div class="field"><label for="kk">Keywords <span class="muted">(comma separated, in the words customers use)</span></label><input id="kk" name="keywords" value="${(a.keywords || []).join(", ")}"></div>
       <div class="field"><label for="kl">Link <span class="muted">(optional site path, e.g. /contact)</span></label><input id="kl" name="linkUrl" maxlength="200" value="${a.link_url || ""}"></div>
       ${a.id ? html`<label class="check"><input type="checkbox" name="active" ${raw(a.active ? "checked" : "")}><span>Active</span></label>` : ""}
       <button class="btn btn-primary">Save</button></form>`, { wide: true });
@@ -440,9 +440,9 @@ async function emailsPage() {
     ${delivery === "log" ? html`<p class="callout bad"><strong>Emails are not being delivered.</strong> Add the hello@ticketroom.co.za mailbox settings (SMTP_HOST, SMTP_USER, SMTP_PASS) to the app's .env file and restart.</p>` : ""}
     <section class="card stack"><h2>Automatic emails</h2>
       <form class="stack" id="f-em">
-        <label class="check"><input type="checkbox" name="reminderDayBefore" ${raw(st.reminderDayBefore ? "checked" : "")} ${ro}><span><strong>Day-before reminder</strong> — to every ticket holder, about 24 hours before the event</span></label>
-        <label class="check"><input type="checkbox" name="reminderSoon" ${raw(st.reminderSoon ? "checked" : "")} ${ro}><span><strong>Starting-soon reminder</strong> — within 3 hours of the start, with gate tips</span></label>
-        <label class="check"><input type="checkbox" name="abandonedCheckout" ${raw(st.abandonedCheckout ? "checked" : "")} ${ro}><span><strong>Abandoned checkout</strong> — once per person per event, only while tickets are still on sale, never to people who unsubscribed</span></label>
+        <label class="check"><input type="checkbox" name="reminderDayBefore" ${raw(st.reminderDayBefore ? "checked" : "")} ${ro}><span><strong>Day-before reminder</strong> to every ticket holder, about 24 hours before the event</span></label>
+        <label class="check"><input type="checkbox" name="reminderSoon" ${raw(st.reminderSoon ? "checked" : "")} ${ro}><span><strong>Starting-soon reminder</strong> within 3 hours of the start, with tips for the gate</span></label>
+        <label class="check"><input type="checkbox" name="abandonedCheckout" ${raw(st.abandonedCheckout ? "checked" : "")} ${ro}><span><strong>Abandoned checkout</strong>: once per person per event, only while tickets are still on sale, never to people who unsubscribed</span></label>
         <div class="field"><label for="em-d">Send the abandoned-checkout email after</label><select id="em-d" name="abandonedDelayHours" ${ro}>${[1, 2, 3, 6, 12, 24].map((h) => html`<option value="${h}" ${raw(h === st.abandonedDelayHours ? "selected" : "")}>${h} hour${h === 1 ? "" : "s"}</option>`)}</select></div>
         <p class="tiny muted mb-0">Each email is sent at most once. Reminders need the background jobs cron (see the setup guide) or the app to be running.</p>
         ${isA() ? html`<div><button class="btn btn-dark">Save</button></div>` : ""}</form></section>
@@ -473,7 +473,7 @@ async function emailsPage() {
 // ---------------- integrations ----------------
 async function integrations() {
   const d = await get("/api/admin/integrations");
-  render(main, html`${head("Integrations", "TicketRoom's own provider accounts. Credentials live in the server's .env file and are never shown here — only whether each one is set.")}
+  render(main, html`${head("Integrations", "TicketRoom's own provider accounts. Passwords and keys stay on the server and are never shown here. You only see whether each one is set.")}
     <p class="callout small">Fees: buyers pay ${moneyExact(d.defaults.bookingFeeCents)} per paid ticket${d.defaults.bookingFeeBps ? ` + ${d.defaults.bookingFeeBps / 100}%` : ""}; organisers pay ${d.defaults.organiserCommissionBps / 100}% commission (override per organiser under Organisers). Free events pay nothing.</p>
     <div class="stack">${d.integrations.map((i) => html`<section class="card stack"><div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.provider === "none" || i.provider === "disabled" ? "draft" : "active")} <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment || "—"}</span></span></div>
       <dl class="dl"><dt>Provider</dt><dd>${i.provider}</dd><dt>Endpoint</dt><dd class="mono small">${i.endpoint || "—"}</dd>${i.webhookUrl ? html`<dt>Webhook URL</dt><dd class="mono small">${i.webhookUrl}</dd>` : ""}
@@ -481,7 +481,7 @@ async function integrations() {
         <dt>Last 24h</dt><dd>${i.calls || 0} calls, ${i.failures || 0} failures${i.avg_ms ? `, avg ${i.avg_ms} ms` : ""}${i.problems ? html` · <span class="badge bad">${i.problems} webhook problems</span>` : ""}</dd></dl>
       ${isA() ? html`<div><button class="btn btn-ghost btn-sm" data-health="${i.key}">Run health check</button></div>` : ""}</section>`)}</div>`);
   $$("[data-health]").forEach((b) => b.addEventListener("click", async () => {
-    try { const r = await post(`/api/admin/integrations/${b.dataset.health}/health`); toast(r.ok ? `Healthy${r.detail ? ` — ${r.detail}` : ""}` : `Problem: ${r.error || r.detail || "check failed"}`, r.ok ? "good" : "bad"); }
+    try { const r = await post(`/api/admin/integrations/${b.dataset.health}/health`); toast(r.ok ? `Healthy${r.detail ? `. ${r.detail}` : ""}` : `Problem: ${r.error || r.detail || "check failed"}`, r.ok ? "good" : "bad"); }
     catch (err) { toast(err.message, "bad"); }
   }));
 }
@@ -494,6 +494,6 @@ async function integrations() {
   await header($("#header"), { portal: "Back office", links: [["/admin", "Back office"]] });
   if (!R.size) { render($("#sidenav"), ""); return render(main, html`${head("No access")}<p>This area is for TicketRoom staff.</p>`); }
   nav();
-  router([["/", overview], ["/organisers", organisers], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", tags], ["/terminals", terminals], ["/support", support],
-    ["/refunds", refunds], ["/payouts", payouts], ["/payments", payments], ["/reconciliation", reconciliation], ["/ledger", ledgerPage], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations]], () => { location.hash = "#/"; });
+  router([["/", overview], ["/organisers", organisers], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support],
+    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations]], () => { location.hash = "#/"; });
 })();

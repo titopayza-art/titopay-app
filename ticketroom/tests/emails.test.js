@@ -34,10 +34,10 @@ test("day-before and starting-soon reminders go to each holder once", async () =
   const n2 = await automated.reminders();
   assert.equal(n1, 2);
   assert.equal(n2, 0, "never sent twice");
-  const r = (await mails(fan.user.email)).filter((m) => /^(Tomorrow|Starting soon)/.test(m.subject));
+  const r = (await mails(fan.user.email)).filter((m) => / (is tomorrow|starts at \d\d:\d\d)$/.test(m.subject));
   assert.equal(r.length, 2);
-  assert.ok(r.some((m) => m.subject === `Tomorrow: ${tomorrow.event.title}` && /You have 3 tickets/.test(m.body)));
-  assert.ok(r.some((m) => m.subject.startsWith("Starting soon") && /Turn your screen brightness up/.test(m.body)));
+  assert.ok(r.some((m) => m.subject === `${tomorrow.event.title} is tomorrow` && /You have 3 tickets/.test(m.body)));
+  assert.ok(r.some((m) => /starts at \d\d:\d\d$/.test(m.subject) && /Turn your screen brightness up/.test(m.body)));
   // switched off in admin -> nothing sent
   await admin.put("/api/admin/settings/emails", { reminderDayBefore: false, reminderSoon: false, abandonedCheckout: true, abandonedDelayHours: 1 });
   const fan2 = await h.user();
@@ -62,7 +62,7 @@ test("abandoned checkout: one nudge, not after booking, not after unsubscribe", 
   const [m] = (await mails(a.user.email)).filter((x) => /Still want to go/.test(x.subject));
   assert.ok(m);
   assert.match(m.body, new RegExp(`/events/${ev.event.slug}`));
-  assert.match(m.body, /Unsubscribe: http.*unsubscribe\?t=/);
+  assert.match(m.body, /unsubscribe here: http.*unsubscribe\?t=/);
   assert.equal((await mails(booked.user.email)).filter((x) => /Still want to go/.test(x.subject)).length, 0);
   assert.equal((await mails(optedOut.user.email)).filter((x) => /Still want to go/.test(x.subject)).length, 0);
 });
@@ -87,7 +87,7 @@ test("cancelling an event emails ticket holders and voids free tickets", async (
   const fan = await h.user();
   await h.buy(fan, ev.event, [{ ticketTypeId: ev.ticketTypes[0].id, quantity: 1 }]);
   assert.equal((await admin.post(`/api/admin/events/${ev.event.id}/cancel`, { reason: "Venue flooded" })).status, 200);
-  const m = (await mails(fan.user.email)).find((x) => x.subject === `Cancelled: ${ev.event.title}`);
+  const m = (await mails(fan.user.email)).find((x) => x.subject === `${ev.event.title} has been cancelled`);
   assert.match(m.body, /Venue flooded/);
   assert.match(m.body, /free tickets have been cancelled/);
   assert.equal((await h.ticketsOf(fan)).filter((t) => t.status === "valid").length, 0);
@@ -114,7 +114,7 @@ test("admin can list, preview and test-send every email", async () => {
 test("HTML rendering: buttons, bullets, escaping", () => {
   const m = templates.eventReminder({ name: "<b>X</b>", event: { title: "A & B", starts_at: new Date().toISOString(), venue_name: "V", city: "C", transfers_enabled: true }, ticketCount: 1, soon: false });
   const html = toHtml(m.subject, m.body);
-  assert.match(html, /<a href="[^"]+\/account#\/tickets"[^>]*>Open your tickets<\/a>/);
+  assert.match(html, /<a href="[^"]+\/account#\/tickets"[^>]*>Open my tickets<\/a>/);
   assert.match(html, /<li[^>]*>Turn your screen brightness up/);
   assert.match(html, /&lt;b&gt;X&lt;\/b&gt;/);
   assert.doesNotMatch(html, /<b>X<\/b>/);

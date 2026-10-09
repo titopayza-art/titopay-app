@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate } from "/assets/core.js";
 
 const main = $("#main");
 let ORG = null;
@@ -14,8 +14,8 @@ const base = () => `/api/organiser/${ORG.id}`;
 function nav() {
   render($("#sidenav"), html`
     ${ORGS.length > 1 ? html`<div class="org-switch"><label class="sr-only" for="orgsel">Organisation</label><select id="orgsel">${ORGS.map((o) => html`<option value="${o.id}" ${raw(o.id === ORG?.id ? "selected" : "")}>${o.name}</option>`)}</select></div>` : ORG ? html`<div class="sect">${ORG.name}</div>` : ""}
-    <a href="#/">📊 Dashboard</a><a href="#/events">🎫 Events</a><a href="#/marketing">📣 Marketing</a><a href="#/refunds" data-feature="finance">↩️ Refunds</a><a href="#/finance" data-feature="finance">💰 Finance & payouts</a><a href="#/team">👥 Team</a><a href="#/settings">⚙️ Settings</a>
-    <div class="sect">Tools</div><a href="/scan">📷 Gate scanner</a><a href="/pos" data-feature="pos">🧾 Vendor POS</a>`);
+    <a href="#/">Dashboard</a><a href="#/events">Events</a><a href="#/marketing">Marketing</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
+    <div class="sect">Tools</div><a href="/scan">Gate scanner</a><a href="/pos" data-feature="pos">Vendor POS</a>`);
   $("#orgsel")?.addEventListener("change", (e) => { localStorage.setItem("tr_org", e.target.value); location.hash = "#/"; location.reload(); });
 }
 
@@ -46,7 +46,7 @@ async function dashboard() {
     ${pendingBanner()}
     <div class="kpis"><div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.revenueCents)}</div><div class="s">after discounts, before fees</div></div>
       <div class="kpi"><div class="k">Tickets sold</div><div class="v">${t.ticketsSold.toLocaleString("en-ZA")}</div><div class="s">across ${t.events} event${t.events === 1 ? "" : "s"}</div></div>
-      <div class="kpi"><div class="k">Last 7 days</div><div class="v">${money(t.last7RevenueCents)}</div><div class="s">${t.last7Orders} orders</div></div>
+      <div class="kpi"><div class="k">Last 7 days</div><div class="v">${money(t.last7RevenueCents)}</div><div class="s">${t.last7Orders} order${t.last7Orders === 1 ? "" : "s"}</div></div>
       <div class="kpi"><div class="k">Live events</div><div class="v">${t.live}</div><div class="s">published & upcoming</div></div></div>
     <section class="card mt"><div class="card-title"><h2>Upcoming events</h2><a href="#/events">All events</a></div>
       ${upcoming.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Status</th><th>Sold</th><th class="num">Revenue</th></tr></thead><tbody>
@@ -151,10 +151,10 @@ async function overviewTab(el, d) {
   const checkPct = a.checkins.issued ? Math.round((a.checkins.admitted / a.checkins.issued) * 100) : 0;
   render(el, html`<div class="kpis">
       <div class="kpi"><div class="k">Tickets sold</div><div class="v">${t.ticketsSold}</div><div class="s">of ${t.capacity} capacity</div><div class="meter amber mt"><i data-pct="${(t.ticketsSold / t.capacity) * 100}"></i></div></div>
-      <div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.ticket_revenue_cents)}</div><div class="s">${t.orders} orders · refunds ${money(t.refunded_cents)}</div></div>
+      <div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.ticket_revenue_cents)}</div><div class="s">${t.orders} order${t.orders === 1 ? "" : "s"}${t.refunded_cents ? ` · refunds ${money(t.refunded_cents)}` : ""}</div></div>
       <div class="kpi"><div class="k">Checked in</div><div class="v">${a.checkins.admitted}</div><div class="s">${checkPct}% of ${a.checkins.issued} issued</div></div>
       <div class="kpi"><div class="k">Owed to you</div><div class="v">${money(t.payableCents)}</div><div class="s">${t.abandoned} abandoned checkouts</div></div></div>
-    <section class="card mt"><div class="card-title"><h3>Tickets sold per day — last 30 days</h3><button class="btn-link" data-tbl>Show as table</button></div>
+    <section class="card mt"><div class="card-title"><h3>Tickets sold per day, last 30 days</h3><button class="btn-link" data-tbl>Show as table</button></div>
       <div class="chart-wrap">${barChart(a.daily, { label: (x) => x.day.slice(8), value: (x) => x.tickets, title: "Tickets sold per day", tickEvery: 3 })}</div>
       <div class="table-wrap hidden mt" id="dtbl"><table><thead><tr><th>Day</th><th class="num">Tickets</th><th class="num">Revenue</th></tr></thead><tbody>${a.daily.filter((x) => x.tickets).map((x) => html`<tr><td>${x.day}</td><td class="num">${x.tickets}</td><td class="num">${moneyExact(x.revenue_cents)}</td></tr>`)}</tbody></table></div></section>
     <div class="grid-2 mt">
@@ -178,7 +178,7 @@ async function ticketsTab(el, d, reload) {
         <td>${t.quantity_sold} sold${t.quantity_held ? `, ${t.quantity_held} reserved` : ""} / ${t.quantity_total}</td><td>${t.per_order_limit}</td><td>${badge(t.status)}</td>
         <td>${editable ? html`<button class="btn btn-ghost btn-sm" data-edit="${t.id}">Edit</button>` : ""}</td></tr>`)}</tbody></table></div>`
       : empty("No ticket types yet. Add at least one before submitting.")}
-    <p class="small muted mt mb-0">Buyers pay a service fee per paid ticket on top of your price. Prices lock once a ticket type has sales — add a new release (e.g. "Second release") to change pricing.</p></section>`);
+    <p class="small muted mt mb-0">Buyers pay a service fee per paid ticket on top of your price. Once a ticket type has sales its price is locked. To change the price, add a new release such as "Second release".</p></section>`);
   const form = (t = {}) => {
     const dlg = dialog(t.id ? "Edit ticket type" : "Add ticket type", html`<form class="stack">
       <div class="field"><label for="tn">Name</label><input id="tn" name="name" required maxlength="80" value="${t.name || ""}" placeholder="e.g. Early Bird"></div>
@@ -254,7 +254,7 @@ async function staffTab(el, d, reload) {
   const { staff } = await get(`${base()}/events/${d.event.id}/staff`);
   render(el, html`<section class="card" aria-labelledby="live-h"><div class="card-title"><h3 id="live-h">Live check-ins</h3><span class="badge good" data-live>Live</span></div><div id="live">${spinner()}</div></section>
     <section class="card mt"><div class="card-title"><h3>Ticket scanners & desk staff</h3></div>
-    <p class="small muted">Add your team by email. They scan tickets on their own phones at <strong>ticketroom.co.za/scan</strong> — no app to install — and see a live admitted count. They only see this event. New people get an email invite to set a password.</p>
+    <p class="small muted">Add your team by email. They scan tickets on their own phones at <strong>ticketroom.co.za/scan</strong>. There is no app to install, and they see a live count of people let in. They only see this event. New people get an email invite to set a password.</p>
     ${staff.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Scan tickets</th><th>Manage tags</th><th class="num">Admitted</th><th></th></tr></thead><tbody>
       ${staff.map((s) => html`<tr><td>${s.full_name}<div class="small muted">${s.email}</div></td><td>${s.can_scan ? "Yes" : "No"}</td><td>${s.can_manage_tags ? "Yes" : "No"}</td><td class="num">${s.admitted}</td><td>${can("owner", "manager") ? html`<button class="btn btn-ghost btn-sm" data-rm="${s.id}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">No scanners yet. Add your first one below.</p>`}
     ${can("owner", "manager") ? html`<form class="stack mt" id="sf"><div class="grid-2"><div class="field"><label for="sn">Name <span class="muted">(for new people)</span></label><input id="sn" name="fullName" maxlength="120" autocomplete="off"></div>
@@ -279,7 +279,7 @@ async function staffTab(el, d, reload) {
         <div class="kpi"><div class="k">Last 15 minutes</div><div class="v">${x.last15min}</div><div class="s">people admitted</div></div></div>
         <div class="meter mt" aria-hidden="true"><i data-pct="${pct}"></i></div>
         ${x.scanners.length ? html`<h4 class="mt">By scanner</h4><div class="table-wrap"><table><thead><tr><th>Scanner</th><th class="num">Admitted</th><th class="num">Refused</th><th>Last scan</th></tr></thead><tbody>${x.scanners.map((s) => html`<tr><td>${s.full_name}</td><td class="num">${s.admitted}</td><td class="num">${s.refused}</td><td>${fmtTime(s.last_scan)}</td></tr>`)}</tbody></table></div>` : html`<p class="small muted mt mb-0">No scans yet. Counts update every 5 seconds.</p>`}
-        ${x.recent.length ? html`<h4 class="mt">Latest scans</h4><ul class="small">${x.recent.slice(0, 8).map((a) => html`<li>${fmtTime(a.occurred_at)} · ${badge(a.outcome)} ${a.holder_name || ""} <span class="muted">— ${a.scanner}${a.gate ? `, ${a.gate}` : ""}</span></li>`)}</ul>` : ""}
+        ${x.recent.length ? html`<h4 class="mt">Latest scans</h4><ul class="small">${x.recent.slice(0, 8).map((a) => html`<li>${fmtTime(a.occurred_at)} · ${badge(a.outcome)} ${a.holder_name || ""} <span class="muted">by ${a.scanner}${a.gate ? `, ${a.gate}` : ""}</span></li>`)}</ul>` : ""}
         <p class="tiny muted mb-0">Updated ${fmtTime(x.at)}</p>`);
       paintMeters(live);
       $("[data-live]", el)?.classList.replace("warn", "good");
@@ -296,7 +296,7 @@ async function vendorsTab(el, d, reload) {
     ${vendors.length ? html`<div class="stack">${vendors.map((v) => html`<section class="card"><div class="card-title"><div><h3>${v.name}</h3><span class="small muted">${v.description || ""} · commission ${(v.commission_bps / 100).toFixed(1)}% · gross ${moneyExact(v.gross_cents)}</span></div>
         <div class="row">${badge(v.status)}${edit ? html`<button class="btn btn-ghost btn-sm" data-vstatus="${v.id}" data-s="${v.status === "active" ? "suspended" : "active"}">${v.status === "active" ? "Suspend" : "Reactivate"}</button>` : ""}
         ${can("owner", "finance") ? html`<button class="btn btn-ghost btn-sm" data-vpay="${v.id}">Request settlement</button>` : ""}</div></div>
-      <div class="grid-2"><div><div class="label">Team</div>${v.members.length ? html`<ul class="small">${v.members.map((m) => html`<li>${m.name} (${m.role}) — ${m.email}</li>`)}</ul>` : html`<p class="small muted">No vendor staff yet.</p>`}
+      <div class="grid-2"><div><div class="label">Team</div>${v.members.length ? html`<ul class="small">${v.members.map((m) => html`<li>${m.name} (${m.role}), ${m.email}</li>`)}</ul>` : html`<p class="small muted">No vendor staff yet.</p>`}
           ${edit ? html`<form class="row" data-member="${v.id}"><input name="email" type="email" required placeholder="Staff email" class="grow" aria-label="Vendor staff email"><select name="role" aria-label="Role"><option value="cashier">Cashier</option><option value="manager">Manager</option></select><button class="btn btn-ghost btn-sm">Add</button></form>` : ""}</div>
         <div><div class="label">Terminals</div>${v.terminals.length ? html`<ul class="small">${v.terminals.map((t) => html`<li>${t.label} ${badge(t.status)} ${t.lastSeenAt ? html`<span class="muted">seen ${fmtDateTime(t.lastSeenAt)}</span>` : ""} ${edit && t.status !== "retired" ? html`<button class="btn-link" data-tstatus="${t.id}" data-s="${t.status === "active" ? "suspended" : "active"}">${t.status === "active" ? "suspend" : "activate"}</button>` : ""}</li>`)}</ul>` : html`<p class="small muted">No terminals.</p>`}
           ${edit ? html`<form class="row" data-term="${v.id}"><input name="label" required placeholder="e.g. Till 1" class="grow" aria-label="Terminal name"><button class="btn btn-ghost btn-sm">Register terminal</button></form>` : ""}</div></div></section>`)}</div>` : empty("No vendors yet.")}
@@ -324,7 +324,7 @@ async function detailsTab(el, d, reload) {
 async function marketing() {
   const [{ campaigns }, aud, evs] = await Promise.all([get(`${base()}/campaigns`), get(`${base()}/marketing/audience`), get(`${base()}/events`)]);
   const cfg = await get("/api/config");
-  render(main, html`${head("Marketing", "Email and SMS your fans. Only people who bought from you and opted in are included — that's the law (POPIA), and it keeps your messages welcome.", can("owner", "manager", "marketing") ? html`<button class="btn btn-primary" data-new>New campaign</button>` : "")}
+  render(main, html`${head("Marketing", "Email the people who booked with you. Only those who ticked the box to hear from you are included. That is what POPIA requires, and it keeps people happy to read your mail.", can("owner", "manager", "marketing") ? html`<button class="btn btn-primary" data-new>New campaign</button>` : "")}
     ${pendingBanner()}
     <div class="kpis"><div class="kpi"><div class="k">Ticket holders</div><div class="v">${aud.ticketHolders}</div><div class="s">all your events</div></div>
       <div class="kpi"><div class="k">Email audience</div><div class="v">${aud.emailOptIns}</div><div class="s">opted in to your email</div></div>
@@ -380,7 +380,7 @@ function campaignDialog(c, evs, done) {
 // ---------------- refunds ----------------
 async function refunds() {
   const { refunds: list } = await get(`${base()}/refunds`);
-  render(main, html`${head("Refunds", "Ticket refunds are approved by TicketRoom finance. You can approve vendor (POS) refunds for your own events — but not ones you requested.")}
+  render(main, html`${head("Refunds", "Ticket refunds are approved by TicketRoom finance. You can approve vendor (POS) refunds for your own events, but not ones you asked for yourself.")}
     ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Reference</th><th>Event</th><th>Type</th><th>Reason</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead><tbody>
       ${list.map((r) => html`<tr><td class="mono">${r.reference}</td><td>${r.event_title}${r.vendor_name ? html`<div class="small muted">${r.vendor_name}</div>` : ""}</td><td>${r.kind.replace("_", " ")}</td><td class="small">${r.reason}<div class="tiny muted">by ${r.requested_by_name || "system"}</div></td><td class="num">${moneyExact(r.amount_cents + r.fee_refund_cents)}</td><td>${badge(r.status)}</td>
         <td>${r.kind === "pos_sale" && r.status === "requested" && !r.mine && can("owner", "manager") ? html`<div class="row"><button class="btn btn-good btn-sm" data-dec="${r.id}" data-ok="1">Approve</button><button class="btn btn-ghost btn-sm" data-dec="${r.id}" data-ok="">Reject</button></div>` : ""}</td></tr>`)}</tbody></table></div>` : empty("No refunds.")}`);
@@ -412,7 +412,7 @@ async function team() {
   render(main, html`${head("Team", "Give colleagues their own login with only the access they need.")}
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>${members.map((m) => html`<tr><td>${m.full_name}</td><td>${m.email}</td><td>${m.role}</td><td>${can("owner") && m.role !== "owner" ? html`<button class="btn btn-ghost btn-sm" data-rm="${m.id}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>
     ${can("owner") ? html`<section class="card mt"><h3>Add a team member</h3><form class="stack" id="tm"><div class="grid-2"><div class="field"><label for="me">Their TicketRoom email</label><input id="me" name="email" type="email" required></div>
-      <div class="field"><label for="mr">Role</label><select id="mr" name="role"><option value="manager">Manager — events, staff, vendors</option><option value="marketing">Marketing — campaigns, promos</option><option value="finance">Finance — payouts, refunds</option><option value="viewer">Viewer — read only</option></select></div></div><button class="btn btn-dark">Add</button></form></section>` : ""}`);
+      <div class="field"><label for="mr">Role</label><select id="mr" name="role"><option value="manager">Manager: events, staff, vendors</option><option value="marketing">Marketing: campaigns, promos</option><option value="finance">Finance: payouts, refunds</option><option value="viewer">Viewer: read only</option></select></div></div><button class="btn btn-dark">Add</button></form></section>` : ""}`);
   if ($("#tm")) onSubmit($("#tm"), async (v) => { await post(`${base()}/members`, v); toast("Added.", "good"); team(); });
   $$("[data-rm]").forEach((b) => b.addEventListener("click", async () => { await del(`${base()}/members/${b.dataset.rm}`); team(); }));
 }
@@ -454,6 +454,6 @@ async function loadOrg() {
   if (!ORG) { render($("#sidenav"), ""); return apply(); }
   router([
     ["/", dashboard], ["/apply", apply], ["/events", events], ["/events/new", newEvent], ["/events/:id", (p) => eventWorkspace(p)], ["/events/:id/:tab", (p) => eventWorkspace(p)],
-    ["/marketing", marketing], ["/refunds", refunds], ["/finance", finance], ["/team", team], ["/settings", settings],
+    ["/marketing", marketing], ["/refunds", gate("finance", refunds)], ["/finance", gate("finance", finance)], ["/team", team], ["/settings", settings],
   ], () => { location.hash = "#/"; });
 })();

@@ -155,12 +155,12 @@ function smtp_health(): array
 
 // ============================================================== HTML version
 // "Label: https://…" alone on a line -> button; "- " lines -> bullets;
-// everything after the "—" line -> footer.
+// everything after the "-- " line -> footer.
 function email_html(string $subject, string $text): string
 {
     $esc = fn($s) => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
     $linkify = fn($s) => preg_replace_callback('#https?://[^\s<]+[^\s<.,;:!?)]#', fn($m) => '<a href="' . $m[0] . '" style="color:#1B3770">' . $m[0] . '</a>', $esc($s));
-    $parts = preg_split("/\n\n—\n/u", $text, 2);
+    $parts = preg_split("/\n\n-- \n/u", $text, 2);
     $main = $parts[0];
     $footer = $parts[1] ?? '';
     $blocks = '';
@@ -190,7 +190,7 @@ function email_html(string $subject, string $text): string
 }
 
 // ============================================================== templates
-const FOOTER = "\n\n—\nTicketRoom · ticketroom.co.za · hello@ticketroom.co.za";
+const FOOTER = "\n\n-- \nTicketRoom · ticketroom.co.za · hello@ticketroom.co.za\nTicketRoom (Pty) Ltd · Reg. no. K2026811077";
 function sa_time(?string $iso, string $fmt): string
 {
     $d = new DateTimeImmutable($iso ?: 'now');
@@ -202,85 +202,80 @@ function first_name(?string $n): string { $p = preg_split('/\s+/', trim((string)
 function plural(int $n, string $w): string { return $n . ' ' . $w . ($n === 1 ? '' : 's'); }
 function place(array $e): string { return implode(', ', array_filter([$e['venue_name'] ?? null, $e['address'] ?? null, $e['city'] ?? null])); }
 
+// Same wording as src/modules/messaging/templates.js in the Node edition.
 function tpl(string $name, array $a): array
 {
     $B = base_url();
+    $hi = 'Hi ' . first_name($a['name'] ?? ($a['order']['buyer_name'] ?? null)) . ",\n\n";
     switch ($name) {
         case 'orderConfirmed':
-            $o = $a['order']; $e = $a['event']; $n = (int) $a['ticketCount']; $free = (int) $o['total_cents'] === 0;
+            $o = $a['order']; $e = $a['event']; $n = (int) $a['ticketCount']; $free = (int) $o['total_cents'] === 0; $isAre = $n === 1 ? 'is' : 'are';
             return [
-                'subject' => $free ? "You're in! Your free " . ($n === 1 ? 'ticket' : 'tickets') . " for {$e['title']}" : "Your tickets for {$e['title']} ({$o['reference']})",
-                'body' => 'Hi ' . first_name($o['buyer_name']) . ",\n\n"
-                    . ($free ? "You're in! Your " . plural($n, 'free ticket') . " for {$e['title']} " . ($n === 1 ? 'is' : 'are') . ' ready.'
-                             : 'Payment received — your ' . plural($n, 'ticket') . " for {$e['title']} " . ($n === 1 ? 'is' : 'are') . ' ready.')
+                'subject' => $free ? 'Your free ' . ($n === 1 ? 'ticket' : 'tickets') . " for {$e['title']}" : "Your tickets for {$e['title']} ({$o['reference']})",
+                'body' => $hi . ($free ? "You're booked for {$e['title']}. Your " . plural($n, 'free ticket') . " $isAre waiting in your TicketRoom account."
+                                       : 'Thanks for your order. Your ' . plural($n, 'ticket') . " for {$e['title']} $isAre ready.")
                     . "\n\n" . place($e) . "\n" . when_str($e['starts_at']) . "\nOrder {$o['reference']}" . ($free ? '' : ' · ' . format_zar((int) $o['total_cents']))
-                    . "\n\nOpen your tickets: $B/account#/tickets\n\nYour QR code is your entry. Don't share screenshots of it: the first scan wins."
-                    . ($free ? "\n\nCan't make it any more? Transfer your ticket to a friend from My tickets so someone else can use your spot." : '') . FOOTER,
+                    . "\n\nOpen my tickets: $B/account#/tickets\n\nYour QR code is your way in, so please don't share it. If someone else scans it first, you won't get in."
+                    . ($free ? "\n\nIf you can't make it after all, you can pass your ticket to a friend from My tickets." : '') . FOOTER,
             ];
         case 'eventReminder':
             $e = $a['event']; $soon = !empty($a['soon']); $n = (int) $a['ticketCount'];
-            $tips = ['- Open your tickets now while you have signal — they then work offline.', '- Turn your screen brightness up at the gate so the QR code scans quickly.'];
-            if (!empty($e['age_restriction'])) $tips[] = "- This event is {$e['age_restriction']}. Bring ID.";
-            $tips[] = '- Each ticket admits one person once.';
-            if (!empty($e['transfers_enabled'])) $tips[] = "- Can't go? Transfer your ticket to a friend before the event starts.";
+            $tips = ["- Open your tickets before you leave home. They'll still work if the signal at the venue is bad.", '- Turn your screen brightness up so the QR code scans first time.', '- Each ticket lets one person in, once.'];
+            if (!empty($e['age_restriction'])) $tips[] = "- This event is {$e['age_restriction']}, so bring ID.";
+            if (!empty($e['transfers_enabled'])) $tips[] = "- Can't go? Send your ticket to a friend before the event starts.";
             return [
-                'subject' => $soon ? "Starting soon: {$e['title']} at " . time_str($e['starts_at']) : "Tomorrow: {$e['title']}",
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\n" . ($soon ? "{$e['title']} starts at " . time_str($e['starts_at']) . ' today.' : "Just a reminder: {$e['title']} is tomorrow.")
-                    . ' You have ' . plural($n, 'ticket') . ".\n\n" . when_str($e['starts_at']) . "\n" . place($e)
-                    . "\n\nOpen your tickets: $B/account#/tickets\n\nBefore you go:\n" . implode("\n", $tips) . "\n\nSee you there!" . FOOTER,
+                'subject' => $soon ? "{$e['title']} starts at " . time_str($e['starts_at']) : "{$e['title']} is tomorrow",
+                'body' => $hi . ($soon ? "{$e['title']} starts at " . time_str($e['starts_at']) . ' today.' : "{$e['title']} is tomorrow.") . ' You have ' . plural($n, 'ticket') . ".\n\n"
+                    . when_str($e['starts_at']) . "\n" . place($e) . "\n\nOpen my tickets: $B/account#/tickets\n\nA few things that help at the gate:\n" . implode("\n", $tips) . "\n\nEnjoy it!" . FOOTER,
             ];
         case 'checkoutAbandoned':
             $e = $a['event'];
-            return [
-                'subject' => "Still want to go to {$e['title']}?",
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\nYou started booking tickets for {$e['title']} but didn't finish, so the tickets weren't kept for you.\n\n"
-                    . when_str($e['starts_at']) . "\n" . place($e) . "\n\nFinish your booking: {$a['eventUrl']}\n\nIf something went wrong at checkout, request a callback at $B/contact and we'll help.\n\nWe only send this once. Don't want reminders like this? Unsubscribe: {$a['unsubscribeUrl']}" . FOOTER,
-            ];
+            return ['subject' => "Still want to go to {$e['title']}?",
+                'body' => $hi . "You started booking tickets for {$e['title']} but didn't finish, so we couldn't hold them for you. There are still tickets available.\n\n"
+                    . when_str($e['starts_at']) . "\n" . place($e) . "\n\nFinish my booking: {$a['eventUrl']}\n\nIf something went wrong at checkout, ask us to call you back at $B/contact and we'll sort it out.\n\nThis is the only reminder we'll send about it. To stop emails like this, unsubscribe here: {$a['unsubscribeUrl']}" . FOOTER];
         case 'eventCancelled':
             $e = $a['event'];
-            return [
-                'subject' => "Cancelled: {$e['title']}",
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\nWe're sorry — {$e['title']} on " . when_str($e['starts_at']) . ' has been cancelled by the organiser.'
-                    . (!empty($a['reason']) ? "\n\nReason given: {$a['reason']}" : '') . "\n\n"
-                    . (!empty($a['paid']) ? "You don't need to do anything: a full refund, including the booking fee, has been started to your original payment method. Refunds usually reflect within 3–7 working days." : "Your free tickets have been cancelled. You don't need to do anything.")
-                    . "\n\nFind another event: $B/" . FOOTER,
-            ];
+            return ['subject' => "{$e['title']} has been cancelled",
+                'body' => $hi . "We're sorry to tell you that the organiser has cancelled {$e['title']}, which was set for " . when_str($e['starts_at']) . '.'
+                    . (!empty($a['reason']) ? "\n\nThe reason they gave: {$a['reason']}" : '') . "\n\n"
+                    . (!empty($a['paid']) ? "You don't need to do anything. We've started a full refund, booking fee included, to the card or account you paid with. It usually shows within 3 to 7 working days." : "Your free tickets have been cancelled, so there's nothing you need to do.")
+                    . "\n\nSee what else is on: $B/" . FOOTER];
         case 'transferOffer':
             $e = $a['event'];
             return ['subject' => "{$a['fromName']} sent you a ticket for {$e['title']}",
-                'body' => "{$a['fromName']} has transferred a ticket for {$e['title']} (" . when_str($e['starts_at']) . ") to you.\n\nAccept your ticket: {$a['claimUrl']}\n\nThe link is valid for 7 days. You will need a free TicketRoom account." . FOOTER];
+                'body' => "{$a['fromName']} has sent you a ticket for {$e['title']} on " . when_str($e['starts_at']) . ".\n\nAccept the ticket: {$a['claimUrl']}\n\nThe link works for 7 days. You'll need a TicketRoom account to accept it, and signing up is free." . FOOTER];
         case 'transferDone':
-            return ['subject' => "Your ticket for {$a['event']['title']} was transferred",
-                'body' => "Your ticket for {$a['event']['title']} was accepted by {$a['toEmail']}. The QR code on your copy no longer works." . FOOTER];
+            return ['subject' => "Your ticket for {$a['event']['title']} has been accepted",
+                'body' => "{$a['toEmail']} has accepted the ticket you sent for {$a['event']['title']}. The QR code on your copy no longer works." . FOOTER];
         case 'verifyEmail':
-            return ['subject' => 'Welcome to TicketRoom — confirm your email',
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\nWelcome to TicketRoom! Please confirm your email address so we can send you your tickets and updates.\n\nConfirm my email: {$a['url']}\n\nWith your account you can keep all your tickets in one place, transfer them to friends, and find events across South Africa.\n\nIf you did not create a TicketRoom account, ignore this message." . FOOTER];
+            return ['subject' => 'Please confirm your email address',
+                'body' => $hi . "Thanks for signing up to TicketRoom. Please confirm your email address so your tickets and updates reach you.\n\nConfirm my email: {$a['url']}\n\nIf you didn't create a TicketRoom account, you can ignore this email." . FOOTER];
         case 'passwordReset':
             return ['subject' => 'Reset your TicketRoom password',
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\nWe received a request to reset your password. The link is valid for 1 hour.\n\nChoose a new password: {$a['url']}\n\nIf you did not ask for this, ignore this message — your password has not changed." . FOOTER];
+                'body' => $hi . "Someone, hopefully you, asked to reset the password on your TicketRoom account. This link works for one hour.\n\nChoose a new password: {$a['url']}\n\nIf it wasn't you, ignore this email and your password will stay the same." . FOOTER];
         case 'callbackReceived':
-            return ['subject' => "We've received your callback request ({$a['reference']})",
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\nThanks for contacting TicketRoom. Your callback request {$a['reference']} is with our team and we'll resolve it within {$a['responseTime']}.\n\nOur hours: {$a['hoursNote']}\n\nNeed to add something? Reply to this email or write to {$a['email']} and quote {$a['reference']}." . FOOTER];
+            return ['subject' => "We've got your callback request ({$a['reference']})",
+                'body' => $hi . "Thanks for getting in touch. Your reference is {$a['reference']}, and someone from our team will get back to you within {$a['responseTime']}.\n\nOur office hours: {$a['hoursNote']}\n\nIf there's anything to add, reply to this email or write to {$a['email']} and mention {$a['reference']}." . FOOTER];
         case 'unsubscribeLink':
             return ['subject' => 'Unsubscribe from TicketRoom marketing',
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\nYou asked to stop receiving marketing from TicketRoom and the organisers you follow. The link is valid for 7 days.\n\nConfirm unsubscribe: {$a['url']}\n\nYou'll still get messages about tickets you have. If you didn't ask for this, ignore this email." . FOOTER];
+                'body' => $hi . "You asked to stop getting marketing emails from TicketRoom and the organisers you follow. Please confirm below. The link works for 7 days.\n\nConfirm unsubscribe: {$a['url']}\n\nWe'll still email you about tickets you already have. If you didn't ask for this, you can ignore this email." . FOOTER];
         case 'organiserApproved':
             return ['subject' => "{$a['organiser']} is approved on TicketRoom",
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\nGood news — {$a['organiser']} is approved. You can now submit events for publishing and email fans who opted in.\n\nGo to my organiser portal: $B/organisers\n\nRight now TicketRoom is open for free events, with no fees at all. Paid tickets are coming soon.\n\nNeed help setting up? Request a callback at $B/contact." . FOOTER];
+                'body' => $hi . "{$a['organiser']} has been approved. You can now send your events to us for review, and email people who asked to hear from you.\n\nGo to the organiser portal: $B/organisers\n\nFor now, free events are listed at no cost. Paid ticket sales are coming soon.\n\nIf you'd like a hand setting up your first event, ask us to call you at $B/contact." . FOOTER];
         case 'organiserRejected':
             return ['subject' => 'About your TicketRoom organiser application',
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\nThank you for applying to sell tickets on TicketRoom as {$a['organiser']}. We can't approve the application at this stage."
-                    . (!empty($a['reason']) ? "\n\nReason: {$a['reason']}" : '') . "\n\nIf you can give us more information, reply to this email or request a callback at $B/contact." . FOOTER];
+                'body' => $hi . "Thanks for applying to list events on TicketRoom as {$a['organiser']}. We can't approve the application at this stage."
+                    . (!empty($a['reason']) ? "\n\nReason: {$a['reason']}" : '') . "\n\nIf you can send us more information, reply to this email or ask us to call you at $B/contact." . FOOTER];
         case 'eventPublished':
             return ['subject' => "Your event is live: {$a['event']['title']}",
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\n{$a['event']['title']} has been approved and is now published on TicketRoom.\n\nView the event page: {$a['eventUrl']}\n\nNext steps:\n- Share the link on your socials and WhatsApp groups.\n- Create tracking links to see which channel brings the most bookings.\n- Add your gate staff under Staff so they can scan tickets on their phones." . FOOTER];
+                'body' => $hi . "{$a['event']['title']} has been approved and is now live on TicketRoom.\n\nSee the event page: {$a['eventUrl']}\n\nA few next steps:\n- Share the link on your socials and in your WhatsApp groups.\n- Make a tracking link for each place you share it, so you can see what works.\n- Add your door staff under Staff so they can scan tickets on their phones." . FOOTER];
         case 'eventChangesRequested':
             return ['subject' => "Changes needed before {$a['event']['title']} can go live",
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\nWe reviewed {$a['event']['title']} and need a few changes before we can publish it.\n\n"
-                    . (!empty($a['reason']) ? "What to change: {$a['reason']}\n\n" : '') . "Edit my event: $B/organisers#/events/{$a['event']['id']}\n\nWhen you're done, submit it again and we'll review it as soon as possible." . FOOTER];
+                'body' => $hi . "We've looked at {$a['event']['title']} and need a few changes before we can publish it.\n\n"
+                    . (!empty($a['reason']) ? "What to change: {$a['reason']}\n\n" : '') . "Edit my event: $B/organisers#/events/{$a['event']['id']}\n\nOnce you've made the changes, send it to us again and we'll take another look." . FOOTER];
         case 'staffInvite':
             return ['subject' => "{$a['organiser']} added you as a ticket scanner on TicketRoom",
-                'body' => 'Hi ' . first_name($a['name']) . ",\n\n{$a['organiser']} added you as staff for {$a['event']}. The link is valid for 7 days.\n\nSet my password: {$a['url']}\n\nOn the day, open ticketroom.co.za/scan on your phone and sign in to scan tickets." . FOOTER];
+                'body' => $hi . "{$a['organiser']} has added you as a ticket scanner for {$a['event']}. Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nOn the day, open ticketroom.co.za/scan on your phone, sign in, and point the camera at each ticket." . FOOTER];
     }
     throw new InvalidArgumentException("Unknown template $name");
 }
@@ -296,8 +291,8 @@ function email_catalog(): array
     $o = ['buyer_name' => 'Lerato Mokoena', 'reference' => 'TR-7KQ2M9', 'total_cents' => 0];
     return [
         ['key' => 'orderConfirmedFree', 'name' => 'Free tickets confirmed', 'audience' => 'Attendee', 'trigger' => 'Right after someone gets free tickets', 'sample' => fn() => tpl('orderConfirmed', ['order' => $o, 'event' => $ev, 'ticketCount' => 2])],
-        ['key' => 'eventReminderDay', 'name' => 'Event reminder — day before', 'audience' => 'Attendee', 'trigger' => 'Automatic, about 24 hours before the event starts', 'setting' => 'reminderDayBefore', 'sample' => fn() => tpl('eventReminder', ['name' => 'Lerato Mokoena', 'event' => $ev, 'ticketCount' => 2, 'soon' => false])],
-        ['key' => 'eventReminderSoon', 'name' => 'Event reminder — starting soon', 'audience' => 'Attendee', 'trigger' => 'Automatic, within 3 hours of the start', 'setting' => 'reminderSoon', 'sample' => fn() => tpl('eventReminder', ['name' => 'Lerato Mokoena', 'event' => $today, 'ticketCount' => 2, 'soon' => true])],
+        ['key' => 'eventReminderDay', 'name' => 'Event reminder: day before', 'audience' => 'Attendee', 'trigger' => 'Automatic, about 24 hours before the event starts', 'setting' => 'reminderDayBefore', 'sample' => fn() => tpl('eventReminder', ['name' => 'Lerato Mokoena', 'event' => $ev, 'ticketCount' => 2, 'soon' => false])],
+        ['key' => 'eventReminderSoon', 'name' => 'Event reminder: starting soon', 'audience' => 'Attendee', 'trigger' => 'Automatic, within 3 hours of the start', 'setting' => 'reminderSoon', 'sample' => fn() => tpl('eventReminder', ['name' => 'Lerato Mokoena', 'event' => $today, 'ticketCount' => 2, 'soon' => true])],
         ['key' => 'checkoutAbandoned', 'name' => 'Abandoned checkout', 'audience' => 'Attendee', 'trigger' => 'Automatic, once, after an unfinished booking (delay set below)', 'setting' => 'abandonedCheckout', 'sample' => fn() => tpl('checkoutAbandoned', ['name' => 'Lerato Mokoena', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions", 'unsubscribeUrl' => "$B/unsubscribe?t=sample"])],
         ['key' => 'eventCancelled', 'name' => 'Event cancelled', 'audience' => 'Attendee', 'trigger' => 'When an event is cancelled', 'sample' => fn() => tpl('eventCancelled', ['name' => 'Lerato Mokoena', 'event' => $ev, 'reason' => 'Severe weather warning for the venue', 'paid' => false])],
         ['key' => 'transferOffer', 'name' => 'Ticket transfer received', 'audience' => 'Attendee', 'trigger' => 'When someone sends a ticket', 'sample' => fn() => tpl('transferOffer', ['fromName' => 'Thabo Nkosi', 'event' => $ev, 'claimUrl' => "$B/account#/claim/sample"])],

@@ -47,6 +47,23 @@ export function features() {
 }
 features().then((f) => { for (const [k, on] of Object.entries(f)) document.documentElement.classList.toggle(`no-${k}`, !on); });
 
+// Wraps a portal route so it shows a friendly "coming soon" page when the
+// feature is off in this edition (e.g. someone opens an old link).
+const SOON = {
+  cashless: ["Cashless wristbands are coming soon", "Wristbands, top-ups and tapping to pay at events arrive together with paid ticket sales."],
+  payments: ["Payment methods are coming soon", "You'll be able to save a payment method here once paid ticket sales open."],
+  finance: ["Payouts and refunds are coming soon", "Free events don't involve any money. Payouts, settlements and refunds start when paid ticket sales open."],
+  tags: ["Wristbands and tags are coming soon", "Linking wristbands and tags to tickets arrives together with cashless payments."],
+  pos: ["Vendor point of sale is coming soon", "The vendor till arrives together with cashless payments and paid ticket sales."],
+};
+export function gate(feature, fn) {
+  return async (params) => {
+    if ((await features())[feature]) return fn(params);
+    const [title, text] = SOON[feature] || ["Coming soon", "This part of TicketRoom isn't switched on yet."];
+    render($("#main"), html`<div class="card pad-lg stack"><h1>${title}</h1><p class="muted mb-0">${text}</p></div>`);
+  };
+}
+
 // ---------- API ----------
 let csrfToken = null;
 let meCache;
@@ -228,12 +245,12 @@ export async function header(el, { portal, links = [], active } = {}) {
 
 export function footer(el) {
   render(el, html`<div class="wrap"><div class="footer-grid">
-    <div>${brand()}<p class="mt small">South African event ticketing, entry and cashless payments. Your event. Your ticket.</p>
+    <div>${brand()}<p class="mt small">Tickets for concerts, comedy, sport and festivals across South Africa.</p>
       <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p></div>
     <div><h4>Attendees</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">My tickets</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
     <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/organisers">Organiser portal</a></li><li><a href="/scan">Gate scanner</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
     <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
-  </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom · ticketroom.co.za. All prices in South African Rand (ZAR).</div></div>`);
+  </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. K2026811077 · ticketroom.co.za · Prices are in South African rand.</div></div>`);
   siteExtras().catch(() => {});
 }
 
@@ -329,7 +346,7 @@ function chatWidget(s) {
     $$("[data-fb]", el).forEach((b) => b.addEventListener("click", () => {
       m.helpful = b.dataset.fb === "1"; save();
       post(`/api/site/chat/${m.id}/feedback`, { helpful: m.helpful }).catch(() => {});
-      render($(".fb", el), m.helpful ? "Thanks for the feedback." : html`Sorry about that. <button class="btn-link" data-cbq2>Request a callback</button> and a person will help.`);
+      render($(".fb", el), m.helpful ? "Thanks for the feedback." : html`Sorry about that. <button class="btn-link" data-cbq2>Ask us to call you</button> and someone from our team will help.`);
       $("[data-cbq2]", el)?.addEventListener("click", () => callbackDialog({ source: "chat", message: lastQuestion() }));
     }));
     $$("[data-q]", el).forEach((b) => b.addEventListener("click", () => ask(b.dataset.q)));
@@ -358,7 +375,7 @@ function chatWidget(s) {
       if (r.hours) $("[data-status]", panel).textContent = hoursText(r.hours);
     } catch (err) {
       typing.remove();
-      bubble({ role: "assistant", text: err.status === 429 ? "You're sending messages quickly. Please wait a moment and try again." : `${err.message} You can request a callback instead and we'll respond within ${s.support.responseTime}.`, callback: true });
+      bubble({ role: "assistant", text: err.status === 429 ? "You're sending messages quickly. Please wait a moment and try again." : `${err.message} You can ask us to call you instead, and we'll get back to you within ${s.support.responseTime}.`, callback: true });
     } finally { busy = false; save(); }
   };
   const toggle = (open) => {

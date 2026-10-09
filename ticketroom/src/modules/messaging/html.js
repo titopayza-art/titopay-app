@@ -2,13 +2,13 @@
 // CSS, so styles are inline; no images, so nothing is blocked by default.
 //   "Label: https://…" on its own line  -> button
 //   "- item" lines                      -> bullet list
-//   text after the "—" line             -> footer
+//   text after the "-- " line           -> footer
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const linkify = (s) => esc(s).replace(/https?:\/\/[^\s<]+[^\s<.,;:!?)]/g, (u) => `<a href="${u}" style="color:#1B3770">${u}</a>`);
 const BUTTON = /^([^:\n]{2,40}): (https?:\/\/\S+)$/;
 
 function toHtml(subject, text) {
-  const [main, footer = ""] = String(text).split(/\n\n—\n/);
+  const [main, footer = ""] = String(text).split(/\n\n-- \n/);
   const blocks = main.split(/\n{2,}/).map((block) => {
     const lines = block.split("\n");
     const m = lines.length === 1 && lines[0].match(BUTTON);

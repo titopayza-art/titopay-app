@@ -33,9 +33,9 @@ function setup_page(string $docroot, array $errors = [], array $old = []): void
     echo '<!doctype html><html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Set up TicketRoom</title>'
         . '<link rel="icon" href="/assets/favicon.svg"><link rel="stylesheet" href="/assets/tr.css"></head><body>'
         . '<header class="site-header"><div class="wrap"><a class="brand" href="/"><img src="/assets/logo-mark.svg" alt="" width="40" height="30"><span><span class="wordmark">TICKET<b>ROOM</b></span><span class="brand-sub">Your event. Your ticket.</span></span></a><span class="portal-tag">Setup</span></div></header>'
-        . '<main id="main" class="wrap section"><div class="card pad-lg stack"><h1>Set up TicketRoom</h1>'
-        . '<p class="lead mb-0">One step and your site is live. This page disappears once setup is complete.</p>';
-    echo '<h2>1. Hosting check</h2><ul class="stack">';
+        . '<main id="main" class="wrap section"><div class="card pad-lg stack setup-card"><h1>Set up TicketRoom</h1>'
+        . '<p class="lead mb-0">Fill this in once and your site is live. You won\'t see this page again after that.</p>';
+    echo '<h2>1. Hosting check</h2><ul class="stack check-list">';
     foreach ($checks as [$label, $pass, $fix]) {
         echo '<li>' . ($pass ? '<span class="badge good">OK</span> ' : '<span class="badge bad">Needs attention</span> ') . $e($label) . ($pass ? '' : '<div class="small muted">' . $e($fix) . '</div>') . '</li>';
     }
