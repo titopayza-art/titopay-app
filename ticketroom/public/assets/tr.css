@@ -341,7 +341,16 @@ body.maint { display: grid; place-items: center; min-height: 100vh; padding: 16p
 .chat-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
 .chat-form input { flex: 1; min-width: 0; }
 .chat-panel > footer { padding: 0 12px 10px; color: var(--muted); text-align: center; }
-@media (max-width: 520px) { .chat-fab span { display: none; } .chat-fab { padding: 14px; } .chat-panel { right: 8px; left: 8px; width: auto; bottom: 76px; } }
+.chat-log, .chat-panel { overscroll-behavior: contain; }
+@media (max-width: 520px) { .chat-fab span { display: none; } .chat-fab { padding: 14px; } }
+/* Phones: the chat is a full-screen sheet over a locked page. */
+@media (max-width: 640px) {
+  .chat-panel { inset: 0; width: 100%; height: 100vh; height: 100dvh; border-radius: 0; box-shadow: none; }
+  .chat-panel > header { padding-top: max(10px, env(safe-area-inset-top)); }
+  .chat-panel > footer { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .chat-form input { font-size: 16px; } /* stops iPhone zooming in on the box */
+  html.chat-open .chat-fab { display: none; }
+}
 @media print { .chat-fab, .chat-panel, .site-banner { display: none !important; } }
 
 /* ---------- legal documents ---------- */

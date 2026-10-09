@@ -434,10 +434,34 @@ function chatWidget(s) {
       bubble({ role: "assistant", text: err.status === 429 ? "You're sending messages quickly. Please wait a moment and try again." : `${err.message} You can ask us to call you instead, and we'll get back to you within ${s.support.responseTime}.`, callback: true });
     } finally { busy = false; save(); }
   };
+  // On a phone the chat fills the screen and the page behind it stays put:
+  // scrolling the conversation never scrolls the page.
+  const phone = () => matchMedia("(max-width: 640px)").matches;
+  let lockedAt = null;
+  const lockPage = (on) => {
+    const b = document.body;
+    if (on && lockedAt === null) {
+      lockedAt = scrollY;
+      Object.assign(b.style, { position: "fixed", top: `-${lockedAt}px`, left: "0", right: "0", width: "100%" });
+      document.documentElement.classList.add("chat-open");
+    } else if (!on && lockedAt !== null) {
+      Object.assign(b.style, { position: "", top: "", left: "", right: "", width: "" });
+      document.documentElement.classList.remove("chat-open");
+      scrollTo(0, lockedAt);
+      lockedAt = null;
+    }
+  };
   const toggle = (open) => {
     panel.hidden = !open; fab.setAttribute("aria-expanded", String(open)); fab.classList.toggle("open", open);
-    if (open) { if (!log.childElementCount) draw(); $("#chat-in").focus(); }
+    lockPage(open && phone());
+    if (open) {
+      if (!log.childElementCount) draw();
+      log.scrollTop = log.scrollHeight;
+      // On a phone, wait for a tap before raising the keyboard over the conversation.
+      if (!phone()) $("#chat-in").focus();
+    }
   };
+  addEventListener("resize", () => { if (!panel.hidden) lockPage(phone()); });
   fab.addEventListener("click", () => toggle(panel.hidden));
   $("[data-x]", panel).addEventListener("click", () => { toggle(false); fab.focus(); });
   panel.addEventListener("keydown", (e) => { if (e.key === "Escape") { toggle(false); fab.focus(); } });
