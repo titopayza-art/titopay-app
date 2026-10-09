@@ -33,7 +33,7 @@ route('POST', '/api/site/callback', function () {
             'subject' => "Callback request: {$b['topic']}", 'body' => $b['message'], 'status' => 'open', 'full_name' => $b['fullName'], 'phone' => $b['phone'],
             'preferred_time' => $b['preferredTime'] ?? null, 'source' => $b['source'], 'due_at' => iso_in(48 * 3600), 'created_at' => $now, 'updated_at' => $now]);
         outbox_enqueue(['to' => $s['support']['email'], 'subject' => "[TicketRoom] Callback $ref — {$b['topic']}",
-            'body' => "New callback request $ref\n\nName: {$b['fullName']}\nPhone: {$b['phone']}\nEmail: {$b['email']}\nTopic: {$b['topic']}\nPreferred time: " . ($b['preferredTime'] ?? 'any') . "\nVia: {$b['source']}\n\n{$b['message']}\n\nRespond within {$s['support']['responseTime']}. Manage it in Back office → Support."]);
+            'body' => "New callback request $ref\n\nName: {$b['fullName']}\nPhone: {$b['phone']}\nEmail: {$b['email']}\nTopic: {$b['topic']}\nPreferred time: " . ($b['preferredTime'] ?? 'any') . "\nVia: {$b['source']}\n\n{$b['message']}\n\nRespond within {$s['support']['responseTime']}. Manage it in Admin portal → Support."]);
         outbox_enqueue(['to' => $b['email'], 'userId' => user()['id'] ?? null] + tpl('callbackReceived', ['name' => $b['fullName'], 'reference' => $ref,
             'responseTime' => $s['support']['responseTime'], 'email' => $s['support']['email'], 'hoursNote' => $s['hours']['note']]));
     });

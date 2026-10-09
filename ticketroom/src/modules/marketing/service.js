@@ -81,7 +81,7 @@ function render(campaign, organiser, recipient) {
   if (campaign.channel === "sms") return { body: `${organiser.name}: ${body} Opt out: ${unsub}` };
   return {
     subject: campaign.subject,
-    body: `${body}\n\n-- \nYou're getting this because you booked with ${organiser.name} on TicketRoom and said you'd like to hear from them.\nUnsubscribe: ${unsub}\nTicketRoom (Pty) Ltd · Reg. no. K2026811077`,
+    body: `${body}\n\n-- \nYou're getting this because you booked with ${organiser.name} on TicketRoom and said you'd like to hear from them.\nUnsubscribe: ${unsub}\nTicketRoom (Pty) Ltd · Reg. no. 2026811077`,
   };
 }
 

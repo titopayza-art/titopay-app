@@ -52,7 +52,7 @@ router.post("/callback", limit("callback", 5, 3600e3), wrap(async (req, res) => 
       [ref, req.user?.id || null, b.email, b.topic, `Callback request: ${b.topic}`, b.message, b.fullName, b.phone, b.preferredTime || null, b.source]);
     await outbox.enqueue(c, {
       to: s.support.email, subject: `[TicketRoom] Callback ${ref} — ${b.topic}`,
-      body: `New callback request ${ref}\n\nName: ${b.fullName}\nPhone: ${b.phone}\nEmail: ${b.email}\nTopic: ${b.topic}\nPreferred time: ${b.preferredTime || "any"}\nVia: ${b.source}\n\n${b.message}\n\nRespond within ${s.support.responseTime}. Manage it in Back office → Support.`,
+      body: `New callback request ${ref}\n\nName: ${b.fullName}\nPhone: ${b.phone}\nEmail: ${b.email}\nTopic: ${b.topic}\nPreferred time: ${b.preferredTime || "any"}\nVia: ${b.source}\n\n${b.message}\n\nRespond within ${s.support.responseTime}. Manage it in Admin portal → Support.`,
     });
     await outbox.enqueue(c, { to: b.email, userId: req.user?.id, ...templates.callbackReceived({ name: b.fullName, reference: ref, responseTime: s.support.responseTime, email: s.support.email, hoursNote: s.hours.note }) });
   });

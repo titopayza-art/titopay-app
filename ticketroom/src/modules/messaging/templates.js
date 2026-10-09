@@ -5,7 +5,7 @@
 const config = require("../../config");
 const { formatZar } = require("../../lib/money");
 
-const FOOTER = `\n\n-- \nTicketRoom · ticketroom.co.za · hello@ticketroom.co.za\nTicketRoom (Pty) Ltd · Reg. no. K2026811077`;
+const FOOTER = `\n\n-- \nTicketRoom · ticketroom.co.za · hello@ticketroom.co.za\nTicketRoom (Pty) Ltd · Reg. no. 2026811077`;
 const when = (d) => new Date(d).toLocaleString("en-ZA", { dateStyle: "full", timeStyle: "short", timeZone: "Africa/Johannesburg" });
 const time = (d) => new Date(d).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Africa/Johannesburg" });
 const first = (name) => String(name || "there").trim().split(/\s+/)[0];

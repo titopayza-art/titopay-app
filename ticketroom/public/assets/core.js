@@ -209,30 +209,58 @@ export function poster(ev, cls = "") {
 }
 
 // ---------- brand chrome ----------
-export function brand(portal) {
-  return html`<a class="brand" href="/" aria-label="TicketRoom home"><img src="/assets/logo-mark.svg" alt="" width="40" height="30"><span><span class="wordmark">TICKET<b>ROOM</b></span><span class="brand-sub">Your event. Your ticket.</span></span></a>${portal ? html`<span class="portal-tag">${portal}</span>` : ""}`;
+export function brand() {
+  return html`<a class="brand" href="/" aria-label="TicketRoom home"><img src="/assets/logo-mark.svg" alt="" width="40" height="30"><span><span class="wordmark">TICKET<b>ROOM</b></span><span class="brand-sub">Your event. Your ticket.</span></span></a>`;
 }
 
-export async function header(el, { portal, links = [], active } = {}) {
+// The three portals, and the two event-day tools, always go by these names.
+export const PORTALS = {
+  customer: { href: "/account", name: "Customer portal", note: "Your tickets, orders and transfers" },
+  organiser: { href: "/organisers", name: "Organiser portal", note: "Your events, sales and gate staff" },
+  admin: { href: "/admin", name: "Admin portal", note: "TicketRoom staff only" },
+  scanner: { href: "/scan", name: "Gate scanner", note: "Checking tickets at the entrance" },
+  pos: { href: "/pos", name: "Vendor POS", note: "Selling at the event" },
+};
+export const isStaff = (u) => ["admin", "finance", "support"].some((x) => roles(u).has(x));
+// The portals this person can open, in a fixed order.
+export function portalsFor(u) {
+  if (!u) return [];
+  const list = ["customer"];
+  if (u.organisers?.length) list.push("organiser");
+  if (u.staff_events?.length || u.organisers?.length) list.push("scanner");
+  if (u.vendors?.length) list.push("pos");
+  if (isStaff(u)) list.push("admin");
+  return list;
+}
+// Where someone lands after signing in: their working portal.
+export const homePortal = (u) => (isStaff(u) ? "/admin" : u?.organisers?.length ? "/organisers" : "/account");
+
+export async function header(el, { portal, active } = {}) {
   const u = await me();
-  const r = roles(u);
-  const portals = [];
-  if (u) {
-    portals.push(["/account", "My tickets"]);
-    if (u.organisers?.length) portals.push(["/organisers", "Organiser"]);
-    if (u.staff_events?.length || u.organisers?.length) portals.push(["/scan", "Scanner"]);
-    if (u.vendors?.length) portals.push(["/pos", "POS"]);
-    if (r.has("admin") || r.has("finance") || r.has("support")) portals.push(["/admin", "Admin"]);
-  }
-  const navLinks = links.length ? links : [["/", "Events"], ["/sell", "Sell tickets"], ["/help", "Help"]];
-  render(el, html`<a class="skip" href="#main">Skip to content</a><div class="wrap">${brand(portal)}
+  const here = PORTALS[portal];
+  const mine = portalsFor(u);
+  // On the public website: Events, Sell tickets, Help, then the person's main
+  // portal. Inside a portal: the website, then every other portal by its full name.
+  const links = here
+    ? [["/", "TicketRoom website"], ...mine.filter((k) => k !== portal).map((k) => [PORTALS[k].href, PORTALS[k].name])]
+    : [["/", "Events"], ["/sell", "Sell tickets"], ["/help", "Help"], ...(u ? [[homePortal(u), PORTALS[mine.includes("admin") ? "admin" : mine.includes("organiser") ? "organiser" : "customer"].name]] : [])];
+  render(el, html`<a class="skip" href="#main">Skip to content</a><div class="wrap">${brand()}
     <button class="menu-toggle" aria-expanded="false" aria-controls="nav">Menu</button>
     <nav class="nav" id="nav" aria-label="Main">
-      ${navLinks.map(([href, label]) => html`<a href="${href}" ${raw(active === href ? 'aria-current="page"' : "")}>${label}</a>`)}
-      ${u ? html`${portals.filter(([h]) => !navLinks.some(([x]) => x === h)).map(([href, label]) => html`<a href="${href}" ${raw(location.pathname.startsWith(href) ? 'aria-current="page"' : "")}>${label}</a>`)}
-        <button class="link" data-signout><span class="user-chip"><span class="avatar" aria-hidden="true">${initials(u.full_name)}</span>Sign out</span></button>`
+      ${here ? html`<span class="nav-here">You're in the ${here.name}</span>` : ""}
+      ${links.map(([href, label]) => html`<a href="${href}" ${raw(active === href ? 'aria-current="page"' : "")}>${label}</a>`)}
+      ${u ? html`<button class="link" data-signout><span class="user-chip"><span class="avatar" aria-hidden="true">${initials(u.full_name)}</span>Sign out</span></button>`
       : html`<button class="link" data-signin>Sign in</button><button class="btn btn-primary btn-sm" data-signup>Create account</button>`}
     </nav></div>`);
+  // A coloured bar under the header names the portal, so admin, organiser and
+  // customer screens can never be mistaken for each other, on a phone too.
+  $(".portal-bar")?.remove();
+  if (here) {
+    const bar = document.createElement("div");
+    bar.className = `portal-bar pb-${portal}`;
+    render(bar, html`<div class="wrap"><strong>${here.name}</strong><span>${here.note}</span></div>`);
+    el.after(bar);
+  }
   const toggle = $(".menu-toggle", el);
   toggle.addEventListener("click", () => { const open = $("#nav", el).classList.toggle("open"); toggle.setAttribute("aria-expanded", String(open)); });
   $("[data-signin]", el)?.addEventListener("click", () => authDialog("signin"));
@@ -242,12 +270,13 @@ export async function header(el, { portal, links = [], active } = {}) {
     const nag = document.createElement("div");
     nag.className = "pw-nag";
     nag.setAttribute("role", "status");
-    render(nag, html`<div class="wrap">You're signed in with the temporary password. <a href="/account#/settings">Change it now</a>.</div>`);
-    el.after(nag);
+    render(nag, html`<div class="wrap">You're signed in with the temporary password. <a href="${isStaff(u) ? "/admin#/password" : "/account#/settings"}">Change it now</a>.</div>`);
+    ($(".portal-bar") || el).after(nag);
   }
+  if (!u?.mustChangePassword) $(".pw-nag")?.remove();
   maintenanceScreen(u).catch(() => {});
   // Gate, till and back-office screens stay uncluttered: no banner or assistant there.
-  if (!/^\/(scan|pos|admin)(\/|$)/.test(location.pathname)) siteExtras().catch(() => {});
+  if (!/^\/(scan|pos|admin)(\/|$)/.test(location.pathname)) siteExtras({ banner: !here }).catch(() => {});
   return u;
 }
 
@@ -270,10 +299,10 @@ export function footer(el) {
   render(el, html`<div class="wrap"><div class="footer-grid">
     <div>${brand()}<p class="mt small">Tickets for concerts, comedy, sport and festivals across South Africa.</p>
       <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p></div>
-    <div><h4>Attendees</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">My tickets</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
+    <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
     <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/organisers">Organiser portal</a></li><li><a href="/scan">Gate scanner</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
     <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
-  </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. K2026811077 · ticketroom.co.za · Prices are in South African rand.</div></div>`);
+  </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. 2026811077 · ticketroom.co.za · Prices are in South African rand.</div></div>`);
   siteExtras().catch(() => {});
 }
 
@@ -299,12 +328,13 @@ export function weekTable(hours) {
   return html`<dl class="dl hours">${Object.keys(DAY_NAMES).map((d) => html`<dt>${DAY_NAMES[d]}</dt><dd>${hours.week[d] ? `${hm(hours.week[d].open)} – ${hm(hours.week[d].close)}` : "Closed"}</dd>`)}<dt>Public holidays</dt><dd>Closed</dd></dl>`;
 }
 
-export async function siteExtras() {
+// The announcement banner belongs to the public website only, never inside a portal.
+export async function siteExtras({ banner = true } = {}) {
   const s = await siteInfo();
   if (!s) return;
   $$("[data-support-email]").forEach((a) => { a.href = `mailto:${s.support.email}`; a.textContent = s.support.email; });
   $$("[data-hours-line]").forEach((x) => { x.textContent = s.hours.note || "Monday to Friday, 9am to 5pm"; });
-  if (s.banner && !$(".site-banner") && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
+  if (banner && s.banner && !$(".site-banner") && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
     const b = document.createElement("div");
     b.className = "site-banner"; b.setAttribute("role", "region"); b.setAttribute("aria-label", "Announcement");
     render(b, html`<div class="wrap"><p><span class="pill" aria-hidden="true">New</span> ${s.banner.text} ${s.banner.linkText && s.banner.linkUrl ? html`<a href="${s.banner.linkUrl}">${s.banner.linkText} →</a>` : ""}</p><button class="icon-btn" data-hide aria-label="Hide announcement">×</button></div>`);

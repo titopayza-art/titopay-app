@@ -212,7 +212,7 @@ function email_html(string $subject, string $text): string
 }
 
 // ============================================================== templates
-const FOOTER = "\n\n-- \nTicketRoom · ticketroom.co.za · hello@ticketroom.co.za\nTicketRoom (Pty) Ltd · Reg. no. K2026811077";
+const FOOTER = "\n\n-- \nTicketRoom · ticketroom.co.za · hello@ticketroom.co.za\nTicketRoom (Pty) Ltd · Reg. no. 2026811077";
 function sa_time(?string $iso, string $fmt): string
 {
     $d = new DateTimeImmutable($iso ?: 'now');

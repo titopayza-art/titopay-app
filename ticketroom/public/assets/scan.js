@@ -156,10 +156,10 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
     const ev = await offline.savedEvent(saved);
     if (ev) { render($("#header"), html`<div class="wrap"><span class="wordmark">TICKET<b>ROOM</b></span></div>`); start(ev); return setNet(false); }
   }
-  await header($("#header"), { portal: "Scanner", links: [["/scan", "Scanner"]] });
+  await header($("#header"), { portal: "scanner" });
   const u = await requireUser("Staff sign in to scan tickets.");
   if (!u) return render(main, empty("Sign in to scan."));
-  await header($("#header"), { portal: "Scanner", links: [["/scan", "Scanner"]] });
+  await header($("#header"), { portal: "scanner" });
   render(main, spinner());
   pickEvent();
 })();

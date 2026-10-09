@@ -6,17 +6,28 @@ const main = $("#main");
 let R = new Set();
 const isA = () => R.has("admin"), isF = () => R.has("finance"), isS = () => R.has("support");
 const head = (t, s = "", a = "") => html`<div class="page-head"><div><h1>${t}</h1>${s ? html`<p class="muted">${s}</p>` : ""}</div><div class="row">${a}</div></div>`;
-const tbl = (cols, rows) => rows.length ? html`<div class="table-wrap"><table><thead><tr>${cols.map((c) => html`<th class="${c.startsWith("#") ? "num" : ""}">${c.replace("#", "")}</th>`)}</tr></thead><tbody>${rows}</tbody></table></div>` : empty("Nothing here.");
+const tbl = (cols, rows, none = "Nothing here yet.") => rows.length ? html`<div class="table-wrap"><table><thead><tr>${cols.map((c) => html`<th class="${c.startsWith("#") ? "num" : ""}">${c.replace("#", "")}</th>`)}</tr></thead><tbody>${rows}</tbody></table></div>` : empty(none);
+// Staff change their own password here, inside the admin portal.
+async function myPassword() {
+  const u = await me(true);
+  render(main, html`${head("My password", `Signed in as ${u.email}. Other devices are signed out when you change it.`)}
+    <section class="card" style="max-width:520px"><form class="stack" id="pw">
+      <div class="field"><label for="cp">Current password</label><input id="cp" name="currentPassword" type="password" required autocomplete="current-password"></div>
+      <div class="field"><label for="np">New password</label><input id="np" name="newPassword" type="password" required minlength="10" autocomplete="new-password"><span class="hint">At least 10 characters.</span></div>
+      <button class="btn btn-dark">Change password</button></form></section>`);
+  onSubmit($("#pw"), async (v, f) => { await post("/api/auth/me/password", v); f.reset(); $(".pw-nag")?.remove(); toast("Password changed.", "good"); });
+}
 const act = async (fn, msg = "Done.") => { try { await fn(); toast(msg, "good"); return true; } catch (err) { toast(err.message, "bad"); return false; } };
 const reason = (title, msg, label = "Reason") => confirmDialog(title, msg, { confirm: "Confirm", input: { label, required: true } });
 
 function nav(counts = {}) {
   const c = (n) => (n ? html`<span class="count">${n}</span>` : "");
   render($("#sidenav"), html`<a href="#/">Overview</a>
-    <div class="sect">Operations</div><a href="#/organisers">Organisers${c(counts.orgs)}</a><a href="#/events">Events${c(counts.events)}</a><a href="#/users">Users</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
+    <div class="sect">Operations</div><a href="#/organisers">Organiser accounts${c(counts.orgs)}</a><a href="#/events">All events${c(counts.events)}</a><a href="#/users">All users</a><a href="#/lookup">Orders & tickets</a><a href="#/tags" data-feature="tags">Tags</a><a href="#/terminals" data-feature="pos">Terminals</a><a href="#/support">Support${c(counts.support)}</a>
     <div class="sect" data-feature="finance">Finance</div><a href="#/refunds" data-feature="finance">Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance">Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance">Payments & webhooks</a><a href="#/reconciliation" data-feature="finance">Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance">Ledger</a>
     <div class="sect">Website</div><a href="#/site">Site settings</a><a href="#/posters">Advertising posters</a><a href="#/assistant">Assistant</a><a href="#/emails">Email templates</a>
-    <div class="sect">Governance</div><a href="#/integrations">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>`);
+    <div class="sect">Governance</div><a href="#/integrations">Integrations</a><a href="#/audit">Audit log</a><a href="#/outbox">Messages</a>
+    <div class="sect">You</div><a href="#/password">My password</a>`);
 }
 
 async function overview() {
@@ -48,8 +59,8 @@ async function overview() {
 
 async function organisers() {
   const { organisers: list } = await get("/api/admin/organisers");
-  render(main, html`${head("Organisers")}${tbl(["Organiser", "Owner", "Contact", "Events", "Bank", "Status", ""], list.map((o) => html`<tr><td><strong>${o.name}</strong><div class="tiny muted">${fmtDate(o.created_at)}</div></td><td>${o.owner_name || ""}</td><td class="small">${o.contact_email}<br>${o.contact_phone || ""}</td><td>${o.events}</td><td>${o.bank_account_last4 ? `••${o.bank_account_last4}` : "—"}</td><td>${badge(o.status)}<div class="tiny muted">${o.commission_bps == null ? "standard fee" : `fee ${o.commission_bps / 100}%`}</div></td>
-    <td>${isA() ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-fee="${o.id}">Fee</button>${o.status !== "approved" ? html`<button class="btn btn-good btn-sm" data-s="approved" data-id="${o.id}">Approve</button>` : ""}${o.status === "pending" ? html`<button class="btn btn-ghost btn-sm" data-s="rejected" data-id="${o.id}">Reject</button>` : ""}${o.status === "approved" ? html`<button class="btn btn-ghost btn-sm" data-s="suspended" data-id="${o.id}">Suspend</button>` : ""}</div>` : ""}</td></tr>`))}`);
+  render(main, html`${head("Organiser accounts", "Organisations that sell tickets on TicketRoom. Approve applications here; organisers run their own events in the organiser portal.")}${tbl(["Organiser", "Owner", "Contact", "Events", "Bank", "Status", ""], list.map((o) => html`<tr><td><strong>${o.name}</strong><div class="tiny muted">${fmtDate(o.created_at)}</div></td><td>${o.owner_name || ""}</td><td class="small">${o.contact_email}<br>${o.contact_phone || ""}</td><td>${o.events}</td><td>${o.bank_account_last4 ? `••${o.bank_account_last4}` : "—"}</td><td>${badge(o.status)}<div class="tiny muted">${o.commission_bps == null ? "standard fee" : `fee ${o.commission_bps / 100}%`}</div></td>
+    <td>${isA() ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-fee="${o.id}">Fee</button>${o.status !== "approved" ? html`<button class="btn btn-good btn-sm" data-s="approved" data-id="${o.id}">Approve</button>` : ""}${o.status === "pending" ? html`<button class="btn btn-ghost btn-sm" data-s="rejected" data-id="${o.id}">Reject</button>` : ""}${o.status === "approved" ? html`<button class="btn btn-ghost btn-sm" data-s="suspended" data-id="${o.id}">Suspend</button>` : ""}</div>` : ""}</td></tr>`), "No organisers yet. When someone applies to sell tickets, their application appears here for approval.")}`);
   $$("[data-s]").forEach((b) => b.addEventListener("click", async () => {
     const why = b.dataset.s === "approved" ? "" : await reason(`${b.dataset.s === "rejected" ? "Reject" : "Suspend"} organiser`, b.dataset.s === "suspended" ? "Their published events will be suspended too." : "They will be told.");
     if (why === false) return;
@@ -67,7 +78,7 @@ async function organisers() {
 async function events() {
   const filter = sessionStorage.getItem("adm_ev") || "pending_approval";
   const { events: list } = await get(`/api/admin/events${filter === "all" ? "" : `?status=${filter}`}`);
-  render(main, html`${head("Events")}<div class="chips">${[["pending_approval", "Awaiting approval"], ["cancel_requests", "Cancellation requests"], ["published", "Published"], ["suspended", "Suspended"], ["all", "All"]].map(([k, l]) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`)}</div>
+  render(main, html`${head("All events", "Every event on TicketRoom, from every organiser. Approve, suspend or handle cancellation requests.")}<div class="chips">${[["pending_approval", "Awaiting approval"], ["cancel_requests", "Cancellation requests"], ["published", "Published"], ["suspended", "Suspended"], ["all", "All"]].map(([k, l]) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`)}</div>
     <div class="mt">${tbl(["Event", "Organiser", "Date", "Sold", "Status", ""], list.map((e) => html`<tr><td><strong>${e.title}</strong>${e.cancellation_requested_at && e.status !== "cancelled" ? html`<div class="small" >Cancellation requested: ${e.cancellation_reason}</div>` : ""}${e.featured ? html` <span class="badge amber plain">featured</span>` : ""}</td><td>${e.organiser_name}</td><td>${fmtDate(e.starts_at)}<div class="tiny muted">${e.city}</div></td><td>${e.sold}/${e.capacity}</td><td>${badge(e.status)}</td>
       <td>${isA() ? html`<div class="row">
         ${e.status === "pending_approval" ? html`<button class="btn btn-good btn-sm" data-a="publish" data-id="${e.id}">Publish</button><button class="btn btn-ghost btn-sm" data-a="reject" data-id="${e.id}">Request changes</button>` : ""}
@@ -95,7 +106,7 @@ async function users() {
     render($("#ul"), tbl(["Name", "Email", "Phone", "Roles", "Status", ""], list.map((u) => html`<tr><td>${u.full_name}</td><td>${u.email}${u.email_verified_at ? "" : html` <span class="tiny muted">(unverified)</span>`}</td><td>${u.phone || ""}</td><td>${u.roles.join(", ")}</td><td>${badge(u.status)}</td><td><button class="btn btn-ghost btn-sm" data-u="${u.id}">Open</button></td></tr>`)));
     $$("[data-u]").forEach((b) => b.addEventListener("click", () => userDialog(b.dataset.u, () => draw(q))));
   };
-  render(main, html`${head("Users")}<form class="row" id="us"><input id="uq" class="grow" placeholder="Search name, email or phone" aria-label="Search users"><button class="btn btn-ghost">Search</button></form><div id="ul" class="mt">${spinner()}</div>`);
+  render(main, html`${head("All users", "Everyone with a TicketRoom account: customers, organisers and staff.")}<form class="row" id="us"><input id="uq" class="grow" placeholder="Search name, email or phone" aria-label="Search users"><button class="btn btn-ghost">Search</button></form><div id="ul" class="mt">${spinner()}</div>`);
   $("#us").addEventListener("submit", (e) => { e.preventDefault(); draw($("#uq").value); });
   draw();
 }
@@ -487,13 +498,13 @@ async function integrations() {
 }
 
 (async () => {
-  await header($("#header"), { portal: "Back office", links: [["/admin", "Back office"]] });
+  await header($("#header"), { portal: "admin" });
   const u = await requireUser("TicketRoom staff sign in.");
   if (!u) return render(main, empty("Sign in."));
   R = roles(await me(true));
-  await header($("#header"), { portal: "Back office", links: [["/admin", "Back office"]] });
+  await header($("#header"), { portal: "admin" });
   if (!R.size) { render($("#sidenav"), ""); return render(main, html`${head("No access")}<p>This area is for TicketRoom staff.</p>`); }
   nav();
   router([["/", overview], ["/organisers", organisers], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", gate("tags", tags)], ["/terminals", gate("pos", terminals)], ["/support", support],
-    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations]], () => { location.hash = "#/"; });
+    ["/refunds", gate("finance", refunds)], ["/payouts", gate("finance", payouts)], ["/payments", gate("finance", payments)], ["/reconciliation", gate("finance", reconciliation)], ["/ledger", gate("finance", ledgerPage)], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations], ["/password", myPassword]], () => { location.hash = "#/"; });
 })();

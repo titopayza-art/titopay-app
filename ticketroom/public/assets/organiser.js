@@ -14,7 +14,7 @@ const base = () => `/api/organiser/${ORG.id}`;
 function nav() {
   render($("#sidenav"), html`
     ${ORGS.length > 1 ? html`<div class="org-switch"><label class="sr-only" for="orgsel">Organisation</label><select id="orgsel">${ORGS.map((o) => html`<option value="${o.id}" ${raw(o.id === ORG?.id ? "selected" : "")}>${o.name}</option>`)}</select></div>` : ORG ? html`<div class="sect">${ORG.name}</div>` : ""}
-    <a href="#/">Dashboard</a><a href="#/events">Events</a><a href="#/marketing">Marketing</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
+    <a href="#/">Dashboard</a><a href="#/events">My events</a><a href="#/marketing">Marketing</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
     <div class="sect">Tools</div><a href="/scan">Gate scanner</a><a href="/pos" data-feature="pos">Vendor POS</a>`);
   $("#orgsel")?.addEventListener("change", (e) => { localStorage.setItem("tr_org", e.target.value); location.hash = "#/"; location.reload(); });
 }
@@ -59,7 +59,7 @@ async function dashboard() {
 // ---------------- events list & editor ----------------
 async function events() {
   const list = await get(`${base()}/events`);
-  render(main, html`${head("Events", "", can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}${pendingBanner()}
+  render(main, html`${head("My events", "", can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}${pendingBanner()}
     ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Status</th><th>Sold</th><th class="num">Revenue</th></tr></thead><tbody>
       ${list.map((e) => html`<tr><td><a href="#/events/${e.id}"><strong>${e.title}</strong></a></td><td>${fmtDateTime(e.starts_at)}</td><td>${badge(e.status)}</td><td>${e.sold} / ${e.capacity}</td><td class="num">${moneyExact(e.revenue_cents)}</td></tr>`)}
     </tbody></table></div>` : empty("No events yet.")}`);
@@ -111,7 +111,7 @@ function wireUpload(form) {
 }
 
 function newEvent() {
-  render(main, html`${head("Create event", "Start with the basics. You'll add ticket types next.", "", html`<a href="#/events">Events</a>`)}<div class="card">${eventForm()}</div>`);
+  render(main, html`${head("Create event", "Start with the basics. You'll add ticket types next.", "", html`<a href="#/events">My events</a>`)}<div class="card">${eventForm()}</div>`);
   const f = $("#evf"); wireUpload(f);
   onSubmit(f, async (v) => { const r = await post(`${base()}/events`, eventPayload(v)); toast("Draft created. Now add ticket types.", "good"); location.hash = `#/events/${r.event.id}/tickets`; });
 }
@@ -126,7 +126,7 @@ async function eventWorkspace({ id, tab = "" }) {
   if (e.status === "draft" && can("owner", "manager")) actions.push(html`<button class="btn btn-primary" data-submit>Submit for approval</button>`);
   if (e.status === "published") actions.push(html`<a class="btn btn-ghost" href="/events/${e.slug}" target="_blank">View public page ↗</a>`);
   if (can("owner") && !["cancelled", "completed"].includes(e.status)) actions.push(html`<button class="btn btn-ghost" data-cancel>${e.cancellation_requested_at ? "Cancellation requested" : "Cancel event"}</button>`);
-  render(main, html`${head(e.title, html`${badge(e.status)} · ${fmtDateTime(e.starts_at)} · ${e.venue_name}, ${e.city}`, html`${actions}`, html`<a href="#/events">Events</a>`)}
+  render(main, html`${head(e.title, html`${badge(e.status)} · ${fmtDateTime(e.starts_at)} · ${e.venue_name}, ${e.city}`, html`${actions}`, html`<a href="#/events">My events</a>`)}
     ${e.status === "pending_approval" ? html`<p class="callout">Submitted. TicketRoom will review and publish it shortly.</p>` : ""}
     ${e.status === "draft" && e.status_reason ? html`<p class="callout warn"><strong>Changes requested:</strong> ${e.status_reason}</p>` : ""}
     ${e.cancellation_requested_at && e.status !== "cancelled" ? html`<p class="callout warn">Cancellation requested: ${e.cancellation_reason}. TicketRoom will cancel the event and refund buyers.</p>` : ""}
@@ -458,10 +458,10 @@ async function loadOrg() {
 }
 
 (async () => {
-  await header($("#header"), { portal: "Organiser" });
+  await header($("#header"), { portal: "organiser" });
   const u = await requireUser("Sign in to the organiser portal.");
   if (!u) return render(main, empty("Sign in to continue."));
-  await header($("#header"), { portal: "Organiser" });
+  await header($("#header"), { portal: "organiser" });
   FEATURES = await features();
   await loadOrg();
   nav();

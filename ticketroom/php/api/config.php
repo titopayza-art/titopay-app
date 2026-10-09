@@ -15,8 +15,8 @@ return [
      * The first administrator, created the first time the site is opened.
      * The password is stored as a one-way hash, never as plain text. Sign in
      * at https://ticketroom.co.za/signin with the temporary password you were
-     * given, then change it under My account → Settings. The back office
-     * reminds you until you do.
+     * given. You land in the admin portal, which reminds you to change the
+     * password (Admin portal → My password) until you do.
      *
      * Changing this later does nothing on a live site, because the account
      * already exists. To reset a forgotten password, see START-HERE.txt.

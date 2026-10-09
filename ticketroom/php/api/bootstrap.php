@@ -141,7 +141,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -151,6 +151,10 @@ const UPGRADES = [
         'CREATE INDEX IF NOT EXISTS message_outbox_user_idx ON message_outbox (user_id)',
         'CREATE INDEX IF NOT EXISTS ticket_transfers_to_idx ON ticket_transfers (to_email, status)',
         'CREATE INDEX IF NOT EXISTS tickets_event_updated_idx ON tickets (event_id, updated_at)',
+    ],
+    // The company registration number has no K prefix.
+    3 => [
+        "UPDATE site_settings SET value = replace(value, '\"K2026811077\"', '\"2026811077\"') WHERE key = 'legal'",
     ],
 ];
 function tr_upgrade(): void

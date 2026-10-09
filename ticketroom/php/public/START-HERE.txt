@@ -17,8 +17,15 @@ The short version:
         hello@ticketroom.co.za
         (the temporary password you were given; it is not written in any
         file on the site)
-     A yellow bar reminds you to change it. Do that first: My account →
-     Settings → Change password.
+     You land in the admin portal (red bar). A yellow bar reminds you to
+     change the password: Admin portal → My password. Do that first.
+
+
+THE THREE PORTALS
+-----------------
+  Admin portal      /admin        red bar     TicketRoom staff
+  Organiser portal  /organisers   blue bar    organisers and their events
+  Customer portal   /account      green bar   ticket buyers
 
 
 WHAT IS WHERE

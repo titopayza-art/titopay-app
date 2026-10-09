@@ -266,11 +266,11 @@ function reset({ token }) {
 
 (async () => {
   const pre = location.hash.match(/^#\/reset\/(.+)$/);
-  await header($("#header"), { portal: "My account" });
+  await header($("#header"), { portal: "customer" });
   if (pre) { nav(); return reset({ token: pre[1] }); }
   const u = await requireUser("Sign in to see your tickets.");
   if (!u) return render(main, empty("Sign in to see your tickets."));
-  await header($("#header"), { portal: "My account" });
+  await header($("#header"), { portal: "customer" });
   nav();
   router([
     ["/", tickets], ["/tickets", tickets], ["/orders", orders], ["/transfers", transfers], ["/claim/:token", claim], ["/tags", gate("cashless", tags)],

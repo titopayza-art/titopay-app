@@ -48,7 +48,7 @@ async function signIn(p, email, password) {
     // 1. The home page is the live site from the first visit.
     const a = await page(browser);
     await a.goto(BASE);
-    await a.locator("#footer").getByText("K2026811077").waitFor();
+    await a.locator("#footer").getByText(/Reg\. no\. 2026811077 ·/).waitFor();
     assert.equal(await a.getByText("Set up TicketRoom").count(), 0, "no setup screen");
     await shot(a, "home-first-visit");
     // The administrator signs in with the temporary password and is told to change it.
@@ -57,7 +57,9 @@ async function signIn(p, email, password) {
     await d.getByLabel("Email").fill(ADMIN.email);
     await d.getByLabel("Password").fill(TEMP);
     await d.getByRole("button", { name: "Sign in" }).click();
-    await a.waitForURL(/\/account/);
+    // Staff land in the admin portal, clearly labelled as such.
+    await a.waitForURL(/\/admin/);
+    await a.locator(".portal-bar.pb-admin").getByText("Admin portal").waitFor();
     await a.getByText("You're signed in with the temporary password.").waitFor();
     await a.getByRole("link", { name: "Change it now" }).click();
     await a.getByLabel("Current password").fill(TEMP);
@@ -66,10 +68,11 @@ async function signIn(p, email, password) {
     await a.getByText("Password changed.").waitFor();
     assert.equal(await a.locator(".pw-nag").count(), 0, "reminder gone");
     await a.goto(`${BASE}/admin#/site`);
+    await a.locator(".portal-bar").getByText("Admin portal").waitFor();
     await a.getByRole("heading", { name: "Site settings" }).waitFor();
     assert.equal(await a.locator(".pw-nag").count(), 0, "reminder stays gone");
     await shot(a, "admin-signed-in");
-    for (const [hash, heading] of [["#/", "Overview"], ["#/organisers", "Organisers"], ["#/events", "Events"], ["#/users", "Users"], ["#/support", "Support & callbacks"],
+    for (const [hash, heading] of [["#/", "Overview"], ["#/organisers", "Organiser accounts"], ["#/events", "All events"], ["#/users", "All users"], ["#/support", "Support & callbacks"],
       ["#/posters", "Advertising posters"], ["#/assistant", "Assistant"], ["#/emails", "Email templates"], ["#/integrations", "Integrations"], ["#/audit", "Audit log"], ["#/outbox", "Messages"]]) {
       await a.goto(`${BASE}/admin${hash}`);
       await a.getByRole("heading", { name: heading, exact: true }).first().waitFor();
@@ -81,6 +84,7 @@ async function signIn(p, email, password) {
     const o = await page(browser);
     await signUp(o, "Naledi Dlamini", "naledi@example.co.za", "organiser-pass-1");
     await o.goto(`${BASE}/organisers`);
+    await o.locator(".portal-bar.pb-organiser").getByText("Organiser portal").waitFor();
     await o.getByLabel("Organisation or trading name").fill("Soweto Community Arts");
     await o.getByRole("button", { name: "Submit for review" }).click();
     await o.getByText(/being reviewed/).waitFor();
@@ -138,6 +142,7 @@ async function signIn(p, email, password) {
     await f.getByRole("heading", { name: /You're going/ }).waitFor();
     await shot(f, "fan-order-confirmed");
     await f.goto(`${BASE}/account#/tickets`);
+    await f.locator(".portal-bar.pb-customer").getByText("Customer portal").waitFor();
     await f.locator(".t-qr img").first().waitFor();
     const qrOk = await f.locator(".t-qr img").first().evaluate((img) => img.complete && img.naturalWidth > 0);
     assert.ok(qrOk, "QR image renders");

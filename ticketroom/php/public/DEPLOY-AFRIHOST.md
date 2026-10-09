@@ -97,12 +97,25 @@ Go to **https://ticketroom.co.za/signin**.
 - Email `hello@ticketroom.co.za`
 - Password: the temporary one you were given
 
-A yellow bar reminds you to change it. **My account → Settings → Change
-password**. Then open the back office at **https://ticketroom.co.za/admin**.
+You land in the **admin portal** (red bar at the top). A yellow bar reminds
+you to change the password: **Admin portal → My password**.
+
+TicketRoom has three portals, each with its own coloured bar so they are
+never confused:
+
+| Portal | Address | Bar | Who uses it |
+| --- | --- | --- | --- |
+| Admin portal | /admin | red | TicketRoom staff: approve organisers and events, site settings, support |
+| Organiser portal | /organisers | blue | Organisers: their events, tickets, sales, gate staff |
+| Customer portal | /account | green | Ticket buyers: their tickets, orders, transfers |
+
+Staff land in the admin portal when they sign in, organisers in the
+organiser portal, everyone else in the customer portal. The Menu button
+lists the other portals a person may open, by these names.
 
 ## 8. Prove that email works
 
-Back office → **Emails** → send yourself a test, or create a free test
+Admin portal → **Email templates** → send yourself a test, or create a free test
 event and book a ticket for yourself. The ticket email should arrive within
 a minute or two. If it does not, run the deploy check again: the Email
 section says what is wrong.

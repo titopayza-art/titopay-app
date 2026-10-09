@@ -226,7 +226,7 @@ function org_render(array $camp, array $org, array $recipient): array
     if ($camp['channel'] === 'sms') return ['body' => "{$org['name']}: $body Opt out: $unsub"];
     return [
         'subject' => $camp['subject'],
-        'body' => "$body\n\n-- \nYou're getting this because you booked with {$org['name']} on TicketRoom and said you'd like to hear from them.\nUnsubscribe: $unsub\nTicketRoom (Pty) Ltd · Reg. no. K2026811077",
+        'body' => "$body\n\n-- \nYou're getting this because you booked with {$org['name']} on TicketRoom and said you'd like to hear from them.\nUnsubscribe: $unsub\nTicketRoom (Pty) Ltd · Reg. no. 2026811077",
     ];
 }
 

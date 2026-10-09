@@ -25,7 +25,7 @@ function setting_defaults(): array
             'note' => 'Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.',
         ],
         'support' => ['email' => 'hello@ticketroom.co.za', 'phone' => '', 'responseTime' => '24–48 hours'],
-        'legal' => ['entityName' => 'TicketRoom (Pty) Ltd', 'registrationNumber' => 'K2026811077', 'vatNumber' => '', 'physicalAddress' => '', 'postalAddress' => '', 'informationOfficer' => '', 'website' => 'ticketroom.co.za'],
+        'legal' => ['entityName' => 'TicketRoom (Pty) Ltd', 'registrationNumber' => '2026811077', 'vatNumber' => '', 'physicalAddress' => '', 'postalAddress' => '', 'informationOfficer' => '', 'website' => 'ticketroom.co.za'],
         'emails' => ['reminderDayBefore' => true, 'reminderSoon' => true, 'abandonedCheckout' => true, 'abandonedDelayHours' => 1],
         'chatbot' => ['enabled' => true, 'aiEnabled' => true, 'greeting' => "Hi, I'm the TicketRoom assistant. Ask me about tickets, events, refunds or listing your own event."],
     ];

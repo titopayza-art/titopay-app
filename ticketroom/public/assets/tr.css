@@ -382,3 +382,17 @@ body.maint { display: grid; place-items: center; min-height: 100vh; padding: 16p
 html.maint-on body > *:not(.maint-screen) { display: none !important; }
 .maint-screen { display: grid; place-items: center; min-height: 100vh; padding: 16px; background: linear-gradient(180deg, var(--navy-900), var(--navy-950)); color: #fff; text-align: center; }
 .maint-screen h1 { color: #fff; }
+
+/* ---------- which portal am I in? ---------- */
+.portal-bar { color: #fff; font-size: .9rem; position: relative; z-index: 31; }
+.portal-bar .wrap { display: flex; align-items: baseline; gap: 6px 12px; flex-wrap: wrap; padding-top: 9px; padding-bottom: 9px; }
+.portal-bar strong { font-weight: 800; letter-spacing: .02em; }
+.portal-bar span { opacity: .85; font-size: .84rem; }
+.pb-admin { background: var(--bad); }
+.pb-organiser { background: var(--info); }
+.pb-customer { background: var(--good); }
+.pb-scanner, .pb-pos { background: var(--navy-700); }
+.nav-here { display: none; }
+@media (max-width: 820px) {
+  .nav-here { display: block; font-size: .74rem; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; color: #AFC0DD; padding: 8px 12px 4px; }
+}

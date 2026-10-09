@@ -1,6 +1,6 @@
 <?php
 /**
- * Reset a back-office password on the live site.
+ * Reset an admin or staff password on the live site.
  *
  * Locked: it only opens while an empty file called unlock-reset exists in the
  * data folder (cPanel → File Manager → public_html/data → + File). Without it
@@ -52,7 +52,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 <html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Reset password | TicketRoom</title><link rel="icon" href="/assets/favicon.svg"><link rel="stylesheet" href="/assets/tr.css"></head>
 <body><main id="main" class="wrap section"><div class="card pad-lg stack setup-card">
-<h1>Reset a back-office password</h1>
+<h1>Reset an admin or staff password</h1>
 <?php if ($done): ?>
   <p class="callout good" role="status"><?= $e($done) ?></p>
   <a class="btn btn-primary" href="/signin">Sign in</a>

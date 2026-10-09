@@ -70,7 +70,7 @@ const PUBLIC = [
 ];
 for (const [file, title, desc, canon] of PUBLIC) write(file, page("index.html", title, desc, canon));
 for (const [slug, title] of [["terms-of-use", "Terms of Use"], ["terms", "Terms and Conditions"], ["privacy", "Privacy Policy"], ["cookies", "Cookie Policy"], ["paia", "PAIA manual"]]) {
-  write(`legal/${slug}.html`, page("index.html", `${title} | TicketRoom`, `TicketRoom ${title}. TicketRoom (Pty) Ltd, registration number K2026811077.`, `/legal/${slug}`));
+  write(`legal/${slug}.html`, page("index.html", `${title} | TicketRoom`, `TicketRoom ${title}. TicketRoom (Pty) Ltd, registration number 2026811077.`, `/legal/${slug}`));
 }
 // Portals keep their own page and title; /organisers is organisers.html.
 for (const [file, out] of [["account.html", "account.html"], ["organiser.html", "organisers.html"], ["admin.html", "admin.html"], ["scan.html", "scan.html"], ["pos.html", "pos.html"]]) {

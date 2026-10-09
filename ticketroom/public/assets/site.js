@@ -398,7 +398,14 @@ function unsubscribe() {
     else if (p === "/contact") await contact();
     else if (p === "/unsubscribe") unsubscribe();
     else if (p === "/" || p === "/browse") await home();
-    else if (p === "/signin") { await home(); const { authDialog } = await import("/assets/core.js"); if (!(await me())) authDialog("signin", { onDone: () => { location.href = "/account"; } }); }
+    else if (p === "/signin") {
+      // Staff land in the admin portal, organisers in the organiser portal, everyone else in the customer portal.
+      const { authDialog, homePortal } = await import("/assets/core.js");
+      const u = await me();
+      if (u) { location.replace(homePortal(u)); return; }
+      await home();
+      authDialog("signin", { onDone: async () => { location.href = homePortal(await me(true)); } });
+    }
     else render(main, html`<div class="wrap section"><div class="card pad-lg"><h1>Page not found</h1><a class="btn btn-primary" href="/">Browse events</a></div></div>`);
   } catch (err) {
     render(main, html`<div class="wrap section"><div class="card pad-lg"><h1>${err.status === 404 ? "Not found" : "Something went wrong"}</h1><p>${err.message}</p><a class="btn btn-primary" href="/">Browse events</a></div></div>`);

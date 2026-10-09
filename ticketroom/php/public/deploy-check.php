@@ -65,7 +65,7 @@ if ($data) {
     $add('Data', 'Data folder', is_writable($data), $data . (is_writable($data) ? '' : ': not writable. File Manager → right-click → Change Permissions → 755.'));
     $add('Data', 'Database', is_file("$data/ticketroom.sqlite"), is_file("$data/ticketroom.sqlite") ? number_format(filesize("$data/ticketroom.sqlite") / 1048576, 1) . ' MB · ' . $state['users'] . ($state['users'] === 1 ? ' account · ' : ' accounts · ') . $state['events'] . ($state['events'] === 1 ? ' event' : ' events') : '');
     $add('Data', 'Ticket signing keys', is_file("$data/keys.php") || !empty(cfg('keys.qr')), 'Back up the data folder: every ticket QR code depends on these keys.');
-    $add('Data', 'Administrator', $state['admin'] ? ($state['temp'] ? null : true) : false, $state['admin'] ? $state['admin']['email'] . ($state['temp'] ? ' · still on the temporary password: change it under My account → Settings' : '') : 'No administrator found.');
+    $add('Data', 'Administrator', $state['admin'] ? ($state['temp'] ? null : true) : false, $state['admin'] ? $state['admin']['email'] . ($state['temp'] ? ' · still on the temporary password: change it under Admin portal → My password' : '') : 'No administrator found.');
     if ($data !== "$root/data") $add('Data', 'Data kept from the earlier package', null, "$data is still in use. That is fine; nothing needs moving.");
 }
 

@@ -177,7 +177,7 @@ async function summary() {
 }
 
 (async () => {
-  await header($("#header"), { portal: "POS", links: [["/pos", "POS"]] });
+  await header($("#header"), { portal: "pos" });
   if (!(await features()).pos) {
     return render(main, html`<div class="card pad-lg stack"><h1>Vendor point of sale is coming soon</h1>
       <p>Cashless payments and the vendor till arrive together with paid ticket sales. Until then, vendors at your events can take payment the way they usually do.</p>
@@ -185,7 +185,7 @@ async function summary() {
   }
   const u = await requireUser("Vendor staff sign in.");
   if (!u) return render(main, empty("Sign in to use the POS."));
-  await header($("#header"), { portal: "POS", links: [["/pos", "POS"]] });
+  await header($("#header"), { portal: "pos" });
   setOnline(navigator.onLine);
   try { await boot(); } catch (err) { render(main, html`<div class="verdict no"><div class="big">UNAVAILABLE</div><div>${err.message}</div></div>`); }
 })();
