@@ -15,7 +15,7 @@ function nav(counts = {}) {
   render($("#sidenav"), html`<a href="#/">📊 Overview</a>
     <div class="sect">Operations</div><a href="#/organisers">🏢 Organisers${c(counts.orgs)}</a><a href="#/events">🎫 Events${c(counts.events)}</a><a href="#/users">👤 Users</a><a href="#/lookup">🔎 Orders & tickets</a><a href="#/tags">📶 Tags</a><a href="#/terminals">🧾 Terminals</a><a href="#/support">💬 Support${c(counts.support)}</a>
     <div class="sect">Finance</div><a href="#/refunds">↩️ Refunds${c(counts.refunds)}</a><a href="#/payouts">💰 Payouts${c(counts.payouts)}</a><a href="#/payments">💳 Payments & webhooks</a><a href="#/reconciliation">⚖️ Reconciliation${c(counts.recon)}</a><a href="#/ledger">📒 Ledger</a>
-    <div class="sect">Website</div><a href="#/site">🌐 Site settings</a><a href="#/posters">🖼️ Advertising posters</a><a href="#/assistant">🤖 Assistant</a>
+    <div class="sect">Website</div><a href="#/site">🌐 Site settings</a><a href="#/posters">🖼️ Advertising posters</a><a href="#/assistant">🤖 Assistant</a><a href="#/emails">📧 Email templates</a>
     <div class="sect">Governance</div><a href="#/integrations">🔌 Integrations</a><a href="#/audit">🛡️ Audit log</a><a href="#/outbox">✉️ Messages</a>`);
 }
 
@@ -430,6 +430,46 @@ async function assistantPage() {
   $$("[data-from]").forEach((b) => b.addEventListener("click", () => editor({ question: chats.find((c) => String(c.id) === b.dataset.from)?.question })));
 }
 
+// ---------------- email templates ----------------
+async function emailsPage() {
+  const { emails, settings: st, delivery } = await get("/api/admin/emails");
+  const ro = raw(isA() ? "" : "disabled");
+  const groups = ["Attendee", "Everyone", "Organiser", "Staff"];
+  const auto = (e) => e.setting ? (st[e.setting] ? html`<span class="badge good">automatic · on</span>` : html`<span class="badge">automatic · off</span>`) : html`<span class="badge info">sent when it happens</span>`;
+  render(main, html`${head("Email templates", "Every email TicketRoom sends. Each is sent as a branded HTML email with a plain-text version.")}
+    ${delivery === "log" ? html`<p class="callout bad"><strong>Emails are not being delivered.</strong> Add the hello@ticketroom.co.za mailbox settings (SMTP_HOST, SMTP_USER, SMTP_PASS) to the app's .env file and restart.</p>` : ""}
+    <section class="card stack"><h2>Automatic emails</h2>
+      <form class="stack" id="f-em">
+        <label class="check"><input type="checkbox" name="reminderDayBefore" ${raw(st.reminderDayBefore ? "checked" : "")} ${ro}><span><strong>Day-before reminder</strong> — to every ticket holder, about 24 hours before the event</span></label>
+        <label class="check"><input type="checkbox" name="reminderSoon" ${raw(st.reminderSoon ? "checked" : "")} ${ro}><span><strong>Starting-soon reminder</strong> — within 3 hours of the start, with gate tips</span></label>
+        <label class="check"><input type="checkbox" name="abandonedCheckout" ${raw(st.abandonedCheckout ? "checked" : "")} ${ro}><span><strong>Abandoned checkout</strong> — once per person per event, only while tickets are still on sale, never to people who unsubscribed</span></label>
+        <div class="field"><label for="em-d">Send the abandoned-checkout email after</label><select id="em-d" name="abandonedDelayHours" ${ro}>${[1, 2, 3, 6, 12, 24].map((h) => html`<option value="${h}" ${raw(h === st.abandonedDelayHours ? "selected" : "")}>${h} hour${h === 1 ? "" : "s"}</option>`)}</select></div>
+        <p class="tiny muted mb-0">Each email is sent at most once. Reminders need the background jobs cron (see the setup guide) or the app to be running.</p>
+        ${isA() ? html`<div><button class="btn btn-dark">Save</button></div>` : ""}</form></section>
+    ${groups.map((g) => html`<h2 class="mt-lg">${g === "Everyone" ? "Account & support" : `${g} emails`}</h2><div class="grid-2">${emails.filter((e) => e.audience === g).map((e) => html`<article class="card stack">
+      <div class="row between"><h3 class="mb-0">${e.name}</h3>${auto(e)}</div>
+      <p class="small muted mb-0">${e.trigger}</p>
+      <p class="small mb-0"><strong>Subject:</strong> ${e.subject}</p>
+      <div class="row"><button class="btn btn-ghost btn-sm" data-prev="${e.key}">Preview</button>${isA() ? html`<button class="btn btn-ghost btn-sm" data-test="${e.key}">Send me a test</button>` : ""}</div></article>`)}</div>`)}`);
+  $("#f-em").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    if (await act(() => put("/api/admin/settings/emails", { reminderDayBefore: f.reminderDayBefore.checked, reminderSoon: f.reminderSoon.checked, abandonedCheckout: f.abandonedCheckout.checked, abandonedDelayHours: Number(f.abandonedDelayHours.value) }), "Email settings saved.")) emailsPage();
+  });
+  $$("[data-prev]").forEach((b) => b.addEventListener("click", () => {
+    const e = emails.find((x) => x.key === b.dataset.prev);
+    const d = dialog(e.name, html`<p class="small mb-0"><strong>Subject:</strong> ${e.subject}</p>
+      <div class="chips mt"><button class="chip" data-v="html" aria-pressed="true">Email</button><button class="chip" data-v="text" aria-pressed="false">Plain text</button></div>
+      <iframe class="email-frame mt" title="Email preview" src="/api/admin/emails/${e.key}/preview" sandbox></iframe><pre class="email-text mt" hidden>${e.body}</pre>
+      <p class="tiny muted mb-0">Preview uses sample data. Real emails use the attendee's and event's details.</p>`, { wide: true });
+    $$("[data-v]", d).forEach((c) => c.addEventListener("click", () => {
+      $$("[data-v]", d).forEach((x) => x.setAttribute("aria-pressed", String(x === c)));
+      $(".email-frame", d).hidden = c.dataset.v !== "html"; $(".email-text", d).hidden = c.dataset.v !== "text";
+    }));
+  }));
+  $$("[data-test]").forEach((b) => b.addEventListener("click", async () => { try { const r = await post(`/api/admin/emails/${b.dataset.test}/test`); toast(`Test sent to ${r.to}.`, "good"); } catch (err) { toast(err.message, "bad"); } }));
+}
+
 // ---------------- integrations ----------------
 async function integrations() {
   const d = await get("/api/admin/integrations");
@@ -455,5 +495,5 @@ async function integrations() {
   if (!R.size) { render($("#sidenav"), ""); return render(main, html`${head("No access")}<p>This area is for TicketRoom staff.</p>`); }
   nav();
   router([["/", overview], ["/organisers", organisers], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", tags], ["/terminals", terminals], ["/support", support],
-    ["/refunds", refunds], ["/payouts", payouts], ["/payments", payments], ["/reconciliation", reconciliation], ["/ledger", ledgerPage], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/integrations", integrations]], () => { location.hash = "#/"; });
+    ["/refunds", refunds], ["/payouts", payouts], ["/payments", payments], ["/reconciliation", reconciliation], ["/ledger", ledgerPage], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/emails", emailsPage], ["/integrations", integrations]], () => { location.hash = "#/"; });
 })();

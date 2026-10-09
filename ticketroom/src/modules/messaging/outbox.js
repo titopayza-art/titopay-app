@@ -42,7 +42,7 @@ const adapters = {
       return this._t;
     },
     async send(msg) {
-      const info = await this.transport().sendMail({ from: config.messaging.fromEmail, to: msg.to_address, subject: msg.subject || "TicketRoom", text: msg.body });
+      const info = await this.transport().sendMail({ from: config.messaging.fromEmail, to: msg.to_address, subject: msg.subject || "TicketRoom", text: msg.body, html: require("./html").toHtml(msg.subject || "TicketRoom", msg.body) });
       return { providerMessageId: String(info.messageId || "") };
     },
     async health() {

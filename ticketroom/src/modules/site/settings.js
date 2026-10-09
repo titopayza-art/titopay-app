@@ -30,6 +30,7 @@ const DEFAULTS = {
   },
   support: { email: "hello@ticketroom.co.za", phone: "", responseTime: "24–48 hours" },
   legal: { entityName: "TicketRoom", registrationNumber: "", vatNumber: "", physicalAddress: "", postalAddress: "", informationOfficer: "", website: "ticketroom.co.za" },
+  emails: { reminderDayBefore: true, reminderSoon: true, abandonedCheckout: true, abandonedDelayHours: 1 },
   chatbot: { enabled: true, aiEnabled: true, greeting: "Hi! I'm the TicketRoom assistant. Ask me about tickets, events, refunds, wristbands or selling tickets." },
 };
 
@@ -53,6 +54,7 @@ const SCHEMAS = {
     entityName: r.str({ max: 160 }), registrationNumber: r.str({ optional: true, max: 40 }), vatNumber: r.str({ optional: true, max: 40 }),
     physicalAddress: r.str({ optional: true, max: 300 }), postalAddress: r.str({ optional: true, max: 300 }), informationOfficer: r.str({ optional: true, max: 120 }), website: r.str({ max: 120 }),
   }),
+  emails: (v) => check(v, { reminderDayBefore: r.bool(), reminderSoon: r.bool(), abandonedCheckout: r.bool(), abandonedDelayHours: r.int({ min: 1, max: 24 }) }),
   chatbot: (v) => check(v, { enabled: r.bool(), aiEnabled: r.bool(), greeting: r.str({ max: 300 }) }),
 };
 

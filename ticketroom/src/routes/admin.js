@@ -17,6 +17,8 @@ const settlements = require("../modules/finance/settlements");
 const reconciliation = require("../modules/finance/reconciliation");
 const payments = require("../modules/payments/service");
 const outbox = require("../modules/messaging/outbox");
+const templates = require("../modules/messaging/templates");
+const { limit } = require("../lib/ratelimit");
 
 const router = express.Router();
 const ANY = requirePlatformRole("admin", "finance", "support");
@@ -66,6 +68,15 @@ router.post("/organisers/:id/status", ADMIN, wrap(async (req, res) => {
       WHERE id = $1 RETURNING id, status`, [req.params.id, b.status, req.user.id]);
   if (!rows[0]) throw notFound("Organiser not found.");
   if (b.status === "suspended") await db.query("UPDATE events SET status = 'suspended', status_reason = 'organiser suspended' WHERE organiser_id = $1 AND status = 'published'", [req.params.id]);
+  if (b.status === "approved" || b.status === "rejected") {
+    const { rows: who } = await db.query(
+      `SELECT o.name, o.contact_email, u.id AS user_id, u.full_name, u.email FROM organisers o
+         LEFT JOIN organiser_members m ON m.organiser_id = o.id AND m.role = 'owner' LEFT JOIN users u ON u.id = m.user_id
+        WHERE o.id = $1 ORDER BY m.created_at LIMIT 1`, [req.params.id]);
+    const w = who[0];
+    if (w) await db.withTx((c) => outbox.enqueue(c, { to: w.email || w.contact_email, userId: w.user_id,
+      ...(b.status === "approved" ? templates.organiserApproved({ name: w.full_name, organiser: w.name }) : templates.organiserRejected({ name: w.full_name, organiser: w.name, reason: b.reason })) }));
+  }
   await audit.record(null, { actor: req.user, action: `organiser.${b.status}`, entityType: "organiser", entityId: req.params.id, organiserId: req.params.id, details: { reason: b.reason } });
   res.json({ organiser: rows[0] });
 }));
@@ -104,6 +115,13 @@ router.post("/events/:id/status", ADMIN, wrap(async (req, res) => {
     if (!t[0].includes(ev.status)) throw conflict(`Cannot ${b.action} an event that is ${ev.status}.`, "bad_transition");
     if (b.action !== "publish" && b.action !== "reinstate" && !b.reason) throw bad("Give a reason.", { reason: "Required." });
     await db.query("UPDATE events SET status = $2, status_reason = $3, published_at = CASE WHEN $2 = 'published' THEN COALESCE(published_at, now()) ELSE published_at END, updated_at = now() WHERE id = $1", [ev.id, t[1], b.reason || null]);
+    if (b.action === "publish" || b.action === "reject") {
+      const { rows: who } = await db.query(
+        `SELECT u.id, u.full_name, u.email FROM users u WHERE u.id = $1
+         UNION ALL SELECT u.id, u.full_name, u.email FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = $2 AND m.role = 'owner' LIMIT 1`, [ev.created_by, ev.organiser_id]);
+      if (who[0]) await db.withTx((c) => outbox.enqueue(c, { to: who[0].email, userId: who[0].id,
+        ...(b.action === "publish" ? templates.eventPublished({ name: who[0].full_name, event: ev, eventUrl: `${config.publicBaseUrl}/events/${ev.slug}` }) : templates.eventChangesRequested({ name: who[0].full_name, event: ev, reason: b.reason })) }));
+    }
   } else {
     await db.query("UPDATE events SET featured = $2 WHERE id = $1", [ev.id, b.action === "feature"]);
   }
@@ -133,6 +151,11 @@ router.post("/events/:id/cancel", ADMIN, wrap(async (req, res) => {
         await c.query("ROLLBACK TO SAVEPOINT rf");
       }
     }
+    const { rows: holders } = await c.query(
+      `SELECT u.id, u.email, u.full_name, bool_or(t.price_cents > 0) AS paid FROM tickets t JOIN users u ON u.id = t.owner_user_id
+        WHERE t.event_id = $1 AND t.status IN ('valid','refunded') GROUP BY u.id`, [ev.id]);
+    for (const h of holders) await outbox.enqueue(c, { to: h.email, userId: h.id, ...templates.eventCancelled({ name: h.full_name, event: ev, reason: b.reason, paid: h.paid }) });
+    await c.query("UPDATE tickets SET status = 'revoked', revoked_reason = 'event cancelled', updated_at = now() WHERE event_id = $1 AND status = 'valid' AND price_cents = 0", [ev.id]);
     await audit.record(c, { actor: req.user, action: "event.cancelled", entityType: "event", entityId: ev.id, organiserId: ev.organiser_id, details: { reason: b.reason, refundsRaised: raised } });
     return { refundsRaised: raised };
   });
@@ -509,6 +532,33 @@ router.get("/chats", wrap(async (req, res) => {
             count(*) FILTER (WHERE helpful)::int AS helpful, count(*) FILTER (WHERE helpful = false)::int AS unhelpful
        FROM chat_messages WHERE created_at > now() - interval '30 days'`);
   res.json({ chats: rows, stats: stats[0] });
+}));
+
+// ---- email templates: catalogue, preview, test send ---------------------------------
+const catalog = require("../modules/messaging/catalog");
+const { toHtml } = require("../modules/messaging/html");
+router.get("/emails", wrap(async (_req, res) => {
+  res.json({
+    emails: catalog.CATALOG.map((x) => ({ key: x.key, name: x.name, audience: x.audience, trigger: x.trigger, setting: x.setting || null, ...x.sample() })),
+    settings: await settingsSvc.get("emails"),
+    delivery: config.messaging.emailProvider,
+  });
+}));
+router.get("/emails/:key/preview", wrap(async (req, res) => {
+  const item = catalog.find(req.params.key);
+  if (!item) throw notFound("Unknown email.");
+  const m = item.sample();
+  // Shown inside the back office only; email HTML needs inline styles.
+  res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.type("html").send(toHtml(m.subject, m.body));
+}));
+router.post("/emails/:key/test", ADMIN, limit("emailtest", 20, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const item = catalog.find(req.params.key);
+  if (!item) throw notFound("Unknown email.");
+  const m = item.sample();
+  await db.withTx((c) => outbox.enqueue(c, { to: req.user.email, userId: req.user.id, subject: `[TEST] ${m.subject}`, body: m.body }));
+  res.json({ ok: true, to: req.user.email });
 }));
 
 // ---- audit, support, outbox -------------------------------------------------------

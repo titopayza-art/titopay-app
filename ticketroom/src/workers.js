@@ -3,6 +3,7 @@
 const orders = require("./modules/orders/service");
 const outbox = require("./modules/messaging/outbox");
 const marketing = require("./modules/marketing/service");
+const automated = require("./modules/messaging/automated");
 const db = require("./lib/db");
 const config = require("./config");
 
@@ -19,6 +20,8 @@ const retention = [
 const jobs = [
   { name: "expire-orders", everyMs: 30_000, run: () => orders.expireDue() },
   { name: "deliver-outbox", everyMs: 5_000, run: () => outbox.deliverBatch(50) },
+  { name: "event-reminders", everyMs: 10 * 60_000, run: () => automated.reminders() },
+  { name: "abandoned-checkouts", everyMs: 15 * 60_000, run: () => automated.abandonedCheckouts() },
   { name: "scheduled-campaigns", everyMs: 60_000, run: () => marketing.dueScheduled() },
   { name: "complete-events", everyMs: 15 * 60_000, run: () => db.query("UPDATE events SET status = 'completed', updated_at = now() WHERE status = 'published' AND ends_at < now() - interval '2 days'") },
   { name: "expire-tags", everyMs: 15 * 60_000, run: () => db.query("UPDATE tags t SET status = 'expired', updated_at = now() FROM events e WHERE e.id = t.event_id AND t.status IN ('active','assigned') AND e.ends_at < now() - interval '2 days'") },

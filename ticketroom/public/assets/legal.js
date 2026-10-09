@@ -138,7 +138,7 @@ Nothing in these terms limits liability that cannot be limited by law, including
 - staff you add as scanners act on your behalf and you are responsible for them;
 - you indemnify TicketRoom against all claims arising from your Event, your content, your staff, or your breach of these Terms.`],
         ["10. Vendors (cashless point of sale)", `Vendors trading at cashless Events act under the Organiser's arrangements. Sales are recorded by the Platform; refunds of sales require approval by someone other than the requester. Settlements are made after the Event, less agreed commission and reversals.`],
-        ["11. Communications", `We send transactional messages (receipts, tickets, changes, refunds) by email and, where provided, SMS. Marketing is sent only if you opted in, and every message lets you unsubscribe. See our Privacy Policy.`],
+        ["11. Communications", `We send service messages (receipts, tickets, event reminders, changes, cancellations and refunds) by email and, where provided, SMS. If you start a booking but don't finish it, we may send one reminder about that event, which you can opt out of. Marketing is sent only if you opted in, and every message lets you unsubscribe. See our Privacy Policy.`],
         ["12. Liability and indemnity", `**To the fullest extent permitted by law:** TicketRoom is not liable for the Event itself or for the acts or omissions of Organisers, venues, performers, vendors or other Attendees; and TicketRoom's total liability in connection with any order is limited to the amount you paid for that order. Nothing limits liability that cannot lawfully be limited. The limitation of liability and indemnity in our Terms of Use also apply.`],
         ["13. Complaints and disputes", `Contact us first at ${email} or use the callback form; we aim to respond within 24–48 hours during business hours (Monday to Friday, 9am to 5pm, excluding public holidays). If we cannot resolve your complaint, you may approach the Consumer Goods and Services Ombud or the National Consumer Commission. South African law applies.`],
       ],
@@ -171,6 +171,7 @@ For Attendee information they receive, Organisers are separate responsible parti
 - To admit you to Events, prevent duplicate entry, fraud and abuse, and keep the Platform secure — **our legitimate interests** and those of Organisers (s11(1)(f)).
 - To keep financial and tax records, respond to lawful requests, and comply with law — **legal obligations** (s11(1)(c)).
 - To send transactional messages about your orders and Events — **contract**.
+- To remind you about Events you hold tickets for, and to send one reminder if you leave a booking unfinished (you can opt out at any time) — **legitimate interest**.
 - To send marketing from TicketRoom or an Organiser — **only with your consent** (s69), which you can withdraw at any time.
 - To answer support requests and improve our help content — **legitimate interests**.`],
         ["5. Who we share it with", `- **Organisers** of Events you book or attend: your name, email, ticket and admission details, and your phone number if you provided it, so they can run the Event and contact you about it. Organisers may send you marketing only if you opted in for them.
