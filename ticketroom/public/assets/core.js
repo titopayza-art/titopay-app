@@ -181,7 +181,7 @@ export function poster(ev, cls = "") {
 
 // ---------- brand chrome ----------
 export function brand(portal) {
-  return html`<a class="brand" href="/" aria-label="TicketRoom home"><img src="/assets/logo-mark.svg" alt="" width="40" height="30"><span><span class="wordmark">TICKET<b>ROOM</b></span><span class="brand-sub">Powered by TitoPay</span></span></a>${portal ? html`<span class="portal-tag">${portal}</span>` : ""}`;
+  return html`<a class="brand" href="/" aria-label="TicketRoom home"><img src="/assets/logo-mark.svg" alt="" width="40" height="30"><span><span class="wordmark">TICKET<b>ROOM</b></span><span class="brand-sub">Your event. Your ticket.</span></span></a>${portal ? html`<span class="portal-tag">${portal}</span>` : ""}`;
 }
 
 export async function header(el, { portal, links = [], active } = {}) {
@@ -221,7 +221,7 @@ export function footer(el) {
     <div><h4>Attendees</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">My tickets</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
     <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/organisers">Organiser portal</a></li><li><a href="/scan">Gate scanner</a></li><li><a href="/pos">Vendor POS</a></li></ul></div>
     <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
-  </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom · ticketroom.co.za · Powered by TitoPay. All prices in South African Rand (ZAR).</div></div>`);
+  </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom · ticketroom.co.za. All prices in South African Rand (ZAR).</div></div>`);
   siteExtras().catch(() => {});
 }
 

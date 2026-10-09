@@ -1,6 +1,6 @@
 # TICKETROOM
 
-**Your event. Your ticket.** · ticketroom.co.za · *Powered by TitoPay*
+**Your event. Your ticket.** · ticketroom.co.za
 
 TicketRoom is a South African platform for event ticketing, QR entry, RFID/NFC/QR tags and cashless payments. It is an isolated package inside the TitoPay repository: **it changes no TitoPay file** and uses its own database.
 

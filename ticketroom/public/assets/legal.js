@@ -29,7 +29,7 @@ export function documents(L, S) {
         "We may suspend or close accounts that break these terms (clause 8).",
       ],
       sections: [
-        ["1. Who we are and agreement to these terms", `The website ticketroom.co.za, its sub-domains, apps, scanners, point-of-sale tools and related services (together, **the Platform**) are operated by ${who(L)} (**TicketRoom**, **we**, **us**). TicketRoom is powered by TitoPay technology.
+        ["1. Who we are and agreement to these terms", `The website ticketroom.co.za, its sub-domains, apps, scanners, point-of-sale tools and related services (together, **the Platform**) are operated by ${who(L)} (**TicketRoom**, **we**, **us**).
 
 By accessing or using the Platform you agree to these Terms of Use, our Privacy Policy and our Cookie Policy. If you do not agree, do not use the Platform. If you use the Platform on behalf of a business or organisation, you confirm you are authorised to bind it.`],
         ["2. Definitions", `- **Attendee**: a person who obtains or holds a ticket.
@@ -65,7 +65,7 @@ Organisers keep ownership of their content but grant TicketRoom a non-exclusive,
 - our total liability to you for any claim relating to the Platform is limited to the booking fees you paid to TicketRoom in the 12 months before the claim arose.
 
 Nothing in these terms limits liability that cannot be limited by law, including for gross negligence, intentional misconduct, or your rights under the Consumer Protection Act.`],
-        ["11. Indemnity", `You indemnify and hold harmless TicketRoom, its directors, employees, agents and technology partners (including TitoPay) against all claims, losses, damages, penalties and costs (including reasonable legal fees) arising from your breach of these terms, your misuse of the Platform, your content, or — for Organisers — your Event.`],
+        ["11. Indemnity", `You indemnify and hold harmless TicketRoom, its directors, employees, agents and technology and payment partners against all claims, losses, damages, penalties and costs (including reasonable legal fees) arising from your breach of these terms, your misuse of the Platform, your content, or — for Organisers — your Event.`],
         ["12. Notices and electronic communication", `You agree to receive communications electronically. Notices to us must be sent to ${email}. Our physical address for legal notices is ${addr}. A notice sent by email is received when it enters the recipient's mailbox.`],
         ["13. Changes to these terms", `We may update these terms. The version and date at the top show when they last changed. For material changes we will give notice on the Platform or by email. Continuing to use the Platform after the effective date means you accept the update.`],
         ["14. General", `These terms are governed by the laws of the Republic of South Africa. You consent to the jurisdiction of the Magistrates' Court having jurisdiction, without prejudice to our right to approach the High Court. If any clause is invalid, the rest remain in force. Our failure to enforce a right is not a waiver. These terms, together with the documents they refer to, are the entire agreement on their subject.`],

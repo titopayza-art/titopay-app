@@ -2,7 +2,7 @@
   "name": "ticketroom",
   "version": "0.1.0",
   "private": true,
-  "description": "TicketRoom — event ticketing, tags and cashless platform. Powered by TitoPay.",
+  "description": "TicketRoom — event ticketing, tags and cashless platform.",
   "main": "server.js",
   "engines": {
     "node": ">=20"

@@ -161,7 +161,7 @@ test("sending a campaign queues one message per recipient with opt-out, never tw
   assert.equal((await owner.post(`${A()}/campaigns/${c.body.campaign.id}/send`, {})).status, 409);
   const msgs = (await h.db.query("SELECT * FROM message_outbox WHERE campaign_id = $1", [c.body.campaign.id])).rows;
   assert.equal(msgs.length, 2);
-  assert.ok(msgs.every((m) => /Unsubscribe: http/.test(m.body) && /powered by TitoPay/.test(m.body)));
+  assert.ok(msgs.every((m) => /Unsubscribe: http/.test(m.body) && !/powered by TitoPay/i.test(m.body)));
   assert.ok(msgs.some((m) => m.body.startsWith("Hi Buyer, new dates")));
 });
 

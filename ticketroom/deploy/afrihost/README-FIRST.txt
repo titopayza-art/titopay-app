@@ -1,5 +1,5 @@
-TICKETROOM — Powered by TitoPay — Afrihost package
-====================================================
+TICKETROOM — Afrihost package
+=============================
 
 Extract ticketroom.zip INSIDE public_html. That's all for step 1.
 

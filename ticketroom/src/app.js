@@ -20,7 +20,7 @@ async function maintenance(req, res, next) {
   const esc = (v) => String(v).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
   res.status(503).setHeader("Retry-After", "1800");
   res.send(`<!doctype html><html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TicketRoom — back soon</title><link rel="icon" href="/assets/favicon.svg"><link rel="stylesheet" href="/assets/tr.css"></head>
-<body class="maint"><main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260"><h1>We'll be right back</h1><p>${esc(m.message)}</p><p class="small">Questions? <a href="mailto:hello@ticketroom.co.za">hello@ticketroom.co.za</a></p><p class="small">Powered by TitoPay</p></main></body></html>`);
+<body class="maint"><main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260"><h1>We'll be right back</h1><p>${esc(m.message)}</p><p class="small">Questions? <a href="mailto:hello@ticketroom.co.za">hello@ticketroom.co.za</a></p></main></body></html>`);
 }
 
 function createApp() {

@@ -73,7 +73,7 @@ test("maintenance mode: visitors blocked, staff and webhooks still work", async 
   const page = await anon.get("/");
   assert.equal(page.status, 503);
   assert.match(page.body, /Upgrading &#60;tonight&#62;/);
-  assert.match(page.body, /Powered by TitoPay/);
+  assert.doesNotMatch(page.body, /TitoPay/);
   assert.equal((await anon.get("/api/public/events")).status, 503);
   assert.equal((await anon.get("/api/health")).status, 200);
   assert.equal((await anon.get("/api/site")).body.maintenance.message, "Upgrading <tonight>");
@@ -197,5 +197,5 @@ test("legal and site pages are served", async () => {
   const js = await anon.get("/assets/legal.js");
   assert.equal(js.status, 200);
   for (const s of ["Terms of Use", "Terms and Conditions", "Privacy Policy", "Cookie Policy", "Information Regulator", "R10", "5%", "hello@ticketroom.co.za"]) assert.ok(js.body.includes(s), s);
-  assert.ok(!/division of TitoPay/i.test(js.body));
+  assert.ok(!/division of TitoPay|powered by TitoPay/i.test(js.body));
 });

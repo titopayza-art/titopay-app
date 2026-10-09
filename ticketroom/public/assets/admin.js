@@ -163,7 +163,7 @@ async function refunds() {
 
 async function payouts() {
   const { payouts: list } = await get("/api/admin/payouts");
-  render(main, html`${head("Payouts", "TicketRoom does not move money automatically. Approve, make the EFT through TitoPay's banking process, then record it here with the bank reference.")}
+  render(main, html`${head("Payouts", "TicketRoom does not move money automatically. Approve, make the EFT from TicketRoom's bank account, then record it here with the bank reference.")}
     ${tbl(["Ref", "Beneficiary", "Bank", "#Amount", "Requested", "Status", ""], list.map((p) => html`<tr><td class="mono">${p.reference}</td><td>${p.organiser_name}${p.vendor_name ? html`<div class="small">vendor: ${p.vendor_name}</div>` : ""}</td>
       <td class="small">${p.bank_name || "—"} ${p.bank_account_last4 ? `••${p.bank_account_last4}` : ""}<div class="tiny muted">${p.bank_account_holder || ""} ${p.bank_branch_code || ""}</div></td><td class="num">${moneyExact(p.amount_cents)}</td>
       <td class="small">${fmtDate(p.created_at)}<div class="tiny muted">${p.requested_by_name}${p.approved_by_name ? ` · approved ${p.approved_by_name}` : ""}</div></td><td>${badge(p.status)}${p.bank_reference ? html`<div class="tiny mono">${p.bank_reference}</div>` : ""}</td>

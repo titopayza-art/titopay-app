@@ -214,7 +214,7 @@ function sellPage() {
   const tile = (icon, t, s) => html`<div class="card flat center"><div aria-hidden="true">${raw(icon)}</div><h3 class="mt">${t}</h3><p class="muted mb-0">${s}</p></div>`;
   const ic = (d) => `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0B1D3F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   render(main, html`<section class="hero"><div class="wrap"><span class="cat-label">For organisers</span><h1>Run your whole event on <b>TicketRoom</b></h1>
-      <p class="lead">From the first ticket sold to the last vendor payout — one platform, built in South Africa and powered by TitoPay.</p>
+      <p class="lead">From the first ticket sold to the last vendor payout — one platform, built in South Africa.</p>
       <div class="row"><button class="btn btn-primary" data-apply>Create an organiser account</button><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div></div></section>
     <section class="section"><div class="wrap stack-lg">
       <div class="grid-2">
@@ -274,7 +274,7 @@ async function legal(doc) {
       ${d.important.length ? html`<aside class="legal-important" aria-labelledby="imp-h"><h2 id="imp-h">Important clauses — please read</h2><ul>${d.important.map((x) => html`<li>${markup(x)}</li>`)}</ul></aside>` : ""}
       ${d.sections.length > 3 ? html`<nav class="legal-toc" aria-label="Contents"><h2>Contents</h2><ol>${d.sections.map(([h], i) => html`<li><a href="#${slug(i)}">${h.replace(/^\d+\.\s*/, "")}</a></li>`)}</ol></nav>` : ""}
       ${d.sections.map(([h, body], i) => html`<section><h2 id="${slug(i)}">${h}</h2>${markup(body)}</section>`)}
-      <footer class="legal-meta"><p class="mb-0">${site.legal?.entityName || "TicketRoom"} · ticketroom.co.za · <a href="mailto:${site.support.email}">${site.support.email}</a> · Powered by TitoPay</p></footer>
+      <footer class="legal-meta"><p class="mb-0">${site.legal?.entityName || "TicketRoom"} · ticketroom.co.za · <a href="mailto:${site.support.email}">${site.support.email}</a></p></footer>
     </article></div></div>`);
   if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
 }

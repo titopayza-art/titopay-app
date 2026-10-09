@@ -1,7 +1,7 @@
 {
   "name": "TicketRoom",
   "short_name": "TicketRoom",
-  "description": "Your event. Your ticket. Powered by TitoPay.",
+  "description": "Your event. Your ticket.",
   "start_url": "/account",
   "display": "standalone",
   "background_color": "#0B1D3F",
