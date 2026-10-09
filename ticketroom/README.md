@@ -12,10 +12,20 @@ TicketRoom is a South African platform for event ticketing, QR entry, RFID/NFC/Q
 |---|---|---|
 | `/` | Everyone | Event discovery (featured, categories, cities, dates), event pages, all-in pricing, checkout, order status |
 | `/account` | Attendees | Ticket wallet with QR (works offline), orders, **ticket transfers**, tags & wristbands, cashless wallets and top-ups, refunds, support, privacy (export/delete), spending PIN, marketing preferences |
-| `/organiser` | Organisers | Dashboard, event setup, ticket types and releases, promo codes, tracking links, **analytics**, orders and refunds, attendees (CSV), staff, vendors and POS terminals, **email and SMS marketing**, **finance and payouts**, team roles, bank details |
+| `/organisers` | Organisers | Dashboard, event setup, ticket types and releases, promo codes, tracking links, **analytics**, orders and refunds, attendees (CSV), staff, vendors and POS terminals, **email and SMS marketing**, **finance and payouts**, team roles, bank details |
 | `/scan` | Event staff | Camera QR, Web NFC and manual gate scanning with live counts; tag registration desk (link, replace, block) |
 | `/pos` | Vendors | Phone POS: product grid, tag charge via QR/NFC, PIN pad, approvals, uncertain-outcome recovery, history, refund requests, summary |
-| `/admin` | TicketRoom team | Approvals, users and roles, order/ticket lookup, tags (batch mint/import), terminals, support, **refunds, payouts, payments and webhooks, reconciliation, ledger** (finance), audit log, messages |
+| `/sell`, `/help`, `/contact`, `/legal/*`, `/unsubscribe` | Everyone | Organiser landing, help centre, **callback form** (24–48 h), Terms of Use, Terms and Conditions, Privacy Policy, Cookie Policy, PAIA, unsubscribe from all marketing |
+| `/admin` | TicketRoom team | **Site settings** (maintenance switch, announcement banner, business hours and public holidays, support and legal details, assistant), **advertising posters**, **assistant knowledge base**, integrations, approvals, users and roles, order/ticket lookup, tags (batch mint/import), terminals, support, **refunds, payouts, payments and webhooks, reconciliation, ledger** (finance), audit log, messages |
+
+## Website features
+
+- **Announcement banner** — on by default: *"We're currently open for listing FREE events. Paid tickets are coming soon."* Turn it off or change it in Back office → Site settings.
+- **Maintenance mode** — one switch in Back office → Site settings. Visitors see a maintenance page; TicketRoom staff can still sign in; payment webhooks keep working.
+- **Business hours** — Monday to Friday, 9am–5pm, closed weekends and South African public holidays (2026–2027 pre-loaded). Editable in Site settings. The assistant, help page and callback confirmations use them.
+- **Assistant (chatbot)** — answers from an editable knowledge base (Back office → Assistant). With `ANTHROPIC_API_KEY` set it gives smart answers grounded in that knowledge base (model `CHATBOT_MODEL`, default `claude-opus-5-5`; daily cap `CHATBOT_AI_DAILY_LIMIT`, default 300). It never sees customer accounts and points people to the callback form for anything account-specific.
+- **Callback form** — on `/contact`, `/help` and inside the assistant. Creates a support case due within 48 hours, emails hello@ticketroom.co.za and confirms to the customer.
+- **Legal pages** — Terms of Use, Terms and Conditions, Privacy Policy (POPIA), Cookie Policy and PAIA, filled with the company details from Site settings → Legal details. **Have an attorney review them before launch.**
 
 ## Quick start (development)
 

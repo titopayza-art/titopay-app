@@ -8,6 +8,21 @@ const { notFound } = require("./lib/errors");
 
 const PUBLIC = path.resolve(__dirname, "..", "public");
 
+// Maintenance mode (Back office → Site settings). TicketRoom staff keep full
+// access; everyone else sees the maintenance page. Payment webhooks, sign-in
+// and the health check keep working so no payment is lost while it is on.
+const EXEMPT = /^\/(api\/(health|config|auth\/|webhooks\/|site(\/|$)|admin\/)|admin(\/|$)|assets\/|media\/|sim\/|signin$|sw\.js$|manifest\.webmanifest$|favicon)/;
+async function maintenance(req, res, next) {
+  if (EXEMPT.test(req.path)) return next();
+  const m = await require("./modules/site/settings").get("maintenance");
+  if (!m.enabled || (req.user && req.user.platformRoles.size)) return next();
+  if (req.path.startsWith("/api/")) return res.status(503).json({ error: { code: "maintenance", message: m.message } });
+  const esc = (v) => String(v).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+  res.status(503).setHeader("Retry-After", "1800");
+  res.send(`<!doctype html><html lang="en-ZA"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TicketRoom — back soon</title><link rel="icon" href="/assets/favicon.svg"><link rel="stylesheet" href="/assets/tr.css"></head>
+<body class="maint"><main class="maint-card"><img src="/assets/ticketroom-logo.png" alt="TicketRoom" width="520" height="260"><h1>We'll be right back</h1><p>${esc(m.message)}</p><p class="small">Questions? <a href="mailto:hello@ticketroom.co.za">hello@ticketroom.co.za</a></p><p class="small">Powered by TitoPay</p></main></body></html>`);
+}
+
 function createApp() {
   const app = express();
   app.disable("x-powered-by");
@@ -23,6 +38,7 @@ function createApp() {
   app.use(express.json({ limit: "100kb" }));
   app.use(wrap(loadSession));
   app.use(csrf);
+  app.use(wrap(maintenance));
 
   app.get("/api/health", wrap(async (_req, res) => {
     await db.query("SELECT 1");
@@ -53,6 +69,7 @@ function createApp() {
 <script src="/assets/autosubmit.js"></script></body></html>`);
   }));
 
+  app.use("/api/site", require("./routes/site"));
   app.use("/api/auth", require("./routes/auth").router);
   app.use("/api/public", require("./routes/public"));
   app.use("/api/me", require("./routes/account"));
@@ -77,9 +94,11 @@ function createApp() {
 
   // Portal entry points (each is a small single-page app).
   const page = (file) => (_req, res) => res.sendFile(path.join(PUBLIC, file));
-  app.get(["/", "/events/:slug", "/checkout/:slug", "/orders/:ref", "/browse", "/signin", "/legal/:doc", "/help", "/unsubscribe", "/organisers"], page("index.html"));
+  app.get(["/", "/events/:slug", "/checkout/:slug", "/orders/:ref", "/browse", "/signin", "/legal/:doc", "/help", "/contact", "/unsubscribe", "/sell", "/privacy", "/cookies", "/terms"], page("index.html"));
   app.get(["/account", "/account/*"], page("account.html"));
-  app.get(["/organiser", "/organiser/*"], page("organiser.html"));
+  // ticketroom.co.za/organisers is the organiser dashboard; /organiser is kept as an alias.
+  app.get(["/organisers", "/organisers/*"], page("organiser.html"));
+  app.get(["/organiser", "/organiser/*"], (req, res) => res.redirect(301, req.originalUrl.replace(/^\/organiser/, "/organisers")));
   app.get(["/scan", "/scan/*"], page("scan.html"));
   app.get(["/pos", "/pos/*"], page("pos.html"));
   app.get(["/admin", "/admin/*"], page("admin.html"));

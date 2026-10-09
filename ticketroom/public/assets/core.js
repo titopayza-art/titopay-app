@@ -190,12 +190,12 @@ export async function header(el, { portal, links = [], active } = {}) {
   const portals = [];
   if (u) {
     portals.push(["/account", "My tickets"]);
-    if (u.organisers?.length) portals.push(["/organiser", "Organiser"]);
+    if (u.organisers?.length) portals.push(["/organisers", "Organiser"]);
     if (u.staff_events?.length || u.organisers?.length) portals.push(["/scan", "Scanner"]);
     if (u.vendors?.length) portals.push(["/pos", "POS"]);
     if (r.has("admin") || r.has("finance") || r.has("support")) portals.push(["/admin", "Admin"]);
   }
-  const navLinks = links.length ? links : [["/", "Events"], ["/organisers", "Sell tickets"], ["/help", "Help"]];
+  const navLinks = links.length ? links : [["/", "Events"], ["/sell", "Sell tickets"], ["/help", "Help"]];
   render(el, html`<a class="skip" href="#main">Skip to content</a><div class="wrap">${brand(portal)}
     <button class="menu-toggle" aria-expanded="false" aria-controls="nav">Menu</button>
     <nav class="nav" id="nav" aria-label="Main">
@@ -209,16 +209,157 @@ export async function header(el, { portal, links = [], active } = {}) {
   $("[data-signin]", el)?.addEventListener("click", () => authDialog("signin"));
   $("[data-signup]", el)?.addEventListener("click", () => authDialog("signup"));
   $("[data-signout]", el)?.addEventListener("click", async () => { await post("/api/auth/logout"); location.href = "/"; });
+  // Gate, till and back-office screens stay uncluttered: no banner or assistant there.
+  if (!/^\/(scan|pos|admin)(\/|$)/.test(location.pathname)) siteExtras().catch(() => {});
   return u;
 }
 
 export function footer(el) {
   render(el, html`<div class="wrap"><div class="footer-grid">
-    <div>${brand()}<p class="mt small">South African event ticketing, entry and cashless payments. Your event. Your ticket.</p></div>
-    <div><h4>Attendees</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">My tickets</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li></ul></div>
-    <div><h4>Organisers</h4><ul><li><a href="/organisers">Sell tickets</a></li><li><a href="/organiser">Organiser portal</a></li><li><a href="/scan">Gate scanner</a></li><li><a href="/pos">Vendor POS</a></li></ul></div>
-    <div><h4>Legal</h4><ul><li><a href="/legal/terms">Terms of use</a></li><li><a href="/legal/privacy">Privacy notice (POPIA)</a></li><li><a href="/legal/refunds">Refunds &amp; cancellations</a></li><li><a href="/legal/paia">PAIA manual</a></li></ul></div>
+    <div>${brand()}<p class="mt small">South African event ticketing, entry and cashless payments. Your event. Your ticket.</p>
+      <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p></div>
+    <div><h4>Attendees</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">My tickets</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
+    <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/organisers">Organiser portal</a></li><li><a href="/scan">Gate scanner</a></li><li><a href="/pos">Vendor POS</a></li></ul></div>
+    <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
   </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom · ticketroom.co.za · Powered by TitoPay. All prices in South African Rand (ZAR).</div></div>`);
+  siteExtras().catch(() => {});
+}
+
+// ---------- site information: banner, hours, assistant, callback ----------
+let sitePromise;
+export const siteInfo = (force = false) => {
+  if (!sitePromise || force) sitePromise = fetch("/api/site", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  return sitePromise;
+};
+const store = { get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* private mode */ } } };
+const hashText = (t) => { let h = 0; for (const c of String(t)) h = (h * 31 + c.charCodeAt(0)) | 0; return String(h); };
+const DAY_NAMES = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" };
+const hm = (t) => { const [h, m] = String(t).split(":").map(Number); const ap = h >= 12 ? "pm" : "am"; const hh = h % 12 || 12; return m ? `${hh}:${String(m).padStart(2, "0")}${ap}` : `${hh}${ap}`; };
+
+export function hoursText(hours) {
+  if (!hours) return "";
+  if (hours.openNow) return "We're open now";
+  const n = hours.nextOpen;
+  const when = n ? (n.date === hours.today ? `today at ${hm(n.time)}` : `${DAY_NAMES[n.day]} at ${hm(n.time)}`) : "soon";
+  return `${hours.holiday ? `Closed for ${hours.holiday}` : "We're closed right now"} · back ${when}`;
+}
+export function weekTable(hours) {
+  return html`<dl class="dl hours">${Object.keys(DAY_NAMES).map((d) => html`<dt>${DAY_NAMES[d]}</dt><dd>${hours.week[d] ? `${hm(hours.week[d].open)} – ${hm(hours.week[d].close)}` : "Closed"}</dd>`)}<dt>Public holidays</dt><dd>Closed</dd></dl>`;
+}
+
+export async function siteExtras() {
+  const s = await siteInfo();
+  if (!s) return;
+  $$("[data-support-email]").forEach((a) => { a.href = `mailto:${s.support.email}`; a.textContent = s.support.email; });
+  $$("[data-hours-line]").forEach((x) => { x.textContent = s.hours.note || "Monday to Friday, 9am to 5pm"; });
+  if (s.banner && !$(".site-banner") && store.get("tr_banner_hidden") !== hashText(s.banner.text)) {
+    const b = document.createElement("div");
+    b.className = "site-banner"; b.setAttribute("role", "region"); b.setAttribute("aria-label", "Announcement");
+    render(b, html`<div class="wrap"><p><span class="pill" aria-hidden="true">New</span> ${s.banner.text} ${s.banner.linkText && s.banner.linkUrl ? html`<a href="${s.banner.linkUrl}">${s.banner.linkText} →</a>` : ""}</p><button class="icon-btn" data-hide aria-label="Hide announcement">×</button></div>`);
+    $("[data-hide]", b).addEventListener("click", () => { store.set("tr_banner_hidden", hashText(s.banner.text)); b.remove(); });
+    document.body.prepend(b);
+  }
+  if (s.chatbot?.enabled && !$(".chat-fab")) chatWidget(s);
+}
+
+export async function callbackDialog({ topic = "callback", message = "", source = "web" } = {}) {
+  const [s, u] = await Promise.all([siteInfo(), me()]);
+  const resp = s?.support?.responseTime || "24–48 hours";
+  const d = dialog("Request a callback", html`<form class="stack" novalidate>
+    <p class="muted mb-0">Leave your details and our team will get back to you within <strong>${resp}</strong>${s ? html` (${s.hours.note || "Monday to Friday, 9am to 5pm"})` : ""}.</p>
+    ${s && !s.hours.openNow ? html`<p class="callout warn mb-0">${hoursText(s.hours)}. Your request is saved and handled first thing.</p>` : ""}
+    ${callbackFields(u, topic, message)}
+    <button class="btn btn-primary btn-block">Request callback</button>
+    <p class="tiny muted mb-0">We use these details only to respond to you. See our <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</p></form>`);
+  onSubmit($("form", d), async (v) => {
+    const r = await post("/api/site/callback", { ...v, source });
+    render($(".dialog-body", d), html`<div class="stack center"><h3>Thanks, we've got it</h3><p>Your reference is <strong>${r.reference}</strong>. We'll contact you within ${r.responseTime}. A confirmation is on its way to your email.</p><button class="btn btn-dark" data-close>Done</button></div>`);
+  });
+  return d;
+}
+
+export function callbackFields(u, topic = "callback", message = "") {
+  const topics = [["callback", "General question"], ["tickets", "My tickets or an order"], ["payment", "A payment"], ["refund", "A refund"], ["tag", "Wristband or tag"], ["account", "My account"], ["organiser", "Selling tickets / organisers"], ["advertising", "Advertising with TicketRoom"], ["other", "Something else"]];
+  return html`<div class="grid-2"><div class="field"><label for="cb-name">Full name</label><input id="cb-name" name="fullName" autocomplete="name" required maxlength="120" value="${u?.full_name || ""}"></div>
+    <div class="field"><label for="cb-phone">Phone number</label><input id="cb-phone" name="phone" type="tel" autocomplete="tel" required placeholder="082 123 4567" value="${u?.phone || ""}"></div></div>
+    <div class="grid-2"><div class="field"><label for="cb-email">Email</label><input id="cb-email" name="email" type="email" autocomplete="email" required value="${u?.email || ""}"></div>
+    <div class="field"><label for="cb-topic">Topic</label><select id="cb-topic" name="topic">${topics.map(([v, l]) => html`<option value="${v}" ${raw(v === topic ? "selected" : "")}>${l}</option>`)}</select></div></div>
+    <div class="field"><label for="cb-time">Best time to call <span class="muted">(optional)</span></label><input id="cb-time" name="preferredTime" maxlength="60" placeholder="e.g. weekday mornings"></div>
+    <div class="field"><label for="cb-msg">How can we help?</label><textarea id="cb-msg" name="message" required maxlength="2000" placeholder="Include your order reference if you have one.">${message}</textarea></div>`;
+}
+
+function chatWidget(s) {
+  const KEY = "tr_chat_v1";
+  let state; try { state = JSON.parse(store.get(KEY) || "null"); } catch { state = null; }
+  if (!state?.conversation) state = { conversation: idem().replace(/[^A-Za-z0-9]/g, "").slice(0, 24), log: [] };
+  const save = () => store.set(KEY, JSON.stringify({ conversation: state.conversation, log: state.log.slice(-30) }));
+  const fab = document.createElement("button");
+  fab.className = "chat-fab"; fab.setAttribute("aria-label", "Chat with the TicketRoom assistant"); fab.setAttribute("aria-expanded", "false"); fab.setAttribute("aria-controls", "chat-panel");
+  render(fab, html`<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span>Help</span>`);
+  const panel = document.createElement("section");
+  panel.className = "chat-panel"; panel.id = "chat-panel"; panel.hidden = true; panel.setAttribute("aria-label", "TicketRoom assistant");
+  const starters = ["Where are my tickets?", "How do I list a free event?", "What are your fees?", "How do refunds work?"];
+  render(panel, html`<header><div><strong>TicketRoom assistant</strong><span class="tiny" data-status>${hoursText(s.hours)}</span></div><button class="icon-btn" data-x aria-label="Close chat">×</button></header>
+    <div class="chat-log" aria-live="polite"></div>
+    <div class="chat-starters">${starters.map((q) => html`<button class="chip" data-q="${q}">${q}</button>`)}</div>
+    <form class="chat-form"><label class="sr-only" for="chat-in">Your question</label><input id="chat-in" maxlength="500" autocomplete="off" placeholder="Ask a question…"><button class="btn btn-primary btn-sm">Send</button></form>
+    <footer class="tiny"><button class="btn-link" data-cb>Request a callback</button> · <a href="mailto:${s.support.email}">${s.support.email}</a></footer>`);
+  document.body.append(fab, panel);
+  const log = $(".chat-log", panel);
+  const bubble = (m) => {
+    const el = document.createElement("div");
+    el.className = `msg ${m.role}`;
+    render(el, html`<p>${m.text}</p>${m.link ? html`<a class="small" href="${m.link}">Open this page →</a>` : ""}
+      ${m.callback ? html`<button class="btn btn-dark btn-sm" data-cbq>Request a callback</button>` : ""}
+      ${m.suggestions?.length ? html`<div class="chips">${m.suggestions.map((q) => html`<button class="chip" data-q="${q}">${q}</button>`)}</div>` : ""}
+      ${m.id && m.helpful === undefined ? html`<div class="fb tiny">Helpful? <button class="btn-link" data-fb="1">Yes</button> <button class="btn-link" data-fb="0">No</button></div>` : ""}`);
+    $("[data-cbq]", el)?.addEventListener("click", () => callbackDialog({ source: "chat", message: lastQuestion() }));
+    $$("[data-fb]", el).forEach((b) => b.addEventListener("click", () => {
+      m.helpful = b.dataset.fb === "1"; save();
+      post(`/api/site/chat/${m.id}/feedback`, { helpful: m.helpful }).catch(() => {});
+      render($(".fb", el), m.helpful ? "Thanks for the feedback." : html`Sorry about that. <button class="btn-link" data-cbq2>Request a callback</button> and a person will help.`);
+      $("[data-cbq2]", el)?.addEventListener("click", () => callbackDialog({ source: "chat", message: lastQuestion() }));
+    }));
+    $$("[data-q]", el).forEach((b) => b.addEventListener("click", () => ask(b.dataset.q)));
+    log.append(el); log.scrollTop = log.scrollHeight;
+  };
+  const lastQuestion = () => [...state.log].reverse().find((m) => m.role === "user")?.text || "";
+  const draw = () => {
+    log.textContent = "";
+    bubble({ role: "assistant", text: s.chatbot.greeting || "Hi! I'm the TicketRoom assistant. Ask me about tickets, events, refunds or selling tickets." });
+    state.log.forEach(bubble);
+    $(".chat-starters", panel).hidden = state.log.length > 0;
+  };
+  let busy = false;
+  const ask = async (q) => {
+    q = String(q || "").trim();
+    if (!q || busy) return;
+    busy = true;
+    $(".chat-starters", panel).hidden = true;
+    const history = state.log.slice(-8).map((m) => ({ role: m.role, text: m.text.slice(0, 2000) }));
+    const mine = { role: "user", text: q }; state.log.push(mine); bubble(mine);
+    const typing = document.createElement("div"); typing.className = "msg assistant typing"; typing.textContent = "…"; log.append(typing);
+    try {
+      const r = await post("/api/site/chat", { message: q, conversation: state.conversation, history });
+      const m = { role: "assistant", id: r.id, text: r.text, link: r.link, callback: r.callback, suggestions: r.suggestions };
+      state.log.push(m); typing.remove(); bubble(m);
+      if (r.hours) $("[data-status]", panel).textContent = hoursText(r.hours);
+    } catch (err) {
+      typing.remove();
+      bubble({ role: "assistant", text: err.status === 429 ? "You're sending messages quickly. Please wait a moment and try again." : `${err.message} You can request a callback instead and we'll respond within ${s.support.responseTime}.`, callback: true });
+    } finally { busy = false; save(); }
+  };
+  const toggle = (open) => {
+    panel.hidden = !open; fab.setAttribute("aria-expanded", String(open)); fab.classList.toggle("open", open);
+    if (open) { if (!log.childElementCount) draw(); $("#chat-in").focus(); }
+  };
+  fab.addEventListener("click", () => toggle(panel.hidden));
+  $("[data-x]", panel).addEventListener("click", () => { toggle(false); fab.focus(); });
+  panel.addEventListener("keydown", (e) => { if (e.key === "Escape") { toggle(false); fab.focus(); } });
+  $("[data-cb]", panel).addEventListener("click", () => callbackDialog({ source: "chat", message: lastQuestion() }));
+  $$("[data-q]", $(".chat-starters", panel)).forEach((b) => b.addEventListener("click", () => ask(b.dataset.q)));
+  $(".chat-form", panel).addEventListener("submit", (e) => { e.preventDefault(); const i = $("#chat-in"); ask(i.value); i.value = ""; });
+  window.addEventListener("tr:chat", (e) => { toggle(true); if (e.detail) ask(e.detail); });
 }
 
 export function authDialog(mode = "signin", { onDone, reason } = {}) {
@@ -230,7 +371,7 @@ export function authDialog(mode = "signin", { onDone, reason } = {}) {
       <div class="field"><label for="a-email">Email</label><input id="a-email" name="email" type="email" autocomplete="email" required></div>
       ${signup ? html`<div class="field"><label for="a-phone">Mobile number <span class="muted">(optional)</span></label><input id="a-phone" name="phone" type="tel" autocomplete="tel" placeholder="082 123 4567"><span class="hint">For ticket SMSes if you choose.</span></div>` : ""}
       <div class="field"><label for="a-pass">Password</label><input id="a-pass" name="password" type="password" autocomplete="${signup ? "new-password" : "current-password"}" required minlength="${signup ? 10 : 1}">${signup ? html`<span class="hint">At least 10 characters.</span>` : ""}</div>
-      ${signup ? html`<label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms" target="_blank">Terms</a> and have read the <a href="/legal/privacy" target="_blank">Privacy Notice</a>.</span></label>
+      ${signup ? html`<label class="check"><input type="checkbox" name="acceptTerms"><span>I accept the <a href="/legal/terms-of-use" target="_blank">Terms of Use</a> and <a href="/legal/terms" target="_blank">Terms and Conditions</a>, and have read the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label>
         <label class="check"><input type="checkbox" name="marketingOptIn"><span>Send me TicketRoom event news by email. You can unsubscribe at any time.</span></label>` : ""}
       <button class="btn btn-primary btn-block" type="submit">${signup ? "Create account" : "Sign in"}</button>
       <div class="row between small">${signup ? html`<span>Already have an account? <button type="button" class="btn-link" data-switch>Sign in</button></span>`

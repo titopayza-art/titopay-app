@@ -1,6 +1,6 @@
 // TicketRoom back office. The server enforces every permission; the UI only
 // hides what a role cannot do.
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, put, patch, del, api, money, moneyExact, fmtDate, fmtDateTime, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, router, roles, me } from "/assets/core.js";
 
 const main = $("#main");
 let R = new Set();
@@ -15,7 +15,8 @@ function nav(counts = {}) {
   render($("#sidenav"), html`<a href="#/">📊 Overview</a>
     <div class="sect">Operations</div><a href="#/organisers">🏢 Organisers${c(counts.orgs)}</a><a href="#/events">🎫 Events${c(counts.events)}</a><a href="#/users">👤 Users</a><a href="#/lookup">🔎 Orders & tickets</a><a href="#/tags">📶 Tags</a><a href="#/terminals">🧾 Terminals</a><a href="#/support">💬 Support${c(counts.support)}</a>
     <div class="sect">Finance</div><a href="#/refunds">↩️ Refunds${c(counts.refunds)}</a><a href="#/payouts">💰 Payouts${c(counts.payouts)}</a><a href="#/payments">💳 Payments & webhooks</a><a href="#/reconciliation">⚖️ Reconciliation${c(counts.recon)}</a><a href="#/ledger">📒 Ledger</a>
-    <div class="sect">Governance</div><a href="#/audit">🛡️ Audit log</a><a href="#/outbox">✉️ Messages</a>`);
+    <div class="sect">Website</div><a href="#/site">🌐 Site settings</a><a href="#/posters">🖼️ Advertising posters</a><a href="#/assistant">🤖 Assistant</a>
+    <div class="sect">Governance</div><a href="#/integrations">🔌 Integrations</a><a href="#/audit">🛡️ Audit log</a><a href="#/outbox">✉️ Messages</a>`);
 }
 
 async function overview() {
@@ -47,12 +48,19 @@ async function overview() {
 
 async function organisers() {
   const { organisers: list } = await get("/api/admin/organisers");
-  render(main, html`${head("Organisers")}${tbl(["Organiser", "Owner", "Contact", "Events", "Bank", "Status", ""], list.map((o) => html`<tr><td><strong>${o.name}</strong><div class="tiny muted">${fmtDate(o.created_at)}</div></td><td>${o.owner_name || ""}</td><td class="small">${o.contact_email}<br>${o.contact_phone || ""}</td><td>${o.events}</td><td>${o.bank_account_last4 ? `••${o.bank_account_last4}` : "—"}</td><td>${badge(o.status)}</td>
-    <td>${isA() ? html`<div class="row">${o.status !== "approved" ? html`<button class="btn btn-good btn-sm" data-s="approved" data-id="${o.id}">Approve</button>` : ""}${o.status === "pending" ? html`<button class="btn btn-ghost btn-sm" data-s="rejected" data-id="${o.id}">Reject</button>` : ""}${o.status === "approved" ? html`<button class="btn btn-ghost btn-sm" data-s="suspended" data-id="${o.id}">Suspend</button>` : ""}</div>` : ""}</td></tr>`))}`);
+  render(main, html`${head("Organisers")}${tbl(["Organiser", "Owner", "Contact", "Events", "Bank", "Status", ""], list.map((o) => html`<tr><td><strong>${o.name}</strong><div class="tiny muted">${fmtDate(o.created_at)}</div></td><td>${o.owner_name || ""}</td><td class="small">${o.contact_email}<br>${o.contact_phone || ""}</td><td>${o.events}</td><td>${o.bank_account_last4 ? `••${o.bank_account_last4}` : "—"}</td><td>${badge(o.status)}<div class="tiny muted">${o.commission_bps == null ? "standard fee" : `fee ${o.commission_bps / 100}%`}</div></td>
+    <td>${isA() ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-fee="${o.id}">Fee</button>${o.status !== "approved" ? html`<button class="btn btn-good btn-sm" data-s="approved" data-id="${o.id}">Approve</button>` : ""}${o.status === "pending" ? html`<button class="btn btn-ghost btn-sm" data-s="rejected" data-id="${o.id}">Reject</button>` : ""}${o.status === "approved" ? html`<button class="btn btn-ghost btn-sm" data-s="suspended" data-id="${o.id}">Suspend</button>` : ""}</div>` : ""}</td></tr>`))}`);
   $$("[data-s]").forEach((b) => b.addEventListener("click", async () => {
     const why = b.dataset.s === "approved" ? "" : await reason(`${b.dataset.s === "rejected" ? "Reject" : "Suspend"} organiser`, b.dataset.s === "suspended" ? "Their published events will be suspended too." : "They will be told.");
     if (why === false) return;
     if (await act(() => post(`/api/admin/organisers/${b.dataset.id}/status`, { status: b.dataset.s, reason: why || undefined }))) organisers();
+  }));
+  $$("[data-fee]").forEach((b) => b.addEventListener("click", async () => {
+    const v = await confirmDialog("Organiser commission", "Percentage of ticket sales charged to this organiser. Leave empty for the standard 5%. Applies to new orders only.", { confirm: "Save", input: { label: "Commission %", placeholder: "5" } });
+    if (v === false) return;
+    const pct = v === true || v === "" ? null : Number(String(v).replace(",", "."));
+    if (pct !== null && !(pct >= 0 && pct <= 50)) return toast("Enter a percentage between 0 and 50.", "bad");
+    if (await act(() => post(`/api/admin/organisers/${b.dataset.fee}/commission`, { commissionBps: pct === null ? undefined : Math.round(pct * 100) }), "Commission saved.")) organisers();
   }));
 }
 
@@ -133,15 +141,19 @@ async function refunds() {
   const actionable = list.filter((r) => r.status === "requested" && !r.mine);
   render(main, html`${head("Refunds", "Every refund needs a second person: you cannot approve a refund you requested.", isF() && filter === "requested" && actionable.length ? html`<button class="btn btn-good" data-bulk>Approve all ${actionable.length} I can</button>` : "")}
     ${!isF() ? html`<p class="callout">View only — refund approvals need the finance role.</p>` : ""}
-    <div class="chips">${["requested", "failed", "completed", "rejected", "all"].map((k) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${k}</button>`)}</div>
+    <div class="chips">${["requested", "manual_pending", "failed", "completed", "rejected", "all"].map((k) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${k}</button>`)}</div>
     <div class="mt">${tbl(["Ref", "Event", "Type", "Reason", "By", "#Amount", "Status", ""], list.map((r) => html`<tr><td class="mono">${r.reference}${r.order_reference ? html`<div class="tiny muted">${r.order_reference}</div>` : ""}</td><td>${r.event_title}</td><td>${r.kind.replace("_", " ")}</td><td class="small">${r.reason}${r.failure_reason ? html`<div class="tiny">⚠ ${r.failure_reason}</div>` : ""}</td><td class="small">${r.requested_by_name || "system"}${r.decided_by_name ? html`<div class="tiny muted">decided: ${r.decided_by_name}</div>` : ""}</td>
       <td class="num">${moneyExact(r.amount_cents + r.fee_refund_cents)}</td><td>${badge(r.status)}</td>
       <td>${isF() && r.status === "requested" && !r.mine ? html`<div class="row"><button class="btn btn-good btn-sm" data-ok="${r.id}">Approve</button><button class="btn btn-ghost btn-sm" data-no="${r.id}">Reject</button></div>` : ""}
-        ${isF() && r.status === "failed" ? html`<button class="btn btn-ghost btn-sm" data-retry="${r.id}">Retry</button>` : ""}${r.mine && r.status === "requested" ? html`<span class="tiny muted">yours — needs someone else</span>` : ""}</td></tr>`))}</div>`);
+        ${isF() && r.status === "failed" ? html`<button class="btn btn-ghost btn-sm" data-retry="${r.id}">Retry</button>` : ""}${isF() && r.status === "manual_pending" ? html`<button class="btn btn-dark btn-sm" data-manual="${r.id}">Mark paid manually</button>` : ""}${r.mine && r.status === "requested" ? html`<span class="tiny muted">yours — needs someone else</span>` : ""}</td></tr>`))}</div>`);
   $$("[data-f]").forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_rf", b.dataset.f); refunds(); }));
   $$("[data-ok]").forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/refunds/${b.dataset.ok}/decide`, { approve: true }), "Approved and processed.")) refunds(); }));
   $$("[data-no]").forEach((b) => b.addEventListener("click", async () => { const why = await reason("Reject refund", "The requester will see this note."); if (why && await act(() => post(`/api/admin/refunds/${b.dataset.no}/decide`, { approve: false, note: why }))) refunds(); }));
   $$("[data-retry]").forEach((b) => b.addEventListener("click", async () => { if (await act(() => post(`/api/admin/refunds/${b.dataset.retry}/retry`), "Retried.")) refunds(); }));
+  $$("[data-manual]").forEach((b) => b.addEventListener("click", async () => {
+    const ref = await reason("Complete refund manually", "Pay the customer by EFT or in the provider dashboard first, then enter its reference here.", "Payment reference");
+    if (ref && await act(() => post(`/api/admin/refunds/${b.dataset.manual}/complete-manually`, { providerReference: ref }), "Refund marked as paid.")) refunds();
+  }));
   $("[data-bulk]")?.addEventListener("click", async () => {
     if (!(await confirmDialog("Approve refunds", `Approve and process ${actionable.length} refunds?`, { confirm: "Approve all" }))) return;
     const r = await post("/api/admin/refunds/bulk-approve", { refundIds: actionable.map((x) => x.id) });
@@ -235,11 +247,16 @@ async function terminals() {
 
 async function support() {
   const { cases } = await get("/api/admin/support");
-  render(main, html`${head("Support cases")}${tbl(["Ref", "From", "Topic", "Subject", "Status", ""], cases.map((c) => html`<tr><td class="mono">${c.reference}</td><td class="small">${c.email}</td><td>${c.category}</td><td><strong>${c.subject}</strong><div class="small muted">${c.body.slice(0, 160)}</div></td><td>${badge(c.status)}</td>
-    <td>${isA() || isS() ? html`<button class="btn btn-ghost btn-sm" data-c="${c.id}">Update</button>` : ""}</td></tr>`))}`);
+  const open = cases.filter((c) => ["open", "in_progress"].includes(c.status));
+  render(main, html`${head("Support & callbacks", `${open.length} open · ${open.filter((c) => c.overdue).length} overdue. Callback requests promise a response within 24–48 hours.`)}
+    ${tbl(["Ref", "Customer", "Topic", "Request", "Due", "Status", ""], cases.map((c) => html`<tr><td class="mono">${c.reference}<div class="tiny muted">${c.source || "web"}</div></td>
+      <td class="small">${c.full_name ? html`<strong>${c.full_name}</strong><br>` : ""}${c.phone ? html`<a href="tel:${c.phone}">${c.phone}</a><br>` : ""}<a href="mailto:${c.email}">${c.email}</a>${c.preferred_time ? html`<div class="tiny muted">best time: ${c.preferred_time}</div>` : ""}</td>
+      <td>${c.category}</td><td><strong>${c.subject}</strong><div class="small muted">${c.body.slice(0, 160)}</div></td>
+      <td class="small">${c.due_at ? html`${fmtDateTime(c.due_at)}${c.overdue ? html`<div><span class="badge bad">overdue</span></div>` : ""}` : "—"}</td><td>${badge(c.status)}${c.assignee ? html`<div class="tiny muted">${c.assignee}</div>` : ""}</td>
+      <td>${isA() || isS() ? html`<button class="btn btn-ghost btn-sm" data-c="${c.id}">Update</button>` : ""}</td></tr>`))}`);
   $$("[data-c]").forEach((b) => b.addEventListener("click", () => {
-    const c = cases.find((x) => x.id === b.dataset.c);
-    const dlg = dialog(c.subject, html`<p class="prose small">${c.body}</p><form class="stack"><div class="field"><label for="ss">Status</label><select id="ss" name="status">${["open", "in_progress", "resolved", "closed"].map((s) => html`<option ${raw(s === c.status ? "selected" : "")}>${s}</option>`)}</select></div><div class="field"><label for="sr">Resolution (visible to customer)</label><textarea id="sr" name="resolution">${c.resolution || ""}</textarea></div><button class="btn btn-dark">Save</button></form>`);
+    const c = cases.find((x) => String(x.id) === b.dataset.c);
+    const dlg = dialog(c.subject, html`<p class="prose small">${c.body}</p><form class="stack"><div class="field"><label for="ss">Status</label><select id="ss" name="status">${["open", "in_progress", "resolved", "closed"].map((s) => html`<option ${raw(s === c.status ? "selected" : "")}>${s}</option>`)}</select></div><div class="field"><label for="sr">Resolution notes</label><textarea id="sr" name="resolution">${c.resolution || ""}</textarea></div><button class="btn btn-dark">Save</button></form>`);
     onSubmit($("form", dlg), async (v) => { await post(`/api/admin/support/${c.id}`, v); dlg.close(); support(); });
   }));
 }
@@ -256,6 +273,179 @@ async function outbox() {
   render(main, html`${head("Messages", `Email adapter: ${adapters.email} · SMS adapter: ${adapters.sms}`)}${tbl(["When", "Channel", "Kind", "To", "Subject", "Status"], messages.map((m) => html`<tr><td class="small">${fmtDateTime(m.created_at)}</td><td>${m.channel}</td><td>${m.kind}</td><td class="small">${m.to_address}</td><td class="small">${m.subject || ""}</td><td>${badge(m.status)}${m.last_error ? html`<div class="tiny muted">${m.last_error}</div>` : ""}</td></tr>`))}`);
 }
 
+// ---------------- site settings: maintenance, banner, hours, support, legal, assistant ----------------
+const DAYS = [["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"], ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]];
+async function siteSettings() {
+  const { settings: s, hoursStatus: hs, aiConfigured, assistantModel } = await get("/api/admin/settings");
+  const ro = raw(isA() ? "" : "disabled");
+  const save = async (key, value, msg) => { if (await act(() => put(`/api/admin/settings/${key}`, value), msg)) siteSettings(); };
+  render(main, html`${head("Site settings", "Changes apply to the live site within a few seconds. Every change is written to the audit log.")}
+    ${!isA() ? html`<p class="callout">View only — changing site settings needs the admin role.</p>` : ""}
+    <div class="grid-2">
+    <section class="card stack ${s.maintenance.enabled ? "flat" : ""}" aria-labelledby="mt-h"><h2 id="mt-h">Maintenance mode ${s.maintenance.enabled ? html`<span class="badge bad">ON</span>` : html`<span class="badge good">off</span>`}</h2>
+      <p class="small muted mb-0">When on, visitors see a maintenance page. TicketRoom staff can still sign in and use the site. Webhooks from payment providers keep working.</p>
+      <form class="stack" id="f-mt"><div class="field"><label for="mt-msg">Message shown to visitors</label><textarea id="mt-msg" name="message" maxlength="500" ${ro}>${s.maintenance.message}</textarea></div>
+        <div class="row">${s.maintenance.enabled ? html`<button class="btn btn-good" name="enabled" value="0" ${ro}>Turn maintenance OFF</button>` : html`<button class="btn btn-danger" name="enabled" value="1" ${ro}>Turn maintenance ON</button>`}<button type="button" class="btn btn-ghost" data-save-mt ${ro}>Save message only</button></div></form></section>
+
+    <section class="card stack" aria-labelledby="bn-h"><h2 id="bn-h">Announcement banner ${s.banner.enabled ? html`<span class="badge good">showing</span>` : html`<span class="badge">hidden</span>`}</h2>
+      <p class="small muted mb-0">Shown at the top of every public page. Visitors can hide it for their visit; turn it off here to remove it for everyone.</p>
+      <form class="stack" id="f-bn"><label class="check"><input type="checkbox" name="enabled" ${raw(s.banner.enabled ? "checked" : "")} ${ro}><span>Show the banner</span></label>
+        <div class="field"><label for="bn-t">Text</label><input id="bn-t" name="text" maxlength="200" required value="${s.banner.text}" ${ro}></div>
+        <div class="grid-2"><div class="field"><label for="bn-lt">Link text <span class="muted">(optional)</span></label><input id="bn-lt" name="linkText" maxlength="40" value="${s.banner.linkText || ""}" ${ro}></div>
+        <div class="field"><label for="bn-lu">Link</label><input id="bn-lu" name="linkUrl" maxlength="200" value="${s.banner.linkUrl || ""}" placeholder="/sell" ${ro}></div></div>
+        <button class="btn btn-dark" ${ro}>Save banner</button></form></section>
+    </div>
+
+    <section class="card stack mt" aria-labelledby="hr-h"><h2 id="hr-h">Business hours & public holidays</h2>
+      <p class="callout ${hs.openNow ? "good" : "warn"} mb-0">Right now: <strong>${hs.openNow ? "open" : `closed${hs.holiday ? ` (${hs.holiday})` : ""}`}</strong>${hs.nextOpen && !hs.openNow ? ` · next open ${hs.nextOpen.date} at ${hs.nextOpen.time}` : ""}. The assistant, help page and callback confirmations use these hours.</p>
+      <form class="stack" id="f-hr">
+        <div class="table-wrap"><table><thead><tr><th>Day</th><th>Open</th><th>Opens</th><th>Closes</th></tr></thead><tbody>
+          ${DAYS.map(([k, l]) => html`<tr><td>${l}</td><td><input type="checkbox" name="${k}-on" aria-label="${l} open" ${raw(s.hours.week[k] ? "checked" : "")} ${ro}></td>
+            <td><input type="time" name="${k}-open" aria-label="${l} opens" value="${s.hours.week[k]?.open || "09:00"}" ${ro}></td><td><input type="time" name="${k}-close" aria-label="${l} closes" value="${s.hours.week[k]?.close || "17:00"}" ${ro}></td></tr>`)}</tbody></table></div>
+        <div class="field"><label for="hr-note">Hours note (shown to customers)</label><input id="hr-note" name="note" maxlength="200" value="${s.hours.note}" ${ro}></div>
+        <div class="field"><label for="hr-hol">Closed days — one per line as <code>YYYY-MM-DD Name</code></label><textarea id="hr-hol" name="holidays" rows="10" class="mono" ${ro}>${s.hours.holidays.map((h) => `${h.date} ${h.name}`).join("\n")}</textarea>
+          <span class="hint">South African public holidays for 2026–2027 are pre-loaded. Add company closures (e.g. 2026-12-24 Christmas Eve) the same way.</span></div>
+        <button class="btn btn-dark" ${ro}>Save hours</button></form></section>
+
+    <div class="grid-2 mt">
+    <section class="card stack" aria-labelledby="sp-h"><h2 id="sp-h">Support contact</h2><form class="stack" id="f-sp">
+      <div class="field"><label for="sp-e">Support email</label><input id="sp-e" name="email" type="email" required value="${s.support.email}" ${ro}></div>
+      <div class="field"><label for="sp-p">Phone <span class="muted">(optional, shown on contact page)</span></label><input id="sp-p" name="phone" maxlength="30" value="${s.support.phone || ""}" ${ro}></div>
+      <div class="field"><label for="sp-r">Response time promise</label><input id="sp-r" name="responseTime" maxlength="40" required value="${s.support.responseTime}" ${ro}></div>
+      <button class="btn btn-dark" ${ro}>Save contact details</button></form></section>
+
+    <section class="card stack" aria-labelledby="ai-h"><h2 id="ai-h">Assistant (chatbot)</h2>
+      <p class="small muted mb-0">Answers come from the <a href="#/assistant">knowledge base</a>. ${aiConfigured ? html`Smart answers use Claude (<code>${assistantModel}</code>) and are grounded in the knowledge base.` : html`<strong>Smart answers are off</strong>: set <code>ANTHROPIC_API_KEY</code> in the app's .env to enable them. The knowledge base works without it.`}</p>
+      <form class="stack" id="f-ai"><label class="check"><input type="checkbox" name="enabled" ${raw(s.chatbot.enabled ? "checked" : "")} ${ro}><span>Show the assistant on the website</span></label>
+        <label class="check"><input type="checkbox" name="aiEnabled" ${raw(s.chatbot.aiEnabled ? "checked" : "")} ${ro}><span>Use smart (AI) answers when configured</span></label>
+        <div class="field"><label for="ai-g">Greeting</label><textarea id="ai-g" name="greeting" maxlength="300" ${ro}>${s.chatbot.greeting}</textarea></div>
+        <button class="btn btn-dark" ${ro}>Save assistant</button></form></section>
+    </div>
+
+    <section class="card stack mt" aria-labelledby="lg-h"><h2 id="lg-h">Legal details</h2>
+      <p class="small muted mb-0">Inserted into the Terms, Privacy Policy and PAIA pages. Complete these before launch (CIPC registration, VAT number if registered, address and Information Officer registered with the Information Regulator).</p>
+      <form class="stack" id="f-lg"><div class="grid-2">
+        <div class="field"><label for="lg-n">Legal entity name</label><input id="lg-n" name="entityName" required maxlength="160" value="${s.legal.entityName}" ${ro}></div>
+        <div class="field"><label for="lg-r">Company registration number</label><input id="lg-r" name="registrationNumber" maxlength="40" value="${s.legal.registrationNumber || ""}" placeholder="2026/123456/07" ${ro}></div>
+        <div class="field"><label for="lg-v">VAT number</label><input id="lg-v" name="vatNumber" maxlength="40" value="${s.legal.vatNumber || ""}" ${ro}></div>
+        <div class="field"><label for="lg-i">Information Officer</label><input id="lg-i" name="informationOfficer" maxlength="120" value="${s.legal.informationOfficer || ""}" ${ro}></div>
+        <div class="field"><label for="lg-a">Physical address</label><input id="lg-a" name="physicalAddress" maxlength="300" value="${s.legal.physicalAddress || ""}" ${ro}></div>
+        <div class="field"><label for="lg-p">Postal address</label><input id="lg-p" name="postalAddress" maxlength="300" value="${s.legal.postalAddress || ""}" ${ro}></div></div>
+        <input type="hidden" name="website" value="${s.legal.website || "ticketroom.co.za"}">
+        <div class="row"><button class="btn btn-dark" ${ro}>Save legal details</button><a class="btn btn-ghost" href="/legal/terms" target="_blank">Preview documents</a></div></form></section>`);
+  if (!isA()) return;
+  const fv = (f) => Object.fromEntries([...new FormData(f)].map(([k, v]) => [k, String(v)]));
+  $("#f-mt").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const on = e.submitter?.value === "1";
+    if (on && !(await confirmDialog("Turn maintenance mode on?", "Visitors will see the maintenance page until you turn it off. Staff can still sign in.", { confirm: "Turn on", danger: true }))) return;
+    save("maintenance", { enabled: on, message: $("#mt-msg").value }, on ? "Maintenance mode is ON." : "Maintenance mode is off — the site is live.");
+  });
+  $("[data-save-mt]").addEventListener("click", () => save("maintenance", { enabled: s.maintenance.enabled, message: $("#mt-msg").value }, "Message saved."));
+  $("#f-bn").addEventListener("submit", (e) => { e.preventDefault(); const v = fv(e.target); save("banner", { enabled: e.target.enabled.checked, text: v.text, linkText: v.linkText || undefined, linkUrl: v.linkUrl || undefined }, "Banner saved."); });
+  $("#f-hr").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target, week = {};
+    for (const [k] of DAYS) week[k] = f[`${k}-on`].checked ? { open: f[`${k}-open`].value, close: f[`${k}-close`].value } : null;
+    const holidays = f.holidays.value.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => { const m = l.match(/^(\d{4}-\d{2}-\d{2})\s+(.+)$/); return m ? { date: m[1], name: m[2].slice(0, 80) } : { date: l, name: "" }; });
+    const badLine = holidays.find((h) => !h.name);
+    if (badLine) return toast(`Holiday line "${badLine.date}" needs the format YYYY-MM-DD Name.`, "bad");
+    save("hours", { week, holidays: holidays.sort((a, b) => a.date.localeCompare(b.date)), note: f.note.value }, "Hours saved.");
+  });
+  $("#f-sp").addEventListener("submit", (e) => { e.preventDefault(); const v = fv(e.target); save("support", { email: v.email, phone: v.phone || undefined, responseTime: v.responseTime }, "Contact details saved."); });
+  $("#f-ai").addEventListener("submit", (e) => { e.preventDefault(); save("chatbot", { enabled: e.target.enabled.checked, aiEnabled: e.target.aiEnabled.checked, greeting: e.target.greeting.value }, "Assistant saved."); });
+  $("#f-lg").addEventListener("submit", (e) => { e.preventDefault(); const v = fv(e.target); for (const k of Object.keys(v)) if (!v[k]) delete v[k]; save("legal", v, "Legal details saved."); });
+}
+
+// ---------------- advertising posters ----------------
+async function posters() {
+  const { posters: list } = await get("/api/admin/posters");
+  const live = (p) => p.active && (!p.starts_at || new Date(p.starts_at) <= new Date()) && (!p.ends_at || new Date(p.ends_at) > new Date());
+  render(main, html`${head("Advertising posters", "Posters appear in the Featured section on the home page. Use them for partner adverts, sponsors or your own promotions.", isA() ? html`<button class="btn btn-primary" data-new>New poster</button>` : "")}
+    ${list.length ? html`<div class="poster-rail">${list.map((p) => html`<article class="card flat stack">
+      <div class="ad-poster">${p.image_upload_id ? html`<img src="/media/${p.image_upload_id}" alt="">` : ""}<div class="meta"><h3>${p.title}</h3>${p.subtitle ? html`<span>${p.subtitle}</span>` : ""}</div></div>
+      <div class="row between"><span>${live(p) ? html`<span class="badge good">live</span>` : p.active ? html`<span class="badge warn">scheduled</span>` : html`<span class="badge">paused</span>`}</span><span class="small muted">${p.clicks} clicks</span></div>
+      <p class="small muted mb-0">${p.link_url || "No link"}${p.starts_at || p.ends_at ? html`<br>${p.starts_at ? fmtDate(p.starts_at) : "now"} – ${p.ends_at ? fmtDate(p.ends_at) : "no end"}` : ""}</p>
+      ${isA() ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-edit="${p.id}">Edit</button><button class="btn btn-ghost btn-sm" data-toggle="${p.id}">${p.active ? "Pause" : "Activate"}</button><button class="btn btn-ghost btn-sm" data-del="${p.id}">Delete</button></div>` : ""}</article>`)}</div>`
+      : empty("No posters yet. Create one to advertise on the home page.")}`);
+  const editor = (p = {}) => {
+    const d = dialog(p.id ? "Edit poster" : "New poster", html`<form class="stack">
+      <div class="field"><label for="pt">Title</label><input id="pt" name="title" required maxlength="120" value="${p.title || ""}"></div>
+      <div class="field"><label for="ps">Subtitle <span class="muted">(optional)</span></label><input id="ps" name="subtitle" maxlength="200" value="${p.subtitle || ""}"></div>
+      <div class="field"><label for="pi">Image (16:9, PNG/JPEG/WebP, up to 2 MB)</label><input id="pi" type="file" accept="image/png,image/jpeg,image/webp"><input type="hidden" name="imageUploadId" value="${p.image_upload_id || ""}"></div>
+      <div class="field"><label for="pl">Link <span class="muted">(/events/… or https://…)</span></label><input id="pl" name="linkUrl" maxlength="300" value="${p.link_url || ""}"></div>
+      <div class="grid-2"><div class="field"><label for="pa">Starts <span class="muted">(optional)</span></label><input id="pa" name="startsAt" type="date" value="${p.starts_at ? p.starts_at.slice(0, 10) : ""}"></div>
+        <div class="field"><label for="pe">Ends <span class="muted">(optional)</span></label><input id="pe" name="endsAt" type="date" value="${p.ends_at ? p.ends_at.slice(0, 10) : ""}"></div></div>
+      <div class="field"><label for="po">Order (lower shows first)</label><input id="po" name="sortOrder" type="number" min="0" max="1000" value="${p.sort_order ?? 100}"></div>
+      <button class="btn btn-primary">${p.id ? "Save" : "Create poster"}</button></form>`);
+    const f = $("form", d);
+    $("#pi", d).addEventListener("change", async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      try { const r = await api("POST", "/api/admin/uploads", undefined, { raw: file, headers: { "content-type": file.type } }); f.imageUploadId.value = r.uploadId; toast("Image uploaded.", "good"); }
+      catch (err) { toast(err.message, "bad"); e.target.value = ""; }
+    });
+    onSubmit(f, async (v) => {
+      const body = { title: v.title, subtitle: v.subtitle, imageUploadId: v.imageUploadId || undefined, linkUrl: v.linkUrl || undefined, sortOrder: Number(v.sortOrder || 100),
+        startsAt: v.startsAt ? new Date(`${v.startsAt}T00:00:00+02:00`).toISOString() : undefined, endsAt: v.endsAt ? new Date(`${v.endsAt}T23:59:59+02:00`).toISOString() : undefined };
+      if (p.id) await patch(`/api/admin/posters/${p.id}`, body); else await post("/api/admin/posters", body);
+      d.close(); toast("Poster saved.", "good"); posters();
+    });
+  };
+  $("[data-new]")?.addEventListener("click", () => editor());
+  $$("[data-edit]").forEach((b) => b.addEventListener("click", () => editor(list.find((p) => p.id === b.dataset.edit))));
+  $$("[data-toggle]").forEach((b) => b.addEventListener("click", async () => { const p = list.find((x) => x.id === b.dataset.toggle); if (await act(() => patch(`/api/admin/posters/${p.id}`, { active: !p.active }))) posters(); }));
+  $$("[data-del]").forEach((b) => b.addEventListener("click", async () => { if (await confirmDialog("Delete poster?", "This can't be undone.", { confirm: "Delete", danger: true }) && await act(() => del(`/api/admin/posters/${b.dataset.del}`))) posters(); }));
+}
+
+// ---------------- assistant: knowledge base + conversations ----------------
+async function assistantPage() {
+  const tab = sessionStorage.getItem("adm_as") || "kb";
+  const canEdit = isA() || isS();
+  const [{ articles }, { chats, stats }] = await Promise.all([get("/api/admin/kb"), get(`/api/admin/chats${tab === "gaps" ? "?filter=unanswered" : ""}`)]);
+  render(main, html`${head("Assistant", "The chatbot answers from this knowledge base (and, when enabled, uses it to ground smart answers). Fix gaps by adding articles.", canEdit ? html`<button class="btn btn-primary" data-new>New article</button>` : "")}
+    <div class="kpis"><div class="kpi"><div class="k">Questions (30 days)</div><div class="v">${stats.total}</div><div class="s">${stats.ai} smart answers</div></div>
+      <div class="kpi"><div class="k">Not answered</div><div class="v">${stats.unanswered}</div><div class="s">add articles for these</div></div>
+      <div class="kpi"><div class="k">Helpful</div><div class="v">${stats.helpful}</div><div class="s">${stats.unhelpful} not helpful</div></div></div>
+    <div class="chips mt">${[["kb", "Knowledge base"], ["log", "All conversations"], ["gaps", "Gaps & unhelpful"]].map(([k, l]) => html`<button class="chip" data-tab="${k}" aria-pressed="${tab === k}">${l}</button>`)}</div>
+    <div class="mt">${tab === "kb" ? tbl(["Question", "Answer", "Link", "Status", ""], articles.map((a) => html`<tr><td><strong>${a.question}</strong><div class="tiny muted">${(a.keywords || []).join(", ")}</div></td><td class="small">${a.answer.slice(0, 220)}${a.answer.length > 220 ? "…" : ""}</td><td class="small mono">${a.link_url || ""}</td><td>${a.active ? badge("active") : html`<span class="badge">off</span>`}</td>
+        <td>${canEdit ? html`<button class="btn btn-ghost btn-sm" data-edit="${a.id}">Edit</button>` : ""}</td></tr>`))
+      : tbl(["When", "Question", "Answer", "Source", "Feedback"], chats.map((c) => html`<tr><td class="small">${fmtDateTime(c.created_at)}</td><td><strong>${c.question}</strong>${c.matched ? html`<div class="tiny muted">matched: ${c.matched}</div>` : ""}</td><td class="small">${c.answer.slice(0, 240)}</td><td>${c.source}</td><td>${c.helpful === true ? "👍" : c.helpful === false ? "👎" : ""}${canEdit && tab === "gaps" ? html` <button class="btn btn-ghost btn-sm" data-from="${c.id}">Answer it</button>` : ""}</td></tr>`))}</div>`);
+  $$("[data-tab]").forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_as", b.dataset.tab); assistantPage(); }));
+  const editor = (a = {}) => {
+    const d = dialog(a.id ? "Edit article" : "New article", html`<form class="stack">
+      <div class="field"><label for="kq">Question</label><input id="kq" name="question" required minlength="5" maxlength="200" value="${a.question || ""}"></div>
+      <div class="field"><label for="ka">Answer</label><textarea id="ka" name="answer" required maxlength="2000" rows="6">${a.answer || ""}</textarea></div>
+      <div class="field"><label for="kk">Keywords <span class="muted">(comma separated — words customers use)</span></label><input id="kk" name="keywords" value="${(a.keywords || []).join(", ")}"></div>
+      <div class="field"><label for="kl">Link <span class="muted">(optional site path, e.g. /contact)</span></label><input id="kl" name="linkUrl" maxlength="200" value="${a.link_url || ""}"></div>
+      ${a.id ? html`<label class="check"><input type="checkbox" name="active" ${raw(a.active ? "checked" : "")}><span>Active</span></label>` : ""}
+      <button class="btn btn-primary">Save</button></form>`, { wide: true });
+    onSubmit($("form", d), async (v) => {
+      const body = { question: v.question, answer: v.answer, keywords: String(v.keywords || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean).slice(0, 30), linkUrl: v.linkUrl || undefined };
+      if (a.id) await patch(`/api/admin/kb/${a.id}`, { ...body, active: !!v.active }); else await post("/api/admin/kb", body);
+      d.close(); toast("Article saved. The assistant uses it straight away.", "good"); assistantPage();
+    });
+  };
+  $("[data-new]")?.addEventListener("click", () => editor());
+  $$("[data-edit]").forEach((b) => b.addEventListener("click", () => editor(articles.find((a) => a.id === Number(b.dataset.edit) || a.id === b.dataset.edit))));
+  $$("[data-from]").forEach((b) => b.addEventListener("click", () => editor({ question: chats.find((c) => String(c.id) === b.dataset.from)?.question })));
+}
+
+// ---------------- integrations ----------------
+async function integrations() {
+  const d = await get("/api/admin/integrations");
+  render(main, html`${head("Integrations", "TicketRoom's own provider accounts. Credentials live in the server's .env file and are never shown here — only whether each one is set.")}
+    <p class="callout small">Fees: buyers pay ${moneyExact(d.defaults.bookingFeeCents)} per paid ticket${d.defaults.bookingFeeBps ? ` + ${d.defaults.bookingFeeBps / 100}%` : ""}; organisers pay ${d.defaults.organiserCommissionBps / 100}% commission (override per organiser under Organisers). Free events pay nothing.</p>
+    <div class="stack">${d.integrations.map((i) => html`<section class="card stack"><div class="row between"><h2 class="mb-0">${i.label}</h2><span>${badge(i.provider === "none" || i.provider === "disabled" ? "draft" : "active")} <span class="badge ${i.environment === "live" ? "good" : "warn"}">${i.environment || "—"}</span></span></div>
+      <dl class="dl"><dt>Provider</dt><dd>${i.provider}</dd><dt>Endpoint</dt><dd class="mono small">${i.endpoint || "—"}</dd>${i.webhookUrl ? html`<dt>Webhook URL</dt><dd class="mono small">${i.webhookUrl}</dd>` : ""}
+        ${Object.entries(i.credentials || {}).map(([k, v]) => html`<dt>${k}</dt><dd>${v === "set" ? html`<span class="badge good">set</span>` : html`<span class="badge bad">missing</span>`}</dd>`)}
+        <dt>Last 24h</dt><dd>${i.calls || 0} calls, ${i.failures || 0} failures${i.avg_ms ? `, avg ${i.avg_ms} ms` : ""}${i.problems ? html` · <span class="badge bad">${i.problems} webhook problems</span>` : ""}</dd></dl>
+      ${isA() ? html`<div><button class="btn btn-ghost btn-sm" data-health="${i.key}">Run health check</button></div>` : ""}</section>`)}</div>`);
+  $$("[data-health]").forEach((b) => b.addEventListener("click", async () => {
+    try { const r = await post(`/api/admin/integrations/${b.dataset.health}/health`); toast(r.ok ? `Healthy${r.detail ? ` — ${r.detail}` : ""}` : `Problem: ${r.error || r.detail || "check failed"}`, r.ok ? "good" : "bad"); }
+    catch (err) { toast(err.message, "bad"); }
+  }));
+}
+
 (async () => {
   await header($("#header"), { portal: "Back office", links: [["/admin", "Back office"]] });
   const u = await requireUser("TicketRoom staff sign in.");
@@ -265,5 +455,5 @@ async function outbox() {
   if (!R.size) { render($("#sidenav"), ""); return render(main, html`${head("No access")}<p>This area is for TicketRoom staff.</p>`); }
   nav();
   router([["/", overview], ["/organisers", organisers], ["/events", events], ["/users", users], ["/lookup", lookup], ["/tags", tags], ["/terminals", terminals], ["/support", support],
-    ["/refunds", refunds], ["/payouts", payouts], ["/payments", payments], ["/reconciliation", reconciliation], ["/ledger", ledgerPage], ["/audit", audit], ["/outbox", outbox]], () => { location.hash = "#/"; });
+    ["/refunds", refunds], ["/payouts", payouts], ["/payments", payments], ["/reconciliation", reconciliation], ["/ledger", ledgerPage], ["/audit", audit], ["/outbox", outbox], ["/site", siteSettings], ["/posters", posters], ["/assistant", assistantPage], ["/integrations", integrations]], () => { location.hash = "#/"; });
 })();

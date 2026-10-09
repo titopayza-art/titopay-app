@@ -115,6 +115,16 @@ router.post("/unsubscribe", limit("unsub", 30, 60e3), wrap(async (req, res) => {
   const b = check(req.body, { token: r.str({ max: 600 }) });
   const data = verifyLink(b.token);
   if (!data?.u) throw bad("This unsubscribe link is invalid or has expired. You can manage preferences in your account.");
+  if (data.all) {
+    // Everything: every organiser, every channel, plus TicketRoom's own news.
+    await db.withTx(async (c) => {
+      const { rows } = await c.query("SELECT organiser_id, channel FROM marketing_consents WHERE user_id = $1 AND granted", [data.u]);
+      for (const x of rows) await marketing.setConsent(c, data.u, x.organiser_id, x.channel, false, "unsubscribe_all");
+      await marketing.setConsent(c, data.u, null, "email", false, "unsubscribe_all");
+      await marketing.setConsent(c, data.u, null, "sms", false, "unsubscribe_all");
+    });
+    return res.json({ ok: true, all: true });
+  }
   await db.withTx((c) => marketing.setConsent(c, data.u, data.o || null, data.c, false, "unsubscribe_link"));
   const { rows } = data.o ? await db.query("SELECT name FROM organisers WHERE id = $1", [data.o]) : { rows: [{ name: "TicketRoom" }] };
   res.json({ ok: true, organiser: rows[0]?.name, channel: data.c });

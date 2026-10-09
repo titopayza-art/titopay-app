@@ -43,6 +43,14 @@ const r = {
     if (!m) fail("Enter a valid South African mobile number.");
     return `+27${m[1]}`;
   }, o),
+  // Any reachable number for a callback: SA mobile or landline, or international.
+  contactPhone: (o = {}) => rule((v) => {
+    const d = String(v).replace(/[\s()-]/g, "");
+    const sa = d.match(/^(?:\+?27|0)([1-9]\d{8})$/);
+    if (sa) return `+27${sa[1]}`;
+    if (/^\+[1-9]\d{7,14}$/.test(d)) return d;
+    fail("Enter a valid phone number, e.g. 082 123 4567 or 021 123 4567.");
+  }, o),
   password: (o = {}) => rule((v) => {
     if (typeof v !== "string" || v.length < 10) fail("Use at least 10 characters.");
     if (v.length > 200) fail("Too long.");

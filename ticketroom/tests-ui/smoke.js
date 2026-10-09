@@ -120,13 +120,13 @@ async function login(p, email) {
     // 5. Organiser sees the sale and the analytics; admin and finance load.
     const o = await page(browser);
     await login(o, "organiser@ticketroom.test");
-    await o.goto(`${BASE}/organiser#/`);
+    await o.goto(`${BASE}/organisers#/`);
     await o.getByRole("heading", { name: /Hi, Jozi Live Events/ }).waitFor();
     await shot(o, "organiser-dashboard");
     await o.getByRole("link", { name: "Soweto Sunset Sessions" }).first().click();
     await o.locator(".chart").first().waitFor();
     await shot(o, "organiser-event");
-    await o.goto(`${BASE}/organiser#/marketing`);
+    await o.goto(`${BASE}/organisers#/marketing`);
     await o.getByRole("heading", { name: "Marketing" }).waitFor();
     await shot(o, "organiser-marketing");
     const ad = await page(browser);

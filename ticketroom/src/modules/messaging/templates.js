@@ -2,7 +2,7 @@
 const config = require("../../config");
 const { formatZar } = require("../../lib/money");
 
-const FOOTER = `\n\n—\nTicketRoom · ticketroom.co.za\nPowered by TitoPay`;
+const FOOTER = `\n\n—\nTicketRoom · ticketroom.co.za · hello@ticketroom.co.za\nPowered by TitoPay`;
 const when = (d) => new Date(d).toLocaleString("en-ZA", { dateStyle: "full", timeStyle: "short", timeZone: "Africa/Johannesburg" });
 
 module.exports = {
@@ -37,6 +37,18 @@ module.exports = {
   refundCompleted: ({ reference, amount }) => ({
     subject: `Refund ${reference} processed`,
     body: `Your refund of ${formatZar(amount)} (${reference}) has been processed. Depending on your bank it can take 3–7 working days to reflect.${FOOTER}`,
+  }),
+  callbackReceived: ({ name, reference, responseTime, email, hoursNote }) => ({
+    subject: `We've received your callback request (${reference})`,
+    body: `Hi ${name},\n\nThanks for contacting TicketRoom. Your callback request ${reference} is with our team and we'll resolve it within ${responseTime}.\n\nOur hours: ${hoursNote}\n\nNeed to add something? Reply to this email or write to ${email} and quote ${reference}.${FOOTER}`,
+  }),
+  unsubscribeLink: ({ name, url }) => ({
+    subject: "Unsubscribe from TicketRoom marketing",
+    body: `Hi ${name},\n\nYou asked to stop receiving marketing from TicketRoom and the organisers you follow. Confirm here (link valid for 7 days):\n${url}\n\nYou'll still get messages about tickets you buy. If you didn't ask for this, ignore this email.${FOOTER}`,
+  }),
+  staffInvite: ({ name, organiser, event, url }) => ({
+    subject: `${organiser} added you as a ticket scanner on TicketRoom`,
+    body: `Hi ${name},\n\n${organiser} added you as staff for ${event}. Set your password here (link valid for 7 days):\n${url}\n\nThen open ticketroom.co.za/scan on your phone on the day to scan tickets.${FOOTER}`,
   }),
   footer: FOOTER,
 };

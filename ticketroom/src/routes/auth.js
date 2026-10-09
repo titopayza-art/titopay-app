@@ -73,7 +73,7 @@ router.post("/login", limit("login", 20, 15 * 60e3), wrap(async (req, res) => {
     await db.query("UPDATE users SET failed_logins = failed_logins + 1, locked_until = CASE WHEN failed_logins + 1 >= $2 THEN now() + interval '15 minutes' END WHERE id = $1", [u.id, LOCK_AFTER]);
     throw generic;
   }
-  if (u.status === "suspended") throw new AppError(403, "suspended", "This account is suspended. Contact support@ticketroom.co.za.");
+  if (u.status === "suspended") throw new AppError(403, "suspended", "This account is suspended. Contact hello@ticketroom.co.za.");
   await db.query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1", [u.id]);
   await createSession(res, req, u.id);
   res.json({ user: await profile(u.id) });
@@ -204,6 +204,15 @@ router.post("/me/delete", requireAuth, wrap(async (req, res) => {
   });
   clearSessionCookie(res);
   res.json({ ok: true });
+}));
+
+// One switch to stop all marketing (every organiser, every channel).
+router.post("/me/consents/unsubscribe-all", requireAuth, wrap(async (req, res) => {
+  await db.withTx(async (c) => {
+    const { rows } = await c.query("SELECT organiser_id, channel FROM marketing_consents WHERE user_id = $1 AND granted", [req.user.id]);
+    for (const x of rows) await marketing.setConsent(c, req.user.id, x.organiser_id, x.channel, false, "account_unsubscribe_all");
+  });
+  res.json({ consents: await marketing.consentsFor(req.user.id) });
 }));
 
 router.get("/me/consents", requireAuth, wrap(async (req, res) => res.json({ consents: await marketing.consentsFor(req.user.id) })));

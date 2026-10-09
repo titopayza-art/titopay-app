@@ -1,5 +1,5 @@
 // Attendee portal: tickets wallet, transfers, tags, cashless, refunds, privacy.
-import { html, raw, render, $, $$, get, post, patch, put, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, header, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, dialog, confirmDialog, parseRand, poster, router } from "/assets/core.js";
 
 const main = $("#main");
 const CACHE_KEY = "tr_wallet_v1";
@@ -8,7 +8,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
 const nav = () => render($("#sidenav"), html`
   <div class="sect">Tickets</div><a href="#/tickets">🎟️ My tickets</a><a href="#/orders">🧾 Orders</a><a href="#/transfers">🔁 Transfers</a>
   <div class="sect">Cashless</div><a href="#/wallet">💳 Wallets</a><a href="#/tags">📶 Tags & wristbands</a>
-  <div class="sect">Account</div><a href="#/refunds">↩️ Refunds & support</a><a href="#/settings">⚙️ Settings & privacy</a>`);
+  <div class="sect">Account</div><a href="#/refunds">↩️ Refunds & support</a><a href="#/payment-methods">🔗 Payment methods</a><a href="#/settings">⚙️ Settings & privacy</a>`);
 
 function head(title, sub = "", actions = "") {
   return html`<div class="page-head"><div><h1>${title}</h1>${sub ? html`<p class="muted">${sub}</p>` : ""}</div><div class="row">${actions}</div></div>`;
@@ -184,7 +184,7 @@ async function refunds() {
 // ---------------- settings & privacy ----------------
 async function settings() {
   const u = await me(true);
-  const { consents } = await get("/api/me/consents");
+  const { consents } = await get("/api/auth/me/consents");
   render(main, html`${head("Settings & privacy")}
     ${!u.email_verified_at ? html`<p class="callout warn">Your email address isn't confirmed yet. <button class="btn-link" data-resend>Resend confirmation email</button></p>` : ""}
     <div class="grid-2">
@@ -203,7 +203,9 @@ async function settings() {
       <section class="card"><h2>Marketing preferences</h2>
         ${consents.length ? html`<div class="stack">${consents.map((c) => html`<label class="check"><input type="checkbox" data-consent data-org="${c.organiser_id || ""}" data-ch="${c.channel}" ${raw(c.granted ? "checked" : "")}><span>${c.organiser_name || "TicketRoom"} — ${c.channel === "sms" ? "SMS" : "email"}</span></label>`)}</div>`
           : html`<p class="muted">You haven't opted in to any marketing.</p>`}
-        <label class="check mt"><input type="checkbox" data-consent data-org="" data-ch="email" ${raw(consents.some((c) => !c.organiser_id && c.channel === "email" && c.granted) ? "checked" : "")}><span>TicketRoom event news by email</span></label></section>
+        <label class="check mt"><input type="checkbox" data-consent data-org="" data-ch="email" ${raw(consents.some((c) => !c.organiser_id && c.channel === "email" && c.granted) ? "checked" : "")}><span>TicketRoom event news by email</span></label>
+        <button class="btn btn-ghost btn-sm mt" id="unall">Unsubscribe from all marketing</button>
+        <p class="tiny muted mb-0">Receipts, tickets and important event updates are still sent.</p></section>
     </div>
     <section class="card mt"><h2>Your data (POPIA)</h2><p class="muted">Download everything we hold about you, or delete your account. Financial records are kept for the period the law requires, with your personal details removed.</p>
       <div class="row"><a class="btn btn-ghost" href="/api/auth/me/export" download>Download my data</a><button class="btn btn-danger" id="del">Delete my account</button></div></section>`);
@@ -214,10 +216,41 @@ async function settings() {
     try { await put("/api/auth/me/consents", { organiserId: c.dataset.org || undefined, channel: c.dataset.ch, granted: c.checked }); toast("Preferences saved.", "good"); }
     catch (err) { c.checked = !c.checked; toast(err.message, "bad"); }
   }));
+  $("#unall").addEventListener("click", async () => {
+    if (!(await confirmDialog("Unsubscribe from all marketing?", "You'll stop receiving marketing emails and SMSes from TicketRoom and every organiser. You can opt in again at any time."))) return;
+    await post("/api/auth/me/consents/unsubscribe-all");
+    toast("You're unsubscribed from all marketing.", "good");
+    settings();
+  });
   $("[data-resend]")?.addEventListener("click", async () => { await post("/api/auth/verify-email/resend"); toast("Confirmation email sent.", "good"); });
   $("#del").addEventListener("click", async () => {
     const d = dialog("Delete account", html`<form class="stack"><p>This permanently removes your personal details. You can't undo it.</p><div class="field"><label for="dp">Password</label><input id="dp" name="password" type="password" required></div><button class="btn btn-danger">Delete my account</button></form>`);
     onSubmit($("form", d), async (v) => { await post("/api/auth/me/delete", v); location.href = "/"; });
+  });
+}
+
+// ---------------- linked payment methods (TitoPay wallet) ----------------
+async function paymentMethods() {
+  const pm = await get("/api/me/payment-methods");
+  const titopay = pm.links.find((l) => l.provider === "titopay");
+  render(main, html`${head("Payment methods", "Link a TitoPay wallet to pay for tickets and top-ups in one tap.")}
+    <section class="card stack"><h2>TitoPay wallet</h2>
+      ${!pm.titopayAvailable ? html`<p class="callout">TitoPay wallet payments are coming soon. Card payments will be available when paid tickets launch.</p>`
+        : titopay ? html`<p>Linked to <strong>${titopay.display_handle}</strong> since ${fmtDate(titopay.linked_at)}. Every payment still needs your approval in the TitoPay app.</p>
+          <div class="row"><button class="btn btn-danger" data-unlink="${titopay.id}">Unlink wallet</button></div>`
+        : html`<p class="muted">We'll send a one-time code to the mobile number on your TitoPay wallet. TicketRoom never sees your TitoPay PIN or password.</p>
+          <form class="stack" id="lk"><div class="field"><label for="lk-ph">TitoPay mobile number</label><input id="lk-ph" name="phone" type="tel" required placeholder="082 123 4567" autocomplete="tel"></div><button class="btn btn-dark">Send code</button></form>`}
+      ${pm.titopayEnvironment && pm.titopayEnvironment !== "live" ? html`<p class="tiny muted mb-0">Test environment (${pm.titopayEnvironment}) — no real money moves.</p>` : ""}
+    </section>`);
+  $("[data-unlink]")?.addEventListener("click", async (e) => {
+    if (!(await confirmDialog("Unlink TitoPay wallet?", "You can link it again at any time.", { confirm: "Unlink", danger: true }))) return;
+    await api("DELETE", `/api/me/payment-methods/${e.currentTarget.dataset.unlink}`); toast("Wallet unlinked.", "good"); paymentMethods();
+  });
+  if ($("#lk")) onSubmit($("#lk"), async (v) => {
+    const r = await post("/api/me/payment-methods/titopay/link", v);
+    const d = dialog("Enter your TitoPay code", html`<form class="stack"><p>We sent a code to ${r.sentTo}.${r.devOtp ? html` <span class="badge warn">Test code: ${r.devOtp}</span>` : ""}</p>
+      <div class="field"><label for="otp">Code</label><input id="otp" name="otp" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" required autocomplete="one-time-code"></div><button class="btn btn-primary btn-block">Link wallet</button></form>`);
+    onSubmit($("form", d), async (x) => { await post("/api/me/payment-methods/titopay/confirm", { linkRequestId: r.linkRequestId, otp: x.otp }); d.close(); toast("TitoPay wallet linked.", "good"); paymentMethods(); });
   });
 }
 
@@ -241,7 +274,7 @@ function reset({ token }) {
   nav();
   router([
     ["/", tickets], ["/tickets", tickets], ["/orders", orders], ["/transfers", transfers], ["/claim/:token", claim], ["/tags", tags],
-    ["/wallet", wallets], ["/wallet/:eventId", wallet], ["/refunds", refunds], ["/settings", settings], ["/verify/:token", verify], ["/reset/:token", reset],
+    ["/wallet", wallets], ["/wallet/:eventId", wallet], ["/refunds", refunds], ["/payment-methods", paymentMethods], ["/settings", settings], ["/verify/:token", verify], ["/reset/:token", reset],
   ], () => { location.hash = "#/tickets"; });
 })();
 void poster;

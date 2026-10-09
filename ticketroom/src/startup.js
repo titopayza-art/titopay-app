@@ -37,6 +37,7 @@ async function run({ migrate = process.env.MIGRATE_ON_START === "true", log = co
   log(`Database OK (PostgreSQL ${version})`);
   if (migrate) await require("./db/migrate").up({ log });
   await bootstrapAdmin(log);
+  await require("./modules/site/assistant").ensureDefaults();
   if (config.isProd && config.publicBaseUrl.startsWith("http://")) log("WARNING: PUBLIC_BASE_URL is http://. Enable SSL (cPanel → SSL/TLS Status → Run AutoSSL) — sign-in cookies require HTTPS.");
   if (config.payments.provider === "none") log("Card payments are OFF (PAYMENT_PROVIDER=none): paid tickets cannot be sold until a gateway is configured.");
 }

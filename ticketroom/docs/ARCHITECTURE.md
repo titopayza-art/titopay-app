@@ -33,7 +33,7 @@ A **modular monolith**: one Node.js 22 / Express 4 process and one PostgreSQL 16
 |---|---|---|
 | `/` `/events/:slug` `/orders/:ref` `/organisers` `/help` `/legal/*` | Public, buyers | `public/assets/site.js` |
 | `/account` | Attendees: tickets, transfers, tags, cashless, refunds, privacy | `account.js` |
-| `/organiser` | Organisers: events, pricing, promos, analytics, staff, vendors, marketing, finance | `organiser.js` |
+| `/organisers` | Organisers: events, pricing, promos, analytics, staff, vendors, marketing, finance | `organiser.js` |
 | `/scan` | Event staff: gate scanning and the tag desk | `scan.js` |
 | `/pos` | Vendor cashiers and managers | `pos.js` |
 | `/admin` | TicketRoom admin, finance and support | `admin.js` |

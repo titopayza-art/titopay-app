@@ -20,7 +20,7 @@ function nav() {
 
 function pendingBanner() {
   if (ORG.status === "approved") return "";
-  return html`<p class="callout ${ORG.status === "pending" ? "warn" : "bad"}"><strong>${ORG.status === "pending" ? "Your organiser account is being reviewed." : `Your organiser account is ${ORG.status}.`}</strong> ${ORG.status === "pending" ? "You can build events now; you can submit them for publishing and send marketing once TicketRoom approves your account (usually within 1 business day)." : "Contact support@ticketroom.co.za."}</p>`;
+  return html`<p class="callout ${ORG.status === "pending" ? "warn" : "bad"}"><strong>${ORG.status === "pending" ? "Your organiser account is being reviewed." : `Your organiser account is ${ORG.status}.`}</strong> ${ORG.status === "pending" ? "You can build events now; you can submit them for publishing and send marketing once TicketRoom approves your account (usually within 1 business day)." : "Contact hello@ticketroom.co.za."}</p>`;
 }
 
 // ---------------- apply ----------------
@@ -70,6 +70,7 @@ const PROVINCES = ["Eastern Cape", "Free State", "Gauteng", "KwaZulu-Natal", "Li
 function eventForm(e = {}) {
   const sel = (v, cur) => raw(v === cur ? "selected" : "");
   return html`<form class="stack" id="evf">
+    <label class="check card flat"><input type="checkbox" name="isFree" ${raw(e.is_free ? "checked" : "")}><span><strong>This is a free event</strong><br><span class="small muted">No ticket price, no booking fee and no commission. Attendees register for free tickets with a QR code. We'll create a "Free admission" ticket type for you.</span></span></label>
     <div class="field"><label for="title">Event name</label><input id="title" name="title" required maxlength="140" value="${e.title || ""}"></div>
     <div class="field"><label for="summary">One-line summary</label><input id="summary" name="summary" maxlength="240" value="${e.summary || ""}" placeholder="Shown on event cards"></div>
     <div class="grid-2"><div class="field"><label for="category">Category</label><select id="category" name="category">${CATS.map((c) => html`<option value="${c}" ${sel(c, e.category)}>${c}</option>`)}</select></div>
@@ -95,7 +96,7 @@ function eventForm(e = {}) {
 function toIso(v) { return v ? new Date(v).toISOString() : undefined; }
 function eventPayload(v) {
   return { ...v, capacity: Number(v.capacity), startsAt: toIso(v.startsAt), endsAt: toIso(v.endsAt), salesStartAt: toIso(v.salesStartAt), salesEndAt: toIso(v.salesEndAt),
-    imageUploadId: v.imageUploadId || undefined, province: v.province || undefined, transfersEnabled: !!v.transfersEnabled, cashlessEnabled: !!v.cashlessEnabled };
+    imageUploadId: v.imageUploadId || undefined, province: v.province || undefined, transfersEnabled: !!v.transfersEnabled, cashlessEnabled: !!v.cashlessEnabled, isFree: !!v.isFree };
 }
 
 function wireUpload(form) {
@@ -250,14 +251,41 @@ async function attendeesTab(el, d) {
 
 async function staffTab(el, d, reload) {
   const { staff } = await get(`${base()}/events/${d.event.id}/staff`);
-  render(el, html`<section class="card"><div class="card-title"><h3>Gate & desk staff</h3></div><p class="small muted">Staff sign in on their phone at <strong>ticketroom.co.za/scan</strong>. They see only this event, and only what their role needs.</p>
+  render(el, html`<section class="card" aria-labelledby="live-h"><div class="card-title"><h3 id="live-h">Live check-ins</h3><span class="badge good" data-live>Live</span></div><div id="live">${spinner()}</div></section>
+    <section class="card mt"><div class="card-title"><h3>Ticket scanners & desk staff</h3></div>
+    <p class="small muted">Add your team by email. They scan tickets on their own phones at <strong>ticketroom.co.za/scan</strong> — no app to install — and see a live admitted count. They only see this event. New people get an email invite to set a password.</p>
     ${staff.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Scan tickets</th><th>Manage tags</th><th class="num">Admitted</th><th></th></tr></thead><tbody>
-      ${staff.map((s) => html`<tr><td>${s.full_name}<div class="small muted">${s.email}</div></td><td>${s.can_scan ? "Yes" : "No"}</td><td>${s.can_manage_tags ? "Yes" : "No"}</td><td class="num">${s.admitted}</td><td>${can("owner", "manager") ? html`<button class="btn btn-ghost btn-sm" data-rm="${s.id}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">No staff yet.</p>`}
-    ${can("owner", "manager") ? html`<form class="stack mt" id="sf"><div class="field"><label for="se">Staff member's TicketRoom email</label><input id="se" name="email" type="email" required></div>
+      ${staff.map((s) => html`<tr><td>${s.full_name}<div class="small muted">${s.email}</div></td><td>${s.can_scan ? "Yes" : "No"}</td><td>${s.can_manage_tags ? "Yes" : "No"}</td><td class="num">${s.admitted}</td><td>${can("owner", "manager") ? html`<button class="btn btn-ghost btn-sm" data-rm="${s.id}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">No scanners yet. Add your first one below.</p>`}
+    ${can("owner", "manager") ? html`<form class="stack mt" id="sf"><div class="grid-2"><div class="field"><label for="sn">Name <span class="muted">(for new people)</span></label><input id="sn" name="fullName" maxlength="120" autocomplete="off"></div>
+      <div class="field"><label for="se">Email</label><input id="se" name="email" type="email" required autocomplete="off"></div></div>
       <label class="check"><input type="checkbox" name="canScan" checked><span>Can scan tickets at the gate</span></label><label class="check"><input type="checkbox" name="canManageTags"><span>Can link, replace and block tags (registration desk)</span></label>
-      <button class="btn btn-dark">Add staff</button></form>` : ""}</section>`);
-  if ($("#sf")) onSubmit($("#sf"), async (v) => { await post(`${base()}/events/${d.event.id}/staff`, v); toast("Staff added.", "good"); reload(); });
+      <button class="btn btn-dark">Add scanner</button></form>` : ""}</section>`);
+  if ($("#sf")) onSubmit($("#sf"), async (v) => {
+    const r = await post(`${base()}/events/${d.event.id}/staff`, v);
+    toast(r.invited ? `Invite emailed to ${v.email}. They can scan once they set a password.` : "Scanner added. They'll see this event at /scan.", "good");
+    reload();
+  });
   $$("[data-rm]", el).forEach((b) => b.addEventListener("click", async () => { await del(`${base()}/events/${d.event.id}/staff/${b.dataset.rm}`); reload(); }));
+
+  const live = $("#live", el);
+  const tick = async () => {
+    if (!live.isConnected) return;
+    try {
+      const x = await get(`${base()}/events/${d.event.id}/checkins/live`);
+      const pct = x.issued ? Math.round((x.admitted / x.issued) * 100) : 0;
+      render(live, html`<div class="grid-3"><div class="kpi"><div class="k">Admitted</div><div class="v">${x.admitted}</div><div class="s">of ${x.issued} tickets (${pct}%)</div></div>
+        <div class="kpi"><div class="k">Still to arrive</div><div class="v">${Math.max(0, x.issued - x.admitted)}</div><div class="s">valid tickets not yet scanned</div></div>
+        <div class="kpi"><div class="k">Last 15 minutes</div><div class="v">${x.last15min}</div><div class="s">people admitted</div></div></div>
+        <div class="meter mt" aria-hidden="true"><i data-pct="${pct}"></i></div>
+        ${x.scanners.length ? html`<h4 class="mt">By scanner</h4><div class="table-wrap"><table><thead><tr><th>Scanner</th><th class="num">Admitted</th><th class="num">Refused</th><th>Last scan</th></tr></thead><tbody>${x.scanners.map((s) => html`<tr><td>${s.full_name}</td><td class="num">${s.admitted}</td><td class="num">${s.refused}</td><td>${fmtTime(s.last_scan)}</td></tr>`)}</tbody></table></div>` : html`<p class="small muted mt mb-0">No scans yet. Counts update every 5 seconds.</p>`}
+        ${x.recent.length ? html`<h4 class="mt">Latest scans</h4><ul class="small">${x.recent.slice(0, 8).map((a) => html`<li>${fmtTime(a.occurred_at)} · ${badge(a.outcome)} ${a.holder_name || ""} <span class="muted">— ${a.scanner}${a.gate ? `, ${a.gate}` : ""}</span></li>`)}</ul>` : ""}
+        <p class="tiny muted mb-0">Updated ${fmtTime(x.at)}</p>`);
+      paintMeters(live);
+      $("[data-live]", el)?.classList.replace("warn", "good");
+    } catch { $("[data-live]", el)?.classList.replace("good", "warn"); }
+    setTimeout(tick, document.hidden ? 15000 : 5000);
+  };
+  tick();
 }
 
 async function vendorsTab(el, d, reload) {

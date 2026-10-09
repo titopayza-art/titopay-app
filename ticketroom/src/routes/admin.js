@@ -426,6 +426,91 @@ router.post("/integrations/:key/health", ADMIN, wrap(async (req, res) => {
   res.json(result);
 }));
 
+// ---- site settings: maintenance, banner, hours, support, legal, assistant ----------
+const settingsSvc = require("../modules/site/settings");
+router.get("/settings", wrap(async (_req, res) => {
+  const all = await settingsSvc.all();
+  res.json({ settings: all, hoursStatus: settingsSvc.hoursStatus(all.hours), aiConfigured: !!process.env.ANTHROPIC_API_KEY, assistantModel: process.env.CHATBOT_MODEL || "claude-opus-5-5" });
+}));
+router.put("/settings/:key", ADMIN, wrap(async (req, res) => res.json({ value: await settingsSvc.set(req.user, req.params.key, req.body) })));
+
+// ---- advertising posters --------------------------------------------------------
+const images = require("../lib/images");
+const config = require("../config");
+router.post("/uploads", ADMIN, express.raw({ type: ["image/png", "image/jpeg", "image/webp"], limit: "2mb" }), wrap(async (req, res) => {
+  res.status(201).json({ uploadId: await images.store({ db, config, ownerId: req.user.id, buffer: req.body }) });
+}));
+const posterShape = (o = {}) => ({
+  title: r.str({ min: 2, max: 120, ...o }), subtitle: r.str({ optional: true, max: 200 }), imageUploadId: r.uuid({ optional: true }),
+  linkUrl: r.str({ optional: true, max: 300, pattern: /^(\/|https?:\/\/)/, message: "Start with / or https://" }), placement: r.oneOf(["home", "events"], { optional: true, fallback: o.optional ? undefined : "home" }),
+  startsAt: r.date({ optional: true }), endsAt: r.date({ optional: true }), active: r.bool({ optional: true, fallback: undefined }), sortOrder: r.int({ optional: true, min: 0, max: 1000 }),
+});
+const POSTER_COLS = { title: "title", subtitle: "subtitle", imageUploadId: "image_upload_id", linkUrl: "link_url", placement: "placement", startsAt: "starts_at", endsAt: "ends_at", active: "active", sortOrder: "sort_order" };
+router.get("/posters", wrap(async (_req, res) => {
+  const { rows } = await db.query("SELECT * FROM ad_posters ORDER BY active DESC, sort_order, created_at DESC");
+  res.json({ posters: rows });
+}));
+router.post("/posters", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, posterShape());
+  const keys = Object.keys(b).filter((k) => b[k] !== undefined);
+  const { rows } = await db.query(`INSERT INTO ad_posters (created_by, ${keys.map((k) => POSTER_COLS[k]).join(", ")}) VALUES ($1, ${keys.map((_, i) => `$${i + 2}`).join(", ")}) RETURNING *`, [req.user.id, ...keys.map((k) => b[k])]);
+  await audit.record(null, { actor: req.user, action: "poster.created", entityType: "ad_poster", entityId: rows[0].id });
+  res.status(201).json({ poster: rows[0] });
+}));
+router.patch("/posters/:id", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, posterShape({ optional: true }));
+  const keys = Object.keys(b).filter((k) => b[k] !== undefined);
+  if (!keys.length) throw bad("Nothing to change.");
+  const { rows } = await db.query(`UPDATE ad_posters SET ${keys.map((k, i) => `${POSTER_COLS[k]} = $${i + 2}`).join(", ")} WHERE id = $1 RETURNING *`, [req.params.id, ...keys.map((k) => b[k])]);
+  if (!rows[0]) throw notFound("Poster not found.");
+  await audit.record(null, { actor: req.user, action: "poster.updated", entityType: "ad_poster", entityId: req.params.id, details: { fields: keys } });
+  res.json({ poster: rows[0] });
+}));
+router.delete("/posters/:id", ADMIN, wrap(async (req, res) => {
+  await db.query("DELETE FROM ad_posters WHERE id = $1", [req.params.id]);
+  await audit.record(null, { actor: req.user, action: "poster.deleted", entityType: "ad_poster", entityId: req.params.id });
+  res.json({ ok: true });
+}));
+
+// ---- assistant knowledge base and conversations ------------------------------------
+const assistant = require("../modules/site/assistant");
+router.get("/kb", wrap(async (_req, res) => {
+  await assistant.ensureDefaults();
+  const { rows } = await db.query("SELECT * FROM kb_articles ORDER BY active DESC, sort_order, question");
+  res.json({ articles: rows });
+}));
+const kbShape = (o = {}) => ({
+  question: r.str({ min: 5, max: 200, ...o }), answer: r.text({ max: 2000, ...o }), keywords: r.array(r.str({ max: 40 }), { optional: true, max: 30 }),
+  linkUrl: r.str({ optional: true, max: 200, pattern: /^\//, message: "Use a site path like /help" }), active: r.bool({ optional: true, fallback: undefined }), sortOrder: r.int({ optional: true, min: 0, max: 1000 }),
+});
+router.post("/kb", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
+  const b = check(req.body, kbShape());
+  const { rows } = await db.query("INSERT INTO kb_articles (question, answer, keywords, link_url, sort_order, updated_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+    [b.question, b.answer, b.keywords || [], b.linkUrl || null, b.sortOrder ?? 100, req.user.id]);
+  res.status(201).json({ article: rows[0] });
+}));
+router.patch("/kb/:id", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
+  const b = check(req.body, kbShape({ optional: true }));
+  const { rows } = await db.query(
+    `UPDATE kb_articles SET question = COALESCE($2, question), answer = COALESCE($3, answer), keywords = COALESCE($4, keywords), link_url = COALESCE($5, link_url),
+            active = COALESCE($6, active), sort_order = COALESCE($7, sort_order), updated_by = $8, updated_at = now() WHERE id = $1 RETURNING *`,
+    [req.params.id, b.question ?? null, b.answer ?? null, b.keywords ?? null, b.linkUrl ?? null, b.active ?? null, b.sortOrder ?? null, req.user.id]);
+  if (!rows[0]) throw notFound("Article not found.");
+  res.json({ article: rows[0] });
+}));
+router.get("/chats", wrap(async (req, res) => {
+  const unanswered = req.query.filter === "unanswered";
+  const { rows } = await db.query(
+    `SELECT c.id, c.question, c.answer, c.source, c.helpful, c.created_at, k.question AS matched
+       FROM chat_messages c LEFT JOIN kb_articles k ON k.id = c.article_id
+      WHERE ($1::boolean IS FALSE OR c.source = 'fallback' OR c.helpful = false) ORDER BY c.id DESC LIMIT 200`, [unanswered]);
+  const { rows: stats } = await db.query(
+    `SELECT count(*)::int AS total, count(*) FILTER (WHERE source = 'ai')::int AS ai, count(*) FILTER (WHERE source = 'fallback')::int AS unanswered,
+            count(*) FILTER (WHERE helpful)::int AS helpful, count(*) FILTER (WHERE helpful = false)::int AS unhelpful
+       FROM chat_messages WHERE created_at > now() - interval '30 days'`);
+  res.json({ chats: rows, stats: stats[0] });
+}));
+
 // ---- audit, support, outbox -------------------------------------------------------
 router.get("/audit", wrap(async (req, res) => {
   const { rows } = await db.query(
@@ -438,7 +523,10 @@ router.get("/audit", wrap(async (req, res) => {
 router.get("/audit/verify", wrap(async (_req, res) => res.json(await audit.verifyChain())));
 
 router.get("/support", wrap(async (_req, res) => {
-  const { rows } = await db.query("SELECT s.*, u.full_name AS assignee FROM support_cases s LEFT JOIN users u ON u.id = s.assigned_to ORDER BY (s.status IN ('resolved','closed')), s.created_at DESC LIMIT 300");
+  const { rows } = await db.query(
+    `SELECT s.*, u.full_name AS assignee, (s.due_at < now() AND s.status IN ('open','in_progress')) AS overdue
+       FROM support_cases s LEFT JOIN users u ON u.id = s.assigned_to
+      ORDER BY (s.status IN ('resolved','closed')), s.due_at NULLS LAST, s.created_at DESC LIMIT 300`);
   res.json({ cases: rows });
 }));
 

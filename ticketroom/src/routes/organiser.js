@@ -1,9 +1,6 @@
 // Organiser portal API. Every route below /:orgId goes through
 // organiserAccess, which enforces tenancy and the member's role.
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
-const crypto = require("crypto");
 const config = require("../config");
 const db = require("../lib/db");
 const audit = require("../lib/audit");
@@ -18,6 +15,9 @@ const marketing = require("../modules/marketing/service");
 const settlements = require("../modules/finance/settlements");
 const refunds = require("../modules/finance/refunds");
 const pos = require("../modules/pos/service");
+const images = require("../lib/images");
+const outbox = require("../modules/messaging/outbox");
+const templates = require("../modules/messaging/templates");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -113,27 +113,14 @@ router.delete("/:orgId/members/:userId", wrap(async (req, res) => {
 }));
 
 // ---- image uploads -------------------------------------------------------------
-// Type is decided by magic bytes, never by the client's header or filename.
-// SVG is not accepted. Files are served from /media with nosniff and a sandbox CSP.
-function sniff(buf) {
-  if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
-  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
-  if (buf.length > 12 && buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
-  return null;
-}
-
+// Image type is decided by magic bytes (lib/images.js); SVG is not accepted.
+// Files are served from /media with nosniff and a sandbox CSP.
 router.post("/:orgId/uploads", limit("upload", 30, 3600e3, (q) => q.user.id),
   express.raw({ type: ["image/png", "image/jpeg", "image/webp"], limit: "2mb" }),
   wrap(async (req, res) => {
     await organiserAccess(req.user, req.params.orgId, EDIT);
-    if (!Buffer.isBuffer(req.body) || !req.body.length) throw bad("Upload a PNG, JPEG or WebP image up to 2 MB.");
-    const mime = sniff(req.body);
-    if (!mime) throw bad("That file is not a PNG, JPEG or WebP image.");
-    const { rows } = await db.query("INSERT INTO uploads (owner_id, organiser_id, mime_type, size_bytes, sha256) VALUES ($1,$2,$3,$4,$5) RETURNING id",
-      [req.user.id, req.params.orgId, mime, req.body.length, crypto.createHash("sha256").update(req.body).digest("hex")]);
-    fs.mkdirSync(config.uploadDir, { recursive: true });
-    fs.writeFileSync(path.join(config.uploadDir, rows[0].id), req.body, { mode: 0o600 });
-    res.status(201).json({ uploadId: rows[0].id });
+    const uploadId = await images.store({ db, config, ownerId: req.user.id, organiserId: req.params.orgId, buffer: req.body });
+    res.status(201).json({ uploadId });
   }));
 
 // ---- events ------------------------------------------------------------------
@@ -387,17 +374,49 @@ router.get("/:orgId/events/:eventId/staff", wrap(async (req, res) => {
   res.json({ staff: rows });
 }));
 
-router.post("/:orgId/events/:eventId/staff", wrap(async (req, res) => {
-  const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
-  const b = check(req.body, { email: r.email(), canScan: r.bool({ fallback: true }), canManageTags: r.bool() });
-  const { rows } = await db.query("SELECT id FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
-  if (!rows[0]) throw notFound("No TicketRoom account uses that email. Ask them to sign up first.");
+// Add a scanner / desk staff member. Someone without an account is created and
+// emailed an invite to set their password (link valid 7 days).
+router.post("/:orgId/events/:eventId/staff", limit("staffadd", 60, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
+  const { event, organiser } = await eventAccess(req.user, req.params.orgId, req.params.eventId, EDIT);
+  const b = check(req.body, { email: r.email(), fullName: r.str({ optional: true, min: 2, max: 120 }), canScan: r.bool({ fallback: true }), canManageTags: r.bool() });
+  let { rows } = await db.query("SELECT id FROM users WHERE lower(email) = $1 AND status = 'active'", [b.email]);
+  let invited = false;
+  if (!rows[0]) {
+    const { hashSecret, randomToken, sha256 } = require("../lib/crypto");
+    const token = randomToken(32);
+    const name = b.fullName || b.email.split("@")[0];
+    rows = await db.withTx(async (c) => {
+      const u = await c.query("INSERT INTO users (email, full_name, password_hash) VALUES ($1,$2,$3) RETURNING id", [b.email, name, hashSecret(randomToken(24))]);
+      await c.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2, now() + interval '7 days')", [sha256(token), u.rows[0].id]);
+      await outbox.enqueue(c, { to: b.email, userId: u.rows[0].id, ...templates.staffInvite({ name, organiser: organiser.name, event: event.title, url: `${config.publicBaseUrl}/account#/reset/${token}` }) });
+      await audit.record(c, { actor: req.user, action: "staff.invited", entityType: "user", entityId: u.rows[0].id, organiserId: event.organiser_id, details: { eventId: event.id } });
+      return u.rows;
+    });
+    invited = true;
+  }
   await db.query(
     `INSERT INTO event_staff (event_id, user_id, can_scan, can_manage_tags, added_by) VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (event_id, user_id) DO UPDATE SET can_scan = EXCLUDED.can_scan, can_manage_tags = EXCLUDED.can_manage_tags`,
     [event.id, rows[0].id, b.canScan, b.canManageTags, req.user.id]);
   await audit.record(null, { actor: req.user, action: "event.staff_set", entityType: "user", entityId: rows[0].id, organiserId: event.organiser_id, details: { eventId: event.id, canScan: b.canScan, canManageTags: b.canManageTags } });
-  res.status(201).json({ ok: true });
+  res.status(201).json({ ok: true, invited });
+}));
+
+// Live check-in view for the organiser (polled every few seconds).
+router.get("/:orgId/events/:eventId/checkins/live", wrap(async (req, res) => {
+  const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, ALL);
+  const [tot, scanners, recent, rate] = await Promise.all([
+    db.query("SELECT count(*) FILTER (WHERE status = 'used')::int AS admitted, count(*) FILTER (WHERE status IN ('valid','used'))::int AS issued FROM tickets WHERE event_id = $1", [event.id]),
+    db.query(
+      `SELECT u.full_name, count(*) FILTER (WHERE a.outcome = 'admitted')::int AS admitted, count(*) FILTER (WHERE a.outcome <> 'admitted')::int AS refused, max(a.occurred_at) AS last_scan
+         FROM admission_log a JOIN users u ON u.id = a.scanned_by WHERE a.event_id = $1 GROUP BY u.id ORDER BY admitted DESC`, [event.id]),
+    db.query(
+      `SELECT a.outcome, a.occurred_at, a.gate, t.holder_name, u.full_name AS scanner
+         FROM admission_log a LEFT JOIN tickets t ON t.id = a.ticket_id JOIN users u ON u.id = a.scanned_by WHERE a.event_id = $1 ORDER BY a.id DESC LIMIT 20`, [event.id]),
+    db.query("SELECT count(*)::int AS n FROM admission_log WHERE event_id = $1 AND outcome = 'admitted' AND occurred_at > now() - interval '15 minutes'", [event.id]),
+  ]);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ ...tot.rows[0], last15min: rate.rows[0].n, scanners: scanners.rows, recent: recent.rows, at: new Date().toISOString() });
 }));
 
 router.delete("/:orgId/events/:eventId/staff/:userId", wrap(async (req, res) => {

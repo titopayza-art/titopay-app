@@ -1,4 +1,5 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable } from "/assets/core.js";
+import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
 const CATS = [["", "All"], ["music", "Music"], ["festival", "Festivals"], ["comedy", "Comedy"], ["sport", "Sport"], ["arts", "Arts & theatre"], ["food", "Food & drink"], ["family", "Family"], ["business", "Business"], ["nightlife", "Nightlife"]];
@@ -36,10 +37,11 @@ async function home() {
       <div class="chips mt" role="group" aria-label="Category">${CATS.map(([v, l]) => html`<button class="chip" data-cat="${v}" aria-pressed="${state.category === v}">${l}</button>`)}</div>
       <div class="event-grid mt" id="grid" aria-live="polite">${spinner()}</div>
     </div></section>
+    <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/contact?topic=advertising">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
     <section class="section"><div class="wrap"><div class="promo-band">
       <div><span class="cat-label">For organisers</span><h2>Sell out your next event with TicketRoom</h2>
         <ul><li>Online and QR tickets with live sales analytics</li><li>Gate scanning that blocks duplicates in real time</li><li>Email &amp; SMS marketing to fans who opted in</li><li>Cashless wristbands, vendor POS and transparent payouts</li></ul></div>
-      <div class="row"><a class="btn btn-primary" href="/organisers">Start selling</a><a class="btn btn-outline-light" href="/organiser">Organiser login</a></div>
+      <div class="row"><a class="btn btn-primary" href="/sell">Start selling</a><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div>
     </div></div></section>`);
 
   const load = async () => {
@@ -59,6 +61,15 @@ async function home() {
   $$("[data-cat]").forEach((b) => b.addEventListener("click", () => { state.category = b.dataset.cat; $$("[data-cat]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
   $("[data-free]").addEventListener("click", (e) => { state.free = state.free ? "" : "1"; e.currentTarget.setAttribute("aria-pressed", String(!!state.free)); load(); });
   $$("[data-when]").forEach((b) => b.addEventListener("click", () => { state.when = b.dataset.when; $$("[data-when]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
+  siteInfo().then((site) => {
+    const ads = (site?.posters || []).filter((a) => a.placement !== "event");
+    if (!ads.length) return;
+    $("#ads").classList.remove("hidden");
+    render($("#ad-rail"), html`${ads.map((a) => html`<a class="ad-poster" href="${a.link_url || "#"}" data-ad="${a.id}" ${raw(/^https?:/i.test(a.link_url || "") ? 'target="_blank" rel="noopener sponsored"' : "")}>
+      ${a.image_upload_id ? html`<img src="/media/${a.image_upload_id}" alt="${a.title}" loading="lazy">` : ""}<span class="sponsored">Featured</span>
+      <div class="meta"><h3>${a.title}</h3>${a.subtitle ? html`<span>${a.subtitle}</span>` : ""}</div></a>`)}`);
+    $$("[data-ad]").forEach((a) => a.addEventListener("click", () => { navigator.sendBeacon?.(`/api/site/posters/${a.dataset.ad}/click`) || post(`/api/site/posters/${a.dataset.ad}/click`).catch(() => {}); }));
+  });
   await load();
 }
 
@@ -198,13 +209,13 @@ async function orderPage(ref) {
 }
 
 // ---------------- organisers landing ----------------
-function organisersPage() {
+function sellPage() {
   document.title = "Sell tickets with TicketRoom";
   const tile = (icon, t, s) => html`<div class="card flat center"><div aria-hidden="true">${raw(icon)}</div><h3 class="mt">${t}</h3><p class="muted mb-0">${s}</p></div>`;
   const ic = (d) => `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0B1D3F" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   render(main, html`<section class="hero"><div class="wrap"><span class="cat-label">For organisers</span><h1>Run your whole event on <b>TicketRoom</b></h1>
-      <p class="lead">From the first ticket sold to the last vendor payout — one platform, built in South Africa, operated by TitoPay.</p>
-      <div class="row"><button class="btn btn-primary" data-apply>Create an organiser account</button><a class="btn btn-outline-light" href="/organiser">Organiser login</a></div></div></section>
+      <p class="lead">From the first ticket sold to the last vendor payout — one platform, built in South Africa and powered by TitoPay.</p>
+      <div class="row"><button class="btn btn-primary" data-apply>Create an organiser account</button><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div></div></section>
     <section class="section"><div class="wrap stack-lg">
       <div class="grid-2">
         ${tile(ic('<path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a3 3 0 0 0 0 6v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a3 3 0 0 0 0-6Z"/><path d="M12 9v1M12 14v1"/>'), "Ticket sales", "Online and QR tickets, early-bird releases, promo codes and free events.")}
@@ -220,92 +231,147 @@ function organisersPage() {
         <div><div class="kpi"><div class="k">You pay</div><div class="v">5%</div><div class="s">of ticket sales, deducted from your payout</div></div></div>
         <div><div class="kpi"><div class="k">Your buyers pay</div><div class="v">R10</div><div class="s">booking fee per paid ticket</div></div></div>
         <div><div class="kpi"><div class="k">Free events</div><div class="v">R0</div><div class="s">no fees at all — set up a free event in minutes</div></div></div></div>
+        <p class="callout mt">Right now TicketRoom is open for <strong>free event listings</strong>. Paid ticket sales are coming soon — set up your event today and switch on paid tickets when they launch.</p>
         <p class="muted small mt mb-0">Example: 100 tickets at R150 = R15 000 in sales. You receive R14 250; each buyer pays R160. Payouts are released after your event, less approved refunds.</p></div>
     </div></section>`);
-  $("[data-apply]").addEventListener("click", async () => { const u = await requireUser("Create a free account first, then set up your organiser profile."); if (u) location.href = "/organiser#/apply"; });
+  $("[data-apply]").addEventListener("click", async () => { const u = await requireUser("Create a free account first, then set up your organiser profile."); if (u) location.href = "/organisers#/apply"; });
 }
 
-// ---------------- help, legal, unsubscribe ----------------
-const LEGAL = {
-  terms: ["Terms of use", `These terms govern use of TicketRoom (ticketroom.co.za), operated by TicketRoom ("TicketRoom", "we"). Payments and the TitoPay wallet are powered by TitoPay.
-
-1. TicketRoom sells tickets as an agent of the event organiser. The organiser is responsible for the event itself.
-2. A ticket is a licence to attend. The QR code is the ticket: the first valid scan admits; later copies are refused.
-3. Prices include VAT where applicable. A booking fee of R10 per paid ticket is shown before payment. Free tickets carry no fee.
-4. Transfers are free while the organiser allows them. A transfer issues a new QR code and cancels the old one.
-5. Cashless balances are held for use at the specific event and may be refunded on request in line with the refund policy.
-6. We may cancel orders that breach these terms, including automated purchasing and resale above face value.
-
-DRAFT — these terms are a working draft pending review by TicketRoom's legal advisers and must not be relied on as final.`],
-  privacy: ["Privacy notice (POPIA)", `TicketRoom is the responsible party for personal information it processes. Contact: hello@ticketroom.co.za.
-
-What we collect: your name, email, optional mobile number, orders, tickets, tag links, cashless transactions and support requests. We do not store card numbers or CVV codes — payments are processed by our payment provider.
-
-Why: to sell and deliver tickets, admit you to events, run cashless payments, prevent fraud, meet legal record-keeping obligations and, only if you opt in, send marketing.
-
-Organisers receive the attendee details they need to run their event. They may only market to you if you opted in for that organiser, and every message includes an opt-out.
-
-Your rights: you can download your data and delete your account from Account → Privacy. Financial records are kept for the period the law requires, with your personal details removed. Contact the Information Officer at privacy@ticketroom.co.za. You may complain to the Information Regulator.
-
-DRAFT — pending review by TicketRoom's Information Officer and legal advisers.`],
-  refunds: ["Refunds & cancellations", `Cancelled events: every ticket holder receives a full refund, including service fees, to the original payment method.
-
-Postponed or materially changed events: you will be told and offered a refund.
-
-Otherwise, refunds follow the event's published refund policy. Ticket refunds are approved by our finance team; approved refunds normally reflect within 3–7 working days.
-
-Unused cashless balances can be refunded from Account → Cashless.
-
-DRAFT — pending legal review against the Consumer Protection Act and ECTA.`],
-  paia: ["PAIA manual", `TicketRoom's PAIA manual is available on request from hello@ticketroom.co.za. DRAFT placeholder.`],
-};
-
-function legal(doc) {
-  const [title, body] = LEGAL[doc] || ["Not found", "This page does not exist."];
-  document.title = `${title} — TicketRoom`;
-  render(main, html`<div class="wrap section"><article class="card pad-lg"><h1>${title}</h1><div class="prose">${body}</div></article></div>`);
+// ---------------- legal ----------------
+// Small markup: blank line = paragraph, "- " = bullet, **bold**. Text is escaped first.
+function markup(text) {
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  const out = [];
+  let para = [], list = [];
+  const flush = () => {
+    if (para.length) out.push(`<p>${inline(para.join(" "))}</p>`);
+    if (list.length) out.push(`<ul>${list.map((l) => `<li>${inline(l)}</li>`).join("")}</ul>`);
+    para = []; list = [];
+  };
+  for (const line of String(text).split("\n")) {
+    const t = line.trim();
+    if (!t) { flush(); continue; }
+    if (t.startsWith("- ")) { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } list.push(t.slice(2)); }
+    else { if (list.length) flush(); para.push(t); }
+  }
+  flush();
+  return raw(out.join(""));
 }
 
-function help() {
+async function legal(doc) {
+  const site = (await siteInfo()) || { legal: {}, support: { email: "hello@ticketroom.co.za" } };
+  const docs = documents(site.legal || {}, site.support || {});
+  const d = docs[doc];
+  if (!d) return render(main, html`<div class="wrap section"><div class="card pad-lg"><h1>Page not found</h1><p>Choose a document:</p><ul>${ORDER.map(([k, t]) => html`<li><a href="/legal/${k}">${t}</a></li>`)}</ul></div></div>`);
+  document.title = `${d.title} — TicketRoom`;
+  const slug = (i) => `s${i + 1}`;
+  render(main, html`<div class="wrap section"><div class="legal-layout">
+    <nav class="legal-nav card" aria-label="Legal documents"><h2 class="h4">Legal</h2><ul>${ORDER.map(([k, t]) => html`<li><a href="/legal/${k}" ${raw(k === doc ? 'aria-current="page"' : "")}>${t}</a></li>`)}</ul>
+      <p class="tiny muted mt mb-0">Questions? <a href="mailto:${site.support.email}">${site.support.email}</a></p></nav>
+    <article class="card pad-lg legal-doc stack">
+      <header><h1>${d.title}</h1><p class="legal-meta mb-0">Version ${VERSION} · Effective ${EFFECTIVE}</p></header>
+      <p class="lead">${d.summary}</p>
+      ${d.important.length ? html`<aside class="legal-important" aria-labelledby="imp-h"><h2 id="imp-h">Important clauses — please read</h2><ul>${d.important.map((x) => html`<li>${markup(x)}</li>`)}</ul></aside>` : ""}
+      ${d.sections.length > 3 ? html`<nav class="legal-toc" aria-label="Contents"><h2>Contents</h2><ol>${d.sections.map(([h], i) => html`<li><a href="#${slug(i)}">${h.replace(/^\d+\.\s*/, "")}</a></li>`)}</ol></nav>` : ""}
+      ${d.sections.map(([h, body], i) => html`<section><h2 id="${slug(i)}">${h}</h2>${markup(body)}</section>`)}
+      <footer class="legal-meta"><p class="mb-0">${site.legal?.entityName || "TicketRoom"} · ticketroom.co.za · <a href="mailto:${site.support.email}">${site.support.email}</a> · Powered by TitoPay</p></footer>
+    </article></div></div>`);
+  if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+}
+
+// ---------------- help and contact ----------------
+const FAQ = [
+  ["Where are my tickets?", "Sign in and open My tickets. Each ticket has its own QR code. Add the page to your home screen so it opens even with poor signal."],
+  ["Can I send a ticket to a friend?", "Yes, if the organiser allows transfers. Open the ticket, choose Transfer and enter their email. Once they accept, your copy stops working."],
+  ["I paid but have no tickets", "Payment is confirmed by the payment provider, which can take a minute. If nothing shows after 15 minutes, request a callback with your order reference — please don't pay again."],
+  ["Can I list my event on TicketRoom?", "Yes. We're currently open for free event listings — create an organiser account, add your event and submit it for review. Once approved it is published automatically. Paid tickets are coming soon."],
+  ["What does it cost?", "Free events cost nothing. For paid events, buyers pay a R10 booking fee per paid ticket and organisers pay 5% of ticket sales, deducted from their payout."],
+  ["How do refunds work?", "If an event is cancelled you are refunded automatically. Other refunds follow the event's refund policy and our Terms and Conditions."],
+  ["How do cashless wristbands work?", "Link your wristband in your account with the code and activation code on its card, then top up. Vendors scan it to charge. Lost it? Block it instantly from your account."],
+  ["How do I stop marketing messages?", "Use the unsubscribe link in any message, switch off marketing in your account, or use the Unsubscribe page to get a one-click link by email."],
+];
+
+async function supportPanel(site, { topic = "callback" } = {}) {
+  const u = await me();
+  const resp = site?.support?.responseTime || "24–48 hours";
+  return html`<div class="grid-2">
+    <section class="card stack"><h2>Request a callback</h2>
+      <p class="muted mb-0">Fill in the form and our team will resolve your query within <strong>${resp}</strong>.</p>
+      <form class="stack" id="cbf" novalidate>${callbackFields(u, topic)}<button class="btn btn-primary">Request callback</button>
+        <p class="tiny muted mb-0">We use these details only to respond to you. See our <a href="/legal/privacy">Privacy Policy</a>.</p></form></section>
+    <section class="card stack"><h2>Contact us</h2>
+      ${site ? html`<p class="callout ${site.hours.openNow ? "good" : "warn"} mb-0"><strong>${hoursText(site.hours)}.</strong></p>` : ""}
+      <p class="mb-0">Email <a href="mailto:${site?.support?.email || "hello@ticketroom.co.za"}">${site?.support?.email || "hello@ticketroom.co.za"}</a></p>
+      <h3>Office hours</h3>${site ? weekTable(site.hours) : html`<p>Monday to Friday, 9am to 5pm. Closed on weekends and public holidays.</p>`}
+      ${site?.hours.upcomingHolidays?.length ? html`<p class="small muted mb-0">Upcoming closures: ${site.hours.upcomingHolidays.map((h) => `${fmtDate(h.date + "T12:00:00+02:00", { day: "numeric", month: "short" })} (${h.name})`).join(", ")}</p>` : ""}
+      <p class="small muted mb-0">Requests received after hours, on weekends or public holidays are handled on the next working day.</p>
+      ${site?.chatbot?.enabled ? html`<button class="btn btn-ghost" data-open-chat>Ask the assistant now</button>` : ""}</section></div>`;
+}
+
+function wireSupport(root) {
+  const f = $("#cbf", root);
+  if (f) onSubmit(f, async (v) => {
+    const r = await post("/api/site/callback", { ...v, source: "web" });
+    render(f, html`<div class="callout good"><strong>Thanks — we've got it.</strong> Your reference is <strong>${r.reference}</strong>. We'll contact you within ${r.responseTime}. A confirmation is on its way to your email.</div>`);
+  });
+  $("[data-open-chat]", root)?.addEventListener("click", () => window.dispatchEvent(new CustomEvent("tr:chat")));
+}
+
+async function help() {
   document.title = "Help — TicketRoom";
-  const qa = [["Where are my tickets?", "Sign in and open My tickets. Each ticket has its own QR code. Add the page to your home screen so it opens even with poor signal."],
-    ["Can I send a ticket to a friend?", "Yes, if the organiser allows transfers. Open the ticket, choose Transfer and enter their email. Once they accept, your copy stops working."],
-    ["I paid but have no tickets", "Payment is confirmed by the payment provider, which can take a minute. If nothing shows after 15 minutes, contact us below with your order reference — do not pay again."],
-    ["How do cashless wristbands work?", "Link your wristband in your account with the code and activation code on its card, then top up. Vendors scan it to charge. Lost it? Block it instantly from your account."],
-    ["How do refunds work?", "If an event is cancelled you are refunded automatically. Other refunds follow the event's policy."]];
-  render(main, html`<div class="wrap section stack-lg"><h1>Help centre</h1>
-    <div class="card">${qa.map(([q, a]) => html`<details class="tt"><summary class="name">${q}</summary><p class="muted mt">${a}</p></details>`)}</div>
-    <div class="card"><h2>Contact support</h2><form class="stack" id="sup">
-      <div class="grid-2"><div class="field"><label for="s-email">Your email</label><input id="s-email" name="email" type="email" required></div>
-      <div class="field"><label for="s-cat">Topic</label><select id="s-cat" name="category"><option value="tickets">Tickets</option><option value="refund">Refund</option><option value="tag">Wristband / tag</option><option value="payment">Payment</option><option value="account">Account</option><option value="other">Other</option></select></div></div>
-      <div class="field"><label for="s-sub">Subject</label><input id="s-sub" name="subject" required maxlength="140"></div>
-      <div class="field"><label for="s-body">How can we help?</label><textarea id="s-body" name="body" required maxlength="4000" placeholder="Include your order reference if you have one."></textarea></div>
-      <button class="btn btn-dark">Send</button></form></div></div>`);
-  me().then((u) => { if (u) $("#s-email").value = u.email; });
-  onSubmit($("#sup"), async (v, f) => { const r = await post("/api/public/support", v); f.reset(); toast(`Thanks — case ${r.reference} opened.`, "good"); });
+  const site = await siteInfo();
+  render(main, html`<div class="wrap section stack-lg"><div><h1>Help centre</h1><p class="lead mb-0">Quick answers, a smart assistant, and real people when you need them.</p></div>
+    <div class="card">${FAQ.map(([q, a]) => html`<details class="tt"><summary class="name">${q}</summary><p class="muted mt">${a}</p></details>`)}</div>
+    <div id="sup">${await supportPanel(site)}</div></div>`);
+  wireSupport(main);
 }
 
+async function contact() {
+  document.title = "Contact us — TicketRoom";
+  const site = await siteInfo();
+  const topic = new URLSearchParams(location.search).get("topic") || "callback";
+  render(main, html`<div class="wrap section stack-lg"><div><h1>Contact TicketRoom</h1><p class="lead mb-0">Request a callback and we'll resolve your query within ${site?.support?.responseTime || "24–48 hours"}.</p></div>
+    ${await supportPanel(site, { topic })}</div>`);
+  wireSupport(main);
+}
+
+// ---------------- unsubscribe ----------------
 function unsubscribe() {
+  document.title = "Unsubscribe — TicketRoom";
   const token = new URLSearchParams(location.search).get("t");
+  if (!token) {
+    render(main, html`<div class="wrap section"><div class="card pad-lg stack"><h1>Unsubscribe from marketing</h1>
+      <p>Enter your email and we'll send you a one-click link to stop <strong>all</strong> marketing emails and SMSes from TicketRoom and every organiser.</p>
+      <form class="stack" id="ur"><div class="field"><label for="u-email">Email</label><input id="u-email" name="email" type="email" required autocomplete="email"></div><button class="btn btn-dark">Send unsubscribe link</button></form>
+      <p class="small muted mb-0">Signed in? You can also switch marketing off in <a href="/account#/settings">Account → Settings &amp; privacy</a>. Messages about tickets you bought (receipts, event changes) are still sent.</p></div></div>`);
+    me().then((u) => { if (u) $("#u-email").value = u.email; });
+    onSubmit($("#ur"), async (v, f) => { const r = await post("/api/site/unsubscribe-request", v); render(f, html`<p class="callout good mb-0">${r.message}</p>`); });
+    return;
+  }
   render(main, html`<div class="wrap section"><div class="card pad-lg stack"><h1>Unsubscribe</h1><p>Stop receiving these marketing messages?</p><button class="btn btn-dark" id="un">Unsubscribe</button><p class="small muted">Transactional messages about tickets you buy (receipts, event changes) will still be sent.</p></div></div>`);
   $("#un").addEventListener("click", async () => {
-    try { const r = await post("/api/public/unsubscribe", { token }); render($(".card", main), html`<h1>You're unsubscribed</h1><p>You won't receive ${r.channel === "sms" ? "SMS" : "email"} marketing from ${r.organiser} any more.</p><a href="/" class="btn btn-ghost">Back to events</a>`); }
-    catch (err) { toast(err.message, "bad"); }
+    try {
+      const r = await post("/api/public/unsubscribe", { token });
+      render($(".card", main), html`<h1>You're unsubscribed</h1><p>${r.all ? "You won't receive any marketing emails or SMSes from TicketRoom or its organisers any more." : `You won't receive ${r.channel === "sms" ? "SMS" : "email"} marketing from ${r.organiser} any more.`}</p><p class="small muted">Changed your mind? Opt in again any time from your account.</p><a href="/" class="btn btn-ghost">Back to events</a>`);
+    } catch (err) { toast(err.message, "bad"); }
   });
 }
 
 // ---------------- boot ----------------
 (async () => {
-  await header($("#header"), { active: location.pathname === "/organisers" ? "/organisers" : location.pathname === "/help" ? "/help" : location.pathname === "/" ? "/" : null });
+  const ALIAS = { "/privacy": "/legal/privacy", "/cookies": "/legal/cookies", "/terms": "/legal/terms", "/legal/refunds": "/legal/terms" };
+  if (ALIAS[location.pathname]) history.replaceState(null, "", ALIAS[location.pathname] + location.hash);
+  await header($("#header"), { active: ["/sell", "/help", "/"].includes(location.pathname) ? location.pathname : location.pathname === "/contact" ? "/help" : null });
   footer($("#footer"));
   const p = location.pathname;
   try {
     let m;
     if ((m = p.match(/^\/events\/([^/]+)$/))) await eventPage(decodeURIComponent(m[1]));
     else if ((m = p.match(/^\/orders\/([^/]+)$/))) await orderPage(decodeURIComponent(m[1]));
-    else if ((m = p.match(/^\/legal\/([a-z]+)$/))) legal(m[1]);
-    else if (p === "/organisers") organisersPage();
-    else if (p === "/help") help();
+    else if ((m = p.match(/^\/legal\/([a-z-]+)$/))) await legal(m[1]);
+    else if (p === "/sell") sellPage();
+    else if (p === "/help") await help();
+    else if (p === "/contact") await contact();
     else if (p === "/unsubscribe") unsubscribe();
     else if (p === "/" || p === "/browse") await home();
     else if (p === "/signin") { await home(); const { authDialog } = await import("/assets/core.js"); if (!(await me())) authDialog("signin", { onDone: () => { location.href = "/account"; } }); }
@@ -314,4 +380,3 @@ function unsubscribe() {
     render(main, html`<div class="wrap section"><div class="card pad-lg"><h1>${err.status === 404 ? "Not found" : "Something went wrong"}</h1><p>${err.message}</p><a class="btn btn-primary" href="/">Browse events</a></div></div>`);
   }
 })();
-void esc;
