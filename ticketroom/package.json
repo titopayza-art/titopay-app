@@ -1,0 +1,28 @@
+{
+  "name": "ticketroom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TicketRoom — event ticketing, tags and cashless platform. A division of TitoPay (Pty) Ltd.",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "migrate": "node src/db/migrate.js up",
+    "migrate:down": "node src/db/migrate.js down",
+    "seed": "node src/db/seed.js",
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:ui": "node tests-ui/smoke.js",
+    "check": "node scripts/check-syntax.js"
+  },
+  "dependencies": {
+    "express": "4.22.3",
+    "pg": "8.13.1",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "playwright": "1.64.0"
+  }
+}

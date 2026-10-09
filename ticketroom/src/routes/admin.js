@@ -1,0 +1,400 @@
+// TicketRoom back office. Roles:
+//   admin   — platform operations: approvals, users, roles, events, tags, terminals
+//   finance — refunds, payouts, reconciliation (financial approvals)
+//   support — customer lookups, tag blocking, ticket reissue, support cases
+// Technical admins cannot approve money movements unless also granted finance.
+const express = require("express");
+const db = require("../lib/db");
+const audit = require("../lib/audit");
+const ledger = require("../lib/ledger");
+const { r, check } = require("../lib/validate");
+const { wrap, requirePlatformRole } = require("../middleware/http");
+const { conflict, notFound, bad, forbidden } = require("../lib/errors");
+const tags = require("../modules/tags/service");
+const tickets = require("../modules/tickets/service");
+const refunds = require("../modules/finance/refunds");
+const settlements = require("../modules/finance/settlements");
+const reconciliation = require("../modules/finance/reconciliation");
+const payments = require("../modules/payments/service");
+const outbox = require("../modules/messaging/outbox");
+
+const router = express.Router();
+const ANY = requirePlatformRole("admin", "finance", "support");
+const ADMIN = requirePlatformRole("admin");
+const FINANCE = requirePlatformRole("finance");
+const ADMIN_OR_SUPPORT = requirePlatformRole("admin", "support");
+router.use(ANY);
+
+router.get("/dashboard", wrap(async (_req, res) => {
+  const one = async (sql) => (await db.query(sql)).rows[0];
+  const [users, orgs, events, sales, ops] = await Promise.all([
+    one("SELECT count(*)::int AS total, count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS new7 FROM users WHERE status <> 'deleted'"),
+    one("SELECT count(*) FILTER (WHERE status = 'pending')::int AS pending, count(*) FILTER (WHERE status = 'approved')::int AS approved FROM organisers"),
+    one("SELECT count(*) FILTER (WHERE status = 'pending_approval')::int AS pending, count(*) FILTER (WHERE status = 'published')::int AS live, count(*) FILTER (WHERE cancellation_requested_at IS NOT NULL AND status <> 'cancelled')::int AS cancel_requests FROM events"),
+    one(`SELECT COALESCE(SUM(total_cents) FILTER (WHERE paid_at > now() - interval '1 day'),0)::bigint AS gmv24, COALESCE(SUM(total_cents),0)::bigint AS gmv_all,
+                count(*) FILTER (WHERE paid_at > now() - interval '1 day')::int AS orders24
+           FROM orders WHERE status IN ('paid','partially_refunded','refunded','paid_unfulfilled')`),
+    one(`SELECT (SELECT count(*) FROM refunds WHERE status = 'requested')::int AS refunds_pending,
+                (SELECT count(*) FROM refunds WHERE status = 'failed')::int AS refunds_failed,
+                (SELECT count(*) FROM payouts WHERE status IN ('requested','approved'))::int AS payouts_open,
+                (SELECT count(*) FROM webhook_events WHERE status IN ('failed','rejected') AND received_at > now() - interval '1 day')::int AS webhook_problems,
+                (SELECT count(*) FROM reconciliation_items WHERE NOT resolved)::int AS recon_exceptions,
+                (SELECT count(*) FROM support_cases WHERE status IN ('open','in_progress'))::int AS support_open,
+                (SELECT count(*) FROM orders WHERE status = 'paid_unfulfilled')::int AS unfulfilled,
+                (SELECT count(*) FROM message_outbox WHERE status = 'failed')::int AS messages_failed,
+                (SELECT count(*) FROM payments WHERE status = 'pending' AND created_at < now() - interval '30 minutes')::int AS stale_payments`),
+  ]);
+  res.json({ users, organisers: orgs, events, sales, ops, ledger: await reconciliation.ledgerIntegrity() });
+}));
+
+// ---- organisers ------------------------------------------------------------
+router.get("/organisers", wrap(async (req, res) => {
+  const status = req.query.status ? String(req.query.status) : null;
+  const { rows } = await db.query(
+    `SELECT o.id, o.name, o.status, o.contact_email, o.contact_phone, o.created_at, o.bank_account_last4,
+            (SELECT count(*) FROM events WHERE organiser_id = o.id)::int AS events,
+            (SELECT u.full_name FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = o.id AND m.role = 'owner' LIMIT 1) AS owner_name
+       FROM organisers o WHERE ($1::text IS NULL OR o.status = $1) ORDER BY o.created_at DESC LIMIT 200`, [status]);
+  res.json({ organisers: rows });
+}));
+
+router.post("/organisers/:id/status", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { status: r.oneOf(["approved", "rejected", "suspended"]), reason: r.str({ optional: true, max: 400 }) });
+  const { rows } = await db.query(
+    `UPDATE organisers SET status = $2, approved_at = CASE WHEN $2 = 'approved' THEN now() ELSE approved_at END, approved_by = CASE WHEN $2 = 'approved' THEN $3::uuid ELSE approved_by END
+      WHERE id = $1 RETURNING id, status`, [req.params.id, b.status, req.user.id]);
+  if (!rows[0]) throw notFound("Organiser not found.");
+  if (b.status === "suspended") await db.query("UPDATE events SET status = 'suspended', status_reason = 'organiser suspended' WHERE organiser_id = $1 AND status = 'published'", [req.params.id]);
+  await audit.record(null, { actor: req.user, action: `organiser.${b.status}`, entityType: "organiser", entityId: req.params.id, organiserId: req.params.id, details: { reason: b.reason } });
+  res.json({ organiser: rows[0] });
+}));
+
+// ---- events ------------------------------------------------------------------
+router.get("/events", wrap(async (req, res) => {
+  const status = req.query.status ? String(req.query.status) : null;
+  const { rows } = await db.query(
+    `SELECT e.id, e.title, e.slug, e.status, e.starts_at, e.city, e.capacity, e.featured, e.cashless_enabled, e.cancellation_requested_at, e.cancellation_reason, e.status_reason,
+            o.name AS organiser_name, o.id AS organiser_id,
+            (SELECT COALESCE(SUM(quantity_sold),0) FROM ticket_types WHERE event_id = e.id)::int AS sold
+       FROM events e JOIN organisers o ON o.id = e.organiser_id
+      WHERE ($1::text IS NULL OR e.status = $1 OR ($1 = 'cancel_requests' AND e.cancellation_requested_at IS NOT NULL AND e.status <> 'cancelled'))
+      ORDER BY e.starts_at DESC LIMIT 300`, [status]);
+  res.json({ events: rows });
+}));
+
+router.post("/events/:id/status", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { action: r.oneOf(["publish", "reject", "suspend", "reinstate", "feature", "unfeature"]), reason: r.str({ optional: true, max: 400 }) });
+  const { rows } = await db.query("SELECT * FROM events WHERE id = $1", [req.params.id]);
+  const ev = rows[0];
+  if (!ev) throw notFound("Event not found.");
+  const t = {
+    publish: [["pending_approval"], "published"], reject: [["pending_approval"], "draft"], suspend: [["published"], "suspended"], reinstate: [["suspended"], "published"],
+  }[b.action];
+  if (t) {
+    if (!t[0].includes(ev.status)) throw conflict(`Cannot ${b.action} an event that is ${ev.status}.`, "bad_transition");
+    if (b.action !== "publish" && b.action !== "reinstate" && !b.reason) throw bad("Give a reason.", { reason: "Required." });
+    await db.query("UPDATE events SET status = $2, status_reason = $3, published_at = CASE WHEN $2 = 'published' THEN COALESCE(published_at, now()) ELSE published_at END, updated_at = now() WHERE id = $1", [ev.id, t[1], b.reason || null]);
+  } else {
+    await db.query("UPDATE events SET featured = $2 WHERE id = $1", [ev.id, b.action === "feature"]);
+  }
+  await audit.record(null, { actor: req.user, action: `event.${b.action}`, entityType: "event", entityId: ev.id, organiserId: ev.organiser_id, details: { reason: b.reason } });
+  res.json({ ok: true });
+}));
+
+// Cancelling an event stops sales and raises a full refund request for every
+// paid order. Finance then approves them (bulk approve below).
+router.post("/events/:id/cancel", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { reason: r.str({ min: 5, max: 400 }) });
+  const out = await db.withTx(async (c) => {
+    const { rows } = await c.query("SELECT * FROM events WHERE id = $1 FOR UPDATE", [req.params.id]);
+    const ev = rows[0];
+    if (!ev) throw notFound("Event not found.");
+    if (ev.status === "cancelled") throw conflict("Already cancelled.", "bad_transition");
+    await c.query("UPDATE events SET status = 'cancelled', status_reason = $2, updated_at = now() WHERE id = $1", [ev.id, b.reason]);
+    const { rows: paid } = await c.query("SELECT id FROM orders WHERE event_id = $1 AND status IN ('paid','partially_refunded') AND total_cents > 0", [ev.id]);
+    let raised = 0;
+    for (const o of paid) {
+      try {
+        await c.query("SAVEPOINT rf");
+        await refunds.requestOrderRefund(req.user, { orderId: o.id, reason: `Event cancelled: ${b.reason}`, includeFees: true }, c);
+        await c.query("RELEASE SAVEPOINT rf");
+        raised++;
+      } catch (err) {
+        await c.query("ROLLBACK TO SAVEPOINT rf");
+      }
+    }
+    await audit.record(c, { actor: req.user, action: "event.cancelled", entityType: "event", entityId: ev.id, organiserId: ev.organiser_id, details: { reason: b.reason, refundsRaised: raised } });
+    return { refundsRaised: raised };
+  });
+  res.json(out);
+}));
+
+// ---- users -------------------------------------------------------------------
+router.get("/users", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
+  const q = String(req.query.q || "").replace(/[%_\\]/g, "").slice(0, 80);
+  const { rows } = await db.query(
+    `SELECT u.id, u.email, u.full_name, u.phone, u.status, u.created_at, u.email_verified_at,
+            COALESCE((SELECT array_agg(role) FROM platform_roles WHERE user_id = u.id), '{}') AS roles
+       FROM users u WHERE $1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.full_name ILIKE '%' || $1 || '%' OR u.phone ILIKE '%' || $1 || '%'
+      ORDER BY u.created_at DESC LIMIT 100`, [q]);
+  res.json({ users: rows });
+}));
+
+router.get("/users/:id", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
+  const { rows } = await db.query("SELECT id, email, full_name, phone, status, created_at, email_verified_at, (spending_pin_hash IS NOT NULL) AS has_pin FROM users WHERE id = $1", [req.params.id]);
+  if (!rows[0]) throw notFound("User not found.");
+  const q = (sql) => db.query(sql, [req.params.id]).then((x) => x.rows);
+  res.json({
+    user: rows[0],
+    roles: (await q("SELECT role, granted_at FROM platform_roles WHERE user_id = $1")),
+    orders: await q("SELECT o.id, o.reference, o.status, o.total_cents, o.created_at, e.title FROM orders o JOIN events e ON e.id = o.event_id WHERE o.user_id = $1 ORDER BY o.created_at DESC LIMIT 50"),
+    tickets: await q("SELECT t.id, t.code, t.status, e.title, t.admitted_at FROM tickets t JOIN events e ON e.id = t.event_id WHERE t.owner_user_id = $1 ORDER BY t.created_at DESC LIMIT 100"),
+    tags: (await q("SELECT t.id, t.display_code, t.tag_type, t.status, e.title FROM tags t LEFT JOIN events e ON e.id = t.event_id WHERE t.user_id = $1")).map((t) => ({ ...t, display_code: tags.formatDisplay(t.display_code) })),
+  });
+}));
+
+router.post("/users/:id/status", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { status: r.oneOf(["active", "suspended"]), reason: r.str({ min: 3, max: 400 }) });
+  if (req.params.id === req.user.id) throw bad("You cannot change your own status.");
+  const { rowCount } = await db.query("UPDATE users SET status = $2, updated_at = now() WHERE id = $1 AND status <> 'deleted'", [req.params.id, b.status]);
+  if (!rowCount) throw notFound("User not found.");
+  if (b.status === "suspended") await db.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [req.params.id]);
+  await audit.record(null, { actor: req.user, action: `user.${b.status}`, entityType: "user", entityId: req.params.id, details: { reason: b.reason } });
+  res.json({ ok: true });
+}));
+
+router.post("/users/:id/roles", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { role: r.oneOf(["admin", "finance", "support"]), grant: r.bool() });
+  if (req.params.id === req.user.id) throw forbidden("You cannot change your own platform roles.");
+  if (b.grant) await db.query("INSERT INTO platform_roles (user_id, role, granted_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [req.params.id, b.role, req.user.id]);
+  else await db.query("DELETE FROM platform_roles WHERE user_id = $1 AND role = $2", [req.params.id, b.role]);
+  await audit.record(null, { actor: req.user, action: b.grant ? "role.granted" : "role.revoked", entityType: "user", entityId: req.params.id, details: { role: b.role } });
+  res.json({ ok: true });
+}));
+
+// ---- orders, tickets, payments ---------------------------------------------------
+router.get("/orders", wrap(async (req, res) => {
+  const q = String(req.query.q || "").replace(/[%_\\]/g, "").slice(0, 80);
+  const { rows } = await db.query(
+    `SELECT o.id, o.reference, o.status, o.buyer_name, o.buyer_email, o.total_cents, o.refunded_cents, o.created_at, e.title,
+            (SELECT json_agg(json_build_object('id', p.id, 'status', p.status, 'provider', p.provider, 'ref', p.provider_reference, 'amount', p.amount_cents)) FROM payments p WHERE p.order_id = o.id) AS payments
+       FROM orders o JOIN events e ON e.id = o.event_id
+      WHERE $1 = '' OR o.reference ILIKE '%' || $1 || '%' OR o.buyer_email ILIKE '%' || $1 || '%'
+      ORDER BY o.created_at DESC LIMIT 100`, [q]);
+  res.json({ orders: rows });
+}));
+
+router.get("/tickets/:code", wrap(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.qr_version, t.revoked_reason, e.title, o.reference, u.email AS owner_email
+       FROM tickets t JOIN events e ON e.id = t.event_id JOIN orders o ON o.id = t.order_id JOIN users u ON u.id = t.owner_user_id
+      WHERE t.code = upper($1)`, [String(req.params.code).replace(/[\s-]/g, "")]);
+  if (!rows[0]) throw notFound("Ticket not found.");
+  const { rows: log } = await db.query("SELECT outcome, occurred_at, gate FROM admission_log WHERE ticket_id = $1 ORDER BY id DESC LIMIT 20", [rows[0].id]);
+  res.json({ ticket: rows[0], admissions: log });
+}));
+
+router.post("/tickets/:id/reissue", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
+  const b = check(req.body, { reason: r.str({ min: 3, max: 300 }) });
+  res.json(await tickets.reissue(req.user, req.params.id, b.reason));
+}));
+router.post("/tickets/:id/revoke", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { reason: r.str({ min: 3, max: 300 }) });
+  await tickets.revoke(req.user, req.params.id, b.reason);
+  res.json({ ok: true });
+}));
+
+router.get("/payments", wrap(async (req, res) => {
+  const status = req.query.status ? String(req.query.status) : null;
+  const { rows } = await db.query(
+    `SELECT p.id, p.purpose, p.provider, p.provider_reference, p.amount_cents, p.refunded_cents, p.status, p.failure_reason, p.created_at, p.confirmed_at, u.email
+       FROM payments p JOIN users u ON u.id = p.user_id WHERE ($1::text IS NULL OR p.status = $1) ORDER BY p.created_at DESC LIMIT 200`, [status]);
+  res.json({ payments: rows });
+}));
+
+router.post("/payments/:id/recheck", wrap(async (req, res) => {
+  const result = await payments.syncStatus(req.params.id);
+  await audit.record(null, { actor: req.user, action: "payment.rechecked", entityType: "payment", entityId: req.params.id, details: { result } });
+  res.json({ result });
+}));
+
+router.get("/webhooks", wrap(async (_req, res) => {
+  const { rows } = await db.query("SELECT id, provider, provider_event_id, signature_valid, status, error, attempts, received_at, processed_at FROM webhook_events ORDER BY received_at DESC LIMIT 200");
+  res.json({ webhooks: rows });
+}));
+
+// ---- refunds (finance) ---------------------------------------------------------
+router.get("/refunds", wrap(async (req, res) => {
+  const status = req.query.status ? String(req.query.status) : null;
+  const { rows } = await db.query(
+    `SELECT r.id, r.reference, r.kind, r.status, r.amount_cents, r.fee_refund_cents, r.reason, r.failure_reason, r.created_at, r.decided_at,
+            e.title AS event_title, ru.full_name AS requested_by_name, du.full_name AS decided_by_name, (r.requested_by = $2) AS mine, o.reference AS order_reference
+       FROM refunds r JOIN events e ON e.id = r.event_id LEFT JOIN users ru ON ru.id = r.requested_by LEFT JOIN users du ON du.id = r.decided_by
+       LEFT JOIN orders o ON o.id = r.order_id
+      WHERE ($1::text IS NULL OR r.status = $1) ORDER BY r.created_at DESC LIMIT 300`, [status, req.user.id]);
+  res.json({ refunds: rows });
+}));
+
+router.post("/refunds/:id/decide", FINANCE, wrap(async (req, res) => {
+  const b = check(req.body, { approve: r.bool(), note: r.str({ optional: true, max: 400 }) });
+  res.json({ refund: await refunds.decide(req.user, req.params.id, b.approve, b.note) });
+}));
+
+router.post("/refunds/:id/retry", FINANCE, wrap(async (req, res) => res.json({ refund: await refunds.execute(req.user, req.params.id) })));
+
+router.post("/refunds/bulk-approve", FINANCE, wrap(async (req, res) => {
+  const b = check(req.body, { refundIds: r.array(r.uuid(), { min: 1, max: 200 }), note: r.str({ optional: true, max: 400 }) });
+  const results = [];
+  for (const id of b.refundIds) {
+    try { results.push({ id, status: (await refunds.decide(req.user, id, true, b.note)).status }); } catch (err) { results.push({ id, error: err.message }); }
+  }
+  res.json({ results });
+}));
+
+// ---- payouts (finance) -----------------------------------------------------------
+router.get("/payouts", wrap(async (_req, res) => {
+  const { rows } = await db.query(
+    `SELECT p.*, o.name AS organiser_name, o.bank_name, o.bank_account_holder, o.bank_account_last4, o.bank_branch_code, v.name AS vendor_name,
+            ru.full_name AS requested_by_name, au.full_name AS approved_by_name
+       FROM payouts p JOIN organisers o ON o.id = p.organiser_id LEFT JOIN vendors v ON v.id = p.vendor_id
+       LEFT JOIN users ru ON ru.id = p.requested_by LEFT JOIN users au ON au.id = p.approved_by
+      ORDER BY p.created_at DESC LIMIT 200`);
+  res.json({ payouts: rows.map((p) => ({ ...p, mine: p.requested_by === _req.user.id })) });
+}));
+
+router.post("/payouts/:id/decide", FINANCE, wrap(async (req, res) => {
+  const b = check(req.body, { approve: r.bool(), note: r.str({ optional: true, max: 400 }) });
+  res.json({ payout: await settlements.decide(req.user, req.params.id, b.approve, b.note) });
+}));
+
+router.post("/payouts/:id/mark-paid", FINANCE, wrap(async (req, res) => {
+  const b = check(req.body, { bankReference: r.str({ min: 3, max: 60 }) });
+  res.json({ payout: await settlements.markPaid(req.user, req.params.id, b.bankReference) });
+}));
+
+// Full bank account number, revealed to finance only and audited.
+router.post("/payouts/:id/reveal-account", FINANCE, wrap(async (req, res) => {
+  const { rows } = await db.query("SELECT o.id, o.bank_account_enc FROM payouts p JOIN organisers o ON o.id = p.organiser_id WHERE p.id = $1 AND p.status = 'approved'", [req.params.id]);
+  if (!rows[0]?.bank_account_enc) throw notFound("Approved payout with bank details not found.");
+  await audit.record(null, { actor: req.user, action: "bank_account.revealed", entityType: "payout", entityId: req.params.id, organiserId: rows[0].id });
+  res.json({ accountNumber: require("../lib/crypto").decrypt(rows[0].bank_account_enc) });
+}));
+
+// ---- reconciliation & ledger (finance) ----------------------------------------------
+router.get("/reconciliation", wrap(async (_req, res) => {
+  const { rows } = await db.query("SELECT r.*, u.full_name AS created_by_name FROM reconciliation_runs r LEFT JOIN users u ON u.id = r.created_by ORDER BY r.created_at DESC LIMIT 50");
+  res.json({ runs: rows, ledger: await reconciliation.ledgerIntegrity() });
+}));
+
+router.post("/reconciliation", FINANCE, wrap(async (req, res) => {
+  const b = check(req.body, { provider: r.oneOf(["simulated"]), from: r.date(), to: r.date(), csv: r.text({ optional: true, max: 2000000 }) });
+  res.status(201).json({ run: await reconciliation.run(req.user, b) });
+}));
+
+router.get("/reconciliation/:id", wrap(async (req, res) => {
+  const { rows: run } = await db.query("SELECT * FROM reconciliation_runs WHERE id = $1", [req.params.id]);
+  if (!run[0]) throw notFound("Run not found.");
+  const { rows } = await db.query("SELECT * FROM reconciliation_items WHERE run_id = $1 ORDER BY (outcome = 'matched'), id", [req.params.id]);
+  res.json({ run: run[0], items: rows });
+}));
+
+router.post("/reconciliation/items/:id/resolve", FINANCE, wrap(async (req, res) => {
+  const b = check(req.body, { note: r.str({ min: 5, max: 500 }) });
+  const { rowCount } = await db.query("UPDATE reconciliation_items SET resolved = true, resolved_by = $2, resolution_note = $3 WHERE id = $1 AND NOT resolved", [req.params.id, req.user.id, b.note]);
+  if (!rowCount) throw notFound("Open item not found.");
+  await audit.record(null, { actor: req.user, action: "reconciliation.item_resolved", entityType: "reconciliation_item", entityId: req.params.id, details: { note: b.note } });
+  res.json({ ok: true });
+}));
+
+router.get("/ledger/accounts", wrap(async (_req, res) => {
+  const { rows } = await db.query(
+    `SELECT a.code, a.kind, a.owner_type, a.name, COALESCE(SUM(e.amount_cents),0)::bigint AS raw_cents, count(e.id)::int AS entries
+       FROM ledger_accounts a LEFT JOIN ledger_entries e ON e.account_id = a.id GROUP BY a.id ORDER BY a.kind, a.code LIMIT 1000`);
+  res.json({ accounts: rows.map((a) => ({ ...a, balance_cents: ["asset", "expense"].includes(a.kind) ? a.raw_cents : -a.raw_cents })) });
+}));
+
+router.get("/ledger/journals", wrap(async (req, res) => {
+  const ref = String(req.query.reference || "").slice(0, 40);
+  const { rows } = await db.query(
+    `SELECT j.id, j.kind, j.reference, j.memo, j.created_at, j.reverses_journal_id,
+            json_agg(json_build_object('account', a.code, 'amount', e.amount_cents) ORDER BY e.id) AS lines
+       FROM journals j JOIN ledger_entries e ON e.journal_id = j.id JOIN ledger_accounts a ON a.id = e.account_id
+      WHERE $1 = '' OR j.reference = $1 GROUP BY j.id ORDER BY j.created_at DESC LIMIT 100`, [ref]);
+  res.json({ journals: rows });
+}));
+
+// ---- tags & terminals ----------------------------------------------------------------
+router.post("/tag-batches", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, {
+    tagType: r.oneOf(["nfc_wristband", "nfc_card", "qr_tag"]), mode: r.oneOf(["generate", "import"]),
+    quantity: r.int({ optional: true, min: 1, max: 2000 }), uids: r.array(r.str({ max: 40 }), { optional: true, max: 2000 }),
+    eventId: r.uuid({ optional: true }), notes: r.str({ optional: true, max: 200 }),
+  });
+  if (b.mode === "generate" && !b.quantity) throw bad("Enter a quantity.");
+  if (b.mode === "import" && !b.uids?.length) throw bad("Paste at least one chip UID.");
+  res.status(201).json(await tags.createBatch(req.user, b));
+}));
+
+router.get("/tags", wrap(async (req, res) => {
+  const q = String(req.query.q || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+  const { rows } = await db.query(
+    `SELECT t.id, t.tag_type, t.display_code, t.status, t.security_level, t.linked_at, t.last_used_at, t.status_reason, e.title AS event_title, u.email AS owner_email
+       FROM tags t LEFT JOIN events e ON e.id = t.event_id LEFT JOIN users u ON u.id = t.user_id
+      WHERE $1 = '' OR t.display_code LIKE $1 || '%' ORDER BY t.created_at DESC LIMIT 200`, [q]);
+  res.json({ tags: rows.map((t) => ({ ...t, display_code: tags.formatDisplay(t.display_code) })) });
+}));
+
+router.get("/tags/:id/history", wrap(async (req, res) => {
+  const { rows } = await db.query("SELECT te.action, te.details, te.occurred_at, u.full_name AS actor FROM tag_events te LEFT JOIN users u ON u.id = te.actor_id WHERE te.tag_id = $1 ORDER BY te.id DESC", [req.params.id]);
+  res.json({ history: rows });
+}));
+
+router.post("/tags/:id/status", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
+  const b = check(req.body, { status: r.oneOf(["blocked", "active", "revoked"]), reason: r.str({ min: 3, max: 200 }) });
+  await tags.setStatus(req.user, req.params.id, b.status, b.reason);
+  res.json({ ok: true });
+}));
+
+router.get("/terminals", wrap(async (_req, res) => {
+  const { rows } = await db.query(
+    `SELECT t.id, t.label, t.status, t.last_seen_at, t.created_at, v.name AS vendor_name, e.title AS event_title
+       FROM terminals t JOIN vendors v ON v.id = t.vendor_id JOIN events e ON e.id = t.event_id ORDER BY t.created_at DESC LIMIT 300`);
+  res.json({ terminals: rows });
+}));
+
+router.post("/terminals/:id/status", ADMIN, wrap(async (req, res) => {
+  const b = check(req.body, { status: r.oneOf(["active", "suspended", "retired"]) });
+  await db.query("UPDATE terminals SET status = $2 WHERE id = $1", [req.params.id, b.status]);
+  await audit.record(null, { actor: req.user, action: `terminal.${b.status}`, entityType: "terminal", entityId: req.params.id });
+  res.json({ ok: true });
+}));
+
+// ---- audit, support, outbox -------------------------------------------------------
+router.get("/audit", wrap(async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT a.id, a.occurred_at, a.action, a.entity_type, a.entity_id, a.actor_role, a.details, u.full_name AS actor_name
+       FROM audit_log a LEFT JOIN users u ON u.id = a.actor_id
+      WHERE ($1 = '' OR a.action LIKE $1 || '%') ORDER BY a.id DESC LIMIT 300`, [String(req.query.action || "").slice(0, 60)]);
+  res.json({ entries: rows });
+}));
+
+router.get("/audit/verify", wrap(async (_req, res) => res.json(await audit.verifyChain())));
+
+router.get("/support", wrap(async (_req, res) => {
+  const { rows } = await db.query("SELECT s.*, u.full_name AS assignee FROM support_cases s LEFT JOIN users u ON u.id = s.assigned_to ORDER BY (s.status IN ('resolved','closed')), s.created_at DESC LIMIT 300");
+  res.json({ cases: rows });
+}));
+
+router.post("/support/:id", ADMIN_OR_SUPPORT, wrap(async (req, res) => {
+  const b = check(req.body, { status: r.oneOf(["open", "in_progress", "resolved", "closed"]), resolution: r.text({ optional: true, max: 2000 }) });
+  await db.query("UPDATE support_cases SET status = $2, resolution = COALESCE($3, resolution), assigned_to = COALESCE(assigned_to, $4), updated_at = now() WHERE id = $1", [req.params.id, b.status, b.resolution || null, req.user.id]);
+  res.json({ ok: true });
+}));
+
+router.get("/outbox", wrap(async (_req, res) => {
+  const { rows } = await db.query("SELECT id, channel, kind, to_address, subject, status, provider, attempts, last_error, created_at, sent_at FROM message_outbox ORDER BY created_at DESC LIMIT 200");
+  res.json({ messages: rows.map((m) => ({ ...m, to_address: outbox.mask(m.to_address) })), adapters: { email: outbox.adapterFor("email").name, sms: outbox.adapterFor("sms").name } });
+}));
+
+void ledger;
+module.exports = router;
