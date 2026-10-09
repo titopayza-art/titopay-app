@@ -123,6 +123,11 @@ async function signIn(p, email, password) {
     await o.getByLabel("Venue", { exact: true }).fill("Thokoza Park");
     await o.getByLabel("City", { exact: true }).fill("Soweto");
     await o.getByRole("button", { name: "Create draft" }).click();
+    // The event's QR code is offered straight away, ready to download.
+    const made = o.locator("dialog", { hasText: "Your event is created" });
+    await made.getByRole("button", { name: "Download PNG" }).waitFor();
+    await shot(o, "event-created-qr", false);
+    await made.getByRole("button", { name: "Next: add ticket types" }).click();
     await o.getByText(/Free admission/).first().waitFor();
     await shot(o, "organiser-free-event-tickets");
     await o.getByRole("button", { name: "Submit for approval" }).click();
@@ -181,7 +186,7 @@ async function signIn(p, email, password) {
     // Live count in the organiser portal.
     await o.goto(`${BASE}/organisers#/events`);
     await o.locator("#main a[href*='#/events/']:not([href$='/new'])").first().click();
-    await o.getByRole("tab", { name: "Staff" }).click();
+    await o.getByRole("tab", { name: "Gate staff" }).click();
     await o.getByRole("heading", { name: "Live check-ins" }).waitFor();
     // Totals are shared by every gate and refreshed every few seconds.
     await o.waitForFunction(() => document.querySelector("#live .kpi .v")?.textContent.trim() === "1", null, { timeout: 15000 });

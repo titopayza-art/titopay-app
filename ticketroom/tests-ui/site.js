@@ -135,7 +135,7 @@ const login = async (p, email) => assert.equal((await p.request.post(`${BASE}/ap
     await login(o, "organiser@ticketroom.test");
     await o.goto(`${BASE}/organisers#/events`);
     await o.locator("#main a[href*='#/events/']:not([href$='/new'])").first().click();
-    await o.getByRole("tab", { name: "Staff" }).click();
+    await o.getByRole("tab", { name: "Gate staff" }).click();
     await o.getByRole("heading", { name: "Live check-ins" }).waitFor();
     await o.locator(".kpi").first().waitFor();
     await shot(o, "organiser-staff-live");

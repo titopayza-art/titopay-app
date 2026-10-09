@@ -123,11 +123,23 @@ function wireUpload(form) {
 function newEvent() {
   render(main, html`${head("Create event", "Start with the basics. You'll add ticket types next.", "", html`<a href="#/events">My events</a>`)}<div class="card">${eventForm()}</div>`);
   const f = $("#evf"); wireUpload(f);
-  onSubmit(f, async (v) => { const r = await post(`${base()}/events`, eventPayload(v)); toast("Draft created. Now add ticket types.", "good"); location.hash = `#/events/${r.event.id}/tickets`; });
+  onSubmit(f, async (v) => {
+    const r = await post(`${base()}/events`, eventPayload(v));
+    const next = () => { location.hash = `#/events/${r.event.id}/tickets`; };
+    // The event's QR code, ready to download the moment the event exists.
+    try {
+      const q = await get(`${base()}/events/${r.event.id}/qr`);
+      const d = dialog("Your event is created", html`<div class="stack"><p class="mb-0">Here is the QR code for <strong>${q.title}</strong>. It opens your event page, so put it on posters, flyers and socials. It starts working once TicketRoom has approved the event.</p>
+        <div data-qr></div><button class="btn btn-primary" data-next>Next: add ticket types</button>
+        <p class="tiny muted mb-0">You can download it again any time from the event's Overview tab.</p></div>`, { onClose: next });
+      $("[data-qr]", d).append(qrPanel(q.svg, { name: `${q.title} QR code`, caption: q.title }));
+      $("[data-next]", d).addEventListener("click", () => d.close());
+    } catch { toast("Draft created. Now add ticket types.", "good"); next(); }
+  });
 }
 
 // ---------------- event workspace ----------------
-const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["promos", "Promos & links"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Staff"], ["vendors", "Vendors & POS"], ["details", "Details"]];
+const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["promos", "Promos & links"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["vendors", "Vendors & POS"], ["details", "Details"]];
 
 async function eventWorkspace({ id, tab = "" }) {
   const d = await get(`${base()}/events/${id}`);

@@ -288,12 +288,14 @@ export async function header(el, { portal, active } = {}) {
   const mine = portalsFor(u);
   // On the public website: Events, Sell tickets, Help, then the person's main
   // portal. Inside a portal: the website, then every other portal by its full name.
-  // The admin portal is never linked from the website or the other portals:
-  // staff open it at /admin (signing in takes them there).
-  const shown = mine.filter((k) => k !== "admin" && k !== portal);
-  const links = here
-    ? [["/", "TicketRoom website"], ...shown.map((k) => [PORTALS[k].href, PORTALS[k].name])]
-    : [["/", "Events"], ["/sell", "Sell tickets"], ["/help", "Help"], ...(u ? [[PORTALS[mine.includes("organiser") ? "organiser" : "customer"].href, PORTALS[mine.includes("organiser") ? "organiser" : "customer"].name]] : [])];
+  // Each portal links only to the tools that role actually uses. The admin
+  // portal is never linked from anywhere (staff open /admin, and signing in
+  // takes them there), and it links to nothing but the website.
+  const ALLOWED = { admin: [], organiser: ["scanner", "pos"], customer: ["organiser", "scanner", "pos"], scanner: ["organiser"], pos: ["organiser"] };
+  const main = mine.includes("organiser") ? "organiser" : "customer";
+  const shown = here ? mine.filter((k) => ALLOWED[portal].includes(k))
+    : u ? [main, ...(main === "customer" && mine.includes("scanner") ? ["scanner"] : [])] : [];
+  const links = [...(here ? [["/", "TicketRoom website"]] : [["/", "Events"], ["/sell", "Sell tickets"], ["/help", "Help"]]), ...shown.map((k) => [PORTALS[k].href, PORTALS[k].name])];
   render(el, html`<a class="skip" href="#main">Skip to content</a><div class="wrap">${brand()}
     <button class="menu-toggle" aria-expanded="false" aria-controls="nav">Menu</button>
     <nav class="nav" id="nav" aria-label="Main">
@@ -377,7 +379,7 @@ export function footer(el) {
     <div>${brand()}<p class="mt small">Tickets for concerts, comedy, sport and festivals across South Africa.</p>
       <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p></div>
     <div><h4>Customers</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">Customer portal</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
-    <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/advertise">Advertise your business</a></li><li><a href="/organisers">Organiser portal</a></li><li><a href="/scan">Gate scanner</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
+    <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/advertise">Advertise your business</a></li><li><a href="/organisers">Organiser portal</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
     <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
   </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom (Pty) Ltd · Reg. no. 2026811077 · ticketroom.co.za · Prices are in South African rand.</div></div>`);
   $("[data-sub]", el).append(subscribeForm("footer"));
