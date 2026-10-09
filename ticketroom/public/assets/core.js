@@ -86,6 +86,10 @@ setTimeout(pageReady, 6000); // never hide a page for long, whatever happens
 }
 
 // ---------- API ----------
+let leaving = false;
+addEventListener("pagehide", () => { leaving = true; });
+addEventListener("beforeunload", () => { leaving = true; });
+addEventListener("pageshow", () => { leaving = false; });
 let csrfToken = null;
 let meCache;
 export class ApiError extends Error { constructor(status, body) { super(body?.error?.message || `Request failed (${status})`); this.status = status; this.code = body?.error?.code; this.details = body?.error?.details; } }
@@ -103,6 +107,8 @@ export async function api(method, path, body, { headers = {}, timeoutMs = 20000,
   opts.signal = ctl.signal;
   let res;
   try { res = await fetch(path, opts); } catch (err) {
+    // Leaving the page cancels its requests; that is not an error to show.
+    if (leaving) await new Promise(() => {});
     const e = new ApiError(0, { error: { code: err.name === "AbortError" ? "timeout" : "network", message: err.name === "AbortError" ? "The server did not answer in time." : "You appear to be offline." } });
     throw e;
   } finally { clearTimeout(timer); }

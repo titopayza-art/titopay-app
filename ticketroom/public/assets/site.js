@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -75,7 +75,7 @@ async function home() {
   $$("[data-cat]").forEach((b) => b.addEventListener("click", () => { state.category = b.dataset.cat; $$("[data-cat]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
   $("[data-free]").addEventListener("click", (e) => { state.free = state.free ? "" : "1"; e.currentTarget.setAttribute("aria-pressed", String(!!state.free)); load(); });
   $$("[data-when]").forEach((b) => b.addEventListener("click", () => { state.when = b.dataset.when; $$("[data-when]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
-  siteInfo().then((site) => {
+  const showAds = (site) => {
     const ads = (site?.posters || []).filter((a) => a.placement !== "event");
     if (!ads.length) return;
     $("#ads").classList.remove("hidden");
@@ -83,7 +83,8 @@ async function home() {
       ${a.image_upload_id ? html`<img src="/media/${a.image_upload_id}" alt="${a.title}" loading="lazy">` : ""}<span class="sponsored">Featured</span>
       <div class="meta"><h3>${a.title}</h3>${a.subtitle ? html`<span>${a.subtitle}</span>` : ""}</div></a>`)}`);
     $$("[data-ad]").forEach((a) => a.addEventListener("click", () => { navigator.sendBeacon?.(`/api/site/posters/${a.dataset.ad}/click`) || post(`/api/site/posters/${a.dataset.ad}/click`).catch(() => {}); }));
-  });
+  };
+  showAds(await siteInfo());
   await load();
 }
 
@@ -441,6 +442,9 @@ function unsubscribe() {
 }
 
 // ---------------- boot ----------------
+// This page says when it is ready (after its content has loaded), so it
+// appears in one go instead of jumping about on a slow connection.
+document.documentElement.dataset.manualReady = "1";
 (async () => {
   const ALIAS = { "/privacy": "/legal/privacy", "/cookies": "/legal/cookies", "/terms": "/legal/terms", "/legal/refunds": "/legal/terms" };
   if (ALIAS[location.pathname]) history.replaceState(null, "", ALIAS[location.pathname] + location.hash);
@@ -470,5 +474,7 @@ function unsubscribe() {
     else render(main, html`<div class="wrap section"><div class="card pad-lg"><h1>Page not found</h1><a class="btn btn-primary" href="/">Browse events</a></div></div>`);
   } catch (err) {
     render(main, html`<div class="wrap section"><div class="card pad-lg"><h1>${err.status === 404 ? "Not found" : "Something went wrong"}</h1><p>${err.message}</p><a class="btn btn-primary" href="/">Browse events</a></div></div>`);
+  } finally {
+    pageReady();
   }
 })();

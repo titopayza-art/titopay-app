@@ -437,3 +437,9 @@ html.maint-on body > *:not(.maint-screen) { display: none !important; }
 .sub-done { margin: 0; padding: 12px 14px; border-radius: 12px; background: rgba(23,128,74,.22); color: #C9F2DA; font-weight: 600; }
 .card .sub-note { color: var(--muted); } .card .sub-note a { color: inherit; }
 .card .sub-done { background: var(--good-bg); color: var(--good); }
+
+/* ---------- calm first paint (see pageReady in core.js) ---------- */
+html.booting #main, html.booting #footer, html.booting .site-banner, html.booting .portal-bar, html.booting .pw-nag, html.booting #sidenav, html.booting #header nav, html.booting .menu-toggle { visibility: hidden; }
+html.booting body::after { content: ""; position: fixed; left: 50%; top: 40vh; width: 28px; height: 28px; margin-left: -14px; border: 3px solid var(--line); border-top-color: var(--navy-900); border-radius: 50%; animation: spin .8s linear infinite; }
+body.venue main#main { min-height: 0; }
+#main { min-height: calc(100vh - 64px); }
