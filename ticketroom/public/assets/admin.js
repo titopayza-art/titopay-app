@@ -105,7 +105,7 @@ const ROLE_INFO = [
 async function staffPage() {
   const { staff } = await get("/api/admin/staff");
   const meId = (await me()).id;
-  const roleBoxes = (prefix, has = []) => html`<fieldset class="stack"><legend class="label">Roles</legend>${ROLE_INFO.map(([k, name, what]) => html`<label class="check"><input type="checkbox" name="${prefix}${k}" ${raw(has.includes(k) ? "checked" : "")}><span><strong>${name}</strong><br><span class="small muted">${what}</span></span></label>`)}</fieldset>`;
+  const roleBoxes = (prefix, has = []) => html`<fieldset class="stack card flat"><legend class="label">Roles</legend>${ROLE_INFO.map(([k, name, what]) => html`<label class="check"><input type="checkbox" name="${prefix}${k}" ${raw(has.includes(k) ? "checked" : "")}><span><strong>${name}</strong><br><span class="small muted">${what}</span></span></label>`)}</fieldset>`;
   render(main, html`${head("Staff & roles", "Everyone who can open the admin portal. Give each person only the roles they need.")}
     ${isA() ? html`<section class="card stack"><h2>Add a staff member</h2>
       <form class="stack" id="sf"><div class="grid-2"><div class="field"><label for="sn">Full name</label><input id="sn" name="fullName" required maxlength="120"></div>
