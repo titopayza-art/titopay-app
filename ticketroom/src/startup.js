@@ -39,6 +39,9 @@ async function run({ migrate = process.env.MIGRATE_ON_START === "true", log = co
   await bootstrapAdmin(log);
   await require("./modules/site/assistant").ensureDefaults();
   if (config.isProd && config.publicBaseUrl.startsWith("http://")) log("WARNING: PUBLIC_BASE_URL is http://. Enable SSL (cPanel → SSL/TLS Status → Run AutoSSL) — sign-in cookies require HTTPS.");
+  const m = config.messaging;
+  if (config.isProd && m.emailProvider === "log") log("WARNING: emails are NOT being delivered (no SMTP settings). Set SMTP_HOST, SMTP_USER and SMTP_PASS in .env so tickets, password resets and staff invites reach people.");
+  if (m.emailProvider === "smtp" && /CHANGE_ME/i.test(m.smtp.pass || "")) log("WARNING: SMTP_PASS is still CHANGE_ME — emails will fail. Put the hello@ mailbox password in .env and restart.");
   if (config.payments.provider === "none") log("Card payments are OFF (PAYMENT_PROVIDER=none): paid tickets cannot be sold until a gateway is configured.");
 }
 
