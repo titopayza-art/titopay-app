@@ -35,7 +35,10 @@ async function signUp(p, name, email, password) {
   await d.getByLabel("Confirm password").fill(password);
   await d.getByText("I accept the").click();
   await d.getByRole("button", { name: "Create account" }).click();
-  await p.getByRole("button", { name: /Sign out/ }).waitFor();
+  await p.getByRole("button", { name: /Sign out/ }).waitFor().catch(async (err) => {
+    await p.screenshot({ path: path.join(SHOTS, "signup-failed.png") });
+    throw new Error(`sign-up did not finish: ${(await d.innerText().catch(() => "")).slice(0, 300)} | ${err.message.split("\n")[0]}`);
+  });
 }
 async function signIn(p, email, password) {
   const r = await p.request.post(`${BASE}/api/auth/login`, { data: { email, password } });
@@ -150,7 +153,7 @@ async function signIn(p, email, password) {
     await dlg.getByLabel("Confirm password").fill("fan-password-123");
     await dlg.getByText("I accept the").click();
     await dlg.getByRole("button", { name: "Create account" }).click();
-    await f.getByRole("heading", { name: "Checkout" }).waitFor();
+    await f.getByRole("heading", { name: "Checkout" }).waitFor().catch(async (e) => { throw new Error(`no checkout; dialog says: ${(await f.locator("dialog[open]").innerText().catch(() => "-")).slice(0, 300)} | ${e.message.split("\n")[0]}`); });
     await f.getByRole("button", { name: "Get free tickets" }).click();
     await f.getByRole("heading", { name: /You're going/ }).waitFor();
     await shot(f, "fan-order-confirmed");
@@ -205,6 +208,11 @@ async function signIn(p, email, password) {
     await m.goto(BASE);
     await m.locator(".event-card").first().waitFor();
     await shot(m, "mobile-home", false);
+  } catch (err) {
+    // Keep a picture of every open page, to see what the test was looking at.
+    let i = 0;
+    for (const ctx of browser.contexts()) for (const p of ctx.pages()) await p.screenshot({ path: path.join(SHOTS, `failed-${++i}.png`), fullPage: true }).catch(() => {});
+    throw err;
   } finally {
     await browser.close();
   }

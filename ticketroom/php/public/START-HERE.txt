@@ -28,6 +28,19 @@ THE THREE PORTALS
   Customer portal   /account      green bar   ticket buyers
 
 
+IN THE ADMIN PORTAL (ticketroom.co.za/admin)
+-----------------------------------------
+  Staff & roles     Add people to the team and choose what each may do:
+                    Admin, Finance or Support. New people get an email to
+                    set their password.
+  QR codes          Make a QR code for any link, event page, WhatsApp
+                    chat, email or phone number. Download PNG or SVG.
+  Subscribers       Everyone who asked for updates from the website.
+                    Send them an update (test it on yourself first), or
+                    export the list.
+Organisers get a QR code for each event under the event's Overview tab.
+
+
 WHAT IS WHERE
 -------------
   index.html, sell.html, help.html …   The pages. Plain files.

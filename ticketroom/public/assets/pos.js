@@ -19,7 +19,7 @@ const tpost = (p, b, timeoutMs = 15000) => api("POST", p, b, { headers: termHead
 
 function setOnline(v) {
   online = v;
-  render($("#netbanner"), v ? "" : html`<div class="offline-banner" role="alert">OFFLINE — payments cannot be confirmed. Do not hand over goods.</div>`);
+  render($("#netbanner"), v ? "" : html`<div class="offline-banner" role="alert">OFFLINE: payments cannot be confirmed. Do not hand over goods.</div>`);
   $$("[data-charge]").forEach((b) => { b.disabled = !v || !cart.size; });
 }
 setInterval(async () => { try { await fetch("/api/health", { cache: "no-store" }).then((r) => { if (!r.ok) throw 0; }); setOnline(true); } catch { setOnline(false); } }, 15000);
@@ -127,7 +127,7 @@ async function resolveUncertain(pending) {
       return finish(r);
     } catch { setOnline(false); await new Promise((res) => setTimeout(res, 3000)); }
   }
-  showResult("uncertain", "Still can't reach TicketRoom. Do not hand over goods and do not charge again. Keep this screen open — it will keep checking.");
+  showResult("uncertain", "Still can't reach TicketRoom. Do not hand over goods and do not charge again. Keep this screen open; it will keep checking.");
   setTimeout(() => resolveUncertain(pending), 5000);
 }
 
@@ -140,7 +140,7 @@ function showResult(kind, r) {
   if (!ctx) return;
   const box = {
     pending: html`<div class="verdict idle"><div class="big">CHARGING…</div><div>Waiting for TicketRoom. Don't hand over goods yet.</div></div>`,
-    uncertain: html`<div class="verdict warn"><div class="big">CHECKING</div><div>${typeof r === "string" ? r : "Connection dropped. Checking whether this sale went through — it will NOT be charged twice."}</div></div>`,
+    uncertain: html`<div class="verdict warn"><div class="big">CHECKING</div><div>${typeof r === "string" ? r : "Connection dropped. Checking whether this sale went through. It will NOT be charged twice."}</div></div>`,
     not_charged: html`<div class="verdict no"><div class="big">NOT CHARGED</div><div>The sale did not reach TicketRoom. Nothing was taken. You can try again.</div></div>`,
     approved: html`<div class="verdict ok"><div class="big">APPROVED</div><div>${r?.totalCents ? moneyExact(r.totalCents) : ""} · ${r?.reference || ""}</div></div>`,
     declined: html`<div class="verdict no"><div class="big">DECLINED</div><div>${r?.message || ""}</div></div>`,

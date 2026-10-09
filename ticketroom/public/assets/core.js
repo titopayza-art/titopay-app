@@ -71,7 +71,11 @@ export function gate(feature, fn) {
 const root = document.documentElement;
 export function pageReady() {
   if (!root.classList.contains("booting")) return;
-  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("booting")));
+  const show = () => root.classList.remove("booting");
+  // After the next paint, so it all appears together; the timer covers tabs
+  // opened in the background, where browsers pause painting.
+  requestAnimationFrame(() => requestAnimationFrame(show));
+  setTimeout(show, 120);
 }
 setTimeout(pageReady, 6000); // never hide a page for long, whatever happens
 {
@@ -113,7 +117,12 @@ export async function api(method, path, body, { headers = {}, timeoutMs = 20000,
     throw e;
   } finally { clearTimeout(timer); }
   const type = res.headers.get("content-type") || "";
-  const data = type.includes("json") ? await res.json() : await res.text();
+  let data;
+  try { data = type.includes("json") ? await res.json() : await res.text(); } catch {
+    // The answer was cut off (page reloading, or the connection dropped).
+    if (leaving) await new Promise(() => {});
+    throw new ApiError(0, { error: { code: "network", message: "The connection dropped. Please try again." } });
+  }
   if (!res.ok) {
     if (res.status === 403 && data?.error?.code === "csrf_failed") { meCache = undefined; csrfToken = null; }
     throw new ApiError(res.status, data);
@@ -567,7 +576,8 @@ export function authDialog(mode = "signin", { onDone, reason } = {}) {
   });
   $("[data-switch]", d).addEventListener("click", () => { d.close(); authDialog(signup ? "signin" : "signup", { onDone, reason }); });
   $("[data-forgot]", d)?.addEventListener("click", () => { d.close(); forgotDialog(); });
-  setTimeout(() => $("input", form)?.focus(), 50);
+  // Put the cursor in the first box, unless the person is already typing somewhere.
+  setTimeout(() => { if (!form.contains(document.activeElement)) $("input", form)?.focus(); }, 50);
   return d;
 }
 

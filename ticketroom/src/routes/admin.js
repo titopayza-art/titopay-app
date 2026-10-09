@@ -214,7 +214,7 @@ router.get("/staff", wrap(async (_req, res) => {
 }));
 // Add someone to the team. A new address gets an account and an email to set a password.
 router.post("/staff", ADMIN, limit("staffteam", 30, 3600e3, (q) => q.user.id), wrap(async (req, res) => {
-  const b = check(req.body, { email: r.email(), fullName: r.str({ min: 2, max: 120 }), roles: r.arr(r.oneOf(Object.keys(STAFF_ROLE_NAMES)), { min: 1, max: 3 }) });
+  const b = check(req.body, { email: r.email(), fullName: r.str({ min: 2, max: 120 }), roles: r.array(r.oneOf(Object.keys(STAFF_ROLE_NAMES)), { min: 1, max: 3 }) });
   const roles = [...new Set(b.roles)];
   const { hashSecret, randomToken, sha256 } = require("../lib/crypto");
   const invited = await db.withTx(async (c) => {
@@ -237,7 +237,7 @@ router.post("/staff", ADMIN, limit("staffteam", 30, 3600e3, (q) => q.user.id), w
 }));
 // Set exactly these roles; an empty list removes the person from the team.
 router.put("/staff/:id", ADMIN, wrap(async (req, res) => {
-  const b = check(req.body, { roles: r.arr(r.oneOf(Object.keys(STAFF_ROLE_NAMES)), { max: 3 }) });
+  const b = check(req.body, { roles: r.array(r.oneOf(Object.keys(STAFF_ROLE_NAMES)), { max: 3 }) });
   if (req.params.id === req.user.id) throw forbidden("You cannot change your own roles. Ask another admin.");
   if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) throw notFound("Staff member not found.");
   const want = [...new Set(b.roles)];

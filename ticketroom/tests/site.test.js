@@ -103,7 +103,7 @@ test("callback request opens a case due in 48h and emails hello@ and the custome
 });
 
 test("assistant answers from the knowledge base, offers callbacks, records feedback", async () => {
-  const a = await anon.post("/api/site/chat", { message: "How do I transfer my ticket to a friend?" });
+  const a = await anon.post("/api/site/chat", { message: "How do I transfer my ticket to a friend?", conversation: "testconv1" });
   assert.equal(a.status, 200);
   assert.equal(a.body.source, "kb");
   assert.match(a.body.text, /transfer/i);
@@ -113,7 +113,10 @@ test("assistant answers from the knowledge base, offers callbacks, records feedb
   const f = await anon.post("/api/site/chat", { message: "qwerty zxcvb" });
   assert.equal(f.body.source, "fallback");
   assert.equal(f.body.callback, true);
-  assert.equal((await anon.post(`/api/site/chat/${a.body.id}/feedback`, { helpful: true })).status, 200);
+  // Someone else's conversation id changes nothing; the right one records it.
+  await anon.post(`/api/site/chat/${a.body.id}/feedback`, { helpful: false, conversation: "someoneelse" });
+  assert.equal((await anon.post(`/api/site/chat/${a.body.id}/feedback`, { helpful: true, conversation: "testconv1" })).status, 200);
+  assert.equal((await h.one("SELECT helpful FROM chat_messages WHERE id = $1", [a.body.id])).helpful, true);
   const chats = await support.get("/api/admin/chats?filter=unanswered");
   assert.ok(chats.body.chats.some((c) => c.question === "qwerty zxcvb"));
   assert.ok(chats.body.stats.helpful >= 1);
