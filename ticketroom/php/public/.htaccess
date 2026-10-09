@@ -45,3 +45,9 @@ DirectoryIndex index.php
   ExpiresByType image/png "access plus 1 day"
   ExpiresByType image/svg+xml "access plus 1 day"
 </IfModule>
+
+# Compress pages, scripts and API answers (the scanner's offline ticket list
+# for a full stadium shrinks from about 4 MB to under 1 MB).
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/plain text/csv application/javascript text/javascript application/json image/svg+xml application/manifest+json
+</IfModule>

@@ -255,6 +255,9 @@ CREATE TABLE order_items (
   unit_fee_cents   INTEGER NOT NULL DEFAULT 0 CHECK (unit_fee_cents >= 0)
 );
 
+CREATE INDEX order_items_order_idx ON order_items (order_id);
+CREATE INDEX orders_event_created_idx ON orders (event_id, created_at);
+
 CREATE TABLE tickets (
   id             TEXT PRIMARY KEY,
   code           TEXT NOT NULL UNIQUE,
@@ -277,6 +280,7 @@ CREATE TABLE tickets (
 );
 CREATE INDEX tickets_owner_idx ON tickets (owner_user_id);
 CREATE INDEX tickets_event_idx ON tickets (event_id, status);
+CREATE INDEX tickets_event_updated_idx ON tickets (event_id, updated_at);
 CREATE INDEX tickets_order_idx ON tickets (order_id);
 
 CREATE TABLE ticket_transfers (
@@ -303,6 +307,7 @@ CREATE TABLE admission_log (
   occurred_at TEXT NOT NULL
 );
 CREATE INDEX admission_event_idx ON admission_log (event_id, occurred_at);
+CREATE INDEX admission_scanner_idx ON admission_log (event_id, scanned_by);
 CREATE TRIGGER admission_log_no_update BEFORE UPDATE ON admission_log BEGIN SELECT RAISE(ABORT, 'admission_log is append-only'); END;
 CREATE TRIGGER admission_log_no_delete BEFORE DELETE ON admission_log BEGIN SELECT RAISE(ABORT, 'admission_log is append-only'); END;
 
@@ -383,6 +388,10 @@ CREATE TABLE site_settings (
   updated_by TEXT REFERENCES users(id),
   updated_at TEXT NOT NULL
 );
+
+CREATE INDEX support_cases_status_idx ON support_cases (status, due_at);
+CREATE INDEX message_outbox_user_idx ON message_outbox (user_id);
+CREATE INDEX ticket_transfers_to_idx ON ticket_transfers (to_email, status);
 
 CREATE TABLE ad_posters (
   id              TEXT PRIMARY KEY,

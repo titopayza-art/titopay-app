@@ -24,6 +24,34 @@ function tr_load(string $dataDir): void
     $GLOBALS['TR_DATA_DIR'] = $dataDir;
     $GLOBALS['TR_CONFIG'] = require "$dataDir/config.php";
     date_default_timezone_set('UTC');
+    tr_upgrade();
+}
+// Database upgrades for sites installed with an earlier zip. Each step runs
+// once; new installs get everything from schema.sql and skip them all.
+const SCHEMA_VERSION = 2;
+const UPGRADES = [
+    2 => [
+        'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
+        'CREATE INDEX IF NOT EXISTS orders_event_created_idx ON orders (event_id, created_at)',
+        'CREATE INDEX IF NOT EXISTS admission_scanner_idx ON admission_log (event_id, scanned_by)',
+        'CREATE INDEX IF NOT EXISTS support_cases_status_idx ON support_cases (status, due_at)',
+        'CREATE INDEX IF NOT EXISTS message_outbox_user_idx ON message_outbox (user_id)',
+        'CREATE INDEX IF NOT EXISTS ticket_transfers_to_idx ON ticket_transfers (to_email, status)',
+        'CREATE INDEX IF NOT EXISTS tickets_event_updated_idx ON tickets (event_id, updated_at)',
+    ],
+];
+function tr_upgrade(): void
+{
+    $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
+    if ($have >= SCHEMA_VERSION) return;
+    tx(function () {
+        $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
+        foreach (UPGRADES as $v => $steps) {
+            if ($v <= $have) continue;
+            foreach ($steps as $sql) db()->exec($sql);
+            q("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) $v]);
+        }
+    });
 }
 
 function tr_error_response(Throwable $e): Response
@@ -89,7 +117,7 @@ function jobs(): array
             q('DELETE FROM chat_messages WHERE created_at < ?', [iso_in(-90 * 86400)]);
             q("UPDATE message_outbox SET body = '[redacted]', to_address = '[redacted]' WHERE created_at < ? AND body <> '[redacted]'", [iso_in(-180 * 86400)]);
         }],
-        ['deliver-outbox', 0, fn() => outbox_deliver(25)],
+        ['deliver-outbox', 0, function () { $end = microtime(true) + 8; while (microtime(true) < $end && outbox_deliver(25) === 25); }],
     ];
 }
 function run_due_jobs(bool $force = false): array
@@ -99,15 +127,16 @@ function run_due_jobs(bool $force = false): array
     foreach (rows('SELECT name, last_run FROM job_runs') as $r) $last[$r['name']] = (int) $r['last_run'];
     foreach (jobs() as [$name, $every, $fn]) {
         $now = time();
-        $every = max($every, 5);
+        // Email goes out within ~2 seconds of being queued, but only one worker
+        // at a time sends it, so a booking rush is not slowed down by email.
+        $every = $name === 'deliver-outbox' ? (empty($GLOBALS['TR_OUTBOX_DIRTY']) ? 30 : 2) : max($every, 5);
         if (!$force) {
-            $dirtyOutbox = $name === 'deliver-outbox' && !empty($GLOBALS['TR_OUTBOX_DIRTY']);
-            if (!$dirtyOutbox && ($last[$name] ?? 0) > $now - $every) continue;
+            if (($last[$name] ?? 0) > $now - $every) continue;
             $claimed = tx(function () use ($name, $every, $now) {
                 q('INSERT OR IGNORE INTO job_runs (name, last_run) VALUES (?, 0)', [$name]);
                 return affected('UPDATE job_runs SET last_run = ? WHERE name = ? AND last_run <= ?', [$now, $name, $now - $every]);
             });
-            if (!$claimed && !$dirtyOutbox) continue;
+            if (!$claimed) continue;
         }
         try { $fn(); $ran[] = $name; } catch (Throwable $e) { error_log("[ticketroom] job $name: " . $e->getMessage()); }
     }

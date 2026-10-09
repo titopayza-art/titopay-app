@@ -242,12 +242,26 @@ async function ordersTab(el, d) {
 }
 
 async function attendeesTab(el, d) {
-  const { attendees } = await get(`${base()}/events/${d.event.id}/attendees`);
-  render(el, html`<div class="row between"><p class="muted mb-0">${attendees.length} tickets · ${attendees.filter((a) => a.status === "used").length} checked in</p>
-    <a class="btn btn-ghost btn-sm" href="${base()}/events/${d.event.id}/attendees?format=csv" download>Export CSV</a></div>
+  const url = `${base()}/events/${d.event.id}/attendees`;
+  let q = "", page = 1;
+  render(el, html`<div class="row between"><p class="muted mb-0" id="att-sum">${spinner()}</p>
+    <a class="btn btn-ghost btn-sm" href="${url}?format=csv" download>Export CSV</a></div>
     <p class="tiny muted">Attendee details are personal information. Use them only to run this event (POPIA). Exports are logged.</p>
-    ${attendees.length ? html`<div class="table-wrap"><table><thead><tr><th>Holder</th><th>Ticket</th><th>Code</th><th>Order</th><th>Status</th><th>Checked in</th></tr></thead><tbody>
-      ${attendees.map((a) => html`<tr><td>${a.holder_name || "—"}</td><td>${a.ticket_type}</td><td class="mono">${a.code}</td><td class="mono">${a.reference}</td><td>${badge(a.status)}</td><td>${a.admitted_at ? fmtTime(a.admitted_at) : ""}</td></tr>`)}</tbody></table></div>` : empty("No attendees yet.")}`);
+    <form class="row" id="att-s" role="search"><label class="sr-only" for="att-q">Search attendees</label><input id="att-q" type="search" placeholder="Name, ticket code, order or email"><button class="btn btn-ghost">Search</button></form>
+    <div id="att-list" class="mt"></div>`);
+  async function draw() {
+    const r = await get(`${url}?page=${page}${q ? `&q=${encodeURIComponent(q)}` : ""}`);
+    const list = r.attendees;
+    const total = r.total ?? list.length;
+    const checkedIn = r.checkedIn ?? list.filter((a) => a.status === "used").length;
+    $("#att-sum").textContent = `${total.toLocaleString("en-ZA")} ticket${total === 1 ? "" : "s"} · ${checkedIn.toLocaleString("en-ZA")} checked in`;
+    render($("#att-list"), html`${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Holder</th><th>Ticket</th><th>Code</th><th>Order</th><th>Status</th><th>Checked in</th></tr></thead><tbody>
+      ${list.map((a) => html`<tr><td>${a.holder_name || "—"}</td><td>${a.ticket_type}</td><td class="mono">${a.code}</td><td class="mono">${a.reference}</td><td>${badge(a.status)}</td><td>${a.admitted_at ? fmtTime(a.admitted_at) : ""}</td></tr>`)}</tbody></table></div>` : empty(q ? "No tickets match that search." : "No attendees yet.")}
+      ${page > 1 || r.more ? html`<div class="row between mt"><button class="btn btn-ghost btn-sm" data-pg="-1" ${raw(page > 1 ? "" : "disabled")}>Previous</button><span class="small muted">Page ${page}</span><button class="btn btn-ghost btn-sm" data-pg="1" ${raw(r.more ? "" : "disabled")}>Next</button></div>` : ""}`);
+    $("#att-list").querySelectorAll("[data-pg]").forEach((b) => b.addEventListener("click", () => { page += Number(b.dataset.pg); draw(); }));
+  }
+  $("#att-s").addEventListener("submit", (e) => { e.preventDefault(); q = $("#att-q").value.trim(); page = 1; draw(); });
+  await draw();
 }
 
 async function staffTab(el, d, reload) {

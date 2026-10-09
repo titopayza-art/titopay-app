@@ -105,7 +105,7 @@ export async function me(force = false) {
     const r = await fetch("/api/auth/me", { credentials: "same-origin" }).then((x) => x.json());
     meCache = r.user || null;
     csrfToken = r.csrfToken || null;
-  } catch { meCache = null; }
+  } catch { return null; } // no signal: ask again next time
   return meCache;
 }
 export const roles = (u) => new Set(u?.platform_roles || []);

@@ -589,19 +589,34 @@ route('GET', '/api/organiser/:orgId/events/:eventId/orders', function ($a) {
                                ORDER BY o.created_at DESC LIMIT 200", [$event['id'], $q, $like, $like, $like])];
 });
 
+// Attendees. The screen shows 500 at a time with search and totals, so a
+// 100,000-ticket stadium stays quick; the CSV export has every ticket.
 route('GET', '/api/organiser/:orgId/events/:eventId/attendees', function ($a) {
     $u = require_auth();
     ['event' => $event] = event_access($u, $a['orgId'], $a['eventId'], ['owner', 'manager', 'viewer']);
-    $list = rows('SELECT t.code, t.status, t.holder_name, t.admitted_at, tt.name AS ticket_type, o.reference, o.buyer_email
-                    FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id
-                   WHERE t.event_id = ? ORDER BY t.holder_name NULLS LAST, t.created_at LIMIT 5000', [$event['id']]);
+    $sql = 'SELECT t.code, t.status, t.holder_name, tt.name AS ticket_type, o.reference, o.buyer_email, t.admitted_at
+              FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id WHERE t.event_id = ?';
     if (qs('format') === 'csv') {
-        audit('attendees.exported', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id'], 'details' => ['rows' => count($list)]]);
-        $lines = ['code,status,holder_name,ticket_type,order_reference,buyer_email,admitted_at'];
-        foreach ($list as $x) $lines[] = implode(',', array_map('org_csv_esc', [$x['code'], $x['status'], $x['holder_name'], $x['ticket_type'], $x['reference'], $x['buyer_email'], $x['admitted_at'] ?? '']));
-        return raw_out(implode("\n", $lines), 'text/csv; charset=utf-8', 200, ['Content-Disposition' => "attachment; filename=\"attendees-{$event['slug']}.csv\""]);
+        @set_time_limit(120);
+        $st = q($sql . ' ORDER BY t.holder_name NULLS LAST, t.created_at', [$event['id']]);
+        $out = "code,status,holder_name,ticket_type,order_reference,buyer_email,admitted_at\n";
+        $n = 0;
+        while ($x = $st->fetch(PDO::FETCH_NUM)) { $out .= implode(',', array_map('org_csv_esc', array_map(fn($v) => $v ?? '', $x))) . "\n"; $n++; }
+        $st->closeCursor();
+        audit('attendees.exported', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id'], 'details' => ['rows' => $n]]);
+        return raw_out($out, 'text/csv; charset=utf-8', 200, ['Content-Disposition' => "attachment; filename=\"attendees-{$event['slug']}.csv\""]);
     }
-    return ['attendees' => $list];
+    $tot = row("SELECT count(*) AS total, COALESCE(SUM(status = 'used'),0) AS checked_in FROM tickets WHERE event_id = ?", [$event['id']]);
+    $q = str_replace(['%', '_', '\\'], '', mb_substr(trim((string) qs('q', '')), 0, 80));
+    $page = max(1, min(1000, (int) qs('page', '1')));
+    $p = [$event['id']];
+    if ($q !== '') {
+        $sql .= ' AND (lower(t.holder_name) LIKE lower(?) OR upper(t.code) LIKE upper(?) OR upper(o.reference) LIKE upper(?) OR lower(o.buyer_email) LIKE lower(?))';
+        array_push($p, "%$q%", "$q%", "$q%", "%$q%");
+    }
+    $list = rows($sql . ' ORDER BY t.holder_name NULLS LAST, t.created_at LIMIT 501 OFFSET ' . (($page - 1) * 500), $p);
+    $more = count($list) > 500;
+    return ['attendees' => array_slice($list, 0, 500), 'total' => (int) $tot['total'], 'checkedIn' => (int) $tot['checked_in'], 'page' => $page, 'more' => $more];
 });
 
 // Ticket refunds: free orders have nothing to refund (as in Node); paid
@@ -666,8 +681,7 @@ route('POST', '/api/organiser/:orgId/events/:eventId/staff', function ($a) {
 // Live check-in view for the organiser (polled every few seconds).
 route('GET', '/api/organiser/:orgId/events/:eventId/checkins/live', function ($a) {
     ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
-    $tot = row("SELECT COALESCE(SUM(CASE WHEN status = 'used' THEN 1 ELSE 0 END),0) AS admitted,
-                       COALESCE(SUM(CASE WHEN status IN ('valid','used') THEN 1 ELSE 0 END),0) AS issued FROM tickets WHERE event_id = ?", [$event['id']]);
+    $tot = staff_event_counts($event['id']);
     $scanners = rows("SELECT u.full_name, COALESCE(SUM(CASE WHEN a.outcome = 'admitted' THEN 1 ELSE 0 END),0) AS admitted,
                              COALESCE(SUM(CASE WHEN a.outcome <> 'admitted' THEN 1 ELSE 0 END),0) AS refused, max(a.occurred_at) AS last_scan
                         FROM admission_log a JOIN users u ON u.id = a.scanned_by WHERE a.event_id = ? GROUP BY u.id ORDER BY admitted DESC", [$event['id']]);

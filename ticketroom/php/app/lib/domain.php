@@ -288,7 +288,7 @@ function admit(array $staff, array $b): array
         $eventId = $b['eventId'];
         $ev = row('SELECT id, title, status, starts_at, ends_at FROM events WHERE id = ?', [$eventId]);
         $log = function (string $outcome, ?string $ticketId = null) use ($eventId, $staff, $b) {
-            q('INSERT INTO admission_log (event_id, ticket_id, scanned_by, outcome, gate, occurred_at) VALUES (?,?,?,?,?,?)', [$eventId, $ticketId, $staff['id'], $outcome, $b['gate'] ?? null, now_iso()]);
+            q('INSERT INTO admission_log (event_id, ticket_id, scanned_by, outcome, gate, occurred_at) VALUES (?,?,?,?,?,?)', [$eventId, $ticketId, $staff['id'], $outcome, $b['gate'] ?? null, $b['at'] ?? now_iso()]);
         };
         $now = microtime(true);
         if ($ev['status'] !== 'published' || $now < to_unix($ev['starts_at']) - ADMIT_BEFORE_H * 3600 || $now > to_unix($ev['ends_at']) + ADMIT_AFTER_H * 3600) {
@@ -304,8 +304,9 @@ function admit(array $staff, array $b): array
         if ($t['event_id'] !== $eventId) { $log('wrong_event', $t['id']); return ['outcome' => 'wrong_event', 'message' => 'This ticket is for a different event.']; }
         if (in_array($t['status'], ['revoked', 'refunded'], true)) { $log($t['status'], $t['id']); return ['outcome' => $t['status'], 'message' => "This ticket was {$t['status']}."]; }
         $type = val('SELECT name FROM ticket_types WHERE id = ?', [$t['ticket_type_id']]);
-        $at = now_iso();
-        if (affected("UPDATE tickets SET status = 'used', admitted_at = ?, admitted_by = ?, updated_at = ? WHERE id = ? AND status = 'valid'", [$at, $staff['id'], $at, $t['id']]) === 0) {
+        // Offline scans synced later keep the time the fan actually walked in.
+        $at = $b['at'] ?? now_iso();
+        if (affected("UPDATE tickets SET status = 'used', admitted_at = ?, admitted_by = ?, updated_at = ? WHERE id = ? AND status = 'valid'", [$at, $staff['id'], now_iso(), $t['id']]) === 0) {
             $log('already_used', $t['id']);
             return ['outcome' => 'already_used', 'message' => 'Already scanned.', 'admittedAt' => $t['admitted_at'], 'holderName' => $t['holder_name'], 'ticketType' => $type];
         }

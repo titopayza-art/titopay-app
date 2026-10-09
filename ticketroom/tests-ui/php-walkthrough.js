@@ -152,8 +152,8 @@ async function signIn(p, email, password) {
     await o.locator("#main a[href*='#/events/']:not([href$='/new'])").first().click();
     await o.getByRole("tab", { name: "Staff" }).click();
     await o.getByRole("heading", { name: "Live check-ins" }).waitFor();
-    await o.locator("#live .kpi .v").first().waitFor();
-    assert.equal((await o.locator("#live .kpi .v").first().innerText()).trim(), "1");
+    // Totals are shared by every gate and refreshed every few seconds.
+    await o.waitForFunction(() => document.querySelector("#live .kpi .v")?.textContent.trim() === "1", null, { timeout: 15000 });
     await shot(o, "organiser-live-count");
     for (const hash of ["#/", "#/marketing", "#/team", "#/settings"]) { await o.goto(`${BASE}/organisers${hash}`); await o.waitForTimeout(400); }
 

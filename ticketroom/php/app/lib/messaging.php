@@ -93,52 +93,73 @@ function send_email(string $mode, string $to, string $subject, string $text): st
     return $msgId;
 }
 // Minimal SMTP client: implicit TLS (465) or STARTTLS (587/25), AUTH LOGIN.
+// One SMTP connection is kept open for the whole delivery run (a big match
+// sends tens of thousands of tickets; logging in for every email is slow and
+// mail servers throttle it). It is closed at the end of the request.
 function smtp_send(string $to, string $subject, array $headers, string $body): void
+{
+    static $conn = null;
+    if ($conn) {
+        try { smtp_message($conn, $to, $subject, $headers, $body); return; }
+        catch (RuntimeException $e) { if (!str_starts_with($e->getMessage(), 'SMTP link')) { smtp_reset($conn); throw $e; } @fclose($conn['fp']); $conn = null; }
+    }
+    $conn = smtp_open();
+    register_shutdown_function(function () use (&$conn) { if ($conn) { @fwrite($conn['fp'], "QUIT\r\n"); @fclose($conn['fp']); $conn = null; } });
+    try { smtp_message($conn, $to, $subject, $headers, $body); }
+    catch (RuntimeException $e) { smtp_reset($conn); throw $e; }
+}
+function smtp_cmd(array $c, ?string $line, array $ok): string
+{
+    $fp = $c['fp'];
+    if ($line !== null && @fwrite($fp, $line . "\r\n") === false) throw new RuntimeException('SMTP link lost');
+    $data = '';
+    while (($l = fgets($fp, 1024)) !== false) { $data .= $l; if (strlen($l) < 4 || $l[3] !== '-') break; }
+    if ($data === '') throw new RuntimeException('SMTP link lost');
+    if (!in_array((int) substr($data, 0, 3), $ok, true)) throw new RuntimeException('SMTP: ' . trim(preg_replace('/\s+/', ' ', $data)));
+    return $data;
+}
+function smtp_open(): array
 {
     $host = (string) cfg('mail.smtpHost');
     $port = (int) cfg('mail.smtpPort', 465);
     $user = (string) cfg('mail.smtpUser');
-    $pass = (string) cfg('mail.smtpPass');
     $ctx = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true]]);
     $fp = @stream_socket_client(($port === 465 ? 'ssl://' : 'tcp://') . "$host:$port", $errno, $err, 15, STREAM_CLIENT_CONNECT, $ctx);
     if (!$fp) throw new RuntimeException("SMTP connect failed: $err");
     stream_set_timeout($fp, 20);
-    $read = function () use ($fp): string {
-        $data = '';
-        while (($line = fgets($fp, 1024)) !== false) { $data .= $line; if (strlen($line) < 4 || $line[3] !== '-') break; }
-        return $data;
-    };
-    $cmd = function (?string $c, array $ok) use ($fp, $read): string {
-        if ($c !== null) fwrite($fp, $c . "\r\n");
-        $r = $read();
-        if (!in_array((int) substr($r, 0, 3), $ok, true)) throw new RuntimeException('SMTP: ' . trim(preg_replace('/\s+/', ' ', $r)));
-        return $r;
-    };
+    $c = ['fp' => $fp];
     try {
-        $cmd(null, [220]);
+        smtp_cmd($c, null, [220]);
         $ehlo = 'EHLO ' . (parse_url(base_url(), PHP_URL_HOST) ?: 'localhost');
-        $caps = $cmd($ehlo, [250]);
+        $caps = smtp_cmd($c, $ehlo, [250]);
         if ($port !== 465 && stripos($caps, 'STARTTLS') !== false) {
-            $cmd('STARTTLS', [220]);
+            smtp_cmd($c, 'STARTTLS', [220]);
             if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) throw new RuntimeException('SMTP TLS failed');
-            $cmd($ehlo, [250]);
+            smtp_cmd($c, $ehlo, [250]);
         }
         if ($user !== '') {
-            $cmd('AUTH LOGIN', [334]);
-            $cmd(base64_encode($user), [334]);
-            $cmd(base64_encode($pass), [235]);
+            smtp_cmd($c, 'AUTH LOGIN', [334]);
+            smtp_cmd($c, base64_encode($user), [334]);
+            smtp_cmd($c, base64_encode((string) cfg('mail.smtpPass')), [235]);
         }
-        $cmd('MAIL FROM:<' . mail_from()[0] . '>', [250]);
-        $cmd("RCPT TO:<$to>", [250, 251]);
-        $cmd('DATA', [354]);
-        $h = "To: $to\r\nSubject: " . mime_header($subject) . "\r\n";
-        foreach ($headers as $k => $v) $h .= "$k: $v\r\n";
-        $data = preg_replace('/^\./m', '..', $h . "\r\n" . $body);
-        $cmd($data . "\r\n.", [250]);
-        $cmd('QUIT', [221, 250]);
-    } finally {
-        fclose($fp);
-    }
+    } catch (Throwable $e) { @fclose($fp); throw $e; }
+    return $c;
+}
+function smtp_message(array $c, string $to, string $subject, array $headers, string $body): void
+{
+    smtp_cmd($c, 'MAIL FROM:<' . mail_from()[0] . '>', [250]);
+    smtp_cmd($c, "RCPT TO:<$to>", [250, 251]);
+    smtp_cmd($c, 'DATA', [354]);
+    $h = "To: $to\r\nSubject: " . mime_header($subject) . "\r\n";
+    foreach ($headers as $k => $v) $h .= "$k: $v\r\n";
+    $data = preg_replace('/^\./m', '..', $h . "\r\n" . $body);
+    smtp_cmd($c, $data . "\r\n.", [250]);
+}
+// After a refused recipient, clear the half-started message so the same
+// connection can carry on with the next email.
+function smtp_reset(array $c): void
+{
+    try { smtp_cmd($c, 'RSET', [250]); } catch (Throwable) {}
 }
 function smtp_health(): array
 {

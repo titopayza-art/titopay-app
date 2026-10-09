@@ -167,6 +167,7 @@ async function eventPage(slug) {
           <label class="check"><input type="checkbox" name="mEmail"><span>Email me about their future events</span></label>
           <label class="check"><input type="checkbox" name="mSms"><span>SMS me about their future events</span></label>
           <span class="tiny muted">Unsubscribe any time. We never sell your details.</span></fieldset>
+        <p class="callout warn mb-0" id="pay-wait" role="status" hidden></p>
         <button class="btn btn-primary btn-block" type="submit">${quote.totalCents === 0 ? "Get free tickets" : `Pay ${moneyExact(quote.totalCents)}`}</button>
         <button class="btn btn-link btn-block" type="button" data-back>Change tickets</button>
         <p class="tiny muted mb-0">By paying you agree to the <a href="/legal/terms">Terms</a> and the event's refund policy. Your tickets are reserved for a few minutes while you pay. Payment is confirmed by the payment provider, not by your browser.</p>
@@ -174,10 +175,24 @@ async function eventPage(slug) {
     $("#promo").addEventListener("submit", (ev) => { ev.preventDefault(); drawCheckout(u, $("#pc").value.trim()); });
     $("[data-back]", box).addEventListener("click", drawSelect);
     onSubmit($("#pay"), async (v) => {
-      const res = await post("/api/public/orders", {
+      const body = {
         eventSlug: slug, items: selection(), promoCode: quote.promoCode || undefined, ref: sessionStorage.getItem(`tr_ref_${slug}`) || undefined,
         buyerPhone: v.buyerPhone, marketingOptIn: { email: !!v.mEmail, sms: !!v.mSms }, idempotencyKey: key, paymentMethod: v.paymentMethod || "card",
-      });
+      };
+      // On a big on-sale the server can be briefly too busy to answer. Try
+      // again with the same key: the server books it once, however many tries.
+      const note = $("#pay-wait");
+      let res;
+      for (let attempt = 0; ; attempt++) {
+        try { res = await post("/api/public/orders", body, { timeoutMs: 25000 }); break; }
+        catch (err) {
+          const busy = err.status === 0 || err.status === 502 || err.status === 504 || (err.status === 503 && (!err.code || err.code === "busy"));
+          if (!busy || attempt >= 7) { note.hidden = true; throw err; }
+          note.hidden = false;
+          note.textContent = "Lots of people are booking right now. Hold on, we're still trying. Please don't close this page.";
+          await new Promise((r) => setTimeout(r, Math.min(8000, 1500 * 2 ** attempt) * (0.7 + Math.random() * 0.6)));
+        }
+      }
       sessionStorage.removeItem(`tr_idem_${slug}`);
       if (res.payment?.redirectUrl && res.order.status === "pending_payment") location.href = res.payment.redirectUrl;
       else location.href = `/orders/${res.order.reference}`;

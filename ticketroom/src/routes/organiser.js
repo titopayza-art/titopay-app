@@ -319,20 +319,31 @@ router.get("/:orgId/events/:eventId/orders", wrap(async (req, res) => {
   res.json({ orders: rows });
 }));
 
+// The screen pages 500 at a time with search and totals; the CSV has every ticket.
 router.get("/:orgId/events/:eventId/attendees", wrap(async (req, res) => {
   const { event } = await eventAccess(req.user, req.params.orgId, req.params.eventId, ["owner", "manager", "viewer"]);
-  const { rows } = await db.query(
-    `SELECT t.code, t.status, t.holder_name, t.admitted_at, tt.name AS ticket_type, o.reference, o.buyer_email
+  const sql = `SELECT t.code, t.status, t.holder_name, t.admitted_at, tt.name AS ticket_type, o.reference, o.buyer_email
        FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id
-      WHERE t.event_id = $1 ORDER BY t.holder_name NULLS LAST, t.created_at LIMIT 5000`, [event.id]);
+      WHERE t.event_id = $1`;
   if (req.query.format === "csv") {
+    const { rows } = await db.query(`${sql} ORDER BY t.holder_name NULLS LAST, t.created_at`, [event.id]);
     await audit.record(null, { actor: req.user, action: "attendees.exported", entityType: "event", entityId: event.id, organiserId: event.organiser_id, details: { rows: rows.length } });
     const esc = (v) => { const s = String(v ?? ""); return /^[=+\-@]/.test(s) ? `"'${s.replace(/"/g, '""')}"` : `"${s.replace(/"/g, '""')}"`; };
     const csv = ["code,status,holder_name,ticket_type,order_reference,buyer_email,admitted_at", ...rows.map((x) => [x.code, x.status, x.holder_name, x.ticket_type, x.reference, x.buyer_email, x.admitted_at?.toISOString?.() || ""].map(esc).join(","))].join("\n");
     res.setHeader("Content-Disposition", `attachment; filename="attendees-${event.slug}.csv"`);
     return res.type("text/csv").send(csv);
   }
-  res.json({ attendees: rows });
+  const q = String(req.query.q || "").trim().slice(0, 80).replace(/[%_\\]/g, "");
+  const page = Math.max(1, Math.min(1000, Number.parseInt(req.query.page, 10) || 1));
+  const { rows: [tot] } = await db.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'used')::int AS checked_in FROM tickets WHERE event_id = $1`, [event.id]);
+  const params = [event.id];
+  let where = "";
+  if (q) {
+    params.push(`%${q}%`, `${q}%`);
+    where = " AND (t.holder_name ILIKE $2 OR t.code ILIKE $3 OR o.reference ILIKE $3 OR o.buyer_email ILIKE $2)";
+  }
+  const { rows } = await db.query(`${sql}${where} ORDER BY t.holder_name NULLS LAST, t.created_at LIMIT 501 OFFSET ${(page - 1) * 500}`, params);
+  res.json({ attendees: rows.slice(0, 500), total: tot.total, checkedIn: tot.checked_in, page, more: rows.length > 500 });
 }));
 
 router.post("/:orgId/events/:eventId/orders/:orderId/refund", wrap(async (req, res) => {

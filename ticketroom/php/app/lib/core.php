@@ -105,7 +105,12 @@ function norm_row(array $r): array
 }
 function q(string $sql, array $p = []): PDOStatement
 {
-    $st = db()->prepare($sql);
+    // Prepared statements are reused within a request (bookings run the same
+    // dozen statements, so this saves parsing them every time).
+    static $cache = [];
+    if (count($cache) > 200) $cache = [];
+    $st = $cache[$sql] ??= db()->prepare($sql);
+    $st->closeCursor();
     foreach (array_values($p) as $i => $v) {
         $type = is_int($v) ? PDO::PARAM_INT : (is_bool($v) ? PDO::PARAM_INT : ($v === null ? PDO::PARAM_NULL : PDO::PARAM_STR));
         $st->bindValue($i + 1, is_bool($v) ? (int) $v : $v, $type);
@@ -113,10 +118,12 @@ function q(string $sql, array $p = []): PDOStatement
     $st->execute();
     return $st;
 }
-function rows(string $sql, array $p = []): array { return array_map('norm_row', q($sql, $p)->fetchAll()); }
-function row(string $sql, array $p = []): ?array { $r = q($sql, $p)->fetch(); return $r ? norm_row($r) : null; }
-function val(string $sql, array $p = []) { $v = q($sql, $p)->fetchColumn(); return $v === false ? null : $v; }
-function affected(string $sql, array $p = []): int { return q($sql, $p)->rowCount(); }
+// Every helper closes its cursor straight away: a cached statement left half
+// read would keep a read snapshot open and make the next write fail as "busy".
+function rows(string $sql, array $p = []): array { $st = q($sql, $p); $r = $st->fetchAll(); $st->closeCursor(); return array_map('norm_row', $r); }
+function row(string $sql, array $p = []): ?array { $st = q($sql, $p); $r = $st->fetch(); $st->closeCursor(); return $r ? norm_row($r) : null; }
+function val(string $sql, array $p = []) { $st = q($sql, $p); $v = $st->fetchColumn(); $st->closeCursor(); return $v === false ? null : $v; }
+function affected(string $sql, array $p = []): int { $st = q($sql, $p); $n = $st->rowCount(); $st->closeCursor(); return $n; }
 // Writes go through one IMMEDIATE transaction at a time: SQLite then
 // serialises every check-and-update (capacity, admission) across workers.
 function tx(callable $fn)

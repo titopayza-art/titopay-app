@@ -117,7 +117,7 @@ function tr_setup(string $docroot, string $path, string $method): void
     $GLOBALS['TR_CONFIG'] = $config;
     @unlink("$dir/ticketroom.sqlite");
     db()->exec((string) file_get_contents(TR_APP . '/schema.sql'));
-    q('INSERT INTO meta (key, value) VALUES (?, ?)', ['schema_version', '1']);
+    q('INSERT INTO meta (key, value) VALUES (?, ?)', ['schema_version', (string) SCHEMA_VERSION]);
     $uid = uuid();
     $now = now_iso();
     insert('users', ['id' => $uid, 'email' => $email, 'full_name' => $in['fullName'], 'password_hash' => hash_secret($pw), 'status' => 'active', 'email_verified_at' => $now, 'created_at' => $now, 'updated_at' => $now]);
