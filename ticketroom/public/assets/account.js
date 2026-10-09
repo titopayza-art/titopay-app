@@ -7,8 +7,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").cat
 
 const nav = () => render($("#sidenav"), html`
   <div class="sect">Tickets</div><a href="#/tickets">🎟️ My tickets</a><a href="#/orders">🧾 Orders</a><a href="#/transfers">🔁 Transfers</a>
-  <div class="sect">Cashless</div><a href="#/wallet">💳 Wallets</a><a href="#/tags">📶 Tags & wristbands</a>
-  <div class="sect">Account</div><a href="#/refunds">↩️ Refunds & support</a><a href="#/payment-methods">🔗 Payment methods</a><a href="#/settings">⚙️ Settings & privacy</a>`);
+  <div class="sect" data-feature="cashless">Cashless</div><a href="#/wallet" data-feature="cashless">💳 Wallets</a><a href="#/tags" data-feature="cashless">📶 Tags & wristbands</a>
+  <div class="sect">Account</div><a href="#/refunds">↩️ Refunds & support</a><a href="#/payment-methods" data-feature="payments">🔗 Payment methods</a><a href="#/settings">⚙️ Settings & privacy</a>`);
 
 function head(title, sub = "", actions = "") {
   return html`<div class="page-head"><div><h1>${title}</h1>${sub ? html`<p class="muted">${sub}</p>` : ""}</div><div class="row">${actions}</div></div>`;

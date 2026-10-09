@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -40,7 +40,7 @@ async function home() {
     <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/contact?topic=advertising">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
     <section class="section"><div class="wrap"><div class="promo-band">
       <div><span class="cat-label">For organisers</span><h2>Sell out your next event with TicketRoom</h2>
-        <ul><li>Online and QR tickets with live sales analytics</li><li>Gate scanning that blocks duplicates in real time</li><li>Email &amp; SMS marketing to fans who opted in</li><li>Cashless wristbands, vendor POS and transparent payouts</li></ul></div>
+        <ul><li>Online and QR tickets with live sales analytics</li><li>Gate scanning that blocks duplicates in real time</li><li>Email marketing to fans who opted in</li><li data-feature="cashless">Cashless wristbands, vendor POS and transparent payouts</li><li data-feature-off="cashless">Free events with no fees — paid tickets, cashless and payouts coming soon</li></ul></div>
       <div class="row"><a class="btn btn-primary" href="/sell">Start selling</a><a class="btn btn-outline-light" href="/organisers">Organiser login</a></div>
     </div></div></section>`);
 
@@ -225,7 +225,7 @@ function sellPage() {
       </div>
       <div class="card"><h2>What's included</h2><div class="grid-2">
         <ul><li>Real-time sales dashboard and daily trend</li><li>Tracking links to see which channel sells</li><li>Email and SMS campaigns to fans who opted in (POPIA-aligned)</li><li>Free ticket transfers that invalidate the old QR</li></ul>
-        <ul><li>RFID/NFC wristbands and QR tags for cashless events</li><li>Vendor POS on any phone, with per-vendor reporting</li><li>Refunds with dual approval and a full audit trail</li><li>Transparent settlements once your event has run</li></ul></div>
+        <ul><li data-feature="cashless">RFID/NFC wristbands and QR tags for cashless events</li><li data-feature="pos">Vendor POS on any phone, with per-vendor reporting</li><li data-feature="finance">Refunds with dual approval and a full audit trail</li><li data-feature="finance">Transparent settlements once your event has run</li><li data-feature-off="cashless">Coming soon: paid tickets, cashless wristbands, vendor POS and payouts</li></ul></div>
       </div>
       <div class="card" id="pricing"><h2>Simple pricing</h2><div class="grid-3">
         <div><div class="kpi"><div class="k">You pay</div><div class="v">5%</div><div class="s">of ticket sales, deducted from your payout</div></div></div>
@@ -319,9 +319,9 @@ function wireSupport(root) {
 
 async function help() {
   document.title = "Help — TicketRoom";
-  const site = await siteInfo();
+  const [site, feat] = await Promise.all([siteInfo(), features()]);
   render(main, html`<div class="wrap section stack-lg"><div><h1>Help centre</h1><p class="lead mb-0">Quick answers, a smart assistant, and real people when you need them.</p></div>
-    <div class="card">${FAQ.map(([q, a]) => html`<details class="tt"><summary class="name">${q}</summary><p class="muted mt">${a}</p></details>`)}</div>
+    <div class="card">${FAQ.filter(([q]) => feat.cashless || !/cashless/i.test(q)).map(([q, a]) => html`<details class="tt"><summary class="name">${q}</summary><p class="muted mt">${a}</p></details>`)}</div>
     <div id="sup">${await supportPanel(site)}</div></div>`);
   wireSupport(main);
 }

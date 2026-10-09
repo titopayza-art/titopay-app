@@ -1,9 +1,10 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features } from "/assets/core.js";
 
 const main = $("#main");
-let ORG = null;           // current organiser
+let ORG = null;
+let FEATURES = { cashless: true, sms: true };           // current organiser
 let ORGS = [];
 
 const head = (title, sub = "", actions = "", crumbs = "") => html`${crumbs ? html`<div class="crumbs">${crumbs}</div>` : ""}<div class="page-head"><div><h1>${title}</h1>${sub ? html`<p class="muted">${sub}</p>` : ""}</div><div class="row">${actions}</div></div>`;
@@ -13,8 +14,8 @@ const base = () => `/api/organiser/${ORG.id}`;
 function nav() {
   render($("#sidenav"), html`
     ${ORGS.length > 1 ? html`<div class="org-switch"><label class="sr-only" for="orgsel">Organisation</label><select id="orgsel">${ORGS.map((o) => html`<option value="${o.id}" ${raw(o.id === ORG?.id ? "selected" : "")}>${o.name}</option>`)}</select></div>` : ORG ? html`<div class="sect">${ORG.name}</div>` : ""}
-    <a href="#/">📊 Dashboard</a><a href="#/events">🎫 Events</a><a href="#/marketing">📣 Marketing</a><a href="#/refunds">↩️ Refunds</a><a href="#/finance">💰 Finance & payouts</a><a href="#/team">👥 Team</a><a href="#/settings">⚙️ Settings</a>
-    <div class="sect">Tools</div><a href="/scan">📷 Gate scanner</a><a href="/pos">🧾 Vendor POS</a>`);
+    <a href="#/">📊 Dashboard</a><a href="#/events">🎫 Events</a><a href="#/marketing">📣 Marketing</a><a href="#/refunds" data-feature="finance">↩️ Refunds</a><a href="#/finance" data-feature="finance">💰 Finance & payouts</a><a href="#/team">👥 Team</a><a href="#/settings">⚙️ Settings</a>
+    <div class="sect">Tools</div><a href="/scan">📷 Gate scanner</a><a href="/pos" data-feature="pos">🧾 Vendor POS</a>`);
   $("#orgsel")?.addEventListener("change", (e) => { localStorage.setItem("tr_org", e.target.value); location.hash = "#/"; location.reload(); });
 }
 
@@ -89,7 +90,7 @@ function eventForm(e = {}) {
     <div class="field"><label for="accessibilityInfo">Accessibility information</label><textarea id="accessibilityInfo" name="accessibilityInfo" maxlength="2000" placeholder="Step-free access, accessible toilets, companion tickets…">${e.accessibility_info || ""}</textarea></div>
     <div class="field"><label for="ageRestriction">Age restriction</label><input id="ageRestriction" name="ageRestriction" maxlength="60" value="${e.age_restriction || ""}" placeholder="e.g. 18+"></div>
     <label class="check"><input type="checkbox" name="transfersEnabled" ${raw(e.transfers_enabled === false ? "" : "checked")}><span>Allow ticket holders to transfer tickets</span></label>
-    <label class="check"><input type="checkbox" name="cashlessEnabled" ${raw(e.cashless_enabled ? "checked" : "")}><span>Cashless event (wristbands / tags and vendor POS)</span></label>
+    <label class="check" data-feature="cashless"><input type="checkbox" name="cashlessEnabled" ${raw(e.cashless_enabled ? "checked" : "")}><span>Cashless event (wristbands / tags and vendor POS)</span></label>
     <button class="btn btn-primary" type="submit">${e.id ? "Save changes" : "Create draft"}</button></form>`;
 }
 
@@ -129,7 +130,7 @@ async function eventWorkspace({ id, tab = "" }) {
     ${e.status === "pending_approval" ? html`<p class="callout">Submitted. TicketRoom will review and publish it shortly.</p>` : ""}
     ${e.status === "draft" && e.status_reason ? html`<p class="callout warn"><strong>Changes requested:</strong> ${e.status_reason}</p>` : ""}
     ${e.cancellation_requested_at && e.status !== "cancelled" ? html`<p class="callout warn">Cancellation requested: ${e.cancellation_reason}. TicketRoom will cancel the event and refund buyers.</p>` : ""}
-    <div class="tabs" role="tablist">${TABS.map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
+    <div class="tabs" role="tablist">${TABS.filter(([k]) => k !== "vendors" || FEATURES.cashless).map(([k, l]) => html`<a href="#/events/${id}${k ? "/" + k : ""}" role="tab" aria-selected="${tab === k}">${l}</a>`)}</div>
     <div id="tab"></div>`);
   $("[data-submit]")?.addEventListener("click", async () => { try { await post(`${base()}/events/${id}/submit`); toast("Submitted for approval.", "good"); eventWorkspace({ id, tab }); } catch (err) { toast(err.message, "bad"); } });
   $("[data-cancel]")?.addEventListener("click", async () => {
@@ -258,7 +259,7 @@ async function staffTab(el, d, reload) {
       ${staff.map((s) => html`<tr><td>${s.full_name}<div class="small muted">${s.email}</div></td><td>${s.can_scan ? "Yes" : "No"}</td><td>${s.can_manage_tags ? "Yes" : "No"}</td><td class="num">${s.admitted}</td><td>${can("owner", "manager") ? html`<button class="btn btn-ghost btn-sm" data-rm="${s.id}">Remove</button>` : ""}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">No scanners yet. Add your first one below.</p>`}
     ${can("owner", "manager") ? html`<form class="stack mt" id="sf"><div class="grid-2"><div class="field"><label for="sn">Name <span class="muted">(for new people)</span></label><input id="sn" name="fullName" maxlength="120" autocomplete="off"></div>
       <div class="field"><label for="se">Email</label><input id="se" name="email" type="email" required autocomplete="off"></div></div>
-      <label class="check"><input type="checkbox" name="canScan" checked><span>Can scan tickets at the gate</span></label><label class="check"><input type="checkbox" name="canManageTags"><span>Can link, replace and block tags (registration desk)</span></label>
+      <label class="check"><input type="checkbox" name="canScan" checked><span>Can scan tickets at the gate</span></label><label class="check" data-feature="tags"><input type="checkbox" name="canManageTags"><span>Can link, replace and block tags (registration desk)</span></label>
       <button class="btn btn-dark">Add scanner</button></form>` : ""}</section>`);
   if ($("#sf")) onSubmit($("#sf"), async (v) => {
     const r = await post(`${base()}/events/${d.event.id}/staff`, v);
@@ -327,7 +328,7 @@ async function marketing() {
     ${pendingBanner()}
     <div class="kpis"><div class="kpi"><div class="k">Ticket holders</div><div class="v">${aud.ticketHolders}</div><div class="s">all your events</div></div>
       <div class="kpi"><div class="k">Email audience</div><div class="v">${aud.emailOptIns}</div><div class="s">opted in to your email</div></div>
-      <div class="kpi"><div class="k">SMS audience</div><div class="v">${aud.smsOptIns}</div><div class="s">opted in, with a mobile number</div></div>
+      <div class="kpi" data-feature="sms"><div class="k">SMS audience</div><div class="v">${aud.smsOptIns}</div><div class="s">opted in, with a mobile number</div></div>
       <div class="kpi"><div class="k">Campaigns sent</div><div class="v">${campaigns.filter((c) => c.status === "sent").length}</div><div class="s">limit 10 per day</div></div></div>
     ${cfg.messaging.email === "log" || cfg.messaging.sms === "log" ? html`<p class="callout warn mt"><strong>Delivery is simulated in this environment.</strong> Messages are queued and recorded but not sent until an email/SMS gateway is connected.</p>` : ""}
     <section class="card mt"><h2>Campaigns</h2>${campaigns.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Channel</th><th>Status</th><th class="num">Recipients</th><th class="num">Delivered</th><th>Date</th><th></th></tr></thead><tbody>
@@ -341,7 +342,7 @@ async function marketing() {
 function campaignDialog(c, evs, done) {
   const dlg = dialog(c ? c.name : "New campaign", html`<form class="stack" id="cf">
     <div class="grid-2"><div class="field"><label for="cn">Campaign name (internal)</label><input id="cn" name="name" required value="${c?.name || ""}"></div>
-      <div class="field"><label for="cc">Channel</label><select id="cc" name="channel" ${raw(c ? "disabled" : "")}><option value="email" ${raw(c?.channel === "email" ? "selected" : "")}>Email</option><option value="sms" ${raw(c?.channel === "sms" ? "selected" : "")}>SMS</option></select></div></div>
+      <div class="field"><label for="cc">Channel</label><select id="cc" name="channel" ${raw(c ? "disabled" : "")}><option value="email" ${raw(c?.channel === "email" ? "selected" : "")}>Email</option>${FEATURES.sms ? html`<option value="sms" ${raw(c?.channel === "sms" ? "selected" : "")}>SMS</option>` : ""}</select></div></div>
     <div class="field" id="subj"><label for="cs">Email subject</label><input id="cs" name="subject" maxlength="150" value="${c?.subject || ""}"></div>
     <div class="field"><label for="cb">Message</label><textarea id="cb" name="body" required maxlength="5000">${c?.body || ""}</textarea><span class="hint" id="cbh">Use {{first_name}} to personalise. An unsubscribe link and your organisation name are added automatically.</span></div>
     <fieldset class="field"><legend class="label">Audience: people who bought tickets to…</legend>
@@ -447,6 +448,7 @@ async function loadOrg() {
   const u = await requireUser("Sign in to the organiser portal.");
   if (!u) return render(main, empty("Sign in to continue."));
   await header($("#header"), { portal: "Organiser" });
+  FEATURES = await features();
   await loadOrg();
   nav();
   if (!ORG) { render($("#sidenav"), ""); return apply(); }

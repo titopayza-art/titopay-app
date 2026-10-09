@@ -1,0 +1,47 @@
+# TicketRoom — public_html/.htaccess (Afrihost LiteSpeed / Apache)
+Options -Indexes
+DirectoryIndex index.php
+
+# Private folders: application code and (if kept here) the data folder.
+<IfModule mod_alias.c>
+  RedirectMatch 404 ^/(tr-app|tr-data)(/|$)
+</IfModule>
+
+# Never serve archives, configuration, databases, logs or dot-files.
+<FilesMatch "(?i)\.(zip|tar|gz|tgz|rar|7z|env|sql|sqlite|sqlite-wal|sqlite-shm|db|bak|old|log|sh|ini|pem|key|txt|json)$|^\.">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+<FilesMatch "^manifest\.webmanifest$">
+  <IfModule mod_authz_core.c>
+    Require all granted
+  </IfModule>
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # After SSL is active (cPanel → SSL/TLS Status → Run AutoSSL), remove the "#"
+  # from the next two lines to send everyone to https://.
+  # RewriteCond %{HTTPS} !=on
+  # RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+  # Real files (assets, images) are served directly; everything else goes to TicketRoom.
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule ^ index.php [L,QSA]
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css "access plus 1 hour"
+  ExpiresByType application/javascript "access plus 1 hour"
+  ExpiresByType image/png "access plus 1 day"
+  ExpiresByType image/svg+xml "access plus 1 day"
+</IfModule>

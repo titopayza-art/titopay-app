@@ -35,6 +35,18 @@ export const parseRand = (s) => { const t = String(s || "").replace(/^R\s*/i, ""
 export const idem = () => (crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`);
 export const initials = (name) => String(name || "?").split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
 
+// ---------- edition features ----------
+// The PHP edition (shared hosting) has no payments, cashless, POS or SMS yet;
+// /api/config says so and feature-specific UI marked data-feature="…" hides.
+const ALL_FEATURES = { payments: true, cashless: true, pos: true, finance: true, sms: true, tags: true };
+let featurePromise;
+export function features() {
+  featurePromise ||= fetch("/api/config", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}))
+    .then((c) => ({ ...ALL_FEATURES, ...(c.features || {}) }));
+  return featurePromise;
+}
+features().then((f) => { for (const [k, on] of Object.entries(f)) document.documentElement.classList.toggle(`no-${k}`, !on); });
+
 // ---------- API ----------
 let csrfToken = null;
 let meCache;
@@ -219,7 +231,7 @@ export function footer(el) {
     <div>${brand()}<p class="mt small">South African event ticketing, entry and cashless payments. Your event. Your ticket.</p>
       <p class="small mb-0"><a href="mailto:hello@ticketroom.co.za" data-support-email>hello@ticketroom.co.za</a><br><span data-hours-line>Monday to Friday, 9am to 5pm</span></p></div>
     <div><h4>Attendees</h4><ul><li><a href="/">Find events</a></li><li><a href="/account">My tickets</a></li><li><a href="/account#/transfers">Transfer a ticket</a></li><li><a href="/help">Help centre</a></li><li><a href="/contact">Request a callback</a></li></ul></div>
-    <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/organisers">Organiser portal</a></li><li><a href="/scan">Gate scanner</a></li><li><a href="/pos">Vendor POS</a></li></ul></div>
+    <div><h4>Organisers</h4><ul><li><a href="/sell">Sell tickets</a></li><li><a href="/organisers">Organiser portal</a></li><li><a href="/scan">Gate scanner</a></li><li data-feature="pos"><a href="/pos">Vendor POS</a></li></ul></div>
     <div><h4>Legal</h4><ul><li><a href="/legal/terms-of-use">Terms of Use</a></li><li><a href="/legal/terms">Terms and Conditions</a></li><li><a href="/legal/privacy">Privacy Policy</a></li><li><a href="/legal/cookies">Cookie Policy</a></li><li><a href="/legal/paia">PAIA manual</a></li><li><a href="/unsubscribe">Unsubscribe</a></li></ul></div>
   </div><div class="legal-line">© ${new Date().getFullYear()} TicketRoom · ticketroom.co.za. All prices in South African Rand (ZAR).</div></div>`);
   siteExtras().catch(() => {});

@@ -13,8 +13,8 @@ const reason = (title, msg, label = "Reason") => confirmDialog(title, msg, { con
 function nav(counts = {}) {
   const c = (n) => (n ? html`<span class="count">${n}</span>` : "");
   render($("#sidenav"), html`<a href="#/">📊 Overview</a>
-    <div class="sect">Operations</div><a href="#/organisers">🏢 Organisers${c(counts.orgs)}</a><a href="#/events">🎫 Events${c(counts.events)}</a><a href="#/users">👤 Users</a><a href="#/lookup">🔎 Orders & tickets</a><a href="#/tags">📶 Tags</a><a href="#/terminals">🧾 Terminals</a><a href="#/support">💬 Support${c(counts.support)}</a>
-    <div class="sect">Finance</div><a href="#/refunds">↩️ Refunds${c(counts.refunds)}</a><a href="#/payouts">💰 Payouts${c(counts.payouts)}</a><a href="#/payments">💳 Payments & webhooks</a><a href="#/reconciliation">⚖️ Reconciliation${c(counts.recon)}</a><a href="#/ledger">📒 Ledger</a>
+    <div class="sect">Operations</div><a href="#/organisers">🏢 Organisers${c(counts.orgs)}</a><a href="#/events">🎫 Events${c(counts.events)}</a><a href="#/users">👤 Users</a><a href="#/lookup">🔎 Orders & tickets</a><a href="#/tags" data-feature="tags">📶 Tags</a><a href="#/terminals" data-feature="pos">🧾 Terminals</a><a href="#/support">💬 Support${c(counts.support)}</a>
+    <div class="sect" data-feature="finance">Finance</div><a href="#/refunds" data-feature="finance">↩️ Refunds${c(counts.refunds)}</a><a href="#/payouts" data-feature="finance">💰 Payouts${c(counts.payouts)}</a><a href="#/payments" data-feature="finance">💳 Payments & webhooks</a><a href="#/reconciliation" data-feature="finance">⚖️ Reconciliation${c(counts.recon)}</a><a href="#/ledger" data-feature="finance">📒 Ledger</a>
     <div class="sect">Website</div><a href="#/site">🌐 Site settings</a><a href="#/posters">🖼️ Advertising posters</a><a href="#/assistant">🤖 Assistant</a><a href="#/emails">📧 Email templates</a>
     <div class="sect">Governance</div><a href="#/integrations">🔌 Integrations</a><a href="#/audit">🛡️ Audit log</a><a href="#/outbox">✉️ Messages</a>`);
 }
