@@ -473,6 +473,12 @@ export function router(routes, fallback) {
           a.toggleAttribute("aria-current", target === "/" ? path === "/" : path === target || path.startsWith(target + "/"));
           if (a.hasAttribute("aria-current")) a.setAttribute("aria-current", "page");
         });
+        // On a phone the menu is a sideways strip: keep the current page in view.
+        const cur = document.querySelector('.sidenav a[aria-current="page"]');
+        if (cur && cur.parentElement.scrollWidth > cur.parentElement.clientWidth) {
+          const nav = cur.parentElement;
+          nav.scrollTo({ left: Math.max(0, cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2), behavior: "smooth" });
+        }
         $("#main")?.focus({ preventScroll: true });
         return;
       }

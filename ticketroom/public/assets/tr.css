@@ -215,7 +215,12 @@ dialog::backdrop { background: rgba(7,19,48,.55); }
 .sidenav a[aria-current="page"] { background: var(--navy-900); color: #fff; }
 .sidenav a .count { margin-left: auto; background: var(--amber-500); color: var(--navy-950); border-radius: 999px; font-size: .72rem; padding: 1px 8px; font-weight: 800; }
 @media (max-width: 979px) {
-  .sidenav { display: flex; gap: 4px; overflow-x: auto; padding: 8px var(--gutter); border-right: 0; border-bottom: 1px solid var(--line); position: sticky; top: 64px; z-index: 30; }
+  /* Menu strip on top, page below: the strip keeps its own height instead of
+     sharing the screen height with the page. */
+  .shell { grid-template-rows: auto 1fr; align-content: start; }
+  .sidenav { display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; padding: 8px var(--gutter); border-right: 0; border-bottom: 1px solid var(--line); position: sticky; top: 64px; z-index: 30; }
+  .sidenav::-webkit-scrollbar { display: none; }
+  .sidenav:empty { display: none; }
   .sidenav .sect { display: none; } .sidenav a { white-space: nowrap; padding: 8px 12px; flex: none; }
 }
 .main { padding: 24px var(--gutter) 64px; max-width: 1200px; width: 100%; }
