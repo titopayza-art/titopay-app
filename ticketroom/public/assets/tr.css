@@ -28,7 +28,7 @@ p { margin: 0 0 1em; }
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; } .row.between { justify-content: space-between; } .row.end { justify-content: flex-end; }
 .stack > * + * { margin-top: 12px; } .stack-lg > * + * { margin-top: 24px; }
 .grow { flex: 1 1 auto; } .hidden { display: none !important; }
-.mt-0 { margin-top: 0; } .mb-0 { margin-bottom: 0; } .mt { margin-top: 16px; } .mb { margin-bottom: 16px; } .mt-lg { margin-top: 32px; }
+.mt-0 { margin-top: 0; } .mb-0 { margin-bottom: 0; } .mt { margin-top: 16px; } .mb { margin-bottom: 16px; } .nowrap { white-space: nowrap; } .mt-lg { margin-top: 32px; }
 
 /* ---------- header ---------- */
 .site-header { background: var(--navy-900); color: #fff; position: sticky; top: 0; z-index: 40; border-bottom: 1px solid rgba(255,255,255,.08); }

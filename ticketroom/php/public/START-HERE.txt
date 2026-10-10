@@ -38,8 +38,20 @@ IN THE ADMIN PORTAL (ticketroom.co.za/admin)
   Subscribers       Everyone who asked for updates from the website.
                     Send them an update (test it on yourself first), or
                     export the list.
+  All events and     Search by Event ID (EV-...), Organiser ID (ORG-...)
+  Organiser accounts or name. Every event and organiser gets its ID when it
+                    is created; ask callers for it.
 Organisers get a QR code for each event as soon as they create it, and
 again any time under the event's Overview tab.
+
+Organisers can sell any kind of ticket (general, early bird, VIP, VVIP,
+golden circle, student, child, pensioner, couple, group or table, day and
+season passes, backstage, hospitality and more). Couple, group and table
+tickets let several people in on one QR code; the scanner shows "ADMIT 2".
+They choose which age groups an event is for, and visitors can filter by
+age group. Crew, artists, media, vendors and guests get gate passes from
+the event's Gate passes tab: each has its own QR code and private link,
+can allow re-entry or one entry, and can be cancelled or replaced.
 
 Customers can like events (saved under Saved events), share them on
 WhatsApp, Facebook, X or email, add them to their calendar, and save each

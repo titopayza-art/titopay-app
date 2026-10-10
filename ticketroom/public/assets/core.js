@@ -164,7 +164,9 @@ export function dialog(title, bodyTpl, { wide = false, onClose } = {}) {
   render(d, html`<div class="dialog-head"><h2 id="dlg-title">${title}</h2><button class="icon-btn" data-close aria-label="Close">×</button></div><div class="dialog-body">${bodyTpl}</div>`);
   document.body.append(d);
   d.addEventListener("click", (e) => { if (e.target.closest("[data-close]") || e.target === d) d.close(); });
-  d.addEventListener("close", () => { d.remove(); onClose?.(); });
+  // Closed because the person moved to another page: its follow-up (often a
+  // reload of the old page) no longer applies.
+  d.addEventListener("close", () => { d.remove(); if (!d.dataset.left) onClose?.(); });
   d.showModal();
   return d;
 }
@@ -602,6 +604,8 @@ export async function requireUser(reason) {
 // ---------- tiny hash router for portals ----------
 export function router(routes, fallback) {
   const go = async () => {
+    // A window left open belongs to the page being left.
+    document.querySelectorAll("dialog[open]").forEach((d) => { d.dataset.left = "1"; d.close(); });
     const path = location.hash.replace(/^#/, "") || "/";
     for (const [pattern, fn] of routes) {
       const keys = [];

@@ -113,7 +113,7 @@ async function eventPage(slug) {
         <section class="card"><h2>Venue</h2><p class="mb-0"><strong>${e.venue_name}</strong><br>${e.address ? html`${e.address}<br>` : ""}${e.city}${e.province ? `, ${e.province}` : ""}</p></section>
         ${e.accessibility_info ? html`<section class="card"><h2>Accessibility</h2><p class="prose mb-0">${e.accessibility_info}</p></section>` : ""}
         <section class="card"><h2>Good to know</h2><dl class="dl">
-          <dt>Organiser</dt><dd>${e.organiser_name}${e.organiser_ref ? html` <span class="small muted mono">${e.organiser_ref}</span>` : ""}</dd>
+          <dt>Organiser</dt><dd>${e.organiser_name}${e.organiser_ref ? html` <span class="small muted mono nowrap">${e.organiser_ref}</span>` : ""}</dd>
           ${e.ref ? html`<dt>Event ID</dt><dd class="mono">${e.ref}</dd>` : ""}
           ${e.age_groups ? html`<dt>Made for</dt><dd>${ageGroupText(e.age_groups)}</dd>` : ""}
           ${e.age_restriction ? html`<dt>Age</dt><dd>${e.age_restriction}</dd>` : ""}

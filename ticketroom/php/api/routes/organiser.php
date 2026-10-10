@@ -903,6 +903,7 @@ function org_issue_passes(array $u, array $event, array $org, array $people, arr
             $g = insert('gate_passes', ['id' => uuid(), 'event_id' => $event['id'], 'code' => new_pass_code(), 'qr_version' => 1, 'holder_name' => $p['holderName'],
                 'email' => isset($p['email']) && $p['email'] !== '' ? strtolower($p['email']) : null, 'role' => $opts['role'], 'access_note' => ($opts['accessNote'] ?? '') !== '' ? $opts['accessNote'] : null,
                 'reentry' => !empty($opts['reentry']) ? 1 : 0, 'status' => 'active', 'link_token_hash' => sha256($token), 'created_by' => $u['id'], 'created_at' => $now, 'updated_at' => $now]);
+            $g = row('SELECT * FROM gate_passes WHERE id = ?', [$g['id']]);
             $url = base_url() . "/pass?t=$token";
             org_pass_send($g, $event, $url);
             $out[] = ['pass' => org_pass_view($g), 'url' => $url];

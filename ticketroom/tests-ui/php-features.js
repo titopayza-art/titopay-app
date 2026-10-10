@@ -236,7 +236,8 @@ const download = async (p, click) => { const [d] = await Promise.all([p.waitForE
     const pimg = await download(o, () => o.locator("dialog").getByRole("button", { name: "Pass image" }).click());
     assert.deepEqual([...pimg.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
     const pp = await page(browser, null, { width: 390, height: 844 });
-    await pp.goto(link);
+    // Links use the site's public address; open the same path on this test server.
+    await pp.goto(`${BASE}/pass${new URL(link).search}`);
     await pp.getByText("Media Person").waitFor();
     await pp.locator(".t-qr svg").waitFor();
     await o.goto(`${BASE}/organisers#/events/${evId}/details`);
