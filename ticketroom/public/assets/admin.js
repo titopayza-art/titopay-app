@@ -187,10 +187,23 @@ async function overview() {
       ${tbl(["Provider clearing", "#Ledger", "#Expected", "Check"], d.ledger.clearing.map((c) => html`<tr><td class="mono">${c.account}</td><td class="num">${moneyExact(c.ledgerCents)}</td><td class="num">${moneyExact(c.expectedCents)}</td><td>${badge(c.ok ? "matched" : "failed")}</td></tr>`))}</section>`);
 }
 
+// A search box for the organiser and event lists, remembered for the session.
+const searchBox = (key, q, placeholder) => html`<form class="row mb" data-search="${key}"><input class="grow" name="q" value="${q}" placeholder="${placeholder}" aria-label="${placeholder}" maxlength="80">
+  <button class="btn btn-ghost">Search</button>${q ? html`<button type="button" class="btn btn-link" data-clear>Clear</button>` : ""}</form>`;
+function wireSearch(key, redraw) {
+  const f = $(`[data-search="${key}"]`);
+  f.addEventListener("submit", (e) => { e.preventDefault(); sessionStorage.setItem(`adm_${key}`, f.elements.q.value.trim()); redraw(); });
+  $("[data-clear]", f)?.addEventListener("click", () => { sessionStorage.removeItem(`adm_${key}`); redraw(); });
+}
+
 async function organisers() {
-  const { organisers: list } = await get("/api/admin/organisers");
-  render(main, html`${head("Organiser accounts", "Organisations that sell tickets on TicketRoom. Approve applications here; organisers run their own events in the organiser portal.")}${tbl(["Organiser", "Owner", "Contact", "Events", "Bank", "Status", ""], list.map((o) => html`<tr><td><strong>${o.name}</strong><div class="tiny muted">${fmtDate(o.created_at)}</div></td><td>${o.owner_name || ""}</td><td class="small">${o.contact_email}<br>${o.contact_phone || ""}</td><td>${o.events}</td><td>${o.bank_account_last4 ? `••${o.bank_account_last4}` : "—"}</td><td>${badge(o.status)}<div class="tiny muted">${o.commission_bps == null ? "standard fee" : `fee ${o.commission_bps / 100}%`}</div></td>
-    <td>${isA() ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-fee="${o.id}">Fee</button>${o.status !== "approved" ? html`<button class="btn btn-good btn-sm" data-s="approved" data-id="${o.id}">Approve</button>` : ""}${o.status === "pending" ? html`<button class="btn btn-ghost btn-sm" data-s="rejected" data-id="${o.id}">Reject</button>` : ""}${o.status === "approved" ? html`<button class="btn btn-ghost btn-sm" data-s="suspended" data-id="${o.id}">Suspend</button>` : ""}</div>` : ""}</td></tr>`), "No organisers yet. When someone applies to sell tickets, their application appears here for approval.")}`);
+  const q = sessionStorage.getItem("adm_oq") || "";
+  const { organisers: list } = await get(`/api/admin/organisers${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+  render(main, html`${head("Organiser accounts", "Organisations that sell tickets on TicketRoom. Approve applications here; organisers run their own events in the organiser portal.")}
+    ${searchBox("oq", q, "Search by organiser ID (ORG-…), name or email")}
+    ${tbl(["Organiser", "Owner", "Contact", "Events", "Bank", "Status", ""], list.map((o) => html`<tr><td><strong>${o.name}</strong><div class="tiny muted"><span class="mono">${o.ref || ""}</span> · ${fmtDate(o.created_at)}</div></td><td>${o.owner_name || ""}</td><td class="small">${o.contact_email}<br>${o.contact_phone || ""}</td><td>${o.events}</td><td>${o.bank_account_last4 ? `••${o.bank_account_last4}` : "—"}</td><td>${badge(o.status)}<div class="tiny muted">${o.commission_bps == null ? "standard fee" : `fee ${o.commission_bps / 100}%`}</div></td>
+    <td>${isA() ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-fee="${o.id}">Fee</button>${o.status !== "approved" ? html`<button class="btn btn-good btn-sm" data-s="approved" data-id="${o.id}">Approve</button>` : ""}${o.status === "pending" ? html`<button class="btn btn-ghost btn-sm" data-s="rejected" data-id="${o.id}">Reject</button>` : ""}${o.status === "approved" ? html`<button class="btn btn-ghost btn-sm" data-s="suspended" data-id="${o.id}">Suspend</button>` : ""}</div>` : ""}</td></tr>`), q ? "No organiser matches that search." : "No organisers yet. When someone applies to sell tickets, their application appears here for approval.")}`);
+  wireSearch("oq", organisers);
   $$("[data-s]").forEach((b) => b.addEventListener("click", async () => {
     const why = b.dataset.s === "approved" ? "" : await reason(`${b.dataset.s === "rejected" ? "Reject" : "Suspend"} organiser`, b.dataset.s === "suspended" ? "Their published events will be suspended too." : "They will be told.");
     if (why === false) return;
@@ -207,15 +220,19 @@ async function organisers() {
 
 async function events() {
   const filter = sessionStorage.getItem("adm_ev") || "pending_approval";
-  const { events: list } = await get(`/api/admin/events${filter === "all" ? "" : `?status=${filter}`}`);
-  render(main, html`${head("All events", "Every event on TicketRoom, from every organiser. Approve, suspend or handle cancellation requests.")}<div class="chips">${[["pending_approval", "Awaiting approval"], ["cancel_requests", "Cancellation requests"], ["published", "Published"], ["suspended", "Suspended"], ["all", "All"]].map(([k, l]) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`)}</div>
-    <div class="mt">${tbl(["Event", "Organiser", "Date", "Sold", "Status", ""], list.map((e) => html`<tr><td><strong>${e.title}</strong>${e.cancellation_requested_at && e.status !== "cancelled" ? html`<div class="small" >Cancellation requested: ${e.cancellation_reason}</div>` : ""}${e.featured ? html` <span class="badge amber plain">featured</span>` : ""}</td><td>${e.organiser_name}</td><td>${fmtDate(e.starts_at)}<div class="tiny muted">${e.city}</div></td><td>${e.sold}/${e.capacity}</td><td>${badge(e.status)}</td>
+  const q = sessionStorage.getItem("adm_eq") || "";
+  // A search looks through every event, whatever its status.
+  const { events: list } = await get(`/api/admin/events${q ? `?q=${encodeURIComponent(q)}` : filter === "all" ? "" : `?status=${filter}`}`);
+  render(main, html`${head("All events", "Every event on TicketRoom, from every organiser. Approve, suspend or handle cancellation requests.")}
+    ${searchBox("eq", q, "Search by event ID (EV-…), organiser ID, event or organiser name")}<div class="chips ${q ? "hidden" : ""}">${[["pending_approval", "Awaiting approval"], ["cancel_requests", "Cancellation requests"], ["published", "Published"], ["suspended", "Suspended"], ["all", "All"]].map(([k, l]) => html`<button class="chip" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`)}</div>
+    <div class="mt">${tbl(["Event", "Organiser", "Date", "Sold", "Status", ""], list.map((e) => html`<tr><td><strong>${e.title}</strong><div class="tiny muted mono">${e.ref || ""}</div>${e.cancellation_requested_at && e.status !== "cancelled" ? html`<div class="small" >Cancellation requested: ${e.cancellation_reason}</div>` : ""}${e.featured ? html` <span class="badge amber plain">featured</span>` : ""}</td><td>${e.organiser_name}<div class="tiny muted mono">${e.organiser_ref || ""}</div></td><td>${fmtDate(e.starts_at)}<div class="tiny muted">${e.city}</div></td><td>${e.sold}/${e.capacity}</td><td>${badge(e.status)}</td>
       <td>${isA() ? html`<div class="row">
         ${e.status === "pending_approval" ? html`<button class="btn btn-good btn-sm" data-a="publish" data-id="${e.id}">Publish</button><button class="btn btn-ghost btn-sm" data-a="reject" data-id="${e.id}">Request changes</button>` : ""}
         ${e.status === "published" ? html`<button class="btn btn-ghost btn-sm" data-a="${e.featured ? "unfeature" : "feature"}" data-id="${e.id}">${e.featured ? "Unfeature" : "Feature"}</button><button class="btn btn-ghost btn-sm" data-a="suspend" data-id="${e.id}">Suspend</button>` : ""}
         ${e.status === "suspended" ? html`<button class="btn btn-ghost btn-sm" data-a="reinstate" data-id="${e.id}">Reinstate</button>` : ""}
         ${!["cancelled", "completed", "draft"].includes(e.status) ? html`<button class="btn btn-danger btn-sm" data-cancel="${e.id}">Cancel & refund</button>` : ""}
         <a class="btn btn-link btn-sm" href="/events/${e.slug}" target="_blank">view</a></div>` : ""}</td></tr>`))}</div>`);
+  wireSearch("eq", events);
   $$("[data-f]").forEach((b) => b.addEventListener("click", () => { sessionStorage.setItem("adm_ev", b.dataset.f); events(); }));
   $$("[data-a]").forEach((b) => b.addEventListener("click", async () => {
     const needs = ["reject", "suspend"].includes(b.dataset.a);

@@ -64,7 +64,8 @@ async function download(full) {
   if (r.full) state.tickets = new Map();
   // Never forget a ticket this phone let in but has not synced yet.
   const pending = new Set(queue.map((s) => s.code));
-  for (const [code, version, st, name, type] of r.tickets) state.tickets.set(code, [version, pending.has(code) ? 2 : st, name, type]);
+  // A sixth field marks a re-entry gate pass: it stays valid after a scan.
+  for (const [code, version, st, name, type, multi] of r.tickets) state.tickets.set(code, [version, pending.has(code) && !multi ? 2 : st, name, type, multi ? 1 : 0]);
   state.event = r.event;
   state.generatedAt = r.generatedAt;
   savePackSoon();
@@ -97,7 +98,7 @@ export async function forgetOthers(keepId) {
 
 function parse(value) {
   const s = String(value).trim();
-  const m = /^TR1\.([2-9A-HJ-NP-TV-Z]{10})\.(\d{1,6})\.[A-Za-z0-9_-]{22}$/.exec(s);
+  const m = /^T[RP]1\.([2-9A-HJ-NP-TV-Z]{10})\.(\d{1,6})\.[A-Za-z0-9_-]{22}$/.exec(s);
   if (m) return { code: m[1], version: Number(m[2]) };
   const typed = s.replace(/[\s-]/g, "").toUpperCase();
   return /^[2-9A-HJ-NP-TV-Z]{10}$/.test(typed) ? { code: typed, version: null } : null;
@@ -108,7 +109,7 @@ function parse(value) {
 export function markUsed(value) {
   const p = parse(value);
   const t = p && state?.tickets.get(p.code);
-  if (t && t[1] !== 2) { t[1] = 2; savePackSoon(); }
+  if (t && t[1] !== 2 && !t[4]) { t[1] = 2; savePackSoon(); }
 }
 
 // Check a ticket against the phone's copy of the list. Returns null when this
@@ -117,23 +118,28 @@ export function check(value, gate) {
   if (!state?.tickets.size) return null;
   const ev = state.event;
   const now = Date.now();
-  if (ev && (now < Date.parse(ev.starts_at) - 12 * 3600e3 || now > Date.parse(ev.ends_at) + 6 * 3600e3)) {
+  const p = parse(value);
+  const t = p && state.tickets.get(p.code);
+  // Same windows as the server: tickets from 12 hours before to 6 after,
+  // gate passes from 2 days before (setup) to a day after (strike).
+  const isPass = /^Gate pass/.test(t?.[3] || "");
+  const [before, after] = isPass ? [48, 24] : [12, 6];
+  if (ev && (now < Date.parse(ev.starts_at) - before * 3600e3 || now > Date.parse(ev.ends_at) + after * 3600e3)) {
     return { outcome: "event_not_live", message: "This event is not open for entry right now." };
   }
-  const p = parse(value);
   if (!p) return { outcome: "invalid", message: "Not a TicketRoom ticket." };
-  const t = state.tickets.get(p.code);
   if (!t) return { outcome: "invalid", message: "Not on this event's ticket list." };
-  const [version, st, name, type] = t;
+  const [version, st, name, type, multi] = t;
   if (p.version !== null && p.version !== version) return { outcome: "invalid", message: "This QR code was replaced. Ask for the current ticket.", holderName: name };
   if (st === 2) return { outcome: "already_used", message: "Already scanned.", holderName: name, ticketType: type };
   if (st !== 1) return { outcome: "invalid", message: "This ticket is no longer valid.", holderName: name, ticketType: type };
-  t[1] = 2;
+  if (!multi) t[1] = 2;
   queue.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, code: p.code, payload: String(value).trim(), gate: gate || undefined, at: new Date().toISOString() });
   saveQueue();
   savePackSoon();
   onChange();
-  return { outcome: "admitted", offline: true, holderName: name, ticketType: type };
+  const admits = Number(/Admit (\d+)/.exec(type || "")?.[1] || 1);
+  return { outcome: "admitted", offline: true, holderName: name, ticketType: type, admits, pass: isPass };
 }
 
 let syncing = false;

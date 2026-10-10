@@ -33,7 +33,9 @@ function staff_event_counts(string $eventId): array
     $key = "counts:$eventId";
     $c = row('SELECT value FROM meta WHERE key = ?', [$key]);
     if ($c) { $v = json_decode($c['value'], true); if (($v['at'] ?? 0) > microtime(true) - 3) return $v; }
-    $r = row("SELECT COALESCE(SUM(status = 'used'),0) AS admitted, COALESCE(SUM(status IN ('valid','used')),0) AS issued FROM tickets WHERE event_id = ?", [$eventId]);
+    // People, not tickets: a couple ticket lets two in.
+    $r = row("SELECT COALESCE(SUM(CASE WHEN t.status = 'used' THEN tt.admits ELSE 0 END),0) AS admitted, COALESCE(SUM(CASE WHEN t.status IN ('valid','used') THEN tt.admits ELSE 0 END),0) AS issued
+                FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id WHERE t.event_id = ?", [$eventId]);
     $v = ['admitted' => (int) $r['admitted'], 'issued' => (int) $r['issued'], 'at' => microtime(true)];
     q('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [$key, json_encode($v)]);
     return $v;
@@ -44,7 +46,7 @@ route('GET', '/api/staff/events/:eventId/stats', function ($a) {
     event_staff_access($u, $a['eventId'], 'can_scan');
     $c = staff_event_counts($a['eventId']);
     $mine = (int) val("SELECT count(*) FROM admission_log WHERE event_id = ? AND scanned_by = ? AND outcome = 'admitted'", [$a['eventId'], $u['id']]);
-    $recent = rows('SELECT a.outcome, a.occurred_at, a.gate, t.holder_name FROM admission_log a LEFT JOIN tickets t ON t.id = a.ticket_id
+    $recent = rows('SELECT a.outcome, a.occurred_at, a.gate, COALESCE(t.holder_name, g.holder_name) AS holder_name FROM admission_log a LEFT JOIN tickets t ON t.id = a.ticket_id LEFT JOIN gate_passes g ON g.id = a.pass_id
                      WHERE a.event_id = ? AND a.scanned_by = ? ORDER BY a.id DESC LIMIT 15', [$a['eventId'], $u['id']]);
     return ['admitted' => $c['admitted'], 'issued' => $c['issued'], 'mine' => $mine, 'recent' => $recent];
 });
@@ -59,7 +61,7 @@ route('GET', '/api/staff/events/:eventId/offline-pack', function ($a) {
     $ev = event_staff_access($u, $a['eventId'], 'can_scan');
     $since = parse_iso(qs('since'));
     $types = [];
-    foreach (rows('SELECT id, name FROM ticket_types WHERE event_id = ?', [$ev['id']]) as $t) $types[$t['id']] = $t['name'];
+    foreach (rows('SELECT id, name, kind, admits FROM ticket_types WHERE event_id = ?', [$ev['id']]) as $t) $types[$t['id']] = gate_label($t);
     $generatedAt = now_iso();
     $st = q('SELECT code, qr_version, status, holder_name, ticket_type_id FROM tickets WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]);
     $list = [];
@@ -68,6 +70,11 @@ route('GET', '/api/staff/events/:eventId/offline-pack', function ($a) {
         $list[] = [$t[0], (int) $t[1], $t[2] === 'valid' ? 1 : ($t[2] === 'used' ? 2 : 0), $first, $types[$t[4]] ?? ''];
     }
     $st->closeCursor();
+    // Gate passes ride along; the sixth field marks a re-entry pass.
+    foreach (rows('SELECT code, qr_version, status, holder_name, role, access_note, reentry, scans FROM gate_passes WHERE event_id = ?' . ($since ? ' AND updated_at >= ?' : ''), $since ? [$ev['id'], $since] : [$ev['id']]) as $g) {
+        $list[] = [$g['code'], (int) $g['qr_version'], $g['status'] !== 'active' ? 0 : ((int) $g['reentry'] === 0 && (int) $g['scans'] > 0 ? 2 : 1), $g['holder_name'],
+            'Gate pass · ' . (PASS_ROLES[$g['role']] ?? $g['role']) . ($g['access_note'] ? " · {$g['access_note']}" : ''), (int) $g['reentry']];
+    }
     audit('scan.offline_pack', ['entityType' => 'event', 'entityId' => $ev['id'], 'organiserId' => $ev['organiser_id'], 'details' => ['tickets' => count($list), 'incremental' => (bool) $since]]);
     return ['event' => ['id' => $ev['id'], 'title' => $ev['title'], 'starts_at' => $ev['starts_at'], 'ends_at' => $ev['ends_at']],
         'generatedAt' => $generatedAt, 'full' => !$since, 'tickets' => $list];

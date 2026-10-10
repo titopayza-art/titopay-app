@@ -307,6 +307,9 @@ function tpl(string $name, array $a): array
         case 'staffInvite':
             return ['subject' => "{$a['organiser']} added you as a ticket scanner on TicketRoom",
                 'body' => $hi . "{$a['organiser']} has added you as a ticket scanner for {$a['event']}. Set a password to get started. The link works for 7 days.\n\nSet my password: {$a['url']}\n\nOn the day, open ticketroom.co.za/scan on your phone, sign in, and point the camera at each ticket." . FOOTER];
+        case 'gatePass':
+            return ['subject' => "Your gate pass for {$a['event']}",
+                'body' => $hi . "{$a['organiser']} has given you a {$a['role']} pass for {$a['event']} ({$a['when']}, {$a['venue']}).\n\nOpen your pass: {$a['url']}\n\nShow the QR code at the gate. " . ($a['reentry'] ? 'It lets you in and out as often as you need.' : 'It works for one entry.') . " Keep the link to yourself: anyone with it can use your pass." . FOOTER];
     }
     throw new InvalidArgumentException("Unknown template $name");
 }
@@ -339,6 +342,7 @@ function email_catalog(): array
         ['key' => 'eventPublished', 'name' => 'Event published', 'audience' => 'Organiser', 'trigger' => 'When admin approves an event', 'sample' => fn() => tpl('eventPublished', ['name' => 'Naledi Dlamini', 'event' => $ev, 'eventUrl' => "$B/events/soweto-sunset-sessions"])],
         ['key' => 'eventChangesRequested', 'name' => 'Event needs changes', 'audience' => 'Organiser', 'trigger' => 'When admin sends an event back', 'sample' => fn() => tpl('eventChangesRequested', ['name' => 'Naledi Dlamini', 'event' => $ev, 'reason' => 'Please add the full venue address and a poster image.'])],
         ['key' => 'teamInvite', 'name' => 'Added to the TicketRoom team', 'audience' => 'Staff', 'trigger' => 'When an admin adds a staff member', 'sample' => fn() => tpl('teamInvite', ['name' => 'Ayanda Khumalo', 'by' => 'Thuso Tshiloane', 'roles' => 'Support', 'url' => "$B/account#/reset/sample"])],
+        ['key' => 'gatePass', 'name' => 'Gate pass', 'audience' => 'Crew and guests', 'trigger' => 'When an organiser issues a gate pass with an email address', 'sample' => fn() => tpl('gatePass', ['name' => 'Lerato', 'organiser' => 'Soweto Community Arts', 'role' => 'Crew', 'event' => 'Soweto Sunset Sessions', 'when' => 'Sat 21 Nov 2026, 15:00', 'venue' => 'Thokoza Park, Soweto', 'url' => "$B/pass?t=sample", 'reentry' => true])],
         ['key' => 'staffInvite', 'name' => 'Scanner staff invite', 'audience' => 'Staff', 'trigger' => 'When an organiser adds a new scanner', 'sample' => fn() => tpl('staffInvite', ['name' => 'Sipho', 'organiser' => 'Soweto Community Arts', 'event' => 'Soweto Sunset Sessions', 'url' => "$B/account#/reset/sample"])],
     ];
 }

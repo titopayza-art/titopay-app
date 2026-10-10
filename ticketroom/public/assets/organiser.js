@@ -1,6 +1,6 @@
 // Organiser portal: events, tickets, promo/tracking, analytics, attendees,
 // staff, vendors & terminals, refunds, finance & payouts, marketing.
-import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, isStaff, qrPanel } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, patch, put, del, api, money, moneyExact, fmtDate, fmtTime, fmtDateTime, toLocalInput, header, requireUser, toast, onSubmit, badge, empty, spinner, dialog, confirmDialog, parseRand, router, barChart, paintMeters, me, features, gate, isStaff, qrPanel, ticketPng, TICKET_KINDS, AGE_GROUPS, ageGroupList, ageGroupText } from "/assets/core.js";
 
 const main = $("#main");
 let ORG = null;
@@ -14,6 +14,7 @@ const base = () => `/api/organiser/${ORG.id}`;
 function nav() {
   render($("#sidenav"), html`
     ${ORGS.length > 1 ? html`<div class="org-switch"><label class="sr-only" for="orgsel">Organisation</label><select id="orgsel">${ORGS.map((o) => html`<option value="${o.id}" ${raw(o.id === ORG?.id ? "selected" : "")}>${o.name}</option>`)}</select></div>` : ORG ? html`<div class="sect">${ORG.name}</div>` : ""}
+    ${ORG?.ref ? html`<div class="org-id">Organiser ID <span class="mono">${ORG.ref}</span></div>` : ""}
     <a href="#/">Dashboard</a><a href="#/events">My events</a><a href="#/marketing">Marketing</a><a href="#/refunds" data-feature="finance">Refunds</a><a href="#/finance" data-feature="finance">Finance & payouts</a><a href="#/team">Team</a><a href="#/settings">Settings</a>
     <div class="sect">Tools</div><a href="/scan">Gate scanner</a><a href="/pos" data-feature="pos">Vendor POS</a>`);
   $("#orgsel")?.addEventListener("change", (e) => { localStorage.setItem("tr_org", e.target.value); location.hash = "#/"; location.reload(); });
@@ -52,7 +53,7 @@ async function dashboard() {
   const d = await get(`${base()}/dashboard`);
   const t = d.totals;
   const upcoming = d.events.filter((e) => new Date(e.starts_at) > new Date()).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
-  render(main, html`${head(`Hi, ${ORG.name}`, "Here's how your events are selling.", can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}
+  render(main, html`${head(`Hi, ${ORG.name}`, html`Here's how your events are selling.${ORG.ref ? html` <span class="small">Organiser ID <span class="mono">${ORG.ref}</span></span>` : ""}`, can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}
     ${pendingBanner()}
     <div class="kpis"><div class="kpi"><div class="k">Ticket revenue</div><div class="v">${money(t.revenueCents)}</div><div class="s">after discounts, before fees</div></div>
       <div class="kpi"><div class="k">Tickets sold</div><div class="v">${t.ticketsSold.toLocaleString("en-ZA")}</div><div class="s">across ${t.events} event${t.events === 1 ? "" : "s"}</div></div>
@@ -70,8 +71,8 @@ async function dashboard() {
 async function events() {
   const list = await get(`${base()}/events`);
   render(main, html`${head("My events", "", can("owner", "manager") ? html`<a class="btn btn-primary" href="#/events/new">Create event</a>` : "")}${pendingBanner()}
-    ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Date</th><th>Status</th><th>Sold</th><th class="num">Revenue</th></tr></thead><tbody>
-      ${list.map((e) => html`<tr><td><a href="#/events/${e.id}"><strong>${e.title}</strong></a></td><td>${fmtDateTime(e.starts_at)}</td><td>${badge(e.status)}</td><td>${e.sold} / ${e.capacity}</td><td class="num">${moneyExact(e.revenue_cents)}</td></tr>`)}
+    ${list.length ? html`<div class="table-wrap"><table><thead><tr><th>Event</th><th>Event ID</th><th>Date</th><th>Status</th><th>Sold</th><th class="num">Revenue</th></tr></thead><tbody>
+      ${list.map((e) => html`<tr><td><a href="#/events/${e.id}"><strong>${e.title}</strong></a></td><td class="mono small">${e.ref || ""}</td><td>${fmtDateTime(e.starts_at)}</td><td>${badge(e.status)}</td><td>${e.sold} / ${e.capacity}</td><td class="num">${moneyExact(e.revenue_cents)}</td></tr>`)}
     </tbody></table></div>` : empty("No events yet.")}`);
 }
 
@@ -98,7 +99,10 @@ function eventForm(e = {}) {
       <div class="field"><label for="salesEndAt">Sales close <span class="muted">(default: event end)</span></label><input id="salesEndAt" name="salesEndAt" type="datetime-local" value="${toLocalInput(e.sales_end_at)}"></div></div>
     <div class="field"><label for="refundPolicy">Refund policy</label><textarea id="refundPolicy" name="refundPolicy" maxlength="2000">${e.refund_policy || "Tickets are non-refundable unless the event is cancelled or materially changed."}</textarea></div>
     <div class="field"><label for="accessibilityInfo">Accessibility information</label><textarea id="accessibilityInfo" name="accessibilityInfo" maxlength="2000" placeholder="Step-free access, accessible toilets, companion tickets…">${e.accessibility_info || ""}</textarea></div>
-    <div class="field"><label for="ageRestriction">Age restriction</label><input id="ageRestriction" name="ageRestriction" maxlength="60" value="${e.age_restriction || ""}" placeholder="e.g. 18+"></div>
+    <fieldset class="field age-groups"><legend class="label">Who is this event for? <span class="muted">(pick any)</span></legend>
+      <div class="check-grid">${Object.entries(AGE_GROUPS).map(([k, l]) => html`<label class="check"><input type="checkbox" name="ag_${k}" ${raw(ageGroupList(e.age_groups).includes(k) ? "checked" : "")}><span>${l}</span></label>`)}</div>
+      <span class="hint">Shown on your event page, and people can filter events by age group.</span></fieldset>
+    <div class="field"><label for="ageRestriction">Age restriction <span class="muted">(entry rule)</span></label><input id="ageRestriction" name="ageRestriction" maxlength="60" value="${e.age_restriction || ""}" placeholder="e.g. 18+"><span class="hint">Leave empty if anyone may enter.</span></div>
     <label class="check"><input type="checkbox" name="transfersEnabled" ${raw(e.transfers_enabled === false ? "" : "checked")}><span>Allow ticket holders to transfer tickets</span></label>
     <label class="check" data-feature="cashless"><input type="checkbox" name="cashlessEnabled" ${raw(e.cashless_enabled ? "checked" : "")}><span>Cashless event (wristbands / tags and vendor POS)</span></label>
     <button class="btn btn-primary" type="submit">${e.id ? "Save changes" : "Create draft"}</button></form>`;
@@ -106,8 +110,18 @@ function eventForm(e = {}) {
 
 function toIso(v) { return v ? new Date(v).toISOString() : undefined; }
 function eventPayload(v) {
-  return { ...v, capacity: Number(v.capacity), startsAt: toIso(v.startsAt), endsAt: toIso(v.endsAt), salesStartAt: toIso(v.salesStartAt), salesEndAt: toIso(v.salesEndAt),
+  const ageGroups = Object.keys(AGE_GROUPS).filter((k) => v[`ag_${k}`]);
+  for (const k of Object.keys(AGE_GROUPS)) delete v[`ag_${k}`];
+  return { ...v, ageGroups, capacity: Number(v.capacity), startsAt: toIso(v.startsAt), endsAt: toIso(v.endsAt), salesStartAt: toIso(v.salesStartAt), salesEndAt: toIso(v.salesEndAt),
     imageUploadId: v.imageUploadId || undefined, province: v.province || undefined, transfersEnabled: !!v.transfersEnabled, cashlessEnabled: !!v.cashlessEnabled, isFree: !!v.isFree };
+}
+
+// "All ages" and the specific groups exclude each other.
+function wireAgeGroups(form) {
+  const all = form.elements.ag_all;
+  const rest = Object.keys(AGE_GROUPS).filter((k) => k !== "all").map((k) => form.elements[`ag_${k}`]);
+  all.addEventListener("change", () => { if (all.checked) rest.forEach((x) => { x.checked = false; }); });
+  rest.forEach((x) => x.addEventListener("change", () => { if (x.checked) all.checked = false; }));
 }
 
 function wireUpload(form) {
@@ -122,7 +136,7 @@ function wireUpload(form) {
 
 function newEvent() {
   render(main, html`${head("Create event", "Start with the basics. You'll add ticket types next.", "", html`<a href="#/events">My events</a>`)}<div class="card">${eventForm()}</div>`);
-  const f = $("#evf"); wireUpload(f);
+  const f = $("#evf"); wireUpload(f); wireAgeGroups(f);
   onSubmit(f, async (v) => {
     const r = await post(`${base()}/events`, eventPayload(v));
     const next = () => { location.hash = `#/events/${r.event.id}/tickets`; };
@@ -139,7 +153,7 @@ function newEvent() {
 }
 
 // ---------------- event workspace ----------------
-const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["promos", "Promos & links"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["vendors", "Vendors & POS"], ["details", "Details"]];
+const TABS = [["", "Overview"], ["tickets", "Tickets & pricing"], ["promos", "Promos & links"], ["orders", "Orders"], ["attendees", "Attendees"], ["staff", "Gate staff"], ["passes", "Gate passes"], ["vendors", "Vendors & POS"], ["details", "Details"]];
 
 async function eventWorkspace({ id, tab = "" }) {
   const d = await get(`${base()}/events/${id}`);
@@ -148,7 +162,7 @@ async function eventWorkspace({ id, tab = "" }) {
   if (e.status === "draft" && can("owner", "manager")) actions.push(html`<button class="btn btn-primary" data-submit>Submit for approval</button>`);
   if (e.status === "published") actions.push(html`<a class="btn btn-ghost" href="/events/${e.slug}" target="_blank">View public page ↗</a>`);
   if (can("owner") && !["cancelled", "completed"].includes(e.status)) actions.push(html`<button class="btn btn-ghost" data-cancel>${e.cancellation_requested_at ? "Cancellation requested" : "Cancel event"}</button>`);
-  render(main, html`${head(e.title, html`${badge(e.status)} · ${fmtDateTime(e.starts_at)} · ${e.venue_name}, ${e.city}`, html`${actions}`, html`<a href="#/events">My events</a>`)}
+  render(main, html`${head(e.title, html`${badge(e.status)} · ${fmtDateTime(e.starts_at)} · ${e.venue_name}, ${e.city}${e.ref ? html` · Event ID <span class="mono">${e.ref}</span>` : ""}${e.age_groups ? html`<br><span class="small">For: ${ageGroupText(e.age_groups)}</span>` : ""}`, html`${actions}`, html`<a href="#/events">My events</a>`)}
     ${e.status === "pending_approval" ? html`<p class="callout">Submitted. TicketRoom will review and publish it shortly.</p>` : ""}
     ${e.status === "draft" && e.status_reason ? html`<p class="callout warn"><strong>Changes requested:</strong> ${e.status_reason}</p>` : ""}
     ${e.cancellation_requested_at && e.status !== "cancelled" ? html`<p class="callout warn">Cancellation requested: ${e.cancellation_reason}. TicketRoom will cancel the event and refund buyers.</p>` : ""}
@@ -162,7 +176,7 @@ async function eventWorkspace({ id, tab = "" }) {
     const r = await post(`${base()}/events/${id}/request-cancellation`, { reason }); toast(r.status === "cancelled" ? "Event cancelled." : "Cancellation requested.", "good"); eventWorkspace({ id, tab });
   });
   const el = $("#tab");
-  const fns = { "": overviewTab, tickets: ticketsTab, promos: promosTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, vendors: vendorsTab, details: detailsTab };
+  const fns = { "": overviewTab, tickets: ticketsTab, promos: promosTab, orders: ordersTab, attendees: attendeesTab, staff: staffTab, passes: passesTab, vendors: vendorsTab, details: detailsTab };
   render(el, spinner());
   await fns[tab](el, d, () => eventWorkspace({ id, tab }));
 }
@@ -217,23 +231,38 @@ async function overviewTab(el, d) {
 async function ticketsTab(el, d, reload) {
   const editable = can("owner", "manager");
   render(el, html`<section class="card"><div class="card-title"><h3>Ticket types</h3>${editable ? html`<button class="btn btn-primary btn-sm" data-add>Add ticket type</button>` : ""}</div>
-    ${d.ticketTypes.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th class="num">Price</th><th>Quantity</th><th>Per order</th><th>Status</th><th></th></tr></thead><tbody>
-      ${d.ticketTypes.map((t) => html`<tr><td><strong>${t.name}</strong>${t.description ? html`<div class="small muted">${t.description}</div>` : ""}</td><td class="num">${t.price_cents ? moneyExact(t.price_cents) : "Free"}</td>
+    ${d.ticketTypes.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Kind</th><th class="num">Price</th><th>Quantity</th><th>Per order</th><th>Status</th><th></th></tr></thead><tbody>
+      ${d.ticketTypes.map((t) => html`<tr><td><strong>${t.name}</strong>${t.description ? html`<div class="small muted">${t.description}</div>` : ""}</td>
+        <td>${TICKET_KINDS[t.kind]?.label || t.kind}${t.admits > 1 ? html`<div class="small muted">Admits ${t.admits}</div>` : ""}</td><td class="num">${t.price_cents ? moneyExact(t.price_cents) : "Free"}</td>
         <td>${t.quantity_sold} sold${t.quantity_held ? `, ${t.quantity_held} reserved` : ""} / ${t.quantity_total}</td><td>${t.per_order_limit}</td><td>${badge(t.status)}</td>
         <td>${editable ? html`<button class="btn btn-ghost btn-sm" data-edit="${t.id}">Edit</button>` : ""}</td></tr>`)}</tbody></table></div>`
       : empty("No ticket types yet. Add at least one before submitting.")}
-    <p class="small muted mt mb-0">Buyers pay a service fee per paid ticket on top of your price. Once a ticket type has sales its price is locked. To change the price, add a new release such as "Second release".</p></section>`);
+    <p class="small muted mt mb-0">Sell any kind of ticket: general, early bird, VIP, golden circle, student, child, pensioner, couple, group or table, day and season passes, backstage and hospitality. A couple, group or table ticket lets several people in on one QR code; the gate scanner shows how many. Buyers pay a service fee per paid ticket on top of your price. Once a ticket type has sales its price is locked. To change the price, add a new release such as "Second release".</p>
+    <p class="small muted mb-0">Crew, artists, media and guests don't need tickets: give them a <a href="#/events/${d.event.id}/passes">gate pass</a>.</p></section>`);
   const form = (t = {}) => {
     const dlg = dialog(t.id ? "Edit ticket type" : "Add ticket type", html`<form class="stack">
-      <div class="field"><label for="tn">Name</label><input id="tn" name="name" required maxlength="80" value="${t.name || ""}" placeholder="e.g. Early Bird"></div>
+      <div class="grid-2"><div class="field"><label for="tk">Kind of ticket</label><select id="tk" name="kind">${Object.entries(TICKET_KINDS).map(([k, x]) => html`<option value="${k}" ${raw(k === (t.kind || "general") ? "selected" : "")}>${x.label}</option>`)}</select></div>
+        <div class="field"><label for="ta">People per ticket</label><input id="ta" name="admits" type="number" min="1" max="20" required value="${t.admits || 1}" ${raw(t.quantity_sold ? "disabled" : "")}><span class="hint">2 for a couple, 8 for a table of eight.</span></div></div>
+      <div class="field"><label for="tn">Name</label><input id="tn" name="name" required maxlength="80" value="${t.name || ""}" placeholder="e.g. Early Bird"><span class="hint">What buyers see, e.g. "VIP Early Bird" or "Table of 8".</span></div>
       <div class="field"><label for="td">Description</label><input id="td" name="description" maxlength="240" value="${t.description || ""}"></div>
       <div class="grid-2"><div class="field"><label for="tp">Price (R)</label><input id="tp" name="price" inputmode="decimal" required value="${t.price_cents !== undefined ? t.price_cents / 100 : ""}" ${raw(t.quantity_sold ? "disabled" : "")}><span class="hint">0 for free</span></div>
         <div class="field"><label for="tq">Quantity</label><input id="tq" name="quantityTotal" type="number" min="0" required value="${t.quantity_total ?? ""}"></div></div>
       <div class="grid-2"><div class="field"><label for="tl">Max per order</label><input id="tl" name="perOrderLimit" type="number" min="1" max="50" value="${t.per_order_limit || 10}"></div>
         <div class="field"><label for="ts">Status</label><select id="ts" name="status">${["on_sale", "paused", "hidden"].map((s) => html`<option value="${s}" ${raw(s === (t.status || "on_sale") ? "selected" : "")}>${s.replace("_", " ")}</option>`)}</select></div></div>
       <button class="btn btn-primary">Save</button></form>`);
+    // Picking a kind fills in a sensible name and head count until the organiser types their own.
+    const kindSel = $("#tk", dlg), nameIn = $("#tn", dlg), admitsIn = $("#ta", dlg);
+    let named = !!t.name, counted = !!t.id;
+    nameIn.addEventListener("input", () => { named = true; });
+    admitsIn.addEventListener("input", () => { counted = true; });
+    kindSel.addEventListener("change", () => {
+      const k = TICKET_KINDS[kindSel.value];
+      if (!named) nameIn.value = k.label;
+      if (!counted && !admitsIn.disabled) admitsIn.value = k.admits || 1;
+    });
     onSubmit($("form", dlg), async (v) => {
-      const body = { name: v.name, description: v.description, quantityTotal: Number(v.quantityTotal), perOrderLimit: Number(v.perOrderLimit), status: v.status };
+      const body = { name: v.name, kind: v.kind, description: v.description, quantityTotal: Number(v.quantityTotal), perOrderLimit: Number(v.perOrderLimit), status: v.status };
+      if (v.admits !== undefined) body.admits = Number(v.admits);
       if (v.price !== undefined) { const c = parseRand(v.price); if (c === null) throw Object.assign(new Error("Check the price."), { details: { price: "Enter an amount like 150 or 0." } }); body.priceCents = c; }
       if (t.id) await patch(`${base()}/events/${d.event.id}/ticket-types/${t.id}`, body); else await post(`${base()}/events/${d.event.id}/ticket-types`, body);
       dlg.close(); toast("Saved.", "good"); reload();
@@ -347,6 +376,94 @@ async function staffTab(el, d, reload) {
   tick();
 }
 
+// Gate passes: crew, artists, media, vendors and guests get in without a
+// ticket. Each pass has its own QR code and private link; re-entry passes
+// scan in as often as needed, one-entry passes once.
+async function passesTab(el, d, reload) {
+  const ev = d.event;
+  const { passes, roles } = await get(`${base()}/events/${ev.id}/passes`);
+  const edit = can("owner", "manager");
+  const active = passes.filter((g) => g.status === "active");
+  const onSite = active.filter((g) => g.scans > 0).length;
+  const when = `${fmtDate(ev.starts_at, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(ev.starts_at)}`;
+  const place = [ev.venue_name, ev.city].filter(Boolean).join(", ");
+  const rowsFor = (g) => [["Pass", g.roleLabel], ["Name", g.holderName], ...(g.accessNote ? [["Access", g.accessNote]] : []), ["Entry", g.reentry ? "In and out" : "One entry"]];
+  const savePass = async (g) => {
+    const r = await get(`${base()}/events/${ev.id}/passes/${g.id}`);
+    if (!r.svg) return toast("This pass was cancelled.", "bad");
+    const png = await ticketPng(r.svg, { label: "GATE PASS", title: ev.title, when, place, rows: rowsFor(r.pass), code: r.pass.code, codeLabel: "PASS CODE", note: "Show this pass at the gate. Keep it private." });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(png); a.download = `gate-pass-${r.pass.holderName.replace(/[^\w]+/g, "-").toLowerCase()}.png`; document.body.append(a); a.click(); a.remove();
+  };
+  const showLinks = (title, issued) => {
+    const dlg = dialog(title, html`<div class="stack"><p class="mb-0">${issued.length === 1 ? "Send this private link to the pass holder, or download the pass and print it." : "Each person has their own private link. Those with an email address have been sent theirs."}</p>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Link</th><th></th></tr></thead><tbody>${issued.map((x, i) => html`<tr><td>${x.pass.holderName}${x.pass.email ? html`<div class="tiny muted">Emailed to ${x.pass.email}</div>` : ""}</td>
+        <td><input readonly class="mono tiny" value="${x.url}" aria-label="Pass link for ${x.pass.holderName}"></td><td class="row"><button class="btn btn-ghost btn-sm" data-copy="${i}">Copy</button><button class="btn btn-ghost btn-sm" data-img="${i}">Pass image</button></td></tr>`)}</tbody></table></div>
+      <p class="tiny muted mb-0">Links are shown only now. If one is lost, use "New link" on the pass: the old link and QR code stop working.</p></div>`, { onClose: reload });
+    $$("[data-copy]", dlg).forEach((b) => b.addEventListener("click", async () => { try { await navigator.clipboard.writeText(issued[b.dataset.copy].url); toast("Link copied.", "good"); } catch { toast("Select the link and copy it."); } }));
+    $$("[data-img]", dlg).forEach((b) => b.addEventListener("click", () => savePass(issued[b.dataset.img].pass).catch((err) => toast(err.message, "bad"))));
+  };
+  const roleOptions = (cur = "crew") => Object.entries(roles).map(([k, l]) => html`<option value="${k}" ${raw(k === cur ? "selected" : "")}>${l}</option>`);
+  render(el, html`<div class="kpis"><div class="kpi"><div class="k">Active passes</div><div class="v">${active.length}</div><div class="s">${passes.length - active.length} cancelled</div></div>
+      <div class="kpi"><div class="k">Scanned in</div><div class="v">${onSite}</div><div class="s">passes used at least once</div></div>
+      <div class="kpi"><div class="k">By role</div><div class="s">${Object.entries(roles).map(([k, l]) => [l, active.filter((g) => g.role === k).length]).filter(([, n]) => n).map(([l, n]) => `${l} ${n}`).join(" · ") || "None yet"}</div></div></div>
+    ${edit ? html`<section class="card mt"><div class="card-title"><h3>Issue gate passes</h3></div>
+      <p class="small muted">For crew, artists, media, vendors, security, sponsors and your guest list. Passes don't use ticket stock. Each person gets a QR code that your gate staff scan like a ticket, from two days before the event (for setup) until a day after.</p>
+      <form class="stack" id="pf"><div class="grid-2"><div class="field"><label for="pr">Pass type</label><select id="pr" name="role">${roleOptions()}</select></div>
+          <div class="field"><label for="pa">Access <span class="muted">(optional)</span></label><input id="pa" name="accessNote" maxlength="60" placeholder="e.g. Backstage, VIP deck"></div></div>
+        <label class="check"><input type="checkbox" name="reentry" checked><span>Allow re-entry (in and out all day). Untick for one entry only, like a guest-list spot.</span></label>
+        <div class="tabs" role="tablist"><button type="button" role="tab" aria-selected="true" data-mode="one">One person</button><button type="button" role="tab" aria-selected="false" data-mode="many">Many people</button></div>
+        <div data-one class="grid-2"><div class="field"><label for="ph">Name</label><input id="ph" name="holderName" maxlength="120" autocomplete="off"></div>
+          <div class="field"><label for="pe">Email <span class="muted">(optional, we send the pass)</span></label><input id="pe" name="email" type="email" autocomplete="off"></div></div>
+        <div data-many class="field hidden"><label for="pl">One person per line: name, then a comma and their email (optional)</label><textarea id="pl" name="people" rows="6" placeholder="Thandi Mokoena, thandi@example.co.za&#10;Sound crew 1&#10;Pieter van Wyk, pieter@example.co.za"></textarea><span class="hint">Up to 200 at a time.</span></div>
+        <button class="btn btn-dark">Issue pass</button></form></section>` : ""}
+    <section class="card mt"><div class="card-title"><h3>Passes</h3><span class="small muted">${passes.length} issued</span></div>
+      ${passes.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Pass</th><th>Entry</th><th>Status</th><th>Scans</th><th></th></tr></thead><tbody>
+        ${passes.map((g) => html`<tr><td>${g.holderName}${g.email ? html`<div class="tiny muted">${g.email}</div>` : ""}<div class="tiny muted mono">${g.code}</div></td>
+          <td>${g.roleLabel}${g.accessNote ? html`<div class="tiny muted">${g.accessNote}</div>` : ""}</td><td>${g.reentry ? "In and out" : "One entry"}</td><td>${badge(g.status === "active" ? "active" : "cancelled")}</td>
+          <td>${g.scans}${g.lastScannedAt ? html`<div class="tiny muted">last ${fmtDateTime(g.lastScannedAt)}</div>` : ""}</td>
+          <td>${edit && g.status === "active" ? html`<div class="row"><button class="btn btn-ghost btn-sm" data-pimg="${g.id}">Pass image</button><button class="btn btn-ghost btn-sm" data-pnew="${g.id}">New link</button><button class="btn btn-ghost btn-sm" data-pcancel="${g.id}">Cancel</button></div>` : ""}</td></tr>`)}</tbody></table></div>`
+        : html`<p class="muted mb-0">No gate passes yet.</p>`}</section>`);
+
+  const form = $("#pf", el);
+  if (form) {
+    let mode = "one";
+    $$("[data-mode]", form).forEach((b) => b.addEventListener("click", () => {
+      mode = b.dataset.mode;
+      $$("[data-mode]", form).forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+      $("[data-one]", form).classList.toggle("hidden", mode !== "one");
+      $("[data-many]", form).classList.toggle("hidden", mode !== "many");
+      $(".btn-dark", form).textContent = mode === "one" ? "Issue pass" : "Issue passes";
+    }));
+    onSubmit(form, async (v) => {
+      const opts = { role: v.role, accessNote: v.accessNote, reentry: !!v.reentry };
+      if (mode === "one") {
+        if (!v.holderName) throw Object.assign(new Error("Enter the pass holder's name."), { details: { holderName: "Required." } });
+        const r = await post(`${base()}/events/${ev.id}/passes`, { ...opts, holderName: v.holderName, email: v.email || undefined });
+        return showLinks("Pass issued", [r]);
+      }
+      const people = String(v.people || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+        const [name, email] = l.split(",").map((x) => x.trim());
+        return { holderName: name, ...(email ? { email } : {}) };
+      });
+      if (!people.length) throw Object.assign(new Error("Add at least one person, one per line."), { details: { people: "One person per line." } });
+      const r = await post(`${base()}/events/${ev.id}/passes/bulk`, { ...opts, people });
+      showLinks(`${r.passes.length} passes issued`, r.passes);
+    });
+  }
+  const byId = (id) => passes.find((g) => g.id === id);
+  $$("[data-pimg]", el).forEach((b) => b.addEventListener("click", () => savePass(byId(b.dataset.pimg)).catch((err) => toast(err.message, "bad"))));
+  $$("[data-pnew]", el).forEach((b) => b.addEventListener("click", async () => {
+    const g = byId(b.dataset.pnew);
+    if (!(await confirmDialog("Make a new link?", `${g.holderName}'s current link and QR code stop working straight away.${g.email ? " We email the new link to " + g.email + "." : ""}`, { confirm: "Make new link" }))) return;
+    try { const r = await post(`${base()}/events/${ev.id}/passes/${g.id}/reissue`); showLinks("New link made", [r]); } catch (err) { toast(err.message, "bad"); }
+  }));
+  $$("[data-pcancel]", el).forEach((b) => b.addEventListener("click", async () => {
+    const g = byId(b.dataset.pcancel);
+    if (!(await confirmDialog("Cancel this pass?", `${g.holderName}'s pass stops working at the gate straight away. This cannot be undone; issue a new pass if needed.`, { confirm: "Cancel pass", danger: true }))) return;
+    try { await post(`${base()}/events/${ev.id}/passes/${g.id}/revoke`); toast("Pass cancelled.", "good"); reload(); } catch (err) { toast(err.message, "bad"); }
+  }));
+}
+
 async function vendorsTab(el, d, reload) {
   const { vendors } = await get(`${base()}/events/${d.event.id}/vendors`);
   const edit = can("owner", "manager");
@@ -374,7 +491,7 @@ async function vendorsTab(el, d, reload) {
 async function detailsTab(el, d, reload) {
   if (!can("owner", "manager")) return render(el, html`<p class="muted">You have view-only access.</p>`);
   render(el, html`<div class="card">${eventForm(d.event)}</div>`);
-  const f = $("#evf"); wireUpload(f);
+  const f = $("#evf"); wireUpload(f); wireAgeGroups(f);
   onSubmit(f, async (v) => { await patch(`${base()}/events/${d.event.id}`, eventPayload(v)); toast("Saved.", "good"); reload(); });
 }
 
@@ -478,7 +595,7 @@ async function team() {
 async function settings() {
   const { organiser: o } = await get(`${base()}`);
   render(main, html`${head("Settings")}<div class="grid-2">
-    <section class="card"><h2>Organisation</h2><form class="stack" id="of">
+    <section class="card"><h2>Organisation</h2>${o.ref ? html`<p class="small">Organiser ID <strong class="mono">${o.ref}</strong>. Quote it when you contact TicketRoom.</p>` : ""}<form class="stack" id="of">
       <div class="field"><label for="on">Name</label><input id="on" name="name" required value="${o.name}"></div>
       <div class="field"><label for="oe">Contact email</label><input id="oe" name="contactEmail" type="email" required value="${o.contactEmail}"></div>
       <div class="field"><label for="op">Contact number</label><input id="op" name="contactPhone" value="${o.contactPhone || ""}"></div>

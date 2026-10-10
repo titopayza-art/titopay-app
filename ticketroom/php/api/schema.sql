@@ -69,8 +69,10 @@ CREATE TABLE organisers (
   commission_bps      INTEGER CHECK (commission_bps IS NULL OR commission_bps BETWEEN 0 AND 5000),
   created_at          TEXT NOT NULL,
   approved_at         TEXT,
-  approved_by         TEXT REFERENCES users(id)
+  approved_by         TEXT REFERENCES users(id),
+  ref                 TEXT
 );
+CREATE UNIQUE INDEX organisers_ref_uq ON organisers (ref);
 
 CREATE TABLE organiser_members (
   organiser_id TEXT NOT NULL REFERENCES organisers(id),
@@ -162,8 +164,11 @@ CREATE TABLE events (
   created_at                TEXT NOT NULL,
   updated_at                TEXT NOT NULL,
   published_at              TEXT,
+  ref                       TEXT,
+  age_groups                TEXT,
   CHECK (ends_at > starts_at)
 );
+CREATE UNIQUE INDEX events_ref_uq ON events (ref);
 CREATE INDEX events_status_idx ON events (status, starts_at);
 CREATE INDEX events_organiser_idx ON events (organiser_id);
 
@@ -182,6 +187,8 @@ CREATE TABLE ticket_types (
   status          TEXT NOT NULL DEFAULT 'on_sale' CHECK (status IN ('on_sale','paused','hidden')),
   sort_order      INTEGER NOT NULL DEFAULT 0,
   created_at      TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'general',
+  admits          INTEGER NOT NULL DEFAULT 1 CHECK (admits BETWEEN 1 AND 20),
   CHECK (quantity_sold + quantity_held <= quantity_total)
 );
 CREATE INDEX ticket_types_event_idx ON ticket_types (event_id);
@@ -283,6 +290,30 @@ CREATE INDEX tickets_event_idx ON tickets (event_id, status);
 CREATE INDEX tickets_event_updated_idx ON tickets (event_id, updated_at);
 CREATE INDEX tickets_order_idx ON tickets (order_id);
 
+-- Gate passes: crew, artists, media, vendors and guests that an organiser
+-- lets in without a ticket. Each has its own signed QR code (TP1.…) and a
+-- private link to show it on a phone; re-entry passes scan in many times.
+CREATE TABLE gate_passes (
+  id               TEXT PRIMARY KEY,
+  event_id         TEXT NOT NULL REFERENCES events(id),
+  code             TEXT NOT NULL UNIQUE,
+  qr_version       INTEGER NOT NULL DEFAULT 1,
+  holder_name      TEXT NOT NULL,
+  email            TEXT,
+  role             TEXT NOT NULL,
+  access_note      TEXT,
+  reentry          INTEGER NOT NULL DEFAULT 1,
+  status           TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+  link_token_hash  TEXT NOT NULL UNIQUE,
+  scans            INTEGER NOT NULL DEFAULT 0,
+  first_scanned_at TEXT,
+  last_scanned_at  TEXT,
+  created_by       TEXT NOT NULL REFERENCES users(id),
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
+);
+CREATE INDEX gate_passes_event_idx ON gate_passes (event_id, updated_at);
+
 CREATE TABLE ticket_transfers (
   id               TEXT PRIMARY KEY,
   ticket_id        TEXT NOT NULL REFERENCES tickets(id),
@@ -304,7 +335,8 @@ CREATE TABLE admission_log (
   scanned_by  TEXT NOT NULL REFERENCES users(id),
   outcome     TEXT NOT NULL CHECK (outcome IN ('admitted','already_used','invalid','wrong_event','revoked','refunded','event_not_live')),
   gate        TEXT,
-  occurred_at TEXT NOT NULL
+  occurred_at TEXT NOT NULL,
+  pass_id     TEXT
 );
 CREATE INDEX admission_event_idx ON admission_log (event_id, occurred_at);
 CREATE INDEX admission_scanner_idx ON admission_log (event_id, scanned_by);

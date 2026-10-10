@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 const PUBLIC_EVENT = "e.id, e.slug, e.title, e.is_free, e.summary, e.category, e.venue_name, e.address, e.city, e.province, e.starts_at, e.ends_at,
-  e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.status, e.sales_start_at, e.sales_end_at, o.name AS organiser_name,
+  e.doors_open_at, e.image_upload_id, e.featured, e.age_restriction, e.age_groups, e.ref, e.status, e.sales_start_at, e.sales_end_at, o.name AS organiser_name, o.ref AS organiser_ref,
   (SELECT MIN(price_cents) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS from_price_cents,
   (SELECT COALESCE(SUM(quantity_total - quantity_sold - quantity_held),0) FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale') AS remaining,
   (SELECT count(*) FROM event_likes l WHERE l.event_id = e.id) AS likes";
@@ -20,6 +20,8 @@ route('GET', '/api/public/events', function () {
     }
     if (qs('category')) { $where[] = 'e.category = ?'; $p[] = qs('category'); }
     if (qs('city')) { $where[] = 'e.city = ?'; $p[] = qs('city'); }
+    // An age group also matches events for all ages.
+    if (isset(AGE_GROUPS[qs('age') ?? ''])) { $where[] = "(',' || COALESCE(e.age_groups, '') || ',' LIKE ? OR e.age_groups = 'all')"; $p[] = '%,' . qs('age') . ',%'; }
     if (qs('free') === '1') $where[] = "(e.is_free = 1 OR NOT EXISTS (SELECT 1 FROM ticket_types tt WHERE tt.event_id = e.id AND tt.status = 'on_sale' AND tt.price_cents > 0))";
     if (qs('when') === 'weekend') {
         // Friday 00:00 to Monday 00:00 of this week, Johannesburg time (ISO week starts Monday).
@@ -37,7 +39,7 @@ route('GET', '/api/public/events/:slug', function ($a) {
     $ev = row('SELECT ' . PUBLIC_EVENT . ", e.description, e.refund_policy, e.accessibility_info, e.transfers_enabled, e.cashless_enabled, e.capacity
                 FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE e.slug = ? AND e.status IN ('published','cancelled','completed')", [$a['slug']]);
     if (!$ev) throw not_found('Event not found.');
-    $types = rows("SELECT id, name, description, price_cents, per_order_limit, sales_start_at, sales_end_at, MAX(quantity_total - quantity_sold - quantity_held, 0) AS remaining
+    $types = rows("SELECT id, name, description, kind, admits, price_cents, per_order_limit, sales_start_at, sales_end_at, MAX(quantity_total - quantity_sold - quantity_held, 0) AS remaining
                      FROM ticket_types WHERE event_id = ? AND status = 'on_sale' ORDER BY sort_order, price_cents", [$ev['id']]);
     foreach ($types as &$t) $t['fee_cents'] = ticket_fee((int) $t['price_cents']);
     $ev['salesOpen'] = sales_open($ev);
@@ -156,4 +158,21 @@ route('POST', '/api/public/support', function () {
     insert('support_cases', ['id' => uuid(), 'reference' => $ref, 'user_id' => $u['id'] ?? null, 'email' => $u['email'] ?? $b['email'], 'category' => $b['category'],
         'subject' => $b['subject'], 'body' => $b['body'], 'status' => 'open', 'source' => 'web', 'due_at' => iso_in(48 * 3600), 'created_at' => $now, 'updated_at' => $now]);
     return json_out(['reference' => $ref], 201);
+});
+
+// A gate pass opened from its private link (no account needed).
+route('GET', '/api/public/pass', function () {
+    limit('passview', 60, 60);
+    $t = (string) qs('t', '');
+    if (!preg_match('/^[A-Za-z0-9_-]{20,64}$/', $t)) throw not_found('This pass link is not valid.');
+    $g = row('SELECT * FROM gate_passes WHERE link_token_hash = ?', [sha256($t)]);
+    if (!$g) throw not_found('This pass link is not valid. If the organiser sent you a new one, use that.');
+    $e = row('SELECT e.title, e.ref, e.starts_at, e.ends_at, e.venue_name, e.city, e.status, o.name AS organiser FROM events e JOIN organisers o ON o.id = e.organiser_id WHERE e.id = ?', [$g['event_id']]);
+    $live = $g['status'] === 'active' && !in_array($e['status'], ['cancelled'], true);
+    return [
+        'pass' => ['holderName' => $g['holder_name'], 'role' => PASS_ROLES[$g['role']] ?? $g['role'], 'accessNote' => $g['access_note'], 'reentry' => (bool) $g['reentry'],
+            'status' => $live ? 'active' : 'revoked', 'code' => $g['code'], 'used' => !$g['reentry'] && (int) $g['scans'] > 0],
+        'event' => $e,
+        'svg' => $live ? tr_qr_svg(pass_payload($g), ['ecc' => 'M', 'margin' => 1, 'dark' => '#0B1A33', 'light' => '#FFFFFF']) : null,
+    ];
 });

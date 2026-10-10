@@ -1,4 +1,4 @@
-import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile } from "/assets/core.js";
+import { html, raw, render, $, $$, get, post, money, moneyExact, fmtDate, fmtTime, fmtDateTime, dayNum, monShort, header, footer, poster, requireUser, me, toast, onSubmit, idem, badge, empty, spinner, esc, siteInfo, callbackFields, callbackDialog, hoursText, weekTable, features, subscribeForm, pageReady, likeButton, shareBar, svgIcon, INSTAGRAM, calendarFile, AGE_GROUPS, TICKET_KINDS, ageGroupText, ticketPng } from "/assets/core.js";
 import { documents, ORDER, VERSION, EFFECTIVE } from "/assets/legal.js";
 
 const main = $("#main");
@@ -29,7 +29,7 @@ const icon = (name) => raw(`<svg class="ico" width="16" height="16" viewBox="0 0
 async function home() {
   document.title = "TicketRoom | Event tickets in South Africa";
   const params = new URLSearchParams(location.search);
-  const state = { q: params.get("q") || "", category: params.get("category") || "", city: params.get("city") || "", when: params.get("when") || "", free: params.get("free") || "" };
+  const state = { q: params.get("q") || "", category: params.get("category") || "", city: params.get("city") || "", when: params.get("when") || "", free: params.get("free") || "", age: params.get("age") || "" };
   render(main, html`
     <section class="hero"><div class="wrap">
       <h1>Your event. <b>Your ticket.</b></h1>
@@ -43,7 +43,8 @@ async function home() {
     <section class="section"><div class="wrap">
       <div class="row between"><h2 class="mb-0">Upcoming events</h2>
         <div class="chips" role="group" aria-label="When">${[["", "Any date"], ["weekend", "This weekend"], ["month", "Next 30 days"]].map(([v, l]) => html`<button class="chip" data-when="${v}" aria-pressed="${state.when === v}">${l}</button>`)}<button class="chip" data-free aria-pressed="${state.free === "1"}">Free events</button></div></div>
-      <div class="chips mt" role="group" aria-label="Category">${CATS.map(([v, l]) => html`<button class="chip" data-cat="${v}" aria-pressed="${state.category === v}">${l}</button>`)}</div>
+      <div class="chips mt" role="group" aria-label="Category">${CATS.map(([v, l]) => html`<button class="chip" data-cat="${v}" aria-pressed="${state.category === v}">${l}</button>`)}
+        <label class="sr-only" for="age">Age group</label><select id="age" class="chip-select"><option value="">Any age group</option>${Object.entries(AGE_GROUPS).filter(([k]) => k !== "all").map(([k, l]) => html`<option value="${k}" ${raw(state.age === k ? "selected" : "")}>${l}</option>`)}</select></div>
       <div class="event-grid mt" id="grid" aria-live="polite">${spinner()}</div>
     </div></section>
     <section class="section hidden" id="ads"><div class="wrap"><div class="row between"><h2 class="mb-0">Featured</h2><a class="small" href="/advertise">Advertise with us</a></div><div class="poster-rail mt" id="ad-rail"></div></div></section>
@@ -66,13 +67,14 @@ async function home() {
     if (sel.options.length === 1) cities.forEach((c) => { const o = new Option(`${c.city} (${c.n})`, c.city); sel.add(o); });
     sel.value = state.city;
     render($("#grid"), events.length ? html`${events.map(card)}` : empty("No events match. Try another search or category."));
-    if (!state.q && !state.category && !state.city && !state.when && !state.free) {
+    if (!state.q && !state.category && !state.city && !state.when && !state.free && !state.age) {
       const feat = events.filter((e) => e.featured).slice(0, 6);
       render($("#featured"), html`${(feat.length ? feat : events.slice(0, 4)).map((e) => html`<a class="feature" href="/events/${e.slug}">${poster(e)}<span class="shade"></span><div class="meta"><span class="badge amber plain">${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short" })}</span><h3>${e.title}</h3><span class="small">${e.venue_name}, ${e.city} · ${e.from_price_cents === 0 ? "Free" : `from ${money(e.from_price_cents)}`}</span></div></a>`)}`);
     } else render($("#featured"), "");
   };
   $("#search").addEventListener("submit", (e) => { e.preventDefault(); state.q = $("#q").value.trim(); state.city = $("#city").value; load(); });
   $$("[data-cat]").forEach((b) => b.addEventListener("click", () => { state.category = b.dataset.cat; $$("[data-cat]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
+  $("#age").addEventListener("change", (e) => { state.age = e.target.value; load(); });
   $("[data-free]").addEventListener("click", (e) => { state.free = state.free ? "" : "1"; e.currentTarget.setAttribute("aria-pressed", String(!!state.free)); load(); });
   $$("[data-when]").forEach((b) => b.addEventListener("click", () => { state.when = b.dataset.when; $$("[data-when]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); load(); }));
   const showAds = (site) => {
@@ -111,7 +113,9 @@ async function eventPage(slug) {
         <section class="card"><h2>Venue</h2><p class="mb-0"><strong>${e.venue_name}</strong><br>${e.address ? html`${e.address}<br>` : ""}${e.city}${e.province ? `, ${e.province}` : ""}</p></section>
         ${e.accessibility_info ? html`<section class="card"><h2>Accessibility</h2><p class="prose mb-0">${e.accessibility_info}</p></section>` : ""}
         <section class="card"><h2>Good to know</h2><dl class="dl">
-          <dt>Organiser</dt><dd>${e.organiser_name}</dd>
+          <dt>Organiser</dt><dd>${e.organiser_name}${e.organiser_ref ? html` <span class="small muted mono">${e.organiser_ref}</span>` : ""}</dd>
+          ${e.ref ? html`<dt>Event ID</dt><dd class="mono">${e.ref}</dd>` : ""}
+          ${e.age_groups ? html`<dt>Made for</dt><dd>${ageGroupText(e.age_groups)}</dd>` : ""}
           ${e.age_restriction ? html`<dt>Age</dt><dd>${e.age_restriction}</dd>` : ""}
           <dt>Transfers</dt><dd>${e.transfers_enabled ? "Free ticket transfers until the event starts" : "Tickets are not transferable"}</dd>
           ${e.cashless_enabled ? html`<dt>Cashless</dt><dd>This is a cashless event. Link a wristband and top up in your account.</dd>` : ""}
@@ -135,6 +139,7 @@ async function eventPage(slug) {
       ${closed ? html`<p class="callout warn">${e.status === "cancelled" ? "Sales are closed." : "Ticket sales are not open right now."}</p>` : ""}
       ${ticketTypes.length ? ticketTypes.map((t) => html`<div class="tt"><div class="info"><div class="name">${t.name}</div>
           <div class="meta">${t.price_cents === 0 ? "Free" : html`${moneyExact(t.price_cents)} <span>+ ${moneyExact(t.fee_cents)} booking fee</span>`}${t.remaining === 0 ? " · Sold out" : t.remaining < 25 ? ` · Only ${t.remaining} left` : ""}</div>
+          ${t.admits > 1 || TICKET_KINDS[t.kind]?.note ? html`<div class="meta">${[t.admits > 1 ? `Admits ${t.admits} people` : "", TICKET_KINDS[t.kind]?.note || ""].filter(Boolean).join(" · ")}</div>` : ""}
           ${t.description ? html`<div class="meta">${t.description}</div>` : ""}</div>
         <div class="stepper" role="group" aria-label="${t.name} quantity"><button data-dec="${t.id}" aria-label="Fewer ${t.name}" ${raw(qty[t.id] === 0 ? "disabled" : "")}>−</button><output aria-live="polite">${qty[t.id]}</output><button data-inc="${t.id}" aria-label="More ${t.name}" ${raw(closed || qty[t.id] >= Math.min(t.per_order_limit, t.remaining) ? "disabled" : "")}>+</button></div></div>`) : html`<p class="muted">No tickets available.</p>`}
       <div class="totals"><div class="line"><span>${count} ticket${count === 1 ? "" : "s"}</span><span>${moneyExact(sub)}</span></div>
@@ -428,6 +433,43 @@ async function contact() {
   wireSupport(main);
 }
 
+// ---------------- gate pass ----------------
+// Crew, artists, media and guests open their pass from the private link the
+// organiser sent. No account needed; the link is the key, so it is not indexed.
+async function passPage() {
+  document.title = "Gate pass | TicketRoom";
+  const t = new URLSearchParams(location.search).get("t") || "";
+  let r;
+  try { r = await get(`/api/public/pass?t=${encodeURIComponent(t)}`); }
+  catch (err) { render(main, html`<div class="wrap section"><div class="tk-wrap"><div class="card"><h1>Pass not found</h1><p class="mb-0">${err.message}</p></div></div></div>`); return; }
+  const { pass: g, event: e, svg } = r;
+  const when = `${fmtDate(e.starts_at, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(e.starts_at)}`;
+  const place = [e.venue_name, e.city].filter(Boolean).join(", ");
+  const rows = [["Pass", g.role], ["Name", g.holderName], ...(g.accessNote ? [["Access", g.accessNote]] : []), ["Entry", g.reentry ? "In and out" : "One entry"]];
+  const live = g.status === "active" && svg;
+  render(main, html`<div class="wrap section"><div class="tk-wrap">
+    ${!live ? html`<p class="callout bad mb-0">This pass was cancelled or replaced by the organiser. Ask them for your current pass.</p>` : g.used ? html`<p class="callout warn mb-0">This one-entry pass has already been scanned.</p>` : ""}
+    <article class="ticket ${live ? "" : "void"}" aria-label="Gate pass ${g.code}">
+      <header class="tk-head"><span class="tk-label">Gate pass</span><h3>${e.title}</h3><p class="tk-when">${when}</p><p class="tk-where">${place}</p></header>
+      <div class="tk-body"><dl class="tk-rows">${rows.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>
+        <div class="t-qr">${live ? raw(svg.replace("<svg ", '<svg role="img" aria-label="Gate pass QR code" width="220" height="220" ')) : html`<span class="stamp muted">cancelled</span>`}</div>
+        <p class="tk-scan">${live ? "Scan at the gate" : ""}</p></div>
+      <div class="tk-perf" aria-hidden="true"></div>
+      <div class="tk-foot"><span class="tk-label">Pass code</span><span class="tk-code">${g.code}</span>
+        <p class="tk-note">Issued by ${e.organiser}. Keep this link private: anyone with it can use your pass.</p></div>
+    </article>
+    ${live ? html`<div class="tk-actions no-print"><div class="row"><button class="btn btn-ghost btn-sm" data-img>Save pass image</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div></div>` : ""}
+  </div></div>`);
+  $("[data-print]")?.addEventListener("click", () => window.print());
+  $("[data-img]")?.addEventListener("click", async () => {
+    try {
+      const png = await ticketPng(svg, { label: "GATE PASS", title: e.title, when, place, rows, code: g.code, codeLabel: "PASS CODE", note: "Show this pass at the gate. Keep it private." });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(png); a.download = `gate-pass-${g.code}.png`; document.body.append(a); a.click(); a.remove();
+      toast("Saved to your downloads. Show it at the gate if you have no signal.", "good");
+    } catch (err) { toast(err.message, "bad"); }
+  });
+}
+
 // ---------------- unsubscribe ----------------
 function unsubscribe() {
   document.title = "Unsubscribe | TicketRoom";
@@ -471,6 +513,7 @@ document.documentElement.dataset.manualReady = "1";
     else if (p === "/help") await help();
     else if (p === "/contact") await contact();
     else if (p === "/unsubscribe") unsubscribe();
+    else if (p === "/pass") await passPage();
     else if (p === "/" || p === "/browse") await home();
     else if (p === "/signin") {
       // Staff land in the admin portal, organisers in the organiser portal, everyone else in the customer portal.

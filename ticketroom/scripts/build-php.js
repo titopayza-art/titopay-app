@@ -67,6 +67,7 @@ const PUBLIC = [
   ["help.html", "Help centre | TicketRoom", "Answers about tickets, transfers, refunds and events, and how to reach the TicketRoom team.", "/help"],
   ["contact.html", "Contact us | TicketRoom", "Email hello@ticketroom.co.za or ask us to call you back. We reply within 24 to 48 hours.", "/contact"],
   ["unsubscribe.html", "Unsubscribe | TicketRoom", "", ""],
+  ["pass.html", "Gate pass | TicketRoom", "", ""],
   ["signin.html", "Sign in | TicketRoom", "", "/signin"],
   ["404.html", "Page not found | TicketRoom", "", ""],
 ];

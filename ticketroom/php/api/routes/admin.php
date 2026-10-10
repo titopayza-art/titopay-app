@@ -64,14 +64,26 @@ route('GET', '/api/admin/dashboard', function () {
 });
 
 // ---- organisers ----------------------------------------------------------------
+// ?q= searches by ID (EV-…, ORG-…) or name. Returns the bind values for the
+// query's search clause: [q, ref, (ref,) like, like].
+function adm_find(bool $events = false): array
+{
+    $q = trim(mb_substr((string) qs('q', ''), 0, 80));
+    if ($q === '') return $events ? [null, null, null, null, null] : [null, null, null, null];
+    $ref = strtoupper($q);
+    $like = '%' . like_escape(mb_strtolower($q)) . '%';
+    return $events ? [$q, $ref, $ref, $like, $like] : [$q, $ref, $like, $like];
+}
+
 route('GET', '/api/admin/organisers', function () {
     adm_any();
     $status = qs('status') ?: null;
-    $list = rows("SELECT o.id, o.name, o.status, o.contact_email, o.contact_phone, o.created_at, o.bank_account_last4,
+    $list = rows("SELECT o.id, o.ref, o.name, o.status, o.contact_email, o.contact_phone, o.created_at, o.bank_account_last4,
                          (SELECT count(*) FROM events WHERE organiser_id = o.id) AS events,
                          o.commission_bps,
                          (SELECT u.full_name FROM organiser_members m JOIN users u ON u.id = m.user_id WHERE m.organiser_id = o.id AND m.role = 'owner' LIMIT 1) AS owner_name
-                    FROM organisers o WHERE (? IS NULL OR o.status = ?) ORDER BY o.created_at DESC LIMIT 200", [$status, $status]);
+                    FROM organisers o WHERE (? IS NULL OR o.status = ?) AND (? IS NULL OR o.ref = ? OR lower(o.name) LIKE ? ESCAPE '\\' OR lower(o.contact_email) LIKE ? ESCAPE '\\')
+                   ORDER BY o.created_at DESC LIMIT 200", array_merge([$status, $status], adm_find()));
     return ['organisers' => $list];
 });
 
@@ -116,12 +128,13 @@ route('POST', '/api/admin/organisers/:id/commission', function ($a) {
 route('GET', '/api/admin/events', function () {
     adm_any();
     $status = qs('status') ?: null;
-    $list = rows("SELECT e.id, e.title, e.slug, e.status, e.starts_at, e.city, e.capacity, e.featured, e.cashless_enabled, e.cancellation_requested_at, e.cancellation_reason, e.status_reason,
-                         o.name AS organiser_name, o.id AS organiser_id,
+    $list = rows("SELECT e.id, e.ref, e.title, e.slug, e.status, e.starts_at, e.city, e.capacity, e.featured, e.cashless_enabled, e.cancellation_requested_at, e.cancellation_reason, e.status_reason,
+                         o.name AS organiser_name, o.id AS organiser_id, o.ref AS organiser_ref,
                          (SELECT COALESCE(SUM(quantity_sold),0) FROM ticket_types WHERE event_id = e.id) AS sold
                     FROM events e JOIN organisers o ON o.id = e.organiser_id
                    WHERE (? IS NULL OR e.status = ? OR (? = 'cancel_requests' AND e.cancellation_requested_at IS NOT NULL AND e.status <> 'cancelled'))
-                   ORDER BY e.starts_at DESC LIMIT 300", [$status, $status, $status]);
+                     AND (? IS NULL OR e.ref = ? OR o.ref = ? OR lower(e.title) LIKE ? ESCAPE '\\' OR lower(o.name) LIKE ? ESCAPE '\\')
+                   ORDER BY e.starts_at DESC LIMIT 300", array_merge([$status, $status, $status], adm_find(true)));
     foreach ($list as &$e) $e['sold'] = (int) $e['sold'];
     return ['events' => $list];
 });

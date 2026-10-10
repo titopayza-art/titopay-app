@@ -59,6 +59,39 @@ function consents_for(string $userId): array
                   WHERE c.user_id = ? ORDER BY (o.name IS NOT NULL), o.name, c.channel', [$userId]);
 }
 
+// ============================================================== IDs, ticket kinds, age groups
+// Short IDs people can read out on the phone: EV-7K3M9Q for an event,
+// ORG-4H8T2W for an organiser. Same alphabet as ticket codes (no 0/O, 1/I).
+function new_ref(string $table): string
+{
+    $prefix = $table === 'events' ? 'EV-' : 'ORG-';
+    do { $ref = $prefix . random_code(6); } while (val("SELECT 1 FROM $table WHERE ref = ?", [$ref]));
+    return $ref;
+}
+// Ticket kinds an organiser can sell. 'check' is what the gate is told to look
+// at; 'admits' is the usual number of people one ticket lets in.
+const TICKET_KINDS = [
+    'general' => ['label' => 'General admission'], 'early_bird' => ['label' => 'Early bird'], 'vip' => ['label' => 'VIP'], 'vvip' => ['label' => 'VVIP'],
+    'golden_circle' => ['label' => 'Golden circle'], 'seated' => ['label' => 'Reserved seating'], 'standing' => ['label' => 'Standing'],
+    'student' => ['label' => 'Student', 'check' => 'Check student card'], 'child' => ['label' => 'Child', 'check' => 'Check age'],
+    'pensioner' => ['label' => 'Pensioner', 'check' => 'Check ID'], 'couple' => ['label' => 'Couple', 'admits' => 2],
+    'group' => ['label' => 'Group', 'admits' => 4], 'table' => ['label' => 'Table / booth', 'admits' => 8],
+    'day_pass' => ['label' => 'Day pass'], 'multi_day' => ['label' => 'Weekend / multi-day pass'], 'season' => ['label' => 'Season pass'],
+    'backstage' => ['label' => 'Backstage / meet & greet'], 'hospitality' => ['label' => 'Hospitality'],
+    'accessible' => ['label' => 'Accessible', 'check' => 'Companion may enter with this ticket'], 'late_entry' => ['label' => 'Late entry'],
+];
+const AGE_GROUPS = ['all' => 'All ages', 'kids' => 'Kids (under 13)', 'teens' => 'Teens (13 to 17)', '18_24' => '18 to 24', '25_34' => '25 to 34',
+    '35_49' => '35 to 49', '50_plus' => '50 and over', 'families' => 'Families'];
+// What the scanner shows under the name: "VIP · Admit 2 · Check ID".
+function gate_label(array $tt): string
+{
+    $k = TICKET_KINDS[$tt['kind'] ?? 'general'] ?? [];
+    $parts = [$tt['name']];
+    if ((int) ($tt['admits'] ?? 1) > 1) $parts[] = 'Admit ' . (int) $tt['admits'];
+    if (!empty($k['check'])) $parts[] = $k['check'];
+    return implode(' · ', $parts);
+}
+
 // ============================================================== orders
 const MAX_TICKETS_PER_ORDER = 20;
 const HOLD_MINUTES = 10;
@@ -120,8 +153,9 @@ function create_order(array $user, array $in): array
         $event = row('SELECT * FROM events WHERE slug = ?', [$in['eventSlug']]);
         if (!$event) throw not_found('Event not found.');
         $qt = order_quote($event, $in['items'], $in['promoCode'] ?? null);
-        $used = (int) val('SELECT COALESCE(SUM(quantity_sold + quantity_held),0) FROM ticket_types WHERE event_id = ?', [$event['id']]);
-        $wanted = array_sum(array_column($qt['lines'], 'quantity'));
+        // Capacity counts people: a couple ticket uses two places.
+        $used = (int) val('SELECT COALESCE(SUM((quantity_sold + quantity_held) * admits),0) FROM ticket_types WHERE event_id = ?', [$event['id']]);
+        $wanted = array_sum(array_map(fn($l) => $l['quantity'] * max(1, (int) ($l['ticketType']['admits'] ?? 1)), $qt['lines']));
         if ($used + $wanted > $event['capacity']) throw conflict('Not enough tickets left for this event.', 'sold_out');
         if ($qt['total'] > 0) throw new AppError(503, 'payments_not_configured', 'Card payments are not switched on yet. Free tickets are available; paid tickets go on sale soon.');
         // Free tickets: the per-person limit counts every order this person
@@ -223,10 +257,31 @@ function qr_parse(?string $input): ?array
     $typed = preg_replace('/[\s-]/', '', strtoupper($s));
     return preg_match('/^[2-9A-HJ-NP-TV-Z]{10}$/', $typed) ? ['code' => $typed, 'signed' => false] : null;
 }
+// Gate passes use their own prefix and signing label, so a pass code can never
+// be passed off as a ticket or the other way round.
+function pass_sig(string $code, int $version): string { return substr(b64url(hmac_raw(key_hex('qr'), "P|$code|$version")), 0, 22); }
+function pass_payload(array $g): string { return "TP1.{$g['code']}.{$g['qr_version']}." . pass_sig($g['code'], (int) $g['qr_version']); }
+function pass_parse(?string $input): ?array
+{
+    if (!preg_match('/^TP1\.([2-9A-HJ-NP-TV-Z]{10})\.(\d{1,6})\.([A-Za-z0-9_-]{22})$/', trim((string) $input), $m)) return null;
+    return safe_equal(pass_sig($m[1], (int) $m[2]), $m[3]) ? ['code' => $m[1], 'version' => (int) $m[2], 'signed' => true] : null;
+}
+// A code no ticket or pass uses yet.
+function new_pass_code(): string
+{
+    do { $c = random_code(10); } while (val('SELECT 1 FROM tickets WHERE code = ? UNION ALL SELECT 1 FROM gate_passes WHERE code = ?', [$c, $c]));
+    return $c;
+}
+const PASS_ROLES = ['crew' => 'Crew', 'artist' => 'Artist / performer', 'media' => 'Media', 'vendor' => 'Vendor', 'security' => 'Security', 'medical' => 'Medical',
+    'sponsor' => 'Sponsor', 'guest' => 'Guest list', 'staff' => 'Event staff', 'all_access' => 'All access'];
+// Passes work from two days before the event (build) to a day after (strike).
+const PASS_BEFORE_H = 48;
+const PASS_AFTER_H = 24;
+
 function tickets_for_user(string $userId): array
 {
     $list = rows("SELECT t.id, t.code, t.status, t.holder_name, t.admitted_at, t.qr_version, t.price_cents,
-                         tt.name AS ticket_type, e.id AS event_id, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at,
+                         tt.name AS ticket_type, tt.kind AS ticket_kind, tt.admits, e.id AS event_id, e.ref AS event_ref, e.title, e.slug, e.venue_name, e.city, e.starts_at, e.ends_at,
                          e.status AS event_status, e.transfers_enabled, e.image_upload_id, e.category, o.reference AS order_reference
                     FROM tickets t JOIN events e ON e.id = t.event_id JOIN ticket_types tt ON tt.id = t.ticket_type_id JOIN orders o ON o.id = t.order_id
                    WHERE t.owner_user_id = ? ORDER BY e.starts_at, t.created_at", [$userId]);
@@ -299,20 +354,28 @@ function admit(array $staff, array $b): array
         $log = function (string $outcome, ?string $ticketId = null) use ($eventId, $staff, $b) {
             q('INSERT INTO admission_log (event_id, ticket_id, scanned_by, outcome, gate, occurred_at) VALUES (?,?,?,?,?,?)', [$eventId, $ticketId, $staff['id'], $outcome, $b['gate'] ?? null, $b['at'] ?? now_iso()]);
         };
+        $notLive = function () use ($log) { $log('event_not_live'); return ['outcome' => 'event_not_live', 'message' => 'This event is not open for entry right now.']; };
+        if ($ev['status'] !== 'published') return $notLive();
+        // Gate passes have their own, longer window (setup and strike days).
+        $isPass = str_starts_with(trim((string) ($b['payload'] ?? '')), 'TP1.');
         $now = microtime(true);
-        if ($ev['status'] !== 'published' || $now < to_unix($ev['starts_at']) - ADMIT_BEFORE_H * 3600 || $now > to_unix($ev['ends_at']) + ADMIT_AFTER_H * 3600) {
-            $log('event_not_live');
-            return ['outcome' => 'event_not_live', 'message' => 'This event is not open for entry right now.'];
+        if (!$isPass && ($now < to_unix($ev['starts_at']) - ADMIT_BEFORE_H * 3600 || $now > to_unix($ev['ends_at']) + ADMIT_AFTER_H * 3600)) {
+            $typed = qr_parse($b['payload'] ?? '');
+            if (!$typed || $typed['signed'] || !val('SELECT 1 FROM gate_passes WHERE code = ?', [$typed['code']])) return $notLive();
         }
         if (empty($b['payload'])) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Wristbands and tags are not available yet. Scan the ticket QR code.']; }
+        if ($isPass) return admit_pass($staff, $b, $ev);
         $p = qr_parse($b['payload']);
         if (!$p) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Not a TicketRoom ticket, or the code has been altered.']; }
         $t = row('SELECT * FROM tickets WHERE code = ?', [$p['code']]);
+        // A typed code may belong to a gate pass.
+        if (!$t && !$p['signed'] && ($g = row('SELECT * FROM gate_passes WHERE code = ?', [$p['code']]))) return admit_pass($staff, $b + ['typed' => $g], $ev);
         if (!$t) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Ticket not found.']; }
         if ($p['signed'] && $p['version'] !== (int) $t['qr_version']) { $log('invalid', $t['id']); return ['outcome' => 'invalid', 'message' => 'This QR code was replaced (ticket transferred or reissued). Ask for the current ticket.']; }
         if ($t['event_id'] !== $eventId) { $log('wrong_event', $t['id']); return ['outcome' => 'wrong_event', 'message' => 'This ticket is for a different event.']; }
         if (in_array($t['status'], ['revoked', 'refunded'], true)) { $log($t['status'], $t['id']); return ['outcome' => $t['status'], 'message' => "This ticket was {$t['status']}."]; }
-        $type = val('SELECT name FROM ticket_types WHERE id = ?', [$t['ticket_type_id']]);
+        $tt = row('SELECT name, kind, admits FROM ticket_types WHERE id = ?', [$t['ticket_type_id']]);
+        $type = gate_label($tt);
         // Offline scans synced later keep the time the fan actually walked in.
         $at = $b['at'] ?? now_iso();
         if (affected("UPDATE tickets SET status = 'used', admitted_at = ?, admitted_by = ?, updated_at = ? WHERE id = ? AND status = 'valid'", [$at, $staff['id'], now_iso(), $t['id']]) === 0) {
@@ -320,8 +383,40 @@ function admit(array $staff, array $b): array
             return ['outcome' => 'already_used', 'message' => 'Already scanned.', 'admittedAt' => $t['admitted_at'], 'holderName' => $t['holder_name'], 'ticketType' => $type];
         }
         $log('admitted', $t['id']);
-        return ['outcome' => 'admitted', 'message' => 'Admit', 'holderName' => $t['holder_name'], 'ticketType' => $type, 'code' => $t['code']];
+        return ['outcome' => 'admitted', 'message' => 'Admit', 'holderName' => $t['holder_name'], 'ticketType' => $type, 'code' => $t['code'], 'admits' => (int) $tt['admits']];
     });
+}
+// Runs inside admit()'s transaction. Re-entry passes are let in every time
+// (each entry is logged); single-entry passes work once, like a ticket.
+function admit_pass(array $staff, array $b, array $ev): array
+{
+    $log = function (string $outcome, ?string $passId = null) use ($ev, $staff, $b) {
+        q('INSERT INTO admission_log (event_id, pass_id, scanned_by, outcome, gate, occurred_at) VALUES (?,?,?,?,?,?)', [$ev['id'], $passId, $staff['id'], $outcome, $b['gate'] ?? null, $b['at'] ?? now_iso()]);
+    };
+    if (isset($b['typed'])) $g = $b['typed'];
+    else {
+        $p = pass_parse($b['payload']);
+        if (!$p) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Not a TicketRoom pass, or the code has been altered.']; }
+        $g = row('SELECT * FROM gate_passes WHERE code = ?', [$p['code']]);
+        if (!$g) { $log('invalid'); return ['outcome' => 'invalid', 'message' => 'Pass not found.']; }
+        if ($p['version'] !== (int) $g['qr_version']) { $log('invalid', $g['id']); return ['outcome' => 'invalid', 'message' => 'This pass was replaced. Ask for the current pass.']; }
+    }
+    $label = 'Gate pass · ' . (PASS_ROLES[$g['role']] ?? $g['role']) . ($g['access_note'] ? " · {$g['access_note']}" : '');
+    if ($g['event_id'] !== $ev['id']) { $log('wrong_event', $g['id']); return ['outcome' => 'wrong_event', 'message' => 'This pass is for a different event.', 'holderName' => $g['holder_name']]; }
+    if ($g['status'] !== 'active') { $log('revoked', $g['id']); return ['outcome' => 'revoked', 'message' => 'This pass was cancelled by the organiser.', 'holderName' => $g['holder_name']]; }
+    $now = microtime(true);
+    if ($now < to_unix($ev['starts_at']) - PASS_BEFORE_H * 3600 || $now > to_unix($ev['ends_at']) + PASS_AFTER_H * 3600) {
+        $log('event_not_live', $g['id']);
+        return ['outcome' => 'event_not_live', 'message' => 'Passes for this event are not valid right now.'];
+    }
+    $at = $b['at'] ?? now_iso();
+    $once = (int) $g['reentry'] === 0;
+    if (affected('UPDATE gate_passes SET scans = scans + 1, first_scanned_at = COALESCE(first_scanned_at, ?), last_scanned_at = ?, updated_at = ? WHERE id = ?' . ($once ? ' AND scans = 0' : ''), [$at, $at, now_iso(), $g['id']]) === 0) {
+        $log('already_used', $g['id']);
+        return ['outcome' => 'already_used', 'message' => 'Single-entry pass, already scanned.', 'admittedAt' => $g['first_scanned_at'], 'holderName' => $g['holder_name'], 'ticketType' => $label];
+    }
+    $log('admitted', $g['id']);
+    return ['outcome' => 'admitted', 'message' => 'Admit', 'holderName' => $g['holder_name'], 'ticketType' => $label, 'code' => $g['code'], 'pass' => true, 'reentry' => !$once];
 }
 
 // ============================================================== uploads

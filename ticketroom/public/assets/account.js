@@ -35,7 +35,7 @@ function ticketCard(t, offline = false) {
   return html`<div class="tk-wrap"><div class="tk-brand print-only"><img src="/assets/logo-mark-dark.svg" alt="" width="48" height="36"><span class="wordmark">TICKET<b>ROOM</b></span></div><article class="ticket ${t.status === "used" ? "used" : live ? "" : "void"}" aria-label="Ticket ${t.code}">
     <header class="tk-head"><span class="tk-label">TicketRoom ticket</span><h3>${t.title}</h3>
       <p class="tk-when">${fmtDate(t.starts_at, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(t.starts_at)}</p><p class="tk-where">${place}</p></header>
-    <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div><div><dt>Holder</dt><dd>${t.holder_name || "Not set"}</dd></div><div><dt>Order</dt><dd class="mono">${t.order_reference}</dd></div></dl>
+    <div class="tk-body"><dl class="tk-rows"><div><dt>Ticket</dt><dd>${t.ticket_type}</dd></div><div><dt>Holder</dt><dd>${t.holder_name || "Not set"}</dd></div>${t.admits > 1 ? html`<div><dt>Admits</dt><dd>${t.admits} people</dd></div>` : ""}<div><dt>Order</dt><dd class="mono">${t.order_reference}</dd></div></dl>
       <div class="t-qr">${live && qrSrc ? html`<img src="${qrSrc}" alt="QR code for ticket ${t.code}" width="220" height="220">` : html`<span class="stamp ${t.status === "used" ? "" : "muted"}">${t.status}</span>`}</div>
       <p class="tk-scan">${t.status === "used" ? `Scanned ${fmtDateTime(t.admitted_at)}` : live ? "Scan at the entrance" : ""}</p></div>
     <div class="tk-perf" aria-hidden="true"></div>
@@ -46,7 +46,7 @@ function ticketCard(t, offline = false) {
   ${!offline && live ? html`<div class="tk-actions no-print"><div class="row">${t.transfers_enabled && !t.pending_transfer && new Date(t.starts_at) > new Date() ? html`<button class="btn btn-ghost btn-sm" data-transfer="${t.id}">Transfer</button>` : ""}
       <button class="btn btn-ghost btn-sm" data-rename="${t.id}" data-name="${t.holder_name || ""}">Change holder name</button><button class="btn btn-ghost btn-sm" data-print>Print</button></div>
     <div class="wallet-row" data-wallet="${t.id}" data-code="${t.code}" data-title="${t.title}" data-starts="${t.starts_at}" data-ends="${t.ends_at}" data-place="${place}" data-slug="${t.slug}"
-      data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}"></div></div>` : ""}
+      data-type="${t.ticket_type}" data-holder="${t.holder_name || ""}" data-order="${t.order_reference}" data-admits="${t.admits || 1}"></div></div>` : ""}
   </div>`;
 }
 
@@ -73,7 +73,8 @@ async function walletButtons() {
       try {
         const svg = await fetch(`/api/me/tickets/${id}/qr.svg`, { credentials: "same-origin" }).then((r) => { if (!r.ok) throw new Error("Could not load the ticket."); return r.text(); });
         const d = box.dataset;
-        const png = await ticketPng(svg, { title: d.title, when: `${fmtDate(d.starts, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(d.starts)}`, place: d.place, type: d.type, holder: d.holder || "Not set", order: d.order, code: d.code });
+        const png = await ticketPng(svg, { title: d.title, when: `${fmtDate(d.starts, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}, ${fmtTime(d.starts)}`, place: d.place, code: d.code,
+          rows: [["Ticket", d.type], ["Holder", d.holder || "Not set"], ...(Number(d.admits) > 1 ? [["Admits", `${d.admits} people`]] : []), ["Order", d.order]] });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(png); a.download = `ticket-${box.dataset.code}.png`; document.body.append(a); a.click(); a.remove();
         toast("Saved. Show this picture at the gate if you have no signal.", "good");

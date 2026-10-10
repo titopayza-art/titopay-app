@@ -155,6 +155,97 @@ const download = async (p, click) => { const [d] = await Promise.all([p.waitForE
     assert.equal((await again.json()).error.code, "duplicate_event");
     step("the same event cannot be created twice");
 
+    // Event and organiser IDs, target age groups and the age filter.
+    const opost = (url, data) => o.request.post(`${BASE}${url}`, { data, headers: { "x-csrf-token": ocsrf } });
+    const ev2 = (await (await opost(`/api/organiser/${orgId}/events`, { ...ev1, title: "Teen Talent Show", ageGroups: ["teens", "families"] })).json()).event;
+    assert.match(ev2.ref, /^EV-[2-9A-HJ-NP-TV-Z]{6}$/);
+    assert.equal(ev2.age_groups, "teens,families");
+    const bad18 = await opost(`/api/organiser/${orgId}/events`, { ...ev1, title: "Late Club Night", ageRestriction: "18+", ageGroups: ["kids"] });
+    assert.equal(bad18.status(), 400);
+    const orgView = (await (await o.request.get(`${BASE}/api/organiser/${orgId}`)).json()).organiser;
+    assert.match(orgView.ref, /^ORG-[2-9A-HJ-NP-TV-Z]{6}$/);
+    const opatch = (url, data) => o.request.patch(`${BASE}${url}`, { data, headers: { "x-csrf-token": ocsrf } });
+    assert.equal((await (await opatch(`/api/organiser/${orgId}/events/${evId}`, { ageGroups: ["all"] })).json()).event.age_groups, "all");
+    const jazzRef = (await (await o.request.get(`${BASE}/api/organiser/${orgId}/events/${evId}`)).json()).event.ref;
+    const byAge = (await (await fetch(`${BASE}/api/public/events?age=25_34`)).json()).events.map((e) => e.title);
+    assert.ok(byAge.includes("Free Jazz in the Park"), "an all-ages event shows for every age group");
+    const pub = (await (await fetch(`${BASE}/api/public/events/${(await (await fetch(`${BASE}/api/public/events`)).json()).events.find((e) => e.title === "Free Jazz in the Park").slug}`)).json()).event;
+    assert.equal(pub.ref, jazzRef);
+    assert.equal(pub.organiser_ref, orgView.ref);
+    const ap = await page(browser, ADMIN);
+    assert.equal((await (await ap.request.get(`${BASE}/api/admin/events?q=${jazzRef.toLowerCase()}`)).json()).events[0].title, "Free Jazz in the Park");
+    assert.equal((await (await ap.request.get(`${BASE}/api/admin/organisers?q=${orgView.ref}`)).json()).organisers[0].name, orgView.name);
+    step("event and organiser IDs, admin search by ID, target age groups and filter; 18+ events can't target children");
+
+    // Ticket kinds: a couple ticket lets two people in on one QR code.
+    const tt = await opost(`/api/organiser/${orgId}/events/${evId}/ticket-types`, { name: "Couple", kind: "couple", priceCents: 0, quantityTotal: 20, perOrderLimit: 2 });
+    assert.equal(tt.status(), 201);
+    const couple = (await tt.json()).ticketType;
+    assert.equal(couple.admits, 2);
+    assert.equal((await opost(`/api/organiser/${orgId}/events/${evId}/ticket-types`, { name: "Odd", kind: "nonsense", priceCents: 0, quantityTotal: 5 })).status(), 422);
+    const fcsrf = (await (await fan.request.get(`${BASE}/api/auth/me`)).json()).csrfToken;
+    const jazzSlug = pub.slug;
+    const bought = await fan.request.post(`${BASE}/api/public/orders`, { data: { eventSlug: jazzSlug, items: [{ ticketTypeId: couple.id, quantity: 1 }], idempotencyKey: `couple-${Date.now()}` }, headers: { "x-csrf-token": fcsrf } });
+    assert.equal(bought.status(), 201);
+    const coupleCode = execFileSync("php", ["-r", `require '${ROOT}/api/bootstrap.php'; tr_load(); echo val("SELECT code FROM tickets WHERE ticket_type_id = ?", [$argv[1]]);`, couple.id]).toString();
+    const c1 = await (await o.request.post(`${BASE}/api/staff/scan`, { data: { eventId: evId, payload: sign(coupleCode) }, headers: { "x-csrf-token": csrf } })).json();
+    assert.equal(c1.outcome, "admitted");
+    assert.equal(c1.admits, 2);
+    assert.match(c1.ticketType, /Couple · Admit 2/);
+    assert.equal(await (async () => { try { return (await opatch(`/api/organiser/${orgId}/events/${evId}/ticket-types/${couple.id}`, { admits: 3 })).status(); } catch { return 0; } })(), 409);
+    step("couple ticket: one QR code, scanner shows ADMIT 2; head count locked once sold; unknown kinds refused");
+
+    // Gate passes: crew re-entry, single-entry guest list, forged, cancelled and replaced passes.
+    const crew = await (await opost(`/api/organiser/${orgId}/events/${evId}/passes`, { holderName: "Lerato Crew", role: "crew", accessNote: "Backstage" })).json();
+    assert.match(crew.url, /\/pass\?t=[A-Za-z0-9_-]{30,}$/);
+    const tok = new URL(crew.url).searchParams.get("t");
+    const view = await (await fetch(`${BASE}/api/public/pass?t=${tok}`)).json();
+    assert.equal(view.pass.holderName, "Lerato Crew");
+    assert.match(view.svg, /^<svg/);
+    assert.equal((await fetch(`${BASE}/api/public/pass?t=${"x".repeat(32)}`)).status, 404);
+    const passPayload = execFileSync("php", ["-r", `require '${ROOT}/api/bootstrap.php'; tr_load(); echo pass_payload(row('SELECT code, qr_version FROM gate_passes WHERE id = ?', [$argv[1]]));`, crew.pass.id]).toString();
+    for (let i = 0; i < 3; i++) assert.equal(await scan(passPayload), "admitted", "re-entry pass lets crew in and out");
+    assert.equal(await scan(passPayload.slice(0, -1) + (passPayload.endsWith("A") ? "B" : "A")), "invalid", "forged pass refused");
+    assert.equal(await scan(passPayload.replace(/^TP1/, "TR1")), "invalid", "a pass can't pose as a ticket");
+    assert.equal(await scan(crew.pass.code), "admitted", "typed pass code works");
+    const guests = await (await opost(`/api/organiser/${orgId}/events/${evId}/passes/bulk`, { role: "guest", reentry: false, people: [{ holderName: "Guest One" }, { holderName: "Guest Two" }] })).json();
+    assert.equal(guests.passes.length, 2);
+    const gp = execFileSync("php", ["-r", `require '${ROOT}/api/bootstrap.php'; tr_load(); echo pass_payload(row('SELECT code, qr_version FROM gate_passes WHERE id = ?', [$argv[1]]));`, guests.passes[0].pass.id]).toString();
+    const gOutcomes = await Promise.all(Array.from({ length: 5 }, () => scan(gp)));
+    assert.equal(gOutcomes.filter((x) => x === "admitted").length, 1, `one-entry pass admits once: ${gOutcomes}`);
+    const re = await (await opost(`/api/organiser/${orgId}/events/${evId}/passes/${crew.pass.id}/reissue`, {})).json();
+    assert.equal(await scan(passPayload), "invalid", "old QR stops working after a new link");
+    assert.equal((await fetch(`${BASE}/api/public/pass?t=${tok}`)).status, 404, "old link stops working");
+    assert.equal((await fetch(`${BASE}/api/public/pass?t=${new URL(re.url).searchParams.get("t")}`)).status, 200);
+    await opost(`/api/organiser/${orgId}/events/${evId}/passes/${guests.passes[1].pass.id}/revoke`, {});
+    const gp2 = execFileSync("php", ["-r", `require '${ROOT}/api/bootstrap.php'; tr_load(); echo pass_payload(row('SELECT code, qr_version FROM gate_passes WHERE id = ?', [$argv[1]]));`, guests.passes[1].pass.id]).toString();
+    assert.equal(await scan(gp2), "revoked");
+    const stranger = await page(browser, { email: "sipho@example.co.za", password: "fan-password-123" });
+    assert.equal((await stranger.request.get(`${BASE}/api/organiser/${orgId}/events/${evId}/passes`)).status(), 404, "passes are private to the organiser");
+    const pack = await (await o.request.get(`${BASE}/api/staff/events/${evId}/offline-pack`)).json();
+    assert.ok(pack.tickets.some((t) => t[3] === "Lerato Crew" && t[5] === 1), "re-entry passes are in the offline list");
+    step("gate passes: re-entry crew, one-entry guest list (5 phones, 1 admit), forged, replaced and cancelled passes refused; offline list");
+
+    // The organiser screens and the pass page in a browser.
+    await o.goto(`${BASE}/organisers#/events/${evId}/passes`);
+    await o.getByRole("heading", { name: "Issue gate passes" }).waitFor();
+    await o.getByLabel("Name", { exact: true }).fill("Media Person");
+    await o.getByLabel("Pass type").selectOption("media");
+    await o.getByRole("button", { name: "Issue pass" }).click();
+    const link = await o.locator("dialog input[readonly]").first().inputValue();
+    const pimg = await download(o, () => o.locator("dialog").getByRole("button", { name: "Pass image" }).click());
+    assert.deepEqual([...pimg.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+    const pp = await page(browser, null, { width: 390, height: 844 });
+    await pp.goto(link);
+    await pp.getByText("Media Person").waitFor();
+    await pp.locator(".t-qr svg").waitFor();
+    await o.goto(`${BASE}/organisers#/events/${evId}/details`);
+    await o.getByText("Who is this event for?").waitFor();
+    assert.equal(await o.getByLabel("All ages").isChecked(), true);
+    await o.goto(`${BASE}/organisers#/events/${evId}/tickets`);
+    await o.getByRole("cell", { name: /Admits 2/ }).waitFor();
+    step("organiser issues a pass in the portal and downloads it; the pass opens on a phone; age groups and ticket kinds show");
+
     // Locked password page: secret word, one wrong word locks it, staff accounts only.
     const unlock = path.join(ROOT, "data", "unlock-reset");
     assert.equal((await fetch(`${BASE}/set-password.php`)).status, 404);

@@ -40,7 +40,7 @@ function org_bool(array $o = ['optional' => true]): Closure
 function org_view(array $o, string $role): array
 {
     return [
-        'id' => $o['id'], 'name' => $o['name'], 'slug' => $o['slug'], 'status' => $o['status'], 'contactEmail' => $o['contact_email'], 'contactPhone' => $o['contact_phone'],
+        'id' => $o['id'], 'ref' => $o['ref'] ?? null, 'name' => $o['name'], 'slug' => $o['slug'], 'status' => $o['status'], 'contactEmail' => $o['contact_email'], 'contactPhone' => $o['contact_phone'],
         'description' => $o['description'], 'payoutHoldDays' => (int) $o['payout_hold_days'], 'role' => $role,
         'bank' => in_array($role, ORG_MONEY, true) || $role === 'admin'
             ? ['bankName' => $o['bank_name'], 'accountHolder' => $o['bank_account_holder'], 'last4' => $o['bank_account_last4'], 'branchCode' => $o['bank_branch_code']]
@@ -113,7 +113,7 @@ function org_event_analytics(array $event): array
         $daily[] = ['day' => $d, 'tickets' => $tick[$d] ?? 0, 'revenue_cents' => $rev[$d] ?? 0];
     }
 
-    $byType = rows("SELECT tt.id, tt.name, tt.price_cents, tt.quantity_total, tt.quantity_sold, tt.quantity_held,
+    $byType = rows("SELECT tt.id, tt.name, tt.kind, tt.admits, tt.price_cents, tt.quantity_total, tt.quantity_sold, tt.quantity_held,
                            (SELECT count(*) FROM tickets t WHERE t.ticket_type_id = tt.id AND t.status = 'used') AS checked_in
                       FROM ticket_types tt WHERE tt.event_id = ? ORDER BY tt.sort_order, tt.price_cents", [$id]);
     $checkins = row("SELECT COALESCE(SUM(CASE WHEN status = 'used' THEN 1 ELSE 0 END),0) AS admitted,
@@ -150,13 +150,27 @@ function org_event_shape(bool $partial = false): array
         'salesStartAt' => R::date(['optional' => true]), 'salesEndAt' => R::date(['optional' => true]),
         'refundPolicy' => R::text(['optional' => true, 'max' => 2000]), 'accessibilityInfo' => R::text(['optional' => true, 'max' => 2000]), 'ageRestriction' => R::str(['optional' => true, 'max' => 60]),
         'transfersEnabled' => org_bool(), 'cashlessEnabled' => org_bool(), 'imageUploadId' => R::uuid(['optional' => true]),
-        'isFree' => org_bool(),
+        'isFree' => org_bool(), 'ageGroups' => R::arr(R::oneOf(array_keys(AGE_GROUPS)), ['optional' => true, 'max' => 8]),
     ];
+}
+// Target age groups are stored as "18_24,25_34". An 18+ event cannot be aimed
+// at children, which would only confuse buyers.
+function org_age_groups(array $b, ?string $restriction): array
+{
+    if (!array_key_exists('ageGroups', $b)) return $b;
+    $g = array_values(array_intersect(array_keys(AGE_GROUPS), (array) $b['ageGroups']));
+    if (in_array('all', $g, true)) $g = ['all'];
+    if (preg_match('/\b(16|18|21)\s*\+/', (string) $restriction) && array_intersect($g, ['all', 'kids', 'teens', 'families'])) {
+        throw bad('This event has an age restriction, so it cannot be aimed at children, teens or families.', ['ageGroups' => 'Remove the under-18 groups, or the age restriction.']);
+    }
+    $b['ageGroups'] = $g ? implode(',', $g) : null;
+    return $b;
 }
 const ORG_EVENT_COLS = ['title' => 'title', 'summary' => 'summary', 'description' => 'description', 'category' => 'category', 'venueName' => 'venue_name', 'address' => 'address',
     'city' => 'city', 'province' => 'province', 'startsAt' => 'starts_at', 'endsAt' => 'ends_at', 'doorsOpenAt' => 'doors_open_at', 'capacity' => 'capacity',
     'salesStartAt' => 'sales_start_at', 'salesEndAt' => 'sales_end_at', 'refundPolicy' => 'refund_policy', 'accessibilityInfo' => 'accessibility_info',
-    'ageRestriction' => 'age_restriction', 'transfersEnabled' => 'transfers_enabled', 'cashlessEnabled' => 'cashless_enabled', 'imageUploadId' => 'image_upload_id', 'isFree' => 'is_free'];
+    'ageRestriction' => 'age_restriction', 'transfersEnabled' => 'transfers_enabled', 'cashlessEnabled' => 'cashless_enabled', 'imageUploadId' => 'image_upload_id', 'isFree' => 'is_free',
+    'ageGroups' => 'age_groups'];
 
 function org_assert_upload(string $orgId, ?string $uploadId): void
 {
@@ -171,10 +185,11 @@ function org_tt_shape(array $o = []): array
         'quantityTotal' => R::int(['min' => 0, 'max' => 200000] + $o), 'perOrderLimit' => R::int(['min' => 1, 'max' => 50, 'optional' => true]),
         'salesStartAt' => R::date(['optional' => true]), 'salesEndAt' => R::date(['optional' => true]), 'status' => R::oneOf(['on_sale', 'paused', 'hidden'], ['optional' => true]),
         'sortOrder' => R::int(['optional' => true, 'min' => 0, 'max' => 1000]),
+        'kind' => R::oneOf(array_keys(TICKET_KINDS), ['optional' => true]), 'admits' => R::int(['optional' => true, 'min' => 1, 'max' => 20]),
     ];
 }
 const ORG_TT_COLS = ['name' => 'name', 'description' => 'description', 'priceCents' => 'price_cents', 'quantityTotal' => 'quantity_total', 'perOrderLimit' => 'per_order_limit',
-    'salesStartAt' => 'sales_start_at', 'salesEndAt' => 'sales_end_at', 'status' => 'status', 'sortOrder' => 'sort_order'];
+    'salesStartAt' => 'sales_start_at', 'salesEndAt' => 'sales_end_at', 'status' => 'status', 'sortOrder' => 'sort_order', 'kind' => 'kind', 'admits' => 'admits'];
 
 function org_link_url(array $event, string $code): string { return base_url() . '/events/' . $event['slug'] . '?ref=' . $code; }
 
@@ -313,7 +328,7 @@ route('POST', '/api/organiser/apply', function () {
     $b = check(body(), ['name' => R::str(['min' => 2, 'max' => 120]), 'contactEmail' => R::email(), 'contactPhone' => R::phone(['optional' => true]), 'description' => R::text(['optional' => true, 'max' => 2000])]);
     $org = tx(function () use ($u, $b) {
         $now = now_iso();
-        $o = insert('organisers', ['id' => uuid(), 'name' => $b['name'], 'slug' => org_slugify($b['name']) . '-' . strtolower(random_code(4)), 'contact_email' => $b['contactEmail'],
+        $o = insert('organisers', ['id' => uuid(), 'ref' => new_ref('organisers'), 'name' => $b['name'], 'slug' => org_slugify($b['name']) . '-' . strtolower(random_code(4)), 'contact_email' => $b['contactEmail'],
             'contact_phone' => $b['contactPhone'] ?? null, 'description' => ($b['description'] ?? '') !== '' ? $b['description'] : null, 'status' => 'pending', 'created_at' => $now]);
         insert('organiser_members', ['organiser_id' => $o['id'], 'user_id' => $u['id'], 'role' => 'owner', 'created_at' => $now]);
         audit('organiser.applied', ['actor' => $u, 'entityType' => 'organiser', 'entityId' => $o['id'], 'organiserId' => $o['id']]);
@@ -416,6 +431,7 @@ route('POST', '/api/organiser/:orgId/events', function ($a) {
     $u = require_auth();
     ['organiser' => $org] = organiser_access($u, $a['orgId'], ORG_EDIT);
     $b = check(body(), org_event_shape());
+    $b = org_age_groups($b, $b['ageRestriction'] ?? null);
     if ($b['endsAt'] <= $b['startsAt']) throw bad('The event must end after it starts.', ['endsAt' => 'Must be after the start.']);
     org_assert_upload($org['id'], $b['imageUploadId'] ?? null);
     // The same event twice (same name, same start) is almost always a double
@@ -424,7 +440,7 @@ route('POST', '/api/organiser/:orgId/events', function ($a) {
     if ($dup) throw conflict('You already have an event with this name starting at this time. Open it from My events instead of creating it again.', 'duplicate_event', ['eventId' => $dup]);
     $id = tx(function () use ($u, $org, $b) {
         $now = now_iso();
-        $row = ['id' => uuid(), 'organiser_id' => $org['id'], 'slug' => org_slugify($b['title']) . '-' . strtolower(random_code(4)), 'created_by' => $u['id'], 'created_at' => $now, 'updated_at' => $now];
+        $row = ['id' => uuid(), 'ref' => new_ref('events'), 'organiser_id' => $org['id'], 'slug' => org_slugify($b['title']) . '-' . strtolower(random_code(4)), 'created_by' => $u['id'], 'created_at' => $now, 'updated_at' => $now];
         foreach ($b as $k => $v) if ($v !== null) $row[ORG_EVENT_COLS[$k]] = $v;
         insert('events', $row);
         // A free event starts with one free registration type covering its capacity.
@@ -454,10 +470,14 @@ route('GET', '/api/organiser/:orgId/events/:eventId', function ($a) {
 route('PATCH', '/api/organiser/:orgId/events/:eventId', function ($a) {
     $u = require_auth();
     ['event' => $event] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
-    $b = array_filter(check(body(), org_event_shape(true)), fn($v) => $v !== null);
+    $b = check(body(), org_event_shape(true));
+    if (array_key_exists('ageGroups', body()) && !isset($b['ageGroups'])) $b['ageGroups'] = [];
+    $b = org_age_groups($b, array_key_exists('ageRestriction', $b) ? $b['ageRestriction'] : $event['age_restriction']);
+    // An empty list clears the age groups; other empty values are left alone.
+    $b = array_filter($b, fn($v, $k) => $v !== null || $k === 'ageGroups', ARRAY_FILTER_USE_BOTH);
     if (in_array($event['status'], ['cancelled', 'completed'], true)) throw conflict('This event can no longer be edited.', 'event_locked');
     org_assert_upload($event['organiser_id'], $b['imageUploadId'] ?? null);
-    $sold = (int) val('SELECT COALESCE(SUM(quantity_sold + quantity_held),0) FROM ticket_types WHERE event_id = ?', [$event['id']]);
+    $sold = (int) val('SELECT COALESCE(SUM((quantity_sold + quantity_held) * admits),0) FROM ticket_types WHERE event_id = ?', [$event['id']]);
     // Material changes after tickets are sold go through TicketRoom support so buyers can be notified and offered refunds (CPA s47).
     $material = array_values(array_filter(['startsAt', 'endsAt', 'venueName', 'city', 'address'], function ($k) use ($b, $event) {
         if (!array_key_exists($k, $b)) return false;
@@ -527,6 +547,8 @@ route('POST', '/api/organiser/:orgId/events/:eventId/ticket-types', function ($a
     $b = check(body(), org_tt_shape());
     if ($event['is_free'] && $b['priceCents'] > 0) throw conflict('This is a free event, so every ticket type costs R0.', 'free_event');
     if ($b['priceCents'] > 0 && $b['priceCents'] < 1000) throw bad('Paid tickets must cost at least R10.', ['priceCents' => 'Minimum R10, or R0 for free.']);
+    $b['kind'] ??= 'general';
+    $b['admits'] ??= TICKET_KINDS[$b['kind']]['admits'] ?? 1;
     $row = ['id' => uuid(), 'event_id' => $event['id'], 'created_at' => now_iso()];
     foreach ($b as $k => $v) $row[ORG_TT_COLS[$k]] = $v;
     insert('ticket_types', $row);
@@ -546,6 +568,7 @@ route('PATCH', '/api/organiser/:orgId/events/:eventId/ticket-types/:ttId', funct
     $taken = (int) $cur['quantity_sold'] + (int) $cur['quantity_held'];
     if ($price !== null && $price !== (int) $cur['price_cents'] && $taken > 0) throw conflict('Price cannot change after tickets of this type are sold. Create a new ticket type (e.g. a new release) instead.', 'price_locked');
     if (isset($b['quantityTotal']) && $b['quantityTotal'] < $taken) throw conflict("Quantity cannot go below $taken (sold + reserved).", 'quantity_below_sold');
+    if (isset($b['admits']) && $b['admits'] !== (int) $cur['admits'] && $taken > 0) throw conflict('People per ticket cannot change after tickets of this type are sold. Create a new ticket type instead.', 'admits_locked');
     if (!$b) return ['ticketType' => $cur];
     $sets = [];
     $p = [];
@@ -842,4 +865,113 @@ route('GET', '/api/organiser/:orgId/events/:eventId/qr', function ($a) {
     $url = base_url() . '/events/' . $event['slug'];
     return ['url' => $url, 'title' => $event['title'], 'status' => $event['status'],
         'svg' => qr_for_people($url, ['dark' => qs('dark'), 'light' => qs('light'), 'ecc' => qs('ecc') ?? 'Q'])];
+});
+
+// ============================================================== gate passes
+// Crew, artists, media, vendors and guests get a gate pass instead of a
+// ticket. Each pass has a private link (only its hash is stored); reissuing a
+// pass makes a new link and QR code, so old copies stop working.
+const ORG_PASS_LIMIT = 5000;
+function org_pass_view(array $g): array
+{
+    return ['id' => $g['id'], 'code' => $g['code'], 'holderName' => $g['holder_name'], 'email' => $g['email'], 'role' => $g['role'], 'roleLabel' => PASS_ROLES[$g['role']] ?? $g['role'],
+        'accessNote' => $g['access_note'], 'reentry' => (bool) $g['reentry'], 'status' => $g['status'], 'scans' => (int) $g['scans'],
+        'firstScannedAt' => $g['first_scanned_at'], 'lastScannedAt' => $g['last_scanned_at'], 'createdAt' => $g['created_at']];
+}
+function org_pass_shape(): array
+{
+    return ['role' => R::oneOf(array_keys(PASS_ROLES)), 'accessNote' => R::str(['optional' => true, 'max' => 60]), 'reentry' => org_bool(['optional' => true, 'fallback' => true])];
+}
+function org_pass_send(array $g, array $event, string $url): void
+{
+    if (!$g['email']) return;
+    $org = val('SELECT name FROM organisers WHERE id = ?', [$event['organiser_id']]);
+    outbox_enqueue(['to' => $g['email']] + tpl('gatePass', ['name' => $g['holder_name'], 'organiser' => $org, 'role' => PASS_ROLES[$g['role']] ?? $g['role'], 'event' => $event['title'],
+        'when' => wallet_when($event['starts_at']), 'venue' => trim($event['venue_name'] . ', ' . $event['city'], ', '), 'url' => $url, 'reentry' => (bool) $g['reentry']]));
+}
+// Creates passes for a list of people in one go. Returns each pass with its link.
+function org_issue_passes(array $u, array $event, array $org, array $people, array $opts): array
+{
+    if (array_filter(array_column($people, 'email'))) org_require_approved($org);
+    $have = (int) val('SELECT count(*) FROM gate_passes WHERE event_id = ?', [$event['id']]);
+    if ($have + count($people) > ORG_PASS_LIMIT) throw conflict('An event can have at most ' . ORG_PASS_LIMIT . ' gate passes.', 'pass_limit');
+    return tx(function () use ($u, $event, $people, $opts) {
+        $out = [];
+        $now = now_iso();
+        foreach ($people as $p) {
+            $token = random_token(24);
+            $g = insert('gate_passes', ['id' => uuid(), 'event_id' => $event['id'], 'code' => new_pass_code(), 'qr_version' => 1, 'holder_name' => $p['holderName'],
+                'email' => isset($p['email']) && $p['email'] !== '' ? strtolower($p['email']) : null, 'role' => $opts['role'], 'access_note' => ($opts['accessNote'] ?? '') !== '' ? $opts['accessNote'] : null,
+                'reentry' => !empty($opts['reentry']) ? 1 : 0, 'status' => 'active', 'link_token_hash' => sha256($token), 'created_by' => $u['id'], 'created_at' => $now, 'updated_at' => $now]);
+            $url = base_url() . "/pass?t=$token";
+            org_pass_send($g, $event, $url);
+            $out[] = ['pass' => org_pass_view($g), 'url' => $url];
+        }
+        audit('gate_pass.issued', ['actor' => $u, 'entityType' => 'event', 'entityId' => $event['id'], 'organiserId' => $event['organiser_id'], 'details' => ['count' => count($out), 'role' => $opts['role']]]);
+        return $out;
+    });
+}
+function org_get_pass(array $event, string $passId): array
+{
+    $g = row('SELECT * FROM gate_passes WHERE id = ? AND event_id = ?', [$passId, $event['id']]);
+    if (!$g) throw not_found('Pass not found.');
+    return $g;
+}
+
+route('GET', '/api/organiser/:orgId/events/:eventId/passes', function ($a) {
+    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_ALL);
+    $list = array_map('org_pass_view', rows('SELECT * FROM gate_passes WHERE event_id = ? ORDER BY created_at DESC, holder_name', [$event['id']]));
+    return ['passes' => $list, 'roles' => PASS_ROLES];
+});
+
+route('POST', '/api/organiser/:orgId/events/:eventId/passes', function ($a) {
+    $u = require_auth();
+    limit('gatepass', 300, 3600, $u['id']);
+    ['event' => $event, 'organiser' => $org] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
+    if (in_array($event['status'], ['cancelled', 'completed'], true)) throw conflict('This event has ended or was cancelled.', 'event_locked');
+    $b = check(body(), ['holderName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(['optional' => true])] + org_pass_shape());
+    $r = org_issue_passes($u, $event, $org, [$b], $b);
+    return json_out($r[0], 201);
+});
+
+route('POST', '/api/organiser/:orgId/events/:eventId/passes/bulk', function ($a) {
+    $u = require_auth();
+    limit('gatepass', 300, 3600, $u['id']);
+    ['event' => $event, 'organiser' => $org] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
+    if (in_array($event['status'], ['cancelled', 'completed'], true)) throw conflict('This event has ended or was cancelled.', 'event_locked');
+    $b = check(body(), ['people' => R::arr(R::obj(['holderName' => R::str(['min' => 2, 'max' => 120]), 'email' => R::email(['optional' => true])]), ['min' => 1, 'max' => 200])] + org_pass_shape());
+    return json_out(['passes' => org_issue_passes($u, $event, $org, $b['people'], $b)], 201);
+});
+
+// The pass's QR code, for printing a badge or sending it another way.
+route('GET', '/api/organiser/:orgId/events/:eventId/passes/:passId', function ($a) {
+    ['event' => $event] = event_access(require_auth(), $a['orgId'], $a['eventId'], ORG_EDIT);
+    $g = org_get_pass($event, $a['passId']);
+    return ['pass' => org_pass_view($g), 'svg' => $g['status'] === 'active' ? tr_qr_svg(pass_payload($g), ['ecc' => 'M', 'margin' => 1, 'dark' => '#0B1A33', 'light' => '#FFFFFF']) : null];
+});
+
+route('POST', '/api/organiser/:orgId/events/:eventId/passes/:passId/revoke', function ($a) {
+    $u = require_auth();
+    ['event' => $event] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
+    $g = org_get_pass($event, $a['passId']);
+    q("UPDATE gate_passes SET status = 'revoked', updated_at = ? WHERE id = ?", [now_iso(), $g['id']]);
+    audit('gate_pass.revoked', ['actor' => $u, 'entityType' => 'gate_pass', 'entityId' => $g['id'], 'organiserId' => $event['organiser_id']]);
+    return ['pass' => org_pass_view(org_get_pass($event, $g['id']))];
+});
+
+// New link and QR code (lost phone, link shared by mistake). Old copies stop working.
+route('POST', '/api/organiser/:orgId/events/:eventId/passes/:passId/reissue', function ($a) {
+    $u = require_auth();
+    limit('gatepass', 300, 3600, $u['id']);
+    ['event' => $event, 'organiser' => $org] = event_access($u, $a['orgId'], $a['eventId'], ORG_EDIT);
+    $g = org_get_pass($event, $a['passId']);
+    if ($g['status'] !== 'active') throw conflict('This pass was cancelled. Issue a new one instead.', 'pass_revoked');
+    if ($g['email']) org_require_approved($org);
+    $token = random_token(24);
+    q('UPDATE gate_passes SET link_token_hash = ?, qr_version = qr_version + 1, updated_at = ? WHERE id = ?', [sha256($token), now_iso(), $g['id']]);
+    $g = org_get_pass($event, $g['id']);
+    $url = base_url() . "/pass?t=$token";
+    org_pass_send($g, $event, $url);
+    audit('gate_pass.reissued', ['actor' => $u, 'entityType' => 'gate_pass', 'entityId' => $g['id'], 'organiserId' => $event['organiser_id']]);
+    return ['pass' => org_pass_view($g), 'url' => $url];
 });

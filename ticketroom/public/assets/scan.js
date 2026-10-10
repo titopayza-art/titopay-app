@@ -74,7 +74,7 @@ function drawDesk() {
   $("[data-reset]")?.addEventListener("click", () => { deskTicket = null; drawDesk(); idle(); });
 }
 
-const isTicket = (v) => /^TR1\./.test(v) || /^[2-9A-HJ-NP-TV-Z]{10}$/i.test(v.replace(/[\s-]/g, ""));
+const isTicket = (v) => /^T[RP]1\./.test(v) || /^[2-9A-HJ-NP-TV-Z]{10}$/i.test(v.replace(/[\s-]/g, ""));
 
 async function handle(value, fromNfc = false) {
   if (mode === "desk") return desk(value, fromNfc);
@@ -98,7 +98,9 @@ async function handle(value, fromNfc = false) {
 }
 
 function show(r) {
-  const [kind, big] = VERDICT[r.outcome] || ["no", r.outcome];
+  const [kind, word] = VERDICT[r.outcome] || ["no", r.outcome];
+  // A couple or table ticket lets several people in: say so in big letters.
+  const big = r.outcome === "admitted" && r.admits > 1 ? `ADMIT ${r.admits}` : r.outcome === "admitted" && r.pass ? "PASS OK" : word;
   verdict(kind, r.offline ? `${big} (OFFLINE)` : big, [r.holderName, r.ticketType, r.outcome === "already_used" && r.admittedAt ? `first scanned at ${fmtTime(r.admittedAt)}` : r.outcome !== "admitted" ? r.message : ""].filter(Boolean).join(" · "));
   beep(r.outcome === "admitted");
 }

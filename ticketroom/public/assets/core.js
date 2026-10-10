@@ -738,7 +738,7 @@ export async function ticketPng(svg, t) {
       g.save(); rrect(g, X, top, CW, g.canvas.height - top - 200, 44); g.clip(); g.fillStyle = C.navy; g.fillRect(X, top, CW, headH); g.restore();
     }
     let y = top + 92;
-    font(g, 800, 30); if (draw) { g.fillStyle = C.amber; spaced(g, "TICKETROOM TICKET", y, 12); }
+    font(g, 800, 30); if (draw) { g.fillStyle = C.amber; spaced(g, t.label || "TICKETROOM TICKET", y, 12); }
     y += 92; font(g, 800, lines.length > 1 ? 58 : 68);
     if (draw) { g.fillStyle = "#fff"; lines.forEach((l, i) => g.fillText(l, MID, y + i * 68)); }
     y += lh + 60;
@@ -747,7 +747,7 @@ export async function ticketPng(svg, t) {
     y = top + headH;
     // Details
     y += 84;
-    for (const [k, v] of [["Ticket", t.type], ["Holder", t.holder], ["Order", t.order]]) {
+    for (const [k, v] of t.rows || [["Ticket", t.type], ["Holder", t.holder], ["Order", t.order]]) {
       if (draw) {
         font(g, 700, 36); g.textAlign = "left"; g.fillStyle = C.muted; g.fillText(k, X + 80, y);
         fit(g, v, 800, 38, CW - 360); g.textAlign = "right"; g.fillStyle = C.ink; g.fillText(v, X + CW - 80, y); g.textAlign = "center";
@@ -768,10 +768,10 @@ export async function ticketPng(svg, t) {
       for (const cx of [X, X + CW]) { g.beginPath(); g.arc(cx, y, 36, 0, Math.PI * 2); g.fillStyle = C.bg; g.fill(); g.lineWidth = 3; g.strokeStyle = C.line; g.stroke(); }
     }
     // Code
-    y += 100; font(g, 800, 30); if (draw) { g.fillStyle = C.muted; spaced(g, "TICKET CODE", y, 12); }
+    y += 100; font(g, 800, 30); if (draw) { g.fillStyle = C.muted; spaced(g, t.codeLabel || "TICKET CODE", y, 12); }
     y += 108; font(g, 900, 96); let sp = 22; while (sp > 4 && [...t.code].reduce((n, ch) => n + g.measureText(ch).width, 0) + sp * (t.code.length - 1) > CW - 100) sp -= 2;
     if (draw) { g.fillStyle = C.navy; spaced(g, t.code, y, sp); }
-    y += 76; const note = "Present this ticket at the entrance. Do not share the code publicly.";
+    y += 76; const note = t.note || "Present this ticket at the entrance. Do not share the code publicly.";
     fit(g, note, 700, 30, CW - 100); if (draw) { g.fillStyle = C.muted; g.fillText(note, MID, y); }
     y += 84;
     // Tagline
@@ -870,3 +870,17 @@ export function calendarFile({ title, starts, ends, place = "", url = "" }) {
   a.download = `${String(title).toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50) || "event"}.ics`;
   document.body.append(a); a.click(); a.remove();
 }
+
+// ---------- ticket kinds and age groups (same lists as php/api/lib/domain.php) ----------
+export const TICKET_KINDS = {
+  general: { label: "General admission" }, early_bird: { label: "Early bird" }, vip: { label: "VIP" }, vvip: { label: "VVIP" },
+  golden_circle: { label: "Golden circle" }, seated: { label: "Reserved seating" }, standing: { label: "Standing" },
+  student: { label: "Student", note: "Bring your student card" }, child: { label: "Child", note: "Proof of age may be checked" },
+  pensioner: { label: "Pensioner", note: "Bring your ID" }, couple: { label: "Couple", admits: 2 }, group: { label: "Group", admits: 4 },
+  table: { label: "Table / booth", admits: 8 }, day_pass: { label: "Day pass" }, multi_day: { label: "Weekend / multi-day pass" },
+  season: { label: "Season pass" }, backstage: { label: "Backstage / meet & greet" }, hospitality: { label: "Hospitality" },
+  accessible: { label: "Accessible", note: "A companion may enter with this ticket" }, late_entry: { label: "Late entry" },
+};
+export const AGE_GROUPS = { all: "All ages", kids: "Kids (under 13)", teens: "Teens (13 to 17)", "18_24": "18 to 24", "25_34": "25 to 34", "35_49": "35 to 49", "50_plus": "50 and over", families: "Families" };
+export const ageGroupList = (v) => String(v || "").split(",").filter((k) => AGE_GROUPS[k]);
+export const ageGroupText = (v) => ageGroupList(v).map((k) => AGE_GROUPS[k]).join(", ");

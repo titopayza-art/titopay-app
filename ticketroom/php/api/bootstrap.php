@@ -148,7 +148,7 @@ function tr_install_db(string $hash): void
 
 // Database upgrades for sites installed with an earlier zip. Each step runs
 // once; new installs get everything from schema.sql and skip them all.
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const UPGRADES = [
     2 => [
         'CREATE INDEX IF NOT EXISTS order_items_order_idx ON order_items (order_id)',
@@ -175,7 +175,27 @@ const UPGRADES = [
         'CREATE TABLE IF NOT EXISTS event_likes ( user_id TEXT NOT NULL REFERENCES users(id), event_id TEXT NOT NULL REFERENCES events(id), created_at TEXT NOT NULL, PRIMARY KEY (user_id, event_id) )',
         'CREATE INDEX IF NOT EXISTS event_likes_event_idx ON event_likes (event_id)',
     ],
+    // Event and organiser IDs, target age groups, ticket kinds, gate passes.
+    6 => [
+        'ALTER TABLE organisers ADD COLUMN ref TEXT',
+        'ALTER TABLE events ADD COLUMN ref TEXT',
+        'ALTER TABLE events ADD COLUMN age_groups TEXT',
+        "ALTER TABLE ticket_types ADD COLUMN kind TEXT NOT NULL DEFAULT 'general'",
+        'ALTER TABLE ticket_types ADD COLUMN admits INTEGER NOT NULL DEFAULT 1 CHECK (admits BETWEEN 1 AND 20)',
+        'ALTER TABLE admission_log ADD COLUMN pass_id TEXT',
+        'CREATE TABLE IF NOT EXISTS gate_passes ( id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id), code TEXT NOT NULL UNIQUE, qr_version INTEGER NOT NULL DEFAULT 1, holder_name TEXT NOT NULL, email TEXT, role TEXT NOT NULL, access_note TEXT, reentry INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT \'active\' CHECK (status IN (\'active\',\'revoked\')), link_token_hash TEXT NOT NULL UNIQUE, scans INTEGER NOT NULL DEFAULT 0, first_scanned_at TEXT, last_scanned_at TEXT, created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, updated_at TEXT NOT NULL )',
+        'CREATE INDEX IF NOT EXISTS gate_passes_event_idx ON gate_passes (event_id, updated_at)',
+        '@refs',
+        'CREATE UNIQUE INDEX IF NOT EXISTS organisers_ref_uq ON organisers (ref)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS events_ref_uq ON events (ref)',
+    ],
 ];
+// Gives every organiser and event without one its short ID.
+function tr_backfill_refs(): void
+{
+    foreach (rows('SELECT id FROM organisers WHERE ref IS NULL') as $r) q('UPDATE organisers SET ref = ? WHERE id = ?', [new_ref('organisers'), $r['id']]);
+    foreach (rows('SELECT id FROM events WHERE ref IS NULL') as $r) q('UPDATE events SET ref = ? WHERE id = ?', [new_ref('events'), $r['id']]);
+}
 function tr_upgrade(): void
 {
     $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
@@ -184,7 +204,7 @@ function tr_upgrade(): void
         $have = (int) (val("SELECT value FROM meta WHERE key = 'schema_version'") ?? 1);
         foreach (UPGRADES as $v => $steps) {
             if ($v <= $have) continue;
-            foreach ($steps as $sql) db()->exec($sql);
+            foreach ($steps as $sql) $sql === '@refs' ? tr_backfill_refs() : db()->exec($sql);
             q("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [(string) $v]);
         }
     });
